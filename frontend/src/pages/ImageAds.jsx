@@ -198,11 +198,13 @@ export default function ImageAds() {
 
             // Save generated ads to database
             try {
+                // Only send templateId when it's a Winning Ad (UUID); styles from StyleSelector use non-UUID ids and are not in winning_ads
+                const templateId = wizardData.template?.type === 'template' ? wizardData.template?.id : null;
                 const adsToSave = imagesWithBundle.map(img => ({
                     id: `ga_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                     brandId: wizardData.brand?.id,
                     productId: wizardData.product?.id,
-                    templateId: wizardData.template?.id,
+                    templateId,
                     imageUrl: img.url,
                     headline: copy.headline,
                     body: copy.body,

@@ -45,5 +45,6 @@ RUN mkdir -p uploads
 # Expose port (Railway uses dynamic $PORT)
 EXPOSE 8000
 
-# Run migrations and start the application
-CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Create tables from models, seed DB (roles + optional admin), stamp Alembic so
+# we don't run migrations that assume an older schema, then start the application
+CMD python init_db.py && alembic stamp head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}

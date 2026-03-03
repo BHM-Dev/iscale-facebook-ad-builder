@@ -1,0 +1,33 @@
+# Git and IDE
+.git
+.gitignore
+.vscode
+.idea
+*.swp
+*.swo
+
+# Dependencies (reinstalled in containers)
+frontend/node_modules
+backend/venv
+backend/__pycache__
+**/__pycache__
+
+# Env and secrets (mount or pass at runtime)
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+frontend/dist
+*.log
+.DS_Store
+
+# Tests and docs (not needed in image)
+**/*.test.js
+**/*.test.jsx
+**/tests/
+**/agent-transcripts/
+
+# Backend uploads (use volume in compose)
+backend/uploads/*
+!backend/uploads/.gitkeep
