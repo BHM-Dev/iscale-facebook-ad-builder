@@ -1,7 +1,14 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
+# Load .env from backend/ or project root; also load .env.local (common for local dev)
 load_dotenv()
+backend_dir = Path(__file__).resolve().parent.parent.parent
+project_root = backend_dir.parent
+load_dotenv(dotenv_path=project_root / ".env.local")
+load_dotenv(dotenv_path=backend_dir / ".env")
+load_dotenv(dotenv_path=backend_dir / ".env.local")
 
 class Settings:
     PROJECT_NAME: str = "Facebook Ad Automation App"

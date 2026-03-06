@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from app.database import get_db
 from app.models import GeneratedAd, User
@@ -8,14 +9,14 @@ from fastapi.responses import StreamingResponse
 import io
 import csv
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Dict, Any
 
 class ImageGenerationRequest(BaseModel):
     template: Optional[Dict[str, Any]] = None
     brand: Optional[Dict[str, Any]] = None
     product: Optional[Dict[str, Any]] = None
-    copy: Optional[Dict[str, Any]] = None
+    ad_copy: Optional[Dict[str, Any]] = Field(None, alias="copy")
     count: int = 1
     imageSizes: List[Dict[str, Any]] = []
     resolution: str = "1K"
@@ -69,8 +70,8 @@ def build_comprehensive_prompt(request: ImageGenerationRequest) -> str:
     ]
     
     # Add copy context (headline)
-    if request.copy and request.copy.get('headline'):
-        parts.append(f"Context: Visual representation of \"{request.copy.get('headline')}\"")
+    if request.ad_copy and request.ad_copy.get('headline'):
+        parts.append(f"Context: Visual representation of \"{request.ad_copy.get('headline')}\"")
     
     # Add template art direction
     parts.append(f"Art Direction: {mood}, {lighting}, {composition}, {design_style}")
@@ -180,7 +181,7 @@ async def generate_image(
             print(f"📦 Product: {request.product.get('name') if request.product else 'None'}")
             print(f"📦 Product Desc: {request.product.get('description') if request.product else 'None'}")
             print(f"📦 Template Type: {request.template.get('type') if request.template else 'None'}")
-            print(f"📦 Copy Headline: {request.copy.get('headline') if request.copy else 'None'}")
+            print(f"📦 Copy Headline: {request.ad_copy.get('headline') if request.ad_copy else 'None'}")
             print(f"\n📝 FULL GENERATED PROMPT:")
             print(f"{prompt}")
             print(f"{'='*80}\n")
@@ -387,6 +388,12 @@ def batch_save_ads(
     try:
         db.commit()
         return {"message": f"Saved {len(saved_ads)} ads", "count": len(saved_ads)}
+    except IntegrityError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid brand, product, or template ID. Use IDs from Brands/Products/Templates in this app (UUIDs), not Facebook page or ad IDs. " + str(e)
+        )
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

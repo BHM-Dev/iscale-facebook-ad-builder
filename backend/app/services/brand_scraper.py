@@ -159,6 +159,10 @@ class BrandScraperService:
                     else:
                         break
 
+                except httpx.HTTPStatusError as e:
+                    body = e.response.text if e.response else ""
+                    print(f"Facebook API error {e.response.status_code}: {e}, response: {body[:500]}, falling back to Playwright")
+                    return await self._playwright_scrape_ads(page_id, limit, is_search=False)
                 except Exception as e:
                     print(f"API error: {e}, falling back to Playwright")
                     return await self._playwright_scrape_ads(page_id, limit, is_search=False)
@@ -167,7 +171,13 @@ class BrandScraperService:
 
     async def _playwright_scrape_ads(self, query: str, limit: int = 500, is_search: bool = True) -> List[dict]:
         """Scrape ads using Playwright browser automation with response interception for media."""
-        from playwright.async_api import async_playwright
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            raise RuntimeError(
+                "Playwright is not installed. Install it for scraping fallback: "
+                "pip install playwright && playwright install chromium"
+            )
         import urllib.parse
 
         ads = []
@@ -227,13 +237,29 @@ class BrandScraperService:
                     url = f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&view_all_page_id={query}"
 
                 print(f"Playwright navigating to: {url}")
-                await page.goto(url, timeout=60000, wait_until="networkidle")
+                await page.goto(url, timeout=60000, wait_until="domcontentloaded")
+                await page.wait_for_timeout(3000)  # Let ads list render
 
-                # Wait for ads to load
+                # Dismiss cookie/consent banner if present so it doesn't block content
                 try:
-                    await page.wait_for_selector('text=Library ID:', timeout=15000)
-                except:
-                    print("No ads found or page didn't load properly")
+                    allow_btn = page.locator('button:has-text("Allow"), button:has-text("Accept"), [data-cookiebanner="accept_button"], [aria-label*="Allow"]').first
+                    if await allow_btn.is_visible(timeout=2000):
+                        await allow_btn.click()
+                        await page.wait_for_timeout(1000)
+                except Exception:
+                    pass
+
+                # Wait for ads to load - try multiple possible selectors (Facebook UI varies)
+                ad_loaded = False
+                for selector in ['text=Library ID:', 'text=Ad library ID', 'text=Sponsored']:
+                    try:
+                        await page.wait_for_selector(selector, timeout=10000)
+                        ad_loaded = True
+                        break
+                    except Exception:
+                        continue
+                if not ad_loaded:
+                    print("No ads found or page didn't load properly. If this page has ads, set FB_SCRAPER_EMAIL and FB_SCRAPER_PASSWORD in .env.local and try again (logged-in users may see more).")
                     await browser.close()
                     return []
 
@@ -447,12 +473,27 @@ class BrandScraperService:
                     url = f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&view_all_page_id={page_id}&media_type=all"
                     print(f"Scraping page ID: {page_id}")
 
-                await page.goto(url, timeout=60000, wait_until="networkidle")
+                await page.goto(url, timeout=60000, wait_until="domcontentloaded")
+                await page.wait_for_timeout(3000)
 
                 try:
-                    await page.wait_for_selector('text=Library ID:', timeout=15000)
-                except:
-                    print("No ads found")
+                    allow_btn = page.locator('button:has-text("Allow"), button:has-text("Accept"), [data-cookiebanner="accept_button"]').first
+                    if await allow_btn.is_visible(timeout=2000):
+                        await allow_btn.click()
+                        await page.wait_for_timeout(1000)
+                except Exception:
+                    pass
+
+                ad_loaded = False
+                for selector in ['text=Library ID:', 'text=Ad library ID', 'text=Sponsored']:
+                    try:
+                        await page.wait_for_selector(selector, timeout=10000)
+                        ad_loaded = True
+                        break
+                    except Exception:
+                        continue
+                if not ad_loaded:
+                    print("No ads found or page didn't load properly. Set FB_SCRAPER_EMAIL and FB_SCRAPER_PASSWORD for logged-in scraping if needed.")
                     await browser.close()
                     return []
 

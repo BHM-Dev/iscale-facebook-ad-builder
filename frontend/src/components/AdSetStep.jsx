@@ -70,6 +70,7 @@ const AdSetStep = ({ onNext, onBack }) => {
     const [loadingAdSets, setLoadingAdSets] = useState(false);
     const [pixels, setPixels] = useState([]);
     const [loadingPixels, setLoadingPixels] = useState(false);
+    const [pixelsError, setPixelsError] = useState(null);
     const [isTargetingOpen, setIsTargetingOpen] = useState(false);
     const [isScheduleOpen, setIsScheduleOpen] = useState(false);
     const [countrySearch, setCountrySearch] = useState('');
@@ -110,7 +111,11 @@ const AdSetStep = ({ onNext, onBack }) => {
 
     useEffect(() => {
         if (selectedAdAccount) {
+            setPixelsError(null);
             fetchPixels();
+        } else {
+            setPixels([]);
+            setPixelsError(null);
         }
     }, [selectedAdAccount]);
 
@@ -127,12 +132,16 @@ const AdSetStep = ({ onNext, onBack }) => {
     }, [showCountryDropdown]);
 
     const fetchPixels = async () => {
+        if (!selectedAdAccount?.id) return;
         setLoadingPixels(true);
+        setPixelsError(null);
         try {
             const fetchedPixels = await getPixels(selectedAdAccount.id);
-            setPixels(fetchedPixels);
+            setPixels(fetchedPixels || []);
         } catch (error) {
             console.error('Error fetching pixels:', error);
+            setPixelsError(error.message || 'Unable to load pixels. Check your token has ads_management and the ad account has a pixel in Events Manager.');
+            setPixels([]);
             showWarning('Unable to load pixels. Please check your ad account permissions.');
         } finally {
             setLoadingPixels(false);
@@ -441,10 +450,23 @@ const AdSetStep = ({ onNext, onBack }) => {
                             <label className="block text-sm font-medium text-gray-700 mb-2">
                                 Facebook Pixel ID *
                             </label>
-                            {loadingPixels ? (
+                            {!selectedAdAccount ? (
+                                <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                                    Select an ad account in step 1 first. Pixels are loaded from the selected account.
+                                </div>
+                            ) : loadingPixels ? (
                                 <div className="flex items-center gap-2 text-sm text-gray-500 p-2 border rounded-lg bg-gray-50">
                                     <Loader className="animate-spin" size={16} />
                                     <span>Loading pixels...</span>
+                                </div>
+                            ) : pixelsError ? (
+                                <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
+                                    {pixelsError}
+                                    <button type="button" onClick={fetchPixels} className="ml-2 text-amber-600 hover:underline font-medium">Retry</button>
+                                </div>
+                            ) : pixels.length === 0 ? (
+                                <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-3">
+                                    No pixels found. Create a pixel in <a href="https://business.facebook.com/events_manager" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:underline">Meta Events Manager</a> and link it to this ad account.
                                 </div>
                             ) : (
                                 <select

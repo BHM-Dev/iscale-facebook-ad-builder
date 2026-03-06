@@ -484,6 +484,12 @@ Contributions are welcome! Please:
 - Telegram: [@jasonakatiff](https://t.me/jasonakatiff)
 - Email: [jason@jasonakatiff.com](mailto:jason@jasonakatiff.com)
 
+## Built with AI
+
+This project is part of the [Built with AI](https://builtwithai.com/open-source) open source collection — free tools built by the AI builder community.
+
+**[Join the community →](https://builtwithai.com/apply)**
+
 ---
 
 ## License
