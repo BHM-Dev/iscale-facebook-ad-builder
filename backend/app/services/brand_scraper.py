@@ -214,20 +214,98 @@ class BrandScraperService:
                     await page.goto("https://www.facebook.com/login", timeout=30000)
                     await page.wait_for_timeout(2000)
 
+                    # Dismiss cookie/consent banner first so it doesn't cover the login button
+                    try:
+                        allow_btn = page.locator(
+                            'button:has-text("Allow"), button:has-text("Accept"), '
+                            '[data-cookiebanner="accept_button"], [aria-label*="Allow"], '
+                            '[data-testid="cookie-policy-manage-dialog-accept-button"]'
+                        ).first
+                        if await allow_btn.is_visible(timeout=2000):
+                            await allow_btn.click()
+                            await page.wait_for_timeout(1000)
+                    except Exception:
+                        pass
+
+                    # Wait for login form to be ready (Facebook sometimes changes structure)
+                    await page.wait_for_selector('input[name="email"]', timeout=15000)
                     await page.fill('input[name="email"]', fb_email)
                     await page.fill('input[name="pass"]', fb_password)
-                    await page.click('button[name="login"]')
 
-                    # Wait for login to complete
-                    await page.wait_for_timeout(5000)
+                    # Try multiple login submit methods (Facebook changes markup frequently)
+                    login_submitted = False
+                    for selector in [
+                        'button[name="login"]',
+                        '#loginbutton',
+                        'input[name="login"]',
+                        'button[type="submit"]',
+                        '[data-testid="royal_login_button"]',
+                        'form#loginform button[type="submit"]',
+                        'form#loginform input[type="submit"]',
+                        'button:has-text("Log in")',
+                        'button:has-text("Log In")',
+                        'input[value="Log in"]',
+                        '[type="submit"]',
+                    ]:
+                        try:
+                            btn = page.locator(selector).first
+                            if await btn.is_visible(timeout=2000):
+                                await btn.scroll_into_view_if_needed()
+                                await page.wait_for_timeout(300)
+                                await btn.click()
+                                login_submitted = True
+                                print(f"Submitted Facebook login with selector: {selector}")
+                                break
+                        except Exception:
+                            continue
 
-                    # Check if logged in
-                    current_url = page.url.lower()
-                    if "login" in current_url or "checkpoint" in current_url:
-                        error_detail = "Login page still showing" if "login" in current_url else "Security checkpoint triggered"
-                        raise Exception(f"Facebook login failed: {error_detail}. URL: {page.url}")
+                    # Fallback 1: submit by pressing Enter in password field
+                    if not login_submitted:
+                        try:
+                            await page.press('input[name="pass"]', "Enter")
+                            login_submitted = True
+                            print("Submitted Facebook login by pressing Enter")
+                        except Exception:
+                            pass
+
+                    # Fallback 2: submit login form via JS
+                    if not login_submitted:
+                        try:
+                            form_submitted = await page.evaluate("""
+                                () => {
+                                    const form =
+                                        document.querySelector('form#loginform') ||
+                                        document.querySelector('form[action*="login"]') ||
+                                        document.querySelector('form');
+                                    if (!form) return false;
+                                    form.submit();
+                                    return true;
+                                }
+                            """)
+                            if form_submitted:
+                                login_submitted = True
+                                print("Submitted Facebook login via form.submit()")
+                        except Exception:
+                            pass
+
+                    if not login_submitted:
+                        # Do not hard-fail scraping; continue unauthenticated.
+                        print(
+                            "Could not find/submit Facebook login button. Continuing without login; "
+                            "results may be limited."
+                        )
                     else:
-                        print("Facebook login successful")
+                        # Wait for login to complete
+                        await page.wait_for_timeout(5000)
+
+                        # Check if logged in (checkpoint can still happen)
+                        current_url = page.url.lower()
+                        if "checkpoint" in current_url:
+                            print(f"Facebook login hit security checkpoint. Continuing without login. URL: {page.url}")
+                        elif "login" in current_url:
+                            print(f"Facebook login appears unsuccessful. Continuing without login. URL: {page.url}")
+                        else:
+                            print("Facebook login successful")
 
                 # Build URL
                 if is_search:

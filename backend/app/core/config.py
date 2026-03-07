@@ -66,4 +66,11 @@ class Settings:
     def r2_endpoint_url(self) -> str:
         return f"https://{self.R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
+    @property
+    def upload_dir(self) -> Path:
+        """Single uploads directory for saving and serving (StaticFiles)."""
+        backend_dir = Path(__file__).resolve().parent.parent.parent
+        return (backend_dir / "uploads").resolve()
+
+
 settings = Settings()

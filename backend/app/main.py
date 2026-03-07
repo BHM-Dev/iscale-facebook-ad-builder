@@ -115,8 +115,7 @@ app.include_router(ad_remix.router, prefix="/api/v1/ad-remix", tags=["ad-remix"]
 app.include_router(prompts.router, prefix="/api/v1/prompts", tags=["prompts"])
 app.include_router(ad_styles.router, prefix="/api/v1/ad-styles", tags=["ad-styles"])
 
-# Mount static files for uploads
-import os
-uploads_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
+# Mount static files for uploads (same path as generated_ads save location)
+uploads_dir = str(settings.upload_dir)
 os.makedirs(uploads_dir, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
