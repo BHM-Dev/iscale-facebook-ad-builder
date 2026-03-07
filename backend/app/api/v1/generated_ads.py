@@ -120,9 +120,8 @@ try:
 except ImportError:
     fal_client = None
 
-# Setup uploads directory
-UPLOAD_DIR = Path(__file__).parent.parent.parent.parent / "uploads"
-UPLOAD_DIR = UPLOAD_DIR.resolve()
+# Setup uploads directory (same as main.py StaticFiles mount)
+UPLOAD_DIR = settings.upload_dir
 os.makedirs(UPLOAD_DIR, mode=0o755, exist_ok=True)
 
 async def download_and_save_image(image_url: str, prefix: str = "generated") -> str:
