@@ -1,0 +1,25 @@
+name: Build & Push Frontend
+
+on:
+  push:
+    branches:
+      - develop
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:      
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            cd ~/Lead-engine-v2
+            
+            # Pull the latest backend image
+            docker compose -f docker-compose.prod.yml up -d --build
+            
+            echo "Deployment completed successfully"
