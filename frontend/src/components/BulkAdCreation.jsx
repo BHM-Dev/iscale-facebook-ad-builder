@@ -205,7 +205,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     );
 
                     // Save to local database
-                    await authFetch(`${API_URL}/facebook/ads/save`, {
+                    const saveAdRes = await authFetch(`${API_URL}/facebook/ads/save`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -228,6 +228,10 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             fbCreativeId: result.creativeId
                         })
                     });
+                    if (!saveAdRes.ok) {
+                        const err = await saveAdRes.json();
+                        throw new Error(`Failed to save ad locally: ${err.detail || err.message}`);
+                    }
 
                     createdAds.push({
                         ...ad,
