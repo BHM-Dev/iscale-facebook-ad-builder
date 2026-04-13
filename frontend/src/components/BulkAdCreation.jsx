@@ -265,9 +265,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
 
     return (
         <div>
-            <h2 className="text-2xl font-bold mb-6">Bulk Ad Creation</h2>
+            <h2 className="text-2xl font-bold mb-6">Review & Launch Ads</h2>
+            <p className="text-gray-600 mb-2">
+                The app has automatically generated one ad for every combination of your images, headlines, and body copy. Each row below is one ad that will be created on Facebook.
+            </p>
             <p className="text-gray-600 mb-6">
-                Add multiple ads to be created with the same creative structure. Each ad will use the dynamic creative you configured.
+                You can rename any ad before launching. Remove any combinations you don't want by clicking the trash icon.
             </p>
 
             {/* Summary */}
@@ -294,7 +297,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             return parts.join(', ') || '0 files';
                         })()}
                     </div>
-                    <div><strong>Ad Copy:</strong> Standard (Single Body & Headline)</div>
+                    <div><strong>Total Ads to Create:</strong> {adsData.length} ({(() => {
+                        const images = creativeData.creatives?.filter(c => c.mediaType !== 'video').length || 0;
+                        const videos = creativeData.creatives?.filter(c => c.mediaType === 'video').length || 0;
+                        const media = images + videos;
+                        const headlines = creativeData.headlines?.filter(h => h && h.trim()).length || 0;
+                        const bodies = creativeData.bodies?.filter(b => b && b.trim()).length || 0;
+                        return `${media} media × ${headlines} headline${headlines !== 1 ? 's' : ''} × ${bodies} body`;
+                    })()})</div>
                 </div>
             </div>
 
@@ -359,9 +369,10 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     <button
                         onClick={addAd}
                         className="w-full p-4 border-2 border-dashed border-gray-300 rounded-lg text-gray-600 hover:border-blue-500 hover:text-blue-600 transition-colors flex items-center justify-center gap-2"
+                        title="Adds a blank ad slot — use this only if you want to manually add an ad outside the auto-generated combinations above"
                     >
                         <Plus size={20} />
-                        Add Another Ad
+                        Add a Custom Ad
                     </button>
 
                     {/* Errors */}
