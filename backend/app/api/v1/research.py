@@ -509,3 +509,49 @@ async def delete_brand_scrape(scrape_id: str, db: Session = Depends(get_db)):
     if success:
         return {"message": "Brand scrape deleted"}
     raise HTTPException(status_code=500, detail="Failed to delete brand scrape")
+
+
+@router.post("/scraped-ads/{ad_id}/save")
+def save_scraped_ad(ad_id: str, db: Session = Depends(get_db)):
+    """Mark a scraped ad as saved to the user's curated research library."""
+    from app.models import ScrapedAd
+    ad = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Ad not found")
+    ad.is_saved = True
+    db.commit()
+    return {"id": ad_id, "is_saved": True}
+
+
+@router.delete("/scraped-ads/{ad_id}/save")
+def unsave_scraped_ad(ad_id: str, db: Session = Depends(get_db)):
+    """Remove a scraped ad from the user's curated research library."""
+    from app.models import ScrapedAd
+    ad = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Ad not found")
+    ad.is_saved = False
+    db.commit()
+    return {"id": ad_id, "is_saved": False}
+
+
+@router.get("/scraped-ads/saved")
+def get_saved_ads(db: Session = Depends(get_db)):
+    """Return all scraped ads the user has saved to their research library."""
+    from app.models import ScrapedAd
+    ads = db.query(ScrapedAd).filter(ScrapedAd.is_saved == True).order_by(ScrapedAd.created_at.desc()).all()
+    return [
+        {
+            "id": ad.id,
+            "headline": ad.headline,
+            "ad_copy": ad.ad_copy,
+            "cta_text": ad.cta_text,
+            "image_url": ad.image_url,
+            "video_url": ad.video_url,
+            "media_type": ad.media_type,
+            "ad_link": ad.ad_link,
+            "is_saved": ad.is_saved,
+            "created_at": ad.created_at.isoformat() if ad.created_at else None,
+        }
+        for ad in ads
+    ]
