@@ -1,6 +1,9 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Dict, Any, Optional
 from app.services.facebook_service import FacebookService
+
+logger = logging.getLogger(__name__)
 from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, User
 from app.database import get_db
 from app.core.deps import get_current_active_user, require_permission
@@ -116,7 +119,10 @@ def create_creative(
     try:
         result = service.create_creative(creative, ad_account_id)
         return dict(result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        logger.exception("Create creative failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/ads")
@@ -129,7 +135,10 @@ def create_ad(
     try:
         result = service.create_ad(ad, ad_account_id)
         return dict(result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        logger.exception("Create ad failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/ads")

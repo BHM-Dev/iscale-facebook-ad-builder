@@ -7,6 +7,7 @@ from facebook_business.adobjects.adimage import AdImage
 from facebook_business.adobjects.adcreative import AdCreative
 from facebook_business.adobjects.ad import Ad
 from facebook_business.adobjects.advideo import AdVideo
+from facebook_business.exceptions import FacebookRequestError
 from dotenv import load_dotenv
 from pathlib import Path
 from facebook_business.adobjects.user import User
@@ -527,9 +528,22 @@ class FacebookService:
         """Create an ad creative (supports both image and video)."""
         account = self._get_account(ad_account_id)
 
-        page_id = creative_data.get('page_id')
+        page_id = creative_data.get('page_id') or creative_data.get('pageId')
         image_hash = creative_data.get('image_hash')
         video_id = creative_data.get('video_id')
+        website_url = (creative_data.get('website_url') or creative_data.get('websiteUrl') or '').strip()
+
+        if not page_id:
+            raise ValueError('page_id is required to create an ad creative')
+        if not image_hash and not video_id:
+            raise ValueError('Either image_hash or video_id is required')
+        if not website_url or not website_url.startswith('http'):
+            raise ValueError('website_url must be a valid URL (e.g. https://example.com)')
+
+        primary_text = creative_data.get('primary_text') or creative_data.get('message') or ''
+        headline = creative_data.get('headline') or creative_data.get('name') or 'Ad'
+        cta = creative_data.get('cta') or 'LEARN_MORE'
+        creative_name = creative_data.get('name') or creative_data.get('creativeName') or f'Creative {headline[:30]}'
 
         # Determine if this is a video or image creative
         if video_id:
@@ -538,35 +552,29 @@ class FacebookService:
                 'page_id': page_id,
                 'video_data': {
                     'video_id': video_id,
-                    'message': creative_data.get('primary_text', ''),
-                    'title': creative_data.get('headline', ''),
+                    'message': primary_text,
+                    'title': headline,
                     'call_to_action': {
-                        'type': creative_data.get('cta', 'LEARN_MORE'),
-                        'value': {
-                            'link': creative_data.get('website_url')
-                        }
+                        'type': cta,
+                        'value': {'link': website_url}
                     }
                 }
             }
-
-            # Add custom thumbnail if provided
             if creative_data.get('thumbnail_url'):
                 object_story_spec['video_data']['image_url'] = creative_data['thumbnail_url']
         else:
-            # Image creative (existing logic)
+            # Image creative
             object_story_spec = {
                 'page_id': page_id,
                 'link_data': {
                     'image_hash': image_hash,
-                    'link': creative_data.get('website_url'),
-                    'message': creative_data.get('primary_text'),
-                    'name': creative_data.get('headline'),
-                    'description': creative_data.get('description'),
+                    'link': website_url,
+                    'message': primary_text,
+                    'name': headline,
+                    'description': creative_data.get('description') or '',
                     'call_to_action': {
-                        'type': creative_data.get('cta', 'LEARN_MORE'),
-                        'value': {
-                            'link': creative_data.get('website_url')
-                        }
+                        'type': cta,
+                        'value': {'link': website_url}
                     }
                 }
             }
@@ -575,24 +583,46 @@ class FacebookService:
             object_story_spec['instagram_actor_id'] = creative_data['instagram_actor_id']
 
         params = {
-            AdCreative.Field.name: creative_data.get('name'),
+            AdCreative.Field.name: creative_name,
             AdCreative.Field.object_story_spec: object_story_spec,
         }
 
-        return account.create_ad_creative(params=params)
+        try:
+            return account.create_ad_creative(params=params)
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            user_msg = err.get('error_user_msg') or err.get('message') or (e.api_error_message() if hasattr(e, 'api_error_message') and callable(e.api_error_message) else str(e))
+            raise RuntimeError(f"Facebook API: {user_msg}") from e
 
     def create_ad(self, ad_data, ad_account_id=None):
         """Create an ad."""
         account = self._get_account(ad_account_id)
 
+        adset_id = ad_data.get('adset_id') or ad_data.get('adsetId')
+        creative_id = ad_data.get('creative_id') or ad_data.get('creativeId')
+        name = ad_data.get('name') or 'Ad'
+        status = ad_data.get('status') or 'ACTIVE'
+
+        if not adset_id:
+            raise ValueError('adset_id is required to create an ad')
+        if not creative_id:
+            raise ValueError('creative_id is required to create an ad')
+
         params = {
-            Ad.Field.name: ad_data.get('name'),
-            Ad.Field.adset_id: ad_data.get('adset_id'),
-            Ad.Field.creative: {'creative_id': ad_data.get('creative_id')},
-            Ad.Field.status: ad_data.get('status', 'ACTIVE'),  # Changed from PAUSED to ACTIVE
+            Ad.Field.name: name,
+            Ad.Field.adset_id: adset_id,
+            Ad.Field.creative: {'creative_id': creative_id},
+            Ad.Field.status: status,
         }
 
-        return account.create_ad(params=params)
+        try:
+            return account.create_ad(params=params)
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            user_msg = err.get('error_user_msg') or err.get('message') or (e.api_error_message() if hasattr(e, 'api_error_message') and callable(e.api_error_message) else str(e))
+            raise RuntimeError(f"Facebook API: {user_msg}") from e
 
     def search_locations(self, query, location_type='city', limit=10, ad_account_id=None):
         """Search for targeting locations."""

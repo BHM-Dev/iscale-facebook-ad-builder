@@ -81,6 +81,22 @@ Manage Facebook campaigns directly:
 
 ## Quick Start
 
+### Run locally (no Docker)
+
+You need **PostgreSQL** (local or Railway), **Python 3.11+**, and **Node 18+**. Use a `.env.local` in the project root with at least `DATABASE_URL` and `SECRET_KEY`.
+
+```bash
+# One-time setup
+make install          # backend venv + pip, frontend npm install
+make init-db          # create tables and seed roles
+
+# Start the app (use two terminals)
+make backend          # Terminal 1 — API at http://localhost:8000
+make frontend         # Terminal 2 — UI at http://localhost:5173
+```
+
+The frontend proxies `/api` and `/uploads` to the backend. Optional: set `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.env.local` before `make init-db` to create an admin user.
+
 ### Prerequisites
 
 - **Node.js** 18+ ([download](https://nodejs.org))
@@ -483,6 +499,12 @@ Contributions are welcome! Please:
 - Website: [iSCALE.com](https://iscale.com) | [A4D.com](https://a4d.com)
 - Telegram: [@jasonakatiff](https://t.me/jasonakatiff)
 - Email: [jason@jasonakatiff.com](mailto:jason@jasonakatiff.com)
+
+## Built with AI
+
+This project is part of the [Built with AI](https://builtwithai.com/open-source) open source collection — free tools built by the AI builder community.
+
+**[Join the community →](https://builtwithai.com/apply)**
 
 ---
 

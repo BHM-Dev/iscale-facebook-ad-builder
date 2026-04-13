@@ -47,21 +47,22 @@ async def add_security_headers(request: Request, call_next):
 trusted_proxies = os.getenv("TRUSTED_PROXIES", "*")
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=[trusted_proxies] if trusted_proxies != "*" else ["*"])
 
-# CORS origins from env var or defaults
+# CORS origins from env var or defaults (include 127.0.0.1 for Docker/same-host access)
 default_origins = [
     "http://localhost:5173",
+    "http://127.0.0.1:5173",
     "http://localhost:3000",
 ]
 extra_origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
 allowed_origins = default_origins + [o.strip() for o in extra_origins if o.strip()]
 
-# CORS Middleware - explicit methods and headers
+# CORS Middleware - allow headers requested by preflight (Content-Type, Authorization, etc.)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
     expose_headers=["X-Total-Count"],
     max_age=600,
 )
@@ -114,8 +115,7 @@ app.include_router(ad_remix.router, prefix="/api/v1/ad-remix", tags=["ad-remix"]
 app.include_router(prompts.router, prefix="/api/v1/prompts", tags=["prompts"])
 app.include_router(ad_styles.router, prefix="/api/v1/ad-styles", tags=["ad-styles"])
 
-# Mount static files for uploads
-import os
-uploads_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
+# Mount static files for uploads (same path as generated_ads save location)
+uploads_dir = str(settings.upload_dir)
 os.makedirs(uploads_dir, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")

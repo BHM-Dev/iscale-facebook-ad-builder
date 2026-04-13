@@ -159,6 +159,10 @@ class BrandScraperService:
                     else:
                         break
 
+                except httpx.HTTPStatusError as e:
+                    body = e.response.text if e.response else ""
+                    print(f"Facebook API error {e.response.status_code}: {e}, response: {body[:500]}, falling back to Playwright")
+                    return await self._playwright_scrape_ads(page_id, limit, is_search=False)
                 except Exception as e:
                     print(f"API error: {e}, falling back to Playwright")
                     return await self._playwright_scrape_ads(page_id, limit, is_search=False)
@@ -167,7 +171,13 @@ class BrandScraperService:
 
     async def _playwright_scrape_ads(self, query: str, limit: int = 500, is_search: bool = True) -> List[dict]:
         """Scrape ads using Playwright browser automation with response interception for media."""
-        from playwright.async_api import async_playwright
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            raise RuntimeError(
+                "Playwright is not installed. Install it for scraping fallback: "
+                "pip install playwright && playwright install chromium"
+            )
         import urllib.parse
 
         ads = []
@@ -204,20 +214,98 @@ class BrandScraperService:
                     await page.goto("https://www.facebook.com/login", timeout=30000)
                     await page.wait_for_timeout(2000)
 
+                    # Dismiss cookie/consent banner first so it doesn't cover the login button
+                    try:
+                        allow_btn = page.locator(
+                            'button:has-text("Allow"), button:has-text("Accept"), '
+                            '[data-cookiebanner="accept_button"], [aria-label*="Allow"], '
+                            '[data-testid="cookie-policy-manage-dialog-accept-button"]'
+                        ).first
+                        if await allow_btn.is_visible(timeout=2000):
+                            await allow_btn.click()
+                            await page.wait_for_timeout(1000)
+                    except Exception:
+                        pass
+
+                    # Wait for login form to be ready (Facebook sometimes changes structure)
+                    await page.wait_for_selector('input[name="email"]', timeout=15000)
                     await page.fill('input[name="email"]', fb_email)
                     await page.fill('input[name="pass"]', fb_password)
-                    await page.click('button[name="login"]')
 
-                    # Wait for login to complete
-                    await page.wait_for_timeout(5000)
+                    # Try multiple login submit methods (Facebook changes markup frequently)
+                    login_submitted = False
+                    for selector in [
+                        'button[name="login"]',
+                        '#loginbutton',
+                        'input[name="login"]',
+                        'button[type="submit"]',
+                        '[data-testid="royal_login_button"]',
+                        'form#loginform button[type="submit"]',
+                        'form#loginform input[type="submit"]',
+                        'button:has-text("Log in")',
+                        'button:has-text("Log In")',
+                        'input[value="Log in"]',
+                        '[type="submit"]',
+                    ]:
+                        try:
+                            btn = page.locator(selector).first
+                            if await btn.is_visible(timeout=2000):
+                                await btn.scroll_into_view_if_needed()
+                                await page.wait_for_timeout(300)
+                                await btn.click()
+                                login_submitted = True
+                                print(f"Submitted Facebook login with selector: {selector}")
+                                break
+                        except Exception:
+                            continue
 
-                    # Check if logged in
-                    current_url = page.url.lower()
-                    if "login" in current_url or "checkpoint" in current_url:
-                        error_detail = "Login page still showing" if "login" in current_url else "Security checkpoint triggered"
-                        raise Exception(f"Facebook login failed: {error_detail}. URL: {page.url}")
+                    # Fallback 1: submit by pressing Enter in password field
+                    if not login_submitted:
+                        try:
+                            await page.press('input[name="pass"]', "Enter")
+                            login_submitted = True
+                            print("Submitted Facebook login by pressing Enter")
+                        except Exception:
+                            pass
+
+                    # Fallback 2: submit login form via JS
+                    if not login_submitted:
+                        try:
+                            form_submitted = await page.evaluate("""
+                                () => {
+                                    const form =
+                                        document.querySelector('form#loginform') ||
+                                        document.querySelector('form[action*="login"]') ||
+                                        document.querySelector('form');
+                                    if (!form) return false;
+                                    form.submit();
+                                    return true;
+                                }
+                            """)
+                            if form_submitted:
+                                login_submitted = True
+                                print("Submitted Facebook login via form.submit()")
+                        except Exception:
+                            pass
+
+                    if not login_submitted:
+                        # Do not hard-fail scraping; continue unauthenticated.
+                        print(
+                            "Could not find/submit Facebook login button. Continuing without login; "
+                            "results may be limited."
+                        )
                     else:
-                        print("Facebook login successful")
+                        # Wait for login to complete
+                        await page.wait_for_timeout(5000)
+
+                        # Check if logged in (checkpoint can still happen)
+                        current_url = page.url.lower()
+                        if "checkpoint" in current_url:
+                            print(f"Facebook login hit security checkpoint. Continuing without login. URL: {page.url}")
+                        elif "login" in current_url:
+                            print(f"Facebook login appears unsuccessful. Continuing without login. URL: {page.url}")
+                        else:
+                            print("Facebook login successful")
 
                 # Build URL
                 if is_search:
@@ -227,13 +315,29 @@ class BrandScraperService:
                     url = f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&view_all_page_id={query}"
 
                 print(f"Playwright navigating to: {url}")
-                await page.goto(url, timeout=60000, wait_until="networkidle")
+                await page.goto(url, timeout=60000, wait_until="domcontentloaded")
+                await page.wait_for_timeout(3000)  # Let ads list render
 
-                # Wait for ads to load
+                # Dismiss cookie/consent banner if present so it doesn't block content
                 try:
-                    await page.wait_for_selector('text=Library ID:', timeout=15000)
-                except:
-                    print("No ads found or page didn't load properly")
+                    allow_btn = page.locator('button:has-text("Allow"), button:has-text("Accept"), [data-cookiebanner="accept_button"], [aria-label*="Allow"]').first
+                    if await allow_btn.is_visible(timeout=2000):
+                        await allow_btn.click()
+                        await page.wait_for_timeout(1000)
+                except Exception:
+                    pass
+
+                # Wait for ads to load - try multiple possible selectors (Facebook UI varies)
+                ad_loaded = False
+                for selector in ['text=Library ID:', 'text=Ad library ID', 'text=Sponsored']:
+                    try:
+                        await page.wait_for_selector(selector, timeout=10000)
+                        ad_loaded = True
+                        break
+                    except Exception:
+                        continue
+                if not ad_loaded:
+                    print("No ads found or page didn't load properly. If this page has ads, set FB_SCRAPER_EMAIL and FB_SCRAPER_PASSWORD in .env.local and try again (logged-in users may see more).")
                     await browser.close()
                     return []
 
@@ -447,12 +551,27 @@ class BrandScraperService:
                     url = f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&view_all_page_id={page_id}&media_type=all"
                     print(f"Scraping page ID: {page_id}")
 
-                await page.goto(url, timeout=60000, wait_until="networkidle")
+                await page.goto(url, timeout=60000, wait_until="domcontentloaded")
+                await page.wait_for_timeout(3000)
 
                 try:
-                    await page.wait_for_selector('text=Library ID:', timeout=15000)
-                except:
-                    print("No ads found")
+                    allow_btn = page.locator('button:has-text("Allow"), button:has-text("Accept"), [data-cookiebanner="accept_button"]').first
+                    if await allow_btn.is_visible(timeout=2000):
+                        await allow_btn.click()
+                        await page.wait_for_timeout(1000)
+                except Exception:
+                    pass
+
+                ad_loaded = False
+                for selector in ['text=Library ID:', 'text=Ad library ID', 'text=Sponsored']:
+                    try:
+                        await page.wait_for_selector(selector, timeout=10000)
+                        ad_loaded = True
+                        break
+                    except Exception:
+                        continue
+                if not ad_loaded:
+                    print("No ads found or page didn't load properly. Set FB_SCRAPER_EMAIL and FB_SCRAPER_PASSWORD for logged-in scraping if needed.")
                     await browser.close()
                     return []
 

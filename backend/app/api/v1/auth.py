@@ -68,7 +68,7 @@ async def register(
 
 
 @router.post("/login", response_model=Token)
-@limiter.limit("5/minute")
+@limiter.limit("5/minute", methods=["POST"])
 async def login(
     request: Request,
     username: str = Form(...),
@@ -111,7 +111,7 @@ async def login(
 
 
 @router.post("/login/json", response_model=Token)
-@limiter.limit("5/minute")
+@limiter.limit("5/minute", methods=["POST"])
 async def login_json(request: Request, user_data: UserLogin, db: Session = Depends(get_db)):
     """Login with JSON body and get access and refresh tokens"""
     user = db.query(User).filter(User.email == user_data.email).first()

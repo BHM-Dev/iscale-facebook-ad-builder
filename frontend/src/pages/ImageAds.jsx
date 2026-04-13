@@ -178,8 +178,20 @@ export default function ImageAds() {
                 })
             });
 
+            console.log('image generation response:', response);
+
             if (!response.ok) {
-                throw new Error('Image generation failed');
+                const isTimeout = response.status === 504;
+                let message = 'Image generation failed.';
+                try {
+                    const body = await response.text();
+                    const parsed = body.length ? JSON.parse(body) : null;
+                    if (parsed?.detail) message = parsed.detail;
+                    else if (isTimeout) message = 'Request timed out (504). Try generating fewer images at once, or ask your admin to increase the server/proxy timeout.';
+                } catch {
+                    if (isTimeout) message = 'Request timed out (504). Try fewer images or increase server timeout.';
+                }
+                throw new Error(message);
             }
 
             const data = await response.json();
@@ -198,11 +210,13 @@ export default function ImageAds() {
 
             // Save generated ads to database
             try {
+                // Only send templateId when it's a Winning Ad (UUID); styles from StyleSelector use non-UUID ids and are not in winning_ads
+                const templateId = wizardData.template?.type === 'template' ? wizardData.template?.id : null;
                 const adsToSave = imagesWithBundle.map(img => ({
                     id: `ga_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                     brandId: wizardData.brand?.id,
                     productId: wizardData.product?.id,
-                    templateId: wizardData.template?.id,
+                    templateId,
                     imageUrl: img.url,
                     headline: copy.headline,
                     body: copy.body,
@@ -219,14 +233,23 @@ export default function ImageAds() {
                     body: JSON.stringify({ ads: adsToSave })
                 });
 
+                console.log('generated ads batch save response:', saveResponse);
+
+                const saveResult = await saveResponse.json().catch(() => ({}));
                 if (!saveResponse.ok) {
-                    throw new Error(`Batch save failed: ${saveResponse.statusText}`);
+                    const detail = saveResult?.detail ?? saveResponse.statusText;
+                    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
                 }
 
                 console.log('✅ Saved generated ads to database with bundle ID:', bundleId);
+                showSuccess(`Saved ${saveResult.count ?? imagesWithBundle.length} ads to Generated Ads.`);
             } catch (saveError) {
                 console.error('Failed to save ads to database:', saveError);
-                // Don't fail the whole operation if saving fails
+                showError(
+                    saveError?.message
+                        ? `Ads were generated but could not be saved to Generated Ads: ${saveError.message}`
+                        : 'Ads were generated but could not be saved to Generated Ads. You may still see them below; check that brand and product exist in this environment.'
+                );
             }
 
             setCurrentStep(10); // Move to image result step
