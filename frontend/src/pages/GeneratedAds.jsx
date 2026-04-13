@@ -1,8 +1,9 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useState, useEffect, useMemo } from 'react';
-import { Download, Trash2, Search, Filter, CheckSquare, Square, FileDown, ExternalLink, FileText, Image, LayoutGrid, List, Film } from 'lucide-react';
+import { Download, Trash2, Search, Filter, CheckSquare, Square, FileDown, ExternalLink, FileText, Image, LayoutGrid, List, Film, Rocket, Loader, X } from 'lucide-react';
 import { useBrands } from '../context/BrandContext';
+import { getCampaigns, getAdSets, getPages, createCompleteAd } from '../lib/facebookApi';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -31,6 +32,100 @@ export default function GeneratedAds() {
     const [viewedImage, setViewedImage] = useState(null);
     const [imgError, setImgError] = useState(false);
     const [deleteConfirmation, setDeleteConfirmation] = useState({ show: false, bundleId: null, bundleAds: [] });
+
+    // Push to Campaign modal state
+    const [pushModal, setPushModal] = useState({ show: false, ad: null });
+    const [pushCampaigns, setPushCampaigns] = useState([]);
+    const [pushAdSets, setPushAdSets] = useState([]);
+    const [pushPages, setPushPages] = useState([]);
+    const [pushLoading, setPushLoading] = useState(false);
+    const [pushSubmitting, setPushSubmitting] = useState(false);
+    const [pushForm, setPushForm] = useState({
+        adAccountId: '', campaignId: '', adsetId: '', pageId: '',
+        websiteUrl: '', headline: '', body: '', cta: 'LEARN_MORE'
+    });
+
+    const openPushModal = async (ad) => {
+        setPushForm({
+            adAccountId: '', campaignId: '', adsetId: '',
+            pageId: localStorage.getItem('lastUsedPageId') || '',
+            websiteUrl: '',
+            headline: ad.headline || '',
+            body: ad.body || '',
+            cta: ad.cta || 'LEARN_MORE'
+        });
+        setPushCampaigns([]);
+        setPushAdSets([]);
+        setPushModal({ show: true, ad });
+    };
+
+    const loadPushCampaigns = async (adAccountId) => {
+        if (!adAccountId) return;
+        setPushLoading(true);
+        try {
+            const campaigns = await getCampaigns(adAccountId);
+            setPushCampaigns(Array.isArray(campaigns) ? campaigns : []);
+        } catch (e) {
+            showError('Failed to load campaigns');
+        } finally {
+            setPushLoading(false);
+        }
+    };
+
+    const loadPushAdSets = async (campaignId) => {
+        if (!campaignId) return;
+        setPushLoading(true);
+        try {
+            const adsets = await getAdSets(campaignId);
+            setPushAdSets(Array.isArray(adsets) ? adsets : []);
+        } catch (e) {
+            showError('Failed to load ad sets');
+        } finally {
+            setPushLoading(false);
+        }
+    };
+
+    const loadPushPages = async (adAccountId) => {
+        if (!adAccountId || pushPages.length > 0) return;
+        try {
+            const pages = await getPages(adAccountId);
+            setPushPages(Array.isArray(pages) ? pages : []);
+        } catch (e) { /* non-blocking */ }
+    };
+
+    const handlePushToFacebook = async () => {
+        const { ad } = pushModal;
+        if (!pushForm.campaignId || !pushForm.adsetId || !pushForm.pageId || !pushForm.websiteUrl) {
+            showError('Please fill in all required fields');
+            return;
+        }
+        setPushSubmitting(true);
+        try {
+            const adsetObj = pushAdSets.find(a => a.id === pushForm.adsetId);
+            await createCompleteAd(
+                pushForm.campaignId,
+                { fbAdsetId: pushForm.adsetId, ...adsetObj },
+                {
+                    mediaType: 'image',
+                    imageUrl: ad.image_url,
+                    headlines: [pushForm.headline],
+                    bodies: [pushForm.body],
+                    cta: pushForm.cta,
+                    websiteUrl: pushForm.websiteUrl,
+                },
+                { id: `pushed_${ad.id}_${Date.now()}`, name: pushForm.headline || `Ad from library` },
+                pushForm.pageId,
+                pushForm.adAccountId,
+                'ABO'
+            );
+            showSuccess('Ad pushed to Facebook successfully!');
+            setPushModal({ show: false, ad: null });
+        } catch (e) {
+            showError(`Failed to push ad: ${e.message}`);
+        } finally {
+            setPushSubmitting(false);
+        }
+    };
 
     useEffect(() => {
         fetchAds();
@@ -718,6 +813,17 @@ export default function GeneratedAds() {
                                             </div>
                                         </div>
 
+                                        {/* Push to Campaign Button */}
+                                        {viewedImage.media_type !== 'video' && (
+                                            <button
+                                                onClick={() => openPushModal(viewedImage)}
+                                                className="w-full py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold flex items-center justify-center gap-2 transition-colors mb-2"
+                                            >
+                                                <Rocket size={20} />
+                                                Push to Campaign
+                                            </button>
+                                        )}
+
                                         {/* Download Button */}
                                         <a
                                             href={viewedImage.media_type === 'video' ? viewedImage.video_url : viewedImage.image_url}
@@ -782,6 +888,150 @@ export default function GeneratedAds() {
                     </div>
                 )
             }
+
+            {/* Push to Campaign Modal */}
+            {pushModal.show && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-xl font-bold text-gray-900">Push Ad to Facebook Campaign</h3>
+                            <button onClick={() => setPushModal({ show: false, ad: null })} className="text-gray-400 hover:text-gray-600">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-4">
+                            {/* Ad Account ID */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Ad Account ID *</label>
+                                <input
+                                    type="text"
+                                    placeholder="act_123456789"
+                                    value={pushForm.adAccountId}
+                                    onChange={(e) => {
+                                        setPushForm(p => ({ ...p, adAccountId: e.target.value, campaignId: '', adsetId: '' }));
+                                        setPushCampaigns([]); setPushAdSets([]);
+                                    }}
+                                    onBlur={() => { loadPushCampaigns(pushForm.adAccountId); loadPushPages(pushForm.adAccountId); }}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
+                                />
+                            </div>
+
+                            {/* Campaign */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Campaign *</label>
+                                <select
+                                    value={pushForm.campaignId}
+                                    onChange={(e) => { setPushForm(p => ({ ...p, campaignId: e.target.value, adsetId: '' })); loadPushAdSets(e.target.value); }}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
+                                    disabled={pushCampaigns.length === 0}
+                                >
+                                    <option value="">{pushLoading ? 'Loading...' : pushCampaigns.length === 0 ? 'Enter Ad Account ID first' : 'Select a campaign...'}</option>
+                                    {pushCampaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                </select>
+                            </div>
+
+                            {/* Ad Set */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Ad Set *</label>
+                                <select
+                                    value={pushForm.adsetId}
+                                    onChange={(e) => setPushForm(p => ({ ...p, adsetId: e.target.value }))}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
+                                    disabled={pushAdSets.length === 0}
+                                >
+                                    <option value="">{pushAdSets.length === 0 ? 'Select a campaign first' : 'Select an ad set...'}</option>
+                                    {pushAdSets.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                </select>
+                            </div>
+
+                            {/* Facebook Page */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Facebook Page ID *</label>
+                                {pushPages.length > 0 ? (
+                                    <select
+                                        value={pushForm.pageId}
+                                        onChange={(e) => setPushForm(p => ({ ...p, pageId: e.target.value }))}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
+                                    >
+                                        <option value="">Select a page...</option>
+                                        {pushPages.map(pg => <option key={pg.id} value={pg.id}>{pg.name}</option>)}
+                                    </select>
+                                ) : (
+                                    <input
+                                        type="text"
+                                        placeholder="e.g. 123456789"
+                                        value={pushForm.pageId}
+                                        onChange={(e) => setPushForm(p => ({ ...p, pageId: e.target.value }))}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
+                                    />
+                                )}
+                            </div>
+
+                            {/* Website URL */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Destination URL *</label>
+                                <input
+                                    type="url"
+                                    placeholder="https://yoursite.com/landing-page"
+                                    value={pushForm.websiteUrl}
+                                    onChange={(e) => setPushForm(p => ({ ...p, websiteUrl: e.target.value }))}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
+                                />
+                            </div>
+
+                            {/* Headline */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Headline</label>
+                                <input
+                                    type="text"
+                                    value={pushForm.headline}
+                                    onChange={(e) => setPushForm(p => ({ ...p, headline: e.target.value }))}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
+                                />
+                            </div>
+
+                            {/* Body */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Body Copy</label>
+                                <textarea
+                                    rows={3}
+                                    value={pushForm.body}
+                                    onChange={(e) => setPushForm(p => ({ ...p, body: e.target.value }))}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
+                                />
+                            </div>
+
+                            {/* CTA */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Call to Action</label>
+                                <select
+                                    value={pushForm.cta}
+                                    onChange={(e) => setPushForm(p => ({ ...p, cta: e.target.value }))}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
+                                >
+                                    {['LEARN_MORE','SHOP_NOW','SIGN_UP','CONTACT_US','DOWNLOAD','BOOK_NOW','GET_QUOTE'].map(c =>
+                                        <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>
+                                    )}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-3 mt-6">
+                            <button onClick={() => setPushModal({ show: false, ad: null })} className="flex-1 px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium">
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handlePushToFacebook}
+                                disabled={pushSubmitting}
+                                className="flex-1 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium flex items-center justify-center gap-2 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                            >
+                                {pushSubmitting ? <><Loader className="animate-spin" size={18} /> Pushing...</> : <><Rocket size={18} /> Push Live</>}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
