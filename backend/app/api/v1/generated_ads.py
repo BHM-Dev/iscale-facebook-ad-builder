@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from app.database import get_db
 from app.models import GeneratedAd, User
@@ -8,14 +9,14 @@ from fastapi.responses import StreamingResponse
 import io
 import csv
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Dict, Any
 
 class ImageGenerationRequest(BaseModel):
     template: Optional[Dict[str, Any]] = None
     brand: Optional[Dict[str, Any]] = None
     product: Optional[Dict[str, Any]] = None
-    copy: Optional[Dict[str, Any]] = None
+    ad_copy: Optional[Dict[str, Any]] = Field(None, alias="copy")
     count: int = 1
     imageSizes: List[Dict[str, Any]] = []
     resolution: str = "1K"
@@ -32,21 +33,21 @@ def build_comprehensive_prompt(request: ImageGenerationRequest) -> str:
     - Copy context (headline)
     - Template metadata (mood, lighting, composition, design_style)
     """
-    
+
     # Custom prompt override
     if request.customPrompt:
         return request.customPrompt
-    
+
     # Extract all context
     product_name = request.product.get('name', 'Product') if request.product else 'Product'
     product_desc = request.product.get('description', '') if request.product else ''
     brand_name = request.brand.get('name', '') if request.brand else ''
     brand_voice = request.brand.get('voice', 'Professional') if request.brand else 'Professional'
     brand_color = request.brand.get('colors', {}).get('primary', '') if request.brand else ''
-    
+
     # Get template metadata
     template_type = request.template.get('type') if request.template else None
-    
+
     if template_type == 'style':
         # Style archetype - has metadata fields
         mood = request.template.get('mood', 'Engaging')
@@ -59,7 +60,7 @@ def build_comprehensive_prompt(request: ImageGenerationRequest) -> str:
         lighting = request.template.get('lighting', 'Professional lighting') if request.template else 'Professional lighting'
         composition = request.template.get('composition', 'Balanced') if request.template else 'Balanced'
         design_style = request.template.get('design_style', 'Modern') if request.template else 'Modern'
-    
+
     # Build comprehensive prompt (OLD SYSTEM STYLE)
     parts = [
         f"Product Photography of {product_name}",
@@ -67,21 +68,22 @@ def build_comprehensive_prompt(request: ImageGenerationRequest) -> str:
         f"{brand_name} style: {brand_voice}" if brand_name else f"Style: {brand_voice}",
         f"Primary Color: {brand_color}" if brand_color else "",
     ]
-    
+
     # Add copy context (headline)
-    if request.copy and request.copy.get('headline'):
-        parts.append(f"Context: Visual representation of \"{request.copy.get('headline')}\"")
-    
+    if request.ad_copy and request.ad_copy.get('headline'):
+        parts.append(f"Context: Visual representation of \"{request.ad_copy.get('headline')}\"")
+
     # Add template art direction
     parts.append(f"Art Direction: {mood}, {lighting}, {composition}, {design_style}")
-    
+
     # Quality standards
     parts.append("High quality, photorealistic, 4k, advertising standard")
-    
+
     # Join non-empty parts
     prompt = ". ".join([p for p in parts if p])
-    
+
     return prompt
+
 
 class GeneratedAdCreate(BaseModel):
     id: str
@@ -116,35 +118,34 @@ from app.core.config import settings
 
 KIE_AI_BASE_URL = "https://api.kie.ai/api/v1"
 
-# Setup uploads directory
-UPLOAD_DIR = Path(__file__).parent.parent.parent.parent / "uploads"
-UPLOAD_DIR = UPLOAD_DIR.resolve()
+# Setup uploads directory (same as main.py StaticFiles mount)
+UPLOAD_DIR = settings.upload_dir
 os.makedirs(UPLOAD_DIR, mode=0o755, exist_ok=True)
 
 async def download_and_save_image(image_url: str, prefix: str = "generated") -> str:
     """
-    Download image from external URL and save it locally.
-    Returns the local URL path.
+    Download image from external URL; upload to R2 if configured, else save locally.
+    Returns the public URL (R2 or relative /uploads/...) for use in production and dev.
     """
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(image_url, timeout=30.0)
             response.raise_for_status()
 
-            # Generate unique filename
             unique_id = str(uuid.uuid4())
             filename = f"{prefix}_{unique_id}.png"
-            file_path = UPLOAD_DIR / filename
+            content = response.content
 
-            # Save image
-            with open(file_path, "wb") as f:
-                f.write(response.content)
-
-            # Return local URL
-            return f"/uploads/{filename}"
+            if settings.r2_enabled:
+                from app.api.v1.uploads import upload_to_r2
+                return await upload_to_r2(content, filename, "image/png")
+            else:
+                file_path = UPLOAD_DIR / filename
+                with open(file_path, "wb") as f:
+                    f.write(content)
+                return f"/uploads/{filename}"
     except Exception as e:
         print(f"Error downloading image: {e}")
-        # Return original URL as fallback
         return image_url
 
 async def _kie_generate_image(prompt: str, width: int, height: int,
@@ -249,7 +250,11 @@ async def generate_image(
             print(f"{'='*80}")
             print(f"Brand: {request.brand.get('name') if request.brand else 'None'}")
             print(f"Product: {request.product.get('name') if request.product else 'None'}")
-            print(f"Prompt: {prompt}")
+            print(f"Product Desc: {request.product.get('description') if request.product else 'None'}")
+            print(f"Template Type: {request.template.get('type') if request.template else 'None'}")
+            print(f"Copy Headline: {request.ad_copy.get('headline') if request.ad_copy else 'None'}")
+            print(f"\nFULL GENERATED PROMPT:")
+            print(f"{prompt}")
             print(f"{'='*80}\n")
 
             if use_kie:
@@ -259,7 +264,7 @@ async def generate_image(
 
                     print(f"Downloading image from kie.ai: {external_url[:50]}...")
                     image_url = await download_and_save_image(external_url, prefix="generated")
-                    print(f"Saved locally as: {image_url}")
+                    print(f"Saved as: {image_url}")
 
                 except Exception as e:
                     print(f"kie.ai generation failed: {e}")
@@ -286,12 +291,12 @@ def get_generated_ads(
 ):
     """Get all generated ads, optionally filtered by brand"""
     query = db.query(GeneratedAd)
-    
+
     if brand_id:
         query = query.filter(GeneratedAd.brand_id == brand_id)
-    
+
     ads = query.order_by(GeneratedAd.created_at.desc()).all()
-    
+
     return [{
         "id": ad.id,
         "brand_id": ad.brand_id,
@@ -321,13 +326,13 @@ def delete_generated_ad(
 ):
     """Delete a generated ad by ID"""
     ad = db.query(GeneratedAd).filter(GeneratedAd.id == ad_id).first()
-    
+
     if not ad:
         raise HTTPException(status_code=404, detail="Ad not found")
-    
+
     db.delete(ad)
     db.commit()
-    
+
     return {"message": "Ad deleted successfully"}
 
 @router.post("/export-csv")
@@ -338,16 +343,16 @@ def export_ads_csv(
 ):
     """Export selected ads to CSV"""
     ad_ids = request.get("ids", [])
-    
+
     if not ad_ids:
         raise HTTPException(status_code=400, detail="No ad IDs provided")
-    
+
     ads = db.query(GeneratedAd).filter(GeneratedAd.id.in_(ad_ids)).all()
-    
+
     # Create CSV in memory
     output = io.StringIO()
     writer = csv.writer(output)
-    
+
     # Write header
     writer.writerow([
         "ID", "Brand ID", "Headline", "Body", "CTA",
@@ -371,7 +376,7 @@ def export_ads_csv(
             ad.thumbnail_url or "",
             ad.created_at.isoformat() if ad.created_at else ""
         ])
-    
+
     # Prepare response
     output.seek(0)
     return StreamingResponse(
@@ -387,14 +392,14 @@ def batch_save_ads(
     current_user: User = Depends(require_permission("ads:write"))
 ):
     """Batch save generated ads"""
-    
+
     saved_ads = []
     for ad_data in request.ads:
         # Check if ad already exists
         existing = db.query(GeneratedAd).filter(GeneratedAd.id == ad_data.id).first()
         if existing:
             continue
-            
+
         new_ad = GeneratedAd(
             id=ad_data.id,
             brand_id=ad_data.brandId,
@@ -416,10 +421,16 @@ def batch_save_ads(
         )
         db.add(new_ad)
         saved_ads.append(new_ad)
-    
+
     try:
         db.commit()
         return {"message": f"Saved {len(saved_ads)} ads", "count": len(saved_ads)}
+    except IntegrityError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid brand, product, or template ID. Use IDs from Brands/Products/Templates in this app (UUIDs), not Facebook page or ad IDs. " + str(e)
+        )
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
