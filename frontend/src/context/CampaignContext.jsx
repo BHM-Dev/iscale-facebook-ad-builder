@@ -64,7 +64,9 @@ export const CampaignProvider = ({ children }) => {
         attributionSetting: '7d_click', // Default to 7-day click attribution
         status: 'PAUSED',
         fbAdsetId: null,
-        isExisting: false
+        isExisting: false,
+        adScheduleEnabled: false,
+        adSchedule: [] // Array of { days: [0-6], startMinute: number, endMinute: number }
     });
 
     const [creativeData, setCreativeData] = useState({

@@ -1,7 +1,10 @@
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
 import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { searchAndSave, getSavedSearches, deleteSavedSearch, getApiUsage, getBlacklist, addToBlacklist, removeFromBlacklist, getKeywordBlacklist, addToKeywordBlacklist, removeFromKeywordBlacklist, getRateLimit, getVerticals, createVertical, getVerticalAggregatedAds, getVerticalPageAds } from '../api/research';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 const COUNTRIES = [
     { code: 'US', name: 'United States' },
@@ -24,6 +27,7 @@ const LIMIT_OPTIONS = [
 
 const Research = () => {
     const { showSuccess, showError, showInfo } = useToast();
+    const { authFetch } = useAuth();
     const location = useLocation();
     const [query, setQuery] = useState('');
     const [country, setCountry] = useState('US');
@@ -53,6 +57,8 @@ const Research = () => {
     const [pageAds, setPageAds] = useState({});
     const [verticalTab, setVerticalTab] = useState('aggregated');
     const [aggregatedFilter, setAggregatedFilter] = useState('');
+    const [savedAdIds, setSavedAdIds] = useState(new Set());
+    const [savedAds, setSavedAds] = useState([]);
 
     useEffect(() => {
         // Set activeTab based on route
@@ -76,6 +82,7 @@ const Research = () => {
             fetchKeywordBlacklist();
             fetchSavedSearches();
             fetchAggregatedAds();
+            fetchSavedAds();
         }
     }, [activeTab, selectedVertical]);
 
@@ -95,6 +102,40 @@ const Research = () => {
         } catch (error) {
             console.error('Failed to load verticals', error);
             setVerticals([]);
+        }
+    };
+
+    const fetchSavedAds = async () => {
+        try {
+            const res = await authFetch(`${API_URL}/research/scraped-ads/saved`);
+            if (res.ok) {
+                const data = await res.json();
+                setSavedAds(Array.isArray(data) ? data : []);
+                setSavedAdIds(new Set(data.map(a => a.id)));
+            }
+        } catch (e) { /* non-blocking */ }
+    };
+
+    const toggleSaveAd = async (ad) => {
+        const isSaved = savedAdIds.has(ad.id);
+        try {
+            const method = isSaved ? 'DELETE' : 'POST';
+            const res = await authFetch(`${API_URL}/research/scraped-ads/${ad.id}/save`, { method });
+            if (res.ok) {
+                setSavedAdIds(prev => {
+                    const next = new Set(prev);
+                    isSaved ? next.delete(ad.id) : next.add(ad.id);
+                    return next;
+                });
+                if (!isSaved) {
+                    setSavedAds(prev => [{ ...ad, is_saved: true }, ...prev]);
+                    showSuccess('Ad saved to your library');
+                } else {
+                    setSavedAds(prev => prev.filter(a => a.id !== ad.id));
+                }
+            }
+        } catch (e) {
+            showError('Failed to update saved status');
         }
     };
 
@@ -503,6 +544,16 @@ const Research = () => {
                             >
                                 Search & History
                             </button>
+                            <button
+                                onClick={() => setVerticalTab('saved')}
+                                className={`px-4 py-2 font-medium border-b-2 transition-colors ${
+                                    verticalTab === 'saved'
+                                        ? 'border-green-600 text-green-600'
+                                        : 'border-transparent text-gray-600 hover:text-gray-900'
+                                }`}
+                            >
+                                Saved Ads {savedAds.length > 0 && <span className="ml-1 px-1.5 py-0.5 bg-green-100 text-green-700 rounded-full text-xs">{savedAds.length}</span>}
+                            </button>
                         </div>
                     </div>
 
@@ -644,14 +695,22 @@ const Research = () => {
                                                                                 Seen {ad.seen_count || 1}x
                                                                             </span>
                                                                         </div>
-                                                                        <a
-                                                                            href={ad.ad_link}
-                                                                            target="_blank"
-                                                                            rel="noopener noreferrer"
-                                                                            className="text-indigo-600 hover:text-indigo-800"
-                                                                        >
-                                                                            View Ad →
-                                                                        </a>
+                                                                        <div className="flex items-center gap-3">
+                                                                            <button
+                                                                                onClick={() => toggleSaveAd(ad)}
+                                                                                className={`px-2 py-1 rounded text-xs font-medium transition-colors ${savedAdIds.has(ad.id) ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                                                                            >
+                                                                                {savedAdIds.has(ad.id) ? '✓ Saved' : '+ Save'}
+                                                                            </button>
+                                                                            <a
+                                                                                href={ad.ad_link}
+                                                                                target="_blank"
+                                                                                rel="noopener noreferrer"
+                                                                                className="text-indigo-600 hover:text-indigo-800"
+                                                                            >
+                                                                                View Ad →
+                                                                            </a>
+                                                                        </div>
                                                                     </div>
                                                                 </div>
                                                             ))
@@ -663,6 +722,39 @@ const Research = () => {
                                         </div>
                                     ))
                                 })()}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Saved Ads Tab */}
+                    {verticalTab === 'saved' && (
+                        <div>
+                            <p className="text-sm text-gray-500 mb-4">Ads you've saved as inspiration. Click <strong>+ Save</strong> on any ad in the Aggregated Ads view to add it here.</p>
+                            {savedAds.length === 0 ? (
+                                <div className="text-center py-12 text-gray-500">No saved ads yet. Browse the Aggregated Ads tab and click <strong>+ Save</strong> on ads you want to keep.</div>
+                            ) : (
+                                <div className="space-y-3">
+                                    {savedAds.map(ad => (
+                                        <div key={ad.id} className="border border-green-200 rounded-lg p-4 bg-green-50">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <div className="flex-1">
+                                                    {ad.headline && <h5 className="font-semibold text-gray-900">{ad.headline}</h5>}
+                                                    {ad.ad_copy && <p className="text-sm text-gray-700 mt-1">{ad.ad_copy}</p>}
+                                                </div>
+                                                <button
+                                                    onClick={() => toggleSaveAd(ad)}
+                                                    className="ml-3 px-2 py-1 text-xs bg-green-200 text-green-800 rounded hover:bg-red-100 hover:text-red-700 transition-colors"
+                                                >
+                                                    ✓ Saved
+                                                </button>
+                                            </div>
+                                            <div className="flex items-center justify-between text-xs text-gray-500">
+                                                {ad.cta_text && <span className="px-2 py-1 bg-blue-50 text-blue-600 rounded">CTA: {ad.cta_text}</span>}
+                                                <a href={ad.ad_link} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800">View Ad →</a>
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
                             )}
                         </div>

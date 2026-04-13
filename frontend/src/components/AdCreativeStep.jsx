@@ -1,8 +1,11 @@
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
 import React, { useState, useEffect } from 'react';
-import { ChevronRight, Upload, X, Loader, Trash2, Film, Image } from 'lucide-react';
+import { ChevronRight, Upload, X, Loader, Trash2, Film, Image, BookOpen, Check } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
 const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm'];
@@ -22,12 +25,65 @@ const CTA_OPTIONS = [
 
 const AdCreativeStep = ({ onNext, onBack }) => {
     const { showWarning, showError } = useToast();
+    const { authFetch } = useAuth();
     const { creativeData, setCreativeData, selectedAdAccount, selectedProduct, adsetData } = useCampaign();
     const [pages, setPages] = useState([]);
     const [loadingPages, setLoadingPages] = useState(false);
 
     const [manualPageEntry, setManualPageEntry] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
+
+    // Generated Ads library modal
+    const [showLibraryModal, setShowLibraryModal] = useState(false);
+    const [libraryAds, setLibraryAds] = useState([]);
+    const [libraryLoading, setLibraryLoading] = useState(false);
+    const [selectedLibraryIds, setSelectedLibraryIds] = useState(new Set());
+
+    const fetchLibraryAds = async () => {
+        setLibraryLoading(true);
+        try {
+            const res = await authFetch(`${API_URL}/generated-ads`);
+            if (res.ok) {
+                const data = await res.json();
+                setLibraryAds(Array.isArray(data) ? data.filter(ad => ad.image_url) : []);
+            }
+        } catch (e) {
+            showError('Failed to load Generated Ads library');
+        } finally {
+            setLibraryLoading(false);
+        }
+    };
+
+    const openLibraryModal = () => {
+        setSelectedLibraryIds(new Set());
+        fetchLibraryAds();
+        setShowLibraryModal(true);
+    };
+
+    const toggleLibrarySelection = (adId) => {
+        setSelectedLibraryIds(prev => {
+            const next = new Set(prev);
+            next.has(adId) ? next.delete(adId) : next.add(adId);
+            return next;
+        });
+    };
+
+    const addLibrarySelectionToCreatives = () => {
+        const selected = libraryAds.filter(ad => selectedLibraryIds.has(ad.id));
+        const newCreatives = selected.map(ad => ({
+            id: `lib_${ad.id}`,
+            file: null,
+            previewUrl: ad.image_url,
+            imageUrl: ad.image_url,
+            name: ad.headline || `Library Ad ${ad.id}`,
+            mediaType: 'image'
+        }));
+        setCreativeData(prev => ({
+            ...prev,
+            creatives: [...(prev.creatives || []), ...newCreatives]
+        }));
+        setShowLibraryModal(false);
+    };
 
     const handleDragEnter = (e) => {
         e.preventDefault();
@@ -436,9 +492,19 @@ const AdCreativeStep = ({ onNext, onBack }) => {
 
                 {/* Media Upload (Images + Videos) */}
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Ad Media (Images or Videos) *
-                    </label>
+                    <div className="flex items-center justify-between mb-2">
+                        <label className="block text-sm font-medium text-gray-700">
+                            Ad Media (Images or Videos) *
+                        </label>
+                        <button
+                            type="button"
+                            onClick={openLibraryModal}
+                            className="flex items-center gap-1.5 text-sm text-amber-600 font-medium hover:text-amber-800"
+                        >
+                            <BookOpen size={16} />
+                            Browse Generated Ads Library
+                        </button>
+                    </div>
 
                     {/* Upload Area */}
                     <div
@@ -734,6 +800,68 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                 </button>
             </div>
         </div>
+
+        {/* Generated Ads Library Modal */}
+        {showLibraryModal && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[80vh] flex flex-col">
+                    <div className="flex items-center justify-between p-4 border-b">
+                        <h3 className="text-lg font-semibold">Select from Generated Ads Library</h3>
+                        <button onClick={() => setShowLibraryModal(false)} className="text-gray-500 hover:text-gray-700">
+                            <X size={20} />
+                        </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4">
+                        {libraryLoading ? (
+                            <div className="flex items-center justify-center py-12 gap-2 text-gray-500">
+                                <Loader className="animate-spin" size={20} />
+                                <span>Loading library...</span>
+                            </div>
+                        ) : libraryAds.length === 0 ? (
+                            <p className="text-center text-gray-500 py-12">No generated ads found. Create some in the Generated Ads section first.</p>
+                        ) : (
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                {libraryAds.map(ad => {
+                                    const isSelected = selectedLibraryIds.has(ad.id);
+                                    return (
+                                        <div
+                                            key={ad.id}
+                                            onClick={() => toggleLibrarySelection(ad.id)}
+                                            className={`relative cursor-pointer rounded-lg overflow-hidden border-2 transition-all ${isSelected ? 'border-amber-500 ring-2 ring-amber-200' : 'border-gray-200 hover:border-amber-300'}`}
+                                        >
+                                            <img src={ad.image_url} alt={ad.headline || 'Ad'} className="w-full aspect-square object-cover" />
+                                            {isSelected && (
+                                                <div className="absolute top-2 right-2 bg-amber-500 rounded-full p-0.5">
+                                                    <Check size={14} className="text-white" />
+                                                </div>
+                                            )}
+                                            {ad.headline && (
+                                                <div className="p-2 text-xs text-gray-600 truncate bg-white">{ad.headline}</div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                    <div className="p-4 border-t flex items-center justify-between">
+                        <span className="text-sm text-gray-500">{selectedLibraryIds.size} selected</span>
+                        <div className="flex gap-3">
+                            <button onClick={() => setShowLibraryModal(false)} className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">
+                                Cancel
+                            </button>
+                            <button
+                                onClick={addLibrarySelectionToCreatives}
+                                disabled={selectedLibraryIds.size === 0}
+                                className="px-4 py-2 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                            >
+                                Add {selectedLibraryIds.size > 0 ? selectedLibraryIds.size : ''} to Campaign
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
     );
 };
 

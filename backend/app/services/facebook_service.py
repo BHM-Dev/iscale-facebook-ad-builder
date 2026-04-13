@@ -287,6 +287,22 @@ class FacebookService:
             start_time = adset_data.get('start_time') or adset_data.get('startTime')
             params[AdSet.Field.start_time] = start_time
 
+        # Handle day parting / ad schedule
+        # adSchedule is a list of { days: [int], startMinute: int, endMinute: int }
+        # Facebook expects ad_schedule as a list of { days: [int], start_minute: int, end_minute: int, timezone_type: str }
+        ad_schedule = adset_data.get('adSchedule') or adset_data.get('ad_schedule')
+        if adset_data.get('adScheduleEnabled') or adset_data.get('ad_schedule_enabled'):
+            if ad_schedule:
+                params['ad_schedule'] = [
+                    {
+                        'days': s.get('days', []),
+                        'start_minute': s.get('startMinute', s.get('start_minute', 0)),
+                        'end_minute': s.get('endMinute', s.get('end_minute', 1440)),
+                        'timezone_type': 'USER'
+                    }
+                    for s in ad_schedule
+                ]
+
         # Handle bid strategy and bid amount
         # For CBO campaigns, bid_strategy is set at campaign level - don't set at ad set level
         # For ABO campaigns, we can set bid_strategy at ad set level

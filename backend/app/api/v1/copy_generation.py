@@ -1,11 +1,16 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import google.generativeai as genai
 import os
 import json
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.models import Prompt
 
 router = APIRouter()
+
+COPY_GENERATION_PROMPT_ID = "copy_generation_system"
 
 # Configure Gemini
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("VITE_GEMINI_API_KEY")
@@ -30,17 +35,8 @@ class FieldRegenerationRequest(BaseModel):
     template: Optional[Dict[str, Any]] = None
     campaignDetails: Dict[str, str]
 
-@router.post("/generate")
-async def generate_copy(request: CopyGenerationRequest):
-    """Generate ad copy variations using Gemini AI"""
-    
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Gemini API key not configured")
-    
-    try:
-        # Build the prompt
-        count = request.variationCount
-        prompt = f"""You are an expert ad copywriter. Generate {count} variations of ad copy for a Facebook/Instagram ad campaign.
+def _build_default_prompt(count: int, request: "CopyGenerationRequest") -> str:
+    return f"""You are an expert ad copywriter. Generate {count} variations of ad copy for a Facebook/Instagram ad campaign.
 
 BRAND VOICE: {request.brand.get('voice', 'Professional and friendly')}
 
@@ -96,9 +92,38 @@ Return ONLY valid JSON in this exact format:
   ]
 }}"""
 
-        # Use custom prompt if provided
+
+@router.post("/generate")
+async def generate_copy(request: CopyGenerationRequest, db: Session = Depends(get_db)):
+    """Generate ad copy variations using Gemini AI"""
+
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Gemini API key not configured")
+
+    try:
+        count = request.variationCount
+
+        # Use explicit custom prompt if provided, otherwise check DB for an edited system prompt,
+        # then fall back to the built-in default
         if request.customPrompt:
             prompt = request.customPrompt
+        else:
+            db_prompt = db.query(Prompt).filter(Prompt.id == COPY_GENERATION_PROMPT_ID).first()
+            if db_prompt:
+                prompt = db_prompt.template.format(
+                    count=count,
+                    brand_voice=request.brand.get('voice', 'Professional and friendly'),
+                    product_name=request.product.get('name', ''),
+                    product_description=request.product.get('description', ''),
+                    demographics=request.profile.get('demographics', 'General audience'),
+                    pain_points=request.profile.get('pain_points', 'Not specified'),
+                    goals=request.profile.get('goals', 'Not specified'),
+                    offer=request.campaignDetails.get('offer', ''),
+                    messaging=request.campaignDetails.get('messaging', ''),
+                    design_style=request.template.get('design_style', 'Modern and clean') if request.template else 'Modern and clean',
+                )
+            else:
+                prompt = _build_default_prompt(count, request)
         
         # Generate with Gemini
         model = genai.GenerativeModel('gemini-flash-latest')
