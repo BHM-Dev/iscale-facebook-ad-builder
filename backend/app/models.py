@@ -401,6 +401,7 @@ class ScrapedAd(Base):
     seen_count = Column(Integer, default=1)  # Number of times this ad has been encountered in scrapes
     search_id = Column(String, ForeignKey('saved_searches.id', ondelete='CASCADE'), nullable=True)  # Link to search
     facebook_page_id = Column(String, ForeignKey('facebook_pages.id', ondelete='SET NULL'), nullable=True)
+    is_saved = Column(Boolean, default=False, nullable=False, server_default='false')  # User-curated save flag
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     saved_search = relationship("SavedSearch", back_populates="ads")

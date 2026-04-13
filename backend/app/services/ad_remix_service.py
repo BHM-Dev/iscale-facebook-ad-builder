@@ -2,6 +2,8 @@
 Ad Remix Service - Business logic for deconstructing and reconstructing ads
 """
 import json
+import base64
+import requests
 import google.generativeai as genai
 from typing import Dict, Any
 from app.schemas.ad_blueprint import AdBlueprint, AdConcept, BrandData
@@ -26,17 +28,21 @@ async def deconstruct_template(template_image_url: str) -> AdBlueprint:
     try:
         # Use Gemini Vision model
         model = genai.GenerativeModel('gemini-1.5-flash')
-        
+
         # Build the prompt
         prompt = build_deconstruction_prompt(template_image_url)
-        
-        # For now, we'll use the image URL directly
-        # In production, you might want to download and process the image
+
+        # Fetch the image and base64-encode it so Gemini receives actual image bytes
+        image_response = requests.get(template_image_url, timeout=30)
+        image_response.raise_for_status()
+        image_bytes = base64.b64encode(image_response.content).decode('utf-8')
+        content_type = image_response.headers.get('Content-Type', 'image/jpeg').split(';')[0].strip()
+
         response = model.generate_content([
             prompt,
             {
-                'mime_type': 'image/jpeg',
-                'data': template_image_url  # This should be image data or URL
+                'mime_type': content_type,
+                'data': image_bytes
             }
         ])
         

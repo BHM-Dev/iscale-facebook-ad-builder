@@ -493,6 +493,94 @@ const AdSetStep = ({ onNext, onBack }) => {
                                     </p>
                                 </div>
 
+                                {/* Day Parting / Ad Schedule */}
+                                <div>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <label className="text-sm font-medium text-gray-700">
+                                            Run Ads on a Schedule (Day Parting)
+                                        </label>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleInputChange('adScheduleEnabled', !adsetData.adScheduleEnabled)}
+                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${adsetData.adScheduleEnabled ? 'bg-amber-600' : 'bg-gray-300'}`}
+                                        >
+                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${adsetData.adScheduleEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                                        </button>
+                                    </div>
+                                    <p className="text-xs text-gray-500 mb-3">
+                                        Restrict when this ad set runs — useful for aligning with call center hours.
+                                    </p>
+
+                                    {adsetData.adScheduleEnabled && (
+                                        <div className="border border-gray-200 rounded-lg p-4 space-y-4 bg-gray-50">
+                                            {['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((day, dayIndex) => {
+                                                const entry = adsetData.adSchedule?.find(s => s.days.includes(dayIndex));
+                                                const isEnabled = !!entry;
+                                                const startMinute = entry?.startMinute ?? 540;   // 9:00 AM default
+                                                const endMinute   = entry?.endMinute   ?? 1020;  // 5:00 PM default
+
+                                                const toTime = (mins) => {
+                                                    const h = String(Math.floor(mins / 60)).padStart(2, '0');
+                                                    const m = String(mins % 60).padStart(2, '0');
+                                                    return `${h}:${m}`;
+                                                };
+                                                const fromTime = (timeStr) => {
+                                                    const [h, m] = timeStr.split(':').map(Number);
+                                                    return h * 60 + m;
+                                                };
+
+                                                const toggleDay = () => {
+                                                    const current = adsetData.adSchedule || [];
+                                                    const updated = isEnabled
+                                                        ? current.filter(s => !s.days.includes(dayIndex))
+                                                        : [...current, { days: [dayIndex], startMinute: 540, endMinute: 1020 }];
+                                                    handleInputChange('adSchedule', updated);
+                                                };
+
+                                                const updateTime = (field, value) => {
+                                                    const current = adsetData.adSchedule || [];
+                                                    const updated = current.map(s =>
+                                                        s.days.includes(dayIndex)
+                                                            ? { ...s, [field]: fromTime(value) }
+                                                            : s
+                                                    );
+                                                    handleInputChange('adSchedule', updated);
+                                                };
+
+                                                return (
+                                                    <div key={day} className="flex items-center gap-3">
+                                                        <input
+                                                            type="checkbox"
+                                                            id={`day-${dayIndex}`}
+                                                            checked={isEnabled}
+                                                            onChange={toggleDay}
+                                                            className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                                                        />
+                                                        <label htmlFor={`day-${dayIndex}`} className="w-24 text-sm font-medium text-gray-700 cursor-pointer">{day}</label>
+                                                        {isEnabled && (
+                                                            <>
+                                                                <input
+                                                                    type="time"
+                                                                    value={toTime(startMinute)}
+                                                                    onChange={(e) => updateTime('startMinute', e.target.value)}
+                                                                    className="px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-amber-500"
+                                                                />
+                                                                <span className="text-xs text-gray-500">to</span>
+                                                                <input
+                                                                    type="time"
+                                                                    value={toTime(endMinute)}
+                                                                    onChange={(e) => updateTime('endMinute', e.target.value)}
+                                                                    className="px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-amber-500"
+                                                                />
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-2">
                                         Optimization Goal *
