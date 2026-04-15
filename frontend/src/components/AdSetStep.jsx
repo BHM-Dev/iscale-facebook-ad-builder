@@ -72,7 +72,7 @@ const AdSetStep = ({ onNext, onBack }) => {
     const [loadingPixels, setLoadingPixels] = useState(false);
     const [pixelsError, setPixelsError] = useState(null);
     const [isTargetingOpen, setIsTargetingOpen] = useState(false);
-    const [isScheduleOpen, setIsScheduleOpen] = useState(false);
+    const [isScheduleOpen, setIsScheduleOpen] = useState(true);
     const [countrySearch, setCountrySearch] = useState('');
     const [locationResults, setLocationResults] = useState([]);
     const [isSearchingLocations, setIsSearchingLocations] = useState(false);
