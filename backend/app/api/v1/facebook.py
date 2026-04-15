@@ -165,17 +165,32 @@ def save_campaign_locally(
         if existing:
             return {"message": "Campaign already exists", "id": existing.id}
 
-        # Handle daily_budget casting
         daily_budget = campaign_data.get('dailyBudget')
         if daily_budget is not None:
             daily_budget = int(float(daily_budget))
+
+        lifetime_budget = campaign_data.get('lifetimeBudget')
+        if lifetime_budget is not None:
+            lifetime_budget = int(float(lifetime_budget))
+
+        end_time = None
+        end_time_raw = campaign_data.get('endTime')
+        if end_time_raw:
+            try:
+                from datetime import datetime as _dt
+                end_time = _dt.fromisoformat(str(end_time_raw).replace('Z', '+00:00'))
+            except Exception:
+                end_time = None
 
         new_campaign = FacebookCampaign(
             id=campaign_data.get('id'),
             name=campaign_data.get('name'),
             objective=campaign_data.get('objective'),
             budget_type=campaign_data.get('budgetType', 'ABO'),
+            budget_schedule_type=campaign_data.get('budgetScheduleType', 'DAILY'),
             daily_budget=daily_budget,
+            lifetime_budget=lifetime_budget,
+            end_time=end_time,
             bid_strategy=campaign_data.get('bidStrategy'),
             status=campaign_data.get('status'),
             fb_campaign_id=campaign_data.get('fbCampaignId')
@@ -208,21 +223,36 @@ def save_adset_locally(
              
         # We assume campaign is already saved by the frontend calling /campaigns/save first
 
-        # Handle numeric fields casting
         daily_budget = adset_data.get('dailyBudget')
         if daily_budget is not None:
             daily_budget = int(float(daily_budget))
-            
+
+        lifetime_budget = adset_data.get('lifetimeBudget')
+        if lifetime_budget is not None:
+            lifetime_budget = int(float(lifetime_budget))
+
         bid_amount = adset_data.get('bidAmount')
         if bid_amount is not None:
             bid_amount = int(float(bid_amount))
+
+        end_time = None
+        end_time_raw = adset_data.get('endTime')
+        if end_time_raw:
+            try:
+                from datetime import datetime as _dt
+                end_time = _dt.fromisoformat(str(end_time_raw).replace('Z', '+00:00'))
+            except Exception:
+                end_time = None
 
         new_adset = FacebookAdSet(
             id=adset_data.get('id'),
             campaign_id=campaign_id,
             name=adset_data.get('name'),
             optimization_goal=adset_data.get('optimizationGoal'),
+            budget_schedule_type=adset_data.get('budgetScheduleType', 'DAILY'),
             daily_budget=daily_budget,
+            lifetime_budget=lifetime_budget,
+            end_time=end_time,
             bid_strategy=adset_data.get('bidStrategy'),
             bid_amount=bid_amount,
             targeting=adset_data.get('targeting'),

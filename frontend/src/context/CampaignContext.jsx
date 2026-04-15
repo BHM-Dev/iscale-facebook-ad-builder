@@ -10,13 +10,40 @@ export const useCampaign = () => {
     return context;
 };
 
+// Helper: default end time = 30 days from now at 11:59 PM
+const defaultEndTime = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    d.setHours(23, 59, 0, 0);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}T23:59`;
+};
+
+// Helper: default start time = tomorrow at 1:00 AM
+const defaultStartTime = () => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(1, 0, 0, 0);
+    const year = tomorrow.getFullYear();
+    const month = String(tomorrow.getMonth() + 1).padStart(2, '0');
+    const day = String(tomorrow.getDate()).padStart(2, '0');
+    const hours = String(tomorrow.getHours()).padStart(2, '0');
+    const minutes = String(tomorrow.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+};
+
 export const CampaignProvider = ({ children }) => {
     const [campaignData, setCampaignData] = useState({
         id: null,
         name: '',
         objective: 'OUTCOME_SALES',
         budgetType: 'ABO',
+        budgetScheduleType: 'DAILY', // 'DAILY' or 'LIFETIME'
         dailyBudget: 0,
+        lifetimeBudget: 0,
+        endTime: defaultEndTime(), // required when budgetScheduleType === 'LIFETIME'
         bidStrategy: '',
         status: 'PAUSED',
         fbCampaignId: null,
@@ -27,12 +54,15 @@ export const CampaignProvider = ({ children }) => {
         id: null,
         name: '',
         optimizationGoal: 'OFFSITE_CONVERSIONS',
+        budgetScheduleType: 'DAILY', // 'DAILY' or 'LIFETIME'
         dailyBudget: 0,
+        lifetimeBudget: 0,
+        endTime: defaultEndTime(), // required when budgetScheduleType === 'LIFETIME'
         bidStrategy: 'LOWEST_COST_WITHOUT_CAP',
         bidAmount: 0,
         targeting: {
             genders: [], // [] = All, [1] = Male, [2] = Female
-            publisher_platforms: ['facebook', 'instagram'], // Default to Manual (FB & IG)
+            publisher_platforms: ['facebook', 'instagram'],
             geo_locations: {
                 countries: ['US'],
                 excluded_countries: [],
@@ -47,21 +77,10 @@ export const CampaignProvider = ({ children }) => {
             ageMax: 65
         },
         advantageAudience: 0, // 0 = Off, 1 = On
-        startTime: (() => {
-            const tomorrow = new Date();
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            tomorrow.setHours(1, 0, 0, 0);
-            // Format to YYYY-MM-DDThh:mm for datetime-local input
-            const year = tomorrow.getFullYear();
-            const month = String(tomorrow.getMonth() + 1).padStart(2, '0');
-            const day = String(tomorrow.getDate()).padStart(2, '0');
-            const hours = String(tomorrow.getHours()).padStart(2, '0');
-            const minutes = String(tomorrow.getMinutes()).padStart(2, '0');
-            return `${year}-${month}-${day}T${hours}:${minutes}`;
-        })(),
+        startTime: defaultStartTime(),
         pixelId: '',
         conversionEvent: 'PURCHASE',
-        attributionSetting: '7d_click', // Default to 7-day click attribution
+        attributionSetting: '7d_click',
         status: 'PAUSED',
         fbAdsetId: null,
         isExisting: false,
@@ -78,7 +97,7 @@ export const CampaignProvider = ({ children }) => {
         cta: 'LEARN_MORE',
         websiteUrl: '',
         pageId: '',
-        instagramId: null // Explicitly set to null when no IG account is connected
+        instagramId: null
     });
 
     const [adsData, setAdsData] = useState([]);
@@ -91,7 +110,10 @@ export const CampaignProvider = ({ children }) => {
             name: '',
             objective: 'OUTCOME_SALES',
             budgetType: 'ABO',
+            budgetScheduleType: 'DAILY',
             dailyBudget: 0,
+            lifetimeBudget: 0,
+            endTime: defaultEndTime(),
             bidStrategy: '',
             status: 'PAUSED',
             fbCampaignId: null,
@@ -101,7 +123,10 @@ export const CampaignProvider = ({ children }) => {
             id: null,
             name: '',
             optimizationGoal: 'OFFSITE_CONVERSIONS',
+            budgetScheduleType: 'DAILY',
             dailyBudget: 0,
+            lifetimeBudget: 0,
+            endTime: defaultEndTime(),
             bidStrategy: 'LOWEST_COST_WITHOUT_CAP',
             bidAmount: 0,
             targeting: {
@@ -112,22 +137,14 @@ export const CampaignProvider = ({ children }) => {
                 ageMax: 65
             },
             advantageAudience: 0,
-            startTime: (() => {
-                const tomorrow = new Date();
-                tomorrow.setDate(tomorrow.getDate() + 1);
-                tomorrow.setHours(1, 0, 0, 0);
-                const year = tomorrow.getFullYear();
-                const month = String(tomorrow.getMonth() + 1).padStart(2, '0');
-                const day = String(tomorrow.getDate()).padStart(2, '0');
-                const hours = String(tomorrow.getHours()).padStart(2, '0');
-                const minutes = String(tomorrow.getMinutes()).padStart(2, '0');
-                return `${year}-${month}-${day}T${hours}:${minutes}`;
-            })(),
+            startTime: defaultStartTime(),
             pixelId: '',
             conversionEvent: 'PURCHASE',
             status: 'PAUSED',
             fbAdsetId: null,
-            isExisting: false
+            isExisting: false,
+            adScheduleEnabled: false,
+            adSchedule: []
         });
         setCreativeData({
             creativeName: '',

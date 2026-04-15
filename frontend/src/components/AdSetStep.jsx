@@ -248,8 +248,31 @@ const AdSetStep = ({ onNext, onBack }) => {
             }
 
             // Validate ABO Budget
-            if (campaignData.budgetType === 'ABO' && (!adsetData.dailyBudget || adsetData.dailyBudget <= 0)) {
-                showWarning('Please enter a valid Daily Budget');
+            if (campaignData.budgetType === 'ABO') {
+                const isLifetime = adsetData.budgetScheduleType === 'LIFETIME';
+                const budget = isLifetime ? adsetData.lifetimeBudget : adsetData.dailyBudget;
+                if (!budget || budget <= 0) {
+                    showWarning(`Please enter a valid ${isLifetime ? 'Lifetime' : 'Daily'} Budget`);
+                    return;
+                }
+                if (isLifetime) {
+                    if (!adsetData.endTime) {
+                        showWarning('Lifetime budget requires an end date');
+                        return;
+                    }
+                    if (new Date(adsetData.endTime) <= new Date()) {
+                        showWarning('End date must be in the future');
+                        return;
+                    }
+                    if (adsetData.startTime && new Date(adsetData.endTime) <= new Date(adsetData.startTime)) {
+                        showWarning('End date must be after start date');
+                        return;
+                    }
+                }
+            }
+            // Block day parting + daily budget (Facebook API will reject this)
+            if (adsetData.adScheduleEnabled && adsetData.budgetScheduleType !== 'LIFETIME') {
+                showWarning('Day parting requires a Lifetime Budget. Please switch to Lifetime Budget or disable the ad schedule.');
                 return;
             }
 
@@ -384,9 +407,43 @@ const AdSetStep = ({ onNext, onBack }) => {
                     {/* ABO Budget Fields */}
                     {campaignData.budgetType === 'ABO' && (
                         <>
+                            {/* Daily vs Lifetime toggle */}
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Daily Budget (USD) *
+                                    Budget Schedule
+                                </label>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            handleInputChange('budgetScheduleType', 'DAILY');
+                                            // If day parting is on, warn and disable it
+                                            if (adsetData.adScheduleEnabled) {
+                                                handleInputChange('adScheduleEnabled', false);
+                                                showWarning('Day parting has been disabled — it requires a Lifetime Budget.');
+                                            }
+                                        }}
+                                        className={`p-3 rounded-lg border-2 transition-all text-left ${adsetData.budgetScheduleType !== 'LIFETIME' ? 'border-amber-600 bg-amber-50' : 'border-gray-200 hover:border-amber-300'}`}
+                                    >
+                                        <div className="font-semibold text-sm">Daily Budget</div>
+                                        <div className="text-xs text-gray-500">Spend up to X per day</div>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleInputChange('budgetScheduleType', 'LIFETIME')}
+                                        className={`p-3 rounded-lg border-2 transition-all text-left ${adsetData.budgetScheduleType === 'LIFETIME' ? 'border-amber-600 bg-amber-50' : 'border-gray-200 hover:border-amber-300'}`}
+                                    >
+                                        <div className="font-semibold text-sm">Lifetime Budget</div>
+                                        <div className="text-xs text-gray-500">Fixed total + required for day parting</div>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    {adsetData.budgetScheduleType === 'LIFETIME'
+                                        ? 'Lifetime Budget (USD) — Total for entire flight *'
+                                        : 'Daily Budget (USD) *'}
                                 </label>
                                 <div className="relative">
                                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -394,15 +451,50 @@ const AdSetStep = ({ onNext, onBack }) => {
                                     </div>
                                     <input
                                         type="number"
-                                        value={adsetData.dailyBudget || ''}
-                                        onChange={(e) => handleInputChange('dailyBudget', parseInt(e.target.value) || 0)}
-                                        placeholder="50"
+                                        value={adsetData.budgetScheduleType === 'LIFETIME'
+                                            ? (adsetData.lifetimeBudget || '')
+                                            : (adsetData.dailyBudget || '')}
+                                        onChange={(e) => {
+                                            const val = parseInt(e.target.value) || 0;
+                                            if (adsetData.budgetScheduleType === 'LIFETIME') {
+                                                handleInputChange('lifetimeBudget', val);
+                                            } else {
+                                                handleInputChange('dailyBudget', val);
+                                            }
+                                        }}
+                                        placeholder={adsetData.budgetScheduleType === 'LIFETIME' ? '1500' : '50'}
                                         min="1"
                                         step="1"
                                         className="w-full pl-7 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                                     />
                                 </div>
+                                {/* Implied daily spend helper for lifetime */}
+                                {adsetData.budgetScheduleType === 'LIFETIME' && adsetData.lifetimeBudget > 0 && adsetData.endTime && (() => {
+                                    const days = Math.max(1, Math.round((new Date(adsetData.endTime) - new Date(adsetData.startTime || new Date())) / 86400000));
+                                    const implied = (adsetData.lifetimeBudget / days).toFixed(2);
+                                    return (
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            ≈ ${implied}/day over ~{days} days. Facebook paces across all calendar days.
+                                        </p>
+                                    );
+                                })()}
                             </div>
+
+                            {/* End Date — required for lifetime budget */}
+                            {adsetData.budgetScheduleType === 'LIFETIME' && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Ad Set End Date & Time *
+                                    </label>
+                                    <input
+                                        type="datetime-local"
+                                        value={adsetData.endTime || ''}
+                                        onChange={(e) => handleInputChange('endTime', e.target.value)}
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Required for lifetime budget and day parting. Must be after start date.</p>
+                                </div>
+                            )}
 
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -523,7 +615,17 @@ const AdSetStep = ({ onNext, onBack }) => {
                                         </label>
                                         <button
                                             type="button"
-                                            onClick={() => handleInputChange('adScheduleEnabled', !adsetData.adScheduleEnabled)}
+                                            onClick={() => {
+                                                const enabling = !adsetData.adScheduleEnabled;
+                                                if (enabling && adsetData.budgetScheduleType !== 'LIFETIME') {
+                                                    // Auto-switch to lifetime budget — Facebook requires it for day parting
+                                                    handleInputChange('adScheduleEnabled', true);
+                                                    setAdsetData(prev => ({ ...prev, adScheduleEnabled: true, budgetScheduleType: 'LIFETIME' }));
+                                                    showWarning('Day parting requires a Lifetime Budget — switched automatically.');
+                                                } else {
+                                                    handleInputChange('adScheduleEnabled', enabling);
+                                                }
+                                            }}
                                             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${adsetData.adScheduleEnabled ? 'bg-amber-600' : 'bg-gray-300'}`}
                                         >
                                             <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${adsetData.adScheduleEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
