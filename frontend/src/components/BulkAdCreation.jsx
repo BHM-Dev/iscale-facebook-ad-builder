@@ -97,8 +97,10 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     body: JSON.stringify({
                         ...campaignData,
                         fbCampaignId: fbCampaignId,
-                        // Ensure budget fields are numbers
-                        dailyBudget: Number(campaignData.dailyBudget)
+                        dailyBudget: Number(campaignData.dailyBudget),
+                        lifetimeBudget: campaignData.lifetimeBudget ? Number(campaignData.lifetimeBudget) : null,
+                        budgetScheduleType: campaignData.budgetScheduleType || 'DAILY',
+                        endTime: campaignData.endTime || null
                     })
                 });
                 if (!saveCampRes.ok) {
@@ -135,10 +137,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         ...adsetData,
-                        campaignId: campaignData.id, // Use the ID we have in context (local or FB)
+                        campaignId: campaignData.id,
                         fbAdsetId: fbAdsetId,
-                        // Ensure numeric fields
                         dailyBudget: adsetData.dailyBudget ? Number(adsetData.dailyBudget) : null,
+                        lifetimeBudget: adsetData.lifetimeBudget ? Number(adsetData.lifetimeBudget) : null,
+                        budgetScheduleType: adsetData.budgetScheduleType || 'DAILY',
+                        endTime: adsetData.endTime || null,
                         bidAmount: adsetData.bidAmount ? Number(adsetData.bidAmount) : null
                     })
                 });
@@ -279,11 +283,17 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 <div className="text-sm text-blue-800 space-y-1">
                     <div><strong>Campaign:</strong> {campaignData.name}</div>
                     {campaignData.budgetType === 'CBO' && (
-                        <div><strong>Campaign Budget:</strong> ${Number(campaignData.dailyBudget).toFixed(2)} / day</div>
+                        <div><strong>Campaign Budget:</strong> {campaignData.budgetScheduleType === 'LIFETIME'
+                            ? `$${Number(campaignData.lifetimeBudget).toFixed(2)} total (lifetime)`
+                            : `$${Number(campaignData.dailyBudget).toFixed(2)} / day`}
+                        </div>
                     )}
                     <div><strong>Ad Set:</strong> {adsetData.name}</div>
                     {campaignData.budgetType === 'ABO' && (
-                        <div><strong>Ad Set Budget:</strong> ${Number(adsetData.dailyBudget).toFixed(2)} / day</div>
+                        <div><strong>Ad Set Budget:</strong> {adsetData.budgetScheduleType === 'LIFETIME'
+                            ? `$${Number(adsetData.lifetimeBudget).toFixed(2)} total (lifetime)`
+                            : `$${Number(adsetData.dailyBudget).toFixed(2)} / day`}
+                        </div>
                     )}
                     <div><strong>Creative Name:</strong> {creativeData.creativeName}</div>
                     <div>

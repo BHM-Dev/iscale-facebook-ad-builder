@@ -56,14 +56,15 @@ const CampaignStep = ({ onNext, onBack }) => {
         const dailyBudget = campaign.dailyBudget ? parseInt(campaign.dailyBudget) / 100 : 0;
         const lifetimeBudget = campaign.lifetimeBudget ? parseInt(campaign.lifetimeBudget) / 100 : 0;
 
-        // CBO campaigns have budget set at campaign level
-        // ABO campaigns have budget set at ad set level (campaign budget is 0 or null)
         const isCBO = dailyBudget > 0 || lifetimeBudget > 0;
+        const isLifetime = lifetimeBudget > 0 && dailyBudget === 0;
 
         setCampaignData({
             ...campaign,
             budgetType: isCBO ? 'CBO' : 'ABO',
+            budgetScheduleType: isLifetime ? 'LIFETIME' : 'DAILY',
             dailyBudget: dailyBudget,
+            lifetimeBudget: lifetimeBudget,
             bidStrategy: campaign.bid_strategy || '',
             fbCampaignId: campaign.id,
             isExisting: true
@@ -96,9 +97,23 @@ const CampaignStep = ({ onNext, onBack }) => {
                 return;
             }
 
-            if (campaignData.budgetType === 'CBO' && (!campaignData.dailyBudget || campaignData.dailyBudget <= 0)) {
-                showWarning('Please enter a valid Daily Budget for CBO campaign');
-                return;
+            if (campaignData.budgetType === 'CBO') {
+                const isLifetime = campaignData.budgetScheduleType === 'LIFETIME';
+                const budget = isLifetime ? campaignData.lifetimeBudget : campaignData.dailyBudget;
+                if (!budget || budget <= 0) {
+                    showWarning(`Please enter a valid ${isLifetime ? 'Lifetime' : 'Daily'} Budget for CBO campaign`);
+                    return;
+                }
+                if (isLifetime) {
+                    if (!campaignData.endTime) {
+                        showWarning('Lifetime budget requires an end date');
+                        return;
+                    }
+                    if (new Date(campaignData.endTime) <= new Date()) {
+                        showWarning('End date must be in the future');
+                        return;
+                    }
+                }
             }
 
             // Validate Bid Amount if strategy requires it (for CBO campaigns)
@@ -271,9 +286,36 @@ const CampaignStep = ({ onNext, onBack }) => {
 
                     {campaignData.budgetType === 'CBO' && (
                         <>
+                            {/* Daily vs Lifetime toggle */}
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Daily Budget (USD)
+                                    Budget Schedule
+                                </label>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button
+                                        type="button"
+                                        onClick={() => handleInputChange('budgetScheduleType', 'DAILY')}
+                                        className={`p-3 rounded-lg border-2 transition-all text-left ${campaignData.budgetScheduleType !== 'LIFETIME' ? 'border-amber-600 bg-amber-50' : 'border-gray-200 hover:border-amber-300'}`}
+                                    >
+                                        <div className="font-semibold text-sm">Daily Budget</div>
+                                        <div className="text-xs text-gray-500">Spend up to X per day</div>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleInputChange('budgetScheduleType', 'LIFETIME')}
+                                        className={`p-3 rounded-lg border-2 transition-all text-left ${campaignData.budgetScheduleType === 'LIFETIME' ? 'border-amber-600 bg-amber-50' : 'border-gray-200 hover:border-amber-300'}`}
+                                    >
+                                        <div className="font-semibold text-sm">Lifetime Budget</div>
+                                        <div className="text-xs text-gray-500">Fixed total for entire flight</div>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    {campaignData.budgetScheduleType === 'LIFETIME'
+                                        ? 'Lifetime Budget (USD) — Total for entire flight'
+                                        : 'Daily Budget (USD)'}
                                 </label>
                                 <div className="relative">
                                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -281,15 +323,50 @@ const CampaignStep = ({ onNext, onBack }) => {
                                     </div>
                                     <input
                                         type="number"
-                                        value={campaignData.dailyBudget || ''}
-                                        onChange={(e) => handleInputChange('dailyBudget', parseInt(e.target.value) || 0)}
-                                        placeholder="100"
+                                        value={campaignData.budgetScheduleType === 'LIFETIME'
+                                            ? (campaignData.lifetimeBudget || '')
+                                            : (campaignData.dailyBudget || '')}
+                                        onChange={(e) => {
+                                            const val = parseInt(e.target.value) || 0;
+                                            if (campaignData.budgetScheduleType === 'LIFETIME') {
+                                                handleInputChange('lifetimeBudget', val);
+                                            } else {
+                                                handleInputChange('dailyBudget', val);
+                                            }
+                                        }}
+                                        placeholder={campaignData.budgetScheduleType === 'LIFETIME' ? '3000' : '100'}
                                         min="1"
                                         step="1"
                                         className="w-full pl-7 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                                     />
                                 </div>
+                                {/* Implied daily spend helper for lifetime */}
+                                {campaignData.budgetScheduleType === 'LIFETIME' && campaignData.lifetimeBudget > 0 && campaignData.endTime && (() => {
+                                    const days = Math.max(1, Math.round((new Date(campaignData.endTime) - new Date()) / 86400000));
+                                    const implied = (campaignData.lifetimeBudget / days).toFixed(2);
+                                    return (
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            ≈ ${implied}/day over ~{days} days. Facebook paces across all calendar days including unscheduled ones.
+                                        </p>
+                                    );
+                                })()}
                             </div>
+
+                            {/* End Date — required for lifetime budget */}
+                            {campaignData.budgetScheduleType === 'LIFETIME' && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Campaign End Date & Time *
+                                    </label>
+                                    <input
+                                        type="datetime-local"
+                                        value={campaignData.endTime || ''}
+                                        onChange={(e) => handleInputChange('endTime', e.target.value)}
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Required for lifetime budget. Must be a future date.</p>
+                                </div>
+                            )}
 
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-2">

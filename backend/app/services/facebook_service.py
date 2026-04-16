@@ -96,10 +96,11 @@ class FacebookService:
             Campaign.Field.lifetime_budget,
             Campaign.Field.budget_remaining,
             Campaign.Field.bid_strategy,
+            Campaign.Field.stop_time,
+            Campaign.Field.start_time,
             'is_adset_budget_sharing_enabled',
         ]
 
-        
         return account.get_campaigns(fields=fields)
 
     def create_campaign(self, campaign_data, ad_account_id=None):
@@ -113,22 +114,25 @@ class FacebookService:
             Campaign.Field.special_ad_categories: [],
         }
 
-        # Handle budget based on budget type
         budget_type = campaign_data.get('budget_type') or campaign_data.get('budgetType')
-        daily_budget = campaign_data.get('daily_budget') or campaign_data.get('dailyBudget')
-        
-        if budget_type == 'CBO' and daily_budget:
-            # Campaign Budget Optimization
-            # Set budget at campaign level, do NOT set is_adset_budget_sharing_enabled
-            params[Campaign.Field.daily_budget] = int(float(daily_budget) * 100)
+        budget_schedule = (campaign_data.get('budgetScheduleType') or campaign_data.get('budget_schedule_type') or 'DAILY').upper()
+
+        if budget_type == 'CBO':
+            if budget_schedule == 'LIFETIME':
+                lifetime_budget = campaign_data.get('lifetime_budget') or campaign_data.get('lifetimeBudget')
+                if lifetime_budget:
+                    params[Campaign.Field.lifetime_budget] = int(float(lifetime_budget) * 100)
+                end_time = campaign_data.get('end_time') or campaign_data.get('endTime')
+                if end_time:
+                    params[Campaign.Field.stop_time] = end_time
+            else:
+                daily_budget = campaign_data.get('daily_budget') or campaign_data.get('dailyBudget')
+                if daily_budget:
+                    params[Campaign.Field.daily_budget] = int(float(daily_budget) * 100)
         else:
-            # Ad Set Budget Optimization (ABO)
-            # Budget is set at ad set level, not campaign level
-            # Starting with API v24.0+, is_adset_budget_sharing_enabled is REQUIRED for ABO
-            # Set to False to enforce strict ad set budgets
+            # ABO: budget managed at ad set level
             params['is_adset_budget_sharing_enabled'] = False
 
-            
         bid_strategy = campaign_data.get('bid_strategy') or campaign_data.get('bidStrategy')
         if bid_strategy:
             params[Campaign.Field.bid_strategy] = bid_strategy
@@ -175,12 +179,15 @@ class FacebookService:
             AdSet.Field.name,
             AdSet.Field.status,
             AdSet.Field.daily_budget,
+            AdSet.Field.lifetime_budget,
             AdSet.Field.targeting,
             AdSet.Field.optimization_goal,
             AdSet.Field.billing_event,
             AdSet.Field.bid_amount,
             AdSet.Field.promoted_object,
             AdSet.Field.campaign_id,
+            AdSet.Field.start_time,
+            AdSet.Field.end_time,
         ]
 
         if campaign_id:
@@ -271,25 +278,31 @@ class FacebookService:
 
 
         # Handle budget - only set for ABO campaigns (not CBO)
-        # CBO = Campaign Budget Optimization (budget at campaign level)
-        # ABO = Ad Set Budget Optimization (budget at ad set level)
         budget_type = adset_data.get('budget_type') or adset_data.get('budgetType')
+        budget_schedule = (adset_data.get('budgetScheduleType') or adset_data.get('budget_schedule_type') or 'DAILY').upper()
 
         if budget_type != 'CBO':
-            # For ABO campaigns, budget is required at ad set level
-            budget = adset_data.get('daily_budget') or adset_data.get('dailyBudget')
-            if budget:
-                params[AdSet.Field.daily_budget] = int(float(budget) * 100)
-        # For CBO campaigns, don't set daily_budget - it's managed at campaign level
+            if budget_schedule == 'LIFETIME':
+                lifetime_budget = adset_data.get('lifetime_budget') or adset_data.get('lifetimeBudget')
+                if lifetime_budget:
+                    params[AdSet.Field.lifetime_budget] = int(float(lifetime_budget) * 100)
+            else:
+                daily_budget = adset_data.get('daily_budget') or adset_data.get('dailyBudget')
+                if daily_budget:
+                    params[AdSet.Field.daily_budget] = int(float(daily_budget) * 100)
 
         # Handle start time
         if adset_data.get('start_time') or adset_data.get('startTime'):
             start_time = adset_data.get('start_time') or adset_data.get('startTime')
             params[AdSet.Field.start_time] = start_time
 
+        # Handle end time (required for lifetime budget and day parting)
+        if adset_data.get('end_time') or adset_data.get('endTime'):
+            end_time = adset_data.get('end_time') or adset_data.get('endTime')
+            params[AdSet.Field.end_time] = end_time
+
         # Handle day parting / ad schedule
-        # adSchedule is a list of { days: [int], startMinute: int, endMinute: int }
-        # Facebook expects ad_schedule as a list of { days: [int], start_minute: int, end_minute: int, timezone_type: str }
+        # Facebook requires lifetime_budget when ad_schedule is set
         ad_schedule = adset_data.get('adSchedule') or adset_data.get('ad_schedule')
         if adset_data.get('adScheduleEnabled') or adset_data.get('ad_schedule_enabled'):
             if ad_schedule:
@@ -302,6 +315,8 @@ class FacebookService:
                     }
                     for s in ad_schedule
                 ]
+                # Required by Facebook when ad_schedule is set
+                params['pacing_type'] = ['day_parting']
 
         # Handle bid strategy and bid amount
         # For CBO campaigns, bid_strategy is set at campaign level - don't set at ad set level

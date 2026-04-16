@@ -158,7 +158,10 @@ class FacebookCampaign(Base):
     name = Column(String, nullable=False)
     objective = Column(String, nullable=False)
     budget_type = Column(String, nullable=False)
+    budget_schedule_type = Column(String, nullable=True, default='DAILY')  # 'DAILY' or 'LIFETIME'
     daily_budget = Column(Integer, nullable=True)
+    lifetime_budget = Column(Integer, nullable=True)
+    end_time = Column(DateTime(timezone=True), nullable=True)
     bid_strategy = Column(String, nullable=True)
     status = Column(String, default='PAUSED')
     fb_campaign_id = Column(String, nullable=True)
@@ -174,7 +177,10 @@ class FacebookAdSet(Base):
     campaign_id = Column(String, ForeignKey("facebook_campaigns.id", ondelete="CASCADE"), nullable=False)
     name = Column(String, nullable=False)
     optimization_goal = Column(String, nullable=False)
+    budget_schedule_type = Column(String, nullable=True, default='DAILY')  # 'DAILY' or 'LIFETIME'
     daily_budget = Column(Integer, nullable=True)
+    lifetime_budget = Column(Integer, nullable=True)
+    end_time = Column(DateTime(timezone=True), nullable=True)
     bid_strategy = Column(String, nullable=True)
     bid_amount = Column(Integer, nullable=True)
     targeting = Column(JSON, nullable=True)

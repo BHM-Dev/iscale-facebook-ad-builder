@@ -85,29 +85,6 @@ def build_comprehensive_prompt(request: ImageGenerationRequest) -> str:
     return prompt
 
 
-# Fal.ai edit endpoint only accepts these aspect_ratio literals (not pixel dimensions)
-FAL_ASPECT_RATIOS = (
-    "21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"
-)
-
-
-def _fal_aspect_ratio_from_dimensions(width: int, height: int) -> str:
-    """Map width/height to nearest Fal.ai allowed aspect_ratio string."""
-    if width <= 0 or height <= 0:
-        return "1:1"
-    r = width / height
-    # Precompute allowed ratios as (label, value) and pick closest
-    best_label, best_diff = "1:1", float("inf")
-    for label in FAL_ASPECT_RATIOS:
-        a, b = map(int, label.split(":"))
-        val = a / b
-        diff = abs(r - val)
-        if diff < best_diff:
-            best_diff = diff
-            best_label = label
-    return best_label
-
-
 class GeneratedAdCreate(BaseModel):
     id: str
     brandId: Optional[str] = None
@@ -281,42 +258,10 @@ async def generate_image(
             print(f"{'='*80}\n")
             if use_kie:
                 try:
-                    # Determine model and endpoint
-                    if request.useProductImage and request.productShots:
-                        # Use edit endpoint for image-to-image with product photo
-                        model_id = "fal-ai/nano-banana-pro/edit"
-                        print(f"Using product image: {request.productShots[0][:50]}...")
-                        
-                        arguments = {
-                            "prompt": prompt,
-                            "image_urls": request.productShots,
-                            "aspect_ratio": _fal_aspect_ratio_from_dimensions(width, height),
-                            "output_format": "png"
-                        }
-                    else:
-                        # Standard text-to-image
-                        if request.model == "imagen4":
-                            model_id = "fal-ai/imagen4/preview"
-                            print(f"Using Imagen 4 model: {model_id}")
-                        else:
-                            model_id = "fal-ai/nano-banana-pro"
-                            print(f"Using Nano Banana Pro model: {model_id}")
-                        
-                        arguments = {
-                            "prompt": prompt,
-                            "image_size": {
-                                "width": width,
-                                "height": height
-                            }
-                        }
-                    
-                    # Submit to Fal.ai
-                    handler = await fal_client.submit_async(model_id, arguments=arguments)
-                    result = await handler.get()
-                    external_url = result['images'][0]['url']
+                    input_image = request.productShots[0] if request.useProductImage and request.productShots else None
+                    external_url = await _kie_generate_image(prompt, width, height, input_image)
 
-                    # Download and save image locally
-                    print(f"Downloading image from Fal.ai: {external_url[:50]}...")
+                    print(f"Downloading image from kie.ai: {external_url[:50]}...")
                     image_url = await download_and_save_image(external_url, prefix="generated")
                     print(f"Saved as: {image_url}")
 

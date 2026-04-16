@@ -414,9 +414,12 @@ const AdCreativeStep = ({ onNext, onBack }) => {
     return (
         <div>
             <h2 className="text-2xl font-bold mb-6">Ad Creative - Standard Ads</h2>
-            <p className="text-gray-600 mb-6">
-                Create standard ads with a single primary text and headline. We will create one ad for each image you upload.
+            <p className="text-gray-600 mb-3">
+                This creates standard (non-Dynamic) ads. Each image you upload becomes one separate ad on Facebook.
             </p>
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-6 text-sm text-amber-900">
+                <strong>Want to launch 5 ads?</strong> Upload 5 images below with 1 headline and 1 body — you'll get exactly 5 separate ads. Adding more headlines or body options multiplies the total (e.g. 5 images × 2 headlines = 10 ads).
+            </div>
 
             <div className="space-y-6">
                 {/* Creative Name */}
@@ -428,7 +431,7 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                         type="text"
                         value={creativeData.creativeName}
                         onChange={(e) => handleInputChange('creativeName', e.target.value)}
-                        placeholder="Summer Sale Dynamic Creative"
+                        placeholder="e.g. Summer Sale – June 2025"
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                     />
                 </div>

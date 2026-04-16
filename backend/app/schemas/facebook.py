@@ -30,7 +30,10 @@ class FacebookAd(FacebookAdBase):
 class FacebookAdSetBase(BaseModel):
     name: str
     optimization_goal: str
+    budget_schedule_type: Optional[str] = 'DAILY'
     daily_budget: Optional[int] = None
+    lifetime_budget: Optional[int] = None
+    end_time: Optional[datetime] = None
     bid_strategy: Optional[str] = None
     bid_amount: Optional[int] = None
     targeting: Optional[Dict[str, Any]] = None
@@ -55,7 +58,10 @@ class FacebookCampaignBase(BaseModel):
     name: str
     objective: str
     budget_type: str
+    budget_schedule_type: Optional[str] = 'DAILY'
     daily_budget: Optional[int] = None
+    lifetime_budget: Optional[int] = None
+    end_time: Optional[datetime] = None
     bid_strategy: Optional[str] = None
     status: Optional[str] = 'PAUSED'
     fb_campaign_id: Optional[str] = None
