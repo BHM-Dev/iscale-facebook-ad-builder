@@ -6,12 +6,16 @@ on:
   push:
     branches: [develop, main]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   backend-import:
-    name: Backend imports & boots
+    name: Backend imports cleanly
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,11 +65,13 @@ jobs:
         env:
           DATABASE_URL: postgresql://ci:ci@localhost:5432/ci_check
           SECRET_KEY: ci-import-check-secret-not-used-at-runtime
+        shell: bash
         run: |
+          set -euo pipefail
           HEADS_OUTPUT=$(alembic heads)
           echo "alembic heads output:"
           echo "$HEADS_OUTPUT"
-          HEAD_COUNT=$(echo "$HEADS_OUTPUT" | grep -c "(head)" || true)
+          HEAD_COUNT=$(echo "$HEADS_OUTPUT" | grep -c "(head)")
           if [ "$HEAD_COUNT" -ne 1 ]; then
             echo "::error::Expected exactly 1 Alembic head, found $HEAD_COUNT. Multiple heads must be merged with 'alembic merge'."
             exit 1
@@ -112,13 +118,13 @@ jobs:
           SECRET_KEY: ci-import-check-secret-not-used-at-runtime
         run: alembic upgrade head
 
-      - name: alembic downgrade -1 then upgrade head
+      - name: Round-trip migrations (downgrade base then upgrade head)
         working-directory: backend
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/migrate_check
           SECRET_KEY: ci-import-check-secret-not-used-at-runtime
         run: |
-          alembic downgrade -1
+          alembic downgrade base
           alembic upgrade head
 
       - name: Smoke-boot uvicorn (binds, connects to DB, responds)
@@ -129,22 +135,28 @@ jobs:
         run: |
           uvicorn app.main:app --host 127.0.0.1 --port 8000 > uvicorn.log 2>&1 &
           UVICORN_PID=$!
-          for i in {1..20}; do
+          for i in {1..40}; do
             if curl -fsS http://127.0.0.1:8000/api/v1/openapi.json > /dev/null 2>&1; then
               echo "OK: server responded on attempt $i"
               kill $UVICORN_PID 2>/dev/null || true
               exit 0
             fi
+            if ! kill -0 $UVICORN_PID 2>/dev/null; then
+              echo "::error::uvicorn process exited before responding"
+              echo "--- uvicorn.log ---"
+              cat uvicorn.log
+              exit 1
+            fi
             sleep 1
           done
-          echo "::error::uvicorn failed to respond within 20s"
+          echo "::error::uvicorn failed to respond within 40s"
           echo "--- uvicorn.log ---"
           cat uvicorn.log
           kill $UVICORN_PID 2>/dev/null || true
           exit 1
 
   frontend-build:
-    name: Frontend lint & build
+    name: Frontend builds cleanly
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
