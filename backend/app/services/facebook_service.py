@@ -111,7 +111,8 @@ class FacebookService:
             Campaign.Field.name: campaign_data.get('name'),
             Campaign.Field.objective: campaign_data.get('objective'),
             Campaign.Field.status: campaign_data.get('status', 'PAUSED'),
-            Campaign.Field.special_ad_categories: [],
+            # special_ad_categories is required by Meta — always send the array (empty = no restriction)
+            Campaign.Field.special_ad_categories: campaign_data.get('specialAdCategories') or [],
         }
 
         budget_type = campaign_data.get('budget_type') or campaign_data.get('budgetType')

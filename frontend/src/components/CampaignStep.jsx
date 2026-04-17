@@ -254,6 +254,59 @@ const CampaignStep = ({ onNext, onBack }) => {
                         </select>
                     </div>
 
+                    {/* Special Ad Categories */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Special Ad Category
+                        </label>
+                        <p className="text-xs text-gray-500 mb-3">
+                            Required by Facebook for ads in regulated industries. Select if applicable — leave blank for most campaigns. Note: Housing, Credit, and Employment categories restrict age, gender, and detailed targeting.
+                        </p>
+                        <div className="grid grid-cols-2 gap-2">
+                            {[
+                                { value: 'HOUSING', label: 'Housing', desc: 'Real estate, rentals, mortgage' },
+                                { value: 'FINANCIAL_PRODUCTS_SERVICES', label: 'Financial Products & Services', desc: 'Insurance, loans, credit cards, investments' },
+                                { value: 'EMPLOYMENT', label: 'Employment', desc: 'Job listings, hiring, staffing' },
+                                { value: 'ISSUES_ELECTIONS_POLITICS', label: 'Political / Issues', desc: 'Political ads, social issues' },
+                                { value: 'ONLINE_GAMBLING_AND_GAMING', label: 'Online Gambling & Gaming', desc: 'Gambling, sports betting, iGaming' }
+                            ].map(cat => {
+                                const selected = (campaignData.specialAdCategories || []).includes(cat.value);
+                                return (
+                                    <button
+                                        key={cat.value}
+                                        type="button"
+                                        onClick={() => {
+                                            const current = campaignData.specialAdCategories || [];
+                                            const updated = selected
+                                                ? current.filter(v => v !== cat.value)
+                                                : [...current, cat.value];
+                                            handleInputChange('specialAdCategories', updated);
+                                        }}
+                                        className={`p-3 rounded-lg border-2 text-left transition-all ${selected
+                                            ? 'border-amber-600 bg-amber-50'
+                                            : 'border-gray-200 hover:border-amber-300'
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-2">
+                                            <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${selected ? 'border-amber-600 bg-amber-600' : 'border-gray-300'}`}>
+                                                {selected && <Check size={10} className="text-white" />}
+                                            </div>
+                                            <div>
+                                                <div className="font-semibold text-sm text-gray-900">{cat.label}</div>
+                                                <div className="text-xs text-gray-500">{cat.desc}</div>
+                                            </div>
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        {(campaignData.specialAdCategories || []).length > 0 && (
+                            <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                                <strong>Targeting restrictions apply.</strong> Facebook will limit age, gender, and zip-code targeting for this campaign. Make sure your ad set targeting complies.
+                            </div>
+                        )}
+                    </div>
+
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                             Budget Type *

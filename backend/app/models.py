@@ -163,6 +163,7 @@ class FacebookCampaign(Base):
     lifetime_budget = Column(Integer, nullable=True)
     end_time = Column(DateTime(timezone=True), nullable=True)
     bid_strategy = Column(String, nullable=True)
+    special_ad_categories = Column(JSON, nullable=True, default=list)  # e.g. ["HOUSING"] or []
     status = Column(String, default='PAUSED')
     fb_campaign_id = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -63,6 +63,7 @@ class FacebookCampaignBase(BaseModel):
     lifetime_budget: Optional[int] = None
     end_time: Optional[datetime] = None
     bid_strategy: Optional[str] = None
+    special_ad_categories: Optional[List[str]] = []
     status: Optional[str] = 'PAUSED'
     fb_campaign_id: Optional[str] = None
 
