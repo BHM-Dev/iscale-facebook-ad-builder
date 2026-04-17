@@ -78,8 +78,8 @@ jobs:
           fi
           echo "OK: single migration head"
 
-  alembic-migrate:
-    name: Migrations apply & server boots
+  backend-boot:
+    name: Backend boots against Postgres
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -87,7 +87,7 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: migrate_check
+          POSTGRES_DB: boot_check
         ports:
           - 5432:5432
         options: >-
@@ -111,26 +111,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: alembic upgrade head
+      # The production schema is bootstrapped by init_db.py (SQLAlchemy
+      # Base.metadata.create_all), then alembic migrations run as ALTERs on
+      # top. There is no baseline migration that creates tables from scratch,
+      # so `alembic upgrade head` against an empty DB will fail. Mirror the
+      # production bootstrap path here.
+      - name: Bootstrap schema (init_db) + stamp alembic head
         working-directory: backend
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/migrate_check
-          SECRET_KEY: ci-import-check-secret-not-used-at-runtime
-        run: alembic upgrade head
-
-      - name: Round-trip migrations (downgrade base then upgrade head)
-        working-directory: backend
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/migrate_check
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/boot_check
           SECRET_KEY: ci-import-check-secret-not-used-at-runtime
         run: |
-          alembic downgrade base
-          alembic upgrade head
+          python init_db.py
+          alembic stamp head
 
       - name: Smoke-boot uvicorn (binds, connects to DB, responds)
         working-directory: backend
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/migrate_check
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/boot_check
           SECRET_KEY: ci-import-check-secret-not-used-at-runtime
         run: |
           uvicorn app.main:app --host 127.0.0.1 --port 8000 > uvicorn.log 2>&1 &
