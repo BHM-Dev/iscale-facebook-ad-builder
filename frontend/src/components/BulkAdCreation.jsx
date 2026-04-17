@@ -124,7 +124,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     ...(campaignData.budgetType === 'CBO' && {
                         bidStrategy: campaignData.bidStrategy,
                         bidAmount: campaignData.bidAmount
-                    })
+                    }),
+                    // Pass campaign-level special ad categories so backend can strip restricted targeting
+                    specialAdCategories: campaignData.specialAdCategories || []
                 };
 
                 fbAdsetId = await createFacebookAdSet(adsetPayload, fbCampaignId, selectedAdAccount.accountId, campaignData.budgetType);

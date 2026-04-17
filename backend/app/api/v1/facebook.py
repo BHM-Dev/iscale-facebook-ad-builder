@@ -182,6 +182,10 @@ def save_campaign_locally(
             except Exception:
                 end_time = None
 
+        special_ad_categories = campaign_data.get('specialAdCategories') or []
+        if isinstance(special_ad_categories, str):
+            special_ad_categories = [special_ad_categories] if special_ad_categories else []
+
         new_campaign = FacebookCampaign(
             id=campaign_data.get('id'),
             name=campaign_data.get('name'),
@@ -192,6 +196,7 @@ def save_campaign_locally(
             lifetime_budget=lifetime_budget,
             end_time=end_time,
             bid_strategy=campaign_data.get('bidStrategy'),
+            special_ad_categories=special_ad_categories,
             status=campaign_data.get('status'),
             fb_campaign_id=campaign_data.get('fbCampaignId')
         )

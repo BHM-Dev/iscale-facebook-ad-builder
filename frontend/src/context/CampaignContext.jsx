@@ -45,6 +45,7 @@ export const CampaignProvider = ({ children }) => {
         lifetimeBudget: 0,
         endTime: defaultEndTime(), // required when budgetScheduleType === 'LIFETIME'
         bidStrategy: '',
+        specialAdCategories: [], // e.g. ['HOUSING'] — Facebook requires this at campaign level
         status: 'PAUSED',
         fbCampaignId: null,
         isExisting: false
@@ -115,6 +116,7 @@ export const CampaignProvider = ({ children }) => {
             lifetimeBudget: 0,
             endTime: defaultEndTime(),
             bidStrategy: '',
+            specialAdCategories: [],
             status: 'PAUSED',
             fbCampaignId: null,
             isExisting: false
