@@ -98,6 +98,7 @@ class FacebookService:
             Campaign.Field.bid_strategy,
             Campaign.Field.stop_time,
             Campaign.Field.start_time,
+            Campaign.Field.special_ad_categories,
             'is_adset_budget_sharing_enabled',
         ]
 
@@ -210,37 +211,49 @@ class FacebookService:
         ]
         return adset.get_ads(fields=fields)
 
+    # HEC = Housing, Employment, Credit (Financial Products) — Meta enforces targeting restrictions
+    HEC_CATEGORIES = {'HOUSING', 'EMPLOYMENT', 'FINANCIAL_PRODUCTS_SERVICES'}
+
     def create_adset(self, adset_data, ad_account_id=None):
         """Create a new ad set."""
         account = self._get_account(ad_account_id)
 
+        # Detect HEC special ad categories on the parent campaign
+        special_categories = set(adset_data.get('specialAdCategories') or adset_data.get('special_ad_categories') or [])
+        is_hec = bool(special_categories & self.HEC_CATEGORIES)
+
         # Transform targeting from camelCase to snake_case
         targeting = adset_data.get('targeting', {})
         transformed_targeting = {}
-        
-        # Handle age fields
-        if 'ageMin' in targeting:
-            transformed_targeting['age_min'] = targeting['ageMin']
-        if 'ageMax' in targeting:
-            transformed_targeting['age_max'] = targeting['ageMax']
-        
-        # Handle genders
-        if 'genders' in targeting:
+
+        # Handle age fields — HEC: Meta enforces default 18/65+, so we omit custom ranges
+        if not is_hec:
+            if 'ageMin' in targeting:
+                transformed_targeting['age_min'] = targeting['ageMin']
+            if 'ageMax' in targeting:
+                transformed_targeting['age_max'] = targeting['ageMax']
+
+        # Handle genders — HEC: must not filter by gender (omit or pass empty array)
+        if 'genders' in targeting and not is_hec:
             transformed_targeting['genders'] = targeting['genders']
-        
+
         # Handle geo_locations - clean up empty arrays
         if 'geo_locations' in targeting:
             geo_locs = targeting['geo_locations']
             cleaned_geo_locs = {}
-            
-            # Only include non-empty arrays
+
+            # Keys blocked under HEC: cities, geo_markets, and ALL excluded_* keys
+            hec_blocked_keys = {'cities', 'geo_markets', 'excluded_countries', 'excluded_regions',
+                                 'excluded_cities', 'excluded_geo_markets'}
+
             for key, value in geo_locs.items():
+                if is_hec and key in hec_blocked_keys:
+                    continue  # Strip — Meta will hard-error if these are present
                 if isinstance(value, list) and len(value) > 0:
                     cleaned_geo_locs[key] = value
                 elif not isinstance(value, list):
-                    # Include non-list values as-is
                     cleaned_geo_locs[key] = value
-            
+
             if cleaned_geo_locs:
                 transformed_targeting['geo_locations'] = cleaned_geo_locs
         

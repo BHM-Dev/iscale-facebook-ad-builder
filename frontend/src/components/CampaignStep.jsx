@@ -66,6 +66,7 @@ const CampaignStep = ({ onNext, onBack }) => {
             dailyBudget: dailyBudget,
             lifetimeBudget: lifetimeBudget,
             bidStrategy: campaign.bid_strategy || '',
+            specialAdCategories: campaign.specialAdCategories || [],
             fbCampaignId: campaign.id,
             isExisting: true
         });

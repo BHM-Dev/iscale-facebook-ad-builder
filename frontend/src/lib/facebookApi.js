@@ -82,7 +82,8 @@ export async function getCampaigns(adAccountId) {
             budgetRemaining: campaign.budget_remaining,
             createdTime: campaign.created_time,
             updatedTime: campaign.updated_time,
-            isCBO: campaign.is_adset_budget_sharing_enabled
+            isCBO: campaign.is_adset_budget_sharing_enabled,
+            specialAdCategories: campaign.special_ad_categories || []
         }));
     } catch (error) {
         console.error('Error fetching campaigns:', error);

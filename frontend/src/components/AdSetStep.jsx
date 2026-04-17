@@ -60,9 +60,13 @@ const COUNTRIES = [
     { code: 'FI', name: 'Finland' }
 ];
 
+// HEC categories restrict age, gender, city, DMA, and location exclusions at ad set level
+const HEC_CATEGORIES = new Set(['HOUSING', 'EMPLOYMENT', 'FINANCIAL_PRODUCTS_SERVICES']);
+
 const AdSetStep = ({ onNext, onBack }) => {
     const { campaignData, adsetData, setAdsetData, selectedAdAccount } = useCampaign();
     const { showError, showWarning } = useToast();
+    const isHECRestricted = (campaignData.specialAdCategories || []).some(c => HEC_CATEGORIES.has(c));
     const [mode, setMode] = useState('new');
     const [existingAdsets, setExistingAdsets] = useState([]);
     const [selectedAdset, setSelectedAdset] = useState(null);
@@ -383,6 +387,20 @@ const AdSetStep = ({ onNext, onBack }) => {
             {/* New Ad Set Form */}
             {mode === 'new' && (
                 <div className="space-y-4">
+                    {/* HEC targeting restriction banner */}
+                    {isHECRestricted && (
+                        <div className="p-4 bg-amber-50 border border-amber-300 rounded-xl text-sm text-amber-900">
+                            <div className="font-semibold mb-1">Targeting restrictions apply (Special Ad Category)</div>
+                            <ul className="list-disc list-inside space-y-0.5 text-amber-800">
+                                <li>Age range is fixed at 18–65+ (custom ranges not allowed)</li>
+                                <li>Gender targeting is disabled (all genders only)</li>
+                                <li>City and DMA/metro targeting are blocked — use country or state/region only</li>
+                                <li>Location exclusions are not allowed</li>
+                            </ul>
+                            <p className="mt-2 text-xs text-amber-700">These restrictions are enforced by Meta for Housing, Employment, and Financial Products &amp; Services campaigns. Restricted settings will be automatically stripped before launch.</p>
+                        </div>
+                    )}
+
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                             Ad Set Name *
@@ -816,14 +834,20 @@ const AdSetStep = ({ onNext, onBack }) => {
                                             <div className="relative">
                                                 <select
                                                     value={locationMode}
-                                                    onChange={(e) => setLocationMode(e.target.value)}
+                                                    onChange={(e) => {
+                                                        if (isHECRestricted && e.target.value === 'exclude') {
+                                                            showWarning('Location exclusions are not allowed for Special Ad Category campaigns.');
+                                                            return;
+                                                        }
+                                                        setLocationMode(e.target.value);
+                                                    }}
                                                     className={`appearance-none pl-3 pr-8 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent text-sm font-medium ${locationMode === 'include'
                                                         ? 'bg-green-50 text-green-700 border-green-200'
                                                         : 'bg-red-50 text-red-700 border-red-200'
                                                         }`}
                                                 >
                                                     <option value="include">Include</option>
-                                                    <option value="exclude">Exclude</option>
+                                                    {!isHECRestricted && <option value="exclude">Exclude</option>}
                                                 </select>
                                                 <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-500">
                                                     <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" /></svg>
@@ -865,6 +889,14 @@ const AdSetStep = ({ onNext, onBack }) => {
 
                                                                         const baseType = typeMap[location.type];
                                                                         if (!baseType) return;
+
+                                                                        // Block city and DMA under HEC categories — Meta will hard-error
+                                                                        if (isHECRestricted && (location.type === 'city' || location.type === 'geo_market')) {
+                                                                            showWarning('City and DMA targeting are not allowed for Special Ad Category campaigns. Use country or state/region instead.');
+                                                                            setShowCountryDropdown(false);
+                                                                            setCountrySearch('');
+                                                                            return;
+                                                                        }
 
                                                                         const listType = locationMode === 'include' ? baseType : `excluded_${baseType}`;
                                                                         const currentList = adsetData.targeting.geo_locations?.[listType] || [];
@@ -1021,65 +1053,76 @@ const AdSetStep = ({ onNext, onBack }) => {
 
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                                            Minimum Age *
+                                        <label className={`block text-sm font-medium mb-2 ${isHECRestricted ? 'text-gray-400' : 'text-gray-700'}`}>
+                                            Minimum Age {isHECRestricted ? '(locked — special category)' : '*'}
                                         </label>
                                         <select
                                             value={adsetData.targeting.ageMin}
                                             onChange={(e) => handleTargetingChange('ageMin', parseInt(e.target.value))}
-                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                            disabled={isHECRestricted}
+                                            className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent ${isHECRestricted ? 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed' : 'border-gray-300'}`}
                                         >
                                             {Array.from({ length: 48 }, (_, i) => i + 18).map(age => (
-                                                <option key={age} value={age}>{age}</option>
+                                                <option key={age} value={age}>{age}{isHECRestricted && age === 18 ? ' (default)' : ''}</option>
                                             ))}
                                         </select>
                                     </div>
 
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                                            Maximum Age *
+                                        <label className={`block text-sm font-medium mb-2 ${isHECRestricted ? 'text-gray-400' : 'text-gray-700'}`}>
+                                            Maximum Age {isHECRestricted ? '(locked — special category)' : '*'}
                                         </label>
                                         <select
                                             value={adsetData.targeting.ageMax}
                                             onChange={(e) => handleTargetingChange('ageMax', parseInt(e.target.value))}
-                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                            disabled={isHECRestricted}
+                                            className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent ${isHECRestricted ? 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed' : 'border-gray-300'}`}
                                         >
                                             {Array.from({ length: 48 }, (_, i) => i + 18).map(age => (
-                                                <option key={age} value={age}>{age}</option>
+                                                <option key={age} value={age}>{age}{isHECRestricted && age === 65 ? '+ (default)' : ''}</option>
                                             ))}
                                         </select>
                                     </div>
                                 </div>
 
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                                        Gender *
+                                    <label className={`block text-sm font-medium mb-2 ${isHECRestricted ? 'text-gray-400' : 'text-gray-700'}`}>
+                                        Gender {isHECRestricted ? '(locked — special category)' : '*'}
                                     </label>
                                     <div className="flex gap-4">
                                         <button
-                                            onClick={() => handleTargetingChange('genders', [])}
-                                            className={`flex-1 py-2 px-4 rounded-lg border-2 transition-all ${!adsetData.targeting.genders || adsetData.targeting.genders.length === 0
-                                                ? 'border-amber-600 bg-amber-50 text-amber-700 font-medium'
-                                                : 'border-gray-200 hover:border-amber-300 text-gray-600'
-                                                }`}
+                                            onClick={() => !isHECRestricted && handleTargetingChange('genders', [])}
+                                            disabled={isHECRestricted}
+                                            className={`flex-1 py-2 px-4 rounded-lg border-2 transition-all ${isHECRestricted
+                                                ? 'border-amber-600 bg-amber-50 text-amber-700 font-medium cursor-not-allowed opacity-60'
+                                                : !adsetData.targeting.genders || adsetData.targeting.genders.length === 0
+                                                    ? 'border-amber-600 bg-amber-50 text-amber-700 font-medium'
+                                                    : 'border-gray-200 hover:border-amber-300 text-gray-600'
+                                            }`}
                                         >
                                             All
                                         </button>
                                         <button
-                                            onClick={() => handleTargetingChange('genders', [1])}
-                                            className={`flex-1 py-2 px-4 rounded-lg border-2 transition-all ${adsetData.targeting.genders?.includes(1)
-                                                ? 'border-amber-600 bg-amber-50 text-amber-700 font-medium'
-                                                : 'border-gray-200 hover:border-amber-300 text-gray-600'
-                                                }`}
+                                            onClick={() => !isHECRestricted && handleTargetingChange('genders', [1])}
+                                            disabled={isHECRestricted}
+                                            className={`flex-1 py-2 px-4 rounded-lg border-2 transition-all ${isHECRestricted
+                                                ? 'border-gray-100 text-gray-300 cursor-not-allowed'
+                                                : adsetData.targeting.genders?.includes(1)
+                                                    ? 'border-amber-600 bg-amber-50 text-amber-700 font-medium'
+                                                    : 'border-gray-200 hover:border-amber-300 text-gray-600'
+                                            }`}
                                         >
                                             Men
                                         </button>
                                         <button
-                                            onClick={() => handleTargetingChange('genders', [2])}
-                                            className={`flex-1 py-2 px-4 rounded-lg border-2 transition-all ${adsetData.targeting.genders?.includes(2)
-                                                ? 'border-amber-600 bg-amber-50 text-amber-700 font-medium'
-                                                : 'border-gray-200 hover:border-amber-300 text-gray-600'
-                                                }`}
+                                            onClick={() => !isHECRestricted && handleTargetingChange('genders', [2])}
+                                            disabled={isHECRestricted}
+                                            className={`flex-1 py-2 px-4 rounded-lg border-2 transition-all ${isHECRestricted
+                                                ? 'border-gray-100 text-gray-300 cursor-not-allowed'
+                                                : adsetData.targeting.genders?.includes(2)
+                                                    ? 'border-amber-600 bg-amber-50 text-amber-700 font-medium'
+                                                    : 'border-gray-200 hover:border-amber-300 text-gray-600'
+                                            }`}
                                         >
                                             Women
                                         </button>
