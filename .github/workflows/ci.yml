@@ -1,0 +1,175 @@
+name: CI - Pre-Deploy Checks
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  backend-import:
+    name: Backend imports cleanly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements*.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify app.main imports
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci_check
+          SECRET_KEY: ci-import-check-secret-not-used-at-runtime
+        run: |
+          python -c "from app.main import app; print('OK:', app.title)"
+
+  alembic-heads:
+    name: Single Alembic head
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements*.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Assert exactly one Alembic head
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci_check
+          SECRET_KEY: ci-import-check-secret-not-used-at-runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          HEADS_OUTPUT=$(alembic heads)
+          echo "alembic heads output:"
+          echo "$HEADS_OUTPUT"
+          HEAD_COUNT=$(echo "$HEADS_OUTPUT" | grep -c "(head)")
+          if [ "$HEAD_COUNT" -ne 1 ]; then
+            echo "::error::Expected exactly 1 Alembic head, found $HEAD_COUNT. Multiple heads must be merged with 'alembic merge'."
+            exit 1
+          fi
+          echo "OK: single migration head"
+
+  backend-boot:
+    name: Backend boots against Postgres
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: boot_check
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements*.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # The production schema is bootstrapped by init_db.py (SQLAlchemy
+      # Base.metadata.create_all), then alembic migrations run as ALTERs on
+      # top. There is no baseline migration that creates tables from scratch,
+      # so `alembic upgrade head` against an empty DB will fail. Mirror the
+      # production bootstrap path here.
+      - name: Bootstrap schema (init_db) + stamp alembic head
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/boot_check
+          SECRET_KEY: ci-import-check-secret-not-used-at-runtime
+        run: |
+          python init_db.py
+          alembic stamp head
+
+      - name: Smoke-boot uvicorn (binds, connects to DB, responds)
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/boot_check
+          SECRET_KEY: ci-import-check-secret-not-used-at-runtime
+        run: |
+          uvicorn app.main:app --host 127.0.0.1 --port 8000 > uvicorn.log 2>&1 &
+          UVICORN_PID=$!
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:8000/api/v1/openapi.json > /dev/null 2>&1; then
+              echo "OK: server responded on attempt $i"
+              kill $UVICORN_PID 2>/dev/null || true
+              exit 0
+            fi
+            if ! kill -0 $UVICORN_PID 2>/dev/null; then
+              echo "::error::uvicorn process exited before responding"
+              echo "--- uvicorn.log ---"
+              cat uvicorn.log
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "::error::uvicorn failed to respond within 40s"
+          echo "--- uvicorn.log ---"
+          cat uvicorn.log
+          kill $UVICORN_PID 2>/dev/null || true
+          exit 1
+
+  frontend-build:
+    name: Frontend builds cleanly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
