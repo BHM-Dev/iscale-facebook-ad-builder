@@ -51,11 +51,12 @@ def create_campaign(
     current_user: User = Depends(require_permission("campaigns:write"))
 ):
     try:
-        # Check if ad_account_id is in query or body (body takes precedence if we structured it that way, but here we use query or separate param)
-        # For POST, usually better to have it in the body or query. Let's support query for consistency with GET
         result = service.create_campaign(campaign, ad_account_id)
         return dict(result)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
+        logger.exception("Create campaign failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/pixels")
@@ -106,7 +107,10 @@ def create_adset(
     try:
         result = service.create_adset(adset, ad_account_id)
         return dict(result)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
+        logger.exception("Create adset failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/creatives")

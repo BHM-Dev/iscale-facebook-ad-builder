@@ -10,6 +10,22 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
 const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm'];
 
+// Meta copy limits
+// Headline: 255 hard limit (truncated after ~27 chars in feed)
+// Primary text: 2200 hard limit (truncated after ~125 chars in feed)
+// Description: 255 hard limit
+const HEADLINE_WARN = 40;
+const HEADLINE_LIMIT = 255;
+const BODY_WARN = 125;
+const BODY_LIMIT = 2200;
+const DESC_LIMIT = 255;
+
+const charCountClass = (len, warn, limit) => {
+    if (len > limit) return 'text-red-600 font-semibold';
+    if (len > warn) return 'text-amber-600';
+    return 'text-gray-400';
+};
+
 // Facebook CTA types - confirmed working
 const CTA_OPTIONS = [
     'LEARN_MORE',
@@ -403,6 +419,22 @@ const AdCreativeStep = ({ onNext, onBack }) => {
             return;
         }
 
+        // Validate Meta copy length hard limits
+        const overLimitHeadlines = creativeData.headlines.filter(h => h && h.length > HEADLINE_LIMIT);
+        if (overLimitHeadlines.length > 0) {
+            showWarning(`Headline exceeds Facebook's ${HEADLINE_LIMIT}-character limit. Please shorten it.`);
+            return;
+        }
+        const overLimitBodies = creativeData.bodies.filter(b => b && b.length > BODY_LIMIT);
+        if (overLimitBodies.length > 0) {
+            showWarning(`Primary text exceeds Facebook's ${BODY_LIMIT}-character limit. Please shorten it.`);
+            return;
+        }
+        if (creativeData.description && creativeData.description.length > DESC_LIMIT) {
+            showWarning(`Description exceeds Facebook's ${DESC_LIMIT}-character limit. Please shorten it.`);
+            return;
+        }
+
         // Save URL to local storage for this ad account
         if (selectedAdAccount && creativeData.websiteUrl) {
             localStorage.setItem(`defaultUrl_${selectedAdAccount.id}`, creativeData.websiteUrl);
@@ -647,8 +679,16 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                                     onChange={(e) => handleBodyChange(index, e.target.value)}
                                     placeholder={`Body copy ${index + 1}...`}
                                     rows="3"
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent ${body && body.length > BODY_LIMIT ? 'border-red-400' : body && body.length > BODY_WARN ? 'border-amber-400' : 'border-gray-300'}`}
                                 />
+                                <div className="flex justify-between items-center mt-0.5">
+                                    <span className="text-xs text-gray-400">
+                                        {body && body.length > BODY_WARN ? `Truncated in feed after ${BODY_WARN} chars` : ''}
+                                    </span>
+                                    <span className={`text-xs ${charCountClass(body ? body.length : 0, BODY_WARN, BODY_LIMIT)}`}>
+                                        {body ? body.length : 0} / {BODY_LIMIT}
+                                    </span>
+                                </div>
                                 {index >= 1 && (
                                     <button
                                         type="button"
@@ -693,8 +733,16 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                                     value={headline}
                                     onChange={(e) => handleHeadlineChange(index, e.target.value)}
                                     placeholder={`Headline ${index + 1}...`}
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent ${headline && headline.length > HEADLINE_LIMIT ? 'border-red-400' : headline && headline.length > HEADLINE_WARN ? 'border-amber-400' : 'border-gray-300'}`}
                                 />
+                                <div className="flex justify-between items-center mt-0.5">
+                                    <span className="text-xs text-gray-400">
+                                        {headline && headline.length > HEADLINE_WARN ? `May be truncated in feed` : ''}
+                                    </span>
+                                    <span className={`text-xs ${charCountClass(headline ? headline.length : 0, HEADLINE_WARN, HEADLINE_LIMIT)}`}>
+                                        {headline ? headline.length : 0} / {HEADLINE_LIMIT}
+                                    </span>
+                                </div>
                                 {index >= 1 && (
                                     <button
                                         type="button"
@@ -722,8 +770,13 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                         value={creativeData.description}
                         onChange={(e) => handleInputChange('description', e.target.value)}
                         placeholder="Shop now and save!"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                        className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent ${creativeData.description && creativeData.description.length > DESC_LIMIT ? 'border-red-400' : 'border-gray-300'}`}
                     />
+                    <div className="flex justify-end mt-0.5">
+                        <span className={`text-xs ${creativeData.description && creativeData.description.length > DESC_LIMIT ? 'text-red-600 font-semibold' : 'text-gray-400'}`}>
+                            {creativeData.description ? creativeData.description.length : 0} / {DESC_LIMIT}
+                        </span>
+                    </div>
                 </div>
 
                 {/* Ad Permutation Counter */}

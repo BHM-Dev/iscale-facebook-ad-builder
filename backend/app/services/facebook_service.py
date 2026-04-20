@@ -139,7 +139,16 @@ class FacebookService:
         if bid_strategy:
             params[Campaign.Field.bid_strategy] = bid_strategy
 
-        return account.create_campaign(params=params)
+        try:
+            return account.create_campaign(params=params)
+        except FacebookRequestError as e:
+            err = e.api_error_subcode() and {} or {}
+            try:
+                err = e.body().get('error', {})
+            except Exception:
+                pass
+            user_msg = err.get('error_user_msg') or err.get('message') or (e.api_error_message() if hasattr(e, 'api_error_message') and callable(e.api_error_message) else str(e))
+            raise RuntimeError(f"Facebook API: {user_msg}") from e
 
 
     def get_pixels(self, ad_account_id=None):
@@ -347,7 +356,16 @@ class FacebookService:
             # CBO campaigns inherit bid_strategy from campaign level
             params[AdSet.Field.bid_strategy] = 'LOWEST_COST_WITHOUT_CAP'
 
-        return account.create_ad_set(params=params)
+        try:
+            return account.create_ad_set(params=params)
+        except FacebookRequestError as e:
+            err = {}
+            try:
+                err = e.body().get('error', {})
+            except Exception:
+                pass
+            user_msg = err.get('error_user_msg') or err.get('message') or (e.api_error_message() if hasattr(e, 'api_error_message') and callable(e.api_error_message) else str(e))
+            raise RuntimeError(f"Facebook API: {user_msg}") from e
 
     def upload_image(self, image_path_or_url, ad_account_id=None):
         """Upload an image to the ad library."""
