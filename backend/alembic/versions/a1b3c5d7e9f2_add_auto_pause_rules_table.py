@@ -16,6 +16,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    import sqlalchemy as sa_inspect
+    if sa_inspect.inspect(bind).has_table('auto_pause_rules'):
+        return
     op.create_table(
         'auto_pause_rules',
         sa.Column('id', sa.String(), nullable=False),
