@@ -94,14 +94,15 @@ export default function Layout() {
 
                 {/* Logo / Brand */}
                 <div className={`p-5 border-b border-white/10 ${isCollapsed ? 'px-4' : ''}`}>
-                    <div className={`flex items-center gap-3 ${isCollapsed ? 'justify-center' : ''}`}>
-                        <div className="flex-shrink-0">
-                            <BHMLogo size={40} />
-                        </div>
-                        {!isCollapsed && (
-                            <div className="overflow-hidden whitespace-nowrap">
-                                <h1 className="text-sm font-semibold text-white leading-tight tracking-wide">Bright Horizons Media</h1>
-                            </div>
+                    <div className={`flex items-center ${isCollapsed ? 'justify-center' : ''}`}>
+                        {isCollapsed ? (
+                            <BHMLogo size={36} />
+                        ) : (
+                            <img
+                                src="/bhm-logo.png"
+                                alt="Bright Horizons Media"
+                                className="h-8 w-auto object-contain object-left"
+                            />
                         )}
                     </div>
                 </div>
