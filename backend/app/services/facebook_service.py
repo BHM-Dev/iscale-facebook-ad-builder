@@ -356,6 +356,26 @@ class FacebookService:
             # CBO campaigns inherit bid_strategy from campaign level
             params[AdSet.Field.bid_strategy] = 'LOWEST_COST_WITHOUT_CAP'
 
+        # Handle attribution window — convert UI value (e.g. '7d_click_1d_view')
+        # to Meta's attribution_spec format required by the API.
+        _ATTRIBUTION_MAP = {
+            '1d_click':           [{'event_type': 'CLICK_THROUGH', 'window_days': 1}],
+            '7d_click':           [{'event_type': 'CLICK_THROUGH', 'window_days': 7}],
+            '28d_click':          [{'event_type': 'CLICK_THROUGH', 'window_days': 28}],
+            '1d_click_1d_view':   [{'event_type': 'CLICK_THROUGH', 'window_days': 1},
+                                   {'event_type': 'VIEW_THROUGH',  'window_days': 1}],
+            '7d_click_1d_view':   [{'event_type': 'CLICK_THROUGH', 'window_days': 7},
+                                   {'event_type': 'VIEW_THROUGH',  'window_days': 1}],
+            '28d_click_1d_view':  [{'event_type': 'CLICK_THROUGH', 'window_days': 28},
+                                   {'event_type': 'VIEW_THROUGH',  'window_days': 1}],
+        }
+        attribution_setting = (
+            adset_data.get('attributionSetting')
+            or adset_data.get('attribution_setting')
+        )
+        if attribution_setting and attribution_setting in _ATTRIBUTION_MAP:
+            params['attribution_spec'] = _ATTRIBUTION_MAP[attribution_setting]
+
         try:
             return account.create_ad_set(params=params)
         except FacebookRequestError as e:

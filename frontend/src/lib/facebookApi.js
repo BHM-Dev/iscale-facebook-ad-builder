@@ -551,6 +551,7 @@ export async function createCompleteAd(campaignId, adsetData, creativeData, adDa
         return {
             imageHash,
             videoId: videoData?.video_id || null,
+            thumbnailUrl: videoData?.thumbnail_url || null,
             creativeId,
             adId
         };
