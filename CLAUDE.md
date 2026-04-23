@@ -2,6 +2,59 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+---
+
+## ⛔ MANDATORY PRE-PUSH CHECKLIST — DO NOT SKIP ANY ITEM
+
+This checklist exists because the same classes of bugs have broken production login 6+ times. Run through every item before committing or pushing ANY backend change.
+
+### 1. New migration created?
+- [ ] Does it call `op.create_table()`? → **Must have `has_table()` guard** (see Migration Rules below). No exceptions.
+- [ ] Does it call `op.add_column()`? → Use `ADD COLUMN IF NOT EXISTS` raw SQL pattern, not `op.add_column()` which fails if column exists.
+- [ ] Is `down_revision` pointing to the correct parent? Trace the full chain: `1b02d74254e5` → `d8f2e1a7b4c9` → `e3a1f9b2c8d4` → `f4b2c8d9e1a7` → `a1b3c5d7e9f2`
+
+### 2. New model added to models.py?
+- [ ] Does a migration exist that creates its table? `init_db.py` creates it via `create_all()`, but Alembic still needs the migration file or it will crash trying to create an already-existing table.
+- [ ] Is the model imported in `models.py`? `init_db.py` does `from app.models import *` — if it's not there, the table won't be created.
+
+### 3. New router / file added?
+- [ ] Is it imported at the **module level** in `main.py`? If yes — any import error in that file crashes the entire app on startup, breaking login. Trace the full import chain of the new file before pushing.
+- [ ] Does the new file import anything that doesn't exist yet (e.g. a model not yet in models.py, a method not yet in a service)?
+
+### 4. New package added to requirements.txt?
+- [ ] Does it install cleanly on Python 3.11? Check for known conflicts with existing pinned packages.
+- [ ] Is startup code that uses it wrapped in `try/except`? If it's used at module import level (not inside a function), an install failure crashes the app.
+
+### 5. Existing routes / models modified?
+- [ ] Did any existing model column get renamed or removed? That breaks existing queries.
+- [ ] Did any existing API endpoint path change? That breaks the frontend without a matching frontend update.
+- [ ] Did any function signature change in `facebook_service.py`? Trace every caller.
+
+### 6. Frontend changes?
+- [ ] Do all new CSS classes used (`className="..."`) exist in Tailwind or in `index.css`? Missing classes = invisible/broken UI.
+- [ ] Are all new imports at the top of `.jsx` files valid? A single bad import = blank page.
+- [ ] Does any new page use `authFetch`? It must be imported as `import { authFetch } from '../lib/facebookApi'` (named export).
+
+### 7. Final gate before push
+- [ ] Read the diff one more time (`git diff HEAD`) and ask: "If this breaks, what would the symptom be and how would I fix it in under 5 minutes?"
+- [ ] If the answer involves a DB migration or a Railway rebuild, verify the fix path is clear.
+
+---
+
+## Railway Startup Sequence (memorize this)
+
+Every deploy runs this exact CMD in order. If ANY step fails, the container exits and login is broken:
+
+```
+python init_db.py          ← creates ALL model tables via Base.metadata.create_all()
+  && alembic upgrade head  ← runs any pending migrations
+  && uvicorn app.main:app  ← starts the server (login works here)
+```
+
+**The deadly pattern:** Adding a new model to `models.py` causes `init_db.py` to create its table. Then `alembic upgrade head` tries to create the same table → crash. Always add the `has_table()` guard.
+
+---
+
 ## Startup Checks
 
 On load, verify required tools are installed:
