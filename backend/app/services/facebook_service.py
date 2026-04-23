@@ -325,11 +325,12 @@ class FacebookService:
             params[AdSet.Field.end_time] = end_time
 
         # Handle day parting / ad schedule
-        # Facebook requires lifetime_budget when ad_schedule is set
+        # Meta's API field is 'adset_schedule' (NOT 'ad_schedule') — confirmed in SDK source.
+        # Facebook requires lifetime_budget when adset_schedule is set.
         ad_schedule = adset_data.get('adSchedule') or adset_data.get('ad_schedule')
         if adset_data.get('adScheduleEnabled') or adset_data.get('ad_schedule_enabled'):
             if ad_schedule:
-                params['ad_schedule'] = [
+                params['adset_schedule'] = [
                     {
                         'days': s.get('days', []),
                         'start_minute': s.get('startMinute', s.get('start_minute', 0)),
@@ -338,7 +339,7 @@ class FacebookService:
                     }
                     for s in ad_schedule
                 ]
-                # Required by Facebook when ad_schedule is set
+                # Required by Facebook when adset_schedule is set
                 params['pacing_type'] = ['day_parting']
 
         # Handle bid strategy and bid amount
