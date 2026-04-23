@@ -373,3 +373,42 @@ agent-browser close               # Close browser
 - When adding new origins: update CORS in `main.py` AND CSP in `index.html`
 - Ad account IDs auto-prefixed with 'act_' if missing (facebook_service.py)
 - Local dev uses same Railway DB + R2 as production (shared data)
+
+## Alembic / Database Migration Rules (hard-won — April 2026)
+
+**Never use `alembic stamp head` in the Dockerfile.** It marks migrations as applied without running DDL. Always use `alembic upgrade head`. The Dockerfile CMD is:
+```
+CMD python init_db.py && alembic upgrade head && uvicorn ...
+```
+
+**The baseline migration must be idempotent.** `init_db.py` runs `Base.metadata.create_all()` which creates tables before Alembic runs. The baseline migration (`1b02d74254e5`) has an early-return guard: if the `users` table already exists, it skips all `CREATE TABLE` statements. This prevents conflicts on existing DBs.
+
+**When a new column is missing in production:** Always audit ALL columns in the affected model against the migration chain before writing a fix — not just the one that errored. A single `column does not exist` error usually means multiple columns are missing. Fix them all at once with a single `ADD COLUMN IF NOT EXISTS` migration.
+
+**Migration sync rule:** If a migration is already stamped as applied in `alembic_version` but the DDL never ran, the only fix is raw SQL with `IF NOT EXISTS`. The migration file uses `IF NOT EXISTS` throughout, so running the same SQL manually and then letting Alembic mark it applied keeps everything in sync.
+
+## Meta Marketing API Field Names (verified April 2026)
+
+Critical field name distinctions — wrong names are silently ignored by Meta causing hard-to-diagnose errors:
+
+| Field | Correct name | Common mistake |
+|-------|-------------|----------------|
+| Ad set day-parting schedule | `adset_schedule` | ~~`ad_schedule`~~ |
+| Campaign end time | `stop_time` | ~~`end_time`~~ |
+| Ad set end time | `end_time` | ~~`stop_time`~~ |
+| Day parting flag | `pacing_type: ['day_parting']` | ✓ correct |
+
+**Date format:** Always convert `start_time` and `end_time` to ISO format via `new Date().toISOString()` before sending. The datetime-local input format (`"2026-05-23T23:59"`, no seconds/timezone) is not reliably accepted by Meta.
+
+**Verified correct field names (facebook-business SDK v18+):**
+- Campaign: `name`, `objective`, `status`, `special_ad_categories`, `lifetime_budget`, `daily_budget`, `stop_time`, `bid_strategy`, `is_adset_budget_sharing_enabled`
+- AdSet: `name`, `campaign_id`, `billing_event` (`IMPRESSIONS` still valid), `optimization_goal`, `is_dynamic_creative`, `status`, `targeting`, `promoted_object`, `lifetime_budget`, `daily_budget`, `start_time`, `end_time`, `adset_schedule`, `pacing_type`, `bid_amount`, `bid_strategy`, `attribution_spec`
+- Ad: `name`, `adset_id`, `creative`, `status`
+
+**Enum values:**
+- Campaign objectives: always use `OUTCOME_*` format (`OUTCOME_SALES`, `OUTCOME_TRAFFIC`, `OUTCOME_LEADS`, `OUTCOME_ENGAGEMENT`, `OUTCOME_AWARENESS`, `OUTCOME_APP_PROMOTION`)
+- Special ad categories: `FINANCIAL_PRODUCTS_SERVICES` (not `CREDIT` — deprecated Jan 2025)
+- Attribution windows: no `VIEW_THROUGH` with more than `window_days: 1` (28d/7d view removed Jan 2026)
+- `targeting_automation: {advantage_audience: 0}` goes INSIDE the targeting dict, not at AdSet level
+
+**Before any PR that touches facebook_service.py:** Spawn a peer-review agent to audit all field names and enum values against the current SDK source at `github.com/facebook/facebook-python-business-sdk`.
