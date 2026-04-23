@@ -169,7 +169,7 @@ def get_insights(
     current_user=Depends(get_current_user),
 ):
     """Fetch live spend/CPL/leads from Meta Insights API for one ad set."""
-    svc = FacebookService(ad_account_id=ad_account_id)
+    svc = FacebookService()
     try:
         return svc.get_adset_insights(fb_adset_id, date_preset=date_preset)
     except RuntimeError as e:
@@ -196,7 +196,7 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
     errors = []
     now = datetime.now(timezone.utc)
 
-    svc = FacebookService(ad_account_id=ad_account_id)
+    svc = FacebookService()
 
     for rule in rules:
         adset = rule.adset

@@ -47,7 +47,7 @@ function InsightsCard({ fbAdsetId, adsetName, adAccountId, datePreset }) {
       <Stat label="Leads"  value={data.leads} />
       <Stat label="CPL"    value={data.cpl != null ? `$${data.cpl.toFixed(2)}` : '—'} highlight={data.cpl > 60} />
       <Stat label="Clicks" value={data.clicks.toLocaleString()} />
-      <Stat label="CTR"    value={`${(data.ctr * 100).toFixed(2)}%`} />
+      <Stat label="CTR"    value={`${parseFloat(data.ctr).toFixed(2)}%`} />
     </div>
   );
 }
