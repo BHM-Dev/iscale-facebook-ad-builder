@@ -381,7 +381,18 @@ agent-browser close               # Close browser
 CMD python init_db.py && alembic upgrade head && uvicorn ...
 ```
 
-**The baseline migration must be idempotent.** `init_db.py` runs `Base.metadata.create_all()` which creates tables before Alembic runs. The baseline migration (`1b02d74254e5`) has an early-return guard: if the `users` table already exists, it skips all `CREATE TABLE` statements. This prevents conflicts on existing DBs.
+**Every `create_table` migration must be idempotent.** `init_db.py` runs `Base.metadata.create_all()` on every deploy, which creates ALL model tables before Alembic runs. If a migration tries to `CREATE TABLE` for a table that `init_db.py` already created, it crashes with "relation already exists" — killing the startup CMD chain and breaking login. **Every migration that calls `op.create_table()` must have this guard at the top:**
+
+```python
+def upgrade() -> None:
+    bind = op.get_bind()
+    import sqlalchemy as sa_inspect
+    if sa_inspect.inspect(bind).has_table('your_table_name'):
+        return
+    op.create_table(...)
+```
+
+This pattern is in `1b02d74254e5` (baseline) and `a1b3c5d7e9f2` (auto_pause_rules). Apply it to every new table migration without exception.
 
 **When a new column is missing in production:** Always audit ALL columns in the affected model against the migration chain before writing a fix — not just the one that errored. A single `column does not exist` error usually means multiple columns are missing. Fix them all at once with a single `ADD COLUMN IF NOT EXISTS` migration.
 
