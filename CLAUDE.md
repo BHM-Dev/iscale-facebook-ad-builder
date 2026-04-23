@@ -4,6 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## Current State (as of 2026-04-23)
+
+**Production (Railway):** Running. Login works. All features operational.
+
+**Auto-pause feature:** Deployed and functional. `auto_pause_rules` table exists in production (created by `init_db.py` on hotfix deploy). Migration `a1b3c5d7e9f2` is marked applied in `alembic_version`. Joel can access it via Facebook → Performance & Auto-Pause in the sidebar.
+
+**Pending (low priority, non-blocking):**
+- Two performance indexes on `auto_pause_rules` were not created (migration returned early via guard). Optional SQL: `CREATE INDEX IF NOT EXISTS ix_auto_pause_rules_adset_id ON auto_pause_rules(adset_id);` and `CREATE INDEX IF NOT EXISTS ix_auto_pause_rules_is_active ON auto_pause_rules(is_active);`
+- CI `alembic-round-trip` test is failing — pre-existing issue with baseline migration's incomplete `downgrade()`. No production impact. Fix: add missing `op.drop_table()` calls for `facebook_campaigns`, `brands`, `customer_profiles`, `api_usage_logs`, `page_blacklist`, `keyword_blacklist`, `brand_scrapes`, `ad_styles` to the baseline downgrade function.
+
+**init_db.py behaviour (critical to remember):** On every Railway deploy, `init_db.py` runs `Base.metadata.create_all()` BEFORE Alembic. This creates every table in `models.py`. Any migration that calls `op.create_table()` MUST have the `has_table()` guard or it will crash on the second deploy. See Alembic rules section below.
+
+---
+
 ## ⛔ MANDATORY PRE-PUSH CHECKLIST — DO NOT SKIP ANY ITEM
 
 This checklist exists because the same classes of bugs have broken production login 6+ times. Run through every item before committing or pushing ANY backend change.
