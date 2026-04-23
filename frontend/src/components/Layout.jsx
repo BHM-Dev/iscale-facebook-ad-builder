@@ -100,8 +100,7 @@ export default function Layout() {
                         </div>
                         {!isCollapsed && (
                             <div className="overflow-hidden whitespace-nowrap">
-                                <h1 className="text-base font-bold text-white leading-tight">BreadWinner</h1>
-                                <p className="text-xs text-white/50 mt-0.5">Fresh campaigns daily</p>
+                                <h1 className="text-sm font-semibold text-white leading-tight tracking-wide">Bright Horizons Media</h1>
                             </div>
                         )}
                     </div>
