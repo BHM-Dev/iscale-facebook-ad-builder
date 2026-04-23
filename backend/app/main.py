@@ -78,10 +78,10 @@ async def health_check():
 # Database Connection Validation
 @app.on_event("startup")
 async def startup_event():
-    """Validate PostgreSQL connection on startup"""
+    """Validate PostgreSQL connection on startup, then start background scheduler."""
     from app.database import engine
     from sqlalchemy import text
-    
+
     try:
         with engine.connect() as conn:
             result = conn.execute(text("SELECT version()"))
@@ -89,15 +89,49 @@ async def startup_event():
             print(f"✅ Connected to PostgreSQL")
             print(f"   Version: {version}")
     except Exception as e:
-        # Sanitize DATABASE_URL - hide password
         sanitized_url = re.sub(r'://[^:]+:[^@]+@', '://***:***@', settings.DATABASE_URL)
         print(f"❌ Failed to connect to database: {e}")
         print(f"   DATABASE_URL: {sanitized_url}")
         raise RuntimeError(f"Database connection failed: {e}")
 
+    # Start APScheduler — runs auto-pause check every 30 minutes
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from app.database import SessionLocal
+        from app.api.v1.auto_pause import _run_check
+
+        scheduler = BackgroundScheduler()
+
+        def scheduled_check():
+            db = SessionLocal()
+            try:
+                result = _run_check(db)
+                if result["paused"]:
+                    print(f"⏸  Auto-pause fired: {result['paused']}")
+            except Exception as exc:
+                print(f"⚠️  Auto-pause scheduler error: {exc}")
+            finally:
+                db.close()
+
+        scheduler.add_job(scheduled_check, 'interval', minutes=30, id='auto_pause_check')
+        scheduler.start()
+        app.state.scheduler = scheduler
+        print("✅ Auto-pause scheduler started (every 30 min)")
+    except Exception as e:
+        print(f"⚠️  Could not start auto-pause scheduler: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Gracefully shut down the background scheduler."""
+    scheduler = getattr(app.state, "scheduler", None)
+    if scheduler and scheduler.running:
+        scheduler.shutdown(wait=False)
+        print("🛑 Auto-pause scheduler stopped")
+
 
 # Include Routers
-from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users
+from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
@@ -114,6 +148,7 @@ app.include_router(profiles.router, prefix="/api/v1/profiles", tags=["profiles"]
 app.include_router(ad_remix.router, prefix="/api/v1/ad-remix", tags=["ad-remix"])
 app.include_router(prompts.router, prefix="/api/v1/prompts", tags=["prompts"])
 app.include_router(ad_styles.router, prefix="/api/v1/ad-styles", tags=["ad-styles"])
+app.include_router(auto_pause.router, prefix="/api/v1/auto-pause", tags=["auto-pause"])
 
 # Mount static files for uploads (same path as generated_ads save location)
 uploads_dir = str(settings.upload_dir)

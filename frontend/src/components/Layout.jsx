@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Package, Users, Video, Wand2, Settings, LogOut, Image, ShoppingBag, Target, ChevronLeft, ChevronRight, FileImage, Search, ChevronDown, UserCog } from 'lucide-react';
+import { LayoutDashboard, Package, Users, Video, Wand2, Settings, LogOut, Image, ShoppingBag, Target, ChevronLeft, ChevronRight, FileImage, Search, ChevronDown, UserCog, TrendingDown } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
@@ -34,7 +34,7 @@ export default function Layout() {
     const navigate = useNavigate();
     const { user, logout, hasRole } = useAuth();
     const { showSuccess } = useToast();
-    const [expandedMenus, setExpandedMenus] = useState({ Brands: false, Research: false });
+    const [expandedMenus, setExpandedMenus] = useState({ Brands: false, Research: false, Facebook: false });
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [showUserMenu, setShowUserMenu] = useState(false);
 
@@ -67,7 +67,14 @@ export default function Layout() {
         },
         { icon: Image, label: 'Winning Ads', path: '/winning-ads' },
         { icon: FileImage, label: 'Generated Ads', path: '/generated-ads' },
-        { icon: Target, label: 'Facebook Campaigns', path: '/facebook-campaigns' },
+        {
+            icon: Target,
+            label: 'Facebook',
+            subItems: [
+                { label: 'Campaigns', path: '/facebook-campaigns' },
+                { label: 'Performance & Auto-Pause', path: '/campaign-performance' },
+            ]
+        },
     ];
 
     const toggleMenu = (label) => {

@@ -84,6 +84,29 @@ def read_pages(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/adsets/saved")
+def read_saved_adsets(
+    campaign_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Return ad sets stored in our DB (includes fb_adset_id for live insights lookup)."""
+    q = db.query(FacebookAdSet)
+    if campaign_id:
+        q = q.filter(FacebookAdSet.campaign_id == campaign_id)
+    adsets = q.order_by(FacebookAdSet.created_at.desc()).all()
+    return [
+        {
+            "id": a.id,
+            "name": a.name,
+            "fb_adset_id": a.fb_adset_id,
+            "status": a.status,
+            "campaign_id": a.campaign_id,
+        }
+        for a in adsets
+    ]
+
+
 @router.get("/adsets")
 def read_adsets(
     ad_account_id: Optional[str] = None,

@@ -25,6 +25,7 @@ import Brands from './pages/Brands';
 import Products from './pages/Products';
 import CustomerProfiles from './pages/CustomerProfiles';
 import FacebookCampaigns from './pages/FacebookCampaigns';
+import CampaignPerformance from './pages/CampaignPerformance';
 import WinningAds from './pages/WinningAds';
 import GeneratedAds from './pages/GeneratedAds';
 import Research from './pages/Research';
@@ -63,6 +64,7 @@ function App() {
                   <Route path="image-ads" element={<ImageAds />} />
                   <Route path="video-ads" element={<VideoAds />} />
                   <Route path="facebook-campaigns" element={<FacebookCampaigns />} />
+                  <Route path="campaign-performance" element={<CampaignPerformance />} />
                   <Route path="winning-ads" element={<WinningAds />} />
                   <Route path="generated-ads" element={<GeneratedAds />} />
                   <Route path="brands" element={<Brands />} />

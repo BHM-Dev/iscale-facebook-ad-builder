@@ -10,7 +10,7 @@ const getAuthHeaders = () => {
 };
 
 // Authenticated fetch wrapper
-const authFetch = async (url, options = {}) => {
+export const authFetch = async (url, options = {}) => {
     const response = await fetch(url, {
         ...options,
         headers: {

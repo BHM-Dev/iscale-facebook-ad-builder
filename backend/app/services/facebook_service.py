@@ -710,3 +710,92 @@ class FacebookService:
         
         return account.get_targeting_search(params=params)
 
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Insights & Auto-Pause
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def get_adset_insights(self, fb_adset_id: str, date_preset: str = 'last_7d') -> dict:
+        """Pull spend, leads/conversions, and CPL for a single ad set from Meta Insights API.
+
+        Returns a dict:
+          { spend, leads, cpl, impressions, clicks, ctr, date_preset }
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        adset = AdSet(fbid=fb_adset_id)
+        fields = [
+            'spend',
+            'impressions',
+            'clicks',
+            'ctr',
+            'actions',
+            'cost_per_action_type',
+        ]
+        params = {'date_preset': date_preset}
+
+        try:
+            results = adset.get_insights(fields=fields, params=params)
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            msg = err.get('message') or str(e)
+            logger.error("Meta Insights error for adset %s: %s", fb_adset_id, msg)
+            raise RuntimeError(f"Facebook API: {msg}") from e
+
+        if not results:
+            return {
+                'spend': 0.0, 'leads': 0, 'cpl': None,
+                'impressions': 0, 'clicks': 0, 'ctr': 0.0,
+                'date_preset': date_preset,
+            }
+
+        row = results[0]
+
+        spend = float(row.get('spend', 0) or 0)
+        impressions = int(row.get('impressions', 0) or 0)
+        clicks = int(row.get('clicks', 0) or 0)
+        ctr = float(row.get('ctr', 0) or 0)
+
+        # Count leads: action_type = 'lead' or 'onsite_conversion.lead_grouped'
+        leads = 0
+        lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
+        for action in (row.get('actions') or []):
+            if action.get('action_type') in lead_types:
+                leads += int(float(action.get('value', 0)))
+
+        # CPL from cost_per_action_type
+        cpl = None
+        for cpa in (row.get('cost_per_action_type') or []):
+            if cpa.get('action_type') in lead_types:
+                cpl = float(cpa.get('value', 0))
+                break
+        if cpl is None and leads > 0 and spend > 0:
+            cpl = round(spend / leads, 2)
+
+        return {
+            'spend': round(spend, 2),
+            'leads': leads,
+            'cpl': round(cpl, 2) if cpl is not None else None,
+            'impressions': impressions,
+            'clicks': clicks,
+            'ctr': round(ctr, 4),
+            'date_preset': date_preset,
+        }
+
+    def update_adset_status(self, fb_adset_id: str, status: str) -> None:
+        """Set an ad set's delivery status (ACTIVE | PAUSED) via Meta API."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        adset = AdSet(fbid=fb_adset_id)
+        try:
+            adset.api_update(params={'status': status})
+            logger.info("AdSet %s status → %s", fb_adset_id, status)
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            msg = err.get('message') or str(e)
+            logger.error("Failed to update adset %s status: %s", fb_adset_id, msg)
+            raise RuntimeError(f"Facebook API: {msg}") from e

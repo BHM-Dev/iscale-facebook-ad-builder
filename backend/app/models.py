@@ -219,6 +219,27 @@ class FacebookAd(Base):
 
     adset = relationship("FacebookAdSet", back_populates="ads")
 
+class AutoPauseRule(Base):
+    """Rule that automatically pauses a Facebook ad set when a performance threshold is breached."""
+    __tablename__ = "auto_pause_rules"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    adset_id = Column(String, ForeignKey("facebook_adsets.id", ondelete="CASCADE"), nullable=False)
+    # metric: 'cpl' | 'cpa' | 'ctr'
+    metric = Column(String, nullable=False)
+    # operator: 'greater_than' | 'less_than'
+    operator = Column(String, nullable=False, default='greater_than')
+    threshold = Column(Integer, nullable=False)          # e.g. 50 = $50 CPL
+    min_spend = Column(Integer, nullable=False, default=20)  # minimum $ spend before rule fires
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_checked_at = Column(DateTime(timezone=True), nullable=True)
+    triggered_at = Column(DateTime(timezone=True), nullable=True)
+    trigger_reason = Column(String, nullable=True)       # human-readable e.g. "CPL $68 > $50"
+
+    adset = relationship("FacebookAdSet", backref="auto_pause_rules")
+
+
 class WinningAd(Base):
     __tablename__ = "winning_ads"
 
