@@ -376,6 +376,10 @@ class FacebookService:
         if attribution_setting and attribution_setting in _ATTRIBUTION_MAP:
             params['attribution_spec'] = _ATTRIBUTION_MAP[attribution_setting]
 
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("create_adset params being sent to Meta: %s", params)
+
         try:
             return account.create_ad_set(params=params)
         except FacebookRequestError as e:
@@ -384,6 +388,7 @@ class FacebookService:
                 err = e.body().get('error', {})
             except Exception:
                 pass
+            logger.error("Meta adset creation error. params=%s  error=%s", params, err)
             user_msg = err.get('error_user_msg') or err.get('message') or (e.api_error_message() if hasattr(e, 'api_error_message') and callable(e.api_error_message) else str(e))
             raise RuntimeError(f"Facebook API: {user_msg}") from e
 

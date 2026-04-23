@@ -376,6 +376,8 @@ export async function createFacebookAdSet(adsetData, campaignId, adAccountId, bu
             bid_strategy: adsetData.bidStrategy,
             bid_amount: adsetData.bidAmount,
             start_time: adsetData.startTime ? new Date(adsetData.startTime).toISOString() : null,
+            // end_time must be ISO format — Meta rejects the datetime-local format from the input
+            end_time: adsetData.endTime ? new Date(adsetData.endTime).toISOString() : null,
             targeting: adsetData.targeting
         };
 
