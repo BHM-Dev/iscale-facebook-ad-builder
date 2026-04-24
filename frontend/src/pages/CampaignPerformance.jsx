@@ -189,6 +189,18 @@ export default function CampaignPerformance() {
     } catch (e) { showError(e.message); }
   }, []);
 
+  // Auto-populate Ad Account ID from the connected Facebook account
+  useEffect(() => {
+    authFetch(`${API_BASE}/facebook/accounts`)
+      .then(res => res.ok ? res.json() : null)
+      .then(accounts => {
+        if (Array.isArray(accounts) && accounts.length > 0) {
+          setAdAccountId(accounts[0].account_id || '');
+        }
+      })
+      .catch(() => {}); // silent fail — field stays editable
+  }, []);
+
   useEffect(() => { loadAdsets(); loadRules(); }, [loadAdsets, loadRules]);
 
   const deleteRule = async (ruleId) => {
@@ -255,13 +267,18 @@ export default function CampaignPerformance() {
           >
             {DATE_PRESETS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
           </select>
-          <input
-            type="text"
-            placeholder="Ad Account ID (optional)"
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-48 focus:ring-2 focus:ring-indigo-500"
-            value={adAccountId}
-            onChange={e => setAdAccountId(e.target.value)}
-          />
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Ad Account ID"
+              className="border border-gray-200 rounded-lg pl-3 pr-8 py-2 text-sm w-48 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              value={adAccountId}
+              onChange={e => setAdAccountId(e.target.value)}
+            />
+            {adAccountId && (
+              <span className="absolute right-2 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-green-400" title="Account connected" />
+            )}
+          </div>
           <button
             onClick={runCheck}
             disabled={checking}
