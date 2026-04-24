@@ -331,15 +331,31 @@ export default function CampaignPerformance() {
             {activeAdsets.map(adset => (
               <div key={adset.id} className="px-6 py-4">
                 <div className="flex items-center justify-between mb-3">
-                  <div>
+                  <div className="flex items-center flex-wrap gap-2">
                     <span className="font-medium text-gray-900 text-sm">{adset.name}</span>
-                    <span className={`ml-2 text-xs px-2 py-0.5 rounded-full font-medium ${
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                       adset.status === 'ACTIVE'
                         ? 'bg-green-100 text-green-700'
                         : 'bg-gray-100 text-gray-500'
                     }`}>
                       {adset.status}
                     </span>
+                    {(() => {
+                      const adsetRules = rules.filter(r => r.adset_id === adset.id);
+                      const activeRule = adsetRules.find(r => r.is_active && !r.triggered_at);
+                      const triggeredRule = adsetRules.find(r => r.triggered_at);
+                      if (triggeredRule) return (
+                        <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700 flex items-center gap-1">
+                          <PauseCircle size={10} /> Rule triggered
+                        </span>
+                      );
+                      if (activeRule) return (
+                        <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-indigo-50 text-indigo-600 flex items-center gap-1">
+                          <Zap size={10} /> Rule active
+                        </span>
+                      );
+                      return null;
+                    })()}
                   </div>
                   <span className="text-xs text-gray-400">{adset.fb_adset_id}</span>
                 </div>
