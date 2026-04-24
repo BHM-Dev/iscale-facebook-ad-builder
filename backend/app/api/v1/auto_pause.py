@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_db, get_current_user
 from app.models import AutoPauseRule, FacebookAdSet
 from app.services.facebook_service import FacebookService
+from app.services.slack_service import send_auto_pause_alert, send_check_summary
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -258,10 +259,22 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
                 db.commit()
                 paused.append({"adset": adset.name, "fb_adset_id": adset.fb_adset_id, "reason": reason})
                 logger.info("AUTO-PAUSED adset %s — %s", adset.name, reason)
+                send_auto_pause_alert(
+                    adset_name=adset.name,
+                    fb_adset_id=adset.fb_adset_id,
+                    reason=reason,
+                    rules_evaluated=len(rules),
+                )
             except Exception as e:
                 errors.append({"adset": adset.name, "error": str(e)})
         else:
             db.commit()
+
+    send_check_summary(
+        rules_evaluated=len(rules),
+        paused_count=len(paused),
+        errors=errors,
+    )
 
     return {
         "checked_at": now.isoformat(),
