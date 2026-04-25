@@ -4,15 +4,52 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
-## Current State (as of 2026-04-23)
+## Current State (as of 2026-04-25)
 
 **Production (Railway):** Running. Login works. All features operational.
 
-**Auto-pause feature:** Deployed and functional. `auto_pause_rules` table exists in production (created by `init_db.py` on hotfix deploy). Migration `a1b3c5d7e9f2` is marked applied in `alembic_version`. Joel can access it via Facebook → Performance & Auto-Pause in the sidebar.
+### Features shipped in this session (2026-04-23 → 2026-04-25)
 
-**Pending (low priority, non-blocking):**
-- Two performance indexes on `auto_pause_rules` were not created (migration returned early via guard). Optional SQL: `CREATE INDEX IF NOT EXISTS ix_auto_pause_rules_adset_id ON auto_pause_rules(adset_id);` and `CREATE INDEX IF NOT EXISTS ix_auto_pause_rules_is_active ON auto_pause_rules(is_active);`
-- CI `alembic-round-trip` test is failing — pre-existing issue with baseline migration's incomplete `downgrade()`. No production impact. Fix: add missing `op.drop_table()` calls for `facebook_campaigns`, `brands`, `customer_profiles`, `api_usage_logs`, `page_blacklist`, `keyword_blacklist`, `brand_scrapes`, `ad_styles` to the baseline downgrade function.
+**BHM logo** — Real logo asset (`/public/bhm-logo.png`) now in sidebar. Expanded state = `<img>` tag with the horizontal PNG. Collapsed state = hand-coded `BHMLogo` SVG fallback. Source: `~/Claude/Sites/BHM Company Site/logo.png`.
+
+**CSS/theme overhaul** — Removed beige/amber theme from `index.css`. Now: gray-50 background, gray-900 text, indigo focus rings. Added `.input-base`, `.btn-primary`, `.btn-secondary` utility classes.
+
+**Performance & Auto-Pause page** (`/campaign-performance`) — Full feature added:
+- Live Meta Insights per ad set (Spend, Leads, CPL, Clicks, CTR) via `/auto-pause/insights/{fb_adset_id}`
+- Ad set performance table pulls from `/facebook/adsets/saved` (DB-backed, has `fb_adset_id`)
+- Rule status badges on each performance row: "Rule active" (indigo) / "Rule triggered" (red)
+- Ad Account ID field auto-populates from `GET /facebook/accounts` on mount; field stays editable
+- Auto-pause rules CRUD (create, toggle, delete)
+- "Check Now" button runs immediate rule evaluation against live Meta data
+- Background scheduler checks all rules every 30 minutes (APScheduler in `main.py`)
+
+**`/facebook/adsets/saved` endpoint** — Added to `backend/app/api/v1/facebook.py`. Returns DB-stored ad sets with both internal `id` and `fb_adset_id`. Needed because the live `/adsets` endpoint hits Meta API and doesn't have `fb_adset_id` populated.
+
+**`authFetch` export fix** — `frontend/src/lib/facebookApi.js` changed `const authFetch` → `export const authFetch`. Required for `CampaignPerformance.jsx` import.
+
+**`AutoPauseRule` model + migration** — `auto_pause_rules` table in production. Migration `a1b3c5d7e9f2` has `has_table()` guard. Two performance indexes created manually by Golden (`ix_auto_pause_rules_adset_id`, `ix_auto_pause_rules_is_active`).
+
+**`auto_pause.py` router** — Full CRUD + enforcement at `/api/v1/auto-pause/`. `FacebookService()` constructor takes NO arguments — never pass `ad_account_id=` kwarg.
+
+**Slack notifications** — `backend/app/services/slack_service.py` added. Posts to `C08G7PJJ6NB` (media buying channel) when a rule fires. Uses `httpx` (already in requirements). Requires `SLACK_BOT_TOKEN` Railway env var — silently skips if not set. Golden needs to add this env var to Railway when ready.
+
+**CTR display fix** — Meta returns CTR already as a percentage (e.g. `1.5` = 1.5%). Frontend uses `parseFloat(data.ctr).toFixed(2)%`, not `(data.ctr * 100)`.
+
+### Pending
+
+**Golden action required:**
+- Add `SLACK_BOT_TOKEN` env var to Railway backend service to activate Slack alerts. Token source: check GitHub Actions secrets on automation repos. Channel default (`C08G7PJJ6NB`) is hardcoded — no second var needed.
+
+**Low priority / non-blocking:**
+- CI `alembic-round-trip` test failing — pre-existing issue, baseline migration `downgrade()` doesn't drop all tables it creates. Fix: add missing `op.drop_table()` calls for `facebook_campaigns`, `brands`, `customer_profiles`, `api_usage_logs`, `page_blacklist`, `keyword_blacklist`, `brand_scrapes`, `ad_styles`.
+
+### Auto-pause feature roadmap (not yet built)
+In priority order for Joel (media buyer at $100k+/month Meta spend):
+1. **Scaling rules** — increase daily budget by X% when CPL drops below threshold (mirror of pause)
+2. **Ad-level pausing** — pause individual ads, not just the whole ad set
+3. **Rule audit log** — persistent history of every rule trigger with metric values at time of fire
+4. **ROAS metric** — Meta returns `purchase_roas` in insights; add as supported metric
+5. **Time-window restrictions** — only evaluate rules between configurable hours (avoids noisy early-morning data)
 
 **init_db.py behaviour (critical to remember):** On every Railway deploy, `init_db.py` runs `Base.metadata.create_all()` BEFORE Alembic. This creates every table in `models.py`. Any migration that calls `op.create_table()` MUST have the `has_table()` guard or it will crash on the second deploy. See Alembic rules section below.
 
@@ -186,6 +223,8 @@ backend/app/
 │   └── dashboard.py
 ├── services/            # Business logic
 │   ├── facebook_service.py    # Facebook Marketing API (facebook-business SDK)
+│   ├── slack_service.py       # Slack chat.postMessage wrapper (auto-pause alerts)
+│   ├── scheduler_service.py   # APScheduler — runs auto-pause check every 30 min
 │   ├── research_service.py
 │   ├── scraper.py
 │   └── ad_remix_service.py    # Uses Gemini Vision for template analysis
