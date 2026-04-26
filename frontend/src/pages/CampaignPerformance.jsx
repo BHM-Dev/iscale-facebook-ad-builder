@@ -5,8 +5,8 @@ import { authFetch } from '../lib/facebookApi';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
-const METRIC_LABELS = { cpl: 'Cost Per Lead', cpa: 'Cost Per Action', ctr: 'CTR' };
-const METRIC_UNITS  = { cpl: '$', cpa: '$', ctr: '%' };
+const METRIC_LABELS = { cpl: 'Cost Per Lead', cpa: 'Cost Per Action', ctr: 'CTR', roas: 'ROAS' };
+const METRIC_UNITS  = { cpl: '$', cpa: '$', ctr: '%', roas: 'x' };
 const DATE_PRESETS  = [
   { value: 'today',       label: 'Today' },
   { value: 'yesterday',   label: 'Yesterday' },
@@ -120,6 +120,7 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
             <select className="input-base" value={form.metric} onChange={e => setForm({...form, metric: e.target.value})}>
               <option value="cpl">Cost Per Lead (CPL)</option>
               <option value="ctr">Click-Through Rate (CTR)</option>
+              <option value="roas">ROAS</option>
             </select>
           </Field>
 
@@ -132,12 +133,12 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
 
           <Field label={`Threshold (${METRIC_UNITS[form.metric]})`}>
             <input
-              type="number" min="0" className="input-base"
+              type="number" min="0" step={form.metric === 'roas' ? '0.1' : '1'} className="input-base"
               value={form.threshold}
               onChange={e => setForm({...form, threshold: Number(e.target.value)})}
             />
             <p className="text-xs text-gray-500 mt-1">
-              Pause when {METRIC_LABELS[form.metric]} {form.operator === 'greater_than' ? '>' : '<'} {METRIC_UNITS[form.metric]}{form.threshold}
+              Pause when {METRIC_LABELS[form.metric]} {form.operator === 'greater_than' ? '>' : '<'} {form.metric === 'roas' ? '' : METRIC_UNITS[form.metric]}{form.threshold}{form.metric === 'roas' ? 'x' : ''}
             </p>
           </Field>
 

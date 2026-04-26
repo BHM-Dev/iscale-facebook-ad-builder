@@ -782,20 +782,28 @@ class FacebookService:
         if cpl is None and leads > 0 and spend > 0:
             cpl = round(spend / leads, 2)
 
-        # Purchase revenue from action_values
+        # Revenue from action_values — check purchases first, then leads (lead-gen campaigns
+        # pass payout value with every lead event, so this covers both ecomm and lead-gen)
         revenue = None
         purchase_types = {'purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase'}
         for av in (row.get('action_values') or []):
             if av.get('action_type') in purchase_types:
                 revenue = round(float(av.get('value', 0)), 2)
                 break
+        if revenue is None:
+            for av in (row.get('action_values') or []):
+                if av.get('action_type') in lead_types:
+                    revenue = round(float(av.get('value', 0)), 2)
+                    break
 
-        # ROAS from purchase_roas (Meta returns as array)
+        # ROAS: use Meta's purchase_roas if available, otherwise calculate from lead revenue
         roas = None
         for r in (row.get('purchase_roas') or []):
             if r.get('action_type') in ('omni_purchase', 'purchase'):
                 roas = round(float(r.get('value', 0)), 2)
                 break
+        if roas is None and revenue is not None and spend > 0:
+            roas = round(revenue / spend, 2)
 
         return {
             'spend': round(spend, 2),

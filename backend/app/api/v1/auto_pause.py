@@ -61,6 +61,8 @@ def _get_metric_value(insights: dict, metric: str) -> Optional[float]:
         return insights.get('cpl')      # alias
     if metric == 'ctr':
         return insights.get('ctr')
+    if metric == 'roas':
+        return insights.get('roas')
     return None
 
 
@@ -103,7 +105,7 @@ def create_rule(
     current_user=Depends(get_current_user),
 ):
     # Validate metric and operator
-    valid_metrics = {'cpl', 'cpa', 'ctr'}
+    valid_metrics = {'cpl', 'cpa', 'ctr', 'roas'}
     valid_operators = {'greater_than', 'less_than'}
     if body.metric not in valid_metrics:
         raise HTTPException(400, f"metric must be one of {valid_metrics}")
