@@ -179,6 +179,51 @@ def get_insights(
         raise HTTPException(400, str(e))
 
 
+@router.get("/insights-raw/{fb_adset_id}")
+def get_insights_raw(
+    fb_adset_id: str,
+    date_preset: str = Query("last_7d"),
+    current_user=Depends(get_current_user),
+):
+    """Return the unprocessed Meta Insights API response for debugging.
+    Shows every action type, action_value, and field exactly as Meta returns it.
+    """
+    from facebook_business.adobjects.adset import AdSet
+    from facebook_business.exceptions import FacebookRequestError
+
+    svc = FacebookService()
+    svc.initialize()
+
+    adset = AdSet(fbid=fb_adset_id)
+    fields = [
+        'spend', 'impressions', 'reach', 'frequency',
+        'clicks', 'ctr',
+        'actions', 'action_values',
+        'cost_per_action_type',
+        'purchase_roas',
+    ]
+    try:
+        results = adset.get_insights(fields=fields, params={'date_preset': date_preset})
+    except FacebookRequestError as e:
+        body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+        raise HTTPException(400, str(body))
+
+    if not results:
+        return {"message": "No data returned for this ad set / date range", "fb_adset_id": fb_adset_id}
+
+    row = dict(results[0])
+    return {
+        "fb_adset_id": fb_adset_id,
+        "date_preset": date_preset,
+        "raw": row,
+        # Pull out the key arrays for easy reading
+        "actions": row.get("actions", []),
+        "action_values": row.get("action_values", []),
+        "cost_per_action_type": row.get("cost_per_action_type", []),
+        "purchase_roas": row.get("purchase_roas", []),
+    }
+
+
 @router.post("/check")
 def check_and_enforce(
     ad_account_id: Optional[str] = Query(None),
