@@ -728,10 +728,14 @@ class FacebookService:
         fields = [
             'spend',
             'impressions',
+            'reach',
+            'frequency',
             'clicks',
             'ctr',
             'actions',
+            'action_values',
             'cost_per_action_type',
+            'purchase_roas',
         ]
         params = {'date_preset': date_preset}
 
@@ -747,7 +751,9 @@ class FacebookService:
         if not results:
             return {
                 'spend': 0.0, 'leads': 0, 'cpl': None,
-                'impressions': 0, 'clicks': 0, 'ctr': 0.0,
+                'impressions': 0, 'reach': 0, 'frequency': 0.0,
+                'clicks': 0, 'ctr': 0.0,
+                'revenue': None, 'roas': None,
                 'date_preset': date_preset,
             }
 
@@ -755,6 +761,8 @@ class FacebookService:
 
         spend = float(row.get('spend', 0) or 0)
         impressions = int(row.get('impressions', 0) or 0)
+        reach = int(row.get('reach', 0) or 0)
+        frequency = round(float(row.get('frequency', 0) or 0), 2)
         clicks = int(row.get('clicks', 0) or 0)
         ctr = float(row.get('ctr', 0) or 0)
 
@@ -774,13 +782,32 @@ class FacebookService:
         if cpl is None and leads > 0 and spend > 0:
             cpl = round(spend / leads, 2)
 
+        # Purchase revenue from action_values
+        revenue = None
+        purchase_types = {'purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase'}
+        for av in (row.get('action_values') or []):
+            if av.get('action_type') in purchase_types:
+                revenue = round(float(av.get('value', 0)), 2)
+                break
+
+        # ROAS from purchase_roas (Meta returns as array)
+        roas = None
+        for r in (row.get('purchase_roas') or []):
+            if r.get('action_type') in ('omni_purchase', 'purchase'):
+                roas = round(float(r.get('value', 0)), 2)
+                break
+
         return {
             'spend': round(spend, 2),
             'leads': leads,
             'cpl': round(cpl, 2) if cpl is not None else None,
             'impressions': impressions,
+            'reach': reach,
+            'frequency': frequency,
             'clicks': clicks,
             'ctr': round(ctr, 4),
+            'revenue': revenue,
+            'roas': roas,
             'date_preset': date_preset,
         }
 

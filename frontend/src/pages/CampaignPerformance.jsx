@@ -42,12 +42,25 @@ function InsightsCard({ fbAdsetId, adsetName, adAccountId, datePreset }) {
   if (!data) return null;
 
   return (
-    <div className="flex flex-wrap gap-4 text-sm">
-      <Stat label="Spend"  value={`$${data.spend.toFixed(2)}`} />
-      <Stat label="Leads"  value={data.leads} />
-      <Stat label="CPL"    value={data.cpl != null ? `$${data.cpl.toFixed(2)}` : '—'} highlight={data.cpl > 60} />
-      <Stat label="Clicks" value={data.clicks.toLocaleString()} />
-      <Stat label="CTR"    value={`${parseFloat(data.ctr).toFixed(2)}%`} />
+    <div className="flex flex-wrap gap-x-6 gap-y-3 text-sm">
+      {/* Row 1 — spend & lead metrics */}
+      <Stat label="Spend"     value={`$${data.spend.toFixed(2)}`} />
+      <Stat label="Leads"     value={data.leads} />
+      <Stat label="CPL"       value={data.cpl != null ? `$${data.cpl.toFixed(2)}` : '—'} highlight={data.cpl > 60} />
+      {data.revenue != null && (
+        <Stat label="Revenue" value={`$${data.revenue.toFixed(2)}`} />
+      )}
+      {data.roas != null && (
+        <Stat label="ROAS"    value={`${data.roas.toFixed(2)}x`} highlight={data.roas < 1} />
+      )}
+      {/* Divider */}
+      <span className="w-px bg-gray-100 self-stretch hidden sm:block" />
+      {/* Row 1 cont — delivery metrics */}
+      <Stat label="Reach"     value={data.reach.toLocaleString()} />
+      <Stat label="Frequency" value={data.frequency.toFixed(2)} highlight={data.frequency > 4} />
+      <Stat label="Impressions" value={data.impressions.toLocaleString()} />
+      <Stat label="Clicks"    value={data.clicks.toLocaleString()} />
+      <Stat label="CTR"       value={`${parseFloat(data.ctr).toFixed(2)}%`} />
     </div>
   );
 }
