@@ -48,8 +48,37 @@ In priority order for Joel (media buyer at $100k+/month Meta spend):
 1. **Scaling rules** — increase daily budget by X% when CPL drops below threshold (mirror of pause)
 2. **Ad-level pausing** — pause individual ads, not just the whole ad set
 3. **Rule audit log** — persistent history of every rule trigger with metric values at time of fire
-4. **ROAS metric** — Meta returns `purchase_roas` in insights; add as supported metric
-5. **Time-window restrictions** — only evaluate rules between configurable hours (avoids noisy early-morning data)
+4. **Time-window restrictions** — only evaluate rules between configurable hours (avoids noisy early-morning data)
+
+### Slack Campaign Intelligence Bot (specced, not yet built)
+Full spec at `SLACK_INTELLIGENCE_SPEC.md`. Three trigger modes:
+- **On-demand:** Joel types `@AdBuilder update` in `#media-buying` (C08G7PJJ6NB)
+- **Daily proactive:** 9am ET summary via APScheduler
+- **Threshold alerts:** frequency >4, ROAS drop >20% day-over-day, MTD pacing off by >15%
+
+**Data sources:** Meta Insights (spend, leads, CPL, ROAS, reach, frequency, CTR) + DB (ad sets, rule history). Three date ranges per ad set: today / last_7d / MTD.
+
+**AI layer:** Gemini analyzes all ad sets, assigns SCALE / WATCH / CUT tiers, produces 3–5 specific named recommendations (e.g. "increase [Ad Set A] budget 25%" not "consider optimizing").
+
+**Response structure:** Account scorecard → ad set ranking by ROAS → AI recommendations → auto-pause status. Readable in <60 seconds.
+
+**New components needed:**
+- `backend/app/api/v1/slack_events.py` — inbound Slack Events API handler
+- `backend/app/services/campaign_intelligence_service.py` — data fetch + Gemini analysis
+- Extend `slack_service.py` — add `post_snapshot()`, `post_daily_summary()`, `post_threshold_alert()`
+- New Railway env vars: `SLACK_SIGNING_SECRET` (required), `SLACK_BOT_TOKEN` (already needed for auto-pause alerts)
+- Slack app: add `app_mentions:read` scope, set Events API URL to `https://[backend]/api/v1/slack/events`
+
+**Open questions before building:**
+- Which campaigns to include? All active or scoped?
+- Joel's ROAS target for SCALE/WATCH/CUT tier thresholds
+- Monthly budget per campaign: DB field on `FacebookCampaign` or `@AdBuilder budget [amount]` Slack command?
+- New Slack app or add scopes to existing?
+
+**Phase 3 unlocked by Everflow:** Quality-adjusted ROAS using actual conversions vs. Meta-reported lead values. Junk lead detection per ad set. Full-funnel SCALE/WATCH/CUT scoring.
+
+### Everflow Integration (pending API key from Switchboard/Advertiser)
+Use case: cross-check Meta-reported leads against Everflow actual conversions to get ground-truth ROAS and detect junk traffic per ad set. Same endpoint/auth pattern as existing BHM Everflow reporting. Waiting on advertiser-scoped API key.
 
 **init_db.py behaviour (critical to remember):** On every Railway deploy, `init_db.py` runs `Base.metadata.create_all()` BEFORE Alembic. This creates every table in `models.py`. Any migration that calls `op.create_table()` MUST have the `has_table()` guard or it will crash on the second deploy. See Alembic rules section below.
 
