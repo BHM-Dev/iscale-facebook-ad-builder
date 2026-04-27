@@ -171,45 +171,32 @@ def debug_redtrack(
         except Exception as e:
             return {"error": str(e)}
 
-    base_params = {"api_key": api_key, "date_from": date_from, "date_to": date_to}
+    report_params = {"date_from": date_from, "date_to": date_to, "group": "sub2", "total": "true"}
 
-    # 1. POST with JSON body — some tracker APIs require JSON for report config
-    try:
-        rp = httpx.post(
-            "https://api.redtrack.io/report",
-            params={"api_key": api_key},
-            json={"date_from": date_from, "date_to": date_to, "group_by": ["sub2"]},
-            timeout=15,
-        )
-        try:
-            rp_parsed = rp.json()
-        except Exception:
-            rp_parsed = None
-        r1 = {
-            "status": rp.status_code,
-            "body_raw": rp.text[:2000],
-            "body_parsed": rp_parsed if isinstance(rp_parsed, (dict, list)) and len(str(rp_parsed)) < 2000 else "(truncated)",
-            "row_count": len(rp_parsed) if isinstance(rp_parsed, list) else None,
-        }
-    except Exception as e:
-        r1 = {"error": str(e)}
-
-    # 2. GET /report/sub2 — dedicated sub2 endpoint (some trackers use this)
-    r2 = _safe_get(
-        "https://api.redtrack.io/report/sub2",
-        params=base_params,
+    # Test 1: app.redtrack.io + Bearer <api_key> header + group=sub2
+    r1 = _safe_get(
+        "https://app.redtrack.io/api/report",
+        headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+        params=report_params,
     )
 
-    # 3. GET with columns[]=sub2 instead of group_by
+    # Test 2: app.redtrack.io + api_key query param + group=sub2
+    r2 = _safe_get(
+        "https://app.redtrack.io/api/report",
+        params={**report_params, "api_key": api_key},
+    )
+
+    # Test 3: api.redtrack.io + api_key param + group=sub2 (correct param name, old domain)
     r3 = _safe_get(
         "https://api.redtrack.io/report",
-        params={**base_params, "columns[]": "sub2"},
+        params={"api_key": api_key, "date_from": date_from, "date_to": date_to, "group": "sub2"},
     )
 
-    # 4. GET /clicks — raw click log which may have sub2 per row
+    # Test 4: app.redtrack.io + Bearer + group=date,sub2 (exact UI syntax)
     r4 = _safe_get(
-        "https://api.redtrack.io/clicks",
-        params={**base_params, "limit": 3},
+        "https://app.redtrack.io/api/report",
+        headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+        params={"date_from": date_from, "date_to": date_to, "group": "date,sub2", "total": "true"},
     )
 
     # Extract field names from first row of each response for easy diagnosis
@@ -224,10 +211,10 @@ def debug_redtrack(
         "date_to": date_to,
         "key_length": len(api_key),
         "key_prefix": api_key[:6] + "..." if len(api_key) > 6 else "(short)",
-        "test_1_post_json_body": {**r1, "first_row_keys": _first_row_keys(r1)},
-        "test_2_get_report_sub2_endpoint": {**r2, "first_row_keys": _first_row_keys(r2)},
-        "test_3_get_columns_sub2": {**r3, "first_row_keys": _first_row_keys(r3)},
-        "test_4_get_clicks_log": {**r4, "first_row_keys": _first_row_keys(r4)},
+        "test_1_app_bearer_apikey_group_sub2": {**r1, "first_row_keys": _first_row_keys(r1)},
+        "test_2_app_queryparam_apikey_group_sub2": {**r2, "first_row_keys": _first_row_keys(r2)},
+        "test_3_api_domain_group_sub2": {**r3, "first_row_keys": _first_row_keys(r3)},
+        "test_4_app_bearer_apikey_group_date_sub2": {**r4, "first_row_keys": _first_row_keys(r4)},
     }
 
 
