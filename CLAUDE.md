@@ -4,9 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
-## Current State (as of 2026-04-25)
+## Current State (as of 2026-04-27)
 
-**Production (Railway):** Running. Login works. All features operational.
+**Production (AWS Lightsail VPS):** Running. Login works. All features operational.
+
+**⚠️ INFRASTRUCTURE NOTE — Updated 2026-04-27:**
+The app has moved from **Railway to AWS Lightsail VPS** (Golden's server).
+- DO NOT reference Railway dashboard, Railway env vars, or Railway deployment for this project going forward
+- Env vars are set directly on the server (Golden manages this)
+- Deployment process: Golden restarts the server after changes — not auto-deploy from git push
+- The startup sequence (`python init_db.py && alembic upgrade head && uvicorn`) still applies but is run on the VPS
+- To request env var changes: message Golden in `C041GSZD1NG` with the var name; he adds it server-side and restarts
+- `REDTRACK_API_KEY` confirmed added by Golden (2026-04-27). RedTrack cache will populate on first scheduler run.
+- `SLACK_BOT_TOKEN` status: confirm with Golden whether this was added in the same update
 
 ### Features shipped in this session (2026-04-23 → 2026-04-25)
 
@@ -31,14 +41,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **`auto_pause.py` router** — Full CRUD + enforcement at `/api/v1/auto-pause/`. `FacebookService()` constructor takes NO arguments — never pass `ad_account_id=` kwarg.
 
-**Slack notifications** — `backend/app/services/slack_service.py` added. Posts to `C08G7PJJ6NB` (media buying channel) when a rule fires. Uses `httpx` (already in requirements). Requires `SLACK_BOT_TOKEN` Railway env var — silently skips if not set. Golden needs to add this env var to Railway when ready.
+**Slack notifications** — `backend/app/services/slack_service.py` added. Posts to `C08G7PJJ6NB` (media buying channel) when a rule fires. Uses `httpx` (already in requirements). Requires `SLACK_BOT_TOKEN` server env var — silently skips if not set. Golden needs to add this env var on the VPS.
 
 **CTR display fix** — Meta returns CTR already as a percentage (e.g. `1.5` = 1.5%). Frontend uses `parseFloat(data.ctr).toFixed(2)%`, not `(data.ctr * 100)`.
 
 ### Pending
 
 **Golden action required:**
-- Add `SLACK_BOT_TOKEN` env var to Railway backend service to activate Slack alerts. Token source: check GitHub Actions secrets on automation repos. Channel default (`C08G7PJJ6NB`) is hardcoded — no second var needed.
+- Add `SLACK_BOT_TOKEN` env var to the VPS (Golden adds server-side) to activate Slack alerts. Token source: check GitHub Actions secrets on automation repos. Channel default (`C08G7PJJ6NB`) is hardcoded — no second var needed.
 
 **Low priority / non-blocking:**
 - CI `alembic-round-trip` test failing — pre-existing issue, baseline migration `downgrade()` doesn't drop all tables it creates. Fix: add missing `op.drop_table()` calls for `facebook_campaigns`, `brands`, `customer_profiles`, `api_usage_logs`, `page_blacklist`, `keyword_blacklist`, `brand_scrapes`, `ad_styles`.
@@ -66,7 +76,7 @@ Full spec at `SLACK_INTELLIGENCE_SPEC.md`. Three trigger modes:
 - `backend/app/api/v1/slack_events.py` — inbound Slack Events API handler
 - `backend/app/services/campaign_intelligence_service.py` — data fetch + Gemini analysis
 - Extend `slack_service.py` — add `post_snapshot()`, `post_daily_summary()`, `post_threshold_alert()`
-- New Railway env vars: `SLACK_SIGNING_SECRET` (required), `SLACK_BOT_TOKEN` (already needed for auto-pause alerts)
+- New server env vars (Golden adds to VPS): `SLACK_SIGNING_SECRET` (required), `SLACK_BOT_TOKEN` (already needed for auto-pause alerts)
 - Slack app: add `app_mentions:read` scope, set Events API URL to `https://[backend]/api/v1/slack/events`
 
 **Open questions before building:**
@@ -80,7 +90,7 @@ Full spec at `SLACK_INTELLIGENCE_SPEC.md`. Three trigger modes:
 ### Everflow Integration (pending API key from Switchboard/Advertiser)
 Use case: cross-check Meta-reported leads against Everflow actual conversions to get ground-truth ROAS and detect junk traffic per ad set. Same endpoint/auth pattern as existing BHM Everflow reporting. Waiting on advertiser-scoped API key.
 
-**init_db.py behaviour (critical to remember):** On every Railway deploy, `init_db.py` runs `Base.metadata.create_all()` BEFORE Alembic. This creates every table in `models.py`. Any migration that calls `op.create_table()` MUST have the `has_table()` guard or it will crash on the second deploy. See Alembic rules section below.
+**init_db.py behaviour (critical to remember):** On every server restart/deploy, `init_db.py` runs `Base.metadata.create_all()` BEFORE Alembic. This creates every table in `models.py`. Any migration that calls `op.create_table()` MUST have the `has_table()` guard or it will crash on the second deploy. See Alembic rules section below.
 
 ---
 
@@ -117,13 +127,15 @@ This checklist exists because the same classes of bugs have broken production lo
 
 ### 7. Final gate before push
 - [ ] Read the diff one more time (`git diff HEAD`) and ask: "If this breaks, what would the symptom be and how would I fix it in under 5 minutes?"
-- [ ] If the answer involves a DB migration or a Railway rebuild, verify the fix path is clear.
+- [ ] If the answer involves a DB migration, verify the fix path is clear — Golden applies migrations on the VPS by restarting the server (which runs `alembic upgrade head` automatically).
 
 ---
 
-## Railway Startup Sequence (memorize this)
+## Startup Sequence (memorize this)
 
-Every deploy runs this exact CMD in order. If ANY step fails, the container exits and login is broken:
+**Hosting: AWS Lightsail VPS (not Railway — updated 2026-04-27)**
+
+Every server start runs this exact sequence in order. If ANY step fails, login is broken:
 
 ```
 python init_db.py          ← creates ALL model tables via Base.metadata.create_all()
@@ -154,7 +166,7 @@ Facebook Ad Automation App - A full-stack application for automating the lifecyc
 - Database: PostgreSQL on Railway
 - Storage: Cloudflare R2 (S3-compatible)
 - Testing: agent-browser (e2e), Vitest (unit)
-- Hosting: Railway (backend + frontend + database)
+- Hosting: AWS Lightsail VPS (migrated from Railway, 2026-04-27)
 
 ## Development Commands
 
@@ -357,11 +369,11 @@ Modal design requirements:
 
 **PostgreSQL is REQUIRED.** SQLite is deprecated and will cause startup errors.
 
-Production uses Railway PostgreSQL. Local dev connects to the same Railway database for shared data.
+Production uses PostgreSQL on the AWS Lightsail VPS. Local dev connects to the same production database for shared data.
 
 ### Local Development
 
-Uses Railway PostgreSQL (configured in `.env.local`). No local database setup needed.
+Uses the production PostgreSQL on the VPS (configured in `.env.local`). No local database setup needed.
 
 ### Environment Variables
 
@@ -391,11 +403,14 @@ VITE_FACEBOOK_API_VERSION=v24.0
 SECRET_KEY=...  # Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-**Railway Environment Variables** (set in dashboard):
-- `DATABASE_URL` → Use `${{Postgres.DATABASE_URL}}` to auto-sync with Postgres service
+**Server Environment Variables** (set on VPS by Golden — request via Slack `C041GSZD1NG`):
+- `DATABASE_URL` → PostgreSQL connection string on the VPS
 - `SECRET_KEY` → Strong random key for JWT auth
-- All R2_* variables for storage
+- All R2_* variables for Cloudflare R2 storage
 - All AI API keys
+- `REDTRACK_API_KEY` → Added 2026-04-27 ✅
+- `SLACK_BOT_TOKEN` → Pending confirmation from Golden
+- `SLACK_SIGNING_SECRET` → Needed for Slack intelligence bot (Phase 2)
 
 ## Search & Refactoring Tools
 
@@ -444,11 +459,11 @@ SECRET_KEY=...  # Generate with: python -c "import secrets; print(secrets.token_
 
 ## Deployment
 
-**Railway Setup:**
-1. Backend auto-deploys from `main` branch via Dockerfile
-2. Frontend auto-deploys from `main` branch via Nixpacks
-3. Database is Railway PostgreSQL service
-4. Custom domain → CNAME to Railway
+**Deployment (AWS Lightsail VPS):**
+1. Push changes to `sunbunzz627` fork → PR to `BHM-Dev:develop`
+2. Golden reviews, merges, pulls to VPS, and restarts server
+3. Server restart runs: `python init_db.py && alembic upgrade head && uvicorn`
+4. Always notify Golden on Slack (`C041GSZD1NG`) when a PR includes DB migrations
 
 **Post-Deploy Verification:**
 ```bash
@@ -507,7 +522,7 @@ agent-browser close               # Close browser
 - Frontend API URL set via `VITE_API_URL` env var (build-time, not runtime)
 - When adding new origins: update CORS in `main.py` AND CSP in `index.html`
 - Ad account IDs auto-prefixed with 'act_' if missing (facebook_service.py)
-- Local dev uses same Railway DB + R2 as production (shared data)
+- Local dev uses same VPS DB + R2 as production (shared data)
 
 ## Alembic / Database Migration Rules (hard-won — April 2026)
 
