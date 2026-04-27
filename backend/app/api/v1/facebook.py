@@ -1,4 +1,5 @@
 import logging
+import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Dict, Any, Optional
 from app.services.facebook_service import FacebookService
@@ -82,6 +83,94 @@ def read_pages(
         return pages
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sync")
+def sync_from_meta(
+    ad_account_id: Optional[str] = None,
+    service: FacebookService = Depends(get_facebook_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Import all campaigns and ad sets from Meta into the local DB.
+
+    Safe to run multiple times — uses fb_campaign_id / fb_adset_id to upsert,
+    so existing records are updated rather than duplicated.
+    Returns counts of created vs. updated records.
+    """
+    try:
+        campaigns_raw = service.get_campaigns(ad_account_id=ad_account_id)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to fetch campaigns from Meta: {e}")
+
+    created_campaigns = 0
+    updated_campaigns = 0
+    created_adsets = 0
+    updated_adsets = 0
+
+    for c in campaigns_raw:
+        fb_id = str(c.get("id") or c.get(FacebookCampaign.__table__.c.get("fb_campaign_id", "id"), ""))
+        if not fb_id:
+            continue
+
+        existing = db.query(FacebookCampaign).filter(FacebookCampaign.fb_campaign_id == fb_id).first()
+        budget_type = "CBO" if c.get("daily_budget") or c.get("lifetime_budget") else "ABO"
+        if existing:
+            existing.name = c.get("name", existing.name)
+            existing.status = c.get("status", existing.status)
+            updated_campaigns += 1
+            campaign_db = existing
+        else:
+            campaign_db = FacebookCampaign(
+                id=str(uuid.uuid4()),
+                name=c.get("name", "Imported Campaign"),
+                objective=c.get("objective", "OUTCOME_LEADS"),
+                budget_type=budget_type,
+                status=c.get("status", "PAUSED"),
+                fb_campaign_id=fb_id,
+                special_ad_categories=c.get("special_ad_categories", []),
+            )
+            db.add(campaign_db)
+            created_campaigns += 1
+
+        db.flush()  # ensure campaign_db.id is available
+
+        # Sync ad sets for this campaign
+        try:
+            adsets_raw = service.get_adsets(campaign_id=fb_id)
+        except Exception:
+            continue
+
+        for a in adsets_raw:
+            fb_adset_id = str(a.get("id") or "")
+            if not fb_adset_id:
+                continue
+
+            existing_as = db.query(FacebookAdSet).filter(FacebookAdSet.fb_adset_id == fb_adset_id).first()
+            if existing_as:
+                existing_as.name = a.get("name", existing_as.name)
+                existing_as.status = a.get("status", existing_as.status)
+                existing_as.fb_adset_id = fb_adset_id
+                updated_adsets += 1
+            else:
+                db.add(FacebookAdSet(
+                    id=str(uuid.uuid4()),
+                    campaign_id=campaign_db.id,
+                    name=a.get("name", "Imported Ad Set"),
+                    optimization_goal=a.get("optimization_goal", "LEAD_GENERATION"),
+                    status=a.get("status", "PAUSED"),
+                    fb_adset_id=fb_adset_id,
+                    daily_budget=int(a["daily_budget"]) if a.get("daily_budget") else None,
+                    budget_schedule_type="DAILY" if a.get("daily_budget") else "LIFETIME",
+                ))
+                created_adsets += 1
+
+    db.commit()
+    return {
+        "message": "Sync complete",
+        "campaigns": {"created": created_campaigns, "updated": updated_campaigns},
+        "adsets": {"created": created_adsets, "updated": updated_adsets},
+    }
 
 
 @router.get("/adsets/saved")

@@ -210,6 +210,7 @@ export default function CampaignPerformance() {
   const [datePreset, setDatePreset] = useState('last_7d');
   const [adAccountId, setAdAccountId] = useState('');
   const [loadingAdsets, setLoadingAdsets] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [checking, setChecking] = useState(false);
   const [showAddRule, setShowAddRule] = useState(false);
   const [lastCheckResult, setLastCheckResult] = useState(null);
@@ -269,6 +270,22 @@ export default function CampaignPerformance() {
     } catch (e) { showError(e.message); }
   };
 
+  const syncFromMeta = async () => {
+    setSyncing(true);
+    showInfo('Importing campaigns and ad sets from Meta...');
+    try {
+      const params = adAccountId ? `?ad_account_id=${adAccountId}` : '';
+      const res = await authFetch(`${API_BASE}/facebook/sync${params}`, { method: 'POST' });
+      if (!res.ok) throw new Error('Sync failed');
+      const result = await res.json();
+      showSuccess(
+        `Sync complete — ${result.campaigns.created} campaigns, ${result.adsets.created} ad sets imported. ${result.adsets.updated} ad sets updated.`
+      );
+      loadAdsets();
+    } catch (e) { showError(e.message); }
+    finally { setSyncing(false); }
+  };
+
   const runCheck = async () => {
     setChecking(true);
     showInfo('Checking all rules against live Meta data...');
@@ -303,7 +320,16 @@ export default function CampaignPerformance() {
             Live Meta Insights · Rules checked every 30 minutes automatically
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            onClick={syncFromMeta}
+            disabled={syncing}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
+            title="Import all campaigns and ad sets from Meta into this app"
+          >
+            <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+            {syncing ? 'Syncing...' : 'Sync from Meta'}
+          </button>
           <select
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
             value={datePreset}
