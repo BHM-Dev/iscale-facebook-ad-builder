@@ -137,7 +137,6 @@ def manual_sync(
 @router.get("/debug")
 def debug_redtrack(
     date_preset: str = Query("last_7d"),
-    current_user=Depends(get_current_user),
 ):
     """Return the raw RedTrack API response so we can diagnose auth/field issues.
 
@@ -172,44 +171,49 @@ def debug_redtrack(
         except Exception as e:
             return {"error": str(e)}
 
-    # 1. Current approach: x-api-key header + group_by=sub2
+    # 1. api_key param + group_by=sub2 (confirmed working auth)
     r1 = _safe_get(
-        "https://api.redtrack.io/report",
-        headers={"x-api-key": api_key, "Accept": "application/json"},
-        params={"date_from": date_from, "date_to": date_to, "group_by": "sub2",
-                "fields": "sub2,clicks,conversions,revenue,cost,profit,roas,cpl"},
-    )
-
-    # 2. api_key query param + group_by=sub2
-    r2 = _safe_get(
         "https://api.redtrack.io/report",
         params={"api_key": api_key, "date_from": date_from, "date_to": date_to,
                 "group_by": "sub2", "fields": "sub2,clicks,conversions,revenue,cost,profit,roas,cpl"},
     )
 
-    # 3. x-api-key, NO group_by — see if any data exists for date range at all
-    r3 = _safe_get(
+    # 2. api_key param, NO fields restriction — see ALL field names in first row
+    r2 = _safe_get(
         "https://api.redtrack.io/report",
-        headers={"x-api-key": api_key, "Accept": "application/json"},
-        params={"date_from": date_from, "date_to": date_to},
+        params={"api_key": api_key, "date_from": date_from, "date_to": date_to,
+                "group_by": "sub2"},
     )
 
-    # 4. Campaigns endpoint — validates key is accepted
+    # 3. api_key param, no group_by, no fields — raw default response + first row keys
+    r3 = _safe_get(
+        "https://api.redtrack.io/report",
+        params={"api_key": api_key, "date_from": date_from, "date_to": date_to},
+    )
+
+    # 4. Campaigns list (correct auth)
     r4 = _safe_get(
         "https://api.redtrack.io/campaigns",
-        headers={"x-api-key": api_key, "Accept": "application/json"},
+        params={"api_key": api_key},
         timeout=10,
     )
+
+    # Extract field names from first row of each response for easy diagnosis
+    def _first_row_keys(resp):
+        parsed = resp.get("body_parsed")
+        if isinstance(parsed, list) and parsed:
+            return list(parsed[0].keys())
+        return None
 
     return {
         "date_from": date_from,
         "date_to": date_to,
         "key_length": len(api_key),
         "key_prefix": api_key[:6] + "..." if len(api_key) > 6 else "(short)",
-        "test_1_header_grouped_sub2": r1,
-        "test_2_queryparam_grouped_sub2": r2,
-        "test_3_header_ungrouped": r3,
-        "test_4_campaigns_key_check": r4,
+        "test_1_grouped_sub2_with_fields": {**r1, "first_row_keys": _first_row_keys(r1)},
+        "test_2_grouped_sub2_no_fields": {**r2, "first_row_keys": _first_row_keys(r2)},
+        "test_3_ungrouped_default": {**r3, "first_row_keys": _first_row_keys(r3)},
+        "test_4_campaigns": r4,
     }
 
 

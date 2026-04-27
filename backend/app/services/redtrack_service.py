@@ -31,7 +31,11 @@ class RedTrackService:
         return bool(self.api_key)
 
     def _headers(self) -> dict:
-        return {"x-api-key": self.api_key, "Accept": "application/json"}
+        # RedTrack requires api_key as a query param — x-api-key header returns 401
+        return {"Accept": "application/json"}
+
+    def _auth_params(self) -> dict:
+        return {"api_key": self.api_key}
 
     # ── Date helpers ──────────────────────────────────────────────────────────
 
@@ -88,6 +92,7 @@ class RedTrackService:
                 f"{BASE_URL}/report",
                 headers=self._headers(),
                 params={
+                    **self._auth_params(),
                     "date_from": date_from,
                     "date_to": date_to,
                     "group_by": "sub2",
@@ -143,6 +148,7 @@ class RedTrackService:
             resp = httpx.get(
                 f"{BASE_URL}/campaigns",
                 headers=self._headers(),
+                params=self._auth_params(),
                 timeout=10,
             )
             resp.raise_for_status()
