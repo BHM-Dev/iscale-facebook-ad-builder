@@ -171,31 +171,31 @@ def debug_redtrack(
         except Exception as e:
             return {"error": str(e)}
 
-    # 1. api_key param + group_by=sub2 (confirmed working auth)
+    # httpx supports tuple-list params for repeated keys (PHP array syntax)
+    base = [("api_key", api_key), ("date_from", date_from), ("date_to", date_to)]
+
+    # 1. group[]=sub2  (PHP array syntax — most common for tracker APIs)
     r1 = _safe_get(
         "https://api.redtrack.io/report",
-        params={"api_key": api_key, "date_from": date_from, "date_to": date_to,
-                "group_by": "sub2", "fields": "sub2,clicks,conversions,revenue,cost,profit,roas,cpl"},
+        params=base + [("group[]", "sub2")],
     )
 
-    # 2. api_key param, NO fields restriction — see ALL field names in first row
+    # 2. group[]=sub2 + group[]=date  (sub2 + date breakdown)
     r2 = _safe_get(
         "https://api.redtrack.io/report",
-        params={"api_key": api_key, "date_from": date_from, "date_to": date_to,
-                "group_by": "sub2"},
+        params=base + [("group[]", "sub2"), ("group[]", "date")],
     )
 
-    # 3. api_key param, no group_by, no fields — raw default response + first row keys
+    # 3. group=sub2  (simple string, no brackets)
     r3 = _safe_get(
         "https://api.redtrack.io/report",
-        params={"api_key": api_key, "date_from": date_from, "date_to": date_to},
+        params=base + [("group", "sub2")],
     )
 
-    # 4. Campaigns list (correct auth)
+    # 4. Default (no group param) — baseline showing date-grouped rows we already know works
     r4 = _safe_get(
-        "https://api.redtrack.io/campaigns",
-        params={"api_key": api_key},
-        timeout=10,
+        "https://api.redtrack.io/report",
+        params={"api_key": api_key, "date_from": date_from, "date_to": date_to},
     )
 
     # Extract field names from first row of each response for easy diagnosis
@@ -210,10 +210,10 @@ def debug_redtrack(
         "date_to": date_to,
         "key_length": len(api_key),
         "key_prefix": api_key[:6] + "..." if len(api_key) > 6 else "(short)",
-        "test_1_grouped_sub2_with_fields": {**r1, "first_row_keys": _first_row_keys(r1)},
-        "test_2_grouped_sub2_no_fields": {**r2, "first_row_keys": _first_row_keys(r2)},
-        "test_3_ungrouped_default": {**r3, "first_row_keys": _first_row_keys(r3)},
-        "test_4_campaigns": r4,
+        "test_1_group_brackets_sub2": {**r1, "row_count": r1.get("row_count"), "first_row_keys": _first_row_keys(r1)},
+        "test_2_group_brackets_sub2_and_date": {**r2, "row_count": r2.get("row_count"), "first_row_keys": _first_row_keys(r2)},
+        "test_3_group_plain_sub2": {**r3, "row_count": r3.get("row_count"), "first_row_keys": _first_row_keys(r3)},
+        "test_4_default_date_grouped_baseline": {**r4, "row_count": r4.get("row_count"), "first_row_keys": _first_row_keys(r4)},
     }
 
 
