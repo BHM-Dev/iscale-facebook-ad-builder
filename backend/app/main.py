@@ -216,8 +216,9 @@ async def startup_event():
             finally:
                 db.close()
 
-        # Store meta sync function on app state so auth endpoint can trigger it on login
+        # Store sync functions on app state so auth endpoint can trigger them on login
         app.state.meta_sync_fn = scheduled_meta_sync
+        app.state.rt_sync_fn = scheduled_redtrack_sync
 
         scheduler.add_job(scheduled_check, 'interval', minutes=30, id='auto_pause_check')
         scheduler.add_job(scheduled_redtrack_sync, 'interval', minutes=30, id='redtrack_sync')
