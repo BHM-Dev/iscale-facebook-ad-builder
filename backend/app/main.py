@@ -216,14 +216,15 @@ async def startup_event():
             finally:
                 db.close()
 
+        # Store meta sync function on app state so auth endpoint can trigger it on login
+        app.state.meta_sync_fn = scheduled_meta_sync
+
         scheduler.add_job(scheduled_check, 'interval', minutes=30, id='auto_pause_check')
         scheduler.add_job(scheduled_redtrack_sync, 'interval', minutes=30, id='redtrack_sync')
-        scheduler.add_job(scheduled_meta_sync, 'interval', minutes=30, id='meta_sync')
-        # Also run meta sync immediately on startup so the table is populated right away
-        scheduler.add_job(scheduled_meta_sync, 'date', id='meta_sync_startup')
+        # Meta campaign sync runs on login (not on a timer — no value syncing while Joel sleeps)
         scheduler.start()
         app.state.scheduler = scheduler
-        print("✅ Scheduler started (auto-pause + RedTrack + Meta sync, every 30 min)")
+        print("✅ Scheduler started (auto-pause + RedTrack every 30 min | Meta sync on login)")
     except Exception as e:
         print(f"⚠️  Could not start auto-pause scheduler: {e}")
 

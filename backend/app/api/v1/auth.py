@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Form, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Form, Request
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 
@@ -71,6 +71,7 @@ async def register(
 @limiter.limit("5/minute", methods=["POST"])
 async def login(
     request: Request,
+    background_tasks: BackgroundTasks,
     username: str = Form(...),
     password: str = Form(...),
     db: Session = Depends(get_db)
@@ -104,6 +105,11 @@ async def login(
     db.add(refresh_token_obj)
     db.commit()
 
+    # Fire Meta campaign sync in background (non-blocking)
+    meta_sync_fn = getattr(request.app.state, "meta_sync_fn", None)
+    if meta_sync_fn:
+        background_tasks.add_task(meta_sync_fn)
+
     return Token(
         access_token=access_token,
         refresh_token=refresh_token_str
@@ -112,7 +118,7 @@ async def login(
 
 @router.post("/login/json", response_model=Token)
 @limiter.limit("5/minute", methods=["POST"])
-async def login_json(request: Request, user_data: UserLogin, db: Session = Depends(get_db)):
+async def login_json(request: Request, background_tasks: BackgroundTasks, user_data: UserLogin, db: Session = Depends(get_db)):
     """Login with JSON body and get access and refresh tokens"""
     user = db.query(User).filter(User.email == user_data.email).first()
 
@@ -141,6 +147,11 @@ async def login_json(request: Request, user_data: UserLogin, db: Session = Depen
     )
     db.add(refresh_token_obj)
     db.commit()
+
+    # Fire Meta campaign sync in background (non-blocking)
+    meta_sync_fn = getattr(request.app.state, "meta_sync_fn", None)
+    if meta_sync_fn:
+        background_tasks.add_task(meta_sync_fn)
 
     return Token(
         access_token=access_token,
