@@ -212,7 +212,7 @@ def get_insights(
 
 @router.get("/insights-bulk")
 def get_insights_bulk(
-    ad_account_id: str = Query(...),
+    ad_account_id: Optional[str] = Query(None),
     date_preset: str = Query("last_7d"),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),

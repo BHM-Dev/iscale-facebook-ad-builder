@@ -23,27 +23,28 @@ function InsightsCard({ fbAdsetId, adsetName, adAccountId, datePreset, bulkData,
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Only do an individual fetch if bulk failed or there's no ad account ID
-  const needsIndividualFetch = !adAccountId && !!fbAdsetId;
+  // Individual fetch only fires as fallback if bulk explicitly errored out
+  const needsIndividualFetch = !!bulkError && !!fbAdsetId;
 
   const load = useCallback(async () => {
     if (!needsIndividualFetch) return;
     setLoading(true); setError(null);
     try {
       const params = new URLSearchParams({ date_preset: datePreset });
+      if (adAccountId) params.set('ad_account_id', adAccountId);
       const res = await authFetch(`${API_BASE}/auto-pause/insights/${fbAdsetId}?${params}`);
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
       setData(await res.json());
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
-  }, [fbAdsetId, datePreset, needsIndividualFetch]);
+  }, [fbAdsetId, datePreset, adAccountId, needsIndividualFetch]);
 
   useEffect(() => { load(); }, [load]);
 
-  // Prefer bulk data when available
+  // Prefer bulk data; fall back to individual fetch result
   const resolvedData = (bulkData && fbAdsetId && bulkData[fbAdsetId]) || data;
   const resolvedLoading = needsIndividualFetch ? loading : bulkLoading;
-  const resolvedError = needsIndividualFetch ? error : bulkError;
+  const resolvedError = needsIndividualFetch ? error : (bulkError && !data ? bulkError : null);
 
   if (!fbAdsetId) return <span className="text-xs text-gray-400 italic">Not launched yet</span>;
   if (resolvedLoading) return <span className="text-xs text-gray-400 animate-pulse">Loading...</span>;
@@ -250,11 +251,11 @@ export default function CampaignPerformance() {
   }, []);
 
   const loadBulkInsights = useCallback(async (accountId, preset) => {
-    if (!accountId) return;
     setBulkInsightsLoading(true);
     setBulkInsightsError(null);
     try {
-      const params = new URLSearchParams({ ad_account_id: accountId, date_preset: preset });
+      const params = new URLSearchParams({ date_preset: preset });
+      if (accountId) params.set('ad_account_id', accountId);
       const res = await authFetch(`${API_BASE}/auto-pause/insights-bulk?${params}`);
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed to load insights'); }
       setBulkInsights(await res.json());
@@ -265,24 +266,27 @@ export default function CampaignPerformance() {
     }
   }, []);
 
-  // Auto-populate Ad Account ID from the connected Facebook account, then fetch bulk insights
+  // On mount: try to get account ID, then fire bulk insights either way
   useEffect(() => {
     authFetch(`${API_BASE}/facebook/accounts`)
       .then(res => res.ok ? res.json() : null)
       .then(accounts => {
-        if (Array.isArray(accounts) && accounts.length > 0) {
-          const id = accounts[0].account_id || '';
-          setAdAccountId(id);
-          if (id) loadBulkInsights(id, datePreset);
-        }
+        const id = Array.isArray(accounts) && accounts.length > 0
+          ? (accounts[0].account_id || '')
+          : '';
+        setAdAccountId(id);
+        loadBulkInsights(id, 'last_7d');
       })
-      .catch(() => {}); // silent fail — field stays editable
+      .catch(() => {
+        // accounts fetch failed — still fire bulk with no account ID (backend uses its default)
+        loadBulkInsights('', 'last_7d');
+      });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-fetch bulk insights when date preset or account ID changes
+  // Re-fetch bulk insights when date preset changes
   useEffect(() => {
-    if (adAccountId) loadBulkInsights(adAccountId, datePreset);
-  }, [datePreset, adAccountId, loadBulkInsights]);
+    if (datePreset !== 'last_7d') loadBulkInsights(adAccountId, datePreset);
+  }, [datePreset]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadAdsets(); loadRules(); }, [loadAdsets, loadRules]);
 
