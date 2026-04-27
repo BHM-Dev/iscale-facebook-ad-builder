@@ -65,6 +65,30 @@ def get_report(
     }
 
 
+@router.get("/report/sub1")
+def get_report_sub1(
+    date_preset: str = Query("last_7d"),
+    current_user=Depends(get_current_user),
+):
+    """RedTrack report grouped by sub1 (= Meta ad ID).
+
+    sub1={{ad.id}} is already set in the tracking URL template.
+    Returns dict keyed by fb_ad_id → metrics.
+    """
+    svc = _svc()
+    if not svc.is_configured():
+        return {"configured": False, "data": {}}
+
+    date_from, date_to = svc.preset_to_dates(date_preset)
+    data = svc.get_report_by_sub(date_from, date_to, group_field="sub1")
+    return {
+        "configured": True,
+        "date_preset": date_preset,
+        "ad_count": len(data),
+        "data": data,
+    }
+
+
 @router.get("/adset/{fb_adset_id}")
 def get_adset(
     fb_adset_id: str,

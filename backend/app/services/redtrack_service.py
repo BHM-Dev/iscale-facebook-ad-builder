@@ -129,6 +129,56 @@ class RedTrackService:
             logger.error("RedTrack fetch error: %s", e)
             return {}
 
+    def get_report_by_sub(
+        self,
+        date_from: str,
+        date_to: str,
+        group_field: str = "sub2",
+    ) -> dict:
+        """Generic report grouped by any sub parameter (sub2, sub3, etc.).
+
+        group_field: 'sub2' (adset ID) or 'sub3' (ad ID)
+        Returns dict keyed by the sub field value → metrics.
+        """
+        if not self.is_configured():
+            return {}
+        try:
+            resp = httpx.get(
+                f"{BASE_URL}/report",
+                headers=self._headers(),
+                params={
+                    **self._auth_params(),
+                    "date_from": date_from,
+                    "date_to": date_to,
+                    "group": group_field,
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+            rows = resp.json()
+            result = {}
+            for row in (rows if isinstance(rows, list) else rows.get("data", [])):
+                key = str(row.get(group_field) or "").strip()
+                if not key or key == "0":
+                    continue
+                result[key] = {
+                    "conversions": int(row.get("total_conversions") or 0),
+                    "revenue":     round(float(row.get("total_revenue") or 0), 2),
+                    "cost":        round(float(row.get("cost")          or 0), 2),
+                    "profit":      round(float(row.get("profit")        or 0), 2),
+                    "roas":        round(float(row.get("roas")          or 0), 2),
+                    "cpl":         round(float(row.get("cpa")           or 0), 2),
+                    "clicks":      int(row.get("clicks") or 0),
+                }
+            logger.info("RedTrack %s: fetched %d rows (%s → %s)", group_field, len(result), date_from, date_to)
+            return result
+        except httpx.HTTPStatusError as e:
+            logger.error("RedTrack HTTP error: %s %s", e.response.status_code, e.response.text)
+            return {}
+        except Exception as e:
+            logger.error("RedTrack fetch error: %s", e)
+            return {}
+
     def get_report_by_adset_preset(self, date_preset: str = "last_7d") -> dict:
         """Convenience wrapper — accepts Meta-style date presets."""
         date_from, date_to = self.preset_to_dates(date_preset)

@@ -275,6 +275,24 @@ def get_insights_bulk(
     return result
 
 
+@router.get("/ads-bulk")
+def get_ads_bulk(
+    ad_account_id: Optional[str] = Query(None),
+    date_preset: str = Query("last_7d"),
+    current_user=Depends(get_current_user),
+):
+    """Fetch Meta Insights for ALL ads in a single API call.
+
+    Returns a dict keyed by fb_adset_id → list of ads sorted by spend desc:
+      { fb_adset_id: [ { ad_id, ad_name, spend, leads, cpl, impressions, clicks, ctr, roas } ] }
+    """
+    svc = FacebookService()
+    try:
+        return svc.get_account_ads_insights_bulk(ad_account_id=ad_account_id, date_preset=date_preset)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.get("/insights-raw/{fb_adset_id}")
 def get_insights_raw(
     fb_adset_id: str,

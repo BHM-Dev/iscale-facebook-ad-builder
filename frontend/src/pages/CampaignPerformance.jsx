@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { PauseCircle, PlayCircle, Trash2, Plus, RefreshCw, AlertTriangle, CheckCircle, TrendingDown, DollarSign, Target, Zap } from 'lucide-react';
+import { PauseCircle, PlayCircle, Trash2, Plus, RefreshCw, AlertTriangle, CheckCircle, TrendingDown, DollarSign, Target, Zap, ChevronDown, ChevronRight } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { authFetch } from '../lib/facebookApi';
 
@@ -111,6 +111,100 @@ function RTStat({ label, value, highlight }) {
     <div className="flex flex-col">
       <span className="text-xs text-blue-400">{label}</span>
       <span className={`font-semibold ${highlight ? 'text-red-600' : 'text-blue-700'}`}>{value}</span>
+    </div>
+  );
+}
+
+// ── Creative breakdown table (ad-level) ──────────────────────────────────────
+function AdsBreakdown({ fbAdsetId, adsBulk, adsLoading, rtAdsBulk }) {
+  if (adsLoading) return (
+    <div className="mt-3 pl-10 text-xs text-gray-400 animate-pulse">Loading creatives...</div>
+  );
+
+  const ads = adsBulk?.[fbAdsetId];
+  if (!ads || ads.length === 0) return (
+    <div className="mt-3 pl-10 text-xs text-gray-400 italic">No ad-level data for this period.</div>
+  );
+
+  const maxSpend = Math.max(...ads.map(a => a.spend), 0.01);
+
+  return (
+    <div className="mt-3 rounded-lg border border-gray-100 overflow-hidden">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="bg-gray-50 border-b border-gray-100">
+            <th className="text-left px-3 py-2 font-medium text-gray-500 w-1/3">Creative</th>
+            <th className="text-right px-3 py-2 font-medium text-gray-500">Spend</th>
+            <th className="text-right px-3 py-2 font-medium text-gray-500">Leads</th>
+            <th className="text-right px-3 py-2 font-medium text-gray-500">CPL</th>
+            <th className="text-right px-3 py-2 font-medium text-gray-500">CTR</th>
+            <th className="text-right px-3 py-2 font-medium text-gray-500">Impr.</th>
+            {ads.some(a => a.roas != null) && (
+              <th className="text-right px-3 py-2 font-medium text-gray-500">ROAS</th>
+            )}
+            {rtAdsBulk && (
+              <>
+                <th className="text-right px-3 py-2 font-medium text-blue-400">RT Convs</th>
+                <th className="text-right px-3 py-2 font-medium text-blue-400">RT CPL</th>
+                <th className="text-right px-3 py-2 font-medium text-blue-400">RT ROAS</th>
+              </>
+            )}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-50">
+          {ads.map((ad, i) => {
+            const rt = rtAdsBulk?.[ad.ad_id];
+            const isTop = i === 0 && ads.length > 1 && ad.spend > 0;
+            const isWorse = ad.cpl != null && ads.some(a => a.cpl != null && a.cpl < ad.cpl * 0.7);
+            const spendPct = maxSpend > 0 ? (ad.spend / maxSpend) * 100 : 0;
+
+            return (
+              <tr key={ad.ad_id} className={`${isTop ? 'bg-green-50/40' : ''} hover:bg-gray-50/60 transition-colors`}>
+                <td className="px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    {isTop && <span className="text-green-600 text-xs font-bold">↑</span>}
+                    <div>
+                      <div className="font-medium text-gray-800 leading-tight truncate max-w-[200px]" title={ad.ad_name}>
+                        {ad.ad_name || ad.ad_id}
+                      </div>
+                      {/* Spend bar */}
+                      <div className="mt-1 h-1 bg-gray-100 rounded-full w-24">
+                        <div
+                          className="h-1 rounded-full bg-indigo-400"
+                          style={{ width: `${spendPct}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-3 py-2 text-right font-medium text-gray-700">${ad.spend.toFixed(0)}</td>
+                <td className="px-3 py-2 text-right text-gray-700">{ad.leads}</td>
+                <td className={`px-3 py-2 text-right font-medium ${ad.cpl != null && ad.cpl > 60 ? 'text-red-600' : 'text-gray-700'}`}>
+                  {ad.cpl != null ? `$${ad.cpl.toFixed(2)}` : '—'}
+                </td>
+                <td className="px-3 py-2 text-right text-gray-600">{(ad.ctr * 100).toFixed(2)}%</td>
+                <td className="px-3 py-2 text-right text-gray-500">{ad.impressions.toLocaleString()}</td>
+                {ads.some(a => a.roas != null) && (
+                  <td className={`px-3 py-2 text-right font-medium ${ad.roas != null && ad.roas < 1 ? 'text-red-600' : 'text-gray-700'}`}>
+                    {ad.roas != null ? `${ad.roas.toFixed(2)}x` : '—'}
+                  </td>
+                )}
+                {rtAdsBulk && (
+                  <>
+                    <td className="px-3 py-2 text-right text-blue-700">{rt ? rt.conversions : '—'}</td>
+                    <td className={`px-3 py-2 text-right font-medium ${rt?.cpl != null && rt.cpl > 60 ? 'text-red-600' : 'text-blue-700'}`}>
+                      {rt?.cpl != null ? `$${rt.cpl.toFixed(2)}` : '—'}
+                    </td>
+                    <td className={`px-3 py-2 text-right font-medium ${rt?.roas != null && rt.roas < 1 ? 'text-red-600' : 'text-blue-700'}`}>
+                      {rt?.roas != null ? `${rt.roas.toFixed(2)}x` : '—'}
+                    </td>
+                  </>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -233,6 +327,12 @@ export default function CampaignPerformance() {
   const [bulkInsightsLoading, setBulkInsightsLoading] = useState(false);
   const [bulkInsightsError, setBulkInsightsError]   = useState(null);
 
+  // Ad-level (creative) breakdown state
+  const [adsBulk, setAdsBulk]           = useState(null);
+  const [adsLoading, setAdsLoading]     = useState(false);
+  const [rtAdsBulk, setRtAdsBulk]       = useState(null);  // RT data keyed by ad_id (sub3)
+  const [expandedAdsets, setExpandedAdsets] = useState(new Set());
+
   const loadAdsets = useCallback(async () => {
     setLoadingAdsets(true);
     try {
@@ -268,6 +368,34 @@ export default function CampaignPerformance() {
     }
   }, []);
 
+  const loadAdsBulk = useCallback(async (accountId, preset) => {
+    setAdsLoading(true);
+    try {
+      const params = new URLSearchParams({ date_preset: preset });
+      if (accountId) params.set('ad_account_id', accountId);
+      const res = await authFetch(`${API_BASE}/auto-pause/ads-bulk?${params}`);
+      if (!res.ok) return; // non-fatal — ad breakdown is supplementary
+      setAdsBulk(await res.json());
+    } catch (e) {
+      // silently fail — creative breakdown is supplementary
+    } finally {
+      setAdsLoading(false);
+    }
+  }, []);
+
+  const loadRtAdsBulk = useCallback(async (preset) => {
+    // RT ad-level data requires sub3={{ad.id}} in tracking URLs
+    // Returns dict keyed by ad_id → {conversions, revenue, cost, profit, roas, cpl}
+    try {
+      const res = await authFetch(`${API_BASE}/redtrack/report/sub1?date_preset=${preset}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.configured && data.data) setRtAdsBulk(data.data);
+    } catch (e) {
+      // silently fail — RT ad-level is supplementary
+    }
+  }, []);
+
   // On mount: try to get account ID, then fire bulk insights either way
   useEffect(() => {
     authFetch(`${API_BASE}/facebook/accounts`)
@@ -278,16 +406,23 @@ export default function CampaignPerformance() {
           : '';
         setAdAccountId(id);
         loadBulkInsights(id, 'last_7d');
+        loadAdsBulk(id, 'last_7d');
+        loadRtAdsBulk('last_7d');
       })
       .catch(() => {
-        // accounts fetch failed — still fire bulk with no account ID (backend uses its default)
         loadBulkInsights('', 'last_7d');
+        loadAdsBulk('', 'last_7d');
+        loadRtAdsBulk('last_7d');
       });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-fetch bulk insights when date preset changes
+  // Re-fetch all bulk data when date preset changes
   useEffect(() => {
-    if (datePreset !== 'last_7d') loadBulkInsights(adAccountId, datePreset);
+    if (datePreset !== 'last_7d') {
+      loadBulkInsights(adAccountId, datePreset);
+      loadAdsBulk(adAccountId, datePreset);
+      loadRtAdsBulk(datePreset);
+    }
   }, [datePreset]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadAdsets(); loadRules(); }, [loadAdsets, loadRules]);
@@ -533,48 +668,78 @@ export default function CampaignPerformance() {
           </div>
         ) : (
           <div className="divide-y divide-gray-50">
-            {visibleAdsets.map(adset => (
-              <div key={adset.id} className="px-6 py-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center flex-wrap gap-2">
-                    <span className="font-medium text-gray-900 text-sm">{adset.name}</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                      adset.status === 'ACTIVE'
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-gray-100 text-gray-500'
-                    }`}>
-                      {adset.status}
-                    </span>
-                    {(() => {
-                      const adsetRules = rules.filter(r => r.adset_id === adset.id);
-                      const activeRule = adsetRules.find(r => r.is_active && !r.triggered_at);
-                      const triggeredRule = adsetRules.find(r => r.triggered_at);
-                      if (triggeredRule) return (
-                        <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700 flex items-center gap-1">
-                          <PauseCircle size={10} /> Rule triggered
+            {visibleAdsets.map(adset => {
+              const isExpanded = expandedAdsets.has(adset.fb_adset_id);
+              const hasAds = adsBulk && adsBulk[adset.fb_adset_id]?.length > 0;
+              return (
+                <div key={adset.id} className="px-6 py-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center flex-wrap gap-2">
+                      {/* Expand / collapse toggle */}
+                      <button
+                        onClick={() => setExpandedAdsets(prev => {
+                          const next = new Set(prev);
+                          next.has(adset.fb_adset_id) ? next.delete(adset.fb_adset_id) : next.add(adset.fb_adset_id);
+                          return next;
+                        })}
+                        className="text-gray-400 hover:text-gray-600 transition-colors"
+                        title={isExpanded ? 'Hide creative breakdown' : 'Show creative breakdown'}
+                      >
+                        {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      </button>
+                      <span className="font-medium text-gray-900 text-sm">{adset.name}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        adset.status === 'ACTIVE'
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-gray-100 text-gray-500'
+                      }`}>
+                        {adset.status}
+                      </span>
+                      {hasAds && (
+                        <span className="text-xs text-gray-400">
+                          {adsBulk[adset.fb_adset_id].length} creative{adsBulk[adset.fb_adset_id].length !== 1 ? 's' : ''}
                         </span>
-                      );
-                      if (activeRule) return (
-                        <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-indigo-50 text-indigo-600 flex items-center gap-1">
-                          <Zap size={10} /> Rule active
-                        </span>
-                      );
-                      return null;
-                    })()}
+                      )}
+                      {(() => {
+                        const adsetRules = rules.filter(r => r.adset_id === adset.id);
+                        const activeRule = adsetRules.find(r => r.is_active && !r.triggered_at);
+                        const triggeredRule = adsetRules.find(r => r.triggered_at);
+                        if (triggeredRule) return (
+                          <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700 flex items-center gap-1">
+                            <PauseCircle size={10} /> Rule triggered
+                          </span>
+                        );
+                        if (activeRule) return (
+                          <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-indigo-50 text-indigo-600 flex items-center gap-1">
+                            <Zap size={10} /> Rule active
+                          </span>
+                        );
+                        return null;
+                      })()}
+                    </div>
+                    <span className="text-xs text-gray-400">{adset.fb_adset_id}</span>
                   </div>
-                  <span className="text-xs text-gray-400">{adset.fb_adset_id}</span>
+                  <InsightsCard
+                    fbAdsetId={adset.fb_adset_id}
+                    adsetName={adset.name}
+                    adAccountId={adAccountId}
+                    datePreset={datePreset}
+                    bulkData={bulkInsights}
+                    bulkLoading={bulkInsightsLoading}
+                    bulkError={bulkInsightsError}
+                  />
+                  {/* Creative breakdown — only renders when expanded */}
+                  {isExpanded && (
+                    <AdsBreakdown
+                      fbAdsetId={adset.fb_adset_id}
+                      adsBulk={adsBulk}
+                      adsLoading={adsLoading}
+                      rtAdsBulk={rtAdsBulk}
+                    />
+                  )}
                 </div>
-                <InsightsCard
-                  fbAdsetId={adset.fb_adset_id}
-                  adsetName={adset.name}
-                  adAccountId={adAccountId}
-                  datePreset={datePreset}
-                  bulkData={bulkInsights}
-                  bulkLoading={bulkInsightsLoading}
-                  bulkError={bulkInsightsError}
-                />
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
