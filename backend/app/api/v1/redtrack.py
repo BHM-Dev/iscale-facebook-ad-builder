@@ -134,6 +134,85 @@ def manual_sync(
     }
 
 
+@router.get("/debug")
+def debug_redtrack(
+    date_preset: str = Query("last_7d"),
+    current_user=Depends(get_current_user),
+):
+    """Return the raw RedTrack API response so we can diagnose auth/field issues.
+
+    Tests four approaches:
+      1. x-api-key header + group_by=sub2 (current service approach)
+      2. api_key query param + group_by=sub2
+      3. x-api-key header, NO group_by — raw ungrouped data (shows if ANY data exists)
+      4. Campaigns endpoint — validates API key is accepted at all
+    """
+    import httpx, os
+    import json as json_lib
+    api_key = os.getenv("REDTRACK_API_KEY", "")
+    if not api_key:
+        return {"error": "REDTRACK_API_KEY not set"}
+
+    svc = _svc()
+    date_from, date_to = svc.preset_to_dates(date_preset)
+
+    def _safe_get(url, headers=None, params=None, timeout=15):
+        try:
+            r = httpx.get(url, headers=headers or {}, params=params or {}, timeout=timeout)
+            try:
+                body_parsed = r.json()
+            except Exception:
+                body_parsed = None
+            return {
+                "status": r.status_code,
+                "body_raw": r.text[:3000],
+                "body_parsed": body_parsed if isinstance(body_parsed, (dict, list)) and len(str(body_parsed)) < 3000 else "(truncated — see body_raw)",
+                "row_count": len(body_parsed) if isinstance(body_parsed, list) else None,
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    # 1. Current approach: x-api-key header + group_by=sub2
+    r1 = _safe_get(
+        "https://api.redtrack.io/report",
+        headers={"x-api-key": api_key, "Accept": "application/json"},
+        params={"date_from": date_from, "date_to": date_to, "group_by": "sub2",
+                "fields": "sub2,clicks,conversions,revenue,cost,profit,roas,cpl"},
+    )
+
+    # 2. api_key query param + group_by=sub2
+    r2 = _safe_get(
+        "https://api.redtrack.io/report",
+        params={"api_key": api_key, "date_from": date_from, "date_to": date_to,
+                "group_by": "sub2", "fields": "sub2,clicks,conversions,revenue,cost,profit,roas,cpl"},
+    )
+
+    # 3. x-api-key, NO group_by — see if any data exists for date range at all
+    r3 = _safe_get(
+        "https://api.redtrack.io/report",
+        headers={"x-api-key": api_key, "Accept": "application/json"},
+        params={"date_from": date_from, "date_to": date_to},
+    )
+
+    # 4. Campaigns endpoint — validates key is accepted
+    r4 = _safe_get(
+        "https://api.redtrack.io/campaigns",
+        headers={"x-api-key": api_key, "Accept": "application/json"},
+        timeout=10,
+    )
+
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "key_length": len(api_key),
+        "key_prefix": api_key[:6] + "..." if len(api_key) > 6 else "(short)",
+        "test_1_header_grouped_sub2": r1,
+        "test_2_queryparam_grouped_sub2": r2,
+        "test_3_header_ungrouped": r3,
+        "test_4_campaigns_key_check": r4,
+    }
+
+
 @router.get("/campaigns")
 def get_campaigns(current_user=Depends(get_current_user)):
     """List all RedTrack campaigns — used to validate API connection."""
