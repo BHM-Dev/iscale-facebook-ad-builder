@@ -63,7 +63,7 @@ function InsightsCard({ fbAdsetId, adsetName, adAccountId, datePreset, bulkData,
         <Stat label="Leads"       value={d.leads} />
         <Stat label="CPL"         value={d.cpl != null ? `$${d.cpl.toFixed(2)}` : '—'} highlight={d.cpl > 60} />
         <Stat label="Reach"       value={d.reach.toLocaleString()} />
-        <Stat label="Frequency"   value={d.frequency.toFixed(2)} highlight={d.frequency > 4} />
+        <Stat label="Frequency"   value={d.frequency.toFixed(2)} highlight={d.frequency >= 5} warn={d.frequency >= 3 && d.frequency < 5} />
         <Stat label="Impressions" value={d.impressions.toLocaleString()} />
         <Stat label="Clicks"      value={d.clicks.toLocaleString()} />
         <Stat label="CTR"         value={`${parseFloat(d.ctr).toFixed(2)}%`} />
@@ -97,11 +97,11 @@ function InsightsCard({ fbAdsetId, adsetName, adAccountId, datePreset, bulkData,
   );
 }
 
-function Stat({ label, value, highlight }) {
+function Stat({ label, value, highlight, warn }) {
   return (
     <div className="flex flex-col">
       <span className="text-xs text-gray-500">{label}</span>
-      <span className={`font-semibold ${highlight ? 'text-red-600' : 'text-gray-900'}`}>{value}</span>
+      <span className={`font-semibold ${highlight ? 'text-red-600' : warn ? 'text-orange-500' : 'text-gray-900'}`}>{value}</span>
     </div>
   );
 }
