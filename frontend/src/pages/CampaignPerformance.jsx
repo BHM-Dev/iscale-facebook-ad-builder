@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { PauseCircle, PlayCircle, Trash2, Plus, RefreshCw, AlertTriangle, CheckCircle, TrendingDown, DollarSign, Target, Zap } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { authFetch } from '../lib/facebookApi';
@@ -225,6 +225,8 @@ export default function CampaignPerformance() {
   const [checking, setChecking] = useState(false);
   const [showAddRule, setShowAddRule] = useState(false);
   const [lastCheckResult, setLastCheckResult] = useState(null);
+  const [statusFilter, setStatusFilter] = useState('all');   // 'all' | 'ACTIVE' | 'PAUSED'
+  const [sortBy, setSortBy] = useState('status');            // 'status' | 'spend' | 'cpl' | 'name'
 
   // Bulk insights state — one API call replaces N per-row calls
   const [bulkInsights, setBulkInsights]       = useState(null);
@@ -347,7 +349,37 @@ export default function CampaignPerformance() {
     finally { setChecking(false); }
   };
 
-  const activeAdsets = adsets.filter(a => a.fb_adset_id);
+  const visibleAdsets = useMemo(() => {
+    let list = adsets.filter(a => a.fb_adset_id);
+
+    // Status filter
+    if (statusFilter !== 'all') {
+      list = list.filter(a => a.status === statusFilter);
+    }
+
+    // Sort
+    list = [...list].sort((a, b) => {
+      if (sortBy === 'status') {
+        // ACTIVE first, then PAUSED
+        if (a.status === b.status) return a.name.localeCompare(b.name);
+        return a.status === 'ACTIVE' ? -1 : 1;
+      }
+      if (sortBy === 'name') return a.name.localeCompare(b.name);
+      if (sortBy === 'spend') {
+        const sa = bulkInsights?.[a.fb_adset_id]?.spend ?? -1;
+        const sb = bulkInsights?.[b.fb_adset_id]?.spend ?? -1;
+        return sb - sa; // highest spend first
+      }
+      if (sortBy === 'cpl') {
+        const ca = bulkInsights?.[a.fb_adset_id]?.cpl ?? Infinity;
+        const cb = bulkInsights?.[b.fb_adset_id]?.cpl ?? Infinity;
+        return ca - cb; // lowest CPL first (best performers)
+      }
+      return 0;
+    });
+
+    return list;
+  }, [adsets, statusFilter, sortBy, bulkInsights]);
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
@@ -419,28 +451,56 @@ export default function CampaignPerformance() {
 
       {/* Ad Set Performance Table */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+        <div className="px-6 py-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
           <h2 className="font-semibold text-gray-900 flex items-center gap-2">
             <Target size={16} className="text-gray-400" /> Ad Set Performance
+            <span className="text-xs text-gray-400 font-normal">
+              {statusFilter === 'all'
+                ? `${adsets.filter(a => a.fb_adset_id).length} total`
+                : `${visibleAdsets.length} ${statusFilter.toLowerCase()}`}
+            </span>
           </h2>
-          <button
-            onClick={() => { loadAdsets(); if (adAccountId) loadBulkInsights(adAccountId, datePreset); }}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-            title="Refresh"
-          >
-            <RefreshCw size={14} />
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Status filter */}
+            <select
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              value={statusFilter}
+              onChange={e => setStatusFilter(e.target.value)}
+            >
+              <option value="all">All statuses</option>
+              <option value="ACTIVE">Active only</option>
+              <option value="PAUSED">Paused only</option>
+            </select>
+            {/* Sort */}
+            <select
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value)}
+            >
+              <option value="status">Sort: Active first</option>
+              <option value="spend">Sort: Spend ↓</option>
+              <option value="cpl">Sort: CPL ↑</option>
+              <option value="name">Sort: Name A–Z</option>
+            </select>
+            <button
+              onClick={() => { loadAdsets(); loadBulkInsights(adAccountId, datePreset); }}
+              className="text-gray-400 hover:text-gray-600 transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw size={14} />
+            </button>
+          </div>
         </div>
 
         {loadingAdsets ? (
           <div className="p-8 text-center text-gray-400 text-sm">Loading ad sets...</div>
-        ) : activeAdsets.length === 0 ? (
+        ) : visibleAdsets.length === 0 ? (
           <div className="p-8 text-center text-gray-400 text-sm">
-            No launched ad sets found. Create and launch a campaign first.
+            {statusFilter !== 'all' ? `No ${statusFilter.toLowerCase()} ad sets found.` : 'No launched ad sets found. Create and launch a campaign first.'}
           </div>
         ) : (
           <div className="divide-y divide-gray-50">
-            {activeAdsets.map(adset => (
+            {visibleAdsets.map(adset => (
               <div key={adset.id} className="px-6 py-4">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center flex-wrap gap-2">
