@@ -137,17 +137,10 @@ def manual_sync(
 @router.get("/debug")
 def debug_redtrack(
     date_preset: str = Query("last_7d"),
+    current_user=Depends(get_current_user),
 ):
-    """Return the raw RedTrack API response so we can diagnose auth/field issues.
-
-    Tests four approaches:
-      1. x-api-key header + group_by=sub2 (current service approach)
-      2. api_key query param + group_by=sub2
-      3. x-api-key header, NO group_by — raw ungrouped data (shows if ANY data exists)
-      4. Campaigns endpoint — validates API key is accepted at all
-    """
+    """Return raw RedTrack report grouped by sub2 for diagnosis."""
     import httpx, os
-    import json as json_lib
     api_key = os.getenv("REDTRACK_API_KEY", "")
     if not api_key:
         return {"error": "REDTRACK_API_KEY not set"}
@@ -155,66 +148,23 @@ def debug_redtrack(
     svc = _svc()
     date_from, date_to = svc.preset_to_dates(date_preset)
 
-    def _safe_get(url, headers=None, params=None, timeout=15):
-        try:
-            r = httpx.get(url, headers=headers or {}, params=params or {}, timeout=timeout)
-            try:
-                body_parsed = r.json()
-            except Exception:
-                body_parsed = None
-            return {
-                "status": r.status_code,
-                "body_raw": r.text[:3000],
-                "body_parsed": body_parsed if isinstance(body_parsed, (dict, list)) and len(str(body_parsed)) < 3000 else "(truncated — see body_raw)",
-                "row_count": len(body_parsed) if isinstance(body_parsed, list) else None,
-            }
-        except Exception as e:
-            return {"error": str(e)}
-
-    report_params = {"date_from": date_from, "date_to": date_to, "group": "sub2", "total": "true"}
-
-    # Test 1: app.redtrack.io + Bearer <api_key> header + group=sub2
-    r1 = _safe_get(
-        "https://app.redtrack.io/api/report",
-        headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
-        params=report_params,
-    )
-
-    # Test 2: app.redtrack.io + api_key query param + group=sub2
-    r2 = _safe_get(
-        "https://app.redtrack.io/api/report",
-        params={**report_params, "api_key": api_key},
-    )
-
-    # Test 3: api.redtrack.io + api_key param + group=sub2 (correct param name, old domain)
-    r3 = _safe_get(
-        "https://api.redtrack.io/report",
-        params={"api_key": api_key, "date_from": date_from, "date_to": date_to, "group": "sub2"},
-    )
-
-    # Test 4: app.redtrack.io + Bearer + group=date,sub2 (exact UI syntax)
-    r4 = _safe_get(
-        "https://app.redtrack.io/api/report",
-        headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
-        params={"date_from": date_from, "date_to": date_to, "group": "date,sub2", "total": "true"},
-    )
-
-    # Extract field names from first row of each response for easy diagnosis
-    def _first_row_keys(resp):
-        parsed = resp.get("body_parsed")
-        if isinstance(parsed, list) and parsed:
-            return list(parsed[0].keys())
-        return None
+    try:
+        r = httpx.get(
+            "https://api.redtrack.io/report",
+            params={"api_key": api_key, "date_from": date_from, "date_to": date_to, "group": "sub2"},
+            timeout=15,
+        )
+        rows = r.json() if r.status_code == 200 else None
+    except Exception as e:
+        return {"error": str(e)}
 
     return {
+        "status": r.status_code,
         "date_from": date_from,
         "date_to": date_to,
-        "key_length": len(api_key),
-        "key_prefix": api_key[:6] + "..." if len(api_key) > 6 else "(short)",
-        "test_1_app_bearer_apikey_group_sub2": {**r1, "first_row_keys": _first_row_keys(r1)},
-        "test_2_app_queryparam_apikey_group_sub2": {**r2, "first_row_keys": _first_row_keys(r2)},
-        "test_3_api_domain_group_sub2": {**r3, "first_row_keys": _first_row_keys(r3)},
-        "test_4_app_bearer_apikey_group_date_sub2": {**r4, "first_row_keys": _first_row_keys(r4)},
+        "row_count": len(rows) if isinstance(rows, list) else None,
+        "sample_row": rows[0] if isinstance(rows, list) and rows else None,
+        "sub2_ids": [str(row.get("sub2", "")) for row in rows] if isinstance(rows, list) else [],
     }
 
 

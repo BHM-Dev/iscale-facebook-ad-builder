@@ -95,8 +95,7 @@ class RedTrackService:
                     **self._auth_params(),
                     "date_from": date_from,
                     "date_to": date_to,
-                    "group_by": "sub2",
-                    "fields": "sub2,clicks,conversions,revenue,cost,profit,roas,cpl",
+                    "group": "sub2",   # correct param — group_by is ignored by the API
                 },
                 timeout=15,
             )
@@ -104,18 +103,20 @@ class RedTrackService:
             rows = resp.json()
 
             # Normalise to dict keyed by sub2 (= fb_adset_id)
+            # Note: API returns `total_revenue` and `total_conversions` (not `revenue`/`conversions`)
+            # `cpa` = cost per acquisition (= our cpl), `roas` uses total_revenue internally
             result = {}
             for row in (rows if isinstance(rows, list) else rows.get("data", [])):
                 adset_id = str(row.get("sub2") or "").strip()
                 if not adset_id or adset_id == "0":
                     continue
                 result[adset_id] = {
-                    "conversions": int(row.get("conversions") or 0),
-                    "revenue":     round(float(row.get("revenue")  or 0), 2),
-                    "cost":        round(float(row.get("cost")      or 0), 2),
-                    "profit":      round(float(row.get("profit")    or 0), 2),
-                    "roas":        round(float(row.get("roas")      or 0), 2),
-                    "cpl":         round(float(row.get("cpl")       or 0), 2),
+                    "conversions": int(row.get("total_conversions") or 0),
+                    "revenue":     round(float(row.get("total_revenue") or 0), 2),
+                    "cost":        round(float(row.get("cost")          or 0), 2),
+                    "profit":      round(float(row.get("profit")        or 0), 2),
+                    "roas":        round(float(row.get("roas")          or 0), 2),
+                    "cpl":         round(float(row.get("cpa")           or 0), 2),
                     "clicks":      int(row.get("clicks") or 0),
                 }
             logger.info("RedTrack: fetched %d ad set rows (%s → %s)", len(result), date_from, date_to)
