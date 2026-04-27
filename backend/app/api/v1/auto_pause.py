@@ -210,6 +210,71 @@ def get_insights(
     return {**meta, "redtrack": rt}
 
 
+@router.get("/insights-bulk")
+def get_insights_bulk(
+    ad_account_id: str = Query(...),
+    date_preset: str = Query("last_7d"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Fetch Meta Insights for ALL ad sets in a single API call, merged with
+    cached RedTrack data. Returns a dict keyed by fb_adset_id.
+
+    Use this instead of calling /insights/{id} per row — dramatically faster.
+    """
+    svc = FacebookService()
+    try:
+        bulk = svc.get_account_insights_bulk(ad_account_id=ad_account_id, date_preset=date_preset)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+
+    # Attach all RedTrack cache rows in one query
+    from app.models import RedTrackCache
+    from datetime import date
+    from app.services.redtrack_service import RedTrackService
+
+    date_from_str, date_to_str = RedTrackService.preset_to_dates(date_preset)
+    rt_rows = (
+        db.query(RedTrackCache)
+        .filter(
+            RedTrackCache.date_from == date.fromisoformat(date_from_str),
+            RedTrackCache.date_to   == date.fromisoformat(date_to_str),
+        )
+        .all()
+    )
+    rt_by_adset = {}
+    for rt in rt_rows:
+        rt_by_adset[rt.fb_adset_id] = {
+            "conversions":  rt.conversions,
+            "revenue":      float(rt.revenue)      if rt.revenue      is not None else None,
+            "cost":         float(rt.cost)          if rt.cost         is not None else None,
+            "profit":       float(rt.profit)        if rt.profit       is not None else None,
+            "roas":         float(rt.roas)          if rt.roas         is not None else None,
+            "cpl":          float(rt.cpl)           if rt.cpl          is not None else None,
+            "clicks":       rt.clicks,
+            "quality_rate": float(rt.quality_rate)  if rt.quality_rate is not None else None,
+            "synced_at":    rt.synced_at.isoformat() if rt.synced_at   else None,
+        }
+
+    # Merge redtrack into each bulk row; also include adsets with no Meta spend
+    result = {}
+    for fb_adset_id, meta in bulk.items():
+        result[fb_adset_id] = {**meta, "redtrack": rt_by_adset.get(fb_adset_id)}
+
+    # Include RT-only adsets (edge case: RT has data, Meta row missing due to 0 spend)
+    for fb_adset_id, rt in rt_by_adset.items():
+        if fb_adset_id not in result:
+            result[fb_adset_id] = {
+                "spend": 0, "leads": 0, "cpl": None,
+                "impressions": 0, "reach": 0, "frequency": 0,
+                "clicks": 0, "ctr": 0, "revenue": None, "roas": None,
+                "date_preset": date_preset,
+                "redtrack": rt,
+            }
+
+    return result
+
+
 @router.get("/insights-raw/{fb_adset_id}")
 def get_insights_raw(
     fb_adset_id: str,

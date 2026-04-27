@@ -819,6 +819,109 @@ class FacebookService:
             'date_preset': date_preset,
         }
 
+    def get_account_insights_bulk(self, ad_account_id: str = None, date_preset: str = 'last_7d') -> dict:
+        """Fetch Meta Insights for ALL ad sets in the account in a single API call.
+
+        Returns a dict keyed by fb_adset_id:
+          { fb_adset_id: { spend, leads, cpl, impressions, reach, frequency,
+                           clicks, ctr, revenue, roas, date_preset } }
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        account = self._get_account(ad_account_id)
+        fields = [
+            'adset_id',
+            'adset_name',
+            'spend',
+            'impressions',
+            'reach',
+            'frequency',
+            'clicks',
+            'ctr',
+            'actions',
+            'action_values',
+            'cost_per_action_type',
+            'purchase_roas',
+        ]
+        params = {
+            'date_preset': date_preset,
+            'level': 'adset',
+        }
+
+        try:
+            results = account.get_insights(fields=fields, params=params)
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            msg = err.get('message') or str(e)
+            logger.error("Meta bulk insights error: %s", msg)
+            raise RuntimeError(f"Facebook API: {msg}") from e
+
+        lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
+        purchase_types = {'purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase'}
+        out = {}
+
+        for row in results:
+            fb_adset_id = str(row.get('adset_id') or '')
+            if not fb_adset_id:
+                continue
+
+            spend      = float(row.get('spend', 0) or 0)
+            impressions = int(row.get('impressions', 0) or 0)
+            reach       = int(row.get('reach', 0) or 0)
+            frequency   = round(float(row.get('frequency', 0) or 0), 2)
+            clicks      = int(row.get('clicks', 0) or 0)
+            ctr         = float(row.get('ctr', 0) or 0)
+
+            leads = 0
+            for action in (row.get('actions') or []):
+                if action.get('action_type') in lead_types:
+                    leads += int(float(action.get('value', 0)))
+
+            cpl = None
+            for cpa in (row.get('cost_per_action_type') or []):
+                if cpa.get('action_type') in lead_types:
+                    cpl = float(cpa.get('value', 0))
+                    break
+            if cpl is None and leads > 0 and spend > 0:
+                cpl = round(spend / leads, 2)
+
+            revenue = None
+            for av in (row.get('action_values') or []):
+                if av.get('action_type') in purchase_types:
+                    revenue = round(float(av.get('value', 0)), 2)
+                    break
+            if revenue is None:
+                for av in (row.get('action_values') or []):
+                    if av.get('action_type') in lead_types:
+                        revenue = round(float(av.get('value', 0)), 2)
+                        break
+
+            roas = None
+            for r in (row.get('purchase_roas') or []):
+                if r.get('action_type') in ('omni_purchase', 'purchase'):
+                    roas = round(float(r.get('value', 0)), 2)
+                    break
+            if roas is None and revenue is not None and spend > 0:
+                roas = round(revenue / spend, 2)
+
+            out[fb_adset_id] = {
+                'spend':       round(spend, 2),
+                'leads':       leads,
+                'cpl':         round(cpl, 2) if cpl is not None else None,
+                'impressions': impressions,
+                'reach':       reach,
+                'frequency':   frequency,
+                'clicks':      clicks,
+                'ctr':         round(ctr, 4),
+                'revenue':     revenue,
+                'roas':        roas,
+                'date_preset': date_preset,
+            }
+
+        return out
+
     def update_adset_status(self, fb_adset_id: str, status: str) -> None:
         """Set an ad set's delivery status (ACTIVE | PAUSED) via Meta API."""
         import logging

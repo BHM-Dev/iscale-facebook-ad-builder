@@ -16,48 +16,58 @@ const DATE_PRESETS  = [
 ];
 
 // ── Inline insights card for one ad set ──────────────────────────────────────
-function InsightsCard({ fbAdsetId, adsetName, adAccountId, datePreset }) {
+// Now receives pre-loaded `data` from the parent's bulk fetch.
+// Falls back to an individual fetch only if bulk data is not yet available.
+function InsightsCard({ fbAdsetId, adsetName, adAccountId, datePreset, bulkData, bulkLoading, bulkError }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // Only do an individual fetch if bulk failed or there's no ad account ID
+  const needsIndividualFetch = !adAccountId && !!fbAdsetId;
+
   const load = useCallback(async () => {
-    if (!fbAdsetId) return;
+    if (!needsIndividualFetch) return;
     setLoading(true); setError(null);
     try {
       const params = new URLSearchParams({ date_preset: datePreset });
-      if (adAccountId) params.set('ad_account_id', adAccountId);
       const res = await authFetch(`${API_BASE}/auto-pause/insights/${fbAdsetId}?${params}`);
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
       setData(await res.json());
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
-  }, [fbAdsetId, adAccountId, datePreset]);
+  }, [fbAdsetId, datePreset, needsIndividualFetch]);
 
   useEffect(() => { load(); }, [load]);
 
-  if (!fbAdsetId) return <span className="text-xs text-gray-400 italic">Not launched yet</span>;
-  if (loading) return <span className="text-xs text-gray-400 animate-pulse">Loading...</span>;
-  if (error) return <span className="text-xs text-red-500">{error}</span>;
-  if (!data) return null;
+  // Prefer bulk data when available
+  const resolvedData = (bulkData && fbAdsetId && bulkData[fbAdsetId]) || data;
+  const resolvedLoading = needsIndividualFetch ? loading : bulkLoading;
+  const resolvedError = needsIndividualFetch ? error : bulkError;
 
-  const rt = data.redtrack;
+  if (!fbAdsetId) return <span className="text-xs text-gray-400 italic">Not launched yet</span>;
+  if (resolvedLoading) return <span className="text-xs text-gray-400 animate-pulse">Loading...</span>;
+  if (resolvedError) return <span className="text-xs text-red-500">{resolvedError}</span>;
+  if (!resolvedData) return null;
+
+  const d = resolvedData;
+  const rt = d.redtrack;
 
   return (
     <div className="space-y-2 text-sm">
       {/* Meta Insights row */}
       <div className="flex flex-wrap gap-x-5 gap-y-2">
         <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide self-center w-8">Meta</span>
-        <Stat label="Spend"       value={`$${data.spend.toFixed(2)}`} />
-        <Stat label="Leads"       value={data.leads} />
-        <Stat label="CPL"         value={data.cpl != null ? `$${data.cpl.toFixed(2)}` : '—'} highlight={data.cpl > 60} />
-        <Stat label="Reach"       value={data.reach.toLocaleString()} />
-        <Stat label="Frequency"   value={data.frequency.toFixed(2)} highlight={data.frequency > 4} />
-        <Stat label="Impressions" value={data.impressions.toLocaleString()} />
-        <Stat label="Clicks"      value={data.clicks.toLocaleString()} />
-        <Stat label="CTR"         value={`${parseFloat(data.ctr).toFixed(2)}%`} />
-        {data.roas != null && !rt && (
-          <Stat label="ROAS" value={`${data.roas.toFixed(2)}x`} highlight={data.roas < 1} />
+        <Stat label="Spend"       value={`$${d.spend.toFixed(2)}`} />
+        <Stat label="Leads"       value={d.leads} />
+        <Stat label="CPL"         value={d.cpl != null ? `$${d.cpl.toFixed(2)}` : '—'} highlight={d.cpl > 60} />
+        <Stat label="Reach"       value={d.reach.toLocaleString()} />
+        <Stat label="Frequency"   value={d.frequency.toFixed(2)} highlight={d.frequency > 4} />
+        <Stat label="Impressions" value={d.impressions.toLocaleString()} />
+        <Stat label="Clicks"      value={d.clicks.toLocaleString()} />
+        <Stat label="CTR"         value={`${parseFloat(d.ctr).toFixed(2)}%`} />
+        {d.roas != null && !rt && (
+          <Stat label="ROAS" value={`${d.roas.toFixed(2)}x`} highlight={d.roas < 1} />
         )}
       </div>
 
@@ -71,7 +81,7 @@ function InsightsCard({ fbAdsetId, adsetName, adAccountId, datePreset }) {
           <RTStat label="RT CPL"  value={rt.cpl != null ? `$${rt.cpl.toFixed(2)}` : '—'} highlight={rt.cpl != null && rt.cpl > 60} />
           <RTStat
             label="Quality"
-            value={rt.quality_rate != null ? `${(rt.quality_rate * 100).toFixed(0)}%` : data.leads > 0 ? `${((rt.conversions / data.leads) * 100).toFixed(0)}%` : '—'}
+            value={rt.quality_rate != null ? `${(rt.quality_rate * 100).toFixed(0)}%` : d.leads > 0 ? `${((rt.conversions / d.leads) * 100).toFixed(0)}%` : '—'}
             highlight={rt.quality_rate != null && rt.quality_rate < 0.5}
           />
           <RTStat label="Profit"  value={rt.profit != null ? `$${rt.profit.toFixed(2)}` : '—'} highlight={rt.profit != null && rt.profit < 0} />
@@ -215,6 +225,11 @@ export default function CampaignPerformance() {
   const [showAddRule, setShowAddRule] = useState(false);
   const [lastCheckResult, setLastCheckResult] = useState(null);
 
+  // Bulk insights state — one API call replaces N per-row calls
+  const [bulkInsights, setBulkInsights]       = useState(null);
+  const [bulkInsightsLoading, setBulkInsightsLoading] = useState(false);
+  const [bulkInsightsError, setBulkInsightsError]   = useState(null);
+
   const loadAdsets = useCallback(async () => {
     setLoadingAdsets(true);
     try {
@@ -234,17 +249,40 @@ export default function CampaignPerformance() {
     } catch (e) { showError(e.message); }
   }, []);
 
-  // Auto-populate Ad Account ID from the connected Facebook account
+  const loadBulkInsights = useCallback(async (accountId, preset) => {
+    if (!accountId) return;
+    setBulkInsightsLoading(true);
+    setBulkInsightsError(null);
+    try {
+      const params = new URLSearchParams({ ad_account_id: accountId, date_preset: preset });
+      const res = await authFetch(`${API_BASE}/auto-pause/insights-bulk?${params}`);
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed to load insights'); }
+      setBulkInsights(await res.json());
+    } catch (e) {
+      setBulkInsightsError(e.message);
+    } finally {
+      setBulkInsightsLoading(false);
+    }
+  }, []);
+
+  // Auto-populate Ad Account ID from the connected Facebook account, then fetch bulk insights
   useEffect(() => {
     authFetch(`${API_BASE}/facebook/accounts`)
       .then(res => res.ok ? res.json() : null)
       .then(accounts => {
         if (Array.isArray(accounts) && accounts.length > 0) {
-          setAdAccountId(accounts[0].account_id || '');
+          const id = accounts[0].account_id || '';
+          setAdAccountId(id);
+          if (id) loadBulkInsights(id, datePreset);
         }
       })
       .catch(() => {}); // silent fail — field stays editable
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-fetch bulk insights when date preset or account ID changes
+  useEffect(() => {
+    if (adAccountId) loadBulkInsights(adAccountId, datePreset);
+  }, [datePreset, adAccountId, loadBulkInsights]);
 
   useEffect(() => { loadAdsets(); loadRules(); }, [loadAdsets, loadRules]);
 
@@ -382,7 +420,7 @@ export default function CampaignPerformance() {
             <Target size={16} className="text-gray-400" /> Ad Set Performance
           </h2>
           <button
-            onClick={loadAdsets}
+            onClick={() => { loadAdsets(); if (adAccountId) loadBulkInsights(adAccountId, datePreset); }}
             className="text-gray-400 hover:text-gray-600 transition-colors"
             title="Refresh"
           >
@@ -434,6 +472,9 @@ export default function CampaignPerformance() {
                   adsetName={adset.name}
                   adAccountId={adAccountId}
                   datePreset={datePreset}
+                  bulkData={bulkInsights}
+                  bulkLoading={bulkInsightsLoading}
+                  bulkError={bulkInsightsError}
                 />
               </div>
             ))}
