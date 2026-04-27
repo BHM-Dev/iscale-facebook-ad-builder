@@ -150,11 +150,80 @@ async def startup_event():
             finally:
                 db.close()
 
+        def scheduled_meta_sync():
+            """Sync all Meta campaigns and ad sets into the DB every 30 minutes."""
+            from app.services.facebook_service import FacebookService
+            from app.models import FacebookCampaign, FacebookAdSet
+            import uuid as _uuid
+            db = SessionLocal()
+            try:
+                svc = FacebookService()
+                svc.initialize()
+                campaigns_raw = svc.get_campaigns()
+                created_c = updated_c = created_a = updated_a = 0
+                for c in campaigns_raw:
+                    fb_id = str(c.get("id") or "")
+                    if not fb_id:
+                        continue
+                    existing = db.query(FacebookCampaign).filter(FacebookCampaign.fb_campaign_id == fb_id).first()
+                    if existing:
+                        existing.name = c.get("name", existing.name)
+                        existing.status = c.get("status", existing.status)
+                        updated_c += 1
+                        campaign_db = existing
+                    else:
+                        campaign_db = FacebookCampaign(
+                            id=str(_uuid.uuid4()),
+                            name=c.get("name", "Imported Campaign"),
+                            objective=c.get("objective", "OUTCOME_LEADS"),
+                            budget_type="CBO" if c.get("daily_budget") or c.get("lifetime_budget") else "ABO",
+                            status=c.get("status", "PAUSED"),
+                            fb_campaign_id=fb_id,
+                            special_ad_categories=c.get("special_ad_categories", []),
+                        )
+                        db.add(campaign_db)
+                        created_c += 1
+                    db.flush()
+                    try:
+                        adsets_raw = svc.get_adsets(campaign_id=fb_id)
+                    except Exception:
+                        continue
+                    for a in adsets_raw:
+                        fb_as_id = str(a.get("id") or "")
+                        if not fb_as_id:
+                            continue
+                        existing_as = db.query(FacebookAdSet).filter(FacebookAdSet.fb_adset_id == fb_as_id).first()
+                        if existing_as:
+                            existing_as.name = a.get("name", existing_as.name)
+                            existing_as.status = a.get("status", existing_as.status)
+                            updated_a += 1
+                        else:
+                            db.add(FacebookAdSet(
+                                id=str(_uuid.uuid4()),
+                                campaign_id=campaign_db.id,
+                                name=a.get("name", "Imported Ad Set"),
+                                optimization_goal=a.get("optimization_goal", "LEAD_GENERATION"),
+                                status=a.get("status", "PAUSED"),
+                                fb_adset_id=fb_as_id,
+                                daily_budget=int(a["daily_budget"]) if a.get("daily_budget") else None,
+                                budget_schedule_type="DAILY" if a.get("daily_budget") else "LIFETIME",
+                            ))
+                            created_a += 1
+                db.commit()
+                print(f"✅ Meta sync: {created_c} campaigns created, {updated_c} updated | {created_a} ad sets created, {updated_a} updated")
+            except Exception as exc:
+                print(f"⚠️  Meta sync error: {exc}")
+            finally:
+                db.close()
+
         scheduler.add_job(scheduled_check, 'interval', minutes=30, id='auto_pause_check')
         scheduler.add_job(scheduled_redtrack_sync, 'interval', minutes=30, id='redtrack_sync')
+        scheduler.add_job(scheduled_meta_sync, 'interval', minutes=30, id='meta_sync')
+        # Also run meta sync immediately on startup so the table is populated right away
+        scheduler.add_job(scheduled_meta_sync, 'date', id='meta_sync_startup')
         scheduler.start()
         app.state.scheduler = scheduler
-        print("✅ Auto-pause scheduler started (every 30 min)")
+        print("✅ Scheduler started (auto-pause + RedTrack + Meta sync, every 30 min)")
     except Exception as e:
         print(f"⚠️  Could not start auto-pause scheduler: {e}")
 
