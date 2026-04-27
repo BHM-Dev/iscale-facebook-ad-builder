@@ -41,26 +41,47 @@ function InsightsCard({ fbAdsetId, adsetName, adAccountId, datePreset }) {
   if (error) return <span className="text-xs text-red-500">{error}</span>;
   if (!data) return null;
 
+  const rt = data.redtrack;
+
   return (
-    <div className="flex flex-wrap gap-x-6 gap-y-3 text-sm">
-      {/* Row 1 — spend & lead metrics */}
-      <Stat label="Spend"     value={`$${data.spend.toFixed(2)}`} />
-      <Stat label="Leads"     value={data.leads} />
-      <Stat label="CPL"       value={data.cpl != null ? `$${data.cpl.toFixed(2)}` : '—'} highlight={data.cpl > 60} />
-      {data.revenue != null && (
-        <Stat label="Revenue" value={`$${data.revenue.toFixed(2)}`} />
+    <div className="space-y-2 text-sm">
+      {/* Meta Insights row */}
+      <div className="flex flex-wrap gap-x-5 gap-y-2">
+        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide self-center w-8">Meta</span>
+        <Stat label="Spend"       value={`$${data.spend.toFixed(2)}`} />
+        <Stat label="Leads"       value={data.leads} />
+        <Stat label="CPL"         value={data.cpl != null ? `$${data.cpl.toFixed(2)}` : '—'} highlight={data.cpl > 60} />
+        <Stat label="Reach"       value={data.reach.toLocaleString()} />
+        <Stat label="Frequency"   value={data.frequency.toFixed(2)} highlight={data.frequency > 4} />
+        <Stat label="Impressions" value={data.impressions.toLocaleString()} />
+        <Stat label="Clicks"      value={data.clicks.toLocaleString()} />
+        <Stat label="CTR"         value={`${parseFloat(data.ctr).toFixed(2)}%`} />
+        {data.roas != null && !rt && (
+          <Stat label="ROAS" value={`${data.roas.toFixed(2)}x`} highlight={data.roas < 1} />
+        )}
+      </div>
+
+      {/* RedTrack row — only renders when cache data is available */}
+      {rt ? (
+        <div className="flex flex-wrap gap-x-5 gap-y-2 bg-blue-50 rounded-lg px-3 py-2">
+          <span className="text-xs font-semibold text-blue-500 uppercase tracking-wide self-center w-8">RT</span>
+          <RTStat label="Convs"   value={rt.conversions} />
+          <RTStat label="Revenue" value={rt.revenue != null ? `$${rt.revenue.toFixed(2)}` : '—'} />
+          <RTStat label="ROAS"    value={rt.roas != null ? `${rt.roas.toFixed(2)}x` : '—'} highlight={rt.roas != null && rt.roas < 1} />
+          <RTStat label="RT CPL"  value={rt.cpl != null ? `$${rt.cpl.toFixed(2)}` : '—'} highlight={rt.cpl != null && rt.cpl > 60} />
+          <RTStat
+            label="Quality"
+            value={rt.quality_rate != null ? `${(rt.quality_rate * 100).toFixed(0)}%` : data.leads > 0 ? `${((rt.conversions / data.leads) * 100).toFixed(0)}%` : '—'}
+            highlight={rt.quality_rate != null && rt.quality_rate < 0.5}
+          />
+          <RTStat label="Profit"  value={rt.profit != null ? `$${rt.profit.toFixed(2)}` : '—'} highlight={rt.profit != null && rt.profit < 0} />
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5 text-xs text-gray-400 pl-10">
+          <span className="w-2 h-2 rounded-full bg-gray-200 inline-block" />
+          RedTrack data syncs every 30 min — check back shortly
+        </div>
       )}
-      {data.roas != null && (
-        <Stat label="ROAS"    value={`${data.roas.toFixed(2)}x`} highlight={data.roas < 1} />
-      )}
-      {/* Divider */}
-      <span className="w-px bg-gray-100 self-stretch hidden sm:block" />
-      {/* Row 1 cont — delivery metrics */}
-      <Stat label="Reach"     value={data.reach.toLocaleString()} />
-      <Stat label="Frequency" value={data.frequency.toFixed(2)} highlight={data.frequency > 4} />
-      <Stat label="Impressions" value={data.impressions.toLocaleString()} />
-      <Stat label="Clicks"    value={data.clicks.toLocaleString()} />
-      <Stat label="CTR"       value={`${parseFloat(data.ctr).toFixed(2)}%`} />
     </div>
   );
 }
@@ -70,6 +91,15 @@ function Stat({ label, value, highlight }) {
     <div className="flex flex-col">
       <span className="text-xs text-gray-500">{label}</span>
       <span className={`font-semibold ${highlight ? 'text-red-600' : 'text-gray-900'}`}>{value}</span>
+    </div>
+  );
+}
+
+function RTStat({ label, value, highlight }) {
+  return (
+    <div className="flex flex-col">
+      <span className="text-xs text-blue-400">{label}</span>
+      <span className={`font-semibold ${highlight ? 'text-red-600' : 'text-blue-700'}`}>{value}</span>
     </div>
   );
 }

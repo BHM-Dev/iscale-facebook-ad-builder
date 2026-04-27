@@ -113,7 +113,45 @@ async def startup_event():
             finally:
                 db.close()
 
+        def scheduled_redtrack_sync():
+            """Refresh RedTrack cache for last_7d every 30 minutes."""
+            from app.services.redtrack_service import RedTrackService
+            from app.models import RedTrackCache, FacebookAdSet
+            svc = RedTrackService()
+            if not svc.is_configured():
+                return
+            db = SessionLocal()
+            try:
+                import uuid
+                from datetime import date, timedelta
+                date_from_str, date_to_str = svc.preset_to_dates("last_7d")
+                report = svc.get_report_by_adset(date_from_str, date_to_str)
+                if not report:
+                    return
+                date_from = date.fromisoformat(date_from_str)
+                date_to   = date.fromisoformat(date_to_str)
+                # Upsert: delete existing rows for this date range, insert fresh
+                db.query(RedTrackCache).filter(
+                    RedTrackCache.date_from == date_from,
+                    RedTrackCache.date_to == date_to,
+                ).delete()
+                for fb_adset_id, metrics in report.items():
+                    db.add(RedTrackCache(
+                        id=str(uuid.uuid4()),
+                        fb_adset_id=fb_adset_id,
+                        date_from=date_from,
+                        date_to=date_to,
+                        **metrics,
+                    ))
+                db.commit()
+                print(f"✅ RedTrack cache refreshed: {len(report)} ad sets")
+            except Exception as exc:
+                print(f"⚠️  RedTrack sync error: {exc}")
+            finally:
+                db.close()
+
         scheduler.add_job(scheduled_check, 'interval', minutes=30, id='auto_pause_check')
+        scheduler.add_job(scheduled_redtrack_sync, 'interval', minutes=30, id='redtrack_sync')
         scheduler.start()
         app.state.scheduler = scheduler
         print("✅ Auto-pause scheduler started (every 30 min)")
@@ -131,7 +169,7 @@ async def shutdown_event():
 
 
 # Include Routers
-from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause
+from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
@@ -149,6 +187,7 @@ app.include_router(ad_remix.router, prefix="/api/v1/ad-remix", tags=["ad-remix"]
 app.include_router(prompts.router, prefix="/api/v1/prompts", tags=["prompts"])
 app.include_router(ad_styles.router, prefix="/api/v1/ad-styles", tags=["ad-styles"])
 app.include_router(auto_pause.router, prefix="/api/v1/auto-pause", tags=["auto-pause"])
+app.include_router(redtrack.router, prefix="/api/v1/redtrack", tags=["redtrack"])
 
 # Mount static files for uploads (same path as generated_ads save location)
 uploads_dir = str(settings.upload_dir)

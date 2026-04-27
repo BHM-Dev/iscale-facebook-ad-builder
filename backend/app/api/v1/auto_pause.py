@@ -169,14 +169,45 @@ def get_insights(
     fb_adset_id: str,
     date_preset: str = Query("last_7d"),
     ad_account_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """Fetch live spend/CPL/leads from Meta Insights API for one ad set."""
+    """Fetch live Meta Insights + cached RedTrack data for one ad set."""
     svc = FacebookService()
     try:
-        return svc.get_adset_insights(fb_adset_id, date_preset=date_preset)
+        meta = svc.get_adset_insights(fb_adset_id, date_preset=date_preset)
     except RuntimeError as e:
         raise HTTPException(400, str(e))
+
+    # Attach cached RedTrack data if available
+    from app.models import RedTrackCache
+    from datetime import date
+    from app.services.redtrack_service import RedTrackService
+    date_from_str, date_to_str = RedTrackService.preset_to_dates(date_preset)
+    rt_row = (
+        db.query(RedTrackCache)
+        .filter(
+            RedTrackCache.fb_adset_id == fb_adset_id,
+            RedTrackCache.date_from == date.fromisoformat(date_from_str),
+            RedTrackCache.date_to == date.fromisoformat(date_to_str),
+        )
+        .first()
+    )
+    rt = None
+    if rt_row:
+        rt = {
+            "conversions":   rt_row.conversions,
+            "revenue":       float(rt_row.revenue)  if rt_row.revenue  is not None else None,
+            "cost":          float(rt_row.cost)      if rt_row.cost     is not None else None,
+            "profit":        float(rt_row.profit)    if rt_row.profit   is not None else None,
+            "roas":          float(rt_row.roas)      if rt_row.roas     is not None else None,
+            "cpl":           float(rt_row.cpl)       if rt_row.cpl      is not None else None,
+            "clicks":        rt_row.clicks,
+            "quality_rate":  float(rt_row.quality_rate) if rt_row.quality_rate is not None else None,
+            "synced_at":     rt_row.synced_at.isoformat() if rt_row.synced_at else None,
+        }
+
+    return {**meta, "redtrack": rt}
 
 
 @router.get("/insights-raw/{fb_adset_id}")

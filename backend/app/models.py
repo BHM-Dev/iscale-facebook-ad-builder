@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, ForeignKey, DateTime, Text, JSON, Table, Boolean
+from sqlalchemy import Column, String, Integer, ForeignKey, DateTime, Text, JSON, Table, Boolean, Numeric, Date
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -507,3 +507,22 @@ class BrandScrapedAd(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     brand_scrape = relationship("BrandScrape", back_populates="ads")
+
+
+class RedTrackCache(Base):
+    """Cached RedTrack report data per Meta ad set, refreshed every 30 minutes."""
+    __tablename__ = "redtrack_cache"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    fb_adset_id = Column(String, nullable=False, index=True)
+    date_from = Column(Date, nullable=False)
+    date_to = Column(Date, nullable=False)
+    conversions = Column(Integer, nullable=True)
+    revenue = Column(Numeric(precision=10, scale=2), nullable=True)
+    cost = Column(Numeric(precision=10, scale=2), nullable=True)
+    profit = Column(Numeric(precision=10, scale=2), nullable=True)
+    roas = Column(Numeric(precision=6, scale=2), nullable=True)
+    cpl = Column(Numeric(precision=8, scale=2), nullable=True)
+    clicks = Column(Integer, nullable=True)
+    quality_rate = Column(Numeric(precision=4, scale=3), nullable=True)  # rt_conversions / meta_leads
+    synced_at = Column(DateTime(timezone=True), server_default=func.now())
