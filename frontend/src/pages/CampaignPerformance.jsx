@@ -330,6 +330,25 @@ export default function CampaignPerformance() {
     finally { setSyncing(false); }
   };
 
+  const [syncingRT, setSyncingRT] = useState(false);
+  const syncRedTrack = async () => {
+    setSyncingRT(true);
+    showInfo('Syncing RedTrack data...');
+    try {
+      const params = new URLSearchParams({ date_preset: datePreset });
+      const res = await authFetch(`${API_BASE}/redtrack/sync?${params}`, { method: 'POST' });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Sync failed'); }
+      const result = await res.json();
+      if (result.synced > 0) {
+        showSuccess(`RedTrack synced — ${result.synced} ad sets updated. Refreshing stats...`);
+        loadBulkInsights(adAccountId, datePreset);
+      } else {
+        showInfo(result.message || 'No RedTrack data returned.');
+      }
+    } catch (e) { showError(e.message); }
+    finally { setSyncingRT(false); }
+  };
+
   const runCheck = async () => {
     setChecking(true);
     showInfo('Checking all rules against live Meta data...');
@@ -407,6 +426,15 @@ export default function CampaignPerformance() {
           >
             <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
             {syncing ? 'Syncing...' : 'Sync from Meta'}
+          </button>
+          <button
+            onClick={syncRedTrack}
+            disabled={syncingRT}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-50"
+            title="Pull latest RedTrack conversion data into cache"
+          >
+            <RefreshCw size={14} className={syncingRT ? 'animate-spin' : ''} />
+            {syncingRT ? 'Syncing RT...' : 'Sync RedTrack'}
           </button>
           <select
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"

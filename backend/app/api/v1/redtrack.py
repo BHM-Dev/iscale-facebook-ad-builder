@@ -10,8 +10,9 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
 
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, get_db
 from app.services.redtrack_service import RedTrackService
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,55 @@ def get_adset(
         "fb_adset_id": fb_adset_id,
         "date_preset": date_preset,
         "data": data,  # None if no match in RedTrack
+    }
+
+
+@router.post("/sync")
+def manual_sync(
+    date_preset: str = Query("last_7d"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Manually trigger a RedTrack cache refresh for the given date preset.
+    Same logic as the 30-min scheduler — call this to populate cache immediately.
+    """
+    svc = _svc()
+    if not svc.is_configured():
+        raise HTTPException(400, "REDTRACK_API_KEY not configured.")
+
+    import uuid
+    from datetime import date
+    from app.models import RedTrackCache
+
+    date_from_str, date_to_str = svc.preset_to_dates(date_preset)
+    report = svc.get_report_by_adset(date_from_str, date_to_str)
+    if not report:
+        return {"synced": 0, "message": "RedTrack returned no data for this date range. Check sub2={{adset.id}} is in tracking URLs."}
+
+    date_from = date.fromisoformat(date_from_str)
+    date_to   = date.fromisoformat(date_to_str)
+
+    # Upsert: wipe existing rows for this range, insert fresh
+    db.query(RedTrackCache).filter(
+        RedTrackCache.date_from == date_from,
+        RedTrackCache.date_to   == date_to,
+    ).delete()
+    for fb_adset_id, metrics in report.items():
+        db.add(RedTrackCache(
+            id=str(uuid.uuid4()),
+            fb_adset_id=fb_adset_id,
+            date_from=date_from,
+            date_to=date_to,
+            **metrics,
+        ))
+    db.commit()
+
+    return {
+        "synced": len(report),
+        "date_from": date_from_str,
+        "date_to": date_to_str,
+        "adset_ids": list(report.keys()),
+        "message": f"Cache updated with {len(report)} ad sets from RedTrack.",
     }
 
 
