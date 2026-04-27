@@ -179,11 +179,24 @@ def read_saved_adsets(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Return ad sets stored in our DB (includes fb_adset_id for live insights lookup)."""
+    """Return ad sets stored in our DB (includes fb_adset_id for live insights lookup).
+    Deduplicates by fb_adset_id — if the same fb_adset_id appears more than once,
+    only the most recently created entry is returned.
+    """
     q = db.query(FacebookAdSet)
     if campaign_id:
         q = q.filter(FacebookAdSet.campaign_id == campaign_id)
-    adsets = q.order_by(FacebookAdSet.created_at.desc()).all()
+    all_adsets = q.order_by(FacebookAdSet.created_at.desc()).all()
+
+    # Deduplicate by fb_adset_id — keep the first (most recent) occurrence
+    seen_fb_ids = set()
+    adsets = []
+    for a in all_adsets:
+        key = a.fb_adset_id or a.id  # fallback to id for rows with no fb_adset_id
+        if key not in seen_fb_ids:
+            seen_fb_ids.add(key)
+            adsets.append(a)
+
     return [
         {
             "id": a.id,
@@ -194,6 +207,43 @@ def read_saved_adsets(
         }
         for a in adsets
     ]
+
+
+@router.post("/sync/cleanup")
+def cleanup_duplicate_adsets(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Remove duplicate ad set rows that share the same fb_adset_id.
+    Keeps the most recently created row for each fb_adset_id.
+    Returns count of rows deleted.
+    """
+    from sqlalchemy import func
+
+    # Find fb_adset_ids that appear more than once
+    dupes = (
+        db.query(FacebookAdSet.fb_adset_id)
+        .filter(FacebookAdSet.fb_adset_id.isnot(None))
+        .group_by(FacebookAdSet.fb_adset_id)
+        .having(func.count(FacebookAdSet.id) > 1)
+        .all()
+    )
+
+    deleted = 0
+    for (fb_id,) in dupes:
+        rows = (
+            db.query(FacebookAdSet)
+            .filter(FacebookAdSet.fb_adset_id == fb_id)
+            .order_by(FacebookAdSet.created_at.desc())
+            .all()
+        )
+        # Keep first (most recent), delete the rest
+        for row in rows[1:]:
+            db.delete(row)
+            deleted += 1
+
+    db.commit()
+    return {"deleted": deleted, "message": f"Removed {deleted} duplicate ad set row(s)"}
 
 
 @router.get("/adsets")
