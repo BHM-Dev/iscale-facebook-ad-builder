@@ -225,8 +225,8 @@ export default function CampaignPerformance() {
   const [checking, setChecking] = useState(false);
   const [showAddRule, setShowAddRule] = useState(false);
   const [lastCheckResult, setLastCheckResult] = useState(null);
-  const [statusFilter, setStatusFilter] = useState('all');   // 'all' | 'ACTIVE' | 'PAUSED'
-  const [sortBy, setSortBy] = useState('status');            // 'status' | 'spend' | 'cpl' | 'name'
+  const [statusFilter, setStatusFilter] = useState('ACTIVE'); // 'all' | 'ACTIVE' | 'PAUSED' | 'has_spend'
+  const [sortBy, setSortBy] = useState('status');             // 'status' | 'spend' | 'cpl' | 'name'
 
   // Bulk insights state — one API call replaces N per-row calls
   const [bulkInsights, setBulkInsights]       = useState(null);
@@ -352,9 +352,13 @@ export default function CampaignPerformance() {
   const visibleAdsets = useMemo(() => {
     let list = adsets.filter(a => a.fb_adset_id);
 
-    // Status filter
-    if (statusFilter !== 'all') {
-      list = list.filter(a => a.status === statusFilter);
+    // Status / spend filter
+    if (statusFilter === 'ACTIVE') {
+      list = list.filter(a => a.status === 'ACTIVE');
+    } else if (statusFilter === 'PAUSED') {
+      list = list.filter(a => a.status === 'PAUSED');
+    } else if (statusFilter === 'has_spend') {
+      list = list.filter(a => (bulkInsights?.[a.fb_adset_id]?.spend ?? 0) > 0);
     }
 
     // Sort
@@ -467,9 +471,10 @@ export default function CampaignPerformance() {
               value={statusFilter}
               onChange={e => setStatusFilter(e.target.value)}
             >
-              <option value="all">All statuses</option>
+              <option value="all">All ad sets</option>
               <option value="ACTIVE">Active only</option>
               <option value="PAUSED">Paused only</option>
+              <option value="has_spend">Has spend</option>
             </select>
             {/* Sort */}
             <select
@@ -496,7 +501,7 @@ export default function CampaignPerformance() {
           <div className="p-8 text-center text-gray-400 text-sm">Loading ad sets...</div>
         ) : visibleAdsets.length === 0 ? (
           <div className="p-8 text-center text-gray-400 text-sm">
-            {statusFilter !== 'all' ? `No ${statusFilter.toLowerCase()} ad sets found.` : 'No launched ad sets found. Create and launch a campaign first.'}
+            {statusFilter === 'has_spend' ? 'No ad sets with spend in this date range.' : statusFilter !== 'all' ? `No ${statusFilter.toLowerCase()} ad sets found.` : 'No launched ad sets found. Create and launch a campaign first.'}
           </div>
         ) : (
           <div className="divide-y divide-gray-50">
