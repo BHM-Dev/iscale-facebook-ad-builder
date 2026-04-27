@@ -171,31 +171,45 @@ def debug_redtrack(
         except Exception as e:
             return {"error": str(e)}
 
-    # httpx supports tuple-list params for repeated keys (PHP array syntax)
-    base = [("api_key", api_key), ("date_from", date_from), ("date_to", date_to)]
+    base_params = {"api_key": api_key, "date_from": date_from, "date_to": date_to}
 
-    # 1. group[]=sub2  (PHP array syntax — most common for tracker APIs)
-    r1 = _safe_get(
-        "https://api.redtrack.io/report",
-        params=base + [("group[]", "sub2")],
-    )
+    # 1. POST with JSON body — some tracker APIs require JSON for report config
+    try:
+        rp = httpx.post(
+            "https://api.redtrack.io/report",
+            params={"api_key": api_key},
+            json={"date_from": date_from, "date_to": date_to, "group_by": ["sub2"]},
+            timeout=15,
+        )
+        try:
+            rp_parsed = rp.json()
+        except Exception:
+            rp_parsed = None
+        r1 = {
+            "status": rp.status_code,
+            "body_raw": rp.text[:2000],
+            "body_parsed": rp_parsed if isinstance(rp_parsed, (dict, list)) and len(str(rp_parsed)) < 2000 else "(truncated)",
+            "row_count": len(rp_parsed) if isinstance(rp_parsed, list) else None,
+        }
+    except Exception as e:
+        r1 = {"error": str(e)}
 
-    # 2. group[]=sub2 + group[]=date  (sub2 + date breakdown)
+    # 2. GET /report/sub2 — dedicated sub2 endpoint (some trackers use this)
     r2 = _safe_get(
-        "https://api.redtrack.io/report",
-        params=base + [("group[]", "sub2"), ("group[]", "date")],
+        "https://api.redtrack.io/report/sub2",
+        params=base_params,
     )
 
-    # 3. group=sub2  (simple string, no brackets)
+    # 3. GET with columns[]=sub2 instead of group_by
     r3 = _safe_get(
         "https://api.redtrack.io/report",
-        params=base + [("group", "sub2")],
+        params={**base_params, "columns[]": "sub2"},
     )
 
-    # 4. Default (no group param) — baseline showing date-grouped rows we already know works
+    # 4. GET /clicks — raw click log which may have sub2 per row
     r4 = _safe_get(
-        "https://api.redtrack.io/report",
-        params={"api_key": api_key, "date_from": date_from, "date_to": date_to},
+        "https://api.redtrack.io/clicks",
+        params={**base_params, "limit": 3},
     )
 
     # Extract field names from first row of each response for easy diagnosis
@@ -210,10 +224,10 @@ def debug_redtrack(
         "date_to": date_to,
         "key_length": len(api_key),
         "key_prefix": api_key[:6] + "..." if len(api_key) > 6 else "(short)",
-        "test_1_group_brackets_sub2": {**r1, "row_count": r1.get("row_count"), "first_row_keys": _first_row_keys(r1)},
-        "test_2_group_brackets_sub2_and_date": {**r2, "row_count": r2.get("row_count"), "first_row_keys": _first_row_keys(r2)},
-        "test_3_group_plain_sub2": {**r3, "row_count": r3.get("row_count"), "first_row_keys": _first_row_keys(r3)},
-        "test_4_default_date_grouped_baseline": {**r4, "row_count": r4.get("row_count"), "first_row_keys": _first_row_keys(r4)},
+        "test_1_post_json_body": {**r1, "first_row_keys": _first_row_keys(r1)},
+        "test_2_get_report_sub2_endpoint": {**r2, "first_row_keys": _first_row_keys(r2)},
+        "test_3_get_columns_sub2": {**r3, "first_row_keys": _first_row_keys(r3)},
+        "test_4_get_clicks_log": {**r4, "first_row_keys": _first_row_keys(r4)},
     }
 
 
