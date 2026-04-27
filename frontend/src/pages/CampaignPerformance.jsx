@@ -182,7 +182,7 @@ function AdsBreakdown({ fbAdsetId, adsBulk, adsLoading, rtAdsBulk }) {
                 <td className={`px-3 py-2 text-right font-medium ${ad.cpl != null && ad.cpl > 60 ? 'text-red-600' : 'text-gray-700'}`}>
                   {ad.cpl != null ? `$${ad.cpl.toFixed(2)}` : '—'}
                 </td>
-                <td className="px-3 py-2 text-right text-gray-600">{(ad.ctr * 100).toFixed(2)}%</td>
+                <td className="px-3 py-2 text-right text-gray-600">{parseFloat(ad.ctr).toFixed(2)}%</td>
                 <td className="px-3 py-2 text-right text-gray-500">{ad.impressions.toLocaleString()}</td>
                 {ads.some(a => a.roas != null) && (
                   <td className={`px-3 py-2 text-right font-medium ${ad.roas != null && ad.roas < 1 ? 'text-red-600' : 'text-gray-700'}`}>
