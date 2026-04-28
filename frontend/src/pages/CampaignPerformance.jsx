@@ -364,6 +364,14 @@ export default function CampaignPerformance() {
     } catch (e) { showError(e.message); }
   }, []);
 
+  // authFetch with a hard timeout — prevents any single call from hanging forever
+  const timedFetch = useCallback((url, options = {}, ms = 25000) => {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), ms);
+    return authFetch(url, { ...options, signal: ctrl.signal })
+      .finally(() => clearTimeout(tid));
+  }, []);
+
   // Build date params — passes date_from/date_to for custom ranges, date_preset otherwise
   const buildDateParams = useCallback((preset, dateFrom = null, dateTo = null) => {
     const params = new URLSearchParams();
@@ -382,43 +390,42 @@ export default function CampaignPerformance() {
     try {
       const params = buildDateParams(preset, dateFrom, dateTo);
       if (accountId) params.set('ad_account_id', accountId);
-      const res = await authFetch(`${API_BASE}/auto-pause/insights-bulk?${params}`);
+      const res = await timedFetch(`${API_BASE}/auto-pause/insights-bulk?${params}`, {}, 25000);
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed to load insights'); }
       setBulkInsights(await res.json());
     } catch (e) {
-      setBulkInsightsError(e.message);
+      setBulkInsightsError(e.name === 'AbortError' ? 'Request timed out — Meta API is slow, try again.' : e.message);
     } finally {
       setBulkInsightsLoading(false);
     }
-  }, [buildDateParams]);
+  }, [buildDateParams, timedFetch]);
 
   const loadAdsBulk = useCallback(async (accountId, preset, dateFrom = null, dateTo = null) => {
     setAdsLoading(true);
     try {
       const params = buildDateParams(preset, dateFrom, dateTo);
       if (accountId) params.set('ad_account_id', accountId);
-      const res = await authFetch(`${API_BASE}/auto-pause/ads-bulk?${params}`);
-      if (!res.ok) return; // non-fatal — ad breakdown is supplementary
+      const res = await timedFetch(`${API_BASE}/auto-pause/ads-bulk?${params}`, {}, 20000);
+      if (!res.ok) return;
       setAdsBulk(await res.json());
     } catch (e) {
       // silently fail — creative breakdown is supplementary
     } finally {
       setAdsLoading(false);
     }
-  }, [buildDateParams]);
+  }, [buildDateParams, timedFetch]);
 
   const loadRtAdsBulk = useCallback(async (preset, dateFrom = null, dateTo = null) => {
-    // RT ad-level data keyed by ad_id (sub1) → {conversions, revenue, roas, cpl, ...}
     try {
       const params = buildDateParams(preset, dateFrom, dateTo);
-      const res = await authFetch(`${API_BASE}/redtrack/report/sub1?${params}`);
+      const res = await timedFetch(`${API_BASE}/redtrack/report/sub1?${params}`, {}, 15000);
       if (!res.ok) return;
       const data = await res.json();
       if (data.configured && data.data) setRtAdsBulk(data.data);
     } catch (e) {
       // silently fail — RT ad-level is supplementary
     }
-  }, [buildDateParams]);
+  }, [buildDateParams, timedFetch]);
 
   // Track whether the initial mount load has fired — prevents datePreset effect
   // from double-firing on mount before the account ID is resolved

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { TrendingDown, Wand2, Star, ShoppingBag, AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -156,10 +156,16 @@ export default function Dashboard() {
         insightsParams.set('date_preset', p || 'last_7d');
       }
 
+      const timedFetch = (url, ms = 25000) => {
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), ms);
+        return authFetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(tid));
+      };
+
       const [adsetsRes, insightsRes, rulesRes] = await Promise.all([
-        authFetch(`${API_URL}/facebook/adsets/saved`),
-        authFetch(`${API_URL}/auto-pause/insights-bulk?${insightsParams}`),
-        authFetch(`${API_URL}/auto-pause/rules`),
+        timedFetch(`${API_URL}/facebook/adsets/saved`, 10000),
+        timedFetch(`${API_URL}/auto-pause/insights-bulk?${insightsParams}`, 25000),
+        timedFetch(`${API_URL}/auto-pause/rules`, 10000),
       ]);
       if (adsetsRes.ok)   setAdsets(await adsetsRes.json());
       if (insightsRes.ok) setBulkInsights(await insightsRes.json());
