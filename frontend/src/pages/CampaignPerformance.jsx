@@ -420,22 +420,31 @@ export default function CampaignPerformance() {
     }
   }, [buildDateParams]);
 
-  // On mount: try to get account ID, then fire bulk insights either way
+  // On mount: use cached account ID immediately, refresh in background with timeout
   useEffect(() => {
-    authFetch(`${API_BASE}/facebook/accounts`)
+    const cached = localStorage.getItem('fb_ad_account_id') || '';
+    if (cached) setAdAccountId(cached);
+
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 4000); // 4s hard timeout
+
+    authFetch(`${API_BASE}/facebook/accounts`, { signal: controller.signal })
       .then(res => res.ok ? res.json() : null)
       .then(accounts => {
+        clearTimeout(tid);
         const id = Array.isArray(accounts) && accounts.length > 0
-          ? (accounts[0].account_id || '')
-          : '';
-        setAdAccountId(id);
-        loadBulkInsights(id, 'last_7d');
-        loadAdsBulk(id, 'last_7d');
+          ? (accounts[0].account_id || '') : '';
+        if (id) { localStorage.setItem('fb_ad_account_id', id); setAdAccountId(id); }
+        const resolvedId = id || cached;
+        loadBulkInsights(resolvedId, 'last_7d');
+        loadAdsBulk(resolvedId, 'last_7d');
         loadRtAdsBulk('last_7d');
       })
       .catch(() => {
-        loadBulkInsights('', 'last_7d');
-        loadAdsBulk('', 'last_7d');
+        clearTimeout(tid);
+        // Fall back to cached or empty — still fire the data loads
+        loadBulkInsights(cached, 'last_7d');
+        loadAdsBulk(cached, 'last_7d');
         loadRtAdsBulk('last_7d');
       });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

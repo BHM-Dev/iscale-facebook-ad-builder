@@ -132,17 +132,20 @@ export default function Dashboard() {
     const { preset: p, dateFrom: df, dateTo: dt } = range || { preset: 'last_7d', dateFrom: null, dateTo: null };
     setLoading(true);
     try {
-      // Resolve ad account ID first (same pattern as CampaignPerformance)
-      let adAccountId = '';
+      // Use cached account ID immediately; refresh in background without blocking
+      let adAccountId = localStorage.getItem('fb_ad_account_id') || '';
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), 4000); // 4s hard timeout
       try {
-        const acctRes = await authFetch(`${API_URL}/facebook/accounts`);
+        const acctRes = await authFetch(`${API_URL}/facebook/accounts`, { signal: controller.signal });
+        clearTimeout(tid);
         if (acctRes.ok) {
           const accounts = await acctRes.json();
-          adAccountId = (Array.isArray(accounts) && accounts.length > 0)
-            ? (accounts[0].account_id || '')
-            : '';
+          const id = (Array.isArray(accounts) && accounts.length > 0)
+            ? (accounts[0].account_id || '') : '';
+          if (id) { adAccountId = id; localStorage.setItem('fb_ad_account_id', id); }
         }
-      } catch (_) { /* fall through with empty account */ }
+      } catch (_) { clearTimeout(tid); /* use cached or empty */ }
 
       const insightsParams = new URLSearchParams();
       if (adAccountId) insightsParams.set('ad_account_id', adAccountId);
