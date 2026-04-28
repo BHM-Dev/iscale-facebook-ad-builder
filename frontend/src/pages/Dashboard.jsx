@@ -28,9 +28,24 @@ export default function Dashboard() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      // Resolve ad account ID first (same pattern as CampaignPerformance)
+      let adAccountId = '';
+      try {
+        const acctRes = await authFetch(`${API_URL}/facebook/accounts`);
+        if (acctRes.ok) {
+          const accounts = await acctRes.json();
+          adAccountId = (Array.isArray(accounts) && accounts.length > 0)
+            ? (accounts[0].account_id || '')
+            : '';
+        }
+      } catch (_) { /* fall through with empty account */ }
+
+      const insightsParams = new URLSearchParams({ date_preset: 'last_7d' });
+      if (adAccountId) insightsParams.set('ad_account_id', adAccountId);
+
       const [adsetsRes, insightsRes, rulesRes] = await Promise.all([
         authFetch(`${API_URL}/facebook/adsets/saved`),
-        authFetch(`${API_URL}/auto-pause/insights-bulk?date_preset=last_7d`),
+        authFetch(`${API_URL}/auto-pause/insights-bulk?${insightsParams}`),
         authFetch(`${API_URL}/auto-pause/rules`),
       ]);
       if (adsetsRes.ok)   setAdsets(await adsetsRes.json());
