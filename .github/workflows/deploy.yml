@@ -17,6 +17,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
           script: |
+            set -e
             cd /home/ubuntu/iscale-facebook-ad-builder
 
             git pull origin develop
