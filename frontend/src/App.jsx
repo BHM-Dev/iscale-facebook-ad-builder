@@ -32,6 +32,7 @@ import Research from './pages/Research';
 import ResearchSettings from './pages/ResearchSettings';
 import BrandScrapes from './pages/BrandScrapes';
 import AdRemix from './pages/AdRemix';
+import BatchGenerate from './pages/BatchGenerate';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
 import UserManagement from './pages/UserManagement';
@@ -62,6 +63,7 @@ function App() {
                   <Route path="research/settings" element={<ResearchSettings />} />
                   <Route path="build-creatives" element={<CreateAds />} />
                   <Route path="image-ads" element={<ImageAds />} />
+                  <Route path="batch-generate" element={<BatchGenerate />} />
                   <Route path="video-ads" element={<VideoAds />} />
                   <Route path="facebook-campaigns" element={<FacebookCampaigns />} />
                   <Route path="campaign-performance" element={<CampaignPerformance />} />

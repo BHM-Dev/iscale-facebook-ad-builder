@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Package, Users, Video, Wand2, Settings, LogOut, Image, ShoppingBag, Target, ChevronLeft, ChevronRight, FileImage, Search, ChevronDown, UserCog, TrendingDown } from 'lucide-react';
+import { LayoutDashboard, Package, Users, Video, Wand2, Settings, LogOut, Image, ShoppingBag, Target, ChevronLeft, ChevronRight, FileImage, Search, ChevronDown, UserCog, TrendingDown, Zap, Shuffle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
@@ -34,7 +34,7 @@ export default function Layout() {
     const navigate = useNavigate();
     const { user, logout, hasRole } = useAuth();
     const { showSuccess } = useToast();
-    const [expandedMenus, setExpandedMenus] = useState({ Brands: false, Research: false, Facebook: false });
+    const [expandedMenus, setExpandedMenus] = useState({ Brands: false, Research: false, Facebook: false, 'Build Creatives': true });
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [showUserMenu, setShowUserMenu] = useState(false);
 
@@ -55,7 +55,16 @@ export default function Layout() {
                 { label: 'Settings', path: '/research/settings' }
             ]
         },
-        { icon: Wand2, label: 'Build Creatives', path: '/build-creatives' },
+        {
+            icon: Wand2,
+            label: 'Build Creatives',
+            subItems: [
+                { label: 'Image Ad',         path: '/image-ads',       icon: Image },
+                { label: 'Batch Generate',   path: '/batch-generate',  icon: Zap },
+                { label: 'Ad Remix',         path: '/ad-remix',        icon: Shuffle },
+                { label: 'Video Ad',         path: '/video-ads',       icon: Video },
+            ]
+        },
         {
             icon: ShoppingBag,
             label: 'Brands',
