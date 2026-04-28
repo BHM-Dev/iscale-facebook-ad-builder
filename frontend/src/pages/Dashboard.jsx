@@ -124,13 +124,13 @@ export default function Dashboard() {
   const [rules, setRules] = useState([]);
 
   // Date filter state
-  const [preset, setPreset] = useState('last_7d');
+  const [preset, setPreset] = useState('today');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [activeRange, setActiveRange] = useState({ preset: 'last_7d', dateFrom: null, dateTo: null });
+  const [activeRange, setActiveRange] = useState({ preset: 'today', dateFrom: null, dateTo: null });
 
   const load = useCallback(async (range) => {
-    const { preset: p, dateFrom: df, dateTo: dt } = range || { preset: 'last_7d', dateFrom: null, dateTo: null };
+    const { preset: p, dateFrom: df, dateTo: dt } = range || { preset: 'today', dateFrom: null, dateTo: null };
     setLoading(true);
     setInsightsError(null);
     setBulkInsights({}); // clear stale data so KPIs show — while loading
@@ -156,7 +156,7 @@ export default function Dashboard() {
         insightsParams.set('date_from', df);
         insightsParams.set('date_to', dt);
       } else {
-        insightsParams.set('date_preset', p || 'last_7d');
+        insightsParams.set('date_preset', p || 'today');
       }
 
       const timedFetch = (url, ms = 25000) => {

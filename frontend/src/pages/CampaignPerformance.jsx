@@ -313,7 +313,7 @@ export default function CampaignPerformance() {
   const { showSuccess, showError, showInfo } = useToast();
   const [adsets, setAdsets]     = useState([]);
   const [rules, setRules]       = useState([]);
-  const [datePreset, setDatePreset] = useState('last_7d');
+  const [datePreset, setDatePreset] = useState('today');
   const [adAccountId, setAdAccountId] = useState('');
   const [loadingAdsets, setLoadingAdsets] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -441,9 +441,9 @@ export default function CampaignPerformance() {
 
     const fireLoads = (accountId) => {
       initialLoadFired.current = true;
-      loadBulkInsights(accountId, 'last_7d');
+      loadBulkInsights(accountId, 'today');
       // loadAdsBulk fires after bulkInsights settles (see deferred effect below)
-      loadRtAdsBulk('last_7d');
+      loadRtAdsBulk('today');
     };
 
     authFetch(`${API_BASE}/facebook/accounts`, { signal: controller.signal })
