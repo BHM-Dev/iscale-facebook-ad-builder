@@ -352,11 +352,23 @@ export default function CampaignPerformance() {
     } catch (e) { showError(e.message); }
   }, []);
 
-  const loadBulkInsights = useCallback(async (accountId, preset) => {
+  // Build date params — passes date_from/date_to for custom ranges, date_preset otherwise
+  const buildDateParams = useCallback((preset, dateFrom = null, dateTo = null) => {
+    const params = new URLSearchParams();
+    if (dateFrom && dateTo) {
+      params.set('date_from', dateFrom);
+      params.set('date_to', dateTo);
+    } else {
+      params.set('date_preset', preset);
+    }
+    return params;
+  }, []);
+
+  const loadBulkInsights = useCallback(async (accountId, preset, dateFrom = null, dateTo = null) => {
     setBulkInsightsLoading(true);
     setBulkInsightsError(null);
     try {
-      const params = new URLSearchParams({ date_preset: preset });
+      const params = buildDateParams(preset, dateFrom, dateTo);
       if (accountId) params.set('ad_account_id', accountId);
       const res = await authFetch(`${API_BASE}/auto-pause/insights-bulk?${params}`);
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed to load insights'); }
@@ -366,12 +378,12 @@ export default function CampaignPerformance() {
     } finally {
       setBulkInsightsLoading(false);
     }
-  }, []);
+  }, [buildDateParams]);
 
-  const loadAdsBulk = useCallback(async (accountId, preset) => {
+  const loadAdsBulk = useCallback(async (accountId, preset, dateFrom = null, dateTo = null) => {
     setAdsLoading(true);
     try {
-      const params = new URLSearchParams({ date_preset: preset });
+      const params = buildDateParams(preset, dateFrom, dateTo);
       if (accountId) params.set('ad_account_id', accountId);
       const res = await authFetch(`${API_BASE}/auto-pause/ads-bulk?${params}`);
       if (!res.ok) return; // non-fatal — ad breakdown is supplementary
@@ -381,20 +393,20 @@ export default function CampaignPerformance() {
     } finally {
       setAdsLoading(false);
     }
-  }, []);
+  }, [buildDateParams]);
 
-  const loadRtAdsBulk = useCallback(async (preset) => {
-    // RT ad-level data requires sub3={{ad.id}} in tracking URLs
-    // Returns dict keyed by ad_id → {conversions, revenue, cost, profit, roas, cpl}
+  const loadRtAdsBulk = useCallback(async (preset, dateFrom = null, dateTo = null) => {
+    // RT ad-level data keyed by ad_id (sub1) → {conversions, revenue, roas, cpl, ...}
     try {
-      const res = await authFetch(`${API_BASE}/redtrack/report/sub1?date_preset=${preset}`);
+      const params = buildDateParams(preset, dateFrom, dateTo);
+      const res = await authFetch(`${API_BASE}/redtrack/report/sub1?${params}`);
       if (!res.ok) return;
       const data = await res.json();
       if (data.configured && data.data) setRtAdsBulk(data.data);
     } catch (e) {
       // silently fail — RT ad-level is supplementary
     }
-  }, []);
+  }, [buildDateParams]);
 
   // On mount: try to get account ID, then fire bulk insights either way
   useEffect(() => {
@@ -416,13 +428,11 @@ export default function CampaignPerformance() {
       });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-fetch all bulk data when date preset changes
+  // Re-fetch all bulk data whenever date preset changes
   useEffect(() => {
-    if (datePreset !== 'last_7d') {
-      loadBulkInsights(adAccountId, datePreset);
-      loadAdsBulk(adAccountId, datePreset);
-      loadRtAdsBulk(datePreset);
-    }
+    loadBulkInsights(adAccountId, datePreset);
+    loadAdsBulk(adAccountId, datePreset);
+    loadRtAdsBulk(datePreset);
   }, [datePreset]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadAdsets(); loadRules(); }, [loadAdsets, loadRules]);

@@ -937,8 +937,16 @@ class FacebookService:
 
         return out
 
-    def get_account_ads_insights_bulk(self, ad_account_id: str = None, date_preset: str = 'last_7d') -> dict:
+    def get_account_ads_insights_bulk(
+        self,
+        ad_account_id: str = None,
+        date_preset: str = 'last_7d',
+        date_from: str = None,
+        date_to: str = None,
+    ) -> dict:
         """Fetch Meta Insights for ALL ads in the account in a single API call.
+
+        Accepts either date_preset or explicit date_from/date_to (YYYY-MM-DD).
 
         Returns a dict keyed by fb_adset_id → list of ads:
           { fb_adset_id: [ { ad_id, ad_name, spend, leads, cpl,
@@ -961,10 +969,16 @@ class FacebookService:
             'purchase_roas',
             'action_values',
         ]
-        params = {
-            'date_preset': date_preset,
-            'level': 'ad',
-        }
+        if date_from and date_to:
+            params = {
+                'time_range': {'since': date_from, 'until': date_to},
+                'level': 'ad',
+            }
+        else:
+            params = {
+                'date_preset': date_preset,
+                'level': 'ad',
+            }
 
         try:
             results = account.get_insights(fields=fields, params=params)
