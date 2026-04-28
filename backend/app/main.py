@@ -129,13 +129,17 @@ async def startup_event():
                 import uuid
                 from datetime import date as _date
 
+                import time as _time
                 presets = ["today", "yesterday", "last_7d", "last_14d", "last_30d"]
                 total = 0
-                for preset in presets:
+                for i, preset in enumerate(presets):
                     try:
+                        if i > 0:
+                            _time.sleep(2)  # avoid RT rate-limiting on back-to-back calls
                         date_from_str, date_to_str = svc.preset_to_dates(preset)
                         report = svc.get_report_by_adset(date_from_str, date_to_str)
                         if not report:
+                            print(f"ℹ️  RedTrack: no data for {preset} ({date_from_str}→{date_to_str})")
                             continue
                         date_from = _date.fromisoformat(date_from_str)
                         date_to   = _date.fromisoformat(date_to_str)
@@ -153,9 +157,10 @@ async def startup_event():
                             ))
                         db.commit()
                         total += len(report)
+                        print(f"✅ RedTrack {preset}: {len(report)} ad sets cached")
                     except Exception as preset_exc:
                         print(f"⚠️  RedTrack sync error for {preset}: {preset_exc}")
-                print(f"✅ RedTrack cache refreshed: {total} rows across {len(presets)} presets")
+                print(f"✅ RedTrack cache sync complete: {total} total rows")
             except Exception as exc:
                 print(f"⚠️  RedTrack sync error: {exc}")
             finally:

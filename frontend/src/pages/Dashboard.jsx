@@ -201,7 +201,7 @@ export default function Dashboard() {
       label: r.adset_name || 'Ad set',
       reason: `Auto-paused: ${r.trigger_reason}`,
       severity: 'red',
-      link: '/performance',
+      link: '/campaign-performance',
     });
   });
 
@@ -216,7 +216,7 @@ export default function Dashboard() {
           label: a.name,
           reason: `Frequency ${ins.frequency.toFixed(1)} — ad fatigue risk`,
           severity: 'red',
-          link: '/performance',
+          link: '/campaign-performance',
         });
       } else if (ins.frequency >= 3) {
         needsAttention.push({
@@ -224,7 +224,7 @@ export default function Dashboard() {
           label: a.name,
           reason: `Frequency ${ins.frequency.toFixed(1)} — monitor closely`,
           severity: 'orange',
-          link: '/performance',
+          link: '/campaign-performance',
         });
       }
       if (ins.spend > 50 && ins.leads === 0) {
@@ -233,7 +233,7 @@ export default function Dashboard() {
           label: a.name,
           reason: `$${ins.spend.toFixed(0)} spent, 0 leads`,
           severity: 'red',
-          link: '/performance',
+          link: '/campaign-performance',
         });
       }
     });
@@ -268,7 +268,7 @@ export default function Dashboard() {
     .slice(0, 4);
 
   const quickActions = [
-    { label: 'Performance', description: 'Live ad set & creative stats', icon: TrendingDown, path: '/performance', color: 'from-indigo-600 to-indigo-500', primary: true },
+    { label: 'Performance', description: 'Live ad set & creative stats', icon: TrendingDown, path: '/campaign-performance', color: 'from-indigo-600 to-indigo-500', primary: true },
     { label: 'Build Creatives', description: 'Create new image or video ads', icon: Wand2, path: '/build-creatives', color: 'from-amber-500 to-orange-500' },
     { label: 'Manage Brands', description: 'Update brand assets and profiles', icon: ShoppingBag, path: '/brands', color: 'from-orange-500 to-red-500' },
     { label: 'Browse Templates', description: 'Explore winning ad templates', icon: Star, path: '/winning-ads', color: 'from-amber-600 to-yellow-600' },
@@ -346,7 +346,7 @@ export default function Dashboard() {
               <AlertTriangle size={15} className="text-orange-500" />
               Needs Attention
             </h2>
-            <Link to="/performance" className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
+            <Link to="/campaign-performance" className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
               View all <ArrowRight size={11} />
             </Link>
           </div>
@@ -380,7 +380,7 @@ export default function Dashboard() {
               Top Performers
               <span className="text-xs text-gray-400 font-normal">by RT ROAS</span>
             </h2>
-            <Link to="/performance" className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
+            <Link to="/campaign-performance" className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
               View all <ArrowRight size={11} />
             </Link>
           </div>
@@ -393,7 +393,7 @@ export default function Dashboard() {
           ) : (
             <div className="divide-y divide-gray-50">
               {topPerformers.map((a, i) => (
-                <Link key={a.id} to="/performance" className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
+                <Link key={a.id} to="/campaign-performance" className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
                   <span className="text-xs font-bold text-gray-300 w-4">{i + 1}</span>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-gray-800 truncate">{a.name}</div>
