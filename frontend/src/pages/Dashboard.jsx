@@ -346,7 +346,7 @@ export default function Dashboard() {
               <AlertTriangle size={15} className="text-orange-500" />
               Needs Attention
             </h2>
-            <Link to="/campaign-performance" className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
+            <Link to="/campaign-performance?view=attention" className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
               View all <ArrowRight size={11} />
             </Link>
           </div>
@@ -380,7 +380,7 @@ export default function Dashboard() {
               Top Performers
               <span className="text-xs text-gray-400 font-normal">by RT ROAS</span>
             </h2>
-            <Link to="/campaign-performance" className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
+            <Link to="/campaign-performance?view=top-performers" className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
               View all <ArrowRight size={11} />
             </Link>
           </div>
@@ -393,7 +393,7 @@ export default function Dashboard() {
           ) : (
             <div className="divide-y divide-gray-50">
               {topPerformers.map((a, i) => (
-                <Link key={a.id} to="/campaign-performance" className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
+                <Link key={a.id} to="/campaign-performance?view=top-performers" className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
                   <span className="text-xs font-bold text-gray-300 w-4">{i + 1}</span>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-gray-800 truncate">{a.name}</div>

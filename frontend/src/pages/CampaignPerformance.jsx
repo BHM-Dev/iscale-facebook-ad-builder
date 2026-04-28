@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { PauseCircle, PlayCircle, Trash2, Plus, RefreshCw, AlertTriangle, CheckCircle, TrendingDown, DollarSign, Target, Zap, ChevronDown, ChevronRight } from 'lucide-react';
+import { PauseCircle, PlayCircle, Trash2, Plus, RefreshCw, AlertTriangle, CheckCircle, TrendingDown, DollarSign, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
+import { useSearchParams } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -319,8 +320,19 @@ export default function CampaignPerformance() {
   const [checking, setChecking] = useState(false);
   const [showAddRule, setShowAddRule] = useState(false);
   const [lastCheckResult, setLastCheckResult] = useState(null);
-  const [statusFilter, setStatusFilter] = useState('ACTIVE'); // 'all' | 'ACTIVE' | 'PAUSED' | 'has_spend'
-  const [sortBy, setSortBy] = useState('status');             // 'status' | 'spend' | 'cpl' | 'name'
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [statusFilter, setStatusFilter] = useState(() => {
+    const view = searchParams.get('view');
+    if (view === 'attention') return 'flagged';
+    if (view === 'top-performers') return 'has_spend';
+    return 'ACTIVE';
+  });
+  const [sortBy, setSortBy] = useState(() => {
+    const view = searchParams.get('view');
+    if (view === 'top-performers') return 'roas';
+    return 'status';
+  });
+  const [dashboardView, setDashboardView] = useState(() => searchParams.get('view')); // banner state
 
   // Bulk insights state — one API call replaces N per-row calls
   const [bulkInsights, setBulkInsights]       = useState(null);
@@ -513,22 +525,33 @@ export default function CampaignPerformance() {
     finally { setChecking(false); }
   };
 
+  // Helper: is this ad set flagged for attention?
+  const isFlagged = useCallback((a) => {
+    const ins = bulkInsights?.[a.fb_adset_id];
+    if (!ins) return false;
+    if (ins.frequency >= 3) return true;
+    if (ins.spend > 50 && ins.leads === 0) return true;
+    if (rules.some(r => r.triggered_at && r.fb_adset_id === a.fb_adset_id)) return true;
+    return false;
+  }, [bulkInsights, rules]);
+
   const visibleAdsets = useMemo(() => {
     let list = adsets.filter(a => a.fb_adset_id);
 
-    // Status / spend filter
+    // Status / spend / flagged filter
     if (statusFilter === 'ACTIVE') {
       list = list.filter(a => a.status === 'ACTIVE');
     } else if (statusFilter === 'PAUSED') {
       list = list.filter(a => a.status === 'PAUSED');
     } else if (statusFilter === 'has_spend') {
       list = list.filter(a => (bulkInsights?.[a.fb_adset_id]?.spend ?? 0) > 0);
+    } else if (statusFilter === 'flagged') {
+      list = list.filter(a => a.status === 'ACTIVE' && isFlagged(a));
     }
 
     // Sort
     list = [...list].sort((a, b) => {
       if (sortBy === 'status') {
-        // ACTIVE first, then PAUSED
         if (a.status === b.status) return a.name.localeCompare(b.name);
         return a.status === 'ACTIVE' ? -1 : 1;
       }
@@ -536,18 +559,23 @@ export default function CampaignPerformance() {
       if (sortBy === 'spend') {
         const sa = bulkInsights?.[a.fb_adset_id]?.spend ?? -1;
         const sb = bulkInsights?.[b.fb_adset_id]?.spend ?? -1;
-        return sb - sa; // highest spend first
+        return sb - sa;
       }
       if (sortBy === 'cpl') {
         const ca = bulkInsights?.[a.fb_adset_id]?.cpl ?? Infinity;
         const cb = bulkInsights?.[b.fb_adset_id]?.cpl ?? Infinity;
-        return ca - cb; // lowest CPL first (best performers)
+        return ca - cb;
+      }
+      if (sortBy === 'roas') {
+        const ra = bulkInsights?.[a.fb_adset_id]?.redtrack?.roas ?? -1;
+        const rb = bulkInsights?.[b.fb_adset_id]?.redtrack?.roas ?? -1;
+        return rb - ra; // highest RT ROAS first
       }
       return 0;
     });
 
     return list;
-  }, [adsets, statusFilter, sortBy, bulkInsights]);
+  }, [adsets, statusFilter, sortBy, bulkInsights, isFlagged]);
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
@@ -612,6 +640,28 @@ export default function CampaignPerformance() {
         </div>
       </div>
 
+      {/* Dashboard deep-link banner */}
+      {dashboardView && (
+        <div className={`flex items-center justify-between rounded-xl px-4 py-3 text-sm font-medium border ${
+          dashboardView === 'attention'
+            ? 'bg-orange-50 border-orange-200 text-orange-800'
+            : 'bg-green-50 border-green-200 text-green-800'
+        }`}>
+          <div className="flex items-center gap-2">
+            {dashboardView === 'attention'
+              ? <><AlertTriangle size={15} /> Showing flagged ad sets — high frequency, zero-lead spend, or auto-paused</>
+              : <><TrendingUp size={15} /> Showing top performers — sorted by RT ROAS, active with spend</>
+            }
+          </div>
+          <button
+            onClick={() => { setDashboardView(null); setSearchParams({}); setStatusFilter('ACTIVE'); setSortBy('status'); }}
+            className="ml-4 hover:opacity-70 transition-opacity"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       {/* Last check results */}
       {lastCheckResult && lastCheckResult.paused.length > 0 && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4">
@@ -642,22 +692,24 @@ export default function CampaignPerformance() {
             <select
               className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               value={statusFilter}
-              onChange={e => setStatusFilter(e.target.value)}
+              onChange={e => { setStatusFilter(e.target.value); setDashboardView(null); }}
             >
               <option value="all">All ad sets</option>
               <option value="ACTIVE">Active only</option>
               <option value="PAUSED">Paused only</option>
               <option value="has_spend">Has spend</option>
+              <option value="flagged">⚠ Needs attention</option>
             </select>
             {/* Sort */}
             <select
               className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               value={sortBy}
-              onChange={e => setSortBy(e.target.value)}
+              onChange={e => { setSortBy(e.target.value); setDashboardView(null); }}
             >
               <option value="status">Sort: Active first</option>
               <option value="spend">Sort: Spend ↓</option>
               <option value="cpl">Sort: CPL ↑</option>
+              <option value="roas">Sort: RT ROAS ↓</option>
               <option value="name">Sort: Name A–Z</option>
             </select>
             <button
