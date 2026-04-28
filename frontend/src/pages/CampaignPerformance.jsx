@@ -420,13 +420,24 @@ export default function CampaignPerformance() {
     }
   }, [buildDateParams]);
 
-  // On mount: use cached account ID immediately, refresh in background with timeout
+  // Track whether the initial mount load has fired — prevents datePreset effect
+  // from double-firing on mount before the account ID is resolved
+  const initialLoadFired = useRef(false);
+
+  // On mount: resolve account ID (cached → live refresh), then fire initial data load
   useEffect(() => {
     const cached = localStorage.getItem('fb_ad_account_id') || '';
     if (cached) setAdAccountId(cached);
 
     const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 4000); // 4s hard timeout
+    const tid = setTimeout(() => controller.abort(), 4000);
+
+    const fireLoads = (accountId) => {
+      initialLoadFired.current = true;
+      loadBulkInsights(accountId, 'last_7d');
+      loadAdsBulk(accountId, 'last_7d');
+      loadRtAdsBulk('last_7d');
+    };
 
     authFetch(`${API_BASE}/facebook/accounts`, { signal: controller.signal })
       .then(res => res.ok ? res.json() : null)
@@ -435,22 +446,17 @@ export default function CampaignPerformance() {
         const id = Array.isArray(accounts) && accounts.length > 0
           ? (accounts[0].account_id || '') : '';
         if (id) { localStorage.setItem('fb_ad_account_id', id); setAdAccountId(id); }
-        const resolvedId = id || cached;
-        loadBulkInsights(resolvedId, 'last_7d');
-        loadAdsBulk(resolvedId, 'last_7d');
-        loadRtAdsBulk('last_7d');
+        fireLoads(id || cached);
       })
       .catch(() => {
         clearTimeout(tid);
-        // Fall back to cached or empty — still fire the data loads
-        loadBulkInsights(cached, 'last_7d');
-        loadAdsBulk(cached, 'last_7d');
-        loadRtAdsBulk('last_7d');
+        fireLoads(cached);
       });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-fetch all bulk data whenever date preset changes
+  // Re-fetch when user changes the date preset — skip the initial mount render
   useEffect(() => {
+    if (!initialLoadFired.current) return;
     loadBulkInsights(adAccountId, datePreset);
     loadAdsBulk(adAccountId, datePreset);
     loadRtAdsBulk(datePreset);
