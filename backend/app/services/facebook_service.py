@@ -865,7 +865,16 @@ class FacebookService:
             }
 
         try:
-            results = account.get_insights(fields=fields, params=params)
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(account.get_insights, fields, params)
+                try:
+                    results = future.result(timeout=20)  # 20s hard cap on Meta API
+                except FuturesTimeout:
+                    logger.error("Meta bulk insights timed out after 20s")
+                    raise RuntimeError("Meta API timeout — try again in a moment")
+        except RuntimeError:
+            raise
         except FacebookRequestError as e:
             body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
             err = body.get('error', {}) if isinstance(body, dict) else {}
@@ -981,7 +990,16 @@ class FacebookService:
             }
 
         try:
-            results = account.get_insights(fields=fields, params=params)
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(account.get_insights, fields, params)
+                try:
+                    results = future.result(timeout=20)
+                except FuturesTimeout:
+                    logger.error("Meta ads bulk insights timed out after 20s")
+                    raise RuntimeError("Meta API timeout — try again in a moment")
+        except RuntimeError:
+            raise
         except FacebookRequestError as e:
             body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
             err = body.get('error', {}) if isinstance(body, dict) else {}

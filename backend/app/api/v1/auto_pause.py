@@ -407,7 +407,11 @@ def check_and_enforce(
 
 
 def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
-    """Core enforcement logic — called by endpoint and by APScheduler."""
+    """Core enforcement logic — called by endpoint and by APScheduler.
+
+    Uses a single bulk Meta API call instead of one call per rule to avoid
+    N×latency when many rules are active.
+    """
     rules = db.query(AutoPauseRule).filter(AutoPauseRule.is_active == True).all()
 
     paused = []
@@ -416,6 +420,15 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
     now = datetime.now(timezone.utc)
 
     svc = FacebookService()
+
+    # One bulk call for all adset insights instead of N sequential calls
+    bulk_insights = {}
+    try:
+        bulk_insights = svc.get_account_insights_bulk(ad_account_id=ad_account_id)
+    except Exception as e:
+        logger.error("Bulk insights fetch failed for check: %s", e)
+        # Fall back to per-adset calls if bulk fails
+        bulk_insights = None
 
     for rule in rules:
         adset = rule.adset
@@ -430,7 +443,13 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
             continue
 
         try:
-            insights = svc.get_adset_insights(adset.fb_adset_id)
+            if bulk_insights is not None:
+                insights = bulk_insights.get(adset.fb_adset_id)
+                if insights is None:
+                    skipped.append({"rule_id": rule.id, "adset": adset.name, "reason": "not in bulk results"})
+                    continue
+            else:
+                insights = svc.get_adset_insights(adset.fb_adset_id)
         except Exception as e:
             logger.error("Insights fetch failed for %s: %s", adset.fb_adset_id, e)
             errors.append({"rule_id": rule.id, "adset": adset.name, "error": str(e)})
