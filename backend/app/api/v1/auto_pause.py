@@ -255,6 +255,42 @@ def get_insights_bulk(
         )
         .all()
     )
+
+    # Cache miss — fetch live from RedTrack and persist for future loads
+    if not rt_rows:
+        rt_svc = RedTrackService()
+        if rt_svc.is_configured():
+            import uuid, logging as _log
+            _logger = _log.getLogger(__name__)
+            live = rt_svc.get_report_by_adset(date_from_str, date_to_str)
+            if live:
+                _logger.info("RT live fetch for %s→%s: %d rows; caching.", date_from_str, date_to_str, len(live))
+                d_from = date.fromisoformat(date_from_str)
+                d_to   = date.fromisoformat(date_to_str)
+                # Wipe any stale rows for this range then insert fresh
+                db.query(RedTrackCache).filter(
+                    RedTrackCache.date_from == d_from,
+                    RedTrackCache.date_to   == d_to,
+                ).delete()
+                for fb_adset_id, metrics in live.items():
+                    db.add(RedTrackCache(
+                        id=str(uuid.uuid4()),
+                        fb_adset_id=fb_adset_id,
+                        date_from=d_from,
+                        date_to=d_to,
+                        **metrics,
+                    ))
+                db.commit()
+                # Re-query so rt_rows is populated for the merge below
+                rt_rows = (
+                    db.query(RedTrackCache)
+                    .filter(
+                        RedTrackCache.date_from == d_from,
+                        RedTrackCache.date_to   == d_to,
+                    )
+                    .all()
+                )
+
     rt_by_adset = {}
     for rt in rt_rows:
         rt_by_adset[rt.fb_adset_id] = {
