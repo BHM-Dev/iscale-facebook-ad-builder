@@ -118,6 +118,7 @@ function DateFilter({ preset, setPreset, dateFrom, setDateFrom, dateTo, setDateT
 export default function Dashboard() {
   const { authFetch: authFetchCtx } = useAuth();
   const [loading, setLoading] = useState(true);
+  const [insightsError, setInsightsError] = useState(null);
   const [adsets, setAdsets] = useState([]);
   const [bulkInsights, setBulkInsights] = useState({});
   const [rules, setRules] = useState([]);
@@ -131,6 +132,8 @@ export default function Dashboard() {
   const load = useCallback(async (range) => {
     const { preset: p, dateFrom: df, dateTo: dt } = range || { preset: 'last_7d', dateFrom: null, dateTo: null };
     setLoading(true);
+    setInsightsError(null);
+    setBulkInsights({}); // clear stale data so KPIs show — while loading
     try {
       // Use cached account ID immediately; refresh in background without blocking
       let adAccountId = localStorage.getItem('fb_ad_account_id') || '';
@@ -168,10 +171,15 @@ export default function Dashboard() {
         timedFetch(`${API_URL}/auto-pause/rules`, 10000),
       ]);
       if (adsetsRes.ok)   setAdsets(await adsetsRes.json());
-      if (insightsRes.ok) setBulkInsights(await insightsRes.json());
+      if (insightsRes.ok) {
+        setBulkInsights(await insightsRes.json());
+      } else {
+        const err = await insightsRes.json().catch(() => ({}));
+        setInsightsError(err.detail || `Meta API error (${insightsRes.status}) — try a different date range`);
+      }
       if (rulesRes.ok)    setRules(await rulesRes.json());
     } catch (e) {
-      // silently degrade
+      if (e.name !== 'AbortError') setInsightsError('Request timed out — check your connection and try again');
     } finally {
       setLoading(false);
     }
@@ -311,6 +319,14 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
+
+      {/* Insights error banner */}
+      {insightsError && !loading && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
+          <AlertTriangle size={14} className="flex-shrink-0" />
+          {insightsError}
+        </div>
+      )}
 
       {/* KPI Row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">

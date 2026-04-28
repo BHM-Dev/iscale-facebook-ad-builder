@@ -256,40 +256,50 @@ def get_insights_bulk(
         .all()
     )
 
-    # Cache miss — fetch live from RedTrack and persist for future loads
+    # Cache miss — fetch live from RedTrack and persist for future loads.
+    # Wrapped in try/except: RT is supplementary — a RedTrack API error must
+    # never crash the insights-bulk endpoint and wipe out Meta stats.
     if not rt_rows:
-        rt_svc = RedTrackService()
-        if rt_svc.is_configured():
-            import uuid, logging as _log
-            _logger = _log.getLogger(__name__)
-            live = rt_svc.get_report_by_adset(date_from_str, date_to_str)
-            if live:
-                _logger.info("RT live fetch for %s→%s: %d rows; caching.", date_from_str, date_to_str, len(live))
-                d_from = date.fromisoformat(date_from_str)
-                d_to   = date.fromisoformat(date_to_str)
-                # Wipe any stale rows for this range then insert fresh
-                db.query(RedTrackCache).filter(
-                    RedTrackCache.date_from == d_from,
-                    RedTrackCache.date_to   == d_to,
-                ).delete()
-                for fb_adset_id, metrics in live.items():
-                    db.add(RedTrackCache(
-                        id=str(uuid.uuid4()),
-                        fb_adset_id=fb_adset_id,
-                        date_from=d_from,
-                        date_to=d_to,
-                        **metrics,
-                    ))
-                db.commit()
-                # Re-query so rt_rows is populated for the merge below
-                rt_rows = (
-                    db.query(RedTrackCache)
-                    .filter(
+        try:
+            rt_svc = RedTrackService()
+            if rt_svc.is_configured():
+                import uuid, logging as _log
+                _logger = _log.getLogger(__name__)
+                live = rt_svc.get_report_by_adset(date_from_str, date_to_str)
+                if live:
+                    _logger.info("RT live fetch for %s→%s: %d rows; caching.", date_from_str, date_to_str, len(live))
+                    d_from = date.fromisoformat(date_from_str)
+                    d_to   = date.fromisoformat(date_to_str)
+                    # Wipe any stale rows for this range then insert fresh
+                    db.query(RedTrackCache).filter(
                         RedTrackCache.date_from == d_from,
                         RedTrackCache.date_to   == d_to,
+                    ).delete()
+                    for fb_adset_id, metrics in live.items():
+                        db.add(RedTrackCache(
+                            id=str(uuid.uuid4()),
+                            fb_adset_id=fb_adset_id,
+                            date_from=d_from,
+                            date_to=d_to,
+                            **metrics,
+                        ))
+                    db.commit()
+                    # Re-query so rt_rows is populated for the merge below
+                    rt_rows = (
+                        db.query(RedTrackCache)
+                        .filter(
+                            RedTrackCache.date_from == d_from,
+                            RedTrackCache.date_to   == d_to,
+                        )
+                        .all()
                     )
-                    .all()
-                )
+        except Exception as _rt_exc:
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                "RT live fetch failed for %s→%s (non-fatal): %s",
+                date_from_str, date_to_str, _rt_exc
+            )
+            # rt_rows stays empty — Meta data still returned, RT column shows blank
 
     rt_by_adset = {}
     for rt in rt_rows:
