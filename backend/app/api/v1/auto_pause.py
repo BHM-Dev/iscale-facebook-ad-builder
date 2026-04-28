@@ -214,17 +214,25 @@ def get_insights(
 def get_insights_bulk(
     ad_account_id: Optional[str] = Query(None),
     date_preset: str = Query("last_7d"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """Fetch Meta Insights for ALL ad sets in a single API call, merged with
     cached RedTrack data. Returns a dict keyed by fb_adset_id.
 
+    Accepts either date_preset OR explicit date_from/date_to (YYYY-MM-DD).
     Use this instead of calling /insights/{id} per row — dramatically faster.
     """
     svc = FacebookService()
     try:
-        bulk = svc.get_account_insights_bulk(ad_account_id=ad_account_id, date_preset=date_preset)
+        bulk = svc.get_account_insights_bulk(
+            ad_account_id=ad_account_id,
+            date_preset=date_preset,
+            date_from=date_from,
+            date_to=date_to,
+        )
     except RuntimeError as e:
         raise HTTPException(400, str(e))
 
@@ -233,7 +241,12 @@ def get_insights_bulk(
     from datetime import date
     from app.services.redtrack_service import RedTrackService
 
-    date_from_str, date_to_str = RedTrackService.preset_to_dates(date_preset)
+    # Resolve the actual date range for RT cache lookup
+    if date_from and date_to:
+        date_from_str, date_to_str = date_from, date_to
+    else:
+        date_from_str, date_to_str = RedTrackService.preset_to_dates(date_preset)
+
     rt_rows = (
         db.query(RedTrackCache)
         .filter(

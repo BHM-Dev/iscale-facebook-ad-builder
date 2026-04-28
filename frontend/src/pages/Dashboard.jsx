@@ -1,10 +1,18 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { TrendingDown, Wand2, Star, ShoppingBag, AlertTriangle, TrendingUp, DollarSign, Users, Target, RefreshCw, ArrowRight, Zap } from 'lucide-react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { TrendingDown, Wand2, Star, ShoppingBag, AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { authFetch } from '../lib/facebookApi';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+
+const PRESETS = [
+  { value: 'today',    label: 'Today' },
+  { value: 'yesterday', label: 'Yesterday' },
+  { value: 'last_7d',  label: 'Last 7 Days' },
+  { value: 'last_14d', label: 'Last 14 Days' },
+  { value: 'last_30d', label: 'Last 30 Days' },
+];
 
 function KpiCard({ label, value, sub, highlight, warn }) {
   return (
@@ -18,6 +26,95 @@ function KpiCard({ label, value, sub, highlight, warn }) {
   );
 }
 
+function DateFilter({ preset, setPreset, dateFrom, setDateFrom, dateTo, setDateTo, onApply }) {
+  const [open, setOpen] = useState(false);
+  const [showCustom, setShowCustom] = useState(false);
+  const ref = useRef(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  const activeLabel = showCustom && dateFrom && dateTo
+    ? `${dateFrom} – ${dateTo}`
+    : (PRESETS.find(p => p.value === preset)?.label ?? 'Last 7 Days');
+
+  function selectPreset(val) {
+    setPreset(val);
+    setShowCustom(false);
+    setOpen(false);
+    onApply({ preset: val, dateFrom: null, dateTo: null });
+  }
+
+  function applyCustom() {
+    if (!dateFrom || !dateTo) return;
+    setShowCustom(true);
+    setOpen(false);
+    onApply({ preset: null, dateFrom, dateTo });
+  }
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
+      >
+        <Calendar size={13} className="text-gray-400" />
+        {activeLabel}
+        <ChevronDown size={12} className="text-gray-400" />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 mt-1 w-64 bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-1 overflow-hidden">
+          {PRESETS.map(p => (
+            <button
+              key={p.value}
+              onClick={() => selectPreset(p.value)}
+              className={`w-full text-left px-4 py-2 text-sm transition-colors ${
+                preset === p.value && !showCustom
+                  ? 'bg-indigo-50 text-indigo-700 font-medium'
+                  : 'text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+          <div className="border-t border-gray-100 mt-1 pt-1 px-3 pb-3">
+            <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2 pt-1">Custom range</div>
+            <div className="flex gap-2 items-center">
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={e => setDateFrom(e.target.value)}
+                className="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              />
+              <span className="text-gray-400 text-xs">–</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={e => setDateTo(e.target.value)}
+                className="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              />
+            </div>
+            <button
+              onClick={applyCustom}
+              disabled={!dateFrom || !dateTo}
+              className="mt-2 w-full bg-indigo-600 text-white text-xs font-medium py-1.5 rounded-lg hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+            >
+              Apply
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { authFetch: authFetchCtx } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -25,7 +122,14 @@ export default function Dashboard() {
   const [bulkInsights, setBulkInsights] = useState({});
   const [rules, setRules] = useState([]);
 
-  const load = useCallback(async () => {
+  // Date filter state
+  const [preset, setPreset] = useState('last_7d');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [activeRange, setActiveRange] = useState({ preset: 'last_7d', dateFrom: null, dateTo: null });
+
+  const load = useCallback(async (range) => {
+    const { preset: p, dateFrom: df, dateTo: dt } = range || { preset: 'last_7d', dateFrom: null, dateTo: null };
     setLoading(true);
     try {
       // Resolve ad account ID first (same pattern as CampaignPerformance)
@@ -40,8 +144,14 @@ export default function Dashboard() {
         }
       } catch (_) { /* fall through with empty account */ }
 
-      const insightsParams = new URLSearchParams({ date_preset: 'last_7d' });
+      const insightsParams = new URLSearchParams();
       if (adAccountId) insightsParams.set('ad_account_id', adAccountId);
+      if (df && dt) {
+        insightsParams.set('date_from', df);
+        insightsParams.set('date_to', dt);
+      } else {
+        insightsParams.set('date_preset', p || 'last_7d');
+      }
 
       const [adsetsRes, insightsRes, rulesRes] = await Promise.all([
         authFetch(`${API_URL}/facebook/adsets/saved`),
@@ -58,7 +168,13 @@ export default function Dashboard() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // Initial load
+  useEffect(() => { load(activeRange); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function handleApply(range) {
+    setActiveRange(range);
+    load(range);
+  }
 
   // ── Aggregate KPIs ──────────────────────────────────────────────────────────
   const rows = Object.values(bulkInsights);
@@ -70,11 +186,15 @@ export default function Dashboard() {
   const rtRoas       = totalSpend > 0 && rtRevenue > 0 ? rtRevenue / totalSpend : null;
   const activeCount  = adsets.filter(a => a.status === 'ACTIVE').length;
 
+  // Human-readable subtitle for selected range
+  const rangeLabel = activeRange.dateFrom && activeRange.dateTo
+    ? `${activeRange.dateFrom} – ${activeRange.dateTo}`
+    : (PRESETS.find(p => p.value === activeRange.preset)?.label ?? 'Last 7 Days');
+
   // ── Needs Attention ─────────────────────────────────────────────────────────
   const triggeredRules = rules.filter(r => r.triggered_at);
   const needsAttention = [];
 
-  // Triggered auto-pause rules
   triggeredRules.forEach(r => {
     needsAttention.push({
       id: `rule-${r.id}`,
@@ -85,7 +205,6 @@ export default function Dashboard() {
     });
   });
 
-  // High frequency (3+) or high CPL
   adsets
     .filter(a => a.status === 'ACTIVE' && a.fb_adset_id)
     .forEach(a => {
@@ -108,7 +227,6 @@ export default function Dashboard() {
           link: '/performance',
         });
       }
-      // High spend + zero leads
       if (ins.spend > 50 && ins.leads === 0) {
         needsAttention.push({
           id: `noleads-${a.id}`,
@@ -120,7 +238,6 @@ export default function Dashboard() {
       }
     });
 
-  // Deduplicate and cap at 5
   const seen = new Set();
   const attentionList = needsAttention.filter(item => {
     if (seen.has(item.id)) return false;
@@ -163,16 +280,27 @@ export default function Dashboard() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-gray-500 text-sm mt-0.5">Last 7 days · {activeCount} active ad sets</p>
+          <p className="text-gray-500 text-sm mt-0.5">{rangeLabel} · {activeCount} active ad sets</p>
         </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-500 border border-gray-200 hover:bg-gray-50 transition-colors disabled:opacity-40"
-        >
-          <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <DateFilter
+            preset={preset}
+            setPreset={setPreset}
+            dateFrom={dateFrom}
+            setDateFrom={setDateFrom}
+            dateTo={dateTo}
+            setDateTo={setDateTo}
+            onApply={handleApply}
+          />
+          <button
+            onClick={() => load(activeRange)}
+            disabled={loading}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-500 border border-gray-200 hover:bg-gray-50 transition-colors disabled:opacity-40"
+          >
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* KPI Row */}
@@ -180,7 +308,7 @@ export default function Dashboard() {
         <KpiCard
           label="Total Spend"
           value={loading ? '—' : `$${totalSpend.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`}
-          sub="last 7 days"
+          sub={rangeLabel}
         />
         <KpiCard
           label="Total Leads"
@@ -227,7 +355,7 @@ export default function Dashboard() {
           ) : attentionList.length === 0 ? (
             <div className="px-5 py-8 text-center text-sm text-gray-400">
               <div className="text-green-500 font-medium mb-1">All clear</div>
-              No issues flagged in the last 7 days.
+              No issues flagged for this period.
             </div>
           ) : (
             <div className="divide-y divide-gray-50">
