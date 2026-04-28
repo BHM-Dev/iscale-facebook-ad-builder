@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { PauseCircle, PlayCircle, Trash2, Plus, RefreshCw, AlertTriangle, CheckCircle, TrendingDown, DollarSign, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { useSearchParams } from 'react-router-dom';
@@ -442,7 +442,7 @@ export default function CampaignPerformance() {
     const fireLoads = (accountId) => {
       initialLoadFired.current = true;
       loadBulkInsights(accountId, 'last_7d');
-      loadAdsBulk(accountId, 'last_7d');
+      // loadAdsBulk fires after bulkInsights settles (see deferred effect below)
       loadRtAdsBulk('last_7d');
     };
 
@@ -465,9 +465,20 @@ export default function CampaignPerformance() {
   useEffect(() => {
     if (!initialLoadFired.current) return;
     loadBulkInsights(adAccountId, datePreset);
-    loadAdsBulk(adAccountId, datePreset);
+    // loadAdsBulk fires after bulkInsights settles (see deferred effect below)
     loadRtAdsBulk(datePreset);
   }, [datePreset]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Deferred: fire loadAdsBulk after bulk insights finish loading.
+  // This avoids two heavy Meta API calls running in parallel on every page load.
+  const prevBulkLoadingRef = useRef(false);
+  useEffect(() => {
+    // Detect the transition: was loading → now done with data
+    if (prevBulkLoadingRef.current && !bulkInsightsLoading && bulkInsights !== null) {
+      loadAdsBulk(adAccountId, datePreset);
+    }
+    prevBulkLoadingRef.current = bulkInsightsLoading;
+  }, [bulkInsightsLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadAdsets(); loadRules(); }, [loadAdsets, loadRules]);
 
