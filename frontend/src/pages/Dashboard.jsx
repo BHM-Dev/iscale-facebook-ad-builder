@@ -441,15 +441,24 @@ export default function Dashboard() {
                       <div className={`text-xs mt-0.5 ${item.severity === 'red' ? 'text-red-600' : 'text-orange-500'}`}>{item.reason}</div>
                     </Link>
                     {item.fb_adset_id && (
-                      <button
-                        onClick={() => pauseAdset(item.fb_adset_id, item.label)}
-                        disabled={isPausing}
-                        className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-gray-500 border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-40 flex-shrink-0"
-                        title={`Pause ${item.label}`}
-                      >
-                        {isPausing ? <RefreshCw size={11} className="animate-spin" /> : <PauseCircle size={11} />}
-                        Pause
-                      </button>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <button
+                          onClick={() => navigate(`/batch-generate?adsetName=${encodeURIComponent(item.label)}`)}
+                          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-indigo-600 border border-indigo-100 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                          title="Try new creative variants"
+                        >
+                          <Repeat2 size={11} /> Iterate
+                        </button>
+                        <button
+                          onClick={() => pauseAdset(item.fb_adset_id, item.label)}
+                          disabled={isPausing}
+                          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-gray-500 border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-40"
+                          title={`Pause ${item.label}`}
+                        >
+                          {isPausing ? <RefreshCw size={11} className="animate-spin" /> : <PauseCircle size={11} />}
+                          Pause
+                        </button>
+                      </div>
                     )}
                   </div>
                 );

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { PauseCircle, PlayCircle, Trash2, Plus, RefreshCw, AlertTriangle, CheckCircle, TrendingDown, DollarSign, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2 } from 'lucide-react';
+import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2 } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
@@ -398,14 +398,11 @@ export default function CampaignPerformance() {
   const navigate = useNavigate();
   const { showSuccess, showError, showInfo } = useToast();
   const [adsets, setAdsets]     = useState([]);
-  const [rules, setRules]       = useState([]);
+  const [rules, setRules]       = useState([]); // still needed for isFlagged + rule badges
   const [datePreset, setDatePreset] = useState('today');
   const [adAccountId, setAdAccountId] = useState('');
   const [loadingAdsets, setLoadingAdsets] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [checking, setChecking] = useState(false);
-  const [showAddRule, setShowAddRule] = useState(false);
-  const [lastCheckResult, setLastCheckResult] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const [statusFilter, setStatusFilter] = useState(() => {
     const view = searchParams.get('view');
@@ -522,20 +519,23 @@ export default function CampaignPerformance() {
     const newStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
     setPausingAdsets(prev => new Set(prev).add(adset.fb_adset_id));
     try {
-      const res = await authFetch(`${API_BASE}/facebook/adsets/${adset.fb_adset_id}/status`, {
+      const res = await timedFetch(`${API_BASE}/facebook/adsets/${adset.fb_adset_id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
-      });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
+      }, 15000);
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.detail || `API error (${res.status})`);
+      }
       setAdsetStatusOverrides(prev => ({ ...prev, [adset.fb_adset_id]: newStatus }));
-      showSuccess(`Ad set "${adset.name}" ${newStatus === 'PAUSED' ? 'paused' : 'resumed'}`);
+      showSuccess(`"${adset.name}" ${newStatus === 'PAUSED' ? 'paused' : 'resumed'}`);
     } catch (e) {
-      showError(e.message);
+      showError(e.name === 'AbortError' ? 'Request timed out — try again' : (e.message || 'Failed'));
     } finally {
       setPausingAdsets(prev => { const next = new Set(prev); next.delete(adset.fb_adset_id); return next; });
     }
-  }, [adsetStatusOverrides, showSuccess, showError]);
+  }, [adsetStatusOverrides, timedFetch, showSuccess, showError]);
 
   // Track whether the initial mount load has fired — prevents datePreset effect
   // from double-firing on mount before the account ID is resolved
@@ -592,37 +592,6 @@ export default function CampaignPerformance() {
 
   useEffect(() => { loadAdsets(); loadRules(); }, [loadAdsets, loadRules]);
 
-  // Scroll to Auto-Pause Rules section when arriving via nav deep-link
-  useEffect(() => {
-    if (searchParams.get('section') === 'rules') {
-      // Small delay so the DOM is painted first
-      setTimeout(() => {
-        document.getElementById('auto-pause-rules')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 400);
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const deleteRule = async (ruleId) => {
-    try {
-      const res = await authFetch(`${API_BASE}/auto-pause/rules/${ruleId}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Failed to delete rule');
-      showSuccess('Rule deleted');
-      loadRules();
-    } catch (e) { showError(e.message); }
-  };
-
-  const toggleRule = async (rule) => {
-    try {
-      const res = await authFetch(`${API_BASE}/auto-pause/rules/${rule.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ is_active: !rule.is_active }),
-      });
-      if (!res.ok) throw new Error('Failed to update rule');
-      showSuccess(rule.is_active ? 'Rule disabled' : 'Rule enabled');
-      loadRules();
-    } catch (e) { showError(e.message); }
-  };
 
   const syncFromMeta = async () => {
     setSyncing(true);
@@ -657,25 +626,6 @@ export default function CampaignPerformance() {
       }
     } catch (e) { showError(e.message); }
     finally { setSyncingRT(false); }
-  };
-
-  const runCheck = async () => {
-    setChecking(true);
-    showInfo('Checking all rules against live Meta data...');
-    try {
-      const params = adAccountId ? `?ad_account_id=${adAccountId}` : '';
-      const res = await authFetch(`${API_BASE}/auto-pause/check${params}`, { method: 'POST' });
-      if (!res.ok) throw new Error('Check failed');
-      const result = await res.json();
-      setLastCheckResult(result);
-      if (result.paused.length > 0) {
-        showSuccess(`Paused ${result.paused.length} ad set(s)! Check results below.`);
-      } else {
-        showSuccess(`Check complete — no rules breached. ${result.rules_evaluated} rules evaluated.`);
-      }
-      loadAdsets(); loadRules();
-    } catch (e) { showError(e.message); }
-    finally { setChecking(false); }
   };
 
   // Helper: is this ad set flagged for attention?
@@ -785,15 +735,6 @@ export default function CampaignPerformance() {
               <span className="absolute right-2 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-green-400" title="Account connected" />
             )}
           </div>
-          <button
-            onClick={runCheck}
-            disabled={checking}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors"
-            style={{ backgroundColor: checking ? '#9CA3AF' : '#2D2463' }}
-          >
-            <RefreshCw size={14} className={checking ? 'animate-spin' : ''} />
-            {checking ? 'Checking...' : 'Check Now'}
-          </button>
         </div>
       </div>
 
@@ -816,20 +757,6 @@ export default function CampaignPerformance() {
           >
             <X size={14} />
           </button>
-        </div>
-      )}
-
-      {/* Last check results */}
-      {lastCheckResult && lastCheckResult.paused.length > 0 && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-          <h3 className="font-semibold text-red-800 flex items-center gap-2 mb-2">
-            <PauseCircle size={16} /> Auto-paused {lastCheckResult.paused.length} ad set(s)
-          </h3>
-          {lastCheckResult.paused.map((p, i) => (
-            <div key={i} className="text-sm text-red-700">
-              <strong>{p.adset}</strong> — {p.reason}
-            </div>
-          ))}
         </div>
       )}
 
@@ -1014,84 +941,6 @@ export default function CampaignPerformance() {
         )}
       </div>
 
-      {/* Auto-Pause Rules */}
-      <div id="auto-pause-rules" className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-          <h2 className="font-semibold text-gray-900 flex items-center gap-2">
-            <PauseCircle size={16} className="text-red-500" /> Auto-Pause Rules
-          </h2>
-          <button
-            onClick={() => setShowAddRule(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-white"
-            style={{ backgroundColor: '#2D2463' }}
-          >
-            <Plus size={14} /> Add Rule
-          </button>
-        </div>
-
-        {rules.length === 0 ? (
-          <div className="p-8 text-center">
-            <PauseCircle size={32} className="text-gray-200 mx-auto mb-2" />
-            <p className="text-gray-500 text-sm">No rules yet.</p>
-            <p className="text-gray-400 text-xs mt-1">Add a rule to automatically pause ad sets when performance drops.</p>
-          </div>
-        ) : (
-          <div className="divide-y divide-gray-50">
-            {rules.map(rule => (
-              <div key={rule.id} className={`px-6 py-4 flex items-center justify-between gap-4 ${!rule.is_active ? 'opacity-50' : ''}`}>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium text-gray-900 text-sm truncate">{rule.adset_name || rule.adset_id}</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                      rule.triggered_at ? 'bg-red-100 text-red-700' : rule.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                    }`}>
-                      {rule.triggered_at ? 'Triggered' : rule.is_active ? 'Active' : 'Disabled'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    Pause if {METRIC_LABELS[rule.metric]} {rule.operator === 'greater_than' ? '>' : '<'} {METRIC_UNITS[rule.metric]}{rule.threshold}
-                    {' '}after {METRIC_UNITS.cpl}{rule.min_spend} spend
-                  </p>
-                  {rule.trigger_reason && (
-                    <p className="text-xs text-red-600 mt-0.5 flex items-center gap-1">
-                      <AlertTriangle size={10} /> {rule.trigger_reason}
-                    </p>
-                  )}
-                  {rule.last_checked_at && (
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      Last checked: {new Date(rule.last_checked_at).toLocaleString()}
-                    </p>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <button
-                    onClick={() => toggleRule(rule)}
-                    className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-700"
-                    title={rule.is_active ? 'Disable rule' : 'Enable rule'}
-                  >
-                    {rule.is_active ? <PauseCircle size={16} /> : <PlayCircle size={16} />}
-                  </button>
-                  <button
-                    onClick={() => deleteRule(rule.id)}
-                    className="p-1.5 rounded-lg hover:bg-red-50 transition-colors text-gray-400 hover:text-red-500"
-                    title="Delete rule"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {showAddRule && (
-        <AddRuleModal
-          adsets={adsets}
-          onClose={() => setShowAddRule(false)}
-          onCreated={loadRules}
-        />
-      )}
     </div>
   );
 }
