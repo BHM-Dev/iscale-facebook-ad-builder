@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Package, Users, Video, Wand2, Settings, LogOut, Image, ShoppingBag, Target, ChevronLeft, ChevronRight, FileImage, Search, ChevronDown, UserCog, TrendingDown, Zap, Shuffle } from 'lucide-react';
+import { LayoutDashboard, Package, Users, Video, Wand2, Settings, LogOut, Image, ShoppingBag, Target, ChevronLeft, ChevronRight, FileImage, Search, ChevronDown, UserCog, TrendingDown, Zap, Shuffle, PauseCircle, Megaphone } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
@@ -34,7 +34,7 @@ export default function Layout() {
     const navigate = useNavigate();
     const { user, logout, hasRole } = useAuth();
     const { showSuccess } = useToast();
-    const [expandedMenus, setExpandedMenus] = useState({ Brands: false, Research: false, Facebook: false, 'Build Creatives': true });
+    const [expandedMenus, setExpandedMenus] = useState({ Brands: false, Research: false, Facebook: true, 'Build Creatives': true });
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [showUserMenu, setShowUserMenu] = useState(false);
 
@@ -74,14 +74,14 @@ export default function Layout() {
                 { label: 'Customer Profiles', path: '/profiles' }
             ]
         },
-        { icon: Image, label: 'Winning Ads', path: '/winning-ads' },
         { icon: FileImage, label: 'Generated Ads', path: '/generated-ads' },
         {
             icon: Target,
             label: 'Facebook',
             subItems: [
-                { label: 'Campaigns', path: '/facebook-campaigns' },
-                { label: 'Performance & Auto-Pause', path: '/campaign-performance' },
+                { label: 'Campaign Builder', path: '/facebook-campaigns', icon: Megaphone },
+                { label: 'Performance',      path: '/campaign-performance', icon: TrendingDown },
+                { label: 'Auto-Pause Rules', path: '/campaign-performance?section=rules', icon: PauseCircle },
             ]
         },
     ];
@@ -130,7 +130,7 @@ export default function Layout() {
 
                         if (item.subItems) {
                             const isExpanded = expandedMenus[item.label];
-                            const isActive = item.subItems.some(sub => location.pathname === sub.path);
+                            const isActive = item.subItems.some(sub => location.pathname === sub.path.split('?')[0]);
 
                             return (
                                 <div key={item.label} className="space-y-0.5">
@@ -156,17 +156,22 @@ export default function Layout() {
                                     {!isCollapsed && isExpanded && (
                                         <div className="pl-9 space-y-0.5">
                                             {item.subItems.map(subItem => {
-                                                const isSubActive = location.pathname === subItem.path;
+                                                const SubIcon = subItem.icon;
+                                                const subPath = subItem.path.split('?')[0];
+                                                const subQuery = subItem.path.includes('?') ? subItem.path.split('?')[1] : null;
+                                                const isSubActive = location.pathname === subPath &&
+                                                    (!subQuery || location.search === `?${subQuery}`);
                                                 return (
                                                     <Link
                                                         key={subItem.path}
                                                         to={subItem.path}
-                                                        className={`block px-3 py-2 rounded-lg text-sm transition-colors ${
+                                                        className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
                                                             isSubActive
                                                                 ? 'text-white bg-white/15 font-medium'
                                                                 : 'text-white/50 hover:text-white hover:bg-white/10'
                                                         }`}
                                                     >
+                                                        {SubIcon && <SubIcon size={13} className="flex-shrink-0" />}
                                                         {subItem.label}
                                                     </Link>
                                                 );

@@ -592,6 +592,16 @@ export default function CampaignPerformance() {
 
   useEffect(() => { loadAdsets(); loadRules(); }, [loadAdsets, loadRules]);
 
+  // Scroll to Auto-Pause Rules section when arriving via nav deep-link
+  useEffect(() => {
+    if (searchParams.get('section') === 'rules') {
+      // Small delay so the DOM is painted first
+      setTimeout(() => {
+        document.getElementById('auto-pause-rules')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 400);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const deleteRule = async (ruleId) => {
     try {
       const res = await authFetch(`${API_BASE}/auto-pause/rules/${ruleId}`, { method: 'DELETE' });
@@ -669,12 +679,14 @@ export default function CampaignPerformance() {
   };
 
   // Helper: is this ad set flagged for attention?
+  // Criteria must stay in sync with Dashboard.jsx needsAttention logic.
   const isFlagged = useCallback((a) => {
     const ins = bulkInsights?.[a.fb_adset_id];
     if (!ins) return false;
     if (ins.frequency >= 3) return true;
     if (ins.spend > 50 && ins.leads === 0) return true;
-    if (rules.some(r => r.triggered_at && r.fb_adset_id === a.fb_adset_id)) return true;
+    if (rules.some(r => r.triggered_at && r.adset_id === a.id)) return true;
+    if (ins.redtrack?.roas != null && ins.redtrack.roas < 1 && ins.spend > 30) return true;
     return false;
   }, [bulkInsights, rules]);
 
@@ -867,11 +879,17 @@ export default function CampaignPerformance() {
           </div>
         </div>
 
-        {loadingAdsets ? (
-          <div className="p-8 text-center text-gray-400 text-sm">Loading ad sets...</div>
+        {/* Show spinner while loading — especially important for insight-dependent filters */}
+        {(loadingAdsets || (bulkInsightsLoading && ['flagged', 'has_spend', 'roas'].includes(statusFilter))) ? (
+          <div className="p-8 text-center text-gray-400 text-sm flex items-center justify-center gap-2">
+            <RefreshCw size={14} className="animate-spin" /> Loading…
+          </div>
         ) : visibleAdsets.length === 0 ? (
           <div className="p-8 text-center text-gray-400 text-sm">
-            {statusFilter === 'has_spend' ? 'No ad sets with spend in this date range.' : statusFilter !== 'all' ? `No ${statusFilter.toLowerCase()} ad sets found.` : 'No launched ad sets found. Create and launch a campaign first.'}
+            {statusFilter === 'has_spend' ? 'No ad sets with spend in this date range.' :
+             statusFilter === 'flagged' ? 'No flagged ad sets — everything looks healthy.' :
+             statusFilter !== 'all' ? `No ${statusFilter.toLowerCase()} ad sets found.` :
+             'No launched ad sets found. Create and launch a campaign first.'}
           </div>
         ) : (
           <div className="divide-y divide-gray-50">
@@ -997,7 +1015,7 @@ export default function CampaignPerformance() {
       </div>
 
       {/* Auto-Pause Rules */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      <div id="auto-pause-rules" className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
           <h2 className="font-semibold text-gray-900 flex items-center gap-2">
             <PauseCircle size={16} className="text-red-500" /> Auto-Pause Rules

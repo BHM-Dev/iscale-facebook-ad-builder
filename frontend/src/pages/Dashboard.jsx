@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { TrendingDown, Wand2, Star, ShoppingBag, AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { TrendingDown, Wand2, Star, ShoppingBag, AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown, PauseCircle, PlayCircle, Repeat2 } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { authFetch } from '../lib/facebookApi';
 
@@ -117,7 +117,10 @@ function DateFilter({ preset, setPreset, dateFrom, setDateFrom, dateTo, setDateT
 
 export default function Dashboard() {
   const { authFetch: authFetchCtx } = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [pausingAdsets, setPausingAdsets] = useState(new Set());
+  const [pausedOverrides, setPausedOverrides] = useState(new Set()); // fb_adset_ids paused this session
   const [insightsError, setInsightsError] = useState(null);
   const [adsets, setAdsets] = useState([]);
   const [bulkInsights, setBulkInsights] = useState({});
@@ -128,6 +131,23 @@ export default function Dashboard() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [activeRange, setActiveRange] = useState({ preset: 'today', dateFrom: null, dateTo: null });
+
+  const pauseAdset = useCallback(async (fb_adset_id, adsetName) => {
+    setPausingAdsets(prev => new Set(prev).add(fb_adset_id));
+    try {
+      const res = await authFetch(`${API_URL}/facebook/adsets/${fb_adset_id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'PAUSED' }),
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
+      setPausedOverrides(prev => new Set(prev).add(fb_adset_id));
+    } catch (e) {
+      // silently fail — user can try again from Performance page
+    } finally {
+      setPausingAdsets(prev => { const next = new Set(prev); next.delete(fb_adset_id); return next; });
+    }
+  }, []);
 
   const load = useCallback(async (range) => {
     const { preset: p, dateFrom: df, dateTo: dt } = range || { preset: 'today', dateFrom: null, dateTo: null };
@@ -218,12 +238,12 @@ export default function Dashboard() {
       label: r.adset_name || 'Ad set',
       reason: `Auto-paused: ${r.trigger_reason}`,
       severity: 'red',
-      link: '/campaign-performance?view=attention',
+      fb_adset_id: null, // already paused — no action button needed
     });
   });
 
   adsets
-    .filter(a => a.status === 'ACTIVE' && a.fb_adset_id)
+    .filter(a => a.status === 'ACTIVE' && a.fb_adset_id && !pausedOverrides.has(a.fb_adset_id))
     .forEach(a => {
       const ins = bulkInsights[a.fb_adset_id];
       if (!ins) return;
@@ -236,7 +256,7 @@ export default function Dashboard() {
           label: a.name,
           reason: `Frequency ${ins.frequency.toFixed(1)} — ad fatigue risk`,
           severity: 'red',
-          link: '/campaign-performance?view=attention',
+          fb_adset_id: a.fb_adset_id,
         });
       } else if (ins.frequency >= 3) {
         needsAttention.push({
@@ -244,7 +264,7 @@ export default function Dashboard() {
           label: a.name,
           reason: `Frequency ${ins.frequency.toFixed(1)} — monitor closely`,
           severity: 'orange',
-          link: '/campaign-performance?view=attention',
+          fb_adset_id: a.fb_adset_id,
         });
       }
 
@@ -255,7 +275,7 @@ export default function Dashboard() {
           label: a.name,
           reason: `$${ins.spend.toFixed(0)} spent, 0 leads`,
           severity: 'red',
-          link: '/campaign-performance?view=attention',
+          fb_adset_id: a.fb_adset_id,
         });
       }
 
@@ -266,7 +286,7 @@ export default function Dashboard() {
           label: a.name,
           reason: `RT ROAS ${rt.roas.toFixed(2)}x — losing money on ad spend`,
           severity: 'red',
-          link: '/campaign-performance?view=attention',
+          fb_adset_id: a.fb_adset_id,
         });
       }
 
@@ -277,7 +297,7 @@ export default function Dashboard() {
           label: a.name,
           reason: `CPL $${ins.cpl.toFixed(0)} — ${Math.round(ins.cpl / blendedCpl)}x above blended avg`,
           severity: 'orange',
-          link: '/campaign-performance?view=attention',
+          fb_adset_id: a.fb_adset_id,
         });
       }
     });
@@ -411,15 +431,29 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="divide-y divide-gray-50">
-              {attentionList.map(item => (
-                <Link key={item.id} to={item.link} className="flex items-start gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
-                  <div className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${item.severity === 'red' ? 'bg-red-500' : 'bg-orange-400'}`} />
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium text-gray-800 truncate">{item.label}</div>
-                    <div className={`text-xs mt-0.5 ${item.severity === 'red' ? 'text-red-600' : 'text-orange-500'}`}>{item.reason}</div>
+              {attentionList.map(item => {
+                const isPausing = item.fb_adset_id && pausingAdsets.has(item.fb_adset_id);
+                return (
+                  <div key={item.id} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
+                    <div className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${item.severity === 'red' ? 'bg-red-500' : 'bg-orange-400'}`} />
+                    <Link to="/campaign-performance?view=attention" className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-gray-800 truncate">{item.label}</div>
+                      <div className={`text-xs mt-0.5 ${item.severity === 'red' ? 'text-red-600' : 'text-orange-500'}`}>{item.reason}</div>
+                    </Link>
+                    {item.fb_adset_id && (
+                      <button
+                        onClick={() => pauseAdset(item.fb_adset_id, item.label)}
+                        disabled={isPausing}
+                        className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-gray-500 border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-40 flex-shrink-0"
+                        title={`Pause ${item.label}`}
+                      >
+                        {isPausing ? <RefreshCw size={11} className="animate-spin" /> : <PauseCircle size={11} />}
+                        Pause
+                      </button>
+                    )}
                   </div>
-                </Link>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -445,21 +479,30 @@ export default function Dashboard() {
           ) : (
             <div className="divide-y divide-gray-50">
               {topPerformers.map((a, i) => (
-                <Link key={a.id} to="/campaign-performance?view=top-performers" className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
-                  <span className="text-xs font-bold text-gray-300 w-4">{i + 1}</span>
-                  <div className="flex-1 min-w-0">
+                <div key={a.id} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
+                  <span className="text-xs font-bold text-gray-300 w-4 flex-shrink-0">{i + 1}</span>
+                  <Link to="/campaign-performance?view=top-performers" className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-gray-800 truncate">{a.name}</div>
                     <div className="text-xs text-gray-400 mt-0.5">
                       ${a.spend.toFixed(0)} spend · {a.leads} leads · {a.rtConvs} RT convs
                     </div>
+                  </Link>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="text-right">
+                      <div className="text-sm font-bold text-green-600">{a.rtRoas.toFixed(2)}x</div>
+                      {a.rtCpl != null && (
+                        <div className="text-xs text-gray-400">${a.rtCpl.toFixed(2)} CPL</div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => navigate(`/batch-generate?adsetName=${encodeURIComponent(a.name)}`)}
+                      className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-indigo-600 border border-indigo-100 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                      title="Generate more variants of this winning creative"
+                    >
+                      <Repeat2 size={11} /> Iterate
+                    </button>
                   </div>
-                  <div className="text-right flex-shrink-0">
-                    <div className="text-sm font-bold text-green-600">{a.rtRoas.toFixed(2)}x</div>
-                    {a.rtCpl != null && (
-                      <div className="text-xs text-gray-400">${a.rtCpl.toFixed(2)} CPL</div>
-                    )}
-                  </div>
-                </Link>
+                </div>
               ))}
             </div>
           )}
