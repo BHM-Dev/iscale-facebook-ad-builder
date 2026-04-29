@@ -133,40 +133,6 @@ export default function Dashboard() {
   const [dateTo, setDateTo] = useState('');
   const [activeRange, setActiveRange] = useState({ preset: 'today', dateFrom: null, dateTo: null });
 
-  const syncRT = useCallback(async () => {
-    setSyncingRT(true);
-    try {
-      const { preset: p, dateFrom: df, dateTo: dt } = activeRange;
-      const params = new URLSearchParams();
-      if (df && dt) { params.set('date_from', df); params.set('date_to', dt); }
-      else { params.set('date_preset', p || 'today'); }
-      const res = await authFetch(`${API_URL}/redtrack/sync?${params}`, { method: 'POST' });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Sync failed'); }
-      const result = await res.json();
-      if (result.synced > 0) {
-        load(activeRange); // re-fetch dashboard with fresh RT data
-      }
-    } catch (_) { /* silently fail — RT sync is best-effort */ }
-    finally { setSyncingRT(false); }
-  }, [activeRange, load]);
-
-  const pauseAdset = useCallback(async (fb_adset_id, adsetName) => {
-    setPausingAdsets(prev => new Set(prev).add(fb_adset_id));
-    try {
-      const res = await authFetch(`${API_URL}/facebook/adsets/${fb_adset_id}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'PAUSED' }),
-      });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
-      setPausedOverrides(prev => new Set(prev).add(fb_adset_id));
-    } catch (e) {
-      // silently fail — user can try again from Performance page
-    } finally {
-      setPausingAdsets(prev => { const next = new Set(prev); next.delete(fb_adset_id); return next; });
-    }
-  }, []);
-
   const load = useCallback(async (range) => {
     const { preset: p, dateFrom: df, dateTo: dt } = range || { preset: 'today', dateFrom: null, dateTo: null };
     setLoading(true);
@@ -220,6 +186,40 @@ export default function Dashboard() {
       if (e.name !== 'AbortError') setInsightsError('Request timed out — check your connection and try again');
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const syncRT = useCallback(async () => {
+    setSyncingRT(true);
+    try {
+      const { preset: p, dateFrom: df, dateTo: dt } = activeRange;
+      const params = new URLSearchParams();
+      if (df && dt) { params.set('date_from', df); params.set('date_to', dt); }
+      else { params.set('date_preset', p || 'today'); }
+      const res = await authFetch(`${API_URL}/redtrack/sync?${params}`, { method: 'POST' });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Sync failed'); }
+      const result = await res.json();
+      if (result.synced > 0) {
+        load(activeRange); // re-fetch dashboard with fresh RT data
+      }
+    } catch (_) { /* silently fail — RT sync is best-effort */ }
+    finally { setSyncingRT(false); }
+  }, [activeRange, load]);
+
+  const pauseAdset = useCallback(async (fb_adset_id, adsetName) => {
+    setPausingAdsets(prev => new Set(prev).add(fb_adset_id));
+    try {
+      const res = await authFetch(`${API_URL}/facebook/adsets/${fb_adset_id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'PAUSED' }),
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
+      setPausedOverrides(prev => new Set(prev).add(fb_adset_id));
+    } catch (e) {
+      // silently fail — user can try again from Performance page
+    } finally {
+      setPausingAdsets(prev => { const next = new Set(prev); next.delete(fb_adset_id); return next; });
     }
   }, []);
 

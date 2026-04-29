@@ -431,6 +431,7 @@ export default function CampaignPerformance() {
   // Adset-level manual pause state
   const [pausingAdsets, setPausingAdsets] = useState(new Set());
   const [adsetStatusOverrides, setAdsetStatusOverrides] = useState({}); // local optimistic overrides
+  const [syncingRT, setSyncingRT] = useState(false);
 
   const loadAdsets = useCallback(async () => {
     setLoadingAdsets(true);
@@ -609,7 +610,6 @@ export default function CampaignPerformance() {
     finally { setSyncing(false); }
   };
 
-  const [syncingRT, setSyncingRT] = useState(false);
   const syncRedTrack = async () => {
     setSyncingRT(true);
     showInfo('Syncing RedTrack data...');
