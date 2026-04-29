@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { PauseCircle, PlayCircle, Trash2, Plus, RefreshCw, AlertTriangle, CheckCircle, TrendingDown, DollarSign, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X } from 'lucide-react';
+import { PauseCircle, PlayCircle, Trash2, Plus, RefreshCw, AlertTriangle, CheckCircle, TrendingDown, DollarSign, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2 } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -117,7 +117,33 @@ function RTStat({ label, value, highlight }) {
 }
 
 // ── Creative breakdown table (ad-level) ──────────────────────────────────────
-function AdsBreakdown({ fbAdsetId, adsBulk, adsLoading, rtAdsBulk }) {
+function AdsBreakdown({ fbAdsetId, adsetName, adsBulk, adsLoading, rtAdsBulk, onAdStatusChange }) {
+  const navigate = useNavigate();
+  const { showSuccess, showError } = useToast();
+  const [pausingAds, setPausingAds] = useState(new Set());
+  const [adStatuses, setAdStatuses] = useState({}); // local optimistic status overrides
+
+  const toggleAdStatus = async (ad) => {
+    const currentStatus = adStatuses[ad.ad_id] ?? (ad.status || 'ACTIVE');
+    const newStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
+    setPausingAds(prev => new Set(prev).add(ad.ad_id));
+    try {
+      const res = await authFetch(`${API_BASE}/facebook/ads/${ad.ad_id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
+      setAdStatuses(prev => ({ ...prev, [ad.ad_id]: newStatus }));
+      showSuccess(`Ad "${ad.ad_name}" ${newStatus === 'PAUSED' ? 'paused' : 'resumed'}`);
+      onAdStatusChange?.();
+    } catch (e) {
+      showError(e.message);
+    } finally {
+      setPausingAds(prev => { const next = new Set(prev); next.delete(ad.ad_id); return next; });
+    }
+  };
+
   if (adsLoading) return (
     <div className="mt-3 pl-10 text-xs text-gray-400 animate-pulse">Loading creatives...</div>
   );
@@ -128,6 +154,12 @@ function AdsBreakdown({ fbAdsetId, adsBulk, adsLoading, rtAdsBulk }) {
   );
 
   const maxSpend = Math.max(...ads.map(a => a.spend), 0.01);
+  // Blended avg CPL for this ad set (for relative poor-performer detection)
+  const adsWithLeads = ads.filter(a => a.leads > 0);
+  const avgCpl = adsWithLeads.length > 0
+    ? adsWithLeads.reduce((s, a) => s + a.cpl, 0) / adsWithLeads.length
+    : null;
+  const hasRoas = ads.some(a => a.roas != null);
 
   return (
     <div className="mt-3 rounded-lg border border-gray-100 overflow-hidden">
@@ -140,7 +172,7 @@ function AdsBreakdown({ fbAdsetId, adsBulk, adsLoading, rtAdsBulk }) {
             <th className="text-right px-3 py-2 font-medium text-gray-500">CPL</th>
             <th className="text-right px-3 py-2 font-medium text-gray-500">CTR</th>
             <th className="text-right px-3 py-2 font-medium text-gray-500">Impr.</th>
-            {ads.some(a => a.roas != null) && (
+            {hasRoas && (
               <th className="text-right px-3 py-2 font-medium text-gray-500">ROAS</th>
             )}
             {rtAdsBulk && (
@@ -150,20 +182,45 @@ function AdsBreakdown({ fbAdsetId, adsBulk, adsLoading, rtAdsBulk }) {
                 <th className="text-right px-3 py-2 font-medium text-blue-400">RT ROAS</th>
               </>
             )}
+            <th className="px-3 py-2 font-medium text-gray-400 text-center">Actions</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-50">
           {ads.map((ad, i) => {
             const rt = rtAdsBulk?.[ad.ad_id];
-            const isTop = i === 0 && ads.length > 1 && ad.spend > 0;
-            const isWorse = ad.cpl != null && ads.some(a => a.cpl != null && a.cpl < ad.cpl * 0.7);
+            const currentStatus = adStatuses[ad.ad_id] ?? (ad.status || 'ACTIVE');
+            const isPaused = currentStatus === 'PAUSED';
+            const isPausing = pausingAds.has(ad.ad_id);
             const spendPct = maxSpend > 0 ? (ad.spend / maxSpend) * 100 : 0;
 
+            // Flag signals
+            const rtRoas = rt?.roas ?? ad.roas;
+            const isPoorRoas = rtRoas != null && rtRoas < 1;
+            const isHighCpl = avgCpl != null && ad.cpl != null && ad.cpl > avgCpl * 1.4 && ad.spend > 20;
+            const isNoLeads = ad.spend >= 20 && ad.leads === 0;
+            const isPoorPerformer = isPoorRoas || isHighCpl || isNoLeads;
+
+            // Winner: most spend, >1 ad in set, has leads
+            const isTop = i === 0 && ads.length > 1 && ad.spend > 0 && ad.leads > 0;
+
             return (
-              <tr key={ad.ad_id} className={`${isTop ? 'bg-green-50/40' : ''} hover:bg-gray-50/60 transition-colors`}>
+              <tr
+                key={ad.ad_id}
+                className={`transition-colors ${
+                  isPaused ? 'opacity-50' :
+                  isPoorPerformer ? 'bg-red-50/30 hover:bg-red-50/50' :
+                  isTop ? 'bg-green-50/40 hover:bg-green-50/60' :
+                  'hover:bg-gray-50/60'
+                }`}
+              >
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-2">
-                    {isTop && <span className="text-green-600 text-xs font-bold">↑</span>}
+                    {isTop && <span className="text-green-600 text-xs font-bold" title="Top creative">↑</span>}
+                    {isPoorPerformer && !isTop && (
+                      <AlertTriangle size={11} className="text-red-400 flex-shrink-0" title={
+                        isNoLeads ? 'Spend with 0 leads' : isHighCpl ? 'CPL well above average' : 'ROAS < 1x'
+                      } />
+                    )}
                     <div>
                       <div className="font-medium text-gray-800 leading-tight truncate max-w-[200px]" title={ad.ad_name}>
                         {ad.ad_name || ad.ad_id}
@@ -171,7 +228,7 @@ function AdsBreakdown({ fbAdsetId, adsBulk, adsLoading, rtAdsBulk }) {
                       {/* Spend bar */}
                       <div className="mt-1 h-1 bg-gray-100 rounded-full w-24">
                         <div
-                          className="h-1 rounded-full bg-indigo-400"
+                          className={`h-1 rounded-full ${isPoorPerformer ? 'bg-red-300' : isTop ? 'bg-green-400' : 'bg-indigo-400'}`}
                           style={{ width: `${spendPct}%` }}
                         />
                       </div>
@@ -180,13 +237,13 @@ function AdsBreakdown({ fbAdsetId, adsBulk, adsLoading, rtAdsBulk }) {
                 </td>
                 <td className="px-3 py-2 text-right font-medium text-gray-700">${ad.spend.toFixed(0)}</td>
                 <td className="px-3 py-2 text-right text-gray-700">{ad.leads}</td>
-                <td className={`px-3 py-2 text-right font-medium ${ad.cpl != null && ad.cpl > 60 ? 'text-red-600' : 'text-gray-700'}`}>
+                <td className={`px-3 py-2 text-right font-medium ${isHighCpl ? 'text-red-600 font-bold' : ad.cpl != null && ad.cpl > 60 ? 'text-red-600' : 'text-gray-700'}`}>
                   {ad.cpl != null ? `$${ad.cpl.toFixed(2)}` : '—'}
                 </td>
                 <td className="px-3 py-2 text-right text-gray-600">{parseFloat(ad.ctr).toFixed(2)}%</td>
                 <td className="px-3 py-2 text-right text-gray-500">{ad.impressions.toLocaleString()}</td>
-                {ads.some(a => a.roas != null) && (
-                  <td className={`px-3 py-2 text-right font-medium ${ad.roas != null && ad.roas < 1 ? 'text-red-600' : 'text-gray-700'}`}>
+                {hasRoas && (
+                  <td className={`px-3 py-2 text-right font-medium ${isPoorRoas ? 'text-red-600 font-bold' : 'text-gray-700'}`}>
                     {ad.roas != null ? `${ad.roas.toFixed(2)}x` : '—'}
                   </td>
                 )}
@@ -201,6 +258,34 @@ function AdsBreakdown({ fbAdsetId, adsBulk, adsLoading, rtAdsBulk }) {
                     </td>
                   </>
                 )}
+                <td className="px-3 py-2">
+                  <div className="flex items-center justify-center gap-1.5">
+                    {/* Iterate → Batch Generate */}
+                    <button
+                      onClick={() => navigate(`/batch-generate?adName=${encodeURIComponent(ad.ad_name || ad.ad_id)}&adsetName=${encodeURIComponent(adsetName || '')}`)}
+                      className="flex items-center gap-1 px-2 py-1 rounded text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors text-xs font-medium whitespace-nowrap"
+                      title="Iterate more versions of this creative"
+                    >
+                      <Repeat2 size={11} /> Iterate
+                    </button>
+                    {/* Pause / Resume */}
+                    <button
+                      onClick={() => toggleAdStatus(ad)}
+                      disabled={isPausing}
+                      className={`p-1 rounded transition-colors ${
+                        isPaused
+                          ? 'text-green-600 hover:bg-green-50'
+                          : 'text-gray-400 hover:bg-gray-100 hover:text-gray-700'
+                      } disabled:opacity-40`}
+                      title={isPaused ? 'Resume ad' : 'Pause ad'}
+                    >
+                      {isPausing
+                        ? <RefreshCw size={13} className="animate-spin" />
+                        : isPaused ? <PlayCircle size={13} /> : <PauseCircle size={13} />
+                      }
+                    </button>
+                  </div>
+                </td>
               </tr>
             );
           })}
@@ -310,6 +395,7 @@ function Field({ label, children }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function CampaignPerformance() {
+  const navigate = useNavigate();
   const { showSuccess, showError, showInfo } = useToast();
   const [adsets, setAdsets]     = useState([]);
   const [rules, setRules]       = useState([]);
@@ -344,6 +430,10 @@ export default function CampaignPerformance() {
   const [adsLoading, setAdsLoading]     = useState(false);
   const [rtAdsBulk, setRtAdsBulk]       = useState(null);  // RT data keyed by ad_id (sub3)
   const [expandedAdsets, setExpandedAdsets] = useState(new Set());
+
+  // Adset-level manual pause state
+  const [pausingAdsets, setPausingAdsets] = useState(new Set());
+  const [adsetStatusOverrides, setAdsetStatusOverrides] = useState({}); // local optimistic overrides
 
   const loadAdsets = useCallback(async () => {
     setLoadingAdsets(true);
@@ -426,6 +516,26 @@ export default function CampaignPerformance() {
       // silently fail — RT ad-level is supplementary
     }
   }, [buildDateParams, timedFetch]);
+
+  const toggleAdsetStatus = useCallback(async (adset) => {
+    const currentStatus = adsetStatusOverrides[adset.fb_adset_id] ?? adset.status;
+    const newStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
+    setPausingAdsets(prev => new Set(prev).add(adset.fb_adset_id));
+    try {
+      const res = await authFetch(`${API_BASE}/facebook/adsets/${adset.fb_adset_id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
+      setAdsetStatusOverrides(prev => ({ ...prev, [adset.fb_adset_id]: newStatus }));
+      showSuccess(`Ad set "${adset.name}" ${newStatus === 'PAUSED' ? 'paused' : 'resumed'}`);
+    } catch (e) {
+      showError(e.message);
+    } finally {
+      setPausingAdsets(prev => { const next = new Set(prev); next.delete(adset.fb_adset_id); return next; });
+    }
+  }, [adsetStatusOverrides, showSuccess, showError]);
 
   // Track whether the initial mount load has fired — prevents datePreset effect
   // from double-firing on mount before the account ID is resolved
@@ -571,22 +681,24 @@ export default function CampaignPerformance() {
   const visibleAdsets = useMemo(() => {
     let list = adsets.filter(a => a.fb_adset_id);
 
-    // Status / spend / flagged filter
+    // Status / spend / flagged filter — use override if present
+    const effectiveStatus = (a) => adsetStatusOverrides[a.fb_adset_id] ?? a.status;
     if (statusFilter === 'ACTIVE') {
-      list = list.filter(a => a.status === 'ACTIVE');
+      list = list.filter(a => effectiveStatus(a) === 'ACTIVE');
     } else if (statusFilter === 'PAUSED') {
-      list = list.filter(a => a.status === 'PAUSED');
+      list = list.filter(a => effectiveStatus(a) === 'PAUSED');
     } else if (statusFilter === 'has_spend') {
       list = list.filter(a => (bulkInsights?.[a.fb_adset_id]?.spend ?? 0) > 0);
     } else if (statusFilter === 'flagged') {
-      list = list.filter(a => a.status === 'ACTIVE' && isFlagged(a));
+      list = list.filter(a => effectiveStatus(a) === 'ACTIVE' && isFlagged(a));
     }
 
     // Sort
     list = [...list].sort((a, b) => {
       if (sortBy === 'status') {
-        if (a.status === b.status) return a.name.localeCompare(b.name);
-        return a.status === 'ACTIVE' ? -1 : 1;
+        const sa = effectiveStatus(a), sb = effectiveStatus(b);
+        if (sa === sb) return a.name.localeCompare(b.name);
+        return sa === 'ACTIVE' ? -1 : 1;
       }
       if (sortBy === 'name') return a.name.localeCompare(b.name);
       if (sortBy === 'spend') {
@@ -608,7 +720,7 @@ export default function CampaignPerformance() {
     });
 
     return list;
-  }, [adsets, statusFilter, sortBy, bulkInsights, isFlagged]);
+  }, [adsets, statusFilter, sortBy, bulkInsights, isFlagged, adsetStatusOverrides]);
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
@@ -766,8 +878,22 @@ export default function CampaignPerformance() {
             {visibleAdsets.map(adset => {
               const isExpanded = expandedAdsets.has(adset.fb_adset_id);
               const hasAds = adsBulk && adsBulk[adset.fb_adset_id]?.length > 0;
+              const effectiveStatus = adsetStatusOverrides[adset.fb_adset_id] ?? adset.status;
+              const isPausingAdset = pausingAdsets.has(adset.fb_adset_id);
+              // Flag any poor-performing creatives in this adset
+              const adsetAds = adsBulk?.[adset.fb_adset_id] || [];
+              const adsetAvgCpl = adsetAds.filter(a => a.leads > 0).length > 0
+                ? adsetAds.filter(a => a.leads > 0).reduce((s, a) => s + a.cpl, 0) / adsetAds.filter(a => a.leads > 0).length
+                : null;
+              const hasPoorCreatives = adsetAds.some(a => {
+                const isPoorRoas = (a.roas != null && a.roas < 1);
+                const isHighCpl = adsetAvgCpl != null && a.cpl != null && a.cpl > adsetAvgCpl * 1.4 && a.spend > 20;
+                const isNoLeads = a.spend >= 20 && a.leads === 0;
+                return isPoorRoas || isHighCpl || isNoLeads;
+              });
+
               return (
-                <div key={adset.id} className="px-6 py-4">
+                <div key={adset.id} className={`px-6 py-4 ${effectiveStatus === 'PAUSED' ? 'opacity-60' : ''}`}>
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center flex-wrap gap-2">
                       {/* Expand / collapse toggle */}
@@ -784,15 +910,23 @@ export default function CampaignPerformance() {
                       </button>
                       <span className="font-medium text-gray-900 text-sm">{adset.name}</span>
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                        adset.status === 'ACTIVE'
+                        effectiveStatus === 'ACTIVE'
                           ? 'bg-green-100 text-green-700'
                           : 'bg-gray-100 text-gray-500'
                       }`}>
-                        {adset.status}
+                        {effectiveStatus}
                       </span>
                       {hasAds && (
                         <span className="text-xs text-gray-400">
                           {adsBulk[adset.fb_adset_id].length} creative{adsBulk[adset.fb_adset_id].length !== 1 ? 's' : ''}
+                        </span>
+                      )}
+                      {hasPoorCreatives && !isExpanded && (
+                        <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-orange-50 text-orange-600 flex items-center gap-1 cursor-pointer"
+                          onClick={() => setExpandedAdsets(prev => { const next = new Set(prev); next.add(adset.fb_adset_id); return next; })}
+                          title="Click to see flagged creatives"
+                        >
+                          <AlertTriangle size={10} /> Poor creative(s)
                         </span>
                       )}
                       {(() => {
@@ -812,7 +946,28 @@ export default function CampaignPerformance() {
                         return null;
                       })()}
                     </div>
-                    <span className="text-xs text-gray-400">{adset.fb_adset_id}</span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-gray-400">{adset.fb_adset_id}</span>
+                      {/* Adset-level pause / resume button */}
+                      {adset.fb_adset_id && (
+                        <button
+                          onClick={() => toggleAdsetStatus(adset)}
+                          disabled={isPausingAdset}
+                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 ${
+                            effectiveStatus === 'PAUSED'
+                              ? 'bg-green-50 text-green-700 hover:bg-green-100'
+                              : 'bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600'
+                          }`}
+                          title={effectiveStatus === 'PAUSED' ? 'Resume ad set' : 'Pause ad set'}
+                        >
+                          {isPausingAdset
+                            ? <RefreshCw size={12} className="animate-spin" />
+                            : effectiveStatus === 'PAUSED' ? <PlayCircle size={12} /> : <PauseCircle size={12} />
+                          }
+                          {effectiveStatus === 'PAUSED' ? 'Resume' : 'Pause'}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <InsightsCard
                     fbAdsetId={adset.fb_adset_id}
@@ -827,9 +982,11 @@ export default function CampaignPerformance() {
                   {isExpanded && (
                     <AdsBreakdown
                       fbAdsetId={adset.fb_adset_id}
+                      adsetName={adset.name}
                       adsBulk={adsBulk}
                       adsLoading={adsLoading}
                       rtAdsBulk={rtAdsBulk}
+                      onAdStatusChange={() => loadAdsBulk(adAccountId, datePreset)}
                     />
                   )}
                 </div>

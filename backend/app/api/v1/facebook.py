@@ -585,3 +585,48 @@ def search_locations(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.patch("/adsets/{fb_adset_id}/status")
+def update_adset_status(
+    fb_adset_id: str,
+    body: dict,
+    db: Session = Depends(get_db),
+    service: FacebookService = Depends(get_facebook_service),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Pause or resume an ad set on Meta and sync status to local DB."""
+    status = body.get("status")
+    if status not in ("ACTIVE", "PAUSED"):
+        raise HTTPException(status_code=400, detail="status must be ACTIVE or PAUSED")
+    try:
+        service.update_adset_status(fb_adset_id, status)
+        adset = db.query(FacebookAdSet).filter(FacebookAdSet.fb_adset_id == fb_adset_id).first()
+        if adset:
+            adset.status = status
+            db.commit()
+        return {"fb_adset_id": fb_adset_id, "status": status}
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/ads/{fb_ad_id}/status")
+def update_ad_status(
+    fb_ad_id: str,
+    body: dict,
+    service: FacebookService = Depends(get_facebook_service),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Pause or resume an individual ad on Meta."""
+    status = body.get("status")
+    if status not in ("ACTIVE", "PAUSED"):
+        raise HTTPException(status_code=400, detail="status must be ACTIVE or PAUSED")
+    try:
+        service.update_ad_status(fb_ad_id, status)
+        return {"fb_ad_id": fb_ad_id, "status": status}
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

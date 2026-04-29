@@ -1,6 +1,6 @@
-import React, { useState, useRef, useCallback } from 'react';
-import { Plus, X, Zap, CheckCircle, AlertCircle, Clock, Upload, Image, ArrowRight, RefreshCw } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { Plus, X, Zap, CheckCircle, AlertCircle, Clock, Upload, Image, ArrowRight, RefreshCw, Repeat2 } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useToast } from '../context/ToastContext';
 import { authFetch } from '../lib/facebookApi';
 
@@ -82,6 +82,11 @@ function ResultCard({ variant, result, onRetry }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function BatchGenerate() {
   const { showSuccess, showError } = useToast();
+  const [searchParams] = useSearchParams();
+
+  // URL params from "Iterate →" button on Performance page
+  const iterateAdName   = searchParams.get('adName')   || '';
+  const iterateAdsetName = searchParams.get('adsetName') || '';
 
   // Reference image
   const [refImageUrl, setRefImageUrl] = useState('');      // server URL after upload
@@ -96,6 +101,11 @@ export default function BatchGenerate() {
 
   // Variants
   const [variants, setVariants] = useState([newVariant(0), newVariant(1)]);
+
+  // Pre-fill niche from adset name when arriving via Iterate link
+  useEffect(() => {
+    if (iterateAdsetName) setNiche(iterateAdsetName);
+  }, [iterateAdsetName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Generation state
   const [running, setRunning] = useState(false);
@@ -251,6 +261,13 @@ export default function BatchGenerate() {
           <p className="text-gray-500 text-sm mt-0.5">
             Upload a reference image · add your copy variants · generate one image per variant
           </p>
+          {/* Iterate banner — shown when arriving from Performance page */}
+          {iterateAdName && (
+            <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-100 text-xs text-indigo-700 font-medium w-fit">
+              <Repeat2 size={13} />
+              Iterating from: <span className="font-semibold truncate max-w-[300px]" title={iterateAdName}>{iterateAdName}</span>
+            </div>
+          )}
         </div>
         {filledVariants.length > 0 && !running && (
           <button

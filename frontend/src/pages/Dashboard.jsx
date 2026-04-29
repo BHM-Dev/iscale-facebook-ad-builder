@@ -218,7 +218,7 @@ export default function Dashboard() {
       label: r.adset_name || 'Ad set',
       reason: `Auto-paused: ${r.trigger_reason}`,
       severity: 'red',
-      link: '/campaign-performance',
+      link: '/campaign-performance?view=attention',
     });
   });
 
@@ -227,13 +227,16 @@ export default function Dashboard() {
     .forEach(a => {
       const ins = bulkInsights[a.fb_adset_id];
       if (!ins) return;
+      const rt = ins.redtrack;
+
+      // Ad fatigue
       if (ins.frequency >= 5) {
         needsAttention.push({
           id: `freq-${a.id}`,
           label: a.name,
           reason: `Frequency ${ins.frequency.toFixed(1)} — ad fatigue risk`,
           severity: 'red',
-          link: '/campaign-performance',
+          link: '/campaign-performance?view=attention',
         });
       } else if (ins.frequency >= 3) {
         needsAttention.push({
@@ -241,16 +244,40 @@ export default function Dashboard() {
           label: a.name,
           reason: `Frequency ${ins.frequency.toFixed(1)} — monitor closely`,
           severity: 'orange',
-          link: '/campaign-performance',
+          link: '/campaign-performance?view=attention',
         });
       }
+
+      // Spend with no leads
       if (ins.spend > 50 && ins.leads === 0) {
         needsAttention.push({
           id: `noleads-${a.id}`,
           label: a.name,
           reason: `$${ins.spend.toFixed(0)} spent, 0 leads`,
           severity: 'red',
-          link: '/campaign-performance',
+          link: '/campaign-performance?view=attention',
+        });
+      }
+
+      // RT ROAS below 1x (actively losing money)
+      if (rt?.roas != null && rt.roas < 1 && ins.spend > 30) {
+        needsAttention.push({
+          id: `roas-${a.id}`,
+          label: a.name,
+          reason: `RT ROAS ${rt.roas.toFixed(2)}x — losing money on ad spend`,
+          severity: 'red',
+          link: '/campaign-performance?view=attention',
+        });
+      }
+
+      // CPL well above blended average (>1.5x) with meaningful spend
+      if (blendedCpl != null && ins.cpl != null && ins.cpl > blendedCpl * 1.5 && ins.spend > 30) {
+        needsAttention.push({
+          id: `cpl-${a.id}`,
+          label: a.name,
+          reason: `CPL $${ins.cpl.toFixed(0)} — ${Math.round(ins.cpl / blendedCpl)}x above blended avg`,
+          severity: 'orange',
+          link: '/campaign-performance?view=attention',
         });
       }
     });

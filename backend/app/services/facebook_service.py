@@ -1091,3 +1091,19 @@ class FacebookService:
             msg = err.get('message') or str(e)
             logger.error("Failed to update adset %s status: %s", fb_adset_id, msg)
             raise RuntimeError(f"Facebook API: {msg}") from e
+
+    def update_ad_status(self, fb_ad_id: str, status: str) -> None:
+        """Set an individual ad's delivery status (ACTIVE | PAUSED) via Meta API."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        ad = Ad(fbid=fb_ad_id)
+        try:
+            ad.api_update(params={'status': status})
+            logger.info("Ad %s status → %s", fb_ad_id, status)
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            msg = err.get('message') or str(e)
+            logger.error("Failed to update ad %s status: %s", fb_ad_id, msg)
+            raise RuntimeError(f"Facebook API: {msg}") from e
