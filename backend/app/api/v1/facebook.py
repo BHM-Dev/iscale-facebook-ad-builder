@@ -615,15 +615,20 @@ def update_adset_status(
 def update_ad_status(
     fb_ad_id: str,
     body: dict,
+    db: Session = Depends(get_db),
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Pause or resume an individual ad on Meta."""
+    """Pause or resume an individual ad on Meta and sync status to local DB."""
     status = body.get("status")
     if status not in ("ACTIVE", "PAUSED"):
         raise HTTPException(status_code=400, detail="status must be ACTIVE or PAUSED")
     try:
         service.update_ad_status(fb_ad_id, status)
+        ad = db.query(FacebookAd).filter(FacebookAd.fb_ad_id == fb_ad_id).first()
+        if ad:
+            ad.status = status
+            db.commit()
         return {"fb_ad_id": fb_ad_id, "status": status}
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
