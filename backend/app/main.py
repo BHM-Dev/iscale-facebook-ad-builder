@@ -114,47 +114,49 @@ async def startup_event():
                 db.close()
 
         def scheduled_redtrack_sync():
-            """Refresh RedTrack last_7d cache every 30 minutes.
+            """Refresh RedTrack cache every 30 minutes for today, yesterday, and last_7d.
 
-            Syncs only last_7d — the default and most-used view. All other
-            date ranges are served by the live-fetch fallback in insights-bulk
-            (which caches on first request). Keeping this to one RT API call
-            avoids rate-limiting and scheduler thread contention.
+            Three presets are pre-warmed so the Dashboard never triggers a slow
+            live-fetch for the most common date selections. Each preset is one
+            independent RT API call; failures are isolated per-preset.
             """
             from app.services.redtrack_service import RedTrackService
             from app.models import RedTrackCache
             svc = RedTrackService()
             if not svc.is_configured():
                 return
-            db = SessionLocal()
-            try:
-                import uuid
-                from datetime import date as _date
-                date_from_str, date_to_str = svc.preset_to_dates("last_7d")
-                report = svc.get_report_by_adset(date_from_str, date_to_str)
-                if not report:
-                    print("ℹ️  RedTrack: no data returned for last_7d")
-                    return
-                date_from = _date.fromisoformat(date_from_str)
-                date_to   = _date.fromisoformat(date_to_str)
-                db.query(RedTrackCache).filter(
-                    RedTrackCache.date_from == date_from,
-                    RedTrackCache.date_to   == date_to,
-                ).delete()
-                for fb_adset_id, metrics in report.items():
-                    db.add(RedTrackCache(
-                        id=str(uuid.uuid4()),
-                        fb_adset_id=fb_adset_id,
-                        date_from=date_from,
-                        date_to=date_to,
-                        **metrics,
-                    ))
-                db.commit()
-                print(f"✅ RedTrack cache refreshed: {len(report)} ad sets (last_7d)")
-            except Exception as exc:
-                print(f"⚠️  RedTrack sync error: {exc}")
-            finally:
-                db.close()
+
+            import uuid
+            from datetime import date as _date
+
+            for preset in ("today", "yesterday", "last_7d"):
+                db = SessionLocal()
+                try:
+                    date_from_str, date_to_str = svc.preset_to_dates(preset)
+                    report = svc.get_report_by_adset(date_from_str, date_to_str)
+                    if not report:
+                        print(f"ℹ️  RedTrack: no data returned for {preset}")
+                        continue
+                    date_from = _date.fromisoformat(date_from_str)
+                    date_to   = _date.fromisoformat(date_to_str)
+                    db.query(RedTrackCache).filter(
+                        RedTrackCache.date_from == date_from,
+                        RedTrackCache.date_to   == date_to,
+                    ).delete()
+                    for fb_adset_id, metrics in report.items():
+                        db.add(RedTrackCache(
+                            id=str(uuid.uuid4()),
+                            fb_adset_id=fb_adset_id,
+                            date_from=date_from,
+                            date_to=date_to,
+                            **metrics,
+                        ))
+                    db.commit()
+                    print(f"✅ RedTrack cache refreshed: {len(report)} ad sets ({preset})")
+                except Exception as exc:
+                    print(f"⚠️  RedTrack sync error ({preset}): {exc}")
+                finally:
+                    db.close()
 
         def scheduled_meta_sync():
             """Sync all Meta campaigns and ad sets into the DB every 30 minutes."""

@@ -119,6 +119,7 @@ export default function Dashboard() {
   const { authFetch: authFetchCtx } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [syncingRT, setSyncingRT] = useState(false);
   const [pausingAdsets, setPausingAdsets] = useState(new Set());
   const [pausedOverrides, setPausedOverrides] = useState(new Set()); // fb_adset_ids paused this session
   const [insightsError, setInsightsError] = useState(null);
@@ -131,6 +132,23 @@ export default function Dashboard() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [activeRange, setActiveRange] = useState({ preset: 'today', dateFrom: null, dateTo: null });
+
+  const syncRT = useCallback(async () => {
+    setSyncingRT(true);
+    try {
+      const { preset: p, dateFrom: df, dateTo: dt } = activeRange;
+      const params = new URLSearchParams();
+      if (df && dt) { params.set('date_from', df); params.set('date_to', dt); }
+      else { params.set('date_preset', p || 'today'); }
+      const res = await authFetch(`${API_URL}/redtrack/sync?${params}`, { method: 'POST' });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Sync failed'); }
+      const result = await res.json();
+      if (result.synced > 0) {
+        load(activeRange); // re-fetch dashboard with fresh RT data
+      }
+    } catch (_) { /* silently fail — RT sync is best-effort */ }
+    finally { setSyncingRT(false); }
+  }, [activeRange, load]);
 
   const pauseAdset = useCallback(async (fb_adset_id, adsetName) => {
     setPausingAdsets(prev => new Set(prev).add(fb_adset_id));
@@ -357,6 +375,15 @@ export default function Dashboard() {
             onApply={handleApply}
           />
           <button
+            onClick={syncRT}
+            disabled={syncingRT || loading}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-blue-600 border border-blue-200 hover:bg-blue-50 transition-colors disabled:opacity-40"
+            title="Pull latest RedTrack revenue data for this date range"
+          >
+            <RefreshCw size={13} className={syncingRT ? 'animate-spin' : ''} />
+            Sync RT
+          </button>
+          <button
             onClick={() => load(activeRange)}
             disabled={loading}
             className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-500 border border-gray-200 hover:bg-gray-50 transition-colors disabled:opacity-40"
@@ -380,7 +407,7 @@ export default function Dashboard() {
         <KpiCard
           label="Total Spend"
           value={loading ? '—' : `$${totalSpend.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`}
-          sub={rangeLabel}
+          sub="Meta · ad spend"
         />
         <KpiCard
           label="Total Leads"
@@ -397,7 +424,7 @@ export default function Dashboard() {
         <KpiCard
           label="RT Revenue"
           value={loading ? '—' : rtRevenue > 0 ? `$${rtRevenue.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : '—'}
-          sub={rtConvs > 0 ? `${rtConvs} conversions` : 'RedTrack'}
+          sub={rtConvs > 0 ? `RT · ${rtConvs} conversions` : 'RedTrack · awaiting sync'}
         />
         <KpiCard
           label="RT ROAS"
