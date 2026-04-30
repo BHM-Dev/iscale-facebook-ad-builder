@@ -36,6 +36,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             headlineIndex: hIndex,
                             bodyIndex: bIndex,
                             mediaType: creative.mediaType || 'image',
+                            format: creative.format || 'feed',
                             useDefaultCreative: true
                         });
                     });
@@ -51,6 +52,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             setAdsData([]);
         }
     }, [creativeData.creatives, creativeData.headlines, creativeData.bodies]);
+
+    // Format detection — drives multi-adset launch logic
+    const feedAds    = adsData.filter(ad => (ad.format || 'feed') !== 'stories');
+    const storiesAds = adsData.filter(ad => ad.format === 'stories');
+    const isMixedFormat  = feedAds.length > 0 && storiesAds.length > 0;
+    const allStoriesFormat = feedAds.length === 0 && storiesAds.length > 0;
 
     const addAd = () => {
         setAdsData(prev => [
@@ -79,24 +86,30 @@ const BulkAdCreation = ({ onNext, onBack }) => {
 
         setLoading(true);
         setErrors([]);
+
+        // Determine format strategy at submission time (not stale closure)
+        const feedAdsToCreate    = adsData.filter(ad => (ad.format || 'feed') !== 'stories');
+        const storiesAdsToCreate = adsData.filter(ad => ad.format === 'stories');
+        const isMixed      = feedAdsToCreate.length > 0 && storiesAdsToCreate.length > 0;
+        const isAllStories = feedAdsToCreate.length === 0 && storiesAdsToCreate.length > 0;
+
         setProgress({ current: 0, total: adsData.length, status: 'Starting...' });
 
         try {
-            // Step 1: Create Facebook Campaign (if new)
+            // ── Step 1: Campaign ──────────────────────────────────────────────────
             let fbCampaignId = campaignData.fbCampaignId;
             if (!campaignData.isExisting) {
                 setProgress(prev => ({ ...prev, status: 'Creating campaign on Facebook...' }));
                 fbCampaignId = await createFacebookCampaign(campaignData, selectedAdAccount.accountId);
             }
 
-            // Save Campaign Locally (Ensure it exists in DB for FK constraints)
             try {
                 const saveCampRes = await authFetch(`${API_URL}/facebook/campaigns/save`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         ...campaignData,
-                        fbCampaignId: fbCampaignId,
+                        fbCampaignId,
                         dailyBudget: Number(campaignData.dailyBudget),
                         lifetimeBudget: campaignData.lifetimeBudget ? Number(campaignData.lifetimeBudget) : null,
                         budgetScheduleType: campaignData.budgetScheduleType || 'DAILY',
@@ -109,44 +122,85 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 }
             } catch (err) {
                 console.error('Error saving campaign locally:', err);
-                throw err; // Stop execution
+                throw err;
             }
 
-            // Step 2: Create Facebook Ad Set (if new)
-            let fbAdsetId = adsetData.fbAdsetId;
+            // ── Step 2: Ad Set(s) ─────────────────────────────────────────────────
+            // Base payload shared between all ad sets
+            const baseAdsetPayload = {
+                ...adsetData,
+                ...(campaignData.budgetType === 'CBO' && {
+                    bidStrategy: campaignData.bidStrategy,
+                    bidAmount: campaignData.bidAmount
+                }),
+                specialAdCategories: campaignData.specialAdCategories || []
+            };
+
+            // Stories placement targeting overlay
+            const storiesTargeting = {
+                ...adsetData.targeting,
+                publisher_platforms: ['facebook', 'instagram'],
+                facebook_positions: ['story'],
+                instagram_positions: ['story', 'reels']
+            };
+
+            let fbFeedAdsetId    = adsetData.fbAdsetId; // used for feed ads (or all ads if single-format)
+            let fbStoriesAdsetId = null;                // used for stories ads (mixed only)
+            let storiesAdsetLocalId = null;
+
             if (!adsetData.isExisting) {
                 setProgress(prev => ({ ...prev, status: 'Creating ad set on Facebook...' }));
 
-                // For CBO campaigns, pass the bid strategy and bid amount from campaign level
-                const adsetPayload = {
-                    ...adsetData,
-                    // Override bid strategy and amount with campaign-level values for CBO
-                    ...(campaignData.budgetType === 'CBO' && {
-                        bidStrategy: campaignData.bidStrategy,
-                        bidAmount: campaignData.bidAmount
-                    }),
-                    // Pass campaign-level special ad categories so backend can strip restricted targeting
-                    specialAdCategories: campaignData.specialAdCategories || []
+                if (isMixed) {
+                    // Feed ad set
+                    const feedPayload = { ...baseAdsetPayload, name: `${adsetData.name} - Feed` };
+                    fbFeedAdsetId = await createFacebookAdSet(feedPayload, fbCampaignId, selectedAdAccount.accountId, campaignData.budgetType);
+                    // Stories ad set
+                    setProgress(prev => ({ ...prev, status: 'Creating Stories & Reels ad set...' }));
+                    const storiesPayload = {
+                        ...baseAdsetPayload,
+                        name: `${adsetData.name} - Stories & Reels`,
+                        targeting: storiesTargeting
+                    };
+                    fbStoriesAdsetId = await createFacebookAdSet(storiesPayload, fbCampaignId, selectedAdAccount.accountId, campaignData.budgetType);
+                    storiesAdsetLocalId = `adset_stories_${Date.now()}`;
+                } else if (isAllStories) {
+                    // Single ad set — stories placements only
+                    const storiesPayload = { ...baseAdsetPayload, targeting: storiesTargeting };
+                    fbFeedAdsetId = await createFacebookAdSet(storiesPayload, fbCampaignId, selectedAdAccount.accountId, campaignData.budgetType);
+                } else {
+                    // Single ad set — feed (default)
+                    fbFeedAdsetId = await createFacebookAdSet(baseAdsetPayload, fbCampaignId, selectedAdAccount.accountId, campaignData.budgetType);
+                }
+            } else if (isMixed) {
+                // Existing ad set for feed + new stories ad set
+                setProgress(prev => ({ ...prev, status: 'Creating Stories & Reels ad set...' }));
+                const storiesPayload = {
+                    ...baseAdsetPayload,
+                    name: `${adsetData.name} - Stories & Reels`,
+                    targeting: storiesTargeting,
+                    isExisting: false
                 };
-
-                fbAdsetId = await createFacebookAdSet(adsetPayload, fbCampaignId, selectedAdAccount.accountId, campaignData.budgetType);
+                fbStoriesAdsetId = await createFacebookAdSet(storiesPayload, fbCampaignId, selectedAdAccount.accountId, campaignData.budgetType);
+                storiesAdsetLocalId = `adset_stories_${Date.now()}`;
             }
 
-            // Save Ad Set Locally (Ensure it exists in DB for FK constraints)
+            // Save feed (or sole) ad set locally
+            const adsetSaveBody = {
+                ...adsetData,
+                campaignId: campaignData.id,
+                fbAdsetId: fbFeedAdsetId,
+                dailyBudget: adsetData.dailyBudget ? Number(adsetData.dailyBudget) : null,
+                lifetimeBudget: adsetData.lifetimeBudget ? Number(adsetData.lifetimeBudget) : null,
+                budgetScheduleType: adsetData.budgetScheduleType || 'DAILY',
+                endTime: adsetData.endTime || null,
+                bidAmount: adsetData.bidAmount ? Number(adsetData.bidAmount) : null
+            };
             try {
                 const saveAdSetRes = await authFetch(`${API_URL}/facebook/adsets/save`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        ...adsetData,
-                        campaignId: campaignData.id,
-                        fbAdsetId: fbAdsetId,
-                        dailyBudget: adsetData.dailyBudget ? Number(adsetData.dailyBudget) : null,
-                        lifetimeBudget: adsetData.lifetimeBudget ? Number(adsetData.lifetimeBudget) : null,
-                        budgetScheduleType: adsetData.budgetScheduleType || 'DAILY',
-                        endTime: adsetData.endTime || null,
-                        bidAmount: adsetData.bidAmount ? Number(adsetData.bidAmount) : null
-                    })
+                    body: JSON.stringify(adsetSaveBody)
                 });
                 if (!saveAdSetRes.ok) {
                     const err = await saveAdSetRes.json();
@@ -154,25 +208,45 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 }
             } catch (err) {
                 console.error('Error saving ad set locally:', err);
-                throw err; // Stop execution
+                throw err;
             }
 
-            // Step 3: Create ads
+            // Save stories ad set locally (non-fatal if it fails)
+            if (fbStoriesAdsetId && storiesAdsetLocalId) {
+                try {
+                    await authFetch(`${API_URL}/facebook/adsets/save`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            ...adsetSaveBody,
+                            id: storiesAdsetLocalId,
+                            name: `${adsetData.name} - Stories & Reels`,
+                            fbAdsetId: fbStoriesAdsetId
+                        })
+                    });
+                } catch (err) {
+                    console.warn('Could not save stories ad set locally — continuing:', err);
+                }
+            }
+
+            // ── Step 3: Ads ───────────────────────────────────────────────────────
             const createdAds = [];
             for (let i = 0; i < adsData.length; i++) {
                 const ad = adsData[i];
+                const isStoriesAd   = ad.format === 'stories';
+                const adFbAdsetId   = isStoriesAd && fbStoriesAdsetId ? fbStoriesAdsetId : fbFeedAdsetId;
+                const adLocalAdsetId = isStoriesAd && storiesAdsetLocalId ? storiesAdsetLocalId : adsetData.id;
+
                 setProgress({
                     current: i + 1,
                     total: adsData.length,
-                    status: `Creating ad ${i + 1} of ${adsData.length}...`
+                    status: `Creating ${isStoriesAd ? 'Stories' : 'Feed'} ad ${i + 1} of ${adsData.length}...`
                 });
 
                 try {
-                    // Find the specific creative for this ad
                     const specificCreative = creativeData.creatives?.find(c => c.id === ad.creativeId);
                     const isVideo = specificCreative?.mediaType === 'video';
 
-                    // Construct creative data for this specific ad with specific headline and body
                     const adSpecificCreativeData = {
                         ...creativeData,
                         mediaType: isVideo ? 'video' : 'image',
@@ -180,7 +254,6 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         videoUrl: isVideo ? (specificCreative?.videoUrl || specificCreative?.previewUrl) : undefined,
                         imageFile: !isVideo && specificCreative ? specificCreative.file : null,
                         videoFile: isVideo && specificCreative ? specificCreative.file : null,
-                        // Use specific headline and body for this ad permutation
                         headlines: [creativeData.headlines[ad.headlineIndex]],
                         bodies: [creativeData.bodies[ad.bodyIndex]]
                     };
@@ -189,9 +262,6 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         throw new Error('Page ID is missing. Please go back to the Creative step and select a Facebook Page.');
                     }
 
-                    console.log(`Submitting ${isVideo ? 'Video' : 'Image'} Ad with Page ID:`, creativeData.pageId);
-
-                    // Update progress with video-specific message
                     if (isVideo) {
                         setProgress(prev => ({
                             ...prev,
@@ -199,10 +269,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         }));
                     }
 
-                    // Create ad on Facebook
                     const result = await createCompleteAd(
                         fbCampaignId,
-                        { ...adsetData, fbAdsetId },
+                        { ...adsetData, fbAdsetId: adFbAdsetId },
                         adSpecificCreativeData,
                         ad,
                         creativeData.pageId,
@@ -210,13 +279,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         campaignData.budgetType
                     );
 
-                    // Save to local database
                     const saveAdRes = await authFetch(`${API_URL}/facebook/ads/save`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             id: ad.id,
-                            adsetId: adsetData.id,
+                            adsetId: adLocalAdsetId,
                             name: ad.name,
                             creativeName: creativeData.creativeName,
                             mediaType: isVideo ? 'video' : 'image',
@@ -251,16 +319,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 }
             }
 
-            setProgress({
-                current: adsData.length,
-                total: adsData.length,
-                status: 'Complete!'
-            });
+            setProgress({ current: adsData.length, total: adsData.length, status: 'Complete!' });
 
-            // Wait a moment to show completion
-            setTimeout(() => {
-                onNext();
-            }, 1500);
+            setTimeout(() => { onNext(); }, 1500);
 
         } catch (error) {
             console.error('Error in bulk ad creation:', error);
@@ -317,6 +378,16 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         const bodies = creativeData.bodies?.filter(b => b && b.trim()).length || 0;
                         return `${media} media × ${headlines} headline${headlines !== 1 ? 's' : ''} × ${bodies} body`;
                     })()})</div>
+                    {isMixedFormat && (
+                        <div className="mt-2 pt-2 border-t border-blue-200 space-y-0.5">
+                            <div className="font-semibold text-blue-800">🗂 2 ad sets will be created:</div>
+                            <div className="ml-2">• <strong>{feedAds.length} Feed ad{feedAds.length !== 1 ? 's' : ''}</strong> (1:1) → <em>{adsetData.name} - Feed</em></div>
+                            <div className="ml-2">• <strong>{storiesAds.length} Stories & Reels ad{storiesAds.length !== 1 ? 's' : ''}</strong> (9:16) → <em>{adsetData.name} - Stories & Reels</em></div>
+                        </div>
+                    )}
+                    {allStoriesFormat && (
+                        <div className="mt-1 text-blue-700 font-medium">📱 All creatives are 9:16 — ad set will target Stories & Reels only</div>
+                    )}
                 </div>
             </div>
 
@@ -329,6 +400,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             const isVideo = creative?.mediaType === 'video';
                             return (
                                 <div key={ad.id} className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                    {/* Format badge */}
+                                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
+                                        ad.format === 'stories'
+                                            ? 'bg-purple-100 text-purple-700'
+                                            : 'bg-blue-100 text-blue-700'
+                                    }`}>
+                                        {ad.format === 'stories' ? '9:16' : '1:1'}
+                                    </span>
                                     {/* Thumbnail */}
                                     {creative && (
                                         <div className="w-12 h-12 rounded overflow-hidden bg-gray-200 flex-shrink-0 relative">

@@ -270,6 +270,12 @@ class FacebookService:
         if 'publisher_platforms' in targeting:
             transformed_targeting['publisher_platforms'] = targeting['publisher_platforms']
 
+        # Handle platform-specific positions (Stories / Reels placement targeting)
+        if 'facebook_positions' in targeting:
+            transformed_targeting['facebook_positions'] = targeting['facebook_positions']
+        if 'instagram_positions' in targeting:
+            transformed_targeting['instagram_positions'] = targeting['instagram_positions']
+
         # Fix for Advantage Audience Flag Required error
         # Facebook now requires explicit opt-in/out for Advantage+ Audience
         # Default to 0 (Off) if not provided, unless user explicitly sets it

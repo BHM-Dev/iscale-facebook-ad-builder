@@ -1,7 +1,7 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useState, useEffect } from 'react';
-import { ChevronRight, Upload, X, Loader, Trash2, Film, Image, BookOpen, Check } from 'lucide-react';
+import { ChevronRight, Upload, X, Loader, Trash2, Film, Image, BookOpen, Check, Layers } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
 
@@ -92,7 +92,8 @@ const AdCreativeStep = ({ onNext, onBack }) => {
             previewUrl: ad.image_url,
             imageUrl: ad.image_url,
             name: ad.headline || `Library Ad ${ad.id}`,
-            mediaType: 'image'
+            mediaType: 'image',
+            format: 'feed'
         }));
         setCreativeData(prev => ({
             ...prev,
@@ -146,7 +147,8 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                 file,
                 previewUrl: URL.createObjectURL(file),
                 name: file.name,
-                mediaType: isVideo ? 'video' : 'image'
+                mediaType: isVideo ? 'video' : 'image',
+                format: 'feed'
             };
         });
 
@@ -357,7 +359,8 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                 file,
                 previewUrl: URL.createObjectURL(file),
                 name: file.name,
-                mediaType: isVideo ? 'video' : 'image'
+                mediaType: isVideo ? 'video' : 'image',
+                format: 'feed'
             };
         });
 
@@ -371,6 +374,17 @@ const AdCreativeStep = ({ onNext, onBack }) => {
         setCreativeData(prev => ({
             ...prev,
             creatives: prev.creatives.filter(c => c.id !== id)
+        }));
+    };
+
+    const toggleCreativeFormat = (id) => {
+        setCreativeData(prev => ({
+            ...prev,
+            creatives: prev.creatives.map(c =>
+                c.id === id
+                    ? { ...c, format: (c.format || 'feed') === 'stories' ? 'feed' : 'stories' }
+                    : c
+            )
         }));
     };
 
@@ -614,8 +628,22 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                                             <Trash2 size={16} />
                                         </button>
                                     </div>
-                                    <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-xs p-1 truncate">
-                                        {creative.name}
+                                    <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 text-white text-xs flex items-center gap-1 px-1.5 py-1">
+                                        <span className="truncate flex-1 min-w-0">{creative.name}</span>
+                                        <button
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); toggleCreativeFormat(creative.id); }}
+                                            className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold leading-tight transition-colors ${
+                                                (creative.format || 'feed') === 'stories'
+                                                    ? 'bg-purple-500 hover:bg-purple-400'
+                                                    : 'bg-blue-600 hover:bg-blue-500'
+                                            }`}
+                                            title={(creative.format || 'feed') === 'stories'
+                                                ? 'Stories & Reels (9:16) — click to switch to Feed'
+                                                : 'Feed (1:1) — click to switch to Stories & Reels (9:16)'}
+                                        >
+                                            {(creative.format || 'feed') === 'stories' ? '9:16' : '1:1'}
+                                        </button>
                                     </div>
                                 </div>
                             ))}
@@ -639,7 +667,8 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                                         imageUrl: isVideo ? undefined : e.target.value,
                                         videoUrl: isVideo ? e.target.value : undefined,
                                         name: isVideo ? 'Video from URL' : 'Image from URL',
-                                        mediaType: isVideo ? 'video' : 'image'
+                                        mediaType: isVideo ? 'video' : 'image',
+                                        format: 'feed'
                                     };
                                     setCreativeData(prev => ({
                                         ...prev,
@@ -783,7 +812,7 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                 {creativeData.creatives && creativeData.creatives.length > 0 && (
                     <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
                         <div className="flex items-center gap-2 text-amber-800">
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
                             <span className="font-medium">
@@ -807,6 +836,24 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                                 })()}
                             </span>
                         </div>
+                        {(() => {
+                            const hasStories = creativeData.creatives.some(c => c.format === 'stories');
+                            const hasFeed = creativeData.creatives.some(c => (c.format || 'feed') !== 'stories');
+                            if (hasStories && hasFeed) {
+                                const feedCount = creativeData.creatives.filter(c => (c.format || 'feed') !== 'stories').length;
+                                const storiesCount = creativeData.creatives.filter(c => c.format === 'stories').length;
+                                return (
+                                    <div className="mt-2 pt-2 border-t border-amber-200 flex items-start gap-1.5 text-sm text-amber-800">
+                                        <Layers size={15} className="flex-shrink-0 mt-0.5" />
+                                        <span>
+                                            <strong>2 ad sets will be created automatically</strong>
+                                            {' '}— {feedCount} Feed image{feedCount !== 1 ? 's' : ''} (1:1) + {storiesCount} Stories & Reels image{storiesCount !== 1 ? 's' : ''} (9:16)
+                                        </span>
+                                    </div>
+                                );
+                            }
+                            return null;
+                        })()}
                     </div>
                 )}
 
