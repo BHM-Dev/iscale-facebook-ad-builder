@@ -165,6 +165,40 @@ const AdCreativeStep = ({ onNext, onBack }) => {
         }
     }, [adsetData?.name]);
 
+    // Auto-load images queued from the Generated Ads library ("Use in Campaign Builder" flow)
+    useEffect(() => {
+        try {
+            const raw = localStorage.getItem('pendingLibraryImages');
+            if (!raw) return;
+            const pending = JSON.parse(raw);
+            if (!Array.isArray(pending) || pending.length === 0) return;
+            localStorage.removeItem('pendingLibraryImages');
+
+            const newCreatives = pending.map(item => ({
+                id: `lib_${item.id}`,
+                file: null,
+                previewUrl: item.imageUrl,
+                imageUrl: item.imageUrl,
+                name: item.name || `Library Ad`,
+                mediaType: 'image',
+                format: 'feed'
+            }));
+
+            setCreativeData(prev => ({
+                ...prev,
+                creatives: [...(prev.creatives || []), ...newCreatives],
+                // Pre-fill copy fields from the first library ad if not already set
+                headlines: prev.headlines[0] ? prev.headlines : (pending[0]?.headline ? [pending[0].headline] : prev.headlines),
+                bodies: prev.bodies[0] ? prev.bodies : (pending[0]?.body ? [pending[0].body] : prev.bodies),
+                cta: prev.cta || pending[0]?.cta || 'LEARN_MORE'
+            }));
+
+            showSuccess(`${newCreatives.length} image${newCreatives.length !== 1 ? 's' : ''} loaded from Generated Ads library`);
+        } catch (e) {
+            console.error('Failed to load pending library images', e);
+        }
+    }, []);
+
     // Load last used page ID on mount
     useEffect(() => {
         const lastUsedPageId = localStorage.getItem('lastUsedPageId');

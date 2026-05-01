@@ -1,8 +1,9 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useState, useEffect, useMemo } from 'react';
-import { Download, Trash2, Search, Filter, CheckSquare, Square, FileDown, ExternalLink, FileText, Image, LayoutGrid, List, Film, Rocket, Loader, X } from 'lucide-react';
+import { Download, Trash2, Search, Filter, CheckSquare, Square, FileDown, ExternalLink, FileText, Image, LayoutGrid, List, Film, Rocket, Loader, X, Zap, AlertTriangle } from 'lucide-react';
 import { useBrands } from '../context/BrandContext';
+import { useNavigate } from 'react-router-dom';
 import { getCampaigns, getAdSets, getPages, createCompleteAd } from '../lib/facebookApi';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -12,9 +13,12 @@ export default function GeneratedAds() {
     const { brands } = useBrands();
     const { showError, showWarning, showSuccess } = useToast();
     const { authFetch } = useAuth();
+    const navigate = useNavigate();
     const [ads, setAds] = useState([]);
     const [loading, setLoading] = useState(true);
     const [selectedBundles, setSelectedBundles] = useState(new Set());
+    // Track bundle IDs whose thumbnails failed to load in the browser
+    const [brokenBundles, setBrokenBundles] = useState(new Set());
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedBrand, setSelectedBrand] = useState('');
     const [viewMode, setViewMode] = useState(() => {
@@ -314,6 +318,56 @@ export default function GeneratedAds() {
         localStorage.setItem('generatedAdsViewMode', mode);
     };
 
+    // Mark a bundle's thumbnail as broken (image failed to load in browser)
+    const markBroken = (bundleId) => {
+        setBrokenBundles(prev => new Set([...prev, bundleId]));
+    };
+
+    // Delete all bundles whose thumbnails failed to load
+    const handleClearBroken = async () => {
+        const toDelete = [...brokenBundles];
+        if (toDelete.length === 0) return;
+        for (const bundleId of toDelete) {
+            const bundleAds = ads.filter(ad => (ad.ad_bundle_id || `legacy_${ad.id}`) === bundleId);
+            try {
+                await Promise.all(bundleAds.map(ad =>
+                    authFetch(`${API_URL}/generated-ads/${ad.id}`, { method: 'DELETE' })
+                ));
+                setAds(prev => prev.filter(ad => !bundleAds.find(d => d.id === ad.id)));
+            } catch (e) {
+                console.error('Failed to delete broken bundle', bundleId, e);
+            }
+        }
+        setBrokenBundles(new Set());
+        showSuccess(`Removed ${toDelete.length} broken ad${toDelete.length !== 1 ? 's' : ''}`);
+    };
+
+    // Store selected images in localStorage and navigate to campaign builder
+    const handleUseInCampaignBuilder = () => {
+        const selectedAds = ads.filter(ad =>
+            selectedBundles.has(ad.ad_bundle_id || `legacy_${ad.id}`) && ad.image_url
+        );
+        // Dedupe by bundle — pick the square/first image per bundle
+        const seen = new Set();
+        const pending = [];
+        selectedAds.forEach(ad => {
+            const bundleId = ad.ad_bundle_id || `legacy_${ad.id}`;
+            if (!seen.has(bundleId)) {
+                seen.add(bundleId);
+                pending.push({
+                    id: ad.id,
+                    imageUrl: ad.image_url,
+                    name: ad.headline || `Library Ad ${ad.id}`,
+                    headline: ad.headline || '',
+                    body: ad.body || '',
+                    cta: ad.cta || 'LEARN_MORE'
+                });
+            }
+        });
+        localStorage.setItem('pendingLibraryImages', JSON.stringify(pending));
+        navigate('/facebook-campaigns');
+    };
+
     // Modal Helpers
     const openModal = (bundle) => {
         const bundleId = bundle[0].ad_bundle_id || `legacy_${bundle[0].id}`;
@@ -392,30 +446,52 @@ export default function GeneratedAds() {
                     </div>
                 </div>
 
+                {/* Broken image cleanup notice */}
+                {brokenBundles.size > 0 && (
+                    <div className="flex items-center gap-3 p-3 bg-red-50 border border-red-200 rounded-lg mb-3">
+                        <AlertTriangle size={16} className="text-red-500 flex-shrink-0" />
+                        <span className="text-sm text-red-800 flex-1">
+                            {brokenBundles.size} bundle{brokenBundles.size !== 1 ? 's' : ''} failed to load
+                        </span>
+                        <button
+                            onClick={handleClearBroken}
+                            className="flex items-center gap-2 px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium"
+                        >
+                            <Trash2 size={14} />
+                            Remove {brokenBundles.size} Broken
+                        </button>
+                    </div>
+                )}
+
                 {/* Batch Actions */}
-                {
-                    selectedBundles.size > 0 && (
-                        <div className="flex items-center gap-3 p-3 bg-purple-50 border border-purple-200 rounded-lg">
-                            <span className="text-sm font-medium text-purple-900">
-                                {selectedBundles.size} bundle{selectedBundles.size > 1 ? 's' : ''} selected
-                            </span>
-                            <div className="flex-1"></div>
-                            <button
-                                onClick={handleExportCSV}
-                                className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
-                            >
-                                <FileDown size={16} />
-                                Export CSV
-                            </button>
-                            <button
-                                onClick={() => setSelectedBundles(new Set())}
-                                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm font-medium"
-                            >
-                                Clear Selection
-                            </button>
-                        </div>
-                    )
-                }
+                {selectedBundles.size > 0 && (
+                    <div className="flex items-center gap-3 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                        <span className="text-sm font-medium text-purple-900">
+                            {selectedBundles.size} bundle{selectedBundles.size > 1 ? 's' : ''} selected
+                        </span>
+                        <div className="flex-1"></div>
+                        <button
+                            onClick={handleUseInCampaignBuilder}
+                            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+                        >
+                            <Zap size={16} />
+                            Use in Campaign Builder
+                        </button>
+                        <button
+                            onClick={handleExportCSV}
+                            className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
+                        >
+                            <FileDown size={16} />
+                            Export CSV
+                        </button>
+                        <button
+                            onClick={() => setSelectedBundles(new Set())}
+                            className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm font-medium"
+                        >
+                            Clear
+                        </button>
+                    </div>
+                )}
             </div>
 
             {/* Ads Content */}
@@ -436,19 +512,27 @@ export default function GeneratedAds() {
                             const mainAd = bundle.find(ad => ad.size_name?.includes('Square')) || bundle[0];
                             const bundleId = bundle[0].ad_bundle_id || `legacy_${bundle[0].id}`;
                             const isSelected = selectedBundles.has(bundleId);
+                            const isBroken = brokenBundles.has(bundleId);
                             const isVideo = mainAd.media_type === 'video';
                             const mediaUrl = isVideo ? (mainAd.thumbnail_url || mainAd.video_url) : mainAd.image_url;
 
                             return (
                                 <div
                                     key={bundleId}
-                                    onClick={() => openModal(bundle)}
-                                    className={`bg-white rounded-xl shadow-sm border-2 transition-all hover:shadow-lg cursor-pointer overflow-hidden ${isSelected ? 'border-purple-600 ring-2 ring-purple-200' : 'border-gray-200 hover:border-purple-300'
-                                        }`}
+                                    onClick={() => !isBroken && openModal(bundle)}
+                                    className={`group bg-white rounded-xl shadow-sm border-2 transition-all hover:shadow-lg cursor-pointer overflow-hidden ${
+                                        isBroken ? 'border-red-300 opacity-60' :
+                                        isSelected ? 'border-purple-600 ring-2 ring-purple-200' : 'border-gray-200 hover:border-purple-300'
+                                    }`}
                                 >
                                     {/* Media with overlays */}
-                                    <div className="relative aspect-square">
-                                        {isVideo ? (
+                                    <div className="relative aspect-square bg-gray-100">
+                                        {isBroken ? (
+                                            <div className="w-full h-full flex flex-col items-center justify-center text-red-400 gap-2">
+                                                <AlertTriangle size={32} />
+                                                <span className="text-xs font-medium text-red-500">Failed to load</span>
+                                            </div>
+                                        ) : isVideo ? (
                                             <video
                                                 src={mainAd.video_url}
                                                 poster={mainAd.thumbnail_url}
@@ -463,11 +547,12 @@ export default function GeneratedAds() {
                                                 src={mediaUrl}
                                                 alt={mainAd.headline}
                                                 className="w-full h-full object-cover"
+                                                onError={() => markBroken(bundleId)}
                                             />
                                         )}
 
                                         {/* Media Type Badge */}
-                                        {isVideo && (
+                                        {isVideo && !isBroken && (
                                             <div className="absolute top-3 right-12 bg-purple-600/90 backdrop-blur-sm text-white px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1">
                                                 <Film size={12} /> Video
                                             </div>
@@ -486,14 +571,16 @@ export default function GeneratedAds() {
                                         </button>
 
                                         {/* Size Badge */}
-                                        <div className="absolute bottom-3 right-3 bg-black/70 backdrop-blur-sm text-white px-3 py-1.5 rounded-lg text-xs font-medium">
-                                            {bundle.length} Size{bundle.length > 1 ? 's' : ''}
-                                        </div>
+                                        {!isBroken && (
+                                            <div className="absolute bottom-3 right-3 bg-black/70 backdrop-blur-sm text-white px-3 py-1.5 rounded-lg text-xs font-medium">
+                                                {bundle.length} Size{bundle.length > 1 ? 's' : ''}
+                                            </div>
+                                        )}
 
-                                        {/* Delete Button (on hover) */}
+                                        {/* Delete Button — visible on group hover (CSS group class on card) */}
                                         <button
                                             onClick={(e) => handleDelete(bundleId, e)}
-                                            className="absolute top-3 right-3 p-2 bg-red-500/90 backdrop-blur-sm text-white rounded-lg shadow-md hover:bg-red-600 transition-all opacity-0 hover:opacity-100 group-hover:opacity-100"
+                                            className="absolute top-3 right-3 p-2 bg-red-500/90 backdrop-blur-sm text-white rounded-lg shadow-md hover:bg-red-600 transition-all opacity-0 group-hover:opacity-100"
                                             title="Delete Bundle"
                                         >
                                             <Trash2 size={16} />

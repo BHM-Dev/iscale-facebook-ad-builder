@@ -285,14 +285,32 @@ async def generate_image(
 @router.get("/")
 def get_generated_ads(
     brand_id: Optional[str] = None,
+    show_failures: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Get all generated ads, optionally filtered by brand"""
+    """Get all generated ads, optionally filtered by brand.
+    By default hides placeholder/error images (placehold.co) and ads with no media URL.
+    Pass show_failures=true to include them (e.g. for debugging)."""
     query = db.query(GeneratedAd)
 
     if brand_id:
         query = query.filter(GeneratedAd.brand_id == brand_id)
+
+    if not show_failures:
+        # Exclude placeholder/error images saved when kie.ai generation failed
+        from sqlalchemy import and_, or_
+        query = query.filter(
+            and_(
+                # Must have some media URL
+                or_(
+                    GeneratedAd.image_url.isnot(None),
+                    GeneratedAd.video_url.isnot(None)
+                ),
+                # Exclude placehold.co placeholder/error URLs
+                ~GeneratedAd.image_url.like('%placehold.co%')
+            )
+        )
 
     ads = query.order_by(GeneratedAd.created_at.desc()).all()
 
