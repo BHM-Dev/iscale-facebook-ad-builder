@@ -380,9 +380,27 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     })()})</div>
                     {isMixedFormat && (
                         <div className="mt-2 pt-2 border-t border-blue-200 space-y-0.5">
-                            <div className="font-semibold text-blue-800">🗂 2 ad sets will be created:</div>
-                            <div className="ml-2">• <strong>{feedAds.length} Feed ad{feedAds.length !== 1 ? 's' : ''}</strong> (1:1) → <em>{adsetData.name} - Feed</em></div>
-                            <div className="ml-2">• <strong>{storiesAds.length} Stories & Reels ad{storiesAds.length !== 1 ? 's' : ''}</strong> (9:16) → <em>{adsetData.name} - Stories & Reels</em></div>
+                            <div className="font-semibold text-blue-800">🗂 2 ad sets will be used:</div>
+                            {adsetData.isExisting ? (
+                                <>
+                                    <div className="ml-2">• <strong>{feedAds.length} Feed ad{feedAds.length !== 1 ? 's' : ''}</strong> (1:1) → <em>{adsetData.name}</em> <span className="text-blue-600">(existing)</span></div>
+                                    <div className="ml-2">• <strong>{storiesAds.length} Stories & Reels ad{storiesAds.length !== 1 ? 's' : ''}</strong> (9:16) → <em>{adsetData.name} - Stories & Reels</em> <span className="text-blue-600">(new)</span></div>
+                                </>
+                            ) : (
+                                <>
+                                    <div className="ml-2">• <strong>{feedAds.length} Feed ad{feedAds.length !== 1 ? 's' : ''}</strong> (1:1) → <em>{adsetData.name} - Feed</em></div>
+                                    <div className="ml-2">• <strong>{storiesAds.length} Stories & Reels ad{storiesAds.length !== 1 ? 's' : ''}</strong> (9:16) → <em>{adsetData.name} - Stories & Reels</em></div>
+                                </>
+                            )}
+                        </div>
+                    )}
+                    {isMixedFormat && campaignData.budgetType === 'ABO' && (
+                        <div className="mt-2 pt-2 border-t border-blue-200 text-sm font-medium text-amber-700">
+                            ⚠️ ABO: each ad set gets its own budget —{' '}
+                            {adsetData.budgetScheduleType === 'LIFETIME'
+                                ? `total lifetime spend will be $${(Number(adsetData.lifetimeBudget || 0) * 2).toFixed(2)}`
+                                : `total daily spend will be $${(Number(adsetData.dailyBudget || 0) * 2).toFixed(2)}/day`
+                            }.
                         </div>
                     )}
                     {allStoriesFormat && (

@@ -1,7 +1,7 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useState, useEffect } from 'react';
-import { ChevronRight, Upload, X, Loader, Trash2, Film, Image, BookOpen, Check, Layers } from 'lucide-react';
+import { ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image, BookOpen, Check, Layers } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
 
@@ -388,6 +388,24 @@ const AdCreativeStep = ({ onNext, onBack }) => {
         }));
     };
 
+    // Duplicate a creative and pre-toggle its format (feed → stories, stories → feed)
+    // so the common workflow of "same image in both placements" is one click
+    const duplicateCreative = (id) => {
+        setCreativeData(prev => {
+            const original = prev.creatives.find(c => c.id === id);
+            if (!original) return prev;
+            const flippedFormat = (original.format || 'feed') === 'stories' ? 'feed' : 'stories';
+            return {
+                ...prev,
+                creatives: [...prev.creatives, {
+                    ...original,
+                    id: `creative_${Date.now()}_dup`,
+                    format: flippedFormat
+                }]
+            };
+        });
+    };
+
     const handleNext = () => {
         // Validate required fields
         if (!creativeData.creativeName) {
@@ -619,7 +637,14 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                                             </span>
                                         )}
                                     </div>
-                                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
+                                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); duplicateCreative(creative.id); }}
+                                            className="p-2 bg-blue-500 text-white rounded-full hover:bg-blue-600 transform scale-90 hover:scale-100 transition-all"
+                                            title={`Duplicate as ${(creative.format || 'feed') === 'stories' ? 'Feed (1:1)' : 'Stories (9:16)'}`}
+                                        >
+                                            <Copy size={16} />
+                                        </button>
                                         <button
                                             onClick={() => removeCreative(creative.id)}
                                             className="p-2 bg-red-500 text-white rounded-full hover:bg-red-600 transform scale-90 hover:scale-100 transition-all"
