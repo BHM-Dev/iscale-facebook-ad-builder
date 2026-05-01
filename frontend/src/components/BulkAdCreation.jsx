@@ -136,12 +136,21 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 specialAdCategories: campaignData.specialAdCategories || []
             };
 
-            // Stories placement targeting overlay
+            // Stories placement targeting overlay — locks to Stories & Reels only
             const storiesTargeting = {
                 ...adsetData.targeting,
                 publisher_platforms: ['facebook', 'instagram'],
                 facebook_positions: ['story'],
                 instagram_positions: ['story', 'reels']
+            };
+
+            // Feed placement targeting overlay — explicitly excludes Stories/Reels so Meta
+            // doesn't default to Advantage+ Placements and serve 1:1 images in Stories
+            const feedTargeting = {
+                ...adsetData.targeting,
+                publisher_platforms: ['facebook', 'instagram'],
+                facebook_positions: ['feed'],
+                instagram_positions: ['stream']
             };
 
             let fbFeedAdsetId    = adsetData.fbAdsetId; // used for feed ads (or all ads if single-format)
@@ -152,8 +161,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 setProgress(prev => ({ ...prev, status: 'Creating ad set on Facebook...' }));
 
                 if (isMixed) {
-                    // Feed ad set
-                    const feedPayload = { ...baseAdsetPayload, name: `${adsetData.name} - Feed` };
+                    // Feed ad set — explicit feed placements to prevent Advantage+ bleed into Stories
+                    const feedPayload = { ...baseAdsetPayload, name: `${adsetData.name} - Feed`, targeting: feedTargeting };
                     fbFeedAdsetId = await createFacebookAdSet(feedPayload, fbCampaignId, selectedAdAccount.accountId, campaignData.budgetType);
                     // Stories ad set
                     setProgress(prev => ({ ...prev, status: 'Creating Stories & Reels ad set...' }));
@@ -231,6 +240,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
 
             // ── Step 3: Ads ───────────────────────────────────────────────────────
             const createdAds = [];
+            let failedCount = 0;
             for (let i = 0; i < adsData.length; i++) {
                 const ad = adsData[i];
                 const isStoriesAd   = ad.format === 'stories';
@@ -316,12 +326,19 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 } catch (error) {
                     console.error(`Error creating ad ${ad.name}:`, error);
                     setErrors(prev => [...prev, `Failed to create ${ad.name}: ${error.message}`]);
+                    failedCount++;
                 }
             }
 
-            setProgress({ current: adsData.length, total: adsData.length, status: 'Complete!' });
-
-            setTimeout(() => { onNext(); }, 1500);
+            if (failedCount === 0) {
+                // All ads created — auto-advance after brief success display
+                setProgress({ current: adsData.length, total: adsData.length, status: 'Complete!' });
+                setTimeout(() => { onNext(); }, 1500);
+            } else {
+                // Partial failure — stay on screen so Joel can see what failed
+                setProgress({ current: adsData.length, total: adsData.length, status: `${createdAds.length} of ${adsData.length} ads created` });
+                setLoading(false);
+            }
 
         } catch (error) {
             console.error('Error in bulk ad creation:', error);
@@ -484,15 +501,22 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         Add a Custom Ad
                     </button>
 
-                    {/* Errors */}
+                    {/* Errors — partial launch failure */}
                     {errors.length > 0 && (
-                        <div className="mt-6 bg-red-50 border border-red-200 rounded-lg p-4">
-                            <h3 className="font-semibold text-red-900 mb-2">Errors</h3>
-                            <ul className="text-sm text-red-800 space-y-1">
-                                {errors.map((error, index) => (
-                                    <li key={index}>• {error}</li>
-                                ))}
-                            </ul>
+                        <div className="mt-6 space-y-3">
+                            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                                <h3 className="font-semibold text-red-900 mb-2">
+                                    {errors.length} ad{errors.length !== 1 ? 's' : ''} failed to create
+                                </h3>
+                                <ul className="text-sm text-red-800 space-y-1">
+                                    {errors.map((error, index) => (
+                                        <li key={index}>• {error}</li>
+                                    ))}
+                                </ul>
+                            </div>
+                            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
+                                Any ads that <strong>did</strong> create are live in Meta as <strong>PAUSED</strong> — they won't spend until you activate them in Ads Manager.
+                            </div>
                         </div>
                     )}
 
@@ -504,20 +528,33 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         >
                             Back
                         </button>
-                        <button
-                            onClick={handleSubmit}
-                            disabled={adsData.length === 0}
-                            className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-                        >
-                            Create {adsData.length} Ad{adsData.length !== 1 ? 's' : ''} on Facebook
-                        </button>
+                        {errors.length > 0 ? (
+                            <button
+                                onClick={onNext}
+                                className="flex items-center gap-2 px-6 py-3 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700"
+                            >
+                                Continue Anyway
+                            </button>
+                        ) : (
+                            <button
+                                onClick={handleSubmit}
+                                disabled={adsData.length === 0}
+                                className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                            >
+                                Create {adsData.length} Ad{adsData.length !== 1 ? 's' : ''} on Facebook
+                            </button>
+                        )}
                     </div>
                 </>
             ) : (
                 <>
                     {/* Progress Indicator */}
                     <div className="text-center py-12">
-                        <Loader className="animate-spin mx-auto mb-4 text-blue-600" size={48} />
+                        {progress.status === 'Complete!' ? (
+                            <div className="text-green-500 mx-auto mb-4 text-5xl">✓</div>
+                        ) : (
+                            <Loader className="animate-spin mx-auto mb-4 text-blue-600" size={48} />
+                        )}
                         <h3 className="text-xl font-semibold mb-2">{progress.status}</h3>
                         <div className="w-full max-w-md mx-auto bg-gray-200 rounded-full h-3 mb-2">
                             <div
@@ -528,6 +565,11 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         <p className="text-gray-600">
                             {progress.current} of {progress.total} ads created
                         </p>
+                        {progress.status === 'Complete!' && (
+                            <p className="text-sm text-amber-700 mt-3 font-medium">
+                                All ads are <strong>PAUSED</strong> in Meta — go to Ads Manager to activate them when ready.
+                            </p>
+                        )}
                     </div>
                 </>
             )}

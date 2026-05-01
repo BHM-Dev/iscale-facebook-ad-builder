@@ -573,3 +573,26 @@ Critical field name distinctions — wrong names are silently ignored by Meta ca
 - `targeting_automation: {advantage_audience: 0}` goes INSIDE the targeting dict, not at AdSet level
 
 **Before any PR that touches facebook_service.py:** Spawn a peer-review agent to audit all field names and enum values against the current SDK source at `github.com/facebook/facebook-python-business-sdk`.
+
+---
+
+## Pre-Push Rule — Ad Launch Features
+
+Before pushing any change that touches the ad launch flow, run the pressure test agent team using the reusable agent definitions in `.claude/agents/`:
+
+- **`code-auditor`** — traces UI state → permutation → handleSubmit → Meta API for correctness, silent failures, and edge cases
+- **`joel-perspective`** — reviews from Joel Welch's media buyer POV: Ads Manager workflow match, UX gaps, money/time risks
+
+**Trigger files** — run the agent team before pushing any change to:
+- `frontend/src/components/BulkAdCreation.jsx`
+- `frontend/src/components/AdCreativeStep.jsx`
+- `frontend/src/lib/facebookApi.js`
+- `backend/app/services/facebook_service.py`
+
+**How to run:** In a Claude Code session, use `TeamCreate` with `code-auditor` and `joel-perspective` as teammates. Provide both agents with the full diff or describe the feature under review. Do not push until both agents report no blocking / P0 findings.
+
+**Rating scales:**
+- Code auditor: `blocking`, `high`, `medium`, `low`
+- Joel perspective: `P0` (launch blocker), `P1` (support ticket), `P2` (friction), `P3` (nice to have)
+
+Fix all `blocking` and `P0` findings before push. Document `high`/`P1` findings as follow-up tasks.

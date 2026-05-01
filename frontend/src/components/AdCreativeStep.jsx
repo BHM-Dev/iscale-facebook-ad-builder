@@ -640,6 +640,11 @@ const AdCreativeStep = ({ onNext, onBack }) => {
 
                     {/* Media Grid */}
                     {creativeData.creatives && creativeData.creatives.length > 0 && (
+                        <div className="mb-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800">
+                            <strong>Placement tag:</strong> Each image defaults to <span className="font-semibold text-blue-700">Feed (1:1)</span>. Click the pill on any card to switch it to <span className="font-semibold text-purple-700">Stories (9:16)</span>. Use the copy icon to duplicate an image for the opposite placement.
+                        </div>
+                    )}
+                    {creativeData.creatives && creativeData.creatives.length > 0 && (
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
                             {creativeData.creatives.map((creative) => (
                                 <div key={creative.id} className="relative group border rounded-lg overflow-hidden aspect-square bg-gray-100">
@@ -674,10 +679,11 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                                     <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
                                         <button
                                             onClick={(e) => { e.stopPropagation(); duplicateCreative(creative.id); }}
-                                            className="p-2 bg-blue-500 text-white rounded-full hover:bg-blue-600 transform scale-90 hover:scale-100 transition-all"
+                                            className="flex items-center gap-1 px-2 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-xs font-medium transform scale-90 hover:scale-100 transition-all"
                                             title={`Duplicate as ${(creative.format || 'feed') === 'stories' ? 'Feed (1:1)' : 'Stories (9:16)'}`}
                                         >
-                                            <Copy size={16} />
+                                            <Copy size={13} />
+                                            {(creative.format || 'feed') === 'stories' ? 'Dupe as Feed' : 'Dupe as Stories'}
                                         </button>
                                         <button
                                             onClick={() => removeCreative(creative.id)}
