@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2 } from 'lucide-react';
+import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2, Sparkles } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
@@ -122,6 +122,29 @@ function AdsBreakdown({ fbAdsetId, adsetName, adsBulk, adsLoading, rtAdsBulk, on
   const { showSuccess, showError } = useToast();
   const [pausingAds, setPausingAds] = useState(new Set());
   const [adStatuses, setAdStatuses] = useState({}); // local optimistic status overrides
+  const [remixingAd, setRemixingAd] = useState(null); // ad_id currently being fetched for remix
+
+  const handleRemix = async (ad) => {
+    setRemixingAd(ad.ad_id);
+    try {
+      const res = await authFetch(`${API_BASE}/facebook/ads/${ad.ad_id}/creative`);
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed to fetch creative'); }
+      const creative = await res.json();
+      localStorage.setItem('pendingRemixCreative', JSON.stringify({
+        ad_id: ad.ad_id,
+        ad_name: creative.ad_name || ad.ad_name,
+        headline: creative.headline || '',
+        body: creative.body || '',
+        cta_label: creative.cta_label || '',
+        image_url: creative.image_url || '',
+      }));
+      navigate('/ad-remix');
+    } catch (e) {
+      showError(`Remix failed: ${e.message}`);
+    } finally {
+      setRemixingAd(null);
+    }
+  };
 
   const toggleAdStatus = async (ad) => {
     const currentStatus = adStatuses[ad.ad_id] ?? (ad.status || 'ACTIVE');
@@ -260,6 +283,21 @@ function AdsBreakdown({ fbAdsetId, adsetName, adsBulk, adsLoading, rtAdsBulk, on
                 )}
                 <td className="px-3 py-2">
                   <div className="flex items-center justify-center gap-1.5">
+                    {/* Remix → Ad Remix (top creatives get the purple button) */}
+                    {isTop && (
+                      <button
+                        onClick={() => handleRemix(ad)}
+                        disabled={remixingAd === ad.ad_id}
+                        className="flex items-center gap-1 px-2 py-1 rounded text-purple-600 bg-purple-50 hover:bg-purple-100 transition-colors text-xs font-medium whitespace-nowrap disabled:opacity-50"
+                        title="Send this winning creative to Ad Remix to generate variations"
+                      >
+                        {remixingAd === ad.ad_id
+                          ? <RefreshCw size={11} className="animate-spin" />
+                          : <Sparkles size={11} />
+                        }
+                        Remix
+                      </button>
+                    )}
                     {/* Iterate → Batch Generate */}
                     <button
                       onClick={() => navigate(`/batch-generate?adName=${encodeURIComponent(ad.ad_name || ad.ad_id)}&adsetName=${encodeURIComponent(adsetName || '')}`)}

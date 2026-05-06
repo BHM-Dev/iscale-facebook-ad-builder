@@ -1113,3 +1113,69 @@ class FacebookService:
             msg = err.get('message') or str(e)
             logger.error("Failed to update ad %s status: %s", fb_ad_id, msg)
             raise RuntimeError(f"Facebook API: {msg}") from e
+
+    def get_ad_creative(self, fb_ad_id: str) -> dict:
+        """Fetch the creative content (headline, body, CTA, image URL) for a single ad.
+
+        Returns:
+            {
+                "headline": str | None,
+                "body": str | None,
+                "cta_label": str | None,   # e.g. "LEARN_MORE", "GET_QUOTE"
+                "image_url": str | None,
+                "ad_name": str | None,
+            }
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        try:
+            ad = Ad(fbid=fb_ad_id)
+            ad_data = ad.api_get(fields=[
+                Ad.Field.name,
+                'creative{title,body,call_to_action,image_url,thumbnail_url,object_story_spec}',
+            ])
+
+            creative = ad_data.get('creative', {})
+
+            # Headline: try title first, then object_story_spec.link_data.name
+            headline = creative.get('title')
+            if not headline:
+                oss = creative.get('object_story_spec', {})
+                headline = (
+                    oss.get('link_data', {}).get('name') or
+                    oss.get('video_data', {}).get('title')
+                )
+
+            # Body: try body first, then object_story_spec.link_data.message
+            body = creative.get('body')
+            if not body:
+                oss = creative.get('object_story_spec', {})
+                body = (
+                    oss.get('link_data', {}).get('message') or
+                    oss.get('video_data', {}).get('message')
+                )
+
+            # CTA type
+            cta_obj = creative.get('call_to_action', {})
+            cta_label = cta_obj.get('type') if isinstance(cta_obj, dict) else None
+
+            # Image URL: prefer direct image_url, fall back to thumbnail_url (video ads)
+            image_url = creative.get('image_url') or creative.get('thumbnail_url')
+
+            logger.info("Fetched creative for ad %s: headline=%s image=%s", fb_ad_id, headline, image_url)
+
+            return {
+                "headline": headline,
+                "body": body,
+                "cta_label": cta_label,
+                "image_url": image_url,
+                "ad_name": ad_data.get('name'),
+            }
+
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            msg = err.get('message') or str(e)
+            logger.error("Failed to fetch creative for ad %s: %s", fb_ad_id, msg)
+            raise RuntimeError(f"Facebook API: {msg}") from e

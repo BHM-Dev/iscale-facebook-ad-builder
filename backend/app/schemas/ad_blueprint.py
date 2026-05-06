@@ -60,3 +60,15 @@ class ReconstructRequest(BaseModel):
     campaign_offer: str
     campaign_urgency: Optional[str] = None
     campaign_messaging: str
+
+
+class ReconstructFromUrlRequest(BaseModel):
+    """Reconstruct directly from a live ad image URL (no saved template required).
+    Used when Joel sends a winning Meta ad to Ad Remix from the performance page."""
+    source_image_url: Optional[str] = None  # winning ad image; None = text-only remix
+    brand_id: int
+    product_id: int
+    profile_id: int
+    campaign_offer: str
+    campaign_urgency: Optional[str] = None
+    campaign_messaging: str

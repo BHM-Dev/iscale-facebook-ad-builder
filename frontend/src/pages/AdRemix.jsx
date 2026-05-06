@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { ChevronRight, ChevronLeft, Sparkles, Check, Image, FileText, Briefcase, Package, Users } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ChevronRight, ChevronLeft, Sparkles, Check, Image, FileText, Briefcase, Package, Users, Zap } from 'lucide-react';
 import { useBrands } from '../context/BrandContext';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
@@ -18,6 +18,7 @@ export default function AdRemix() {
     const [loading, setLoading] = useState(false);
     const [blueprint, setBlueprint] = useState(null);
     const [adConcept, setAdConcept] = useState(null);
+    const [prefillSource, setPrefillSource] = useState(null); // winning ad data from performance page
 
     const [wizardData, setWizardData] = useState({
         template: null,
@@ -30,6 +31,36 @@ export default function AdRemix() {
             messaging: ''
         }
     });
+
+    // On mount: check for a winning ad passed in from the performance page
+    useEffect(() => {
+        const raw = localStorage.getItem('pendingRemixCreative');
+        if (!raw) return;
+        try {
+            const creative = JSON.parse(raw);
+            localStorage.removeItem('pendingRemixCreative');
+            setPrefillSource(creative);
+            // Pre-populate wizard: use the winning ad image as the template source
+            setWizardData(prev => ({
+                ...prev,
+                template: {
+                    id: null,
+                    name: creative.ad_name || 'Winning Ad',
+                    image_url: creative.image_url || null,
+                    fromMeta: true,
+                },
+                campaignDetails: {
+                    offer: creative.headline || '',
+                    urgency: '',
+                    messaging: creative.body || '',
+                },
+            }));
+            // Skip template picker — jump straight to Brand selection
+            setCurrentStep(2);
+        } catch (e) {
+            // malformed localStorage — ignore
+        }
+    }, []);
 
     const steps = [
         { id: 1, name: 'Template', icon: Image },
@@ -75,10 +106,22 @@ export default function AdRemix() {
     const handleReconstruct = async () => {
         setLoading(true);
         try {
-            const response = await authFetch(`${API_URL}/ad-remix/reconstruct`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+            const isMetaSource = wizardData.template?.fromMeta;
+            const endpoint = isMetaSource
+                ? `${API_URL}/ad-remix/reconstruct-from-url`
+                : `${API_URL}/ad-remix/reconstruct`;
+
+            const payload = isMetaSource
+                ? {
+                    source_image_url: wizardData.template.image_url,
+                    brand_id: wizardData.brand.id,
+                    product_id: wizardData.product.id,
+                    profile_id: wizardData.profile.id,
+                    campaign_offer: wizardData.campaignDetails.offer,
+                    campaign_urgency: wizardData.campaignDetails.urgency,
+                    campaign_messaging: wizardData.campaignDetails.messaging
+                }
+                : {
                     template_id: wizardData.template.id,
                     brand_id: wizardData.brand.id,
                     product_id: wizardData.product.id,
@@ -86,7 +129,12 @@ export default function AdRemix() {
                     campaign_offer: wizardData.campaignDetails.offer,
                     campaign_urgency: wizardData.campaignDetails.urgency,
                     campaign_messaging: wizardData.campaignDetails.messaging
-                })
+                };
+
+            const response = await authFetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
             });
 
             if (!response.ok) throw new Error('Reconstruction failed');
@@ -142,6 +190,18 @@ export default function AdRemix() {
                         );
                     })}</div>
             </div>
+
+            {/* Prefill banner — shown when launched from a winning ad */}
+            {prefillSource && (
+                <div className="mb-4 flex items-start gap-3 bg-purple-50 border border-purple-200 rounded-xl px-4 py-3 text-sm">
+                    <Zap size={16} className="text-purple-600 mt-0.5 flex-shrink-0" />
+                    <div>
+                        <span className="font-semibold text-purple-800">Remixing winner: </span>
+                        <span className="text-purple-700">{prefillSource.ad_name}</span>
+                        <p className="text-purple-600 text-xs mt-0.5">Headline and body pre-filled from the live ad. Select your brand and audience to generate variations.</p>
+                    </div>
+                </div>
+            )}
 
             {/* Step Content */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 min-h-[500px]">

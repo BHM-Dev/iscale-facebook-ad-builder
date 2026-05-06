@@ -635,3 +635,18 @@ def update_ad_status(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/ads/{fb_ad_id}/creative")
+def get_ad_creative(
+    fb_ad_id: str,
+    service: FacebookService = Depends(get_facebook_service),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Fetch headline, body, CTA, and image URL for a single ad — used to pre-populate Ad Remix."""
+    try:
+        return service.get_ad_creative(fb_ad_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
