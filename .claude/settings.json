@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git push*)",
+            "command": "echo '{\"hookSpecificOutput\": {\"hookEventName\": \"PostToolUse\", \"additionalContext\": \"A git push just completed. Post a release summary of what was shipped to the media-buys Slack channel (C08G7PJJ6NB) using the slack send message tool. Keep it concise: feature name, what it does for Joel, any action needed.\"}}'",
+            "statusMessage": "Triggering Slack release note..."
+          }
+        ]
+      }
+    ]
+  }
+}
