@@ -36,58 +36,67 @@ class FieldRegenerationRequest(BaseModel):
     campaignDetails: Dict[str, str]
 
 def _build_default_prompt(count: int, request: "CopyGenerationRequest") -> str:
-    return f"""You are an expert ad copywriter. Generate {count} variations of ad copy for a Facebook/Instagram ad campaign.
+    return f"""You are a direct response copywriter specializing in lead generation ads for financial and insurance verticals (auto insurance, commercial insurance, home insurance, reverse mortgage, personal loans, debt relief). Your framework is Eugene Schwartz's Breakthrough Advertising: you write to a specific avatar at a specific awareness level, matching copy intensity to the depth of their pain.
 
-BRAND VOICE: {request.brand.get('voice', 'Professional and friendly')}
+BRAND VOICE: {request.brand.get('voice', 'Direct and trustworthy')}
 
-PRODUCT: {request.product.get('name')}
-{f"Description: {request.product.get('description')}" if request.product.get('description') else ''}
+OFFER / SERVICE: {request.product.get('name')}
+{f"Details: {request.product.get('description')}" if request.product.get('description') else ''}
 
-TARGET AUDIENCE:
-- Demographics: {request.profile.get('demographics', 'General audience')}
-- Pain Points: {request.profile.get('pain_points', 'Not specified')}
-- Goals: {request.profile.get('goals', 'Not specified')}
+AVATAR:
+- Who they are: {request.profile.get('demographics', 'Adults facing a financial or insurance decision')}
+- Their pain: {request.profile.get('pain_points', 'Overpaying, uncertainty, or not knowing their options')}
+- What they want: {request.profile.get('goals', 'Save money, peace of mind, or a better deal')}
 
-CAMPAIGN DETAILS:
-- Offer: {request.campaignDetails.get('offer')}
-- Key Messaging: {request.campaignDetails.get('messaging')}
+CAMPAIGN:
+- Hook / Offer: {request.campaignDetails.get('offer')}
+- Core message: {request.campaignDetails.get('messaging')}
 
-TEMPLATE STYLE: {request.template.get('design_style', 'Modern and clean') if request.template else 'Modern and clean'}
+---
 
-BODY COPY STYLES (vary across variations):
-1. BULLET POINTS WITH EMOJIS: Use 2-4 bullet points with emojis at the start
-   - Sometimes use the same emoji (e.g., ✓ ✓ ✓ or ⭐ ⭐ ⭐)
-   - Sometimes use mixed emojis (e.g., 🎯 💪 ✨ 🚀)
-   - Keep each bullet concise and benefit-focused
-   Example: "✓ Save 50% today
-✓ Free shipping
-✓ 30-day guarantee"
+LEAD GEN COPY RULES (never break these):
+- The goal is a FORM FILL or CLICK TO QUALIFY — not a purchase. Copy should move the reader toward taking the first step, not closing a sale.
+- Never imply guaranteed savings, guaranteed approval, or guaranteed rates. Use "could", "may", "up to", "as low as".
+- Never use "best rate", "lowest price", or absolute superlatives — Meta flags these in financial verticals.
+- No income claims or specific dollar savings amounts unless they are explicitly provided in the offer.
+- CTAs drive action toward a quote, comparison, or qualification check — not "Buy Now", "Shop Now", or "Order".
+- Approved CTAs: "Get My Quote", "See My Rate", "Check If I Qualify", "Compare Rates", "Get a Free Quote", "See Options", "Find Out Now", "Get Started".
 
-2. EMOTIONAL STORYTELLING: Longer narrative that connects emotionally
-   - Tell a relatable story or paint a vivid picture
-   - Use emotional triggers and sensory details
-   - Build desire and urgency through narrative
-   - Can be 150-200 characters for story-driven ads
-   Example: "Remember that feeling when everything just clicks? When you finally found the solution you've been searching for? That's what our customers experience every day..."
+---
 
-INSTRUCTIONS:
-Generate {count} distinct variations. Mix both body copy styles across variations. Each variation should:
-1. Match the brand voice consistently
-2. Address the audience's pain points and goals
-3. Incorporate the campaign offer and key messaging
-4. Be compelling, conversion-focused, and ad-appropriate
-5. Keep headlines under 40 characters
-6. For bullet-point style: Keep body under 125 characters
-7. For storytelling style: Can extend to 200 characters
-8. Keep CTAs under 20 characters
+COPY STYLES — generate {count} variations and distribute across these styles:
+
+1. PROBLEM-AWARE (Schwartz Level 2) — Avatar knows they have a problem but hasn't found a solution yet.
+   - Lead with the pain: name the specific frustration (overpaying, getting denied, not knowing options)
+   - Agitate briefly, then position the offer as the relief
+   - Tone: empathetic, slightly urgent
+   - Example structure: "Still paying [pain point]? [Quick qualifier statement]. [CTA]."
+
+2. SOLUTION-AWARE (Schwartz Level 3) — Avatar knows solutions exist but hasn't chosen one.
+   - Lead with the category benefit, then differentiate
+   - Emphasize speed, simplicity, and no-obligation
+   - Tone: confident, straightforward
+   - Example structure: "[Benefit statement]. Takes 60 seconds. No obligation. [CTA]."
+
+3. SOCIAL PROOF / CREDIBILITY — Uses numbers, results, or volume to build trust.
+   - Lead with a proof point (number of people helped, average savings range if stated in offer, years in business)
+   - Keep claims conservative and compliant
+   - Bullet points with ✓ work well here
+   - Example: "✓ Compare multiple options in minutes\n✓ No obligation, no spam\n✓ See your rate instantly"
+
+FORMATTING RULES:
+- Headlines: under 40 characters. Pattern options: question ("Overpaying for {vertical}?"), statement ("Lower your {vertical} bill"), or curiosity ("Most {avatar} don't know this").
+- Body: 100–160 characters for bullet styles; up to 220 for narrative styles. Line breaks between bullets.
+- CTA: under 20 characters. Use one of the approved CTAs above.
+- Do NOT use product/e-commerce language: no "free shipping", "in stock", "order today", "add to cart".
 
 Return ONLY valid JSON in this exact format:
 {{
   "variations": [
     {{
-      "headline": "Short, punchy headline",
-      "body": "Compelling body copy (bullets with emojis OR emotional story)",
-      "cta": "Action CTA"
+      "headline": "Short, direct headline",
+      "body": "Lead gen body copy matching one of the three styles above",
+      "cta": "Approved lead gen CTA"
     }}
   ]
 }}"""
@@ -169,19 +178,23 @@ async def regenerate_field(request: FieldRegenerationRequest):
             "cta": "Generate a new call-to-action (under 20 characters)"
         }
         
-        prompt = f"""You are an expert ad copywriter. {field_prompts.get(request.field, 'Generate new copy')}.
+        prompt = f"""You are a direct response copywriter specializing in lead generation ads for financial and insurance verticals. {field_prompts.get(request.field, 'Generate new copy')}.
 
-BRAND VOICE: {request.brand.get('voice', 'Professional and friendly')}
-PRODUCT: {request.product.get('name')}
-TARGET AUDIENCE: {request.profile.get('demographics', 'General audience')}
-CAMPAIGN: {request.campaignDetails.get('offer')}
+BRAND VOICE: {request.brand.get('voice', 'Direct and trustworthy')}
+OFFER / SERVICE: {request.product.get('name')}
+AVATAR: {request.profile.get('demographics', 'Adults facing a financial or insurance decision')}
+THEIR PAIN: {request.profile.get('pain_points', 'Overpaying or uncertainty about their options')}
+CAMPAIGN HOOK: {request.campaignDetails.get('offer')}
 
 Current {request.field}: {request.currentValue}
 
-Generate a DIFFERENT, fresh variation that:
+Generate a DIFFERENT variation that:
 1. Matches the brand voice
-2. Is compelling and conversion-focused
-3. Follows the character limits
+2. Is written for lead generation (goal = form fill / click to qualify, NOT a purchase)
+3. For headlines: question, statement, or curiosity format — under 40 characters
+4. For CTAs: use only approved lead gen CTAs — "Get My Quote", "See My Rate", "Check If I Qualify", "Compare Rates", "Get a Free Quote", "See Options", "Find Out Now", "Get Started"
+5. For body: address the avatar's pain or desire, no guaranteed savings claims, no absolute superlatives
+6. Follows the character limits
 
 Return ONLY the new {request.field} text, nothing else."""
 
