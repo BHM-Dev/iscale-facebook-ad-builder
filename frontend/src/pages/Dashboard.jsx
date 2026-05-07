@@ -86,19 +86,18 @@ function DateFilter({ preset, setPreset, dateFrom, setDateFrom, dateTo, setDateT
           ))}
           <div className="border-t border-gray-100 mt-1 pt-1 px-3 pb-3">
             <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2 pt-1">Custom range</div>
-            <div className="flex gap-2 items-center">
+            <div className="flex flex-col gap-1.5">
               <input
                 type="date"
                 value={dateFrom}
                 onChange={e => setDateFrom(e.target.value)}
-                className="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
               />
-              <span className="text-gray-400 text-xs">–</span>
               <input
                 type="date"
                 value={dateTo}
                 onChange={e => setDateTo(e.target.value)}
-                className="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
               />
             </div>
             <button
