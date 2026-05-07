@@ -85,6 +85,7 @@ export default function BatchGenerate() {
   const [searchParams] = useSearchParams();
 
   // URL params from "Iterate →" button on Performance page
+  const iterateAdId     = searchParams.get('adId')     || '';
   const iterateAdName   = searchParams.get('adName')   || '';
   const iterateAdsetName = searchParams.get('adsetName') || '';
 
@@ -102,10 +103,32 @@ export default function BatchGenerate() {
   // Variants
   const [variants, setVariants] = useState([newVariant(0), newVariant(1)]);
 
-  // Pre-fill niche from adset name when arriving via Iterate link
+  // Pre-fill niche from adset name, and fetch creative data if adId present
   useEffect(() => {
     if (iterateAdsetName) setNiche(iterateAdsetName);
   }, [iterateAdsetName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!iterateAdId) return;
+    // Fetch the winning ad's creative from Meta and pre-fill Variant 1
+    authFetch(`${API_URL}/facebook/ads/${iterateAdId}/creative`)
+      .then(res => res.ok ? res.json() : null)
+      .then(creative => {
+        if (!creative) return;
+        // Pre-fill Variant 1 with headline + body from the live ad
+        setVariants(prev => prev.map((v, i) =>
+          i === 0
+            ? { ...v, headline: creative.headline || '', body: creative.body || '' }
+            : v
+        ));
+        // Pre-load the reference image if available
+        if (creative.image_url) {
+          setRefImagePreview(creative.image_url);
+          setRefImageUrl(creative.image_url);
+        }
+      })
+      .catch(() => {}); // silently fail — Joel can fill manually if Meta is slow
+  }, [iterateAdId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Generation state
   const [running, setRunning] = useState(false);

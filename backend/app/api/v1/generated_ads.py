@@ -266,9 +266,9 @@ async def generate_image(
                     print(f"Saved as: {image_url}")
 
                 except Exception as e:
-                    print(f"kie.ai generation failed: {e}")
-                    product_name = request.product.get('name', 'Product') if request.product else 'Product'
-                    image_url = f"https://placehold.co/{width}x{height}/png?text={product_name}+Error"
+                    err_msg = str(e)
+                    print(f"kie.ai generation failed: {err_msg}")
+                    raise HTTPException(status_code=500, detail=f"Image generation failed: {err_msg}")
             else:
                 product_name = request.product.get('name', 'Product') if request.product else 'Product'
                 image_url = f"https://placehold.co/{width}x{height}/png?text={product_name}+{i+1}"
