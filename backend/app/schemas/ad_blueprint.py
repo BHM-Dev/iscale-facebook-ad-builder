@@ -54,9 +54,9 @@ class DeconstructRequest(BaseModel):
 class ReconstructRequest(BaseModel):
     """Request to reconstruct an ad from blueprint + brand data"""
     template_id: int  # Template with blueprint
-    brand_id: int
-    product_id: int
-    profile_id: int
+    brand_id: str  # UUID string PK
+    product_id: str  # UUID string PK
+    profile_id: str  # UUID string PK
     campaign_offer: str
     campaign_urgency: Optional[str] = None
     campaign_messaging: str
@@ -66,9 +66,9 @@ class ReconstructFromUrlRequest(BaseModel):
     """Reconstruct directly from a live ad image URL (no saved template required).
     Used when Joel sends a winning Meta ad to Ad Remix from the performance page."""
     source_image_url: Optional[str] = None  # winning ad image; None = text-only remix
-    brand_id: int
-    product_id: int
-    profile_id: int
+    brand_id: str  # UUID string PK
+    product_id: str  # UUID string PK
+    profile_id: str  # UUID string PK
     campaign_offer: str
     campaign_urgency: Optional[str] = None
     campaign_messaging: str
