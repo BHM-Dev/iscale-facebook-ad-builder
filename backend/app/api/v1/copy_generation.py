@@ -293,6 +293,10 @@ RULES:
 - Each variation keeps the same emotional core as the winning ad but uses different words, structure, or proof
 - Headline: under 60 characters, punchy, no clickbait, no ALL CAPS
 - Body: 2-4 sentences max, conversational, written like a person not a brand
+  # NOTE (UI): Meta recommends ≤125 characters for primary text in some placements (e.g. Feed).
+  # The 2-4 sentence guideline above routinely produces 150-250+ char bodies. This is a prompt
+  # tuning tradeoff — shorter bodies lose conversational tone. If Joel flags truncation in
+  # previews, revisit with a tighter constraint (e.g. "2 sentences max, under 130 characters").
 - Do NOT use: "Are you...", "Did you know...", discount language, urgency pressure tactics, emojis
 - Write for awareness Stage 3-4 (solution-aware to product-aware) — they know their problem exists
 - Use the niche context naturally if provided

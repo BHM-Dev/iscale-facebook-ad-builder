@@ -20,6 +20,7 @@ export default function AdRemix() {
     const [blueprint, setBlueprint] = useState(null);
     const [adConcept, setAdConcept] = useState(null);
     const [prefillSource, setPrefillSource] = useState(null); // winning ad data from performance page
+    const [pendingBrandId, setPendingBrandId] = useState(null); // brand_id from drawer — resolved once brands load
     const [copied, setCopied] = useState(false);
     const [uploadingRef, setUploadingRef] = useState(false);
     const [refPreview, setRefPreview] = useState('');
@@ -60,12 +61,31 @@ export default function AdRemix() {
                     messaging: creative.body || '',
                 },
             }));
-            // Skip template picker — jump straight to Brand selection
-            setCurrentStep(2);
+            if (creative.brand_id) {
+                // Brand is already known from the drawer — store the ID and resolve
+                // it to a full brand object once the brands list loads (see effect below).
+                setPendingBrandId(creative.brand_id);
+                // Jump to Product step (3); the brand effect below will set the brand object.
+                setCurrentStep(3);
+            } else {
+                // No brand pre-assigned — stop at Brand step so Joel can pick one.
+                setCurrentStep(2);
+            }
         } catch (e) {
             // malformed localStorage — ignore
         }
     }, []);
+
+    // Resolve pendingBrandId → full brand object once the brands list is available.
+    // Runs whenever brands loads/changes and there is a pending brand to resolve.
+    useEffect(() => {
+        if (!pendingBrandId || !brands || brands.length === 0) return;
+        const brand = brands.find(b => b.id === pendingBrandId);
+        if (brand) {
+            setWizardData(prev => ({ ...prev, brand }));
+            setPendingBrandId(null); // resolved — clear the pending state
+        }
+    }, [pendingBrandId, brands]);
 
     const steps = [
         { id: 1, name: 'Template', icon: Image },

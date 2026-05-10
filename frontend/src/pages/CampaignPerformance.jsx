@@ -451,10 +451,20 @@ function Field({ label, children }) {
 }
 
 // ── Remix Drawer ─────────────────────────────────────────────────────────────
+// Extract the meaningful niche segment from a verbose ad set name.
+// Ad set names follow the pattern: "[Date] - [Niche] - [Batch/test info]"
+// Returns the second segment (index 1) when the pattern matches, otherwise
+// falls back to the full name so no data is silently lost.
+function extractNiche(adsetName) {
+  if (!adsetName) return '';
+  const parts = adsetName.split(' - ');
+  return parts.length >= 2 ? parts[1].trim() : adsetName;
+}
+
 function RemixDrawer({ creative, brands, onClose, onLaunchWizard }) {
   const { showError } = useToast();
   const [hook, setHook] = useState(creative.headline || '');
-  const [niche, setNiche] = useState(creative.adsetName || '');
+  const [niche, setNiche] = useState(extractNiche(creative.adsetName));
   const [selectedBrandId, setSelectedBrandId] = useState(creative.brand_id || '');
   const [generating, setGenerating] = useState(false);
   const [variations, setVariations] = useState([]);
@@ -602,6 +612,7 @@ function RemixDrawer({ creative, brands, onClose, onLaunchWizard }) {
                   <div className="flex gap-2">
                     <button
                       onClick={() => copyVariation(v, i)}
+                      title="Copy headline & body to clipboard"
                       className="flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium"
                     >
                       {copied === i ? '✓ Copied' : 'Copy'}
