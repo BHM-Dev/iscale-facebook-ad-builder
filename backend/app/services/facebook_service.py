@@ -1133,28 +1133,34 @@ class FacebookService:
             ad = Ad(fbid=fb_ad_id)
             ad_data = ad.api_get(fields=[
                 Ad.Field.name,
-                'creative{title,body,call_to_action,image_url,thumbnail_url,object_story_spec}',
+                'creative{title,body,call_to_action,image_url,thumbnail_url,object_story_spec,asset_feed_spec}',
             ])
 
             creative = ad_data.get('creative', {})
+            oss = creative.get('object_story_spec', {})
+            afs = creative.get('asset_feed_spec', {})  # dynamic/asset-feed creatives
 
-            # Headline: try title first, then object_story_spec.link_data.name
+            # Headline: title → object_story_spec → asset_feed_spec.titles[0]
             headline = creative.get('title')
             if not headline:
-                oss = creative.get('object_story_spec', {})
                 headline = (
                     oss.get('link_data', {}).get('name') or
                     oss.get('video_data', {}).get('title')
                 )
+            if not headline:
+                titles = afs.get('titles', [])
+                headline = titles[0].get('text') if titles else None
 
-            # Body: try body first, then object_story_spec.link_data.message
+            # Body: body → object_story_spec → asset_feed_spec.bodies[0]
             body = creative.get('body')
             if not body:
-                oss = creative.get('object_story_spec', {})
                 body = (
                     oss.get('link_data', {}).get('message') or
                     oss.get('video_data', {}).get('message')
                 )
+            if not body:
+                bodies = afs.get('bodies', [])
+                body = bodies[0].get('text') if bodies else None
 
             # CTA type
             cta_obj = creative.get('call_to_action', {})

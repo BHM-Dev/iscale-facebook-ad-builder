@@ -392,13 +392,26 @@ export default function AdRemix() {
                 {/* Step 5: Campaign Details */}
                 {currentStep === 5 && (
                     <div>
-                        <h3 className="text-xl font-bold mb-4">Campaign Details</h3>
-                        <p className="text-gray-600 mb-6">Provide details to customize your remixed ad</p>
+                        <h3 className="text-xl font-bold mb-2">Campaign Details</h3>
+                        <p className="text-gray-600 mb-4">
+                            {prefillSource
+                                ? 'Pre-filled from your winning ad — adjust the angle or keep as-is to generate variations.'
+                                : 'Provide details to customize your remixed ad'}
+                        </p>
+
+                        {prefillSource && (
+                            <div className="mb-5 p-3 bg-purple-50 border border-purple-200 rounded-lg text-xs text-purple-700">
+                                <span className="font-semibold">Source ad:</span> {prefillSource.ad_name} — edit the fields below to remix with a new angle, or leave them to generate copy variations on the same hook.
+                            </div>
+                        )}
 
                         <div className="max-w-2xl space-y-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Offer / Promotion *
+                                    Offer / Hook *
+                                    {prefillSource && wizardData.campaignDetails.offer && (
+                                        <span className="ml-2 text-xs font-normal text-purple-500">pre-filled from ad headline</span>
+                                    )}
                                 </label>
                                 <input
                                     type="text"
@@ -412,6 +425,7 @@ export default function AdRemix() {
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-2">
                                     Urgency / Timing
+                                    <span className="ml-2 text-xs font-normal text-gray-400">optional</span>
                                 </label>
                                 <input
                                     type="text"
@@ -425,6 +439,9 @@ export default function AdRemix() {
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-2">
                                     Key Messaging *
+                                    {prefillSource && wizardData.campaignDetails.messaging && (
+                                        <span className="ml-2 text-xs font-normal text-purple-500">pre-filled from ad body</span>
+                                    )}
                                 </label>
                                 <textarea
                                     value={wizardData.campaignDetails.messaging}
