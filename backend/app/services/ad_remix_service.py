@@ -28,7 +28,7 @@ async def deconstruct_template(template_image_url: str) -> AdBlueprint:
     """
     try:
         # Use Gemini Vision model
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-flash-latest')
 
         # Build the prompt
         prompt = build_deconstruction_prompt(template_image_url)
@@ -75,7 +75,7 @@ async def reconstruct_ad(
     """
     try:
         # Use Gemini model
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-flash-latest')
         
         # Convert blueprint to dict
         blueprint_dict = blueprint.model_dump()
