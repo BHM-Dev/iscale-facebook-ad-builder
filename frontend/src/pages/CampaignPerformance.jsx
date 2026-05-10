@@ -188,6 +188,12 @@ function AdsBreakdown({ fbAdsetId, adsetName, adsBulk, adsLoading, rtAdsBulk, on
 
   return (
     <div className="mt-3 rounded-lg border border-gray-100 overflow-hidden">
+      <div className="flex items-center gap-4 px-3 py-1.5 bg-gray-50 border-b border-gray-100 text-xs text-gray-500">
+        <span className="font-medium text-gray-400 uppercase tracking-wide mr-1">Remix color:</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-purple-400"></span> Top performer</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-orange-400"></span> Needs attention</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-indigo-400"></span> Standard</span>
+      </div>
       <table className="w-full text-xs">
         <thead>
           <tr className="bg-gray-50 border-b border-gray-100">
