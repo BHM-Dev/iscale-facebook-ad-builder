@@ -33,13 +33,12 @@ const Products = () => {
         product.brandName.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
-    const handleSave = (productData) => {
+    const handleSave = async (productData) => {
         if (editingProduct) {
-            updateProduct(productData.brandId, editingProduct.id, productData);
+            await updateProduct(productData.brandId, editingProduct.id, productData);
         } else {
-            addProduct(productData.brandId, productData);
+            await addProduct(productData.brandId, productData);
         }
-        setIsFormOpen(false);
         setEditingProduct(null);
     };
 

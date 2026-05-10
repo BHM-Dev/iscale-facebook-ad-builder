@@ -128,7 +128,7 @@ export const BrandProvider = ({ children }) => {
                 const newProduct = { ...product, id: crypto.randomUUID() };
                 const updatedBrand = {
                     ...brand,
-                    products: [...brand.products, newProduct]
+                    products: [...(brand.products || []), newProduct]
                 };
                 await updateBrand(brandId, updatedBrand);
             }
