@@ -11,9 +11,11 @@ const METRIC_UNITS  = { cpl: '$', cpa: '$', ctr: '%', roas: 'x' };
 const DATE_PRESETS  = [
   { value: 'today',       label: 'Today' },
   { value: 'yesterday',   label: 'Yesterday' },
+  { value: 'last_3d',     label: 'Last 3 Days' },
   { value: 'last_7d',     label: 'Last 7 Days' },
   { value: 'last_14d',    label: 'Last 14 Days' },
   { value: 'last_30d',    label: 'Last 30 Days' },
+  { value: 'custom',      label: 'Custom Range' },
 ];
 
 // ── Inline insights card for one ad set ──────────────────────────────────────
@@ -447,6 +449,8 @@ export default function CampaignPerformance() {
   const [adsets, setAdsets]     = useState([]);
   const [rules, setRules]       = useState([]); // still needed for isFlagged + rule badges
   const [datePreset, setDatePreset] = useState('today');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [adAccountId, setAdAccountId] = useState('');
   const [loadingAdsets, setLoadingAdsets] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -620,12 +624,15 @@ export default function CampaignPerformance() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-fetch when user changes the date preset — skip the initial mount render
+  // For custom range, wait until both dateFrom and dateTo are set
   useEffect(() => {
     if (!initialLoadFired.current) return;
-    loadBulkInsights(adAccountId, datePreset);
-    // loadAdsBulk fires after bulkInsights settles (see deferred effect below)
-    loadRtAdsBulk(datePreset);
-  }, [datePreset]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (datePreset === 'custom' && (!dateFrom || !dateTo)) return;
+    const from = datePreset === 'custom' ? dateFrom : null;
+    const to   = datePreset === 'custom' ? dateTo   : null;
+    loadBulkInsights(adAccountId, datePreset, from, to);
+    loadRtAdsBulk(datePreset, from, to);
+  }, [datePreset, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Deferred: fire loadAdsBulk after bulk insights finish loading.
   // This avoids two heavy Meta API calls running in parallel on every page load.
@@ -633,7 +640,9 @@ export default function CampaignPerformance() {
   useEffect(() => {
     // Detect the transition: was loading → now done with data
     if (prevBulkLoadingRef.current && !bulkInsightsLoading && bulkInsights !== null) {
-      loadAdsBulk(adAccountId, datePreset);
+      const from = datePreset === 'custom' ? dateFrom : null;
+      const to   = datePreset === 'custom' ? dateTo   : null;
+      loadAdsBulk(adAccountId, datePreset, from, to);
     }
     prevBulkLoadingRef.current = bulkInsightsLoading;
   }, [bulkInsightsLoading]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -661,13 +670,17 @@ export default function CampaignPerformance() {
     setSyncingRT(true);
     showInfo('Syncing RedTrack data...');
     try {
-      const params = new URLSearchParams({ date_preset: datePreset });
+      const params = datePreset === 'custom' && dateFrom && dateTo
+        ? new URLSearchParams({ date_from: dateFrom, date_to: dateTo })
+        : new URLSearchParams({ date_preset: datePreset });
       const res = await authFetch(`${API_BASE}/redtrack/sync?${params}`, { method: 'POST' });
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Sync failed'); }
       const result = await res.json();
+      const from = datePreset === 'custom' ? dateFrom : null;
+      const to   = datePreset === 'custom' ? dateTo   : null;
       if (result.synced > 0) {
         showSuccess(`RedTrack synced — ${result.synced} ad sets updated. Refreshing stats...`);
-        loadBulkInsights(adAccountId, datePreset);
+        loadBulkInsights(adAccountId, datePreset, from, to);
       } else {
         showInfo(result.message || 'No RedTrack data returned.');
       }
@@ -764,13 +777,32 @@ export default function CampaignPerformance() {
             {syncingRT ? 'Syncing RT...' : 'Sync RedTrack'}
           </button>
           <div className="flex flex-col items-end gap-1">
-            <select
-              className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
-              value={datePreset}
-              onChange={e => setDatePreset(e.target.value)}
-            >
-              {DATE_PRESETS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
-            </select>
+            <div className="flex items-center gap-2">
+              <select
+                className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                value={datePreset}
+                onChange={e => { setDatePreset(e.target.value); setDateFrom(''); setDateTo(''); }}
+              >
+                {DATE_PRESETS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+              </select>
+              {datePreset === 'custom' && (
+                <>
+                  <input
+                    type="date"
+                    value={dateFrom}
+                    onChange={e => setDateFrom(e.target.value)}
+                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <span className="text-gray-400 text-sm">→</span>
+                  <input
+                    type="date"
+                    value={dateTo}
+                    onChange={e => setDateTo(e.target.value)}
+                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                  />
+                </>
+              )}
+            </div>
             {datePreset === 'today' && [0, 6].includes(new Date().getDay()) && (
               <span className="text-xs text-amber-600 font-medium">
                 Weekend — switch to Last 7 Days to see recent ads
@@ -851,7 +883,7 @@ export default function CampaignPerformance() {
               <option value="name">Sort: Name A–Z</option>
             </select>
             <button
-              onClick={() => { loadAdsets(); loadBulkInsights(adAccountId, datePreset); }}
+              onClick={() => { loadAdsets(); loadBulkInsights(adAccountId, datePreset, datePreset === 'custom' ? dateFrom : null, datePreset === 'custom' ? dateTo : null); }}
               className="text-gray-400 hover:text-gray-600 transition-colors"
               title="Refresh"
             >
@@ -985,7 +1017,7 @@ export default function CampaignPerformance() {
                       adsBulk={adsBulk}
                       adsLoading={adsLoading}
                       rtAdsBulk={rtAdsBulk}
-                      onAdStatusChange={() => loadAdsBulk(adAccountId, datePreset)}
+                      onAdStatusChange={() => loadAdsBulk(adAccountId, datePreset, datePreset === 'custom' ? dateFrom : null, datePreset === 'custom' ? dateTo : null)}
                     />
                   )}
                 </div>
