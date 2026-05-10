@@ -77,15 +77,41 @@ export default function AdRemix() {
     }, []);
 
     // Resolve pendingBrandId → full brand object once the brands list is available.
-    // Runs whenever brands loads/changes and there is a pending brand to resolve.
+    // Also auto-selects the product if the brand only has one, skipping to Profile.
     useEffect(() => {
         if (!pendingBrandId || !brands || brands.length === 0) return;
         const brand = brands.find(b => b.id === pendingBrandId);
-        if (brand) {
+        if (!brand) return;
+        setPendingBrandId(null);
+
+        const products = brand.products || [];
+        if (products.length === 1) {
+            // Only one product — auto-select it and jump straight to Profile.
+            setWizardData(prev => ({ ...prev, brand, product: products[0] }));
+            setCurrentStep(4); // profile auto-skip effect will fire from here
+        } else {
+            // Multiple products — stop at Product step for Joel to choose.
             setWizardData(prev => ({ ...prev, brand }));
-            setPendingBrandId(null); // resolved — clear the pending state
+            // currentStep is already 3 (set in mount effect)
         }
     }, [pendingBrandId, brands]);
+
+    // Auto-skip Profile step when the selected brand has exactly one linked profile.
+    // Uses brandId (primitive) as dep to avoid re-running on every wizardData change.
+    const brandId = wizardData.brand?.id;
+    useEffect(() => {
+        if (currentStep !== 4 || !brandId || !customerProfiles.length) return;
+        const brand = brands.find(b => b.id === brandId);
+        if (!brand) return;
+        const brandProfiles = customerProfiles.filter(p =>
+            brand.profileIds?.includes(p.id)
+        );
+        if (brandProfiles.length === 1) {
+            // Only one profile for this brand — auto-select and go to Campaign.
+            setWizardData(prev => ({ ...prev, profile: brandProfiles[0] }));
+            setCurrentStep(5);
+        }
+    }, [currentStep, brandId, customerProfiles, brands]);
 
     const steps = [
         { id: 1, name: 'Template', icon: Image },
