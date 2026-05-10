@@ -571,13 +571,29 @@ export default function AdRemix() {
                 <div></div>
                 <div className="flex gap-3">
                     {/* Back button — available on all steps 2–7 */}
-                    {currentStep > 1 && (
+                    {currentStep > 1 && currentStep < 7 && (
                         <button
-                            onClick={() => currentStep === 7 ? setCurrentStep(6) : setCurrentStep(currentStep - 1)}
+                            onClick={() => setCurrentStep(currentStep - 1)}
                             className="flex items-center gap-2 px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium"
                         >
                             <ChevronLeft size={20} />
                             Back
+                        </button>
+                    )}
+
+                    {/* Next button — steps 2–5 */}
+                    {currentStep >= 2 && currentStep <= 5 && (
+                        <button
+                            onClick={() => setCurrentStep(currentStep + 1)}
+                            disabled={
+                                (currentStep === 2 && !wizardData.brand) ||
+                                (currentStep === 4 && !wizardData.profile) ||
+                                (currentStep === 5 && (!wizardData.campaignDetails.offer || !wizardData.campaignDetails.messaging))
+                            }
+                            className="flex items-center gap-2 px-8 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                            Next
+                            <ChevronRight size={20} />
                         </button>
                     )}
 
