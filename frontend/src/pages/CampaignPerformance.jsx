@@ -446,7 +446,7 @@ export default function CampaignPerformance() {
   const { showSuccess, showError, showInfo } = useToast();
   const [adsets, setAdsets]     = useState([]);
   const [rules, setRules]       = useState([]); // still needed for isFlagged + rule badges
-  const [datePreset, setDatePreset] = useState('last_7d');
+  const [datePreset, setDatePreset] = useState('today');
   const [adAccountId, setAdAccountId] = useState('');
   const [loadingAdsets, setLoadingAdsets] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -763,13 +763,20 @@ export default function CampaignPerformance() {
             <RefreshCw size={14} className={syncingRT ? 'animate-spin' : ''} />
             {syncingRT ? 'Syncing RT...' : 'Sync RedTrack'}
           </button>
-          <select
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
-            value={datePreset}
-            onChange={e => setDatePreset(e.target.value)}
-          >
-            {DATE_PRESETS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
-          </select>
+          <div className="flex flex-col items-end gap-1">
+            <select
+              className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+              value={datePreset}
+              onChange={e => setDatePreset(e.target.value)}
+            >
+              {DATE_PRESETS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+            </select>
+            {datePreset === 'today' && [0, 6].includes(new Date().getDay()) && (
+              <span className="text-xs text-amber-600 font-medium">
+                Weekend — switch to Last 7 Days to see recent ads
+              </span>
+            )}
+          </div>
           <div className="relative">
             <input
               type="text"
