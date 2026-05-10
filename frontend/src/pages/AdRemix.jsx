@@ -55,7 +55,7 @@ export default function AdRemix() {
                     fromMeta: true,
                 },
                 campaignDetails: {
-                    offer: '',
+                    offer: creative.headline || '',
                     urgency: '',
                     messaging: creative.body || '',
                 },
@@ -404,7 +404,7 @@ export default function AdRemix() {
                                     type="text"
                                     value={wizardData.campaignDetails.offer}
                                     onChange={(e) => updateCampaignDetails('offer', e.target.value)}
-                                    placeholder="e.g., 50% off Black Friday, Buy 2 Get 1 Free"
+                                    placeholder="e.g., Get a free quote in 60 seconds, See if you qualify for lower rates"
                                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-600 focus:border-transparent"
                                 />
                             </div>
@@ -417,7 +417,7 @@ export default function AdRemix() {
                                     type="text"
                                     value={wizardData.campaignDetails.urgency}
                                     onChange={(e) => updateCampaignDetails('urgency', e.target.value)}
-                                    placeholder="e.g., Limited time, Ends tonight"
+                                    placeholder="e.g., Rates change daily, Limited spots this week"
                                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-600 focus:border-transparent"
                                 />
                             </div>
@@ -429,7 +429,7 @@ export default function AdRemix() {
                                 <textarea
                                     value={wizardData.campaignDetails.messaging}
                                     onChange={(e) => updateCampaignDetails('messaging', e.target.value)}
-                                    placeholder="e.g., Science-backed results, Trusted by 10,000+ customers"
+                                    placeholder="e.g., Compare top carriers in minutes — no obligation, 100% free"
                                     rows={3}
                                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-600 focus:border-transparent"
                                 />

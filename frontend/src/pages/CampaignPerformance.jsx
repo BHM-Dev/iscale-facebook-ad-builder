@@ -290,25 +290,25 @@ function AdsBreakdown({ fbAdsetId, adsetName, adsBulk, adsLoading, rtAdsBulk, on
                 )}
                 <td className="px-3 py-2">
                   <div className="flex items-center justify-center gap-1.5">
-                    {/* Remix → Ad Remix (top creatives AND poor performers get the button) */}
-                    {(isTop || isPoorPerformer) && (
-                      <button
-                        onClick={() => handleRemix(ad)}
-                        disabled={remixingAd === ad.ad_id}
-                        className={`flex items-center gap-1 px-2 py-1 rounded transition-colors text-xs font-medium whitespace-nowrap disabled:opacity-50 ${
-                          isTop
-                            ? 'text-purple-600 bg-purple-50 hover:bg-purple-100'
-                            : 'text-orange-600 bg-orange-50 hover:bg-orange-100'
-                        }`}
-                        title={isTop ? 'Send this winning creative to Ad Remix to generate variations' : 'Remix this underperformer with a new angle'}
-                      >
-                        {remixingAd === ad.ad_id
-                          ? <RefreshCw size={11} className="animate-spin" />
-                          : <Sparkles size={11} />
-                        }
-                        Remix
-                      </button>
-                    )}
+                    {/* Remix → Ad Remix (all ads) */}
+                    <button
+                      onClick={() => handleRemix(ad)}
+                      disabled={remixingAd === ad.ad_id}
+                      className={`flex items-center gap-1 px-2 py-1 rounded transition-colors text-xs font-medium whitespace-nowrap disabled:opacity-50 ${
+                        isTop
+                          ? 'text-purple-600 bg-purple-50 hover:bg-purple-100'
+                          : isPoorPerformer
+                          ? 'text-orange-600 bg-orange-50 hover:bg-orange-100'
+                          : 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100'
+                      }`}
+                      title={isTop ? 'Remix this winning creative' : isPoorPerformer ? 'Remix this underperformer with a new angle' : 'Remix this creative'}
+                    >
+                      {remixingAd === ad.ad_id
+                        ? <RefreshCw size={11} className="animate-spin" />
+                        : <Sparkles size={11} />
+                      }
+                      Remix
+                    </button>
                     {/* Iterate → Batch Generate */}
                     <button
                       onClick={() => navigate(`/batch-generate?adId=${encodeURIComponent(ad.ad_id)}&adName=${encodeURIComponent(ad.ad_name || ad.ad_id)}&adsetName=${encodeURIComponent(adsetName || '')}`)}
