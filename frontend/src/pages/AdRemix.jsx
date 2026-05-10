@@ -282,7 +282,7 @@ export default function AdRemix() {
             setCurrentStep(7); // Move to results step
         } catch (error) {
             console.error('Reconstruction error:', error);
-            showError('Failed to reconstruct ad. Please try again.');
+            showError(error.message || 'Failed to reconstruct ad. Please try again.');
         } finally {
             setLoading(false);
         }
