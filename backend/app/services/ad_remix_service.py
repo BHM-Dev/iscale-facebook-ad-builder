@@ -46,12 +46,12 @@ async def deconstruct_template(template_image_url: str) -> AdBlueprint:
             }
         ])
         
-        # Parse the JSON response
-        blueprint_data = json.loads(response.text)
-        
+        # Parse the JSON response (Gemini often wraps output in ```json blocks)
+        blueprint_data = extract_json_from_response(response.text)
+
         # Validate and return as AdBlueprint
         return AdBlueprint(**blueprint_data)
-        
+
     except json.JSONDecodeError as e:
         raise ValueError(f"Failed to parse blueprint JSON: {e}")
     except Exception as e:
@@ -97,12 +97,12 @@ async def reconstruct_ad(
         # Generate the ad concept
         response = model.generate_content(prompt)
         
-        # Parse the JSON response
-        concept_data = json.loads(response.text)
-        
+        # Parse the JSON response (Gemini often wraps output in ```json blocks)
+        concept_data = extract_json_from_response(response.text)
+
         # Validate and return as AdConcept
         return AdConcept(**concept_data)
-        
+
     except json.JSONDecodeError as e:
         raise ValueError(f"Failed to parse ad concept JSON: {e}")
     except Exception as e:
