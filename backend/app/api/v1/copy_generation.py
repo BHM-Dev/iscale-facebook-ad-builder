@@ -7,6 +7,7 @@ import json
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Prompt
+from app.utils.json_utils import extract_json_from_response
 
 router = APIRouter()
 
@@ -177,18 +178,8 @@ async def generate_copy(request: CopyGenerationRequest, db: Session = Depends(ge
         # Parse the response
         response_text = response.text.strip()
         
-        # Remove markdown code blocks if present
-        if response_text.startswith('```json'):
-            response_text = response_text[7:]
-        if response_text.startswith('```'):
-            response_text = response_text[3:]
-        if response_text.endswith('```'):
-            response_text = response_text[:-3]
-        
-        response_text = response_text.strip()
-        
-        # Parse JSON
-        result = json.loads(response_text)
+        # Parse JSON — extract_json_from_response handles markdown fences and trailing text
+        result = extract_json_from_response(response_text)
         
         return result
         
@@ -311,17 +302,8 @@ Return ONLY valid JSON, no markdown:
         response = model.generate_content(prompt)
         text = response.text.strip()
 
-        # Strip markdown code fences if Gemini wraps the JSON despite being told not to.
-        # Must strip both the opening fence+language tag AND the closing fence.
-        if text.startswith('```json'):
-            text = text[7:]
-        elif text.startswith('```'):
-            text = text[3:]
-        if text.endswith('```'):
-            text = text[:-3]
-        text = text.strip()
-
-        data = json.loads(text)
+        # Parse JSON — extract_json_from_response handles fences and trailing text
+        data = extract_json_from_response(text)
         variations = data.get("variations", [])
         # Guard: Gemini may return fewer than 3 if it truncates — surface a clear error
         # rather than silently returning an incomplete set.

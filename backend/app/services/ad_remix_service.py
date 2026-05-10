@@ -5,9 +5,10 @@ import json
 import base64
 import requests
 import google.generativeai as genai
-from typing import Dict, Any
+from typing import Any
 from app.schemas.ad_blueprint import AdBlueprint, AdConcept, BrandData
 from app.prompts.ad_remix_prompts import build_deconstruction_prompt, build_reconstruction_prompt
+from app.utils.json_utils import extract_json_from_response
 import os
 
 
@@ -109,25 +110,4 @@ async def reconstruct_ad(
         raise Exception(f"Failed to reconstruct ad: {e}")
 
 
-def extract_json_from_response(text: str) -> Dict[str, Any]:
-    """
-    Extract JSON from a response that might have markdown code blocks or extra text.
-    Strategy: strip fences if present, then find outermost { } boundaries.
-    """
-    # 1. Strip markdown fences if present
-    if "```json" in text:
-        start = text.find("```json") + 7
-        end = text.find("```", start)
-        text = text[start:end].strip() if end != -1 else text[start:].strip()
-    elif "```" in text:
-        start = text.find("```") + 3
-        end = text.find("```", start)
-        text = text[start:end].strip() if end != -1 else text[start:].strip()
-
-    # 2. Pull out the outermost { ... } block so trailing commentary doesn't break parse
-    first_brace = text.find("{")
-    last_brace = text.rfind("}")
-    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-        text = text[first_brace:last_brace + 1]
-
-    return json.loads(text)
+# extract_json_from_response imported from app.utils.json_utils
