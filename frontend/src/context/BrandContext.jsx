@@ -125,6 +125,12 @@ export const BrandProvider = ({ children }) => {
         try {
             const brand = brands.find(b => b.id === brandId);
             if (brand) {
+                const existing = (brand.products || []).find(
+                    p => p.name.trim().toLowerCase() === product.name.trim().toLowerCase()
+                );
+                if (existing) {
+                    throw new Error(`A product named "${existing.name}" already exists for this brand. Please use a different name.`);
+                }
                 const newProduct = { ...product, id: crypto.randomUUID() };
                 const updatedBrand = {
                     ...brand,
