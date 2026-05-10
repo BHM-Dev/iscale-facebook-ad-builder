@@ -155,19 +155,27 @@ async def reconstruct_from_url(
         campaign_messaging=request.campaign_messaging,
     )
 
+    # Generic lead-gen blueprint used as fallback when no image is available
+    # or when the Meta CDN URL has expired (typically within minutes to hours).
+    _generic_blueprint = AdBlueprint(
+        layout_framework="Single hero image with bold headline overlay and CTA button at bottom",
+        narrative_arc="Problem → Relief → CTA",
+        text_hierarchy="Large bold headline at top, 2-3 benefit bullets in middle, CTA button at bottom",
+        psychological_triggers=["Pain relief", "Social proof", "Speed/simplicity", "No obligation"],
+        visual_style_guide="Clean, professional, trust-building — confident direct response style",
+    )
+
     try:
         if request.source_image_url:
-            # Deconstruct the live image to extract its structural blueprint
-            blueprint = await deconstruct_template(request.source_image_url)
+            try:
+                # Deconstruct the live image to extract its structural blueprint.
+                # Meta CDN URLs expire — if the fetch fails, fall back gracefully.
+                blueprint = await deconstruct_template(request.source_image_url)
+            except Exception:
+                blueprint = _generic_blueprint
         else:
-            # No image available (video ad, expired URL) — use a generic lead-gen blueprint
-            blueprint = AdBlueprint(
-                layout_framework="Single hero image with bold headline overlay and CTA button at bottom",
-                narrative_arc="Problem → Relief → CTA",
-                text_hierarchy="Large bold headline at top, 2-3 benefit bullets in middle, CTA button at bottom",
-                psychological_triggers=["Pain relief", "Social proof", "Speed/simplicity", "No obligation"],
-                visual_style_guide="Clean, professional, trust-building — confident direct response style",
-            )
+            # No image available (video ad or no creative URL stored).
+            blueprint = _generic_blueprint
 
         ad_concept = await reconstruct_ad(blueprint, brand_data)
         return ad_concept

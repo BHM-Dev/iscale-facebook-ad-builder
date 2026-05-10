@@ -25,6 +25,9 @@ export default function AdRemix() {
     const [uploadingRef, setUploadingRef] = useState(false);
     const [refPreview, setRefPreview] = useState('');
     const fileInputRef = useRef(null);
+    // Suppresses auto-advance effects for one render cycle when the user presses Back,
+    // preventing the profile/product auto-skip from immediately re-triggering.
+    const skipAutoAdvance = useRef(false);
 
     const [wizardData, setWizardData] = useState({
         template: null,
@@ -98,9 +101,14 @@ export default function AdRemix() {
 
     // Auto-skip Profile step when the selected brand has exactly one linked profile.
     // Uses brandId (primitive) as dep to avoid re-running on every wizardData change.
+    // Guarded by skipAutoAdvance so pressing Back from Campaign doesn't loop back.
     const brandId = wizardData.brand?.id;
     useEffect(() => {
         if (currentStep !== 4 || !brandId || !customerProfiles.length) return;
+        if (skipAutoAdvance.current) {
+            skipAutoAdvance.current = false; // consume the flag and stay on this step
+            return;
+        }
         const brand = brands.find(b => b.id === brandId);
         if (!brand) return;
         const brandProfiles = customerProfiles.filter(p =>
@@ -264,7 +272,10 @@ export default function AdRemix() {
                 body: JSON.stringify(payload)
             });
 
-            if (!response.ok) throw new Error('Reconstruction failed');
+            if (!response.ok) {
+                const errBody = await response.json().catch(() => ({}));
+                throw new Error(errBody.detail || 'Reconstruction failed');
+            }
 
             const data = await response.json();
             setAdConcept(data);
@@ -616,10 +627,15 @@ export default function AdRemix() {
             <div className="mt-6 flex items-center justify-between">
                 <div></div>
                 <div className="flex gap-3">
-                    {/* Back button — available on all steps 2–7 */}
+                    {/* Back button — available on all steps 2–7.
+                        Sets skipAutoAdvance before decrementing so profile/product
+                        auto-skip effects don't immediately re-trigger. */}
                     {currentStep > 1 && currentStep < 7 && (
                         <button
-                            onClick={() => setCurrentStep(currentStep - 1)}
+                            onClick={() => {
+                                skipAutoAdvance.current = true;
+                                setCurrentStep(currentStep - 1);
+                            }}
                             className="flex items-center gap-2 px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium"
                         >
                             <ChevronLeft size={20} />
