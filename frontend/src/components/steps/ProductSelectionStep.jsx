@@ -1,14 +1,27 @@
 import React from 'react';
-import { Check, Image } from 'lucide-react';
+import { Check, Image, ArrowRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 export default function ProductSelectionStep({ products, selectedProduct, onSelect, useProductShots, onToggleProductShots }) {
     return (
         <div>
             <h3 className="text-xl font-bold mb-4">Select Your Product</h3>
-            <p className="text-gray-600 mb-6">Choose the product to feature in the ads</p>
+            <p className="text-gray-600 mb-6">Choose the product or service to feature in the ads</p>
             {products.length === 0 ? (
-                <div className="text-center py-12 text-gray-500">
-                    No products found for this brand. Please add products first.
+                <div className="text-center py-12 px-6">
+                    <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4">
+                        <Image size={24} className="text-gray-400" />
+                    </div>
+                    <p className="text-gray-700 font-medium mb-1">No products set up for this brand</p>
+                    <p className="text-sm text-gray-500 mb-5 max-w-xs mx-auto">
+                        Products represent the service or offering you're advertising — e.g. "Commercial Insurance", "Auto Insurance", "Personal Loans".
+                    </p>
+                    <Link
+                        to="/products"
+                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-purple-600 text-white text-sm font-medium hover:bg-purple-700 transition-colors"
+                    >
+                        Add a Product <ArrowRight size={15} />
+                    </Link>
                 </div>
             ) : (
                 <div className="space-y-3">

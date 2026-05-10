@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { ChevronRight, ChevronLeft, Sparkles, Check, Image, FileText, Briefcase, Package, Users, Zap, Copy, CheckCircle } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { ChevronRight, ChevronLeft, Sparkles, Check, Image, FileText, Briefcase, Package, Users, Zap, Copy, CheckCircle, Upload, RefreshCw, TrendingUp } from 'lucide-react';
+import { useNavigate, Link } from 'react-router-dom';
 import { useBrands } from '../context/BrandContext';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
-import ImageTemplateSelector from '../components/ImageTemplateSelector';
 import BrandSelectionStep from '../components/steps/BrandSelectionStep';
 import ProductSelectionStep from '../components/steps/ProductSelectionStep';
 import ProfileSelectionStep from '../components/steps/ProfileSelectionStep';
@@ -22,6 +21,9 @@ export default function AdRemix() {
     const [adConcept, setAdConcept] = useState(null);
     const [prefillSource, setPrefillSource] = useState(null); // winning ad data from performance page
     const [copied, setCopied] = useState(false);
+    const [uploadingRef, setUploadingRef] = useState(false);
+    const [refPreview, setRefPreview] = useState('');
+    const fileInputRef = useRef(null);
 
     const [wizardData, setWizardData] = useState({
         template: null,
@@ -117,6 +119,38 @@ export default function AdRemix() {
             setTimeout(() => setCopied(false), 2500);
         });
     };
+
+    // Upload a reference image directly on Step 1
+    const handleRefUpload = useCallback(async (file) => {
+        if (!file || !file.type.startsWith('image/')) {
+            showError('Please upload an image file (JPG, PNG, WebP)');
+            return;
+        }
+        setUploadingRef(true);
+        setRefPreview(URL.createObjectURL(file));
+        try {
+            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await authFetch(`${API_URL}/uploads/`, { method: 'POST', body: formData });
+            if (!res.ok) throw new Error('Upload failed');
+            const data = await res.json();
+            const url = data.url || data.file_url || data.path;
+            const absUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
+            updateData('template', {
+                id: null,
+                name: file.name,
+                image_url: absUrl,
+                fromMeta: true,
+            });
+            setCurrentStep(2);
+        } catch (e) {
+            showError(`Upload failed: ${e.message}`);
+            setRefPreview('');
+        } finally {
+            setUploadingRef(false);
+        }
+    }, [authFetch, showError, updateData]);
 
     // Send remix copy to Batch Generate
     const handleGenerateImage = () => {
@@ -261,19 +295,59 @@ export default function AdRemix() {
                     </div>
                 )}
 
-                {/* Step 1: Template Selection */}
+                {/* Step 1: Choose starting point */}
                 {currentStep === 1 && (
                     <div>
-                        <h3 className="text-xl font-bold mb-4">Select a Winning Template to Remix</h3>
-                        <p className="text-gray-600 mb-6">Choose an ad template to deconstruct and use as your blueprint</p>
-                        <ImageTemplateSelector
-                            onSelect={(template) => {
-                                updateData('template', template);
-                                setCurrentStep(2);
-                            }}
-                            onClose={() => { }}
-                            embedded={true}
-                        />
+                        <h3 className="text-xl font-bold mb-2">How do you want to start?</h3>
+                        <p className="text-gray-500 mb-8">Pick a starting point — Ad Remix will build a new creative concept from it using your brand and audience.</p>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-2xl">
+                            {/* Path A: From a live winning ad */}
+                            <Link
+                                to="/campaign-performance"
+                                className="group flex flex-col gap-4 p-6 rounded-xl border-2 border-gray-200 hover:border-purple-400 hover:bg-purple-50/40 transition-all cursor-pointer"
+                            >
+                                <div className="w-12 h-12 rounded-xl bg-purple-100 flex items-center justify-center">
+                                    <TrendingUp size={22} className="text-purple-600" />
+                                </div>
+                                <div>
+                                    <div className="font-bold text-gray-900 mb-1">Start from a live ad</div>
+                                    <p className="text-sm text-gray-500 leading-snug">Go to Campaign Performance, find a winning or underperforming ad, and hit Remix. The creative is pre-loaded automatically.</p>
+                                </div>
+                                <div className="mt-auto flex items-center gap-1 text-xs font-medium text-purple-600 group-hover:gap-2 transition-all">
+                                    Go to Campaign Performance <ChevronRight size={13} />
+                                </div>
+                            </Link>
+
+                            {/* Path B: Upload reference image */}
+                            <div
+                                onClick={() => !uploadingRef && fileInputRef.current?.click()}
+                                className="group flex flex-col gap-4 p-6 rounded-xl border-2 border-dashed border-gray-200 hover:border-purple-400 hover:bg-purple-50/40 transition-all cursor-pointer"
+                            >
+                                <div className="w-12 h-12 rounded-xl bg-gray-100 flex items-center justify-center">
+                                    {uploadingRef
+                                        ? <RefreshCw size={22} className="text-indigo-500 animate-spin" />
+                                        : refPreview
+                                            ? <img src={refPreview} alt="" className="w-12 h-12 object-cover rounded-xl" />
+                                            : <Upload size={22} className="text-gray-400" />
+                                    }
+                                </div>
+                                <div>
+                                    <div className="font-bold text-gray-900 mb-1">Upload a reference image</div>
+                                    <p className="text-sm text-gray-500 leading-snug">Upload any ad creative — a competitor's ad, a screenshot, a mockup — and remix it with your brand.</p>
+                                </div>
+                                <div className="mt-auto flex items-center gap-1 text-xs font-medium text-gray-500 group-hover:text-purple-600 transition-colors">
+                                    {uploadingRef ? 'Uploading…' : 'Click to upload'} <ChevronRight size={13} />
+                                </div>
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept="image/jpeg,image/png,image/webp"
+                                    className="hidden"
+                                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleRefUpload(f); }}
+                                />
+                            </div>
+                        </div>
                     </div>
                 )}
 
