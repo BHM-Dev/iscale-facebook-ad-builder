@@ -97,7 +97,10 @@ async def reconstruct_ad(
         
         # Generate the ad concept
         response = model.generate_content(prompt)
-        
+
+        if not response.text:
+            raise ValueError("Model returned an empty response (possible content filter or rate limit)")
+
         # Parse the JSON response (Gemini often wraps output in ```json blocks)
         concept_data = extract_json_from_response(response.text)
 

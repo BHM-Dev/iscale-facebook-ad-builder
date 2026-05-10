@@ -649,6 +649,7 @@ export default function AdRemix() {
                             onClick={() => setCurrentStep(currentStep + 1)}
                             disabled={
                                 (currentStep === 2 && !wizardData.brand) ||
+                                (currentStep === 3 && !wizardData.product) ||
                                 (currentStep === 4 && !wizardData.profile) ||
                                 (currentStep === 5 && (!wizardData.campaignDetails.offer || !wizardData.campaignDetails.messaging))
                             }
@@ -662,7 +663,7 @@ export default function AdRemix() {
                     {currentStep === 6 && (
                         <button
                             onClick={handleReconstruct}
-                            disabled={!wizardData.campaignDetails.offer || !wizardData.campaignDetails.messaging}
+                            disabled={!wizardData.brand || !wizardData.product || !wizardData.profile || !wizardData.campaignDetails.offer || !wizardData.campaignDetails.messaging}
                             className="flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 font-medium shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             <Sparkles size={20} />
