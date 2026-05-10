@@ -446,7 +446,7 @@ export default function CampaignPerformance() {
   const { showSuccess, showError, showInfo } = useToast();
   const [adsets, setAdsets]     = useState([]);
   const [rules, setRules]       = useState([]); // still needed for isFlagged + rule badges
-  const [datePreset, setDatePreset] = useState('today');
+  const [datePreset, setDatePreset] = useState('last_7d');
   const [adAccountId, setAdAccountId] = useState('');
   const [loadingAdsets, setLoadingAdsets] = useState(false);
   const [syncing, setSyncing] = useState(false);
