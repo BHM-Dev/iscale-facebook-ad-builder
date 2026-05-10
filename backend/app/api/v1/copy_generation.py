@@ -264,7 +264,13 @@ class RemixVariationsRequest(BaseModel):
 
 @router.post("/remix-variations")
 async def remix_variations(request: RemixVariationsRequest):
-    """Generate 3 remix variations of a winning ad using a new hook and/or niche."""
+    """Generate 3 remix variations of a winning ad using a new hook and/or niche.
+
+    Kept separate from /generate because remix has a fundamentally different input
+    contract: it takes a source (winning) ad as context instead of a full
+    brand/product/profile payload. The prompt is also tighter — the goal is
+    copy variation to fight ad fatigue, not a full creative brief from scratch.
+    """
 
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="Gemini API key not configured")
@@ -295,15 +301,29 @@ Return ONLY valid JSON, no markdown:
 {{"variations": [{{"headline": "...", "body": "..."}}, {{"headline": "...", "body": "..."}}, {{"headline": "...", "body": "..."}}]}}"""
 
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # Use the same model alias as /generate for consistency.
+        # gemini-flash-latest auto-tracks the current stable flash model.
+        model = genai.GenerativeModel('gemini-flash-latest')
         response = model.generate_content(prompt)
         text = response.text.strip()
-        if text.startswith("```"):
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-        data = json.loads(text.strip())
-        return {"variations": data.get("variations", [])}
+
+        # Strip markdown code fences if Gemini wraps the JSON despite being told not to.
+        # Must strip both the opening fence+language tag AND the closing fence.
+        if text.startswith('```json'):
+            text = text[7:]
+        elif text.startswith('```'):
+            text = text[3:]
+        if text.endswith('```'):
+            text = text[:-3]
+        text = text.strip()
+
+        data = json.loads(text)
+        variations = data.get("variations", [])
+        # Guard: Gemini may return fewer than 3 if it truncates — surface a clear error
+        # rather than silently returning an incomplete set.
+        if not variations:
+            raise ValueError("No variations returned from model")
+        return {"variations": variations}
     except Exception as e:
         print(f"Remix variations error: {e}")
         raise HTTPException(status_code=500, detail=f"Remix generation failed: {str(e)}")

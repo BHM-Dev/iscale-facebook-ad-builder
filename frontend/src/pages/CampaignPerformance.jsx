@@ -120,6 +120,7 @@ function RTStat({ label, value, highlight }) {
 }
 
 // ── Creative breakdown table (ad-level) ──────────────────────────────────────
+// onRemix: ({ ad_id, ad_name, headline, body, cta_label, image_url, adsetName, campaign_id }) => void
 function AdsBreakdown({ fbAdsetId, adsetName, campaignId, adsBulk, adsLoading, rtAdsBulk, onAdStatusChange, onRemix }) {
   const { showSuccess, showError } = useToast();
   const [pausingAds, setPausingAds] = useState(new Set());
@@ -459,7 +460,11 @@ function RemixDrawer({ creative, brands, onClose, onLaunchWizard }) {
   const [variations, setVariations] = useState([]);
   const [copied, setCopied] = useState(null);
 
-  const selectedBrand = brands.find(b => b.id === selectedBrandId);
+  // Resolve the active brand — fall back to the campaign-assigned brand when
+  // selectedBrandId holds the '__change' sentinel (user clicked "change" but
+  // hasn't picked a new brand yet).
+  const effectiveBrandId = selectedBrandId.startsWith('__change') ? creative.brand_id : selectedBrandId;
+  const selectedBrand = brands.find(b => b.id === effectiveBrandId);
 
   const handleGenerate = async () => {
     if (!hook) return;
@@ -520,19 +525,35 @@ function RemixDrawer({ creative, brands, onClose, onLaunchWizard }) {
             {creative.body && <p className="text-gray-600 text-xs line-clamp-3">{creative.body}</p>}
           </div>
 
-          {/* Brand selector */}
+          {/* Brand — shows as a read-only pill if already assigned to the campaign,
+               so Joel doesn't have to touch it. Reveals a selector only when unassigned
+               or when he explicitly clicks "change". */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">Brand</label>
-            <select
-              value={selectedBrandId}
-              onChange={e => setSelectedBrandId(e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500"
-            >
-              <option value="">— select brand —</option>
-              {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
-            {!creative.brand_id && (
-              <p className="text-xs text-amber-600 mt-1">Tip: assign a brand to this campaign row to skip this step next time.</p>
+            {creative.brand_id && !selectedBrandId.startsWith('__change') ? (
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-800 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-lg">
+                  {creative.brand_name}
+                </span>
+                <button
+                  onClick={() => setSelectedBrandId('__change')}
+                  className="text-xs text-gray-400 hover:text-gray-600 underline"
+                >
+                  change
+                </button>
+              </div>
+            ) : (
+              <>
+                <select
+                  value={selectedBrandId.startsWith('__change') ? '' : selectedBrandId}
+                  onChange={e => setSelectedBrandId(e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="">— select brand —</option>
+                  {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+                <p className="text-xs text-amber-600 mt-1">Tip: assign a brand to this campaign row to skip this step next time.</p>
+              </>
             )}
           </div>
 
@@ -585,11 +606,12 @@ function RemixDrawer({ creative, brands, onClose, onLaunchWizard }) {
                     >
                       {copied === i ? '✓ Copied' : 'Copy'}
                     </button>
+                    {/* Opens in new tab so Joel keeps his place in the Campaign Performance table */}
                     <button
                       onClick={() => onLaunchWizard({ ...creative, headline: v.headline, body: v.body })}
                       className="flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-purple-50 hover:bg-purple-100 text-purple-700 font-medium"
                     >
-                      <Sparkles size={10} /> Build Ad
+                      <Sparkles size={10} /> Build Ad ↗
                     </button>
                   </div>
                 </div>
@@ -1242,6 +1264,9 @@ export default function CampaignPerformance() {
                       rtAdsBulk={rtAdsBulk}
                       onAdStatusChange={() => loadAdsBulk(adAccountId, datePreset, datePreset === 'custom' ? dateFrom : null, datePreset === 'custom' ? dateTo : null)}
                       onRemix={(creative) => {
+                        // Use adset.campaign_id from this render closure (our internal DB id),
+                        // not creative.campaign_id — creative comes from the Meta API and
+                        // carries the Meta campaign id, not our internal one.
                         const cb = campaignBrands[adset.campaign_id];
                         setRemixDrawer({ ...creative, brand_id: cb?.brand_id || '', brand_name: cb?.brand_name || '' });
                       }}
@@ -1263,8 +1288,10 @@ export default function CampaignPerformance() {
         brands={brands}
         onClose={() => setRemixDrawer(null)}
         onLaunchWizard={(data) => {
+          // Write to localStorage then open /ad-remix in a new tab so Joel
+          // keeps his place in the Campaign Performance table.
           localStorage.setItem('pendingRemixCreative', JSON.stringify(data));
-          navigate('/ad-remix');
+          window.open('/ad-remix', '_blank');
         }}
       />
     )}
