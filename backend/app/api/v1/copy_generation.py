@@ -244,9 +244,66 @@ Return ONLY the new {request.field} text, nothing else."""
         response = model.generate_content(prompt)
         
         new_value = response.text.strip().strip('"').strip("'")
-        
+
         return {"newValue": new_value}
-        
+
     except Exception as e:
         print(f"Field regeneration error: {e}")
         raise HTTPException(status_code=500, detail=f"Field regeneration failed: {str(e)}")
+
+
+class RemixVariationsRequest(BaseModel):
+    source_headline: str
+    source_body: str
+    hook: str
+    niche: str
+    brand_name: Optional[str] = ""
+    brand_voice: Optional[str] = ""
+    vertical: Optional[str] = "commercial_insurance"
+
+
+@router.post("/remix-variations")
+async def remix_variations(request: RemixVariationsRequest):
+    """Generate 3 remix variations of a winning ad using a new hook and/or niche."""
+
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Gemini API key not configured")
+
+    prompt = f"""You are a direct response copywriter trained on Eugene Schwartz's Breakthrough Advertising. You write Facebook lead gen ads for {request.vertical.replace('_', ' ')} — NOT ecommerce. No discounts, no products to buy. Ads drive form submissions.
+
+A media buyer has a winning ad and wants 3 variations. Their job is to remix the same emotional angle with slight copy variations — different sentence structure, different opening word, different proof element — to fight ad fatigue while keeping what made the original work.
+
+WINNING AD:
+Headline: {request.source_headline}
+Body: {request.source_body}
+
+REMIX PARAMETERS:
+- Hook/Angle to preserve or riff on: {request.hook}
+- Niche: {request.niche or 'same as original'}
+- Brand: {request.brand_name or 'not specified'}
+{f'- Brand voice: {request.brand_voice}' if request.brand_voice else ''}
+
+RULES:
+- Each variation keeps the same emotional core as the winning ad but uses different words, structure, or proof
+- Headline: under 60 characters, punchy, no clickbait, no ALL CAPS
+- Body: 2-4 sentences max, conversational, written like a person not a brand
+- Do NOT use: "Are you...", "Did you know...", discount language, urgency pressure tactics, emojis
+- Write for awareness Stage 3-4 (solution-aware to product-aware) — they know their problem exists
+- Use the niche context naturally if provided
+
+Return ONLY valid JSON, no markdown:
+{{"variations": [{{"headline": "...", "body": "..."}}, {{"headline": "...", "body": "..."}}, {{"headline": "...", "body": "..."}}]}}"""
+
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        text = response.text.strip()
+        if text.startswith("```"):
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+        data = json.loads(text.strip())
+        return {"variations": data.get("variations", [])}
+    except Exception as e:
+        print(f"Remix variations error: {e}")
+        raise HTTPException(status_code=500, detail=f"Remix generation failed: {str(e)}")

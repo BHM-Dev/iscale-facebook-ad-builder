@@ -166,10 +166,12 @@ class FacebookCampaign(Base):
     special_ad_categories = Column(JSON, nullable=True, default=list)  # e.g. ["HOUSING"] or []
     status = Column(String, default='PAUSED')
     fb_campaign_id = Column(String, nullable=True)
+    brand_id = Column(String, ForeignKey("brands.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     adsets = relationship("FacebookAdSet", back_populates="campaign", cascade="all, delete-orphan")
+    brand = relationship("Brand", foreign_keys=[brand_id])
 
 class FacebookAdSet(Base):
     __tablename__ = "facebook_adsets"

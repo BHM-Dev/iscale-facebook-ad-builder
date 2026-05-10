@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2, Sparkles } from 'lucide-react';
+import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2, Sparkles, Tag, ChevronLeft } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
+import { useBrands } from '../context/BrandContext';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -119,12 +120,11 @@ function RTStat({ label, value, highlight }) {
 }
 
 // ── Creative breakdown table (ad-level) ──────────────────────────────────────
-function AdsBreakdown({ fbAdsetId, adsetName, adsBulk, adsLoading, rtAdsBulk, onAdStatusChange }) {
-  const navigate = useNavigate();
+function AdsBreakdown({ fbAdsetId, adsetName, campaignId, adsBulk, adsLoading, rtAdsBulk, onAdStatusChange, onRemix }) {
   const { showSuccess, showError } = useToast();
   const [pausingAds, setPausingAds] = useState(new Set());
   const [adStatuses, setAdStatuses] = useState({}); // local optimistic status overrides
-  const [remixingAd, setRemixingAd] = useState(null); // ad_id currently being fetched for remix
+  const [remixingAd, setRemixingAd] = useState(null);
 
   const handleRemix = async (ad) => {
     setRemixingAd(ad.ad_id);
@@ -132,15 +132,16 @@ function AdsBreakdown({ fbAdsetId, adsetName, adsBulk, adsLoading, rtAdsBulk, on
       const res = await authFetch(`${API_BASE}/facebook/ads/${ad.ad_id}/creative`);
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed to fetch creative'); }
       const creative = await res.json();
-      localStorage.setItem('pendingRemixCreative', JSON.stringify({
+      onRemix({
         ad_id: ad.ad_id,
         ad_name: creative.ad_name || ad.ad_name,
         headline: creative.headline || '',
         body: creative.body || '',
         cta_label: creative.cta_label || '',
         image_url: creative.image_url || '',
-      }));
-      navigate('/ad-remix');
+        adsetName,
+        campaign_id: campaignId,
+      });
     } catch (e) {
       showError(`Remix failed: ${e.message}`);
     } finally {
@@ -296,7 +297,7 @@ function AdsBreakdown({ fbAdsetId, adsetName, adsBulk, adsLoading, rtAdsBulk, on
                 )}
                 <td className="px-3 py-2">
                   <div className="flex items-center justify-center gap-1.5">
-                    {/* Remix → Ad Remix (all ads) */}
+                    {/* Remix → opens inline drawer */}
                     <button
                       onClick={() => handleRemix(ad)}
                       disabled={remixingAd === ad.ad_id}
@@ -448,10 +449,164 @@ function Field({ label, children }) {
   );
 }
 
+// ── Remix Drawer ─────────────────────────────────────────────────────────────
+function RemixDrawer({ creative, brands, onClose, onLaunchWizard }) {
+  const { showError } = useToast();
+  const [hook, setHook] = useState(creative.headline || '');
+  const [niche, setNiche] = useState(creative.adsetName || '');
+  const [selectedBrandId, setSelectedBrandId] = useState(creative.brand_id || '');
+  const [generating, setGenerating] = useState(false);
+  const [variations, setVariations] = useState([]);
+  const [copied, setCopied] = useState(null);
+
+  const selectedBrand = brands.find(b => b.id === selectedBrandId);
+
+  const handleGenerate = async () => {
+    if (!hook) return;
+    setGenerating(true);
+    setVariations([]);
+    try {
+      const res = await authFetch(`${API_BASE}/copy-generation/remix-variations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_headline: creative.headline,
+          source_body: creative.body,
+          hook,
+          niche,
+          brand_name: selectedBrand?.name || '',
+          brand_voice: selectedBrand?.voice || '',
+          vertical: selectedBrand?.vertical || 'commercial_insurance',
+        }),
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Generation failed'); }
+      const data = await res.json();
+      setVariations(data.variations || []);
+    } catch (e) {
+      showError(e.message);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const copyVariation = (v, idx) => {
+    navigator.clipboard.writeText(`${v.headline}\n\n${v.body}`);
+    setCopied(idx);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end pointer-events-none">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/30 pointer-events-auto" onClick={onClose} />
+      {/* Drawer */}
+      <div className="relative w-full max-w-xl bg-white shadow-2xl pointer-events-auto flex flex-col h-full overflow-y-auto">
+        {/* Header */}
+        <div className="flex items-start justify-between p-5 border-b border-gray-100">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <Sparkles size={18} className="text-purple-600" /> Remix Ad
+            </h2>
+            <p className="text-xs text-gray-500 mt-0.5">Source: <span className="font-medium text-gray-700">{creative.ad_name}</span></p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1"><X size={20} /></button>
+        </div>
+
+        <div className="p-5 space-y-5 flex-1">
+          {/* Source ad reference */}
+          <div className="bg-gray-50 rounded-lg p-3 border border-gray-100 text-sm">
+            <p className="font-medium text-gray-700 mb-1 text-xs uppercase tracking-wide text-gray-400">Source ad copy</p>
+            {creative.headline && <p className="font-semibold text-gray-800 mb-1">"{creative.headline}"</p>}
+            {creative.body && <p className="text-gray-600 text-xs line-clamp-3">{creative.body}</p>}
+          </div>
+
+          {/* Brand selector */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Brand</label>
+            <select
+              value={selectedBrandId}
+              onChange={e => setSelectedBrandId(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500"
+            >
+              <option value="">— select brand —</option>
+              {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+            {!creative.brand_id && (
+              <p className="text-xs text-amber-600 mt-1">Tip: assign a brand to this campaign row to skip this step next time.</p>
+            )}
+          </div>
+
+          {/* Hook */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Hook / Angle <span className="text-gray-400 font-normal">(edit to try a new angle)</span></label>
+            <input
+              type="text"
+              value={hook}
+              onChange={e => setHook(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500"
+              placeholder="e.g. Is your church one repair away from a financial crisis?"
+            />
+          </div>
+
+          {/* Niche */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Niche <span className="text-gray-400 font-normal">(from ad set name)</span></label>
+            <input
+              type="text"
+              value={niche}
+              onChange={e => setNiche(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500"
+              placeholder="e.g. Religious Organizations, Welders, Laundromat"
+            />
+          </div>
+
+          {/* Generate button */}
+          <button
+            onClick={handleGenerate}
+            disabled={generating || !hook}
+            className="w-full flex items-center justify-center gap-2 py-3 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {generating ? <RefreshCw size={16} className="animate-spin" /> : <Sparkles size={16} />}
+            {generating ? 'Generating variations…' : 'Generate 3 Variations'}
+          </button>
+
+          {/* Variations output */}
+          {variations.length > 0 && (
+            <div className="space-y-3">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Variations</p>
+              {variations.map((v, i) => (
+                <div key={i} className="border border-gray-200 rounded-lg p-3 bg-white hover:border-purple-300 transition-colors">
+                  <p className="font-semibold text-gray-900 text-sm mb-1">{v.headline}</p>
+                  <p className="text-gray-600 text-xs mb-3 line-clamp-4">{v.body}</p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => copyVariation(v, i)}
+                      className="flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium"
+                    >
+                      {copied === i ? '✓ Copied' : 'Copy'}
+                    </button>
+                    <button
+                      onClick={() => onLaunchWizard({ ...creative, headline: v.headline, body: v.body })}
+                      className="flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-purple-50 hover:bg-purple-100 text-purple-700 font-medium"
+                    >
+                      <Sparkles size={10} /> Build Ad
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function CampaignPerformance() {
   const navigate = useNavigate();
   const { showSuccess, showError, showInfo } = useToast();
+  const { brands } = useBrands();
   const [adsets, setAdsets]     = useState([]);
   const [rules, setRules]       = useState([]); // still needed for isFlagged + rule badges
   const [datePreset, setDatePreset] = useState('today');
@@ -490,13 +645,29 @@ export default function CampaignPerformance() {
   const [adsetStatusOverrides, setAdsetStatusOverrides] = useState({}); // local optimistic overrides
   const [syncingRT, setSyncingRT] = useState(false);
 
+  // Brand assignment state — maps campaign_id → { brand_id, brand_name }
+  const [campaignBrands, setCampaignBrands] = useState({});
+  const [assigningBrand, setAssigningBrand] = useState(null); // campaign_id currently being saved
+
+  // Remix drawer state
+  const [remixDrawer, setRemixDrawer] = useState(null); // { ad, adsetName, brand_id, brand_name }
+
   const loadAdsets = useCallback(async () => {
     setLoadingAdsets(true);
     try {
       const res = await authFetch(`${API_BASE}/facebook/adsets/saved`);
       if (!res.ok) throw new Error('Failed to load ad sets');
       const data = await res.json();
-      setAdsets(Array.isArray(data) ? data : data.adsets || []);
+      const adsetList = Array.isArray(data) ? data : data.adsets || [];
+      setAdsets(adsetList);
+      // Seed campaignBrands from adsets that already have a brand assigned
+      const brands = {};
+      adsetList.forEach(a => {
+        if (a.campaign_id && a.brand_id) {
+          brands[a.campaign_id] = { brand_id: a.brand_id, brand_name: a.brand_name };
+        }
+      });
+      setCampaignBrands(prev => ({ ...prev, ...brands }));
     } catch (e) { showError(e.message); }
     finally { setLoadingAdsets(false); }
   }, []);
@@ -672,6 +843,24 @@ export default function CampaignPerformance() {
     finally { setSyncing(false); }
   };
 
+  const assignBrandToCampaign = async (campaignId, brandId, brandName) => {
+    setAssigningBrand(campaignId);
+    try {
+      const res = await authFetch(`${API_BASE}/facebook/campaigns/${campaignId}/brand`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brand_id: brandId || null }),
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
+      setCampaignBrands(prev => ({
+        ...prev,
+        [campaignId]: brandId ? { brand_id: brandId, brand_name: brandName } : null,
+      }));
+      showSuccess(brandId ? `Brand assigned to campaign` : 'Brand removed from campaign');
+    } catch (e) { showError(e.message); }
+    finally { setAssigningBrand(null); }
+  };
+
   const syncRedTrack = async () => {
     setSyncingRT(true);
     showInfo('Syncing RedTrack data...');
@@ -751,6 +940,7 @@ export default function CampaignPerformance() {
   }, [adsets, statusFilter, sortBy, bulkInsights, isFlagged, adsetStatusOverrides]);
 
   return (
+    <>
     <div className="max-w-6xl mx-auto space-y-8">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -958,6 +1148,32 @@ export default function CampaignPerformance() {
                           {adsBulk[adset.fb_adset_id].length} creative{adsBulk[adset.fb_adset_id].length !== 1 ? 's' : ''}
                         </span>
                       )}
+                      {/* Brand assignment pill */}
+                      {(() => {
+                        const cb = campaignBrands[adset.campaign_id];
+                        const isAssigning = assigningBrand === adset.campaign_id;
+                        return (
+                          <span className="relative group">
+                            <select
+                              value={cb?.brand_id || ''}
+                              disabled={isAssigning}
+                              onChange={e => {
+                                const selected = brands.find(b => b.id === e.target.value);
+                                assignBrandToCampaign(adset.campaign_id, e.target.value || null, selected?.name || null);
+                              }}
+                              className={`text-xs px-2 py-0.5 rounded-full border cursor-pointer appearance-none pr-5 ${
+                                cb ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-blue-300'
+                              } disabled:opacity-50`}
+                              title="Assign brand to this campaign"
+                            >
+                              <option value="">{isAssigning ? 'Saving…' : '+ Assign brand'}</option>
+                              {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                            </select>
+                            {cb && <Tag size={9} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" />}
+                          </span>
+                        );
+                      })()}
+
                       {hasPoorCreatives && !isExpanded && (
                         <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-orange-50 text-orange-600 flex items-center gap-1 cursor-pointer"
                           onClick={() => setExpandedAdsets(prev => { const next = new Set(prev); next.add(adset.fb_adset_id); return next; })}
@@ -1020,10 +1236,15 @@ export default function CampaignPerformance() {
                     <AdsBreakdown
                       fbAdsetId={adset.fb_adset_id}
                       adsetName={adset.name}
+                      campaignId={adset.campaign_id}
                       adsBulk={adsBulk}
                       adsLoading={adsLoading}
                       rtAdsBulk={rtAdsBulk}
                       onAdStatusChange={() => loadAdsBulk(adAccountId, datePreset, datePreset === 'custom' ? dateFrom : null, datePreset === 'custom' ? dateTo : null)}
+                      onRemix={(creative) => {
+                        const cb = campaignBrands[adset.campaign_id];
+                        setRemixDrawer({ ...creative, brand_id: cb?.brand_id || '', brand_name: cb?.brand_name || '' });
+                      }}
                     />
                   )}
                 </div>
@@ -1034,5 +1255,19 @@ export default function CampaignPerformance() {
       </div>
 
     </div>
+
+    {/* ── Remix Drawer ─────────────────────────────────────────────────────── */}
+    {remixDrawer && (
+      <RemixDrawer
+        creative={remixDrawer}
+        brands={brands}
+        onClose={() => setRemixDrawer(null)}
+        onLaunchWizard={(data) => {
+          localStorage.setItem('pendingRemixCreative', JSON.stringify(data));
+          navigate('/ad-remix');
+        }}
+      />
+    )}
+    </>
   );
 }

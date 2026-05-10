@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional
 from app.services.facebook_service import FacebookService
 
 logger = logging.getLogger(__name__)
-from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, User
+from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, User, Brand
 from app.database import get_db
 from app.core.deps import get_current_active_user, require_permission
 from sqlalchemy.orm import Session
@@ -183,7 +183,10 @@ def read_saved_adsets(
     Deduplicates by fb_adset_id — if the same fb_adset_id appears more than once,
     only the most recently created entry is returned.
     """
-    q = db.query(FacebookAdSet)
+    from sqlalchemy.orm import joinedload
+    q = db.query(FacebookAdSet).options(
+        joinedload(FacebookAdSet.campaign).joinedload(FacebookCampaign.brand)
+    )
     if campaign_id:
         q = q.filter(FacebookAdSet.campaign_id == campaign_id)
     all_adsets = q.order_by(FacebookAdSet.created_at.desc()).all()
@@ -204,6 +207,8 @@ def read_saved_adsets(
             "fb_adset_id": a.fb_adset_id,
             "status": a.status,
             "campaign_id": a.campaign_id,
+            "brand_id": a.campaign.brand_id if a.campaign else None,
+            "brand_name": a.campaign.brand.name if (a.campaign and a.campaign.brand) else None,
         }
         for a in adsets
     ]
@@ -634,6 +639,34 @@ def update_ad_status(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/campaigns/{campaign_id}/brand")
+def assign_campaign_brand(
+    campaign_id: str,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Assign (or clear) a brand on a synced Facebook campaign.
+    Body: { "brand_id": "<uuid>" } or { "brand_id": null } to unassign.
+    """
+    brand_id = body.get("brand_id")
+    campaign = db.query(FacebookCampaign).filter(FacebookCampaign.id == campaign_id).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if brand_id:
+        brand = db.query(Brand).filter(Brand.id == brand_id).first()
+        if not brand:
+            raise HTTPException(status_code=404, detail="Brand not found")
+    campaign.brand_id = brand_id
+    db.commit()
+    db.refresh(campaign)
+    return {
+        "id": campaign.id,
+        "brand_id": campaign.brand_id,
+        "brand_name": campaign.brand.name if campaign.brand else None,
+    }
 
 
 @router.get("/ads/{fb_ad_id}/creative")
