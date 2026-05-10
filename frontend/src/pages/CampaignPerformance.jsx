@@ -667,9 +667,9 @@ export default function CampaignPerformance() {
   const [adsetStatusOverrides, setAdsetStatusOverrides] = useState({}); // local optimistic overrides
   const [syncingRT, setSyncingRT] = useState(false);
 
-  // Brand assignment state — maps campaign_id → { brand_id, brand_name }
+  // Brand assignment state — maps adset.id → { brand_id, brand_name }
   const [campaignBrands, setCampaignBrands] = useState({});
-  const [assigningBrand, setAssigningBrand] = useState(null); // campaign_id currently being saved
+  const [assigningBrand, setAssigningBrand] = useState(null); // adset.id currently being saved
 
   // Remix drawer state
   const [remixDrawer, setRemixDrawer] = useState(null); // { ad, adsetName, brand_id, brand_name }
@@ -682,11 +682,11 @@ export default function CampaignPerformance() {
       const data = await res.json();
       const adsetList = Array.isArray(data) ? data : data.adsets || [];
       setAdsets(adsetList);
-      // Seed campaignBrands from adsets that already have a brand assigned
+      // Seed campaignBrands from adsets that already have a brand assigned (keyed by adset.id)
       const brands = {};
       adsetList.forEach(a => {
-        if (a.campaign_id && a.brand_id) {
-          brands[a.campaign_id] = { brand_id: a.brand_id, brand_name: a.brand_name };
+        if (a.id && a.brand_id) {
+          brands[a.id] = { brand_id: a.brand_id, brand_name: a.brand_name };
         }
       });
       setCampaignBrands(prev => ({ ...prev, ...brands }));
@@ -865,10 +865,10 @@ export default function CampaignPerformance() {
     finally { setSyncing(false); }
   };
 
-  const assignBrandToCampaign = async (campaignId, brandId, brandName) => {
-    setAssigningBrand(campaignId);
+  const assignBrandToAdset = async (adsetId, brandId, brandName) => {
+    setAssigningBrand(adsetId);
     try {
-      const res = await authFetch(`${API_BASE}/facebook/campaigns/${campaignId}/brand`, {
+      const res = await authFetch(`${API_BASE}/facebook/adsets/${adsetId}/brand`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ brand_id: brandId || null }),
@@ -876,9 +876,9 @@ export default function CampaignPerformance() {
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
       setCampaignBrands(prev => ({
         ...prev,
-        [campaignId]: brandId ? { brand_id: brandId, brand_name: brandName } : null,
+        [adsetId]: brandId ? { brand_id: brandId, brand_name: brandName } : null,
       }));
-      showSuccess(brandId ? `Brand assigned to campaign` : 'Brand removed from campaign');
+      showSuccess(brandId ? `Brand assigned to ad set` : 'Brand removed from ad set');
     } catch (e) { showError(e.message); }
     finally { setAssigningBrand(null); }
   };
@@ -1172,8 +1172,8 @@ export default function CampaignPerformance() {
                       )}
                       {/* Brand assignment pill */}
                       {(() => {
-                        const cb = campaignBrands[adset.campaign_id];
-                        const isAssigning = assigningBrand === adset.campaign_id;
+                        const cb = campaignBrands[adset.id];
+                        const isAssigning = assigningBrand === adset.id;
                         return (
                           <span className="relative group">
                             <select
@@ -1181,7 +1181,7 @@ export default function CampaignPerformance() {
                               disabled={isAssigning}
                               onChange={e => {
                                 const selected = brands.find(b => b.id === e.target.value);
-                                assignBrandToCampaign(adset.campaign_id, e.target.value || null, selected?.name || null);
+                                assignBrandToAdset(adset.id, e.target.value || null, selected?.name || null);
                               }}
                               className={`text-xs px-2 py-0.5 rounded-full border cursor-pointer appearance-none pr-5 ${
                                 cb ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-blue-300'
@@ -1264,10 +1264,8 @@ export default function CampaignPerformance() {
                       rtAdsBulk={rtAdsBulk}
                       onAdStatusChange={() => loadAdsBulk(adAccountId, datePreset, datePreset === 'custom' ? dateFrom : null, datePreset === 'custom' ? dateTo : null)}
                       onRemix={(creative) => {
-                        // Use adset.campaign_id from this render closure (our internal DB id),
-                        // not creative.campaign_id — creative comes from the Meta API and
-                        // carries the Meta campaign id, not our internal one.
-                        const cb = campaignBrands[adset.campaign_id];
+                        // Key by adset.id (our internal DB id) — brand is now stored per-adset.
+                        const cb = campaignBrands[adset.id];
                         setRemixDrawer({ ...creative, brand_id: cb?.brand_id || '', brand_name: cb?.brand_name || '' });
                       }}
                     />

@@ -191,9 +191,11 @@ class FacebookAdSet(Base):
     conversion_event = Column(String, nullable=True)
     status = Column(String, default='PAUSED')
     fb_adset_id = Column(String, nullable=True)
+    brand_id = Column(String, ForeignKey("brands.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     campaign = relationship("FacebookCampaign", back_populates="adsets")
+    brand = relationship("Brand", foreign_keys=[brand_id])
     ads = relationship("FacebookAd", back_populates="adset", cascade="all, delete-orphan")
 
 class FacebookAd(Base):

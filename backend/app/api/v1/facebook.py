@@ -185,7 +185,8 @@ def read_saved_adsets(
     """
     from sqlalchemy.orm import joinedload
     q = db.query(FacebookAdSet).options(
-        joinedload(FacebookAdSet.campaign).joinedload(FacebookCampaign.brand)
+        joinedload(FacebookAdSet.brand),
+        joinedload(FacebookAdSet.campaign)
     )
     if campaign_id:
         q = q.filter(FacebookAdSet.campaign_id == campaign_id)
@@ -207,8 +208,8 @@ def read_saved_adsets(
             "fb_adset_id": a.fb_adset_id,
             "status": a.status,
             "campaign_id": a.campaign_id,
-            "brand_id": a.campaign.brand_id if a.campaign else None,
-            "brand_name": a.campaign.brand.name if (a.campaign and a.campaign.brand) else None,
+            "brand_id": a.brand_id,
+            "brand_name": a.brand.name if a.brand else None,
         }
         for a in adsets
     ]
@@ -666,6 +667,37 @@ def assign_campaign_brand(
         "id": campaign.id,
         "brand_id": campaign.brand_id,
         "brand_name": campaign.brand.name if campaign.brand else None,
+    }
+
+
+@router.patch("/adsets/{adset_id}/brand")
+def assign_brand_to_adset(
+    adset_id: str,
+    body: Dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Assign or clear a brand on an ad set.
+
+    Body: { "brand_id": "<uuid>" } or { "brand_id": null } to unassign.
+    Brand assignment is stored at the ad set level so different ad sets
+    within the same campaign can have different brands.
+    """
+    brand_id = body.get("brand_id")
+    adset = db.query(FacebookAdSet).filter(FacebookAdSet.id == adset_id).first()
+    if not adset:
+        raise HTTPException(status_code=404, detail="Ad set not found")
+    if brand_id:
+        brand = db.query(Brand).filter(Brand.id == brand_id).first()
+        if not brand:
+            raise HTTPException(status_code=404, detail="Brand not found")
+    adset.brand_id = brand_id
+    db.commit()
+    db.refresh(adset)
+    return {
+        "adset_id": adset_id,
+        "brand_id": adset.brand_id,
+        "brand_name": adset.brand.name if adset.brand else None,
     }
 
 
