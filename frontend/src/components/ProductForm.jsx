@@ -149,7 +149,7 @@ const ProductForm = ({ onClose, onSave, initialData = null }) => {
                             value={formData.name}
                             onChange={e => setFormData({ ...formData, name: e.target.value })}
                             className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                            placeholder="e.g. Glow Serum"
+                            placeholder="e.g. Commercial Insurance, Auto Insurance, Personal Loans"
                         />
                     </div>
 
@@ -161,7 +161,7 @@ const ProductForm = ({ onClose, onSave, initialData = null }) => {
                             onChange={e => setFormData({ ...formData, description: e.target.value })}
                             className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                             rows="3"
-                            placeholder="Short description of the product..."
+                            placeholder="e.g. Commercial insurance for small business owners — Workers Comp, General Liability, BOP"
                         />
                     </div>
 
@@ -198,7 +198,7 @@ const ProductForm = ({ onClose, onSave, initialData = null }) => {
                             onChange={handleFileUpload}
                             className="hidden"
                         />
-                        <p className="text-xs text-gray-500">Upload product images to use in ad generation.</p>
+                        <p className="text-xs text-gray-500">Optional — for lead gen verticals (insurance, loans, mortgage) you can skip this.</p>
                     </div>
 
                     <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
