@@ -260,7 +260,12 @@ function AdsBreakdown({ fbAdsetId, adsetName, adsBulk, adsLoading, rtAdsBulk, on
                 </td>
                 <td className="px-3 py-2 text-right font-medium text-gray-700">${ad.spend.toFixed(0)}</td>
                 <td className="px-3 py-2 text-right text-gray-700">{ad.leads}</td>
-                <td className={`px-3 py-2 text-right font-medium ${isHighCpl ? 'text-red-600 font-bold' : ad.cpl != null && ad.cpl > 60 ? 'text-red-600' : 'text-gray-700'}`}>
+                <td className={`px-3 py-2 text-right font-medium ${
+                  // Only flag CPL red if it's genuinely unprofitable — skip if ROAS ≥ 1 (ad is covering costs)
+                  (isHighCpl || (ad.cpl != null && ad.cpl > 60)) && !(rtRoas != null && rtRoas >= 1)
+                    ? 'text-red-600 font-bold'
+                    : 'text-gray-700'
+                }`}>
                   {ad.cpl != null ? `$${ad.cpl.toFixed(2)}` : '—'}
                 </td>
                 <td className="px-3 py-2 text-right text-gray-600">{parseFloat(ad.ctr).toFixed(2)}%</td>
@@ -283,13 +288,17 @@ function AdsBreakdown({ fbAdsetId, adsetName, adsBulk, adsLoading, rtAdsBulk, on
                 )}
                 <td className="px-3 py-2">
                   <div className="flex items-center justify-center gap-1.5">
-                    {/* Remix → Ad Remix (top creatives get the purple button) */}
-                    {isTop && (
+                    {/* Remix → Ad Remix (top creatives AND poor performers get the button) */}
+                    {(isTop || isPoorPerformer) && (
                       <button
                         onClick={() => handleRemix(ad)}
                         disabled={remixingAd === ad.ad_id}
-                        className="flex items-center gap-1 px-2 py-1 rounded text-purple-600 bg-purple-50 hover:bg-purple-100 transition-colors text-xs font-medium whitespace-nowrap disabled:opacity-50"
-                        title="Send this winning creative to Ad Remix to generate variations"
+                        className={`flex items-center gap-1 px-2 py-1 rounded transition-colors text-xs font-medium whitespace-nowrap disabled:opacity-50 ${
+                          isTop
+                            ? 'text-purple-600 bg-purple-50 hover:bg-purple-100'
+                            : 'text-orange-600 bg-orange-50 hover:bg-orange-100'
+                        }`}
+                        title={isTop ? 'Send this winning creative to Ad Remix to generate variations' : 'Remix this underperformer with a new angle'}
                       >
                         {remixingAd === ad.ad_id
                           ? <RefreshCw size={11} className="animate-spin" />

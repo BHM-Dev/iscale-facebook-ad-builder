@@ -12,10 +12,23 @@ const SIZE_OPTIONS = [
   { id: 'story',    label: 'Story',    sub: '9:16 · Stories', width: 1080, height: 1920 },
 ];
 
-const CTA_OPTIONS = ['Learn More', 'Get Quote', 'Sign Up', 'Shop Now', 'Contact Us', 'Book Now', 'Apply Now', 'Get Started'];
+const CTA_OPTIONS = [
+  'Learn More',
+  'Get My Quote',
+  'See My Rate',
+  'Check If I Qualify',
+  'Compare Rates',
+  'Get a Free Quote',
+  'See Options',
+  'Find Out Now',
+  'Get Started',
+  'Apply Now',
+  'Contact Us',
+  'Sign Up',
+];
 
 function newVariant(index = 0) {
-  return { id: Date.now() + index, headline: '', body: '', cta: 'Learn More' };
+  return { id: Date.now() + index, headline: '', body: '', cta: 'Get My Quote' };
 }
 
 // ── Status badge ──────────────────────────────────────────────────────────────
@@ -28,7 +41,7 @@ function StatusBadge({ status }) {
 }
 
 // ── Result card ───────────────────────────────────────────────────────────────
-function ResultCard({ variant, result, onRetry }) {
+function ResultCard({ variant, sizeLabel, result, resultKey, onRetry }) {
   const { status, imageUrl, error } = result;
 
   return (
@@ -52,7 +65,7 @@ function ResultCard({ variant, result, onRetry }) {
             <AlertCircle size={24} className="text-red-400" />
             <span className="text-xs text-red-500">{error || 'Generation failed'}</span>
             <button
-              onClick={() => onRetry(variant.id)}
+              onClick={() => onRetry(resultKey)}
               className="mt-1 text-xs text-red-600 underline hover:no-underline"
             >
               Retry
@@ -71,12 +84,21 @@ function ResultCard({ variant, result, onRetry }) {
           {variant.headline || <span className="text-gray-400 italic">No headline</span>}
         </div>
         <div className="mt-1 flex items-center justify-between">
-          <span className="text-xs text-gray-400 truncate max-w-[60%]">{variant.cta}</span>
+          <span className="text-xs text-gray-400 truncate max-w-[60%]">{sizeLabel} · {variant.cta}</span>
           <StatusBadge status={status} />
         </div>
       </div>
     </div>
   );
+}
+
+// Helper: parse result key → { variantId (Number), sizeId (string) }
+function parseResultKey(key) {
+  const dashIdx = key.lastIndexOf('-');
+  return {
+    variantId: Number(key.substring(0, dashIdx)),
+    sizeId: key.substring(dashIdx + 1),
+  };
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
@@ -85,55 +107,74 @@ export default function BatchGenerate() {
   const [searchParams] = useSearchParams();
 
   // URL params from "Iterate →" button on Performance page
-  const iterateAdId     = searchParams.get('adId')     || '';
-  const iterateAdName   = searchParams.get('adName')   || '';
-  const iterateAdsetName = searchParams.get('adsetName') || '';
+  const iterateAdId      = searchParams.get('adId')     || '';
+  const iterateAdName    = searchParams.get('adName')   || '';
 
   // Reference image
-  const [refImageUrl, setRefImageUrl] = useState('');      // server URL after upload
-  const [refImagePreview, setRefImagePreview] = useState(''); // object URL for preview
+  const [refImageUrl, setRefImageUrl] = useState('');
+  const [refImagePreview, setRefImagePreview] = useState('');
   const [uploadingRef, setUploadingRef] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
 
-  // Settings
-  const [selectedSize, setSelectedSize] = useState('square');
-  const [niche, setNiche] = useState('');  // optional context e.g. "Florist Insurance"
+  // Settings — multi-size (array, min 1 selected)
+  const [selectedSizes, setSelectedSizes] = useState(['square']);
+  const [niche, setNiche] = useState('');
+
+  const toggleSize = useCallback((sizeId) => {
+    setSelectedSizes(prev => {
+      if (prev.includes(sizeId)) {
+        if (prev.length === 1) return prev; // must keep at least one
+        return prev.filter(s => s !== sizeId);
+      }
+      return [...prev, sizeId];
+    });
+  }, []);
 
   // Variants
   const [variants, setVariants] = useState([newVariant(0), newVariant(1)]);
 
-  // Pre-fill niche from adset name, and fetch creative data if adId present
+  // Pre-fill Variant 1 if arriving from Ad Remix "Generate Image" button
   useEffect(() => {
-    if (iterateAdsetName) setNiche(iterateAdsetName);
-  }, [iterateAdsetName]); // eslint-disable-line react-hooks/exhaustive-deps
+    const raw = localStorage.getItem('pendingBatchCopy');
+    if (!raw) return;
+    try {
+      const copy = JSON.parse(raw);
+      localStorage.removeItem('pendingBatchCopy');
+      setVariants(prev => prev.map((v, i) =>
+        i === 0
+          ? { ...v, headline: copy.headline || '', body: copy.body || '', cta: copy.cta || v.cta }
+          : v
+      ));
+    } catch (e) { /* malformed — ignore */ }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Fetch creative data if arriving from Performance page (no niche auto-fill from adset name)
   useEffect(() => {
     if (!iterateAdId) return;
-    // Fetch the winning ad's creative from Meta and pre-fill Variant 1
     authFetch(`${API_URL}/facebook/ads/${iterateAdId}/creative`)
       .then(res => res.ok ? res.json() : null)
       .then(creative => {
         if (!creative) return;
-        // Pre-fill Variant 1 with headline + body from the live ad
         setVariants(prev => prev.map((v, i) =>
           i === 0
             ? { ...v, headline: creative.headline || '', body: creative.body || '' }
             : v
         ));
-        // Pre-load the reference image if available
         if (creative.image_url) {
           setRefImagePreview(creative.image_url);
           setRefImageUrl(creative.image_url);
         }
       })
-      .catch(() => {}); // silently fail — Joel can fill manually if Meta is slow
+      .catch(() => {});
   }, [iterateAdId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Generation state
   const [running, setRunning] = useState(false);
-  const [results, setResults] = useState({});  // variantId → { status, imageUrl, error }
+  const [results, setResults] = useState({});  // `${variantId}-${sizeId}` → { status, imageUrl, error }
   const [allDone, setAllDone] = useState(false);
+  const [generatingProgress, setGeneratingProgress] = useState(0);
+  const [generatingTotal, setGeneratingTotal] = useState(0);
 
   // ── Ref image upload ────────────────────────────────────────────────────────
   const uploadRefImage = useCallback(async (file) => {
@@ -153,7 +194,6 @@ export default function BatchGenerate() {
       if (!res.ok) throw new Error('Upload failed');
       const data = await res.json();
       const url = data.url || data.file_url || data.path;
-      // Ensure absolute URL for kie.ai (it needs a public URL, not a relative path)
       const absUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
       setRefImageUrl(absUrl);
     } catch (e) {
@@ -173,17 +213,14 @@ export default function BatchGenerate() {
 
   // ── Variant management ──────────────────────────────────────────────────────
   const addVariant = () => setVariants(prev => [...prev, newVariant(prev.length)]);
-
   const removeVariant = (id) => setVariants(prev => prev.filter(v => v.id !== id));
-
   const updateVariant = (id, field, value) =>
     setVariants(prev => prev.map(v => v.id === id ? { ...v, [field]: value } : v));
 
   // ── Generation ──────────────────────────────────────────────────────────────
-  const sizeConfig = SIZE_OPTIONS.find(s => s.id === selectedSize) || SIZE_OPTIONS[0];
-
-  const generateOne = useCallback(async (variant) => {
-    setResults(prev => ({ ...prev, [variant.id]: { status: 'generating', imageUrl: null, error: null } }));
+  const generateOne = useCallback(async (variant, sizeConfig) => {
+    const key = `${variant.id}-${sizeConfig.id}`;
+    setResults(prev => ({ ...prev, [key]: { status: 'generating', imageUrl: null, error: null } }));
 
     const contextLine = niche ? ` Professional Facebook advertisement for ${niche}.` : ' Professional Facebook advertisement.';
     const prompt = refImageUrl
@@ -229,14 +266,14 @@ export default function BatchGenerate() {
             mediaType: 'image',
           }],
         }),
-      }).catch(() => {}); // save failure is non-fatal — image still shown
+      }).catch(() => {});
 
-      setResults(prev => ({ ...prev, [variant.id]: { status: 'done', imageUrl, error: null } }));
+      setResults(prev => ({ ...prev, [key]: { status: 'done', imageUrl, error: null } }));
     } catch (e) {
       const msg = e.message === 'Failed to fetch' ? 'Network timeout — try again' : e.message;
-      setResults(prev => ({ ...prev, [variant.id]: { status: 'failed', imageUrl: null, error: msg } }));
+      setResults(prev => ({ ...prev, [key]: { status: 'failed', imageUrl: null, error: msg } }));
     }
-  }, [niche, refImageUrl, sizeConfig]);
+  }, [niche, refImageUrl]);
 
   const handleGenerate = useCallback(async () => {
     const valid = variants.filter(v => v.headline.trim());
@@ -245,31 +282,48 @@ export default function BatchGenerate() {
       return;
     }
 
+    const sizes = SIZE_OPTIONS.filter(s => selectedSizes.includes(s.id));
+    const total = valid.length * sizes.length;
+
     setRunning(true);
     setAllDone(false);
+    setGeneratingProgress(0);
+    setGeneratingTotal(total);
 
     // Initialize all as idle
     const init = {};
-    valid.forEach(v => { init[v.id] = { status: 'idle', imageUrl: null, error: null }; });
+    valid.forEach(v => {
+      sizes.forEach(s => {
+        init[`${v.id}-${s.id}`] = { status: 'idle', imageUrl: null, error: null };
+      });
+    });
     setResults(init);
 
     // Sequential — one at a time to avoid rate limiting
+    let completed = 0;
     for (const variant of valid) {
-      await generateOne(variant);
+      for (const size of sizes) {
+        await generateOne(variant, size);
+        completed++;
+        setGeneratingProgress(completed);
+      }
     }
 
     setRunning(false);
     setAllDone(true);
-    showSuccess(`Done — ${valid.length} image${valid.length !== 1 ? 's' : ''} generated and saved`);
-  }, [variants, generateOne, showSuccess, showError]);
+    showSuccess(`Done — ${total} image${total !== 1 ? 's' : ''} generated and saved`);
+  }, [variants, selectedSizes, generateOne, showSuccess, showError]);
 
-  const handleRetry = useCallback(async (variantId) => {
+  const handleRetry = useCallback(async (resultKey) => {
+    const { variantId, sizeId } = parseResultKey(resultKey);
     const variant = variants.find(v => v.id === variantId);
-    if (!variant) return;
-    await generateOne(variant);
+    const sizeConfig = SIZE_OPTIONS.find(s => s.id === sizeId);
+    if (!variant || !sizeConfig) return;
+    await generateOne(variant, sizeConfig);
   }, [variants, generateOne]);
 
   const filledVariants = variants.filter(v => v.headline.trim());
+  const totalToGenerate = filledVariants.length * selectedSizes.length;
   const hasResults = Object.keys(results).length > 0;
 
   return (
@@ -282,7 +336,7 @@ export default function BatchGenerate() {
             Batch Creative Generator
           </h1>
           <p className="text-gray-500 text-sm mt-0.5">
-            Upload a reference image · add your copy variants · generate one image per variant
+            Upload a reference image · add your copy variants · generate images in all selected sizes
           </p>
           {/* Iterate banner — shown when arriving from Performance page */}
           {iterateAdName && (
@@ -299,13 +353,13 @@ export default function BatchGenerate() {
             style={{ backgroundColor: '#2D2463' }}
           >
             <Zap size={14} />
-            Generate {filledVariants.length} Image{filledVariants.length !== 1 ? 's' : ''}
+            Generate {totalToGenerate} Image{totalToGenerate !== 1 ? 's' : ''}
           </button>
         )}
         {running && (
           <div className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium text-indigo-600 bg-indigo-50 border border-indigo-100">
             <RefreshCw size={14} className="animate-spin" />
-            Generating…
+            Generating {generatingProgress} of {generatingTotal}…
           </div>
         )}
       </div>
@@ -379,35 +433,45 @@ export default function BatchGenerate() {
             </div>
           </div>
 
-          {/* Image Size */}
+          {/* Image Sizes — multi-select checkboxes */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-100">
-              <h2 className="text-sm font-semibold text-gray-800">Image Size</h2>
+              <h2 className="text-sm font-semibold text-gray-800">
+                Image Sizes
+                <span className="ml-1 text-xs font-normal text-gray-400">select all that apply</span>
+              </h2>
             </div>
             <div className="p-4 space-y-2">
-              {SIZE_OPTIONS.map(s => (
-                <label
-                  key={s.id}
-                  className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                    selectedSize === s.id
-                      ? 'border-indigo-300 bg-indigo-50'
-                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="size"
-                    value={s.id}
-                    checked={selectedSize === s.id}
-                    onChange={() => setSelectedSize(s.id)}
-                    className="text-indigo-600"
-                  />
-                  <div>
-                    <div className="text-sm font-medium text-gray-800">{s.label}</div>
-                    <div className="text-xs text-gray-400">{s.sub}</div>
-                  </div>
-                </label>
-              ))}
+              {SIZE_OPTIONS.map(s => {
+                const checked = selectedSizes.includes(s.id);
+                return (
+                  <label
+                    key={s.id}
+                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                      checked
+                        ? 'border-indigo-300 bg-indigo-50'
+                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      value={s.id}
+                      checked={checked}
+                      onChange={() => toggleSize(s.id)}
+                      className="text-indigo-600 rounded"
+                    />
+                    <div>
+                      <div className="text-sm font-medium text-gray-800">{s.label}</div>
+                      <div className="text-xs text-gray-400">{s.sub}</div>
+                    </div>
+                  </label>
+                );
+              })}
+              {selectedSizes.length > 1 && (
+                <p className="text-xs text-indigo-600 pt-1">
+                  {selectedSizes.length} sizes selected — {filledVariants.length > 0 ? `${filledVariants.length * selectedSizes.length} images total` : 'fill in variants to see total'}
+                </p>
+              )}
             </div>
           </div>
 
@@ -422,7 +486,7 @@ export default function BatchGenerate() {
             <div className="p-4">
               <input
                 type="text"
-                placeholder="e.g. Florist Insurance, Dental Practice, Home Security"
+                placeholder="e.g. Auto Insurance, Reverse Mortgage, Debt Relief"
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400"
                 value={niche}
                 onChange={e => setNiche(e.target.value)}
@@ -437,7 +501,9 @@ export default function BatchGenerate() {
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-gray-800">
               Copy Variants
-              <span className="ml-2 text-xs font-normal text-gray-400">{variants.length} variant{variants.length !== 1 ? 's' : ''} · one image each</span>
+              <span className="ml-2 text-xs font-normal text-gray-400">
+                {variants.length} variant{variants.length !== 1 ? 's' : ''} · {selectedSizes.length} size{selectedSizes.length !== 1 ? 's' : ''} each
+              </span>
             </h2>
             <button
               onClick={addVariant}
@@ -450,31 +516,32 @@ export default function BatchGenerate() {
 
           <div className="space-y-3">
             {variants.map((variant, idx) => {
-              const result = results[variant.id];
-              const isDone = result?.status === 'done';
-              const isFailed = result?.status === 'failed';
-              const isGenerating = result?.status === 'generating';
+              const variantResults = Object.entries(results).filter(([key]) => parseResultKey(key).variantId === variant.id);
+              const anyGenerating = variantResults.some(([, r]) => r.status === 'generating');
+              const allDoneForVariant = variantResults.length > 0 && variantResults.every(([, r]) => r.status === 'done');
+              const anyFailed = variantResults.some(([, r]) => r.status === 'failed');
 
               return (
                 <div
                   key={variant.id}
                   className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${
-                    isDone ? 'border-green-200' :
-                    isFailed ? 'border-red-200' :
-                    isGenerating ? 'border-indigo-300 ring-1 ring-indigo-100' :
+                    allDoneForVariant ? 'border-green-200' :
+                    anyFailed ? 'border-red-200' :
+                    anyGenerating ? 'border-indigo-300 ring-1 ring-indigo-100' :
                     'border-gray-200'
                   }`}
                 >
                   {/* Card header */}
                   <div className={`px-4 py-2.5 border-b flex items-center justify-between ${
-                    isDone ? 'bg-green-50 border-green-100' :
-                    isFailed ? 'bg-red-50 border-red-100' :
-                    isGenerating ? 'bg-indigo-50 border-indigo-100' :
+                    allDoneForVariant ? 'bg-green-50 border-green-100' :
+                    anyFailed ? 'bg-red-50 border-red-100' :
+                    anyGenerating ? 'bg-indigo-50 border-indigo-100' :
                     'bg-gray-50 border-gray-100'
                   }`}>
                     <span className="text-xs font-semibold text-gray-600">Variant {idx + 1}</span>
                     <div className="flex items-center gap-3">
-                      {result && <StatusBadge status={result.status} />}
+                      {anyGenerating && <StatusBadge status="generating" />}
+                      {allDoneForVariant && <StatusBadge status="done" />}
                       {variants.length > 1 && !running && (
                         <button
                           onClick={() => removeVariant(variant.id)}
@@ -489,10 +556,10 @@ export default function BatchGenerate() {
                   {/* Fields */}
                   <div className="p-4 space-y-3">
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Headline</label>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Headline <span className="text-gray-400 font-normal">· under 40 chars</span></label>
                       <input
                         type="text"
-                        placeholder="Your flower shop is insured. Your delivery driver probably isn't."
+                        placeholder="Your rate went up again. You have options."
                         className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-gray-50 disabled:text-gray-500"
                         value={variant.headline}
                         onChange={e => updateVariant(variant.id, 'headline', e.target.value)}
@@ -500,15 +567,16 @@ export default function BatchGenerate() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Body Copy</label>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Body Copy <span className="text-gray-400 font-normal">· 100–220 chars</span></label>
                       <textarea
                         rows={3}
-                        placeholder="Most florists carry a policy. What they don't realize is what's excluded until a claim gets denied…"
+                        placeholder="Most drivers don't realize they're overpaying until it's too late. Takes 60 seconds. No commitment."
                         className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none disabled:bg-gray-50 disabled:text-gray-500"
                         value={variant.body}
                         onChange={e => updateVariant(variant.id, 'body', e.target.value)}
                         disabled={running}
                       />
+                      <p className="text-xs text-gray-400 mt-1">Used as ad copy and guides the AI image generation</p>
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-gray-500 mb-1">CTA</label>
@@ -527,7 +595,7 @@ export default function BatchGenerate() {
             })}
           </div>
 
-          {/* Generate button — also lives in the right column for easy access */}
+          {/* Generate button */}
           <button
             onClick={handleGenerate}
             disabled={running || filledVariants.length === 0}
@@ -535,9 +603,9 @@ export default function BatchGenerate() {
             style={{ backgroundColor: '#2D2463' }}
           >
             {running ? (
-              <><RefreshCw size={15} className="animate-spin" /> Generating…</>
+              <><RefreshCw size={15} className="animate-spin" /> Generating {generatingProgress} of {generatingTotal}…</>
             ) : (
-              <><Zap size={15} /> Generate {filledVariants.length} Image{filledVariants.length !== 1 ? 's' : ''}</>
+              <><Zap size={15} /> Generate {totalToGenerate} Image{totalToGenerate !== 1 ? 's' : ''}</>
             )}
           </button>
 
@@ -568,16 +636,22 @@ export default function BatchGenerate() {
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-            {variants
-              .filter(v => results[v.id])
-              .map(variant => (
+            {Object.entries(results).map(([key, result]) => {
+              const { variantId, sizeId } = parseResultKey(key);
+              const variant = variants.find(v => v.id === variantId);
+              const sizeConfig = SIZE_OPTIONS.find(s => s.id === sizeId);
+              if (!variant) return null;
+              return (
                 <ResultCard
-                  key={variant.id}
+                  key={key}
                   variant={variant}
-                  result={results[variant.id]}
+                  sizeLabel={sizeConfig?.label || ''}
+                  result={result}
+                  resultKey={key}
                   onRetry={handleRetry}
                 />
-              ))}
+              );
+            })}
           </div>
 
           {allDone && (

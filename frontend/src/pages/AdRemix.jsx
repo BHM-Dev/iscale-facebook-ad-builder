@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronRight, ChevronLeft, Sparkles, Check, Image, FileText, Briefcase, Package, Users, Zap } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Sparkles, Check, Image, FileText, Briefcase, Package, Users, Zap, Copy, CheckCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useBrands } from '../context/BrandContext';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
@@ -12,13 +13,15 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 export default function AdRemix() {
     const { brands, customerProfiles } = useBrands();
-    const { showError } = useToast();
+    const { showError, showSuccess } = useToast();
     const { authFetch } = useAuth();
+    const navigate = useNavigate();
     const [currentStep, setCurrentStep] = useState(1);
     const [loading, setLoading] = useState(false);
     const [blueprint, setBlueprint] = useState(null);
     const [adConcept, setAdConcept] = useState(null);
     const [prefillSource, setPrefillSource] = useState(null); // winning ad data from performance page
+    const [copied, setCopied] = useState(false);
 
     const [wizardData, setWizardData] = useState({
         template: null,
@@ -50,7 +53,7 @@ export default function AdRemix() {
                     fromMeta: true,
                 },
                 campaignDetails: {
-                    offer: creative.headline || '',
+                    offer: '',
                     urgency: '',
                     messaging: creative.body || '',
                 },
@@ -80,6 +83,50 @@ export default function AdRemix() {
             ...prev,
             campaignDetails: { ...prev.campaignDetails, [field]: value }
         }));
+    };
+
+    // Reset all state cleanly (instead of window.location.reload())
+    const handleReset = () => {
+        setCurrentStep(1);
+        setBlueprint(null);
+        setAdConcept(null);
+        setPrefillSource(null);
+        setCopied(false);
+        setWizardData({
+            template: null,
+            brand: null,
+            product: null,
+            profile: null,
+            campaignDetails: { offer: '', urgency: '', messaging: '' }
+        });
+    };
+
+    // Copy all ad copy to clipboard
+    const handleCopyAll = () => {
+        if (!adConcept) return;
+        const text = [
+            `Headline: ${adConcept.headline_remix}`,
+            '',
+            `Body Copy:\n${adConcept.body_copy}`,
+            '',
+            `CTA: ${adConcept.cta_button}`,
+        ].join('\n');
+        navigator.clipboard.writeText(text).then(() => {
+            setCopied(true);
+            showSuccess('Copy pasted to clipboard');
+            setTimeout(() => setCopied(false), 2500);
+        });
+    };
+
+    // Send remix copy to Batch Generate
+    const handleGenerateImage = () => {
+        if (!adConcept) return;
+        localStorage.setItem('pendingBatchCopy', JSON.stringify({
+            headline: adConcept.headline_remix || '',
+            body: adConcept.body_copy || '',
+            cta: adConcept.cta_button || 'Get My Quote',
+        }));
+        navigate('/batch-generate');
     };
 
     const handleDeconstruct = async () => {
@@ -364,7 +411,25 @@ export default function AdRemix() {
                                 <Check size={40} />
                             </div>
                             <h2 className="text-3xl font-bold text-gray-900 mb-2">Ad Concept Generated!</h2>
-                            <p className="text-gray-600">Your remixed ad concept is ready</p>
+                            <p className="text-gray-600 mb-4">Your remixed ad concept is ready</p>
+                            {/* Action buttons */}
+                            <div className="flex items-center justify-center gap-3">
+                                <button
+                                    onClick={handleCopyAll}
+                                    className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors"
+                                >
+                                    {copied ? <CheckCircle size={15} className="text-green-500" /> : <Copy size={15} />}
+                                    {copied ? 'Copied!' : 'Copy All Copy'}
+                                </button>
+                                <button
+                                    onClick={handleGenerateImage}
+                                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                                    style={{ backgroundColor: '#2D2463' }}
+                                >
+                                    <Zap size={15} />
+                                    Generate Image
+                                </button>
+                            </div>
                         </div>
 
                         <div className="space-y-6 max-w-3xl mx-auto">
@@ -414,9 +479,10 @@ export default function AdRemix() {
             <div className="mt-6 flex items-center justify-between">
                 <div></div>
                 <div className="flex gap-3">
-                    {currentStep > 1 && currentStep < 7 && (
+                    {/* Back button — available on all steps 2–7 */}
+                    {currentStep > 1 && (
                         <button
-                            onClick={() => setCurrentStep(currentStep - 1)}
+                            onClick={() => currentStep === 7 ? setCurrentStep(6) : setCurrentStep(currentStep - 1)}
                             className="flex items-center gap-2 px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium"
                         >
                             <ChevronLeft size={20} />
@@ -437,7 +503,7 @@ export default function AdRemix() {
 
                     {currentStep === 7 && (
                         <button
-                            onClick={() => window.location.reload()}
+                            onClick={handleReset}
                             className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium"
                         >
                             Create Another Remix
