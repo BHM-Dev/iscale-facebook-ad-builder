@@ -111,16 +111,23 @@ async def reconstruct_ad(
 
 def extract_json_from_response(text: str) -> Dict[str, Any]:
     """
-    Extract JSON from a response that might have markdown code blocks
+    Extract JSON from a response that might have markdown code blocks or extra text.
+    Strategy: strip fences if present, then find outermost { } boundaries.
     """
-    # Try to find JSON in markdown code blocks
+    # 1. Strip markdown fences if present
     if "```json" in text:
         start = text.find("```json") + 7
         end = text.find("```", start)
-        text = text[start:end].strip()
+        text = text[start:end].strip() if end != -1 else text[start:].strip()
     elif "```" in text:
         start = text.find("```") + 3
         end = text.find("```", start)
-        text = text[start:end].strip()
-    
+        text = text[start:end].strip() if end != -1 else text[start:].strip()
+
+    # 2. Pull out the outermost { ... } block so trailing commentary doesn't break parse
+    first_brace = text.find("{")
+    last_brace = text.rfind("}")
+    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+        text = text[first_brace:last_brace + 1]
+
     return json.loads(text)
