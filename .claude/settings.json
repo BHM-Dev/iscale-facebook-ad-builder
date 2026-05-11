@@ -10,9 +10,14 @@
             "statusMessage": "Checking Alembic migration chain..."
           },
           {
+            "type": "prompt",
+            "prompt": "Look at the bash command being run: $TOOL_INPUT. If it does NOT contain 'git push', output nothing and allow it. If it DOES contain 'git push', inspect the current conversation and answer: were at least TWO separate Agent tool calls made in this conversation since the last git push, specifically as pre-deploy review agents (codebase audit + UX/end-user perspective), and were their results read and addressed before this push attempt? If yes, allow the push. If no — even if one agent ran but not two, or the agents ran but findings were not addressed — output exactly: {\"continue\": false, \"stopReason\": \"BLOCKED: Pre-deploy agent review incomplete. Per CLAUDE.md, you must spawn at least two parallel agents (codebase audit + UX/end-user perspective) and address their findings BEFORE every push. Run both agents now, review results, fix any issues, then push.\"}",
+            "statusMessage": "Verifying pre-deploy agent review was completed..."
+          },
+          {
             "type": "agent",
             "prompt": "You are a senior engineer doing a pre-push code review for the Ad Builder app (BHM-Dev/iscale-facebook-ad-builder). Review the staged diff by running: cd /Users/sunbunzz/Desktop/iscale-facebook-ad-builder && git diff HEAD~1 HEAD 2>/dev/null || git diff --cached. Check for these 7 failure classes:\n1. ALEMBIC: Any new migration file whose down_revision does not point to the current single head (run python3 scripts/check_alembic_heads.py)\n2. MODEL/MIGRATION MISMATCH: New SQLAlchemy column added to models.py without a corresponding migration file\n3. REACT AUTO-ADVANCE LOOP: useEffect that calls setCurrentStep without a skipAutoAdvance guard — Back button will loop\n4. ADSET vs CAMPAIGN KEY: Any state or API call keyed on campaign_id when it should be adset.id (brand assignment, remix state)\n5. META CDN URL: Any call to deconstruct_template or fetch of a Meta image URL without a try/except fallback to the generic blueprint\n6. LOCALSTORAGE HANDOFF: pendingRemixCreative or pendingBatchCopy written but not read (or vice versa) — broken wizard handoff\n7. JOEL UX REGRESSION: Any change to AdRemix.jsx wizard step order, CampaignPerformance.jsx Remix drawer, or BatchGenerate.jsx pre-fill that could break Joel's daily workflow\nIf any issues found: output JSON {\"continue\": false, \"stopReason\": \"PRE-PUSH REVIEW BLOCKED:\\n[issue list]\"}\nIf clean: output nothing and exit 0.",
-            "statusMessage": "Running pre-push agent review..."
+            "statusMessage": "Running pre-push code audit..."
           }
         ]
       }
