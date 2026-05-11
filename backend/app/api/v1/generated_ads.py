@@ -175,20 +175,27 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
         aspect_ratio = "9:16"
 
     # flux-kontext-pro is an image-editing model — it requires inputImage.
-    # For pure text-to-image (no product shot), fall back to flux-pro.
+    # For pure text-to-image (no product shot), use flux-2/pro-text-to-image
+    # which has a different nested-input schema.
     if input_image_url:
         model = "flux-kontext-pro"
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "aspectRatio": aspect_ratio,   # camelCase for kontext
+            "outputFormat": "png",
+            "inputImage": input_image_url,
+        }
     else:
-        model = "flux-pro"
-
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "aspectRatio": aspect_ratio,
-        "outputFormat": "png",
-    }
-    if input_image_url:
-        payload["inputImage"] = input_image_url
+        model = "flux-2/pro-text-to-image"
+        payload = {
+            "model": model,
+            "input": {
+                "prompt": prompt,
+                "aspect_ratio": aspect_ratio,  # snake_case inside input
+                "resolution": "1K",
+            },
+        }
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         # Create the task
