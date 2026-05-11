@@ -1,13 +1,14 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useState, useEffect } from 'react';
-import { ChevronRight, ChevronLeft, Check, Briefcase, Package, Users, Image, Hash, FileText, Sparkles, Download, ChevronDown, ChevronUp, Settings, CheckCircle2, ArrowRight } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Check, Briefcase, Package, Users, Image, Hash, FileText, Sparkles, Download, ChevronDown, ChevronUp, Settings, CheckCircle2, ArrowRight, Rocket } from 'lucide-react';
 import { useBrands } from '../context/BrandContext';
 import ImageTemplateSelector from '../components/ImageTemplateSelector';
 import BrandSelectionStep from '../components/steps/BrandSelectionStep';
 import ProductSelectionStep from '../components/steps/ProductSelectionStep';
 import ProfileSelectionStep from '../components/steps/ProfileSelectionStep';
 import StyleSelector from '../components/StyleSelector';
+import PushToMetaModal from '../components/PushToMetaModal';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -1439,6 +1440,7 @@ Style: ${designStyle}`);
 function ImageGenerationStep({ generatedImages, wizardData, selectedCopy, allCopies = [], onBack, onRestart }) {
     const [selectedImageIndex, setSelectedImageIndex] = useState(null);
     const [imgError, setImgError] = useState(false);
+    const [pushModal, setPushModal] = useState({ show: false, image: null, copy: null });
 
     if (!generatedImages || generatedImages.length === 0) {
         return <div className="text-center p-8 text-red-600">Error: No image data available.</div>;
@@ -1684,22 +1686,42 @@ function ImageGenerationStep({ generatedImages, wizardData, selectedCopy, allCop
                                         </div>
                                     </div>
 
-                                    {/* Download Button */}
-                                    <a
-                                        href={viewedImage.url}
-                                        download={`ad-${viewedImage.size}-${Date.now()}.png`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="w-full py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-bold flex items-center justify-center gap-2 transition-colors"
-                                    >
-                                        <Download size={20} />
-                                        Download Image
-                                    </a>
+                                    {/* Action Buttons */}
+                                    <div className="flex flex-col gap-3">
+                                        <a
+                                            href={viewedImage.url}
+                                            download={`ad-${viewedImage.size}-${Date.now()}.png`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="w-full py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-bold flex items-center justify-center gap-2 transition-colors"
+                                        >
+                                            <Download size={20} />
+                                            Download Image
+                                        </a>
+                                        <button
+                                            onClick={() => setPushModal({ show: true, image: viewedImage, copy: displayCopy })}
+                                            className="w-full py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold flex items-center justify-center gap-2 transition-colors"
+                                        >
+                                            <Rocket size={20} />
+                                            Push to Meta
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Push to Meta Modal — renders above the detail modal (z-[60]) */}
+            {pushModal.show && pushModal.image && (
+                <PushToMetaModal
+                    imageUrl={pushModal.image.url}
+                    initialHeadline={pushModal.copy?.headline || ''}
+                    initialBody={pushModal.copy?.body || ''}
+                    initialCta={pushModal.copy?.cta || 'LEARN_MORE'}
+                    onClose={() => setPushModal({ show: false, image: null, copy: null })}
+                />
             )}
         </div>
     );
