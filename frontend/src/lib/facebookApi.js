@@ -9,15 +9,48 @@ const getAuthHeaders = () => {
     return token ? { 'Authorization': `Bearer ${token}` } : {};
 };
 
-// Authenticated fetch wrapper
+// Attempt a silent token refresh using the stored refresh token
+const tryRefreshToken = async () => {
+    const refreshToken = localStorage.getItem('refreshToken');
+    if (!refreshToken) return null;
+
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+    try {
+        const res = await fetch(`${apiUrl}/auth/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (data.access_token) {
+            localStorage.setItem('accessToken', data.access_token);
+            if (data.refresh_token) localStorage.setItem('refreshToken', data.refresh_token);
+            return data.access_token;
+        }
+    } catch (_) { /* network error — fall through */ }
+    return null;
+};
+
+// Authenticated fetch wrapper — retries once after a silent token refresh on 401
 export const authFetch = async (url, options = {}) => {
-    const response = await fetch(url, {
+    const makeReq = (token) => fetch(url, {
         ...options,
         headers: {
             ...options.headers,
-            ...getAuthHeaders(),
+            ...(token ? { 'Authorization': `Bearer ${token}` } : getAuthHeaders()),
         },
     });
+
+    let response = await makeReq(null);
+
+    if (response.status === 401) {
+        const newToken = await tryRefreshToken();
+        if (newToken) {
+            response = await makeReq(newToken);
+        }
+    }
+
     return response;
 };
 

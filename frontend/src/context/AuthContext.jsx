@@ -64,9 +64,12 @@ export const AuthProvider = ({ children }) => {
     }, [refreshToken]);
 
     const fetchUser = async () => {
+        // Always read from localStorage so this works correctly after a token refresh
+        // (React state update from setAccessToken is async; localStorage is updated synchronously)
+        const token = localStorage.getItem('accessToken') || accessToken;
         const response = await fetch(`${API_URL}/auth/me`, {
             headers: {
-                'Authorization': `Bearer ${accessToken}`,
+                'Authorization': `Bearer ${token}`,
             },
         });
 
