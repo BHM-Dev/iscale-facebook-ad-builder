@@ -199,7 +199,7 @@ class FacebookService:
             AdSet.Field.campaign_id,
             AdSet.Field.start_time,
             AdSet.Field.end_time,
-            'campaign{objective}',   # nested fetch — gives us campaign.objective to detect OUTCOME_LEADS
+            'campaign{objective,name}',  # nested fetch — objective detects OUTCOME_LEADS; name used for ad set grouping in UI
         ]
 
         if campaign_id:
@@ -211,11 +211,33 @@ class FacebookService:
         return account.get_ad_sets(fields=fields)
 
     def get_lead_forms(self, page_id):
-        """Fetch active lead gen forms for a Facebook Page."""
-        from facebook_business.adobjects.page import Page
-        from facebook_business.adobjects.leadgenform import LeadgenForm
+        """Fetch active lead gen forms for a Facebook Page.
 
-        page = Page(page_id, api=self.api)
+        The leadgen_forms endpoint requires a page-scoped access token, not a user token.
+        We obtain it by calling get_pages() (which returns full page data including tokens)
+        and constructing a scoped API instance.
+        """
+        try:
+            from facebook_business.adobjects.page import Page
+            from facebook_business.adobjects.leadgenform import LeadgenForm
+            from facebook_business.session import FacebookSession
+        except ImportError as e:
+            raise RuntimeError(
+                f"facebook-business SDK missing required module: {e}. Upgrade to >= 3.0"
+            ) from e
+
+        # Get the page access token — leadgen_forms requires a page-scoped token
+        pages = self.get_pages()
+        page_data = next((p for p in pages if p.get('id') == page_id), None)
+        page_token = page_data.get('access_token') if page_data else None
+
+        if page_token and self.app_id and self.app_secret:
+            page_api = FacebookAdsApi(FacebookSession(self.app_id, self.app_secret, page_token))
+            page = Page(page_id, api=page_api)
+        else:
+            # Fallback: user token (works if user has manage_pages + ads_management)
+            page = Page(page_id, api=self.api)
+
         fields = [
             LeadgenForm.Field.id,
             LeadgenForm.Field.name,
@@ -645,7 +667,14 @@ class FacebookService:
 
         # Determine creative type: video, lead gen, or standard image/link
         if video_id:
-            # Video creative
+            # Video creative — CTA value depends on whether this is lead gen or link-click
+            if lead_gen_form_id:
+                lead_gen_cta = cta if cta not in ('LEARN_MORE', 'SHOP_NOW', 'BOOK_TRAVEL', 'WATCH_MORE') else 'SIGN_UP'
+                cta_value = {'lead_gen_form_id': lead_gen_form_id}
+                video_cta_type = lead_gen_cta
+            else:
+                cta_value = {'link': website_url}
+                video_cta_type = cta
             object_story_spec = {
                 'page_id': page_id,
                 'video_data': {
@@ -653,20 +682,22 @@ class FacebookService:
                     'message': primary_text,
                     'title': headline,
                     'call_to_action': {
-                        'type': cta,
-                        'value': {'link': website_url}
+                        'type': video_cta_type,
+                        'value': cta_value
                     }
                 }
             }
             if creative_data.get('thumbnail_url'):
                 object_story_spec['video_data']['image_url'] = creative_data['thumbnail_url']
         elif lead_gen_form_id:
-            # Lead gen creative — attaches an Instant Form; no destination URL needed
-            lead_gen_cta = cta if cta not in ('LEARN_MORE', 'SHOP_NOW', 'BOOK_TRAVEL') else 'SIGN_UP'
+            # Lead gen creative — attaches an Instant Form; no destination URL needed.
+            # Meta requires link_data.link even for lead gen; use the Page URL as placeholder.
+            lead_gen_cta = cta if cta not in ('LEARN_MORE', 'SHOP_NOW', 'BOOK_TRAVEL', 'WATCH_MORE') else 'SIGN_UP'
             object_story_spec = {
                 'page_id': page_id,
                 'link_data': {
                     'image_hash': image_hash,
+                    'link': f'https://www.facebook.com/{page_id}',  # required by Meta even for lead gen
                     'message': primary_text,
                     'name': headline,
                     'call_to_action': {
@@ -715,7 +746,7 @@ class FacebookService:
         adset_id = ad_data.get('adset_id') or ad_data.get('adsetId')
         creative_id = ad_data.get('creative_id') or ad_data.get('creativeId')
         name = ad_data.get('name') or 'Ad'
-        status = ad_data.get('status') or 'ACTIVE'
+        status = ad_data.get('status') if ad_data.get('status') in ('ACTIVE', 'PAUSED', 'DELETED', 'ARCHIVED') else 'PAUSED'
 
         if not adset_id:
             raise ValueError('adset_id is required to create an ad')

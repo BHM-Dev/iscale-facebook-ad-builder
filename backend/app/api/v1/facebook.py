@@ -1,8 +1,12 @@
 import logging
 import uuid
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Dict, Any, Optional
 from app.services.facebook_service import FacebookService
+try:
+    from facebook_business.exceptions import FacebookBadObjectError
+except ImportError:
+    FacebookBadObjectError = Exception  # fallback so catch still works
 
 logger = logging.getLogger(__name__)
 from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, User, Brand
@@ -732,7 +736,7 @@ def get_pages(
 
 @router.get("/lead-forms")
 def get_lead_forms(
-    page_id: str,
+    page_id: str = Query(..., min_length=1),
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -755,7 +759,6 @@ CTA_MAP = {
     "book now": "BOOK_TRAVEL",
     "download": "DOWNLOAD",
     "subscribe": "SUBSCRIBE",
-    "watch more": "WATCH_MORE",
     "shop now": "SHOP_NOW",
 }
 
@@ -788,8 +791,8 @@ def push_to_meta(
     """
     adset_id      = body.get("adset_id")
     page_id       = body.get("page_id")
-    website_url   = body.get("website_url", "").strip()
-    lead_form_id  = body.get("lead_form_id", "").strip()
+    website_url   = (body.get("website_url") or "").strip()
+    lead_form_id  = (body.get("lead_form_id") or "").strip()
     headline      = body.get("headline", "").strip()
     body_copy     = body.get("body_copy", "").strip()
     cta_label     = body.get("cta_button", "Learn More")
@@ -851,7 +854,7 @@ def push_to_meta(
             "meta_url": f"https://www.facebook.com/adsmanager/manage/ads?act={account_id_clean}&selected_ad_ids={ad_id}"
         }
 
-    except (ValueError, RuntimeError) as e:
+    except (ValueError, RuntimeError, FacebookBadObjectError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Push to Meta failed: {str(e)}")

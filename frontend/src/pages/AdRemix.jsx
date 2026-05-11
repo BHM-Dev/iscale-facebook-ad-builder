@@ -157,6 +157,13 @@ export default function AdRemix() {
         { id: 6, name: 'Review', icon: Check }
     ];
 
+    // Persist push modal form selections (except image_url which expires) across modal opens
+    useEffect(() => {
+        if (!pushModal) return; // only persist while modal is open
+        const { image_url: _ignored, ...toSave } = pushForm;
+        try { sessionStorage.setItem('pushModalForm', JSON.stringify(toSave)); } catch (_) {}
+    }, [pushForm, pushModal]);
+
     const updateData = (field, value) => {
         setWizardData(prev => ({ ...prev, [field]: value }));
     };
@@ -258,6 +265,7 @@ export default function AdRemix() {
         setAdSets([]);
         setPages([]);
         setLeadForms([]);
+        setLeadFormsLoading(false);
         setAdSetsError('');
         setImageGenerating(false);
     };
@@ -267,14 +275,20 @@ export default function AdRemix() {
         setPushModal(concept);
         setPushResult(null);
         setAdSetsError('');
-        // Never pre-fill Meta CDN URLs — they expire within hours
-        // Always start blank so Joel pastes a freshly generated image URL
+        // Restore persisted selections from previous modal opens (adset, page, form, url, status)
+        // Never restore image_url — Meta CDN URLs expire within hours
+        let savedForm = {};
+        try {
+            const saved = sessionStorage.getItem('pushModalForm');
+            if (saved) savedForm = JSON.parse(saved);
+        } catch (_) {}
         setPushForm({
-            adset_id: '',
-            page_id: '',
-            website_url: '',
+            adset_id: savedForm.adset_id || '',
+            page_id: savedForm.page_id || '',
+            website_url: savedForm.website_url || '',
+            lead_form_id: savedForm.lead_form_id || '',
             image_url: '',
-            status: 'PAUSED',
+            status: savedForm.status || 'PAUSED',
         });
         setAdSets([]);
         setPages([]);
@@ -294,9 +308,17 @@ export default function AdRemix() {
                 throw new Error(`Pages failed (${pagesRes.status}): ${err.detail || pagesRes.statusText}`);
             }
             const adSetsData = await adSetsRes.json();
-            setAdSets(Array.isArray(adSetsData) ? adSetsData : (adSetsData.adsets || []));
+            const loadedAdSets = Array.isArray(adSetsData) ? adSetsData : (adSetsData.adsets || []);
+            setAdSets(loadedAdSets);
             const pagesData = await pagesRes.json();
             setPages(Array.isArray(pagesData) ? pagesData : []);
+            // If the restored adset is a lead gen campaign and we have a page, fetch lead forms
+            if (savedForm.adset_id && savedForm.page_id) {
+                const restoredAdset = loadedAdSets.find(a => a.id === savedForm.adset_id);
+                if (restoredAdset?.campaign?.objective === 'OUTCOME_LEADS') {
+                    fetchLeadForms(savedForm.page_id);
+                }
+            }
         } catch (e) {
             setAdSetsError(e.message || 'Failed to load Meta data — check your access token');
         } finally {
@@ -773,7 +795,7 @@ export default function AdRemix() {
                                                 style={{ backgroundColor: '#2D2463' }}
                                             >
                                                 <Zap size={13} />
-                                                Generate Image
+                                                Batch Generate
                                             </button>
                                             <button
                                                 onClick={() => openPushModal(concept)}
@@ -967,11 +989,30 @@ export default function AdRemix() {
                                             className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                                         >
                                             <option value="">Select an ad set…</option>
-                                            {adSets.map(a => (
-                                                <option key={a.id} value={a.id}>
-                                                    {a.name}{a.status && a.status !== 'ACTIVE' ? ` [${a.status}]` : ''}
-                                                </option>
-                                            ))}
+                                            {(() => {
+                                                // Group by campaign name
+                                                const groups = {};
+                                                adSets.forEach(a => {
+                                                    const campName = a.campaign?.name || 'Uncategorized';
+                                                    if (!groups[campName]) groups[campName] = [];
+                                                    groups[campName].push(a);
+                                                });
+                                                return Object.entries(groups).map(([campName, sets]) => (
+                                                    <optgroup key={campName} label={campName}>
+                                                        {sets.map(a => {
+                                                            const budget = a.daily_budget
+                                                                ? ` · $${(parseInt(a.daily_budget) / 100).toFixed(0)}/day`
+                                                                : '';
+                                                            const statusTag = a.status && a.status !== 'ACTIVE' ? ` [${a.status}]` : '';
+                                                            return (
+                                                                <option key={a.id} value={a.id}>
+                                                                    {a.name}{budget}{statusTag}
+                                                                </option>
+                                                            );
+                                                        })}
+                                                    </optgroup>
+                                                ));
+                                            })()}
                                         </select>
                                         {/* Lead gen indicator */}
                                         {pushForm.adset_id && adSets.find(a => a.id === pushForm.adset_id)?.campaign?.objective === 'OUTCOME_LEADS' && (
