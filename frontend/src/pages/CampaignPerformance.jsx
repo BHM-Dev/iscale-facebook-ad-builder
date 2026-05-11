@@ -818,12 +818,11 @@ export default function CampaignPerformance() {
       loadRtAdsBulk('today');
     };
 
-    authFetch(`${API_BASE}/facebook/accounts`, { signal: controller.signal })
+    authFetch(`${API_BASE}/facebook/config`, { signal: controller.signal })
       .then(res => res.ok ? res.json() : null)
-      .then(accounts => {
+      .then(cfg => {
         clearTimeout(tid);
-        const id = Array.isArray(accounts) && accounts.length > 0
-          ? (accounts[0].account_id || '') : '';
+        const id = cfg?.ad_account_id || '';
         if (id) { localStorage.setItem('fb_ad_account_id', id); setAdAccountId(id); }
         fireLoads(id || cached);
       })

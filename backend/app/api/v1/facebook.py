@@ -77,6 +77,16 @@ def read_pixels(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/config")
+def get_config(
+    service: FacebookService = Depends(get_facebook_service),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return backend-configured Facebook defaults so the frontend never relies on stale localStorage."""
+    account_id = (service.ad_account_id or "").replace("act_", "")
+    return {"ad_account_id": account_id}
+
+
 @router.get("/pages")
 def read_pages(
     service: FacebookService = Depends(get_facebook_service),

@@ -138,17 +138,17 @@ export default function Dashboard() {
     setInsightsError(null);
     setBulkInsights({}); // clear stale data so KPIs show — while loading
     try {
-      // Use cached account ID immediately; refresh in background without blocking
+      // Always use the backend-configured account ID as the source of truth.
+      // Fall back to localStorage only if the config endpoint is unavailable.
       let adAccountId = localStorage.getItem('fb_ad_account_id') || '';
       const controller = new AbortController();
-      const tid = setTimeout(() => controller.abort(), 4000); // 4s hard timeout
+      const tid = setTimeout(() => controller.abort(), 4000);
       try {
-        const acctRes = await authFetch(`${API_URL}/facebook/accounts`, { signal: controller.signal });
+        const cfgRes = await authFetch(`${API_URL}/facebook/config`, { signal: controller.signal });
         clearTimeout(tid);
-        if (acctRes.ok) {
-          const accounts = await acctRes.json();
-          const id = (Array.isArray(accounts) && accounts.length > 0)
-            ? (accounts[0].account_id || '') : '';
+        if (cfgRes.ok) {
+          const cfg = await cfgRes.json();
+          const id = cfg.ad_account_id || '';
           if (id) { adAccountId = id; localStorage.setItem('fb_ad_account_id', id); }
         }
       } catch (_) { clearTimeout(tid); /* use cached or empty */ }
