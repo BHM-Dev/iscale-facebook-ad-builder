@@ -13,7 +13,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 export default function ImageAds() {
     const { brands, customerProfiles } = useBrands();
-    const { showError } = useToast();
+    const { showError, showSuccess } = useToast();
     const { authFetch } = useAuth();
     const [currentStep, setCurrentStep] = useState(1);
     const [generating, setGenerating] = useState(false);
