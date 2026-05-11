@@ -34,6 +34,8 @@ export default function AdRemix() {
     const [adSets, setAdSets] = useState([]);
     const [pages, setPages] = useState([]);
     const [adSetsLoading, setAdSetsLoading] = useState(false);
+    const [adSetsError, setAdSetsError] = useState('');
+    const [imageGenerating, setImageGenerating] = useState(false);
     // Suppresses auto-advance effects for one render cycle when the user presses Back,
     // preventing the profile/product auto-skip from immediately re-triggering.
     const skipAutoAdvance = useRef(false);
@@ -166,6 +168,7 @@ export default function AdRemix() {
 
     // Reset all state cleanly (instead of window.location.reload())
     const handleReset = () => {
+        resetPushModal();
         setCurrentStep(1);
         setBlueprint(null);
         setAdConcept(null);
@@ -245,36 +248,85 @@ export default function AdRemix() {
         navigate('/batch-generate');
     };
 
+    // Shared reset for push modal state — used by Done, Cancel, X, and handleReset
+    const resetPushModal = () => {
+        setPushModal(null);
+        setPushResult(null);
+        setPushForm({ adset_id: '', page_id: '', website_url: '', image_url: '', status: 'PAUSED' });
+        setAdSets([]);
+        setPages([]);
+        setAdSetsError('');
+        setImageGenerating(false);
+    };
+
     // Open the Push to Meta modal for a specific concept
     const openPushModal = async (concept) => {
         setPushModal(concept);
         setPushResult(null);
-        // Pre-fill image_url from the template if available
+        setAdSetsError('');
+        // Never pre-fill Meta CDN URLs — they expire within hours
+        // Always start blank so Joel pastes a freshly generated image URL
         setPushForm({
             adset_id: '',
             page_id: '',
             website_url: '',
-            image_url: wizardData.template?.image_url || '',
+            image_url: '',
             status: 'PAUSED',
         });
+        setAdSets([]);
+        setPages([]);
         setAdSetsLoading(true);
         try {
             const [adSetsRes, pagesRes] = await Promise.all([
                 authFetch(`${API_URL}/facebook/adsets`),
                 authFetch(`${API_URL}/facebook/pages`),
             ]);
-            if (adSetsRes.ok) {
-                const data = await adSetsRes.json();
-                setAdSets(Array.isArray(data) ? data : (data.adsets || []));
+            // Surface HTTP errors explicitly — don't swallow them
+            if (!adSetsRes.ok) {
+                const err = await adSetsRes.json().catch(() => ({}));
+                throw new Error(`Ad sets failed (${adSetsRes.status}): ${err.detail || adSetsRes.statusText}`);
             }
-            if (pagesRes.ok) {
-                const data = await pagesRes.json();
-                setPages(Array.isArray(data) ? data : []);
+            if (!pagesRes.ok) {
+                const err = await pagesRes.json().catch(() => ({}));
+                throw new Error(`Pages failed (${pagesRes.status}): ${err.detail || pagesRes.statusText}`);
             }
+            const adSetsData = await adSetsRes.json();
+            setAdSets(Array.isArray(adSetsData) ? adSetsData : (adSetsData.adsets || []));
+            const pagesData = await pagesRes.json();
+            setPages(Array.isArray(pagesData) ? pagesData : []);
         } catch (e) {
-            showError('Failed to load Meta ad sets / pages');
+            setAdSetsError(e.message || 'Failed to load Meta data — check your access token');
         } finally {
             setAdSetsLoading(false);
+        }
+    };
+
+    // Generate image inline from the modal using the concept's image_generation_prompt
+    const handleGenerateImageInline = async () => {
+        if (!pushModal?.image_generation_prompt) return;
+        setImageGenerating(true);
+        try {
+            const res = await authFetch(`${API_URL}/generated-ads/generate-image`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    customPrompt: pushModal.image_generation_prompt,
+                    count: 1,
+                    imageSizes: [{ width: 1080, height: 1080, name: 'Square' }],
+                }),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || 'Image generation failed');
+            }
+            const data = await res.json();
+            const url = data.images?.[0]?.url;
+            if (!url) throw new Error('No image URL returned');
+            setPushForm(f => ({ ...f, image_url: url }));
+        } catch (e) {
+            showError(`Image generation failed: ${e.message}`);
+        } finally {
+            setImageGenerating(false);
         }
     };
 
@@ -833,7 +885,7 @@ export default function AdRemix() {
                                     Open in Ads Manager
                                 </a>
                                 <button
-                                    onClick={() => { setPushModal(null); setPushResult(null); }}
+                                    onClick={resetPushModal}
                                     className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium text-sm"
                                 >
                                     Done
@@ -846,7 +898,7 @@ export default function AdRemix() {
                             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
                                 <h3 className="text-lg font-bold text-gray-900">Push to Meta</h3>
                                 <button
-                                    onClick={() => setPushModal(null)}
+                                    onClick={resetPushModal}
                                     className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500"
                                 >
                                     <X size={18} />
@@ -860,6 +912,13 @@ export default function AdRemix() {
                                     <p className="text-gray-700 line-clamp-2 text-xs">{pushModal.body_copy}</p>
                                     <span className="mt-2 inline-block px-2 py-0.5 bg-purple-200 text-purple-800 rounded text-xs font-medium">{pushModal.cta_button}</span>
                                 </div>
+
+                                {/* Error banner */}
+                                {adSetsError && (
+                                    <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+                                        <strong>Error loading Meta data:</strong> {adSetsError}
+                                    </div>
+                                )}
 
                                 {/* Ad Set */}
                                 <div>
@@ -877,7 +936,9 @@ export default function AdRemix() {
                                         >
                                             <option value="">Select an ad set…</option>
                                             {adSets.map(a => (
-                                                <option key={a.id} value={a.id}>{a.name}</option>
+                                                <option key={a.id} value={a.id}>
+                                                    {a.name}{a.status && a.status !== 'ACTIVE' ? ` [${a.status}]` : ''}
+                                                </option>
                                             ))}
                                         </select>
                                     )}
@@ -905,22 +966,61 @@ export default function AdRemix() {
                                     )}
                                 </div>
 
-                                {/* Image URL */}
+                                {/* Image — generate inline or paste URL */}
                                 <div>
                                     <label className="block text-sm font-semibold text-gray-700 mb-1.5">
                                         <Image size={13} className="inline mr-1" />
-                                        Image URL
+                                        Ad Image
                                     </label>
-                                    <input
-                                        type="url"
-                                        placeholder="https://… (paste generated image URL)"
-                                        value={pushForm.image_url}
-                                        onChange={e => setPushForm(f => ({ ...f, image_url: e.target.value }))}
-                                        className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                                    />
-                                    <p className="text-xs text-gray-500 mt-1">
-                                        Use <strong>Generate Image</strong> first, then paste the URL here. Or paste any image URL you want to use.
-                                    </p>
+                                    {pushForm.image_url ? (
+                                        /* Image preview once URL is set */
+                                        <div className="border border-gray-200 rounded-lg overflow-hidden">
+                                            <img
+                                                src={pushForm.image_url}
+                                                alt="Ad preview"
+                                                className="w-full h-32 object-cover"
+                                                onError={e => { e.target.style.display = 'none'; }}
+                                            />
+                                            <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-t border-gray-200">
+                                                <p className="text-xs text-gray-500 flex-1 truncate">{pushForm.image_url}</p>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setPushForm(f => ({ ...f, image_url: '' }))}
+                                                    className="text-xs text-red-500 hover:text-red-700 font-medium shrink-0"
+                                                >
+                                                    Remove
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        /* No image yet — generate or paste */
+                                        <div className="space-y-2">
+                                            <button
+                                                type="button"
+                                                onClick={handleGenerateImageInline}
+                                                disabled={imageGenerating}
+                                                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 border-dashed border-purple-300 text-purple-700 bg-purple-50 hover:bg-purple-100 font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                            >
+                                                {imageGenerating ? (
+                                                    <><RefreshCw size={15} className="animate-spin" />Generating image… (30–60s)</>
+                                                ) : (
+                                                    <><Sparkles size={15} />Generate Image with AI</>
+                                                )}
+                                            </button>
+                                            <div className="flex items-center gap-2 text-xs text-gray-400">
+                                                <div className="flex-1 h-px bg-gray-200" />
+                                                or paste a URL
+                                                <div className="flex-1 h-px bg-gray-200" />
+                                            </div>
+                                            <input
+                                                type="url"
+                                                placeholder="https://… (paste any image URL)"
+                                                value={pushForm.image_url}
+                                                onChange={e => setPushForm(f => ({ ...f, image_url: e.target.value }))}
+                                                className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                            />
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* Destination URL */}
@@ -967,7 +1067,7 @@ export default function AdRemix() {
 
                             <div className="px-6 py-4 border-t border-gray-200 flex gap-3">
                                 <button
-                                    onClick={() => setPushModal(null)}
+                                    onClick={resetPushModal}
                                     className="flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium text-sm"
                                 >
                                     Cancel
