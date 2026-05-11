@@ -18,7 +18,8 @@ export default function AdRemix() {
     const [currentStep, setCurrentStep] = useState(1);
     const [loading, setLoading] = useState(false);
     const [blueprint, setBlueprint] = useState(null);
-    const [adConcept, setAdConcept] = useState(null);
+    const [adConcept, setAdConcept] = useState(null);       // single concept (legacy)
+    const [adConcepts, setAdConcepts] = useState([]);        // 3 parallel variations
     const [prefillSource, setPrefillSource] = useState(null); // winning ad data from performance page
     const [pendingBrandId, setPendingBrandId] = useState(null); // brand_id from drawer — resolved once brands load
     const [copied, setCopied] = useState(false);
@@ -40,6 +41,20 @@ export default function AdRemix() {
             messaging: ''
         }
     });
+
+    // On mount: restore result if returning from Batch Generate
+    useEffect(() => {
+        const saved = localStorage.getItem('remixResult');
+        if (saved) {
+            try {
+                const concepts = JSON.parse(saved);
+                setAdConcepts(concepts);
+                setAdConcept(concepts[0]);
+                setCurrentStep(7);
+                localStorage.removeItem('remixResult');
+            } catch (e) { /* ignore */ }
+        }
+    }, []);
 
     // On mount: check for a winning ad passed in from the performance page
     useEffect(() => {
@@ -146,8 +161,10 @@ export default function AdRemix() {
         setCurrentStep(1);
         setBlueprint(null);
         setAdConcept(null);
+        setAdConcepts([]);
         setPrefillSource(null);
         setCopied(false);
+        localStorage.removeItem('remixResult');
         setWizardData({
             template: null,
             brand: null,
@@ -206,13 +223,16 @@ export default function AdRemix() {
         }
     }, [authFetch, showError, updateData]);
 
-    // Send remix copy to Batch Generate
-    const handleGenerateImage = () => {
-        if (!adConcept) return;
+    // Send remix copy to Batch Generate — persist result so Back restores it
+    const handleGenerateImage = (concept) => {
+        const target = concept || adConcept;
+        if (!target) return;
+        // Save all variations so the user can return to the result screen
+        localStorage.setItem('remixResult', JSON.stringify(adConcepts.length ? adConcepts : [target]));
         localStorage.setItem('pendingBatchCopy', JSON.stringify({
-            headline: adConcept.headline_remix || '',
-            body: adConcept.body_copy || '',
-            cta: adConcept.cta_button || 'Get My Quote',
+            headline: target.headline_remix || '',
+            body: target.body_copy || '',
+            cta: target.cta_button || 'Get My Quote',
         }));
         navigate('/batch-generate');
     };
@@ -266,20 +286,32 @@ export default function AdRemix() {
                     campaign_messaging: wizardData.campaignDetails.messaging
                 };
 
-            const response = await authFetch(endpoint, {
+            // Fire 3 parallel requests — Gemini returns different variations each time
+            const fetchOne = () => authFetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
+            }).then(async r => {
+                if (!r.ok) {
+                    const err = await r.json().catch(() => ({}));
+                    throw new Error(err.detail || 'Reconstruction failed');
+                }
+                return r.json();
             });
 
-            if (!response.ok) {
-                const errBody = await response.json().catch(() => ({}));
-                throw new Error(errBody.detail || 'Reconstruction failed');
+            const results = await Promise.allSettled([fetchOne(), fetchOne(), fetchOne()]);
+            const successful = results
+                .filter(r => r.status === 'fulfilled')
+                .map(r => r.value);
+
+            if (successful.length === 0) {
+                const firstErr = results.find(r => r.status === 'rejected');
+                throw new Error(firstErr?.reason?.message || 'All variations failed');
             }
 
-            const data = await response.json();
-            setAdConcept(data);
-            setCurrentStep(7); // Move to results step
+            setAdConcepts(successful);
+            setAdConcept(successful[0]);
+            setCurrentStep(7);
         } catch (error) {
             console.error('Reconstruction error:', error);
             showError(error.message || 'Failed to reconstruct ad. Please try again.');
@@ -552,72 +584,77 @@ export default function AdRemix() {
                 )}
 
                 {/* Step 7: Results */}
-                {currentStep === 7 && adConcept && (
+                {currentStep === 7 && adConcepts.length > 0 && (
                     <div>
                         <div className="text-center mb-8">
                             <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4">
                                 <Check size={40} />
                             </div>
-                            <h2 className="text-3xl font-bold text-gray-900 mb-2">Ad Concept Generated!</h2>
-                            <p className="text-gray-600 mb-4">Your remixed ad concept is ready</p>
-                            {/* Action buttons */}
-                            <div className="flex items-center justify-center gap-3">
-                                <button
-                                    onClick={handleCopyAll}
-                                    className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors"
-                                >
-                                    {copied ? <CheckCircle size={15} className="text-green-500" /> : <Copy size={15} />}
-                                    {copied ? 'Copied!' : 'Copy All Copy'}
-                                </button>
-                                <button
-                                    onClick={handleGenerateImage}
-                                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white transition-opacity hover:opacity-90"
-                                    style={{ backgroundColor: '#2D2463' }}
-                                >
-                                    <Zap size={15} />
-                                    Generate Image
-                                </button>
-                            </div>
+                            <h2 className="text-3xl font-bold text-gray-900 mb-2">
+                                {adConcepts.length} Remix Variation{adConcepts.length > 1 ? 's' : ''} Generated
+                            </h2>
+                            <p className="text-gray-600">Pick the concept you want to build into an image</p>
                         </div>
 
-                        <div className="space-y-6 max-w-3xl mx-auto">
-                            <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-6">
-                                <h4 className="font-bold text-purple-900 mb-3 flex items-center gap-2">
-                                    <FileText size={20} />
-                                    Headline
-                                </h4>
-                                <p className="text-lg font-bold text-gray-900">{adConcept.headline_remix}</p>
-                            </div>
+                        <div className="space-y-8">
+                            {adConcepts.map((concept, idx) => (
+                                <div key={idx} className="border-2 border-gray-200 rounded-xl overflow-hidden">
+                                    {/* Variation header */}
+                                    <div className="flex items-center justify-between px-6 py-3 bg-gray-50 border-b border-gray-200">
+                                        <span className="font-bold text-gray-700">Variation {idx + 1}</span>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => {
+                                                    const text = [
+                                                        `Headline: ${concept.headline_remix}`,
+                                                        `Body: ${concept.body_copy}`,
+                                                        `CTA: ${concept.cta_button}`,
+                                                    ].join('\n\n');
+                                                    navigator.clipboard.writeText(text);
+                                                }}
+                                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-700 bg-white hover:bg-gray-50"
+                                            >
+                                                <Copy size={13} />
+                                                Copy
+                                            </button>
+                                            <button
+                                                onClick={() => handleGenerateImage(concept)}
+                                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white hover:opacity-90"
+                                                style={{ backgroundColor: '#2D2463' }}
+                                            >
+                                                <Zap size={13} />
+                                                Generate Image
+                                            </button>
+                                        </div>
+                                    </div>
 
-                            <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-6">
-                                <h4 className="font-bold text-blue-900 mb-3">Body Copy</h4>
-                                <p className="text-gray-700 whitespace-pre-line">{adConcept.body_copy}</p>
-                            </div>
-
-                            <div className="bg-green-50 border-2 border-green-200 rounded-xl p-6">
-                                <h4 className="font-bold text-green-900 mb-3">Call to Action</h4>
-                                <button className="px-6 py-3 bg-green-600 text-white rounded-lg font-bold">
-                                    {adConcept.cta_button}
-                                </button>
-                            </div>
-
-                            <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-6">
-                                <h4 className="font-bold text-amber-900 mb-3 flex items-center gap-2">
-                                    <Image size={20} />
-                                    Visual Description
-                                </h4>
-                                <p className="text-gray-700">{adConcept.visual_description}</p>
-                            </div>
-
-                            <div className="bg-gray-50 border-2 border-gray-200 rounded-xl p-6">
-                                <h4 className="font-bold text-gray-900 mb-3 flex items-center gap-2">
-                                    <Sparkles size={20} />
-                                    Image Generation Prompt
-                                </h4>
-                                <p className="text-sm text-gray-700 font-mono bg-white p-4 rounded border border-gray-300">
-                                    {adConcept.image_generation_prompt}
-                                </p>
-                            </div>
+                                    {/* Variation content */}
+                                    <div className="p-6 space-y-4">
+                                        <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                                            <p className="text-xs font-semibold text-purple-700 uppercase tracking-wide mb-1">Headline</p>
+                                            <p className="text-lg font-bold text-gray-900">{concept.headline_remix}</p>
+                                        </div>
+                                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                                            <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-1">Body Copy</p>
+                                            <p className="text-gray-700 whitespace-pre-line text-sm">{concept.body_copy}</p>
+                                        </div>
+                                        <div className="flex gap-4">
+                                            <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex-1">
+                                                <p className="text-xs font-semibold text-green-700 uppercase tracking-wide mb-2">CTA</p>
+                                                <span className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-bold">{concept.cta_button}</span>
+                                            </div>
+                                            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex-[2]">
+                                                <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">Visual Direction</p>
+                                                <p className="text-gray-700 text-sm">{concept.visual_description}</p>
+                                            </div>
+                                        </div>
+                                        <details className="bg-gray-50 border border-gray-200 rounded-lg">
+                                            <summary className="px-4 py-2 text-xs font-semibold text-gray-600 cursor-pointer select-none">Image Generation Prompt</summary>
+                                            <p className="px-4 pb-4 text-xs text-gray-700 font-mono">{concept.image_generation_prompt}</p>
+                                        </details>
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     </div>
                 )}
