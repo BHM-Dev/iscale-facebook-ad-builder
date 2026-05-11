@@ -17,6 +17,7 @@ export default function ImageAds() {
     const { authFetch } = useAuth();
     const [currentStep, setCurrentStep] = useState(1);
     const [generating, setGenerating] = useState(false);
+    const [generatingProgress, setGeneratingProgress] = useState({ done: 0, total: 0 });
     const [generatedCopy, setGeneratedCopy] = useState(null);
     const [generatedImages, setGeneratedImages] = useState([]);
     const [selectedCopy, setSelectedCopy] = useState(null);
@@ -156,71 +157,99 @@ export default function ImageAds() {
         }
     };
 
-    const handleImageGeneration = async (copy) => {
-        setSelectedCopy(copy);
+    // Generate images for one copy variant — returns array of images with bundleId attached
+    const generateImagesForCopy = async (copy) => {
+        const response = await authFetch(`${API_URL}/generated-ads/generate-image`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                template: wizardData.template,
+                brand: wizardData.brand,
+                product: wizardData.product,
+                copy: copy,
+                count: wizardData.variationCount,
+                imageSizes: wizardData.imageSizes,
+                resolution: wizardData.resolution,
+                model: wizardData.model,
+                productShots: wizardData.useProductShots ? wizardData.product?.product_shots : [],
+                useProductImage: wizardData.useProductShots,
+                customPrompt: customImagePrompt
+            })
+        });
+
+        if (!response.ok) {
+            const isTimeout = response.status === 504;
+            let message = 'Image generation failed.';
+            try {
+                const body = await response.text();
+                const parsed = body.length ? JSON.parse(body) : null;
+                if (parsed?.detail) message = parsed.detail;
+                else if (isTimeout) message = 'Request timed out (504). Try generating fewer images at once.';
+            } catch {
+                if (isTimeout) message = 'Request timed out (504). Try fewer images or increase server timeout.';
+            }
+            throw new Error(message);
+        }
+
+        const data = await response.json();
+        const bundleId = `bundle_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        return (data.images || []).map(img => ({
+            ...img,
+            adBundleId: bundleId,
+            copyHeadline: copy.headline, // tag for display grouping
+            copyBody: copy.body,         // tag for exact DB save (avoids duplicate-headline ambiguity)
+            copyCta: copy.cta,
+        }));
+    };
+
+    // Main handler — accepts a single copy object OR an array of copies (for batch)
+    const handleImageGeneration = async (copyOrCopies) => {
+        const copies = Array.isArray(copyOrCopies) ? copyOrCopies : [copyOrCopies];
+        setSelectedCopy(copies[0]);
         setGenerating(true);
+        setGeneratingProgress({ done: 0, total: copies.length });
+
         try {
-            const response = await authFetch(`${API_URL}/generated-ads/generate-image`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    template: wizardData.template,
-                    brand: wizardData.brand,
-                    product: wizardData.product,
-                    copy: copy,
-                    count: wizardData.variationCount,
-                    imageSizes: wizardData.imageSizes,
-                    resolution: wizardData.resolution,
-                    model: wizardData.model,
-                    productShots: wizardData.useProductShots ? wizardData.product?.product_shots : [],
-                    useProductImage: wizardData.useProductShots,
-                    customPrompt: customImagePrompt
-                })
-            });
+            // Fire all copy variants in parallel
+            let done = 0;
+            const results = await Promise.allSettled(
+                copies.map(copy =>
+                    generateImagesForCopy(copy).then(imgs => {
+                        done++;
+                        setGeneratingProgress({ done, total: copies.length });
+                        return imgs;
+                    })
+                )
+            );
 
-            console.log('image generation response:', response);
+            const allImages = results
+                .filter(r => r.status === 'fulfilled')
+                .flatMap(r => r.value);
 
-            if (!response.ok) {
-                const isTimeout = response.status === 504;
-                let message = 'Image generation failed.';
-                try {
-                    const body = await response.text();
-                    const parsed = body.length ? JSON.parse(body) : null;
-                    if (parsed?.detail) message = parsed.detail;
-                    else if (isTimeout) message = 'Request timed out (504). Try generating fewer images at once, or ask your admin to increase the server/proxy timeout.';
-                } catch {
-                    if (isTimeout) message = 'Request timed out (504). Try fewer images or increase server timeout.';
-                }
-                throw new Error(message);
+            const failedCount = results.filter(r => r.status === 'rejected').length;
+
+            if (allImages.length === 0) {
+                throw new Error(results[0]?.reason?.message || 'All image generation requests failed.');
             }
 
-            const data = await response.json();
-            console.log('📸 Image generation response:', data);
+            if (failedCount > 0) {
+                showError(`${failedCount} of ${copies.length} variation${failedCount > 1 ? 's' : ''} failed to generate. Showing successful results below.`);
+            }
 
-            // Generate a unique bundle ID for this set of images
-            const bundleId = `bundle_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            setGeneratedImages(allImages);
 
-            // Add bundle ID to images
-            const imagesWithBundle = (data.images || []).map(img => ({
-                ...img,
-                adBundleId: bundleId
-            }));
-
-            setGeneratedImages(imagesWithBundle);
-
-            // Save generated ads to database
+            // Save all generated ads to database in one batch
             try {
-                // Only send templateId when it's a Winning Ad (UUID); styles from StyleSelector use non-UUID ids and are not in winning_ads
                 const templateId = wizardData.template?.type === 'template' ? wizardData.template?.id : null;
-                const adsToSave = imagesWithBundle.map(img => ({
-                    id: `ga_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                const adsToSave = allImages.map((img, i) => ({
+                    id: `ga_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 9)}`,
                     brandId: wizardData.brand?.id,
                     productId: wizardData.product?.id,
                     templateId,
                     imageUrl: img.url,
-                    headline: copy.headline,
-                    body: copy.body,
-                    cta: copy.cta,
+                    headline: img.copyHeadline || copies[0].headline,
+                    body: img.copyBody || copies[0].body,
+                    cta: img.copyCta || copies[0].cta,
                     sizeName: img.size,
                     dimensions: img.dimensions,
                     prompt: img.prompt,
@@ -233,31 +262,29 @@ export default function ImageAds() {
                     body: JSON.stringify({ ads: adsToSave })
                 });
 
-                console.log('generated ads batch save response:', saveResponse);
-
                 const saveResult = await saveResponse.json().catch(() => ({}));
                 if (!saveResponse.ok) {
                     const detail = saveResult?.detail ?? saveResponse.statusText;
                     throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
                 }
 
-                console.log('✅ Saved generated ads to database with bundle ID:', bundleId);
-                showSuccess(`Saved ${saveResult.count ?? imagesWithBundle.length} ads to Generated Ads.`);
+                showSuccess(`Saved ${saveResult.count ?? allImages.length} ads to Generated Ads.`);
             } catch (saveError) {
                 console.error('Failed to save ads to database:', saveError);
                 showError(
                     saveError?.message
-                        ? `Ads were generated but could not be saved to Generated Ads: ${saveError.message}`
-                        : 'Ads were generated but could not be saved to Generated Ads. You may still see them below; check that brand and product exist in this environment.'
+                        ? `Ads were generated but could not be saved: ${saveError.message}`
+                        : 'Ads were generated but could not be saved. Check that brand and product exist.'
                 );
             }
 
-            setCurrentStep(10); // Move to image result step
+            setCurrentStep(10);
         } catch (error) {
             console.error('Image generation error:', error);
-            showError('Failed to generate images. Please try again.');
+            showError(error.message || 'Failed to generate images. Please try again.');
         } finally {
             setGenerating(false);
+            setGeneratingProgress({ done: 0, total: 0 });
         }
     };
 
@@ -322,9 +349,24 @@ export default function ImageAds() {
                     <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center rounded-xl">
                         <div className="w-16 h-16 border-4 border-amber-200 border-t-amber-600 rounded-full animate-spin mb-4"></div>
                         <h3 className="text-xl font-bold text-gray-900">
-                            {currentStep === 9 ? 'Generating High-Converting Images...' : 'Generating Ad Copy...'}
+                            {currentStep === 9 ? 'Generating Images...' : 'Generating Ad Copy...'}
                         </h3>
-                        <p className="text-gray-500 mt-2">Using AI to create your perfect ads</p>
+                        {currentStep === 9 && generatingProgress.total > 1 ? (
+                            <div className="mt-3 text-center">
+                                <p className="text-amber-600 font-semibold text-lg">
+                                    {generatingProgress.done} of {generatingProgress.total} variations complete
+                                </p>
+                                <div className="mt-2 w-48 h-2 bg-amber-100 rounded-full overflow-hidden">
+                                    <div
+                                        className="h-full bg-amber-600 rounded-full transition-all duration-500"
+                                        style={{ width: `${(generatingProgress.done / generatingProgress.total) * 100}%` }}
+                                    />
+                                </div>
+                                <p className="text-gray-500 text-sm mt-2">Running in parallel — this is much faster than one at a time</p>
+                            </div>
+                        ) : (
+                            <p className="text-gray-500 mt-2">Using AI to create your perfect ads</p>
+                        )}
                     </div>
                 )}
 
@@ -486,6 +528,7 @@ export default function ImageAds() {
                             generatedImages={generatedImages}
                             wizardData={wizardData}
                             selectedCopy={selectedCopy}
+                            allCopies={generatedCopy?.variations || []}
                             onBack={() => setCurrentStep(9)}
                             onRestart={() => window.location.reload()}
                         />
@@ -1029,6 +1072,10 @@ function ReviewItem({ label, value, icon: Icon }) {
 function CopySelectionStep({ generatedCopy, wizardData, onBack, onRegenerate, isRegenerating, onProceed, customImagePrompt, setCustomImagePrompt, authFetch }) {
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [editedCopy, setEditedCopy] = useState(null);
+    // Merge editedCopy into the selected slot so "Generate All" sends the user's edits
+    const allVariations = (generatedCopy?.variations || []).map((v, i) =>
+        (i === selectedIndex && editedCopy) ? editedCopy : v
+    );
     const [regeneratingField, setRegeneratingField] = useState(null);
     const [showPrompt, setShowPrompt] = useState(false);
 
@@ -1355,7 +1402,7 @@ Style: ${designStyle}`);
             </div>
 
             {/* Actions */}
-            <div className="mt-6 flex items-center justify-between">
+            <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-3">
                 <button
                     onClick={onBack}
                     className="flex items-center gap-2 px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium transition-colors"
@@ -1363,19 +1410,33 @@ Style: ${designStyle}`);
                     <ChevronLeft size={20} />
                     Back to Review
                 </button>
-                <button
-                    onClick={handleProceed}
-                    className="flex items-center gap-2 px-6 py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-medium shadow-lg transition-colors"
-                >
-                    Generate Image
-                    <ChevronRight size={20} />
-                </button>
+                <div className="flex flex-col sm:flex-row gap-3">
+                    {/* Show "Generate Variation X Only" as secondary when multiple exist */}
+                    {allVariations.length > 1 && (
+                        <button
+                            onClick={handleProceed}
+                            className="flex items-center gap-2 px-5 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium transition-colors"
+                        >
+                            Generate Variation {selectedIndex + 1} Only
+                        </button>
+                    )}
+                    {/* Primary CTA — generates all in parallel */}
+                    <button
+                        onClick={() => allVariations.length > 1 ? onProceed(allVariations) : handleProceed()}
+                        className="flex items-center gap-2 px-6 py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-medium shadow-lg transition-colors"
+                    >
+                        <Sparkles size={18} />
+                        {allVariations.length > 1
+                            ? `Generate All ${allVariations.length} Variations`
+                            : 'Generate Image'}
+                    </button>
+                </div>
             </div>
         </div>
     );
 }
 
-function ImageGenerationStep({ generatedImages, wizardData, selectedCopy, onBack, onRestart }) {
+function ImageGenerationStep({ generatedImages, wizardData, selectedCopy, allCopies = [], onBack, onRestart }) {
     const [selectedImageIndex, setSelectedImageIndex] = useState(null);
     const [imgError, setImgError] = useState(false);
 
@@ -1399,14 +1460,18 @@ function ImageGenerationStep({ generatedImages, wizardData, selectedCopy, onBack
     // Current image being viewed in the modal (defaults to the selected square image)
     const [viewedImage, setViewedImage] = useState(null);
 
-    // Update viewed image when selection changes
+    // Update viewed image when selection changes, and reset any image error state
     React.useEffect(() => {
         if (selectedImage) {
             setViewedImage(selectedImage);
+            setImgError(false);
         }
     }, [selectedImage]);
 
-    const displayCopy = selectedCopy || { headline: '', body: '', cta: '' };
+    // Derive copy from the selected image's tags (correct for batch), fall back to selectedCopy
+    const displayCopy = (selectedImage && (selectedImage.copyHeadline || selectedImage.copyBody))
+        ? { headline: selectedImage.copyHeadline || '', body: selectedImage.copyBody || '', cta: selectedImage.copyCta || '' }
+        : (selectedCopy || { headline: '', body: '', cta: '' });
 
     return (
         <div>
@@ -1419,34 +1484,64 @@ function ImageGenerationStep({ generatedImages, wizardData, selectedCopy, onBack
                 <p className="text-gray-600">Click on any image to view details and download</p>
             </div>
 
-            {/* Image Tile Gallery (Square Images Only) */}
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-w-6xl mx-auto mb-8">
-                {displayImages.map((img, index) => (
-                    <button
-                        key={index}
-                        onClick={() => setSelectedImageIndex(index)}
-                        className="group relative aspect-square rounded-xl overflow-hidden border-2 border-gray-200 hover:border-amber-600 transition-all hover:shadow-xl hover:scale-105"
-                    >
-                        <img
-                            src={img.url}
-                            alt={`Ad ${index + 1}`}
-                            className="w-full h-full object-cover"
-                        />
-                        {/* Overlay on hover */}
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-center justify-center">
-                            <div className="opacity-0 group-hover:opacity-100 transition-opacity text-white text-center p-4">
-                                <Image size={32} className="mx-auto mb-2" />
-                                <p className="text-sm font-medium">{img.size}</p>
-                                <p className="text-xs">{img.dimensions}</p>
+            {/* Image Tile Gallery — grouped by copy variant when multiple were generated */}
+            {(() => {
+                // Group images by bundle (each bundle = one copy variant)
+                const bundles = [];
+                const seen = new Set();
+                for (const img of displayImages) {
+                    if (!seen.has(img.adBundleId)) {
+                        seen.add(img.adBundleId);
+                        bundles.push({ bundleId: img.adBundleId, headline: img.copyHeadline, images: [] });
+                    }
+                    bundles.find(b => b.bundleId === img.adBundleId).images.push(img);
+                }
+                const multiVariant = bundles.length > 1;
+
+                return bundles.map((bundle, bIdx) => (
+                    <div key={bundle.bundleId} className="mb-8">
+                        {multiVariant && (
+                            <div className="flex items-center gap-2 mb-3">
+                                <span className="bg-amber-100 text-amber-700 text-xs font-bold px-2 py-1 rounded-full">
+                                    Variation {bIdx + 1}
+                                </span>
+                                {bundle.headline && (
+                                    <span className="text-sm text-gray-600 truncate max-w-xs">{bundle.headline}</span>
+                                )}
                             </div>
+                        )}
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-w-6xl mx-auto">
+                            {bundle.images.map((img, index) => {
+                                const globalIndex = displayImages.indexOf(img);
+                                return (
+                                    <button
+                                        key={index}
+                                        onClick={() => setSelectedImageIndex(globalIndex)}
+                                        className="group relative aspect-square rounded-xl overflow-hidden border-2 border-gray-200 hover:border-amber-600 transition-all hover:shadow-xl hover:scale-105"
+                                    >
+                                        <img
+                                            src={img.url}
+                                            alt={`Ad ${globalIndex + 1}`}
+                                            className="w-full h-full object-cover"
+                                        />
+                                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-center justify-center">
+                                            <div className="opacity-0 group-hover:opacity-100 transition-opacity text-white text-center p-4">
+                                                <Image size={32} className="mx-auto mb-2" />
+                                                <p className="text-sm font-medium">{img.size}</p>
+                                                <p className="text-xs">{img.dimensions}</p>
+                                            </div>
+                                        </div>
+                                        <div className="absolute bottom-2 left-2 right-2 bg-white/90 backdrop-blur-sm rounded-lg px-2 py-1 text-xs font-medium text-gray-900 text-center">
+                                            {img.size}
+                                        </div>
+                                    </button>
+                                );
+                            })}
                         </div>
-                        {/* Size badge */}
-                        <div className="absolute bottom-2 left-2 right-2 bg-white/90 backdrop-blur-sm rounded-lg px-2 py-1 text-xs font-medium text-gray-900 text-center">
-                            {img.size}
-                        </div>
-                    </button>
-                ))}
-            </div>
+                    </div>
+                ));
+            })()}
+
 
             {/* Action Buttons */}
             <div className="flex justify-between items-center">
