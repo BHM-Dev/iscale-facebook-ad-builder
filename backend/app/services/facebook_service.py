@@ -184,7 +184,7 @@ class FacebookService:
         return [dict(page) for page in pages]
 
     def get_adsets(self, ad_account_id=None, campaign_id=None):
-        """Fetch all ad sets."""
+        """Fetch all ad sets, including the parent campaign objective (used to detect lead gen)."""
         fields = [
             AdSet.Field.id,
             AdSet.Field.name,
@@ -199,6 +199,7 @@ class FacebookService:
             AdSet.Field.campaign_id,
             AdSet.Field.start_time,
             AdSet.Field.end_time,
+            'campaign{objective}',   # nested fetch — gives us campaign.objective to detect OUTCOME_LEADS
         ]
 
         if campaign_id:
@@ -208,6 +209,21 @@ class FacebookService:
         
         account = self._get_account(ad_account_id)
         return account.get_ad_sets(fields=fields)
+
+    def get_lead_forms(self, page_id):
+        """Fetch active lead gen forms for a Facebook Page."""
+        from facebook_business.adobjects.page import Page
+        from facebook_business.adobjects.leadgenform import LeadgenForm
+
+        page = Page(page_id, api=self.api)
+        fields = [
+            LeadgenForm.Field.id,
+            LeadgenForm.Field.name,
+            LeadgenForm.Field.status,
+            LeadgenForm.Field.locale,
+        ]
+        forms = page.get_lead_gen_forms(fields=fields)
+        return [dict(f) for f in forms]
 
     def get_ads(self, adset_id):
         """Fetch all ads for a specific ad set."""
@@ -616,15 +632,18 @@ class FacebookService:
             raise ValueError('page_id is required to create an ad creative')
         if not image_hash and not video_id:
             raise ValueError('Either image_hash or video_id is required')
-        if not website_url or not website_url.startswith('http'):
-            raise ValueError('website_url must be a valid URL (e.g. https://example.com)')
 
         primary_text = creative_data.get('primary_text') or creative_data.get('message') or ''
         headline = creative_data.get('headline') or creative_data.get('name') or 'Ad'
         cta = creative_data.get('cta') or 'LEARN_MORE'
-        creative_name = creative_data.get('name') or creative_data.get('creativeName') or f'Creative {headline[:30]}'
+        creative_name = creative_data.get('creative_name') or creative_data.get('creativeName') or f'Creative {headline[:30]}'
+        lead_gen_form_id = creative_data.get('lead_gen_form_id')
 
-        # Determine if this is a video or image creative
+        # For lead gen creatives, website_url is not required
+        if not lead_gen_form_id and (not website_url or not website_url.startswith('http')):
+            raise ValueError('website_url must be a valid URL (e.g. https://example.com)')
+
+        # Determine creative type: video, lead gen, or standard image/link
         if video_id:
             # Video creative
             object_story_spec = {
@@ -641,8 +660,23 @@ class FacebookService:
             }
             if creative_data.get('thumbnail_url'):
                 object_story_spec['video_data']['image_url'] = creative_data['thumbnail_url']
+        elif lead_gen_form_id:
+            # Lead gen creative — attaches an Instant Form; no destination URL needed
+            lead_gen_cta = cta if cta not in ('LEARN_MORE', 'SHOP_NOW', 'BOOK_TRAVEL') else 'SIGN_UP'
+            object_story_spec = {
+                'page_id': page_id,
+                'link_data': {
+                    'image_hash': image_hash,
+                    'message': primary_text,
+                    'name': headline,
+                    'call_to_action': {
+                        'type': lead_gen_cta,
+                        'value': {'lead_gen_form_id': lead_gen_form_id}
+                    }
+                }
+            }
         else:
-            # Image creative
+            # Standard image / link click creative
             object_story_spec = {
                 'page_id': page_id,
                 'link_data': {

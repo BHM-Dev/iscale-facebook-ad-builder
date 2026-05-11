@@ -723,7 +723,22 @@ def get_pages(
 ):
     """Fetch Facebook Pages available to the connected account."""
     try:
-        return service.get_pages()
+        pages = service.get_pages()
+        # Strip page access_token — sensitive credential, not needed by the browser
+        return [{k: v for k, v in p.items() if k != 'access_token'} for p in pages]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/lead-forms")
+def get_lead_forms(
+    page_id: str,
+    service: FacebookService = Depends(get_facebook_service),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Fetch active lead gen forms for a Facebook Page — used when pushing to OUTCOME_LEADS ad sets."""
+    try:
+        return service.get_lead_forms(page_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -771,40 +786,51 @@ def push_to_meta(
       - ad_name        : Name for the ad in Meta (defaults to headline)
       - status         : PAUSED (default, safe) or ACTIVE
     """
-    adset_id   = body.get("adset_id")
-    page_id    = body.get("page_id")
-    website_url = body.get("website_url", "").strip()
-    headline   = body.get("headline", "")
-    body_copy  = body.get("body_copy", "")
-    cta_label  = body.get("cta_button", "Learn More")
-    image_url  = body.get("image_url", "")
-    ad_name    = body.get("ad_name") or headline[:40] or "Remix Ad"
-    status     = body.get("status", "PAUSED")
+    adset_id      = body.get("adset_id")
+    page_id       = body.get("page_id")
+    website_url   = body.get("website_url", "").strip()
+    lead_form_id  = body.get("lead_form_id", "").strip()
+    headline      = body.get("headline", "").strip()
+    body_copy     = body.get("body_copy", "").strip()
+    cta_label     = body.get("cta_button", "Learn More")
+    image_url     = body.get("image_url", "")
+    ad_name       = body.get("ad_name") or headline[:40] or "Remix Ad"
+    status        = body.get("status", "PAUSED")
 
     if not adset_id:
         raise HTTPException(status_code=400, detail="adset_id is required")
     if not page_id:
         raise HTTPException(status_code=400, detail="page_id is required")
-    if not website_url or not website_url.startswith("http"):
-        raise HTTPException(status_code=400, detail="website_url must be a valid URL")
     if not image_url:
         raise HTTPException(status_code=400, detail="image_url is required")
+    if not headline:
+        raise HTTPException(status_code=400, detail="headline is required")
+    if not body_copy:
+        raise HTTPException(status_code=400, detail="body_copy is required")
+    # For lead gen campaigns, lead_form_id replaces website_url
+    if not lead_form_id and (not website_url or not website_url.startswith("http")):
+        raise HTTPException(status_code=400, detail="website_url is required for non-lead-gen campaigns")
 
     try:
         # Step 1: Upload image → get image hash
         image_hash = service.upload_image(image_url)
 
-        # Step 2: Create ad creative
-        creative = service.create_creative({
+        # Step 2: Create ad creative (lead gen or standard link-click)
+        creative_payload = {
             "page_id": page_id,
             "image_hash": image_hash,
             "headline": headline,
             "primary_text": body_copy,
             "cta": resolve_cta(cta_label),
-            "website_url": website_url,
-            "name": f"Creative — {ad_name}",
-        })
-        creative_id = creative.get_id()
+            "creative_name": f"Creative — {ad_name}",
+        }
+        if lead_form_id:
+            creative_payload["lead_gen_form_id"] = lead_form_id
+        else:
+            creative_payload["website_url"] = website_url
+
+        creative = service.create_creative(creative_payload)
+        creative_id = creative.get_id_assured()
 
         # Step 3: Create ad (PAUSED by default — Joel activates in Meta after review)
         ad = service.create_ad({
@@ -814,13 +840,15 @@ def push_to_meta(
             "status": status,
         })
 
+        ad_id = ad.get_id_assured()
+        account_id_clean = service.ad_account_id.replace('act_', '') if service.ad_account_id else ''
         return {
             "success": True,
-            "ad_id": ad.get_id(),
+            "ad_id": ad_id,
             "creative_id": creative_id,
             "image_hash": image_hash,
             "status": status,
-            "meta_url": f"https://www.facebook.com/adsmanager/manage/ads?act={service.ad_account_id}&selected_ad_ids={ad.get_id()}"
+            "meta_url": f"https://www.facebook.com/adsmanager/manage/ads?act={account_id_clean}&selected_ad_ids={ad_id}"
         }
 
     except (ValueError, RuntimeError) as e:

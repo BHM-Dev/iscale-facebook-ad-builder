@@ -28,7 +28,7 @@ export default function AdRemix() {
     const fileInputRef = useRef(null);
     // Push to Meta modal state
     const [pushModal, setPushModal] = useState(null);    // null | concept object
-    const [pushForm, setPushForm] = useState({ adset_id: '', page_id: '', website_url: '', image_url: '', status: 'PAUSED' });
+    const [pushForm, setPushForm] = useState({ adset_id: '', page_id: '', website_url: '', lead_form_id: '', image_url: '', status: 'PAUSED' });
     const [pushLoading, setPushLoading] = useState(false);
     const [pushResult, setPushResult] = useState(null);
     const [adSets, setAdSets] = useState([]);
@@ -36,6 +36,8 @@ export default function AdRemix() {
     const [adSetsLoading, setAdSetsLoading] = useState(false);
     const [adSetsError, setAdSetsError] = useState('');
     const [imageGenerating, setImageGenerating] = useState(false);
+    const [leadForms, setLeadForms] = useState([]);
+    const [leadFormsLoading, setLeadFormsLoading] = useState(false);
     // Suppresses auto-advance effects for one render cycle when the user presses Back,
     // preventing the profile/product auto-skip from immediately re-triggering.
     const skipAutoAdvance = useRef(false);
@@ -252,9 +254,10 @@ export default function AdRemix() {
     const resetPushModal = () => {
         setPushModal(null);
         setPushResult(null);
-        setPushForm({ adset_id: '', page_id: '', website_url: '', image_url: '', status: 'PAUSED' });
+        setPushForm({ adset_id: '', page_id: '', website_url: '', lead_form_id: '', image_url: '', status: 'PAUSED' });
         setAdSets([]);
         setPages([]);
+        setLeadForms([]);
         setAdSetsError('');
         setImageGenerating(false);
     };
@@ -341,7 +344,8 @@ export default function AdRemix() {
                 body: JSON.stringify({
                     adset_id: pushForm.adset_id,
                     page_id: pushForm.page_id,
-                    website_url: pushForm.website_url,
+                    website_url: pushForm.website_url || '',
+                    lead_form_id: pushForm.lead_form_id || '',
                     image_url: pushForm.image_url,
                     headline: pushModal.headline_remix,
                     body_copy: pushModal.body_copy,
@@ -359,6 +363,26 @@ export default function AdRemix() {
             showError(`Push to Meta failed: ${e.message}`);
         } finally {
             setPushLoading(false);
+        }
+    };
+
+    // Fetch lead gen forms for a page — called when an OUTCOME_LEADS ad set is selected
+    const fetchLeadForms = async (pageId) => {
+        if (!pageId) return;
+        setLeadFormsLoading(true);
+        setLeadForms([]);
+        try {
+            const res = await authFetch(`${API_URL}/facebook/lead-forms?page_id=${pageId}`);
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || `${res.status}`);
+            }
+            const data = await res.json();
+            setLeadForms(Array.isArray(data) ? data : []);
+        } catch (e) {
+            showError(`Failed to load lead forms: ${e.message}`);
+        } finally {
+            setLeadFormsLoading(false);
         }
     };
 
@@ -929,9 +953,17 @@ export default function AdRemix() {
                                             Loading ad sets…
                                         </div>
                                     ) : (
+                                        <>
                                         <select
                                             value={pushForm.adset_id}
-                                            onChange={e => setPushForm(f => ({ ...f, adset_id: e.target.value }))}
+                                            onChange={e => {
+                                                const newId = e.target.value;
+                                                const newAdset = adSets.find(a => a.id === newId);
+                                                const newIsLeadGen = newAdset?.campaign?.objective === 'OUTCOME_LEADS';
+                                                setPushForm(f => ({ ...f, adset_id: newId, lead_form_id: '', website_url: '' }));
+                                                if (newIsLeadGen && pushForm.page_id) fetchLeadForms(pushForm.page_id);
+                                                if (!newIsLeadGen) setLeadForms([]);
+                                            }}
                                             className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                                         >
                                             <option value="">Select an ad set…</option>
@@ -941,6 +973,11 @@ export default function AdRemix() {
                                                 </option>
                                             ))}
                                         </select>
+                                        {/* Lead gen indicator */}
+                                        {pushForm.adset_id && adSets.find(a => a.id === pushForm.adset_id)?.campaign?.objective === 'OUTCOME_LEADS' && (
+                                            <p className="text-xs text-blue-600 mt-1 font-medium">Lead Generation campaign detected — select a lead form below</p>
+                                        )}
+                                        </>
                                     )}
                                 </div>
 
@@ -955,7 +992,14 @@ export default function AdRemix() {
                                     ) : (
                                         <select
                                             value={pushForm.page_id}
-                                            onChange={e => setPushForm(f => ({ ...f, page_id: e.target.value }))}
+                                            onChange={e => {
+                                                const newPageId = e.target.value;
+                                                setPushForm(f => ({ ...f, page_id: newPageId, lead_form_id: '' }));
+                                                const selectedAdset = adSets.find(a => a.id === pushForm.adset_id);
+                                                if (selectedAdset?.campaign?.objective === 'OUTCOME_LEADS') {
+                                                    fetchLeadForms(newPageId);
+                                                }
+                                            }}
                                             className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                                         >
                                             <option value="">Select a page…</option>
@@ -1023,20 +1067,54 @@ export default function AdRemix() {
                                     )}
                                 </div>
 
-                                {/* Destination URL */}
-                                <div>
-                                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                                        <Globe size={13} className="inline mr-1" />
-                                        Destination URL
-                                    </label>
-                                    <input
-                                        type="url"
-                                        placeholder="https://…"
-                                        value={pushForm.website_url}
-                                        onChange={e => setPushForm(f => ({ ...f, website_url: e.target.value }))}
-                                        className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                                    />
-                                </div>
+                                {/* Lead Form (lead gen campaigns) OR Destination URL (traffic/conversion campaigns) */}
+                                {(() => {
+                                    const selectedAdset = adSets.find(a => a.id === pushForm.adset_id);
+                                    const isLeadGen = selectedAdset?.campaign?.objective === 'OUTCOME_LEADS';
+                                    if (isLeadGen) {
+                                        return (
+                                            <div>
+                                                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Lead Form</label>
+                                                {leadFormsLoading ? (
+                                                    <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
+                                                        <RefreshCw size={14} className="animate-spin" />
+                                                        Loading lead forms…
+                                                    </div>
+                                                ) : leadForms.length === 0 ? (
+                                                    <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
+                                                        No lead forms found for this page. <a href="https://www.facebook.com/ads/leadgen/create" target="_blank" rel="noopener noreferrer" className="underline font-medium">Create one in Meta</a> first.
+                                                    </div>
+                                                ) : (
+                                                    <select
+                                                        value={pushForm.lead_form_id}
+                                                        onChange={e => setPushForm(f => ({ ...f, lead_form_id: e.target.value }))}
+                                                        className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                                    >
+                                                        <option value="">Select a lead form…</option>
+                                                        {leadForms.map(f => (
+                                                            <option key={f.id} value={f.id}>{f.name}{f.status && f.status !== 'ACTIVE' ? ` [${f.status}]` : ''}</option>
+                                                        ))}
+                                                    </select>
+                                                )}
+                                            </div>
+                                        );
+                                    }
+                                    return (
+                                        <div>
+                                            <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                                                <Globe size={13} className="inline mr-1" />
+                                                Destination URL
+                                            </label>
+                                            <input
+                                                type="url"
+                                                placeholder="https://…"
+                                                value={pushForm.website_url}
+                                                onChange={e => setPushForm(f => ({ ...f, website_url: e.target.value }))}
+                                                className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                            />
+                                        </div>
+                                    );
+                                })()}
 
                                 {/* Status toggle */}
                                 <div>
@@ -1074,13 +1152,17 @@ export default function AdRemix() {
                                 </button>
                                 <button
                                     onClick={handlePushToMeta}
-                                    disabled={
-                                        !pushForm.adset_id ||
-                                        !pushForm.page_id ||
-                                        !pushForm.website_url ||
-                                        !pushForm.image_url ||
-                                        pushLoading
-                                    }
+                                    disabled={(() => {
+                                        const selectedAdset = adSets.find(a => a.id === pushForm.adset_id);
+                                        const isLeadGen = selectedAdset?.campaign?.objective === 'OUTCOME_LEADS';
+                                        return (
+                                            !pushForm.adset_id ||
+                                            !pushForm.page_id ||
+                                            !pushForm.image_url ||
+                                            (isLeadGen ? !pushForm.lead_form_id : !pushForm.website_url) ||
+                                            pushLoading
+                                        );
+                                    })()}
                                     className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-white rounded-lg font-semibold text-sm disabled:opacity-40 disabled:cursor-not-allowed"
                                     style={{ backgroundColor: '#2D2463' }}
                                 >
