@@ -192,6 +192,9 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
         )
         create_resp.raise_for_status()
         task_data = create_resp.json()
+        print(f"kie.ai createTask response: {task_data}")
+        if not task_data.get("data"):
+            raise ValueError(f"kie.ai createTask returned no data: {task_data}")
         task_id = task_data["data"]["taskId"]
         print(f"kie.ai task created: {task_id}")
 
@@ -205,6 +208,8 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
             )
             status_resp.raise_for_status()
             status_data = status_resp.json()
+            if not status_data.get("data"):
+                raise ValueError(f"kie.ai recordInfo returned no data: {status_data}")
             state = status_data["data"].get("state")
             print(f"kie.ai task {task_id} state: {state} (attempt {attempt + 1})")
 
