@@ -184,8 +184,14 @@ class FacebookService:
         return [dict(page) for page in pages]
 
     def get_adsets(self, ad_account_id=None, campaign_id=None):
-        """Fetch all ad sets, including the parent campaign objective (used to detect lead gen)."""
-        fields = [
+        """Fetch all ad sets and enrich each with parent campaign objective + name.
+
+        The Meta SDK rejects nested field syntax ('campaign{objective,name}') with a UserWarning
+        and silently drops it. Instead we fetch campaigns separately (1 extra API call) and
+        inject a 'campaign' dict into each adset so the UI can group by campaign and detect
+        OUTCOME_LEADS without SDK warnings.
+        """
+        adset_fields = [
             AdSet.Field.id,
             AdSet.Field.name,
             AdSet.Field.status,
@@ -199,16 +205,35 @@ class FacebookService:
             AdSet.Field.campaign_id,
             AdSet.Field.start_time,
             AdSet.Field.end_time,
-            'campaign{objective,name}',  # nested fetch — objective detects OUTCOME_LEADS; name used for ad set grouping in UI
         ]
+        campaign_fields = [Campaign.Field.id, Campaign.Field.name, Campaign.Field.objective]
 
         if campaign_id:
-            # Fetch from campaign
-            campaign = Campaign(campaign_id, api=self.api)
-            return campaign.get_ad_sets(fields=fields)
-        
-        account = self._get_account(ad_account_id)
-        return account.get_ad_sets(fields=fields)
+            camp_obj = Campaign(campaign_id, api=self.api)
+            adsets = list(camp_obj.get_ad_sets(fields=adset_fields))
+            # Single campaign — fetch its meta directly
+            try:
+                camp_data = camp_obj.api_get(fields=campaign_fields)
+                campaign_map = {campaign_id: {'name': camp_data.get('name'), 'objective': camp_data.get('objective')}}
+            except Exception:
+                campaign_map = {}
+        else:
+            account = self._get_account(ad_account_id)
+            adsets = list(account.get_ad_sets(fields=adset_fields))
+            # Fetch all campaigns for this account and build a lookup map
+            try:
+                campaigns = account.get_campaigns(fields=campaign_fields)
+                campaign_map = {c['id']: {'name': c.get('name'), 'objective': c.get('objective')} for c in campaigns}
+            except Exception:
+                campaign_map = {}
+
+        # Inject campaign dict into each adset (mirrors the shape the frontend expects)
+        for adset in adsets:
+            cid = adset.get(AdSet.Field.campaign_id)
+            if cid and cid in campaign_map:
+                adset['campaign'] = campaign_map[cid]
+
+        return adsets
 
     def get_lead_forms(self, page_id):
         """Fetch active lead gen forms for a Facebook Page.
