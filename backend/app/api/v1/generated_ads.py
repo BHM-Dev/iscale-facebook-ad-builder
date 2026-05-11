@@ -174,8 +174,15 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
     else:
         aspect_ratio = "9:16"
 
+    # flux-kontext-pro is an image-editing model — it requires inputImage.
+    # For pure text-to-image (no product shot), fall back to flux-pro.
+    if input_image_url:
+        model = "flux-kontext-pro"
+    else:
+        model = "flux-pro"
+
     payload = {
-        "model": "flux-kontext-pro",
+        "model": model,
         "prompt": prompt,
         "aspectRatio": aspect_ratio,
         "outputFormat": "png",
