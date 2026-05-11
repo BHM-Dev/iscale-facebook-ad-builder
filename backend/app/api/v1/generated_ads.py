@@ -113,6 +113,7 @@ import os
 import asyncio
 import uuid
 import httpx
+import json as _json
 from pathlib import Path
 from app.core.config import settings
 
@@ -208,7 +209,9 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
         task_data = create_resp.json()
         print(f"kie.ai createTask response: {task_data}")
         if not task_data.get("data"):
-            raise ValueError(f"kie.ai createTask returned no data: {task_data}")
+            # Surface kie.ai's own error message when available (e.g. "Insufficient credits")
+            kie_msg = task_data.get("msg") or task_data.get("message") or str(task_data)
+            raise ValueError(f"kie.ai error: {kie_msg}")
         task_id = task_data["data"]["taskId"]
         print(f"kie.ai task created: {task_id}")
 
@@ -228,7 +231,6 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
             print(f"kie.ai task {task_id} state: {state} (attempt {attempt + 1})")
 
             if state == "success":
-                import json as _json
                 result_json = status_data["data"].get("resultJson", "{}")
                 result = _json.loads(result_json) if isinstance(result_json, str) else result_json
                 image_url = result.get("resultUrls", [None])[0]
@@ -277,7 +279,8 @@ async def generate_image(
             print(f"{'='*80}\n")
             if use_kie:
                 try:
-                    input_image = request.productShots[0] if request.useProductImage and request.productShots else None
+                    # Use `or None` to coerce an empty string URL (failed upload) to None
+                    input_image = (request.productShots[0] or None) if request.useProductImage and request.productShots else None
                     external_url = await _kie_generate_image(prompt, width, height, input_image)
 
                     print(f"Downloading image from kie.ai: {external_url[:50]}...")

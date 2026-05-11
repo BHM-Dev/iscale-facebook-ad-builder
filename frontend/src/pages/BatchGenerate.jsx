@@ -43,6 +43,17 @@ function StatusBadge({ status }) {
 // ── Result card ───────────────────────────────────────────────────────────────
 function ResultCard({ variant, sizeLabel, result, resultKey, onRetry }) {
   const { status, imageUrl, error } = result;
+  const [elapsed, setElapsed] = React.useState(0);
+
+  React.useEffect(() => {
+    if (status !== 'generating') { setElapsed(0); return; }
+    const t = setInterval(() => setElapsed(s => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [status]);
+
+  const elapsedLabel = elapsed > 0
+    ? elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
+    : null;
 
   return (
     <div className={`bg-white rounded-xl border overflow-hidden transition-shadow ${
@@ -59,6 +70,7 @@ function ResultCard({ variant, sizeLabel, result, resultKey, onRetry }) {
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
             <div className="w-10 h-10 rounded-full border-2 border-indigo-200 border-t-indigo-600 animate-spin" />
             <span className="text-xs text-indigo-500 font-medium">Generating image…</span>
+            {elapsedLabel && <span className="text-xs text-indigo-400">{elapsedLabel}</span>}
           </div>
         ) : status === 'failed' ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
@@ -269,9 +281,11 @@ export default function BatchGenerate() {
       }).catch(() => {});
 
       setResults(prev => ({ ...prev, [key]: { status: 'done', imageUrl, error: null } }));
+      return 'done';
     } catch (e) {
       const msg = e.message === 'Failed to fetch' ? 'Network timeout — try again' : e.message;
       setResults(prev => ({ ...prev, [key]: { status: 'failed', imageUrl: null, error: msg } }));
+      return 'failed';
     }
   }, [niche, refImageUrl]);
 
@@ -301,9 +315,13 @@ export default function BatchGenerate() {
 
     // Sequential — one at a time to avoid rate limiting
     let completed = 0;
+    let succeeded = 0;
+    let failed = 0;
     for (const variant of valid) {
       for (const size of sizes) {
-        await generateOne(variant, size);
+        const outcome = await generateOne(variant, size);
+        if (outcome === 'done') succeeded++;
+        else failed++;
         completed++;
         setGeneratingProgress(completed);
       }
@@ -311,7 +329,13 @@ export default function BatchGenerate() {
 
     setRunning(false);
     setAllDone(true);
-    showSuccess(`Done — ${total} image${total !== 1 ? 's' : ''} generated and saved`);
+    if (failed === 0) {
+      showSuccess(`Done — ${succeeded} image${succeeded !== 1 ? 's' : ''} generated and saved`);
+    } else if (succeeded === 0) {
+      showError(`All ${failed} image${failed !== 1 ? 's' : ''} failed to generate`);
+    } else {
+      showSuccess(`Done — ${succeeded} saved, ${failed} failed`);
+    }
   }, [variants, selectedSizes, generateOne, showSuccess, showError]);
 
   const handleRetry = useCallback(async (resultKey) => {
