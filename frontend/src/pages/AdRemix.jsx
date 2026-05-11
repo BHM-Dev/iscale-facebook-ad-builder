@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { ChevronRight, ChevronLeft, Sparkles, Check, Image, FileText, Briefcase, Package, Users, Zap, Copy, CheckCircle, Upload, RefreshCw, TrendingUp } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Sparkles, Check, Image, FileText, Briefcase, Package, Users, Zap, Copy, CheckCircle, Upload, RefreshCw, TrendingUp, ExternalLink, X, Globe } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useBrands } from '../context/BrandContext';
 import { useToast } from '../context/ToastContext';
@@ -26,6 +26,14 @@ export default function AdRemix() {
     const [uploadingRef, setUploadingRef] = useState(false);
     const [refPreview, setRefPreview] = useState('');
     const fileInputRef = useRef(null);
+    // Push to Meta modal state
+    const [pushModal, setPushModal] = useState(null);    // null | concept object
+    const [pushForm, setPushForm] = useState({ adset_id: '', page_id: '', website_url: '', image_url: '', status: 'PAUSED' });
+    const [pushLoading, setPushLoading] = useState(false);
+    const [pushResult, setPushResult] = useState(null);
+    const [adSets, setAdSets] = useState([]);
+    const [pages, setPages] = useState([]);
+    const [adSetsLoading, setAdSetsLoading] = useState(false);
     // Suppresses auto-advance effects for one render cycle when the user presses Back,
     // preventing the profile/product auto-skip from immediately re-triggering.
     const skipAutoAdvance = useRef(false);
@@ -237,6 +245,71 @@ export default function AdRemix() {
         navigate('/batch-generate');
     };
 
+    // Open the Push to Meta modal for a specific concept
+    const openPushModal = async (concept) => {
+        setPushModal(concept);
+        setPushResult(null);
+        // Pre-fill image_url from the template if available
+        setPushForm({
+            adset_id: '',
+            page_id: '',
+            website_url: '',
+            image_url: wizardData.template?.image_url || '',
+            status: 'PAUSED',
+        });
+        setAdSetsLoading(true);
+        try {
+            const [adSetsRes, pagesRes] = await Promise.all([
+                authFetch(`${API_URL}/facebook/adsets`),
+                authFetch(`${API_URL}/facebook/pages`),
+            ]);
+            if (adSetsRes.ok) {
+                const data = await adSetsRes.json();
+                setAdSets(Array.isArray(data) ? data : (data.adsets || []));
+            }
+            if (pagesRes.ok) {
+                const data = await pagesRes.json();
+                setPages(Array.isArray(data) ? data : []);
+            }
+        } catch (e) {
+            showError('Failed to load Meta ad sets / pages');
+        } finally {
+            setAdSetsLoading(false);
+        }
+    };
+
+    // Submit the Push to Meta form
+    const handlePushToMeta = async () => {
+        if (!pushModal) return;
+        setPushLoading(true);
+        try {
+            const res = await authFetch(`${API_URL}/facebook/push-to-meta`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    adset_id: pushForm.adset_id,
+                    page_id: pushForm.page_id,
+                    website_url: pushForm.website_url,
+                    image_url: pushForm.image_url,
+                    headline: pushModal.headline_remix,
+                    body_copy: pushModal.body_copy,
+                    cta_button: pushModal.cta_button,
+                    status: pushForm.status,
+                }),
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || 'Push failed');
+            }
+            const result = await res.json();
+            setPushResult(result);
+        } catch (e) {
+            showError(`Push to Meta failed: ${e.message}`);
+        } finally {
+            setPushLoading(false);
+        }
+    };
+
     const handleDeconstruct = async () => {
         setLoading(true);
         try {
@@ -321,6 +394,7 @@ export default function AdRemix() {
     };
 
     return (
+        <>
         <div className="max-w-5xl mx-auto">
             {/* Header */}
             <div className="mb-8">
@@ -625,6 +699,13 @@ export default function AdRemix() {
                                                 <Zap size={13} />
                                                 Generate Image
                                             </button>
+                                            <button
+                                                onClick={() => openPushModal(concept)}
+                                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700"
+                                            >
+                                                <ExternalLink size={13} />
+                                                Push to Meta
+                                            </button>
                                         </div>
                                     </div>
 
@@ -719,5 +800,202 @@ export default function AdRemix() {
                 </div>
             </div>
         </div>
+
+        {/* ── Push to Meta Modal ───────────────────────────────────────── */}
+        {pushModal && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+                    {pushResult ? (
+                        /* Success screen */
+                        <div className="p-8 text-center">
+                            <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <CheckCircle size={32} />
+                            </div>
+                            <h3 className="text-xl font-bold text-gray-900 mb-2">Ad Created in Meta!</h3>
+                            <p className="text-gray-600 text-sm mb-1">
+                                Ad ID: <code className="font-mono text-purple-700">{pushResult.ad_id}</code>
+                            </p>
+                            <p className="text-gray-500 text-sm mb-6">
+                                Status:{' '}
+                                <span className={`font-semibold ${pushResult.status === 'PAUSED' ? 'text-amber-600' : 'text-green-600'}`}>
+                                    {pushResult.status}
+                                </span>
+                                {pushResult.status === 'PAUSED' && ' — Review in Ads Manager before activating.'}
+                            </p>
+                            <div className="flex flex-col gap-3">
+                                <a
+                                    href={pushResult.meta_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm"
+                                >
+                                    <ExternalLink size={16} />
+                                    Open in Ads Manager
+                                </a>
+                                <button
+                                    onClick={() => { setPushModal(null); setPushResult(null); }}
+                                    className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium text-sm"
+                                >
+                                    Done
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        /* Form screen */
+                        <>
+                            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                                <h3 className="text-lg font-bold text-gray-900">Push to Meta</h3>
+                                <button
+                                    onClick={() => setPushModal(null)}
+                                    className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500"
+                                >
+                                    <X size={18} />
+                                </button>
+                            </div>
+
+                            <div className="p-6 space-y-5">
+                                {/* Ad copy preview */}
+                                <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 text-sm">
+                                    <p className="font-semibold text-purple-900 mb-1">{pushModal.headline_remix}</p>
+                                    <p className="text-gray-700 line-clamp-2 text-xs">{pushModal.body_copy}</p>
+                                    <span className="mt-2 inline-block px-2 py-0.5 bg-purple-200 text-purple-800 rounded text-xs font-medium">{pushModal.cta_button}</span>
+                                </div>
+
+                                {/* Ad Set */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">Ad Set</label>
+                                    {adSetsLoading ? (
+                                        <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
+                                            <RefreshCw size={14} className="animate-spin" />
+                                            Loading ad sets…
+                                        </div>
+                                    ) : (
+                                        <select
+                                            value={pushForm.adset_id}
+                                            onChange={e => setPushForm(f => ({ ...f, adset_id: e.target.value }))}
+                                            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                        >
+                                            <option value="">Select an ad set…</option>
+                                            {adSets.map(a => (
+                                                <option key={a.id} value={a.id}>{a.name}</option>
+                                            ))}
+                                        </select>
+                                    )}
+                                </div>
+
+                                {/* Facebook Page */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">Facebook Page</label>
+                                    {adSetsLoading ? (
+                                        <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
+                                            <RefreshCw size={14} className="animate-spin" />
+                                            Loading pages…
+                                        </div>
+                                    ) : (
+                                        <select
+                                            value={pushForm.page_id}
+                                            onChange={e => setPushForm(f => ({ ...f, page_id: e.target.value }))}
+                                            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                        >
+                                            <option value="">Select a page…</option>
+                                            {pages.map(p => (
+                                                <option key={p.id} value={p.id}>{p.name}</option>
+                                            ))}
+                                        </select>
+                                    )}
+                                </div>
+
+                                {/* Image URL */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                                        <Image size={13} className="inline mr-1" />
+                                        Image URL
+                                    </label>
+                                    <input
+                                        type="url"
+                                        placeholder="https://… (paste generated image URL)"
+                                        value={pushForm.image_url}
+                                        onChange={e => setPushForm(f => ({ ...f, image_url: e.target.value }))}
+                                        className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        Use <strong>Generate Image</strong> first, then paste the URL here. Or paste any image URL you want to use.
+                                    </p>
+                                </div>
+
+                                {/* Destination URL */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                                        <Globe size={13} className="inline mr-1" />
+                                        Destination URL
+                                    </label>
+                                    <input
+                                        type="url"
+                                        placeholder="https://…"
+                                        value={pushForm.website_url}
+                                        onChange={e => setPushForm(f => ({ ...f, website_url: e.target.value }))}
+                                        className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                    />
+                                </div>
+
+                                {/* Status toggle */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">Launch Status</label>
+                                    <div className="flex items-center gap-3">
+                                        <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm font-medium">
+                                            <button
+                                                type="button"
+                                                onClick={() => setPushForm(f => ({ ...f, status: 'PAUSED' }))}
+                                                className={`px-4 py-2 transition-colors ${pushForm.status === 'PAUSED' ? 'bg-amber-100 text-amber-800' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                                            >
+                                                Paused
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setPushForm(f => ({ ...f, status: 'ACTIVE' }))}
+                                                className={`px-4 py-2 transition-colors ${pushForm.status === 'ACTIVE' ? 'bg-green-100 text-green-800' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                                            >
+                                                Active
+                                            </button>
+                                        </div>
+                                        {pushForm.status === 'PAUSED' && (
+                                            <p className="text-xs text-amber-700">Recommended — review in Meta before going live</p>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="px-6 py-4 border-t border-gray-200 flex gap-3">
+                                <button
+                                    onClick={() => setPushModal(null)}
+                                    className="flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium text-sm"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handlePushToMeta}
+                                    disabled={
+                                        !pushForm.adset_id ||
+                                        !pushForm.page_id ||
+                                        !pushForm.website_url ||
+                                        !pushForm.image_url ||
+                                        pushLoading
+                                    }
+                                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-white rounded-lg font-semibold text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                                    style={{ backgroundColor: '#2D2463' }}
+                                >
+                                    {pushLoading ? (
+                                        <><RefreshCw size={14} className="animate-spin" />Pushing to Meta…</>
+                                    ) : (
+                                        <>Push to Meta</>
+                                    )}
+                                </button>
+                            </div>
+                        </>
+                    )}
+                </div>
+            </div>
+        )}
+        </>
     );
 }

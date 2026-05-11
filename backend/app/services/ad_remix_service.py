@@ -101,12 +101,8 @@ async def reconstruct_ad(
         if not response.text:
             raise ValueError("Model returned an empty response (possible content filter or rate limit)")
 
-        raw_text = response.text
-        print(f"[reconstruct_ad] raw response (first 500 chars): {raw_text[:500]!r}")
-
         # Parse the JSON response (Gemini often wraps output in ```json blocks)
-        concept_data = extract_json_from_response(raw_text)
-        print(f"[reconstruct_ad] parsed type={type(concept_data).__name__} keys={list(concept_data.keys()) if isinstance(concept_data, dict) else 'NOT A DICT'}")
+        concept_data = extract_json_from_response(response.text)
 
         # Validate and return as AdConcept
         return AdConcept(**concept_data)

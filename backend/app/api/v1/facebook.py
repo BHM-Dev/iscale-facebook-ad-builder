@@ -715,3 +715,116 @@ def get_ad_creative(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/pages")
+def get_pages(
+    service: FacebookService = Depends(get_facebook_service),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Fetch Facebook Pages available to the connected account."""
+    try:
+        return service.get_pages()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# CTA label → Meta API enum
+CTA_MAP = {
+    "learn more": "LEARN_MORE",
+    "get quote": "GET_QUOTE",
+    "get my quote": "GET_QUOTE",
+    "sign up": "SIGN_UP",
+    "contact us": "CONTACT_US",
+    "apply now": "APPLY_NOW",
+    "get started": "GET_STARTED",
+    "book now": "BOOK_TRAVEL",
+    "download": "DOWNLOAD",
+    "subscribe": "SUBSCRIBE",
+    "watch more": "WATCH_MORE",
+    "shop now": "SHOP_NOW",
+}
+
+def resolve_cta(cta_text: str) -> str:
+    """Map a human-readable CTA string to a Meta CTA type enum. Defaults to LEARN_MORE."""
+    return CTA_MAP.get(cta_text.lower().strip(), "LEARN_MORE")
+
+
+@router.post("/push-to-meta")
+def push_to_meta(
+    body: Dict[str, Any],
+    service: FacebookService = Depends(get_facebook_service),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Push a remix concept directly to Meta as a new ad (status=PAUSED by default).
+
+    Required fields:
+      - adset_id       : Facebook ad set ID to attach the ad to
+      - page_id        : Facebook Page ID for the creative
+      - website_url    : Destination URL for the ad
+      - headline       : Ad headline (from remix concept)
+      - body_copy      : Ad body copy (from remix concept)
+      - cta_button     : CTA label (mapped to Meta enum)
+      - image_url      : URL of the generated image (from R2/kie.ai)
+
+    Optional:
+      - ad_name        : Name for the ad in Meta (defaults to headline)
+      - status         : PAUSED (default, safe) or ACTIVE
+    """
+    adset_id   = body.get("adset_id")
+    page_id    = body.get("page_id")
+    website_url = body.get("website_url", "").strip()
+    headline   = body.get("headline", "")
+    body_copy  = body.get("body_copy", "")
+    cta_label  = body.get("cta_button", "Learn More")
+    image_url  = body.get("image_url", "")
+    ad_name    = body.get("ad_name") or headline[:40] or "Remix Ad"
+    status     = body.get("status", "PAUSED")
+
+    if not adset_id:
+        raise HTTPException(status_code=400, detail="adset_id is required")
+    if not page_id:
+        raise HTTPException(status_code=400, detail="page_id is required")
+    if not website_url or not website_url.startswith("http"):
+        raise HTTPException(status_code=400, detail="website_url must be a valid URL")
+    if not image_url:
+        raise HTTPException(status_code=400, detail="image_url is required")
+
+    try:
+        # Step 1: Upload image → get image hash
+        image_hash = service.upload_image(image_url)
+
+        # Step 2: Create ad creative
+        creative = service.create_creative({
+            "page_id": page_id,
+            "image_hash": image_hash,
+            "headline": headline,
+            "primary_text": body_copy,
+            "cta": resolve_cta(cta_label),
+            "website_url": website_url,
+            "name": f"Creative — {ad_name}",
+        })
+        creative_id = creative.get_id()
+
+        # Step 3: Create ad (PAUSED by default — Joel activates in Meta after review)
+        ad = service.create_ad({
+            "adset_id": adset_id,
+            "creative_id": creative_id,
+            "name": ad_name,
+            "status": status,
+        })
+
+        return {
+            "success": True,
+            "ad_id": ad.get_id(),
+            "creative_id": creative_id,
+            "image_hash": image_hash,
+            "status": status,
+            "meta_url": f"https://www.facebook.com/adsmanager/manage/ads?act={service.ad_account_id}&selected_ad_ids={ad.get_id()}"
+        }
+
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Push to Meta failed: {str(e)}")
+
