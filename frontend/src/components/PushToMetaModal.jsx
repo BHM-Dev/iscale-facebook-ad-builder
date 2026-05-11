@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Rocket, Loader, X, CheckCircle2, ExternalLink } from 'lucide-react';
 import { getCampaigns, getAdSets, getPages, createCompleteAd } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
@@ -37,7 +37,7 @@ export default function PushToMetaModal({
     const [successResult, setSuccessResult] = useState(null); // { adId, adsetName }
 
     const [pushForm, setPushForm] = useState({
-        adAccountId: localStorage.getItem('lastUsedAdAccountId') || '',
+        adAccountId: localStorage.getItem('fb_ad_account_id') || '',
         campaignId: '',
         adsetId: '',
         pageId: localStorage.getItem('lastUsedPageId') || '',
@@ -46,6 +46,14 @@ export default function PushToMetaModal({
         body: initialBody,
         cta: initialCta || 'LEARN_MORE',
     });
+
+    // Auto-load campaigns + pages if ad account ID is already populated on mount
+    useEffect(() => {
+        if (pushForm.adAccountId) {
+            loadPushCampaigns(pushForm.adAccountId);
+            loadPushPages(pushForm.adAccountId);
+        }
+    }, []);
 
     const loadPushCampaigns = async (adAccountId) => {
         if (!adAccountId) return;
@@ -107,7 +115,7 @@ export default function PushToMetaModal({
             );
             // Persist selections for next use
             if (pushForm.pageId) localStorage.setItem('lastUsedPageId', pushForm.pageId);
-            if (pushForm.adAccountId) localStorage.setItem('lastUsedAdAccountId', pushForm.adAccountId);
+            if (pushForm.adAccountId) localStorage.setItem('fb_ad_account_id', pushForm.adAccountId);
 
             setSuccessResult({
                 adId: result?.adId,
