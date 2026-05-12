@@ -642,13 +642,18 @@ export default function CampaignPerformance() {
   const { brands } = useBrands();
   const [adsets, setAdsets]     = useState([]);
   const [rules, setRules]       = useState([]); // still needed for isFlagged + rule badges
-  const [datePreset, setDatePreset] = useState('today');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  // searchParams must be declared before the date useState initialisers that read it
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Inherit date from Dashboard URL params (preset / date_from / date_to)
+  const [datePreset, setDatePreset] = useState(() => {
+    if (searchParams.get('date_from') && searchParams.get('date_to')) return 'custom';
+    return searchParams.get('preset') || 'today';
+  });
+  const [dateFrom, setDateFrom] = useState(() => searchParams.get('date_from') || '');
+  const [dateTo, setDateTo] = useState(() => searchParams.get('date_to') || '');
   const [adAccountId, setAdAccountId] = useState('');
   const [loadingAdsets, setLoadingAdsets] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [searchParams, setSearchParams] = useSearchParams();
   const [statusFilter, setStatusFilter] = useState(() => {
     const view = searchParams.get('view');
     if (view === 'attention') return 'flagged';
@@ -813,9 +818,13 @@ export default function CampaignPerformance() {
 
     const fireLoads = (accountId) => {
       initialLoadFired.current = true;
-      loadBulkInsights(accountId, 'today');
+      const initPreset = searchParams.get('preset') || 'today';
+      const initFrom   = searchParams.get('date_from') || null;
+      const initTo     = searchParams.get('date_to')   || null;
+      const resolvedPreset = (initFrom && initTo) ? 'custom' : initPreset;
+      loadBulkInsights(accountId, resolvedPreset, initFrom, initTo);
       // loadAdsBulk fires after bulkInsights settles (see deferred effect below)
-      loadRtAdsBulk('today');
+      loadRtAdsBulk(resolvedPreset, initFrom, initTo);
     };
 
     authFetch(`${API_BASE}/facebook/config`, { signal: controller.signal })
