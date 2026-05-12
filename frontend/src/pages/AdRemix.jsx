@@ -22,6 +22,7 @@ export default function AdRemix() {
     const [adConcepts, setAdConcepts] = useState([]);        // 3 parallel variations
     const [prefillSource, setPrefillSource] = useState(null); // winning ad data from performance page
     const [pendingBrandId, setPendingBrandId] = useState(null); // brand_id from drawer — resolved once brands load
+    const [pendingNiche, setPendingNiche] = useState('');       // niche from ad set name, passed through to Batch Generate
     const [copied, setCopied] = useState(false);
     const [uploadingRef, setUploadingRef] = useState(false);
     const [refPreview, setRefPreview] = useState('');
@@ -76,6 +77,8 @@ export default function AdRemix() {
             const creative = JSON.parse(raw);
             localStorage.removeItem('pendingRemixCreative');
             setPrefillSource(creative);
+            // Carry niche through from the ad set name (parsed upstream in RemixDrawer)
+            if (creative.niche) setPendingNiche(creative.niche);
             // Pre-populate wizard: use the winning ad image as the template source
             setWizardData(prev => ({
                 ...prev,
@@ -259,6 +262,8 @@ export default function AdRemix() {
                 cta: c.cta_button || 'Get My Quote',
             }))
         ));
+        // Carry niche through so BatchGenerate auto-populates the Niche/Context field
+        if (pendingNiche) localStorage.setItem('pendingBatchNiche', pendingNiche);
         navigate('/batch-generate');
     };
 

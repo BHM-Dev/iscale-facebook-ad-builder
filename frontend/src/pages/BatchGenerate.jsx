@@ -121,6 +121,15 @@ export default function BatchGenerate() {
   // URL params from "Iterate →" button on Performance page
   const iterateAdId      = searchParams.get('adId')     || '';
   const iterateAdName    = searchParams.get('adName')   || '';
+  const iterateAdsetName = searchParams.get('adsetName') || '';
+
+  // Parse the meaningful niche segment from a verbose ad set name like
+  // "Apr. 13 - Religious Organizations - Batch 1 - Mixed Avatar - Clean Start" → "Religious Organizations"
+  const extractNiche = (adsetName) => {
+    if (!adsetName) return '';
+    const parts = adsetName.split(' - ');
+    return parts.length >= 2 ? parts[1].trim() : adsetName;
+  };
 
   // Reference image
   const [refImageUrl, setRefImageUrl] = useState('');
@@ -162,6 +171,7 @@ export default function BatchGenerate() {
   // Pre-fill variants if arriving from Ad Remix "Batch Generate" button.
   // New format: array of concepts (one per remix variation).
   // Legacy format: single object — pre-fills Variant 1 only.
+  // Also reads pendingBatchNiche (set by AdRemix) to auto-populate the niche field.
   useEffect(() => {
     const raw = localStorage.getItem('pendingBatchCopy');
     if (!raw) return;
@@ -185,9 +195,23 @@ export default function BatchGenerate() {
         ));
       }
     } catch (e) { /* malformed — ignore */ }
+
+    // Auto-populate niche from Ad Remix handoff (parsed from ad set name upstream)
+    const storedNiche = localStorage.getItem('pendingBatchNiche');
+    if (storedNiche) {
+      setNiche(storedNiche);
+      localStorage.removeItem('pendingBatchNiche');
+    }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch creative data if arriving from Performance page (no niche auto-fill from adset name)
+  // Auto-populate niche from the "Iterate" URL path (adsetName param from Campaign Performance)
+  useEffect(() => {
+    if (!iterateAdsetName) return;
+    const parsed = extractNiche(iterateAdsetName);
+    if (parsed) setNiche(parsed);
+  }, [iterateAdsetName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch ad creative data if arriving via the "Iterate" path (adId URL param)
   useEffect(() => {
     if (!iterateAdId) return;
     authFetch(`${API_URL}/facebook/ads/${iterateAdId}/creative`)

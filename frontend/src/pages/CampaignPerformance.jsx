@@ -619,7 +619,7 @@ function RemixDrawer({ creative, brands, onClose, onLaunchWizard }) {
                     </button>
                     {/* Opens in new tab so Joel keeps his place in the Campaign Performance table */}
                     <button
-                      onClick={() => onLaunchWizard({ ...creative, headline: v.headline, body: v.body })}
+                      onClick={() => onLaunchWizard({ ...creative, headline: v.headline, body: v.body, niche })}
                       className="flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-purple-50 hover:bg-purple-100 text-purple-700 font-medium"
                     >
                       <Sparkles size={10} /> Build Ad ↗
