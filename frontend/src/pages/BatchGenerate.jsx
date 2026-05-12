@@ -260,13 +260,18 @@ export default function BatchGenerate() {
     const key = `${variant.id}-${sizeConfig.id}`;
     setResults(prev => ({ ...prev, [key]: { status: 'generating', imageUrl: null, error: null } }));
 
-    const contextLine = niche ? ` Professional Facebook advertisement for ${niche}.` : ' Professional Facebook advertisement.';
-    const prompt = refImageUrl
-      ? `Maintain the exact visual composition, style, lighting, and aesthetic of the reference image.${contextLine} Keep the same background setting, subject positioning, and overall mood. The ad headline is: "${variant.headline}". High quality photorealistic advertising photography.`
-      : `Professional Facebook advertisement.${contextLine} Headline: "${variant.headline}". ${variant.body}. Clean, high-quality photorealistic ad creative.`;
+    // When a reference image is provided, we keep a custom prompt so Flux maintains
+    // the visual style of that reference. When there's no reference image, we pass
+    // the copy + niche as structured fields and let the backend AI (Claude Haiku)
+    // generate a proper Flux scene description — it produces far better results than
+    // a hand-built string, and it knows the niche context.
+    const refPrompt = refImageUrl
+      ? `Maintain the exact visual composition, style, lighting, and aesthetic of the reference image.${niche ? ` Ad for ${niche}.` : ''} Keep the same background setting, subject positioning, and overall mood. The ad headline is: "${variant.headline}". High quality photorealistic advertising photography.`
+      : null;
 
     const payload = {
-      customPrompt: prompt,
+      ...(refPrompt ? { customPrompt: refPrompt } : {}),
+      ...(niche ? { niche } : {}),
       count: 1,
       imageSizes: [{ width: sizeConfig.width, height: sizeConfig.height, name: sizeConfig.label }],
       copy: { headline: variant.headline, body: variant.body, cta: variant.cta },

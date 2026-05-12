@@ -25,6 +25,7 @@ class ImageGenerationRequest(BaseModel):
     model: str = "flux-kontext-pro"
     customPrompt: Optional[str] = None
     useProductImage: bool = False  # Use uploaded product image as base
+    niche: Optional[str] = None   # e.g. "Religious organizations", "Flower shops" — passed to AI prompt builder
 
 def build_comprehensive_prompt(request: ImageGenerationRequest) -> str:
     """
@@ -188,6 +189,7 @@ async def _build_ai_image_prompt(
         mood = request.template.get("mood", "engaging") if request.template else "engaging"
         lighting = request.template.get("lighting", "natural") if request.template else "natural"
 
+        niche = request.niche or ""
         vertical_hint = _get_vertical_hint(product_name, product_desc)
 
         # Composition guidance differs by orientation
@@ -220,6 +222,7 @@ Rules:
         user_msg = f"""Create a Flux image generation prompt for this Facebook ad:
 
 Vertical / service: {product_name}{(' — ' + product_desc) if product_desc else ''}
+{('Niche / target business type: ' + niche) if niche else ''}
 Brand voice: {brand_voice}
 Brand color palette: {brand_color if brand_color else 'not specified'}
 Ad headline: {headline}
