@@ -330,7 +330,7 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
             "input": input_block,
         }
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=200.0) as client:
         # Create the task
         create_resp = await client.post(
             f"{KIE_AI_BASE_URL}/jobs/createTask",
@@ -347,8 +347,11 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
         task_id = task_data["data"]["taskId"]
         print(f"kie.ai task created: {task_id}")
 
-        # Poll until done (max ~2 minutes)
-        for attempt in range(24):
+        # Poll until done (max ~3 minutes — story/9:16 can take longer than square)
+        # Use 5s sleep × 36 attempts = 180 seconds
+        _FAIL_STATES = {"fail", "failed", "error", "cancelled", "canceled"}
+
+        for attempt in range(36):
             await asyncio.sleep(5)
             status_resp = await client.get(
                 f"{KIE_AI_BASE_URL}/jobs/recordInfo",
@@ -359,20 +362,33 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
             status_data = status_resp.json()
             if not status_data.get("data"):
                 raise ValueError(f"kie.ai recordInfo returned no data: {status_data}")
-            state = status_data["data"].get("state")
-            print(f"kie.ai task {task_id} state: {state} (attempt {attempt + 1})")
+            state = status_data["data"].get("state", "")
+            # Normalise to lowercase so "FAIL" / "Failed" / "fail" all match
+            state_lower = state.lower() if state else ""
+            print(f"kie.ai task {task_id} state: {state!r} (attempt {attempt + 1}/36)")
 
-            if state == "success":
+            if state_lower == "success":
                 result_json = status_data["data"].get("resultJson", "{}")
                 result = _json.loads(result_json) if isinstance(result_json, str) else result_json
                 image_url = result.get("resultUrls", [None])[0]
                 if not image_url:
                     raise ValueError("kie.ai returned success but no image URL")
                 return image_url
-            elif state == "fail":
-                raise ValueError(f"kie.ai task failed: {status_data}")
+            elif state_lower in _FAIL_STATES:
+                # Extract a useful message from the response if kie.ai provides one
+                kie_msg = (
+                    status_data["data"].get("msg")
+                    or status_data["data"].get("message")
+                    or status_data.get("msg")
+                    or f"state={state!r}"
+                )
+                raise ValueError(f"kie.ai task failed: {kie_msg}")
 
-    raise TimeoutError(f"kie.ai task {task_id} did not complete within timeout")
+    raise TimeoutError(
+        f"kie.ai task {task_id} did not complete after 3 minutes. "
+        "This can happen when kie.ai is under load or credits are low. "
+        "Check your kie.ai credit balance and try again."
+    )
 
 
 @router.post("/generate-image")
