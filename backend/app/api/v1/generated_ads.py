@@ -321,13 +321,14 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
         }
     else:
         model = "flux-2/pro-text-to-image"
+        # NOTE: flux-2/pro-text-to-image does NOT support negative_prompt.
+        # The only supported input fields are: prompt, aspect_ratio, resolution, nsfw_checker.
+        # Sending unsupported fields causes immediate task failure (state: fail).
         input_block: Dict[str, Any] = {
             "prompt": prompt,
             "aspect_ratio": aspect_ratio,  # snake_case inside input
             "resolution": "1K",
         }
-        if negative_prompt:
-            input_block["negative_prompt"] = negative_prompt
         payload = {
             "model": model,
             "input": input_block,
@@ -454,9 +455,10 @@ async def generate_image(
                 try:
                     # Use `or None` to coerce an empty string URL (failed upload) to None
                     input_image = (request.productShots[0] or None) if request.useProductImage and request.productShots else None
-                    # Pass negative prompt only for text-to-image (no input image)
-                    neg = _NEGATIVE_PROMPT if not input_image else None
-                    external_url = await _kie_generate_image(prompt, width, height, input_image, neg)
+                    # negative_prompt is NOT supported by flux-2/pro-text-to-image (causes task failure).
+                    # flux-kontext-pro ignores it too. Pass None for now; retained in signature
+                    # in case a future kie.ai model supports it.
+                    external_url = await _kie_generate_image(prompt, width, height, input_image, None)
 
                     print(f"Downloading image from kie.ai: {external_url[:50]}...")
                     image_url = await download_and_save_image(external_url, prefix="generated")
