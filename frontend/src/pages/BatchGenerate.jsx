@@ -129,35 +129,61 @@ export default function BatchGenerate() {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
 
-  // Settings — multi-size (array, min 1 selected)
-  const [selectedSizes, setSelectedSizes] = useState(['square']);
+  // Settings — multi-size (array, min 1 selected). Persisted to localStorage.
+  const [selectedSizes, setSelectedSizes] = useState(() => {
+    try {
+      const saved = localStorage.getItem('batchSelectedSizes');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (_) {}
+    return ['square'];
+  });
   const [niche, setNiche] = useState('');
 
   const toggleSize = useCallback((sizeId) => {
     setSelectedSizes(prev => {
       if (prev.includes(sizeId)) {
         if (prev.length === 1) return prev; // must keep at least one
-        return prev.filter(s => s !== sizeId);
+        const next = prev.filter(s => s !== sizeId);
+        localStorage.setItem('batchSelectedSizes', JSON.stringify(next));
+        return next;
       }
-      return [...prev, sizeId];
+      const next = [...prev, sizeId];
+      localStorage.setItem('batchSelectedSizes', JSON.stringify(next));
+      return next;
     });
   }, []);
 
   // Variants
   const [variants, setVariants] = useState([newVariant(0), newVariant(1)]);
 
-  // Pre-fill Variant 1 if arriving from Ad Remix "Generate Image" button
+  // Pre-fill variants if arriving from Ad Remix "Batch Generate" button.
+  // New format: array of concepts (one per remix variation).
+  // Legacy format: single object — pre-fills Variant 1 only.
   useEffect(() => {
     const raw = localStorage.getItem('pendingBatchCopy');
     if (!raw) return;
     try {
-      const copy = JSON.parse(raw);
+      const parsed = JSON.parse(raw);
       localStorage.removeItem('pendingBatchCopy');
-      setVariants(prev => prev.map((v, i) =>
-        i === 0
-          ? { ...v, headline: copy.headline || '', body: copy.body || '', cta: copy.cta || v.cta }
-          : v
-      ));
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // Replace all variants with one per remix concept
+        setVariants(parsed.map((copy, i) => ({
+          ...newVariant(i),
+          headline: copy.headline || '',
+          body: copy.body || '',
+          cta: copy.cta || 'Get My Quote',
+        })));
+      } else if (parsed && typeof parsed === 'object') {
+        // Legacy single-copy format
+        setVariants(prev => prev.map((v, i) =>
+          i === 0
+            ? { ...v, headline: parsed.headline || '', body: parsed.body || '', cta: parsed.cta || v.cta }
+            : v
+        ));
+      }
     } catch (e) { /* malformed — ignore */ }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

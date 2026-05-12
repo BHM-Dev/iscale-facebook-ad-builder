@@ -229,6 +229,21 @@ def read_saved_adsets(
     ]
 
 
+@router.delete("/adsets/saved/{adset_id}")
+def delete_saved_adset(
+    adset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Remove a saved ad set from the local DB (does not affect Meta)."""
+    adset = db.query(FacebookAdSet).filter(FacebookAdSet.id == adset_id).first()
+    if not adset:
+        raise HTTPException(status_code=404, detail="Ad set not found")
+    db.delete(adset)
+    db.commit()
+    return {"success": True, "deleted_id": adset_id}
+
+
 @router.post("/sync/cleanup")
 def cleanup_duplicate_adsets(
     db: Session = Depends(get_db),

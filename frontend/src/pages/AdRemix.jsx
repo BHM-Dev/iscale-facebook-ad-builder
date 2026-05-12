@@ -243,17 +243,22 @@ export default function AdRemix() {
         }
     }, [authFetch, showError, updateData]);
 
-    // Send remix copy to Batch Generate — persist result so Back restores it
+    // Send remix copy to Batch Generate — passes ALL remix variants so each
+    // shows up as a separate variant in the Batch Generator.
     const handleGenerateImage = (concept) => {
         const target = concept || adConcept;
         if (!target) return;
         // Save all variations so the user can return to the result screen
-        localStorage.setItem('remixResult', JSON.stringify(adConcepts.length ? adConcepts : [target]));
-        localStorage.setItem('pendingBatchCopy', JSON.stringify({
-            headline: target.headline_remix || '',
-            body: target.body_copy || '',
-            cta: target.cta_button || 'Get My Quote',
-        }));
+        const allConcepts = adConcepts.length ? adConcepts : [target];
+        localStorage.setItem('remixResult', JSON.stringify(allConcepts));
+        // Pass full array — BatchGenerate will create one variant per concept
+        localStorage.setItem('pendingBatchCopy', JSON.stringify(
+            allConcepts.map(c => ({
+                headline: c.headline_remix || '',
+                body: c.body_copy || '',
+                cta: c.cta_button || 'Get My Quote',
+            }))
+        ));
         navigate('/batch-generate');
     };
 

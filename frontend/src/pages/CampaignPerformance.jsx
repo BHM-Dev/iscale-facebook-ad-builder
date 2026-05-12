@@ -1161,7 +1161,7 @@ export default function CampaignPerformance() {
               });
 
               return (
-                <div key={adset.id} className={`px-6 py-4 ${effectiveStatus === 'PAUSED' ? 'opacity-60' : ''}`}>
+                <div key={adset.id} className={`group px-6 py-4 ${effectiveStatus === 'PAUSED' ? 'opacity-60' : ''}`}>
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center flex-wrap gap-2">
                       {/* Expand / collapse toggle */}
@@ -1261,6 +1261,22 @@ export default function CampaignPerformance() {
                           {effectiveStatus === 'PAUSED' ? 'Resume' : 'Pause'}
                         </button>
                       )}
+                      {/* Remove from app (does not affect Meta) */}
+                      <button
+                        onClick={async () => {
+                          if (!window.confirm(`Remove "${adset.name}" from this app?\n\nAny auto-pause rules for this ad set will also be deleted. The ad set itself will not be affected in Meta.`)) return;
+                          try {
+                            const res = await authFetch(`${API_BASE}/facebook/adsets/saved/${adset.id}`, { method: 'DELETE' });
+                            if (!res.ok) throw new Error('Failed to remove');
+                            setAdsets(prev => prev.filter(a => a.id !== adset.id));
+                            showSuccess(`"${adset.name}" removed`);
+                          } catch (e) { showError(e.message); }
+                        }}
+                        className="ml-1 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-all"
+                        title="Remove from app (does not affect Meta)"
+                      >
+                        <X size={13} />
+                      </button>
                     </div>
                   </div>
                   <InsightsCard
