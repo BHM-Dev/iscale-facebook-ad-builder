@@ -67,11 +67,20 @@ export const AuthProvider = ({ children }) => {
         // Always read from localStorage so this works correctly after a token refresh
         // (React state update from setAccessToken is async; localStorage is updated synchronously)
         const token = localStorage.getItem('accessToken') || accessToken;
-        const response = await fetch(`${API_URL}/auth/me`, {
-            headers: {
-                'Authorization': `Bearer ${token}`,
-            },
-        });
+
+        // 8-second timeout prevents a hung backend from locking the loading screen forever
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+        let response;
+        try {
+            response = await fetch(`${API_URL}/auth/me`, {
+                headers: { 'Authorization': `Bearer ${token}` },
+                signal: controller.signal,
+            });
+        } finally {
+            clearTimeout(timeoutId);
+        }
 
         if (!response.ok) {
             throw new Error('Failed to fetch user');
@@ -181,17 +190,20 @@ export const AuthProvider = ({ children }) => {
         }
 
         let response;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
         try {
             response = await fetch(`${API_URL}/auth/refresh`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ refresh_token: refreshToken }),
+                signal: controller.signal,
             });
         } catch (err) {
-            // Network error - rethrow but don't attach status so we don't logout
+            // Network error or timeout - rethrow but don't attach status so we don't logout
             throw err;
+        } finally {
+            clearTimeout(timeoutId);
         }
 
         if (!response.ok) {
