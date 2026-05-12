@@ -1,0 +1,34 @@
+name: One-time — Inject ANTHROPIC_API_KEY into VPS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inject:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inject ANTHROPIC_API_KEY into VPS .env and restart backend
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          envs: ANTHROPIC_API_KEY
+          script: |
+            set -e
+            ENV_FILE=/home/ubuntu/iscale-facebook-ad-builder/backend/.env
+
+            if grep -q "^ANTHROPIC_API_KEY=" "$ENV_FILE"; then
+              sed -i "s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}|" "$ENV_FILE"
+              echo "Updated existing ANTHROPIC_API_KEY"
+            else
+              echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" >> "$ENV_FILE"
+              echo "Added ANTHROPIC_API_KEY"
+            fi
+
+            cd /home/ubuntu/iscale-facebook-ad-builder
+            docker compose -f docker-compose.prod.yml restart backend
+            echo "Backend restarted successfully"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
