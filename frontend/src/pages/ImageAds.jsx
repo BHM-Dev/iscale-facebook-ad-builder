@@ -1376,7 +1376,10 @@ Style: ${designStyle}`);
                 {showPrompt && (
                     <div className="p-4 animate-in slide-in-from-top-2 duration-200">
                         <p className="text-xs text-gray-600 mb-3">
-                            <strong>Optional:</strong> Override the AI-generated prompt. Leave empty to automatically build a comprehensive prompt using your brand, product, copy, and template details.
+                            <strong>Optional — leave empty for best results.</strong> The system now uses Claude to automatically write a Flux-optimized scene description from your brand, copy, and vertical. It generates real scenes (people, moments, settings) matched to your ad's emotional angle — not generic stock-photo descriptions.
+                        </p>
+                        <p className="text-xs text-gray-500 mb-3">
+                            Only use this field if you want full manual control. Write your prompt in Flux style: <em>"A [specific person] [doing action] in [setting], [lens], [lighting], clean space at bottom third for text overlay, no text, no logos."</em>
                         </p>
                         <textarea
                             value={customImagePrompt}
