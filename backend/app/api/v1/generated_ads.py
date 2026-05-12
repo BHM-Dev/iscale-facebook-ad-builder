@@ -8,6 +8,7 @@ from app.core.deps import get_current_active_user, require_permission
 from fastapi.responses import StreamingResponse
 import io
 import csv
+import anthropic as _anthropic_sdk
 
 from pydantic import BaseModel, Field
 from typing import Dict, Any
@@ -117,6 +118,133 @@ import json as _json
 from pathlib import Path
 from app.core.config import settings
 
+# ---------------------------------------------------------------------------
+# Anthropic client for AI-enhanced image prompt generation
+# Uses AsyncAnthropic so the call fits naturally in async endpoints.
+# Falls back gracefully if ANTHROPIC_API_KEY is not set.
+# Uses Haiku — this is a fast, inexpensive transformation call (~$0.001 each).
+# ---------------------------------------------------------------------------
+_ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
+_async_anthropic = _anthropic_sdk.AsyncAnthropic(api_key=_ANTHROPIC_KEY) if _ANTHROPIC_KEY else None
+_PROMPT_MODEL = "claude-3-5-haiku-20241022"
+
+# Negative prompt applied to all flux-2/pro-text-to-image calls.
+# Blocks the most common ad creative failure modes across financial/insurance verticals.
+_NEGATIVE_PROMPT = (
+    "text, words, letters, watermark, logo, brand name, signature, caption, speech bubble, "
+    "blurry, out of focus, low quality, distorted, deformed, bad anatomy, extra fingers, "
+    "six fingers, multiple hands, ugly, multiple people, crowd, busy cluttered background, "
+    "oversaturated, harsh shadows, grainy, noise, low resolution, "
+    "illustration, cartoon, 3D render, clipart, stock photo style, "
+    "lens flare, heavy vignette, HDR effect, collage, multiple scenes, split image"
+)
+
+# Per-vertical emotional direction for the image prompt.
+# Haiku performs significantly better with an explicit emotional target and scene vocabulary.
+_VERTICAL_HINTS: Dict[str, str] = {
+    "auto insurance":        "Place the subject near or in a vehicle. Emotional beat: peace of mind, feeling protected on the road.",
+    "commercial insurance":  "Show a small business owner confidently in their environment (shop, office, restaurant). Emotional beat: security, running a tight operation.",
+    "home insurance":        "Subject at or around their home, sense of ownership and pride. Emotional beat: protected, settled.",
+    "personal loans":        "Young adult achieving something (moving into new place, buying furniture, paying off a bill). Emotional beat: access, momentum, relief.",
+    "debt relief":           "Person exhaling, unclenching shoulders, stepping outside into daylight. Emotional beat: relief, breathing room, fresh start — NOT paperwork or stress.",
+    "reverse mortgage":      "Active 60s–70s adult doing something enjoyable — gardening, traveling, time with family. Emotional beat: earned freedom, enjoying retirement on their own terms.",
+    "mortgage":              "Family or individual in front of a home or receiving keys. Emotional beat: milestone, new beginning.",
+    "health insurance":      "Active, healthy-looking person in natural surroundings. Emotional beat: vitality, peace of mind.",
+}
+
+def _get_vertical_hint(product_name: str, product_desc: str) -> str:
+    """Match product name/description to a vertical hint. Returns empty string if no match."""
+    combined = f"{product_name} {product_desc}".lower()
+    for keyword, hint in _VERTICAL_HINTS.items():
+        if keyword in combined:
+            return hint
+    return ""
+
+
+async def _build_ai_image_prompt(
+    request: "ImageGenerationRequest",
+    aspect_ratio: str = "1:1",
+) -> str:
+    """
+    Use Claude Haiku to convert brand/product/copy context into a
+    Flux-optimized visual scene description for Facebook ad creatives.
+
+    aspect_ratio is passed so the model can tailor composition guidance
+    (portrait/story vs. square/landscape).
+
+    Falls back to build_comprehensive_prompt() if the API call fails or
+    if ANTHROPIC_API_KEY is not configured.
+    """
+    if not _async_anthropic:
+        return build_comprehensive_prompt(request)
+
+    try:
+        product_name = request.product.get("name", "") if request.product else ""
+        product_desc = request.product.get("description", "") if request.product else ""
+        brand_voice = request.brand.get("voice", "professional") if request.brand else "professional"
+        brand_color = request.brand.get("colors", {}).get("primary", "") if request.brand else ""
+        headline = request.ad_copy.get("headline", "") if request.ad_copy else ""
+        body = request.ad_copy.get("body", "") if request.ad_copy else ""
+        mood = request.template.get("mood", "engaging") if request.template else "engaging"
+        lighting = request.template.get("lighting", "natural") if request.template else "natural"
+
+        vertical_hint = _get_vertical_hint(product_name, product_desc)
+
+        # Composition guidance differs by orientation
+        is_portrait = aspect_ratio in ("9:16", "3:4")
+        if is_portrait:
+            composition_note = (
+                "vertical story format — subject centered in the middle third of the frame, "
+                "clear safe zones at both top and bottom for UI chrome, no key elements in top or bottom 20%"
+            )
+        else:
+            composition_note = (
+                "clean empty space at the bottom third for text overlay, "
+                "subject prominent in upper two-thirds"
+            )
+
+        system_prompt = f"""You are a professional art director who writes image generation prompts for Facebook ad creatives. Your prompts feed directly into Flux, a photorealistic image generation model.
+
+Your job is to translate ad copy and brand context into a vivid, specific visual scene description that Flux can render as a high-quality Facebook ad background image.
+
+Rules:
+- Describe a REAL SCENE with a real person in a real moment that emotionally matches the ad copy. Never do product photography for abstract services (insurance, loans, mortgages, debt relief).
+- Lead with the subject: "A [specific person description] [doing a specific action] in [specific setting]"
+- Include: photographic lens style (e.g. 85mm portrait lens), lighting quality, color mood, depth of field
+- Composition: {composition_note}
+- End with: "Facebook ad creative format, no text, no logos, no watermarks"
+- Max 80 words total
+- Never mention the brand name, product name, company name, or any specific text that would appear in the image
+- Avoid stock-photo clichés (handshakes, generic smiles at cameras, floating money). Be emotionally specific."""
+
+        user_msg = f"""Create a Flux image generation prompt for this Facebook ad:
+
+Vertical / service: {product_name}{(' — ' + product_desc) if product_desc else ''}
+Brand voice: {brand_voice}
+Brand color palette: {brand_color if brand_color else 'not specified'}
+Ad headline: {headline}
+Ad body copy: {body if body else 'not provided'}
+Visual mood: {mood}
+Lighting direction: {lighting}
+{('Vertical guidance: ' + vertical_hint) if vertical_hint else ''}
+
+Return ONLY the image prompt. No explanation, no preamble."""
+
+        response = await _async_anthropic.messages.create(
+            model=_PROMPT_MODEL,
+            max_tokens=200,
+            messages=[{"role": "user", "content": user_msg}],
+            system=system_prompt,
+        )
+
+        ai_prompt = response.content[0].text.strip()
+        print(f"🤖 AI-enhanced image prompt ({aspect_ratio}): {ai_prompt}")
+        return ai_prompt
+
+    except Exception as e:
+        print(f"AI prompt generation failed, falling back to static prompt: {e}")
+        return build_comprehensive_prompt(request)
+
 KIE_AI_BASE_URL = "https://api.kie.ai/api/v1"
 
 # Setup uploads directory (same as main.py StaticFiles mount)
@@ -150,7 +278,8 @@ async def download_and_save_image(image_url: str, prefix: str = "generated") -> 
         return image_url
 
 async def _kie_generate_image(prompt: str, width: int, height: int,
-                              input_image_url: str = None) -> str:
+                              input_image_url: str = None,
+                              negative_prompt: str = None) -> str:
     """
     Submit an image generation task to kie.ai and poll until complete.
     Uses Flux Kontext for text-to-image and image-to-image.
@@ -189,13 +318,16 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
         }
     else:
         model = "flux-2/pro-text-to-image"
+        input_block: Dict[str, Any] = {
+            "prompt": prompt,
+            "aspect_ratio": aspect_ratio,  # snake_case inside input
+            "resolution": "1K",
+        }
+        if negative_prompt:
+            input_block["negative_prompt"] = negative_prompt
         payload = {
             "model": model,
-            "input": {
-                "prompt": prompt,
-                "aspect_ratio": aspect_ratio,  # snake_case inside input
-                "resolution": "1K",
-            },
+            "input": input_block,
         }
 
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -258,13 +390,35 @@ async def generate_image(
     else:
         print("KIE_AI_API_KEY not set — using placeholder images")
 
+    # Build prompts per aspect-ratio bucket so portrait (9:16, 3:4) gets different
+    # composition guidance from square/landscape — but we don't call the AI more than
+    # once per unique ratio, keeping cost minimal.
+    # Custom prompt bypasses AI entirely — Joel has full manual control.
+    _prompt_cache: Dict[str, str] = {}
+
+    def _get_aspect_ratio(w: int, h: int) -> str:
+        ratio = w / h
+        if ratio >= 1.7:   return "16:9"
+        elif ratio >= 1.2: return "4:3"
+        elif ratio >= 0.9: return "1:1"
+        elif ratio >= 0.7: return "3:4"
+        else:              return "9:16"
+
+    async def _get_prompt_for_size(w: int, h: int) -> str:
+        if request.customPrompt:
+            return request.customPrompt
+        ar = _get_aspect_ratio(w, h)
+        if ar not in _prompt_cache:
+            _prompt_cache[ar] = await _build_ai_image_prompt(request, aspect_ratio=ar)
+        return _prompt_cache[ar]
+
     for i in range(request.count):
         for size in request.imageSizes:
             width = size.get('width', 1080)
             height = size.get('height', 1080)
             size_name = size.get('name', 'Square')
 
-            prompt = build_comprehensive_prompt(request)
+            prompt = await _get_prompt_for_size(width, height)
 
             print(f"\n{'='*80}")
             print(f"IMAGE GENERATION REQUEST")
@@ -281,7 +435,9 @@ async def generate_image(
                 try:
                     # Use `or None` to coerce an empty string URL (failed upload) to None
                     input_image = (request.productShots[0] or None) if request.useProductImage and request.productShots else None
-                    external_url = await _kie_generate_image(prompt, width, height, input_image)
+                    # Pass negative prompt only for text-to-image (no input image)
+                    neg = _NEGATIVE_PROMPT if not input_image else None
+                    external_url = await _kie_generate_image(prompt, width, height, input_image, neg)
 
                     print(f"Downloading image from kie.ai: {external_url[:50]}...")
                     image_url = await download_and_save_image(external_url, prefix="generated")
