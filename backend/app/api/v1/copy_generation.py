@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
-import google.generativeai as genai
+import anthropic
 import os
 import json
 from sqlalchemy.orm import Session
@@ -13,10 +13,11 @@ router = APIRouter()
 
 COPY_GENERATION_PROMPT_ID = "copy_generation_system"
 
-# Configure Gemini
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("VITE_GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+# Anthropic client — instantiated once at module level
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+_anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
+
+_MODEL = "claude-3-5-sonnet-20241022"
 
 class CopyGenerationRequest(BaseModel):
     brand: Dict[str, Any]
@@ -141,10 +142,10 @@ Return ONLY valid JSON in this exact format — no markdown, no code fences, no 
 
 @router.post("/generate")
 async def generate_copy(request: CopyGenerationRequest, db: Session = Depends(get_db)):
-    """Generate ad copy variations using Gemini AI"""
+    """Generate ad copy variations using Claude AI"""
 
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Gemini API key not configured")
+    if not _anthropic_client:
+        raise HTTPException(status_code=500, detail="Anthropic API key not configured")
 
     try:
         count = request.variationCount
@@ -170,22 +171,24 @@ async def generate_copy(request: CopyGenerationRequest, db: Session = Depends(ge
                 )
             else:
                 prompt = _build_default_prompt(count, request)
-        
-        # Generate with Gemini
-        model = genai.GenerativeModel('gemini-flash-latest')
-        response = model.generate_content(prompt)
-        
-        # Parse the response
-        response_text = response.text.strip()
-        
+
+        response = _anthropic_client.messages.create(
+            model=_MODEL,
+            max_tokens=2048,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+        )
+
+        response_text = response.content[0].text.strip()
+
         # Parse JSON — extract_json_from_response handles markdown fences and trailing text
         result = extract_json_from_response(response_text)
-        
+
         return result
-        
+
     except json.JSONDecodeError as e:
         print(f"JSON Parse Error: {e}")
-        print(f"Response text: {response_text}")
         raise HTTPException(status_code=500, detail=f"Failed to parse AI response as JSON: {str(e)}")
     except Exception as e:
         print(f"Copy generation error: {e}")
@@ -194,17 +197,17 @@ async def generate_copy(request: CopyGenerationRequest, db: Session = Depends(ge
 @router.post("/regenerate-field")
 async def regenerate_field(request: FieldRegenerationRequest):
     """Regenerate a specific field (headline, body, or cta)"""
-    
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Gemini API key not configured")
-    
+
+    if not _anthropic_client:
+        raise HTTPException(status_code=500, detail="Anthropic API key not configured")
+
     try:
         field_prompts = {
             "headline": "Generate a new headline (under 40 characters)",
             "body": "Generate new body copy (under 125 characters for bullets, or up to 200 for storytelling)",
             "cta": "Generate a new call-to-action (under 20 characters)"
         }
-        
+
         prompt = f"""You are a direct response copywriter trained on Eugene Schwartz's Breakthrough Advertising. You write Facebook lead gen ads for financial and insurance verticals.
 
 BRAND VOICE: {request.brand.get('voice', 'Direct and trustworthy')}
@@ -231,10 +234,15 @@ Rules:
 
 Return ONLY the new {request.field} text, nothing else."""
 
-        model = genai.GenerativeModel('gemini-flash-latest')
-        response = model.generate_content(prompt)
-        
-        new_value = response.text.strip().strip('"').strip("'")
+        response = _anthropic_client.messages.create(
+            model=_MODEL,
+            max_tokens=512,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+        )
+
+        new_value = response.content[0].text.strip().strip('"').strip("'")
 
         return {"newValue": new_value}
 
@@ -263,8 +271,8 @@ async def remix_variations(request: RemixVariationsRequest):
     copy variation to fight ad fatigue, not a full creative brief from scratch.
     """
 
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Gemini API key not configured")
+    if not _anthropic_client:
+        raise HTTPException(status_code=500, detail="Anthropic API key not configured")
 
     prompt = f"""You are a direct response copywriter trained on Eugene Schwartz's Breakthrough Advertising. You write Facebook lead gen ads for {request.vertical.replace('_', ' ')} — NOT ecommerce. No discounts, no products to buy. Ads drive form submissions.
 
@@ -296,17 +304,19 @@ Return ONLY valid JSON, no markdown:
 {{"variations": [{{"headline": "...", "body": "..."}}, {{"headline": "...", "body": "..."}}, {{"headline": "...", "body": "..."}}]}}"""
 
     try:
-        # Use the same model alias as /generate for consistency.
-        # gemini-flash-latest auto-tracks the current stable flash model.
-        model = genai.GenerativeModel('gemini-flash-latest')
-        response = model.generate_content(prompt)
-        text = response.text.strip()
+        response = _anthropic_client.messages.create(
+            model=_MODEL,
+            max_tokens=1024,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+        )
+
+        text = response.content[0].text.strip()
 
         # Parse JSON — extract_json_from_response handles fences and trailing text
         data = extract_json_from_response(text)
         variations = data.get("variations", [])
-        # Guard: Gemini may return fewer than 3 if it truncates — surface a clear error
-        # rather than silently returning an incomplete set.
         if not variations:
             raise ValueError("No variations returned from model")
         return {"variations": variations}

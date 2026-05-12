@@ -4,7 +4,7 @@ Ad Remix Service - Business logic for deconstructing and reconstructing ads
 import json
 import base64
 import requests
-import google.generativeai as genai
+import anthropic
 from typing import Any
 from app.schemas.ad_blueprint import AdBlueprint, AdConcept, BrandData
 from app.prompts.ad_remix_prompts import build_deconstruction_prompt, build_reconstruction_prompt
@@ -12,43 +12,76 @@ from app.utils.json_utils import extract_json_from_response
 import os
 
 
-# Configure Gemini API
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Anthropic client — instantiated once at module level
+# Guard against missing key: instantiate only if key is present so a missing
+# ANTHROPIC_API_KEY fails gracefully at request time, not at server startup.
+_ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+_anthropic_client = anthropic.Anthropic(api_key=_ANTHROPIC_API_KEY) if _ANTHROPIC_API_KEY else None
+
+# Anthropic's vision API only accepts these media types
+_ALLOWED_MEDIA_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+
+_MODEL = "claude-3-5-sonnet-20241022"
 
 
 async def deconstruct_template(template_image_url: str) -> AdBlueprint:
     """
     Analyze a template image and extract its structural blueprint
-    
+
     Args:
         template_image_url: URL or path to the template image
-        
+
     Returns:
         AdBlueprint with extracted structure
     """
-    try:
-        # Use Gemini Vision model
-        model = genai.GenerativeModel('gemini-flash-latest')
+    if not _anthropic_client:
+        raise Exception("Anthropic API key not configured")
 
+    try:
         # Build the prompt
         prompt = build_deconstruction_prompt(template_image_url)
 
-        # Fetch the image and base64-encode it so Gemini receives actual image bytes
+        # Fetch the image and base64-encode it for the vision API
         image_response = requests.get(template_image_url, timeout=30)
         image_response.raise_for_status()
         image_bytes = base64.b64encode(image_response.content).decode('utf-8')
         content_type = image_response.headers.get('Content-Type', 'image/jpeg').split(';')[0].strip()
 
-        response = model.generate_content([
-            prompt,
-            {
-                'mime_type': content_type,
-                'data': image_bytes
-            }
-        ])
-        
-        # Parse the JSON response (Gemini often wraps output in ```json blocks)
-        blueprint_data = extract_json_from_response(response.text)
+        # Normalize common non-standard media type aliases
+        if content_type == 'image/jpg':
+            content_type = 'image/jpeg'
+        if content_type not in _ALLOWED_MEDIA_TYPES:
+            # Default to jpeg for unknown types rather than hard-erroring on the Anthropic side
+            content_type = 'image/jpeg'
+
+        response = _anthropic_client.messages.create(
+            model=_MODEL,
+            max_tokens=2048,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": content_type,
+                                "data": image_bytes,
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": prompt,
+                        },
+                    ],
+                }
+            ],
+        )
+
+        response_text = response.content[0].text
+
+        # Parse the JSON response (model may wrap output in ```json blocks)
+        blueprint_data = extract_json_from_response(response_text)
 
         # Validate and return as AdBlueprint
         return AdBlueprint(**blueprint_data)
@@ -65,21 +98,21 @@ async def reconstruct_ad(
 ) -> AdConcept:
     """
     Generate a new ad concept by applying brand data to a blueprint
-    
+
     Args:
         blueprint: The structural blueprint to follow
         brand_data: The new brand/product information
-        
+
     Returns:
         AdConcept with generated content
     """
+    if not _anthropic_client:
+        raise Exception("Anthropic API key not configured")
+
     try:
-        # Use Gemini model
-        model = genai.GenerativeModel('gemini-flash-latest')
-        
         # Convert blueprint to dict
         blueprint_dict = blueprint.model_dump()
-        
+
         # Build the reconstruction prompt
         prompt = build_reconstruction_prompt(
             blueprint=blueprint_dict,
@@ -94,15 +127,22 @@ async def reconstruct_ad(
             campaign_urgency=brand_data.campaign_urgency or "",
             campaign_messaging=brand_data.campaign_messaging
         )
-        
-        # Generate the ad concept
-        response = model.generate_content(prompt)
 
-        if not response.text:
+        response = _anthropic_client.messages.create(
+            model=_MODEL,
+            max_tokens=2048,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+        )
+
+        response_text = response.content[0].text
+
+        if not response_text:
             raise ValueError("Model returned an empty response (possible content filter or rate limit)")
 
-        # Parse the JSON response (Gemini often wraps output in ```json blocks)
-        concept_data = extract_json_from_response(response.text)
+        # Parse the JSON response
+        concept_data = extract_json_from_response(response_text)
 
         # Validate and return as AdConcept
         return AdConcept(**concept_data)

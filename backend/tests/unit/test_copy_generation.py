@@ -90,12 +90,12 @@ class TestCopyGeneration:
             status.HTTP_404_NOT_FOUND
         ]
 
-    @patch('app.api.v1.copy_generation.genai')
-    def test_generate_copy_mocked(self, mock_genai, client, auth_headers, test_brand, test_product, test_profile):
-        """Test copy generation with mocked Gemini."""
-        # Mock Gemini response
-        mock_response = MagicMock()
-        mock_response.text = json.dumps({
+    @patch('app.api.v1.copy_generation._anthropic_client')
+    def test_generate_copy_mocked(self, mock_client, client, auth_headers, test_brand, test_product, test_profile):
+        """Test copy generation with mocked Anthropic."""
+        # Mock Anthropic response
+        mock_content = MagicMock()
+        mock_content.text = json.dumps({
             "variations": [
                 {
                     "headline": "Transform Your Life Today",
@@ -114,9 +114,9 @@ class TestCopyGeneration:
                 }
             ]
         })
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = mock_response
-        mock_genai.GenerativeModel.return_value = mock_model
+        mock_response = MagicMock()
+        mock_response.content = [mock_content]
+        mock_client.messages.create.return_value = mock_response
 
         response = client.post(
             "/api/v1/copy-generation/generate",
@@ -148,21 +148,21 @@ class TestCopyGeneration:
 class TestCopyGenerationEdgeCases:
     """Edge case tests for copy generation."""
 
-    @patch('app.api.v1.copy_generation.genai')
-    def test_gemini_returns_markdown(self, mock_genai, client, auth_headers):
-        """Test handling Gemini response wrapped in markdown."""
-        mock_response = MagicMock()
-        # Gemini sometimes returns JSON wrapped in markdown code blocks
-        mock_response.text = """```json
+    @patch('app.api.v1.copy_generation._anthropic_client')
+    def test_claude_returns_markdown(self, mock_client, client, auth_headers):
+        """Test handling Claude response wrapped in markdown."""
+        mock_content = MagicMock()
+        # Claude sometimes returns JSON wrapped in markdown code blocks
+        mock_content.text = """```json
 {
     "variations": [
         {"headline": "Test", "body": "Test body", "cta": "Buy"}
     ]
 }
 ```"""
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = mock_response
-        mock_genai.GenerativeModel.return_value = mock_model
+        mock_response = MagicMock()
+        mock_response.content = [mock_content]
+        mock_client.messages.create.return_value = mock_response
 
         response = client.post(
             "/api/v1/copy-generation/generate",
@@ -175,12 +175,10 @@ class TestCopyGenerationEdgeCases:
         # Should handle markdown stripping gracefully
         assert response.status_code != status.HTTP_500_INTERNAL_SERVER_ERROR
 
-    @patch('app.api.v1.copy_generation.genai')
-    def test_gemini_api_error(self, mock_genai, client, auth_headers):
-        """Test handling Gemini API errors."""
-        mock_model = MagicMock()
-        mock_model.generate_content.side_effect = Exception("API Error")
-        mock_genai.GenerativeModel.return_value = mock_model
+    @patch('app.api.v1.copy_generation._anthropic_client')
+    def test_claude_api_error(self, mock_client, client, auth_headers):
+        """Test handling Claude API errors."""
+        mock_client.messages.create.side_effect = Exception("API Error")
 
         response = client.post(
             "/api/v1/copy-generation/generate",
@@ -198,14 +196,14 @@ class TestCopyGenerationEdgeCases:
             status.HTTP_503_SERVICE_UNAVAILABLE
         ]
 
-    @patch('app.api.v1.copy_generation.genai')
-    def test_gemini_invalid_json(self, mock_genai, client, auth_headers):
-        """Test handling invalid JSON from Gemini."""
+    @patch('app.api.v1.copy_generation._anthropic_client')
+    def test_claude_invalid_json(self, mock_client, client, auth_headers):
+        """Test handling invalid JSON from Claude."""
+        mock_content = MagicMock()
+        mock_content.text = "This is not valid JSON"
         mock_response = MagicMock()
-        mock_response.text = "This is not valid JSON"
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = mock_response
-        mock_genai.GenerativeModel.return_value = mock_model
+        mock_response.content = [mock_content]
+        mock_client.messages.create.return_value = mock_response
 
         response = client.post(
             "/api/v1/copy-generation/generate",
