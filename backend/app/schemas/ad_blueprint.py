@@ -35,6 +35,7 @@ class BrandData(BaseModel):
     campaign_offer: str
     campaign_urgency: Optional[str] = None
     campaign_messaging: str
+    niche: Optional[str] = ""
 
 
 class AdConcept(BaseModel):
@@ -60,6 +61,7 @@ class ReconstructRequest(BaseModel):
     campaign_offer: str
     campaign_urgency: Optional[str] = None
     campaign_messaging: str
+    niche: Optional[str] = ""
 
 
 class ReconstructFromUrlRequest(BaseModel):
@@ -72,3 +74,4 @@ class ReconstructFromUrlRequest(BaseModel):
     campaign_offer: str
     campaign_urgency: Optional[str] = None
     campaign_messaging: str
+    niche: Optional[str] = ""

@@ -455,7 +455,8 @@ export default function AdRemix() {
                     profile_id: wizardData.profile.id,
                     campaign_offer: wizardData.campaignDetails.offer,
                     campaign_urgency: wizardData.campaignDetails.urgency,
-                    campaign_messaging: wizardData.campaignDetails.messaging
+                    campaign_messaging: wizardData.campaignDetails.messaging,
+                    niche: pendingNiche || ""
                 }
                 : {
                     template_id: wizardData.template.id,
@@ -464,7 +465,8 @@ export default function AdRemix() {
                     profile_id: wizardData.profile.id,
                     campaign_offer: wizardData.campaignDetails.offer,
                     campaign_urgency: wizardData.campaignDetails.urgency,
-                    campaign_messaging: wizardData.campaignDetails.messaging
+                    campaign_messaging: wizardData.campaignDetails.messaging,
+                    niche: pendingNiche || ""
                 };
 
             // Fire 3 parallel requests — Gemini returns different variations each time

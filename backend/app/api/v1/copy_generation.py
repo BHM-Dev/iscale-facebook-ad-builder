@@ -17,7 +17,7 @@ COPY_GENERATION_PROMPT_ID = "copy_generation_system"
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 _anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 
-_MODEL = "claude-3-5-sonnet-20241022"
+_MODEL = "claude-3-7-sonnet-20250219"
 
 class CopyGenerationRequest(BaseModel):
     brand: Dict[str, Any]
@@ -255,7 +255,7 @@ class RemixVariationsRequest(BaseModel):
     source_headline: str
     source_body: str
     hook: str
-    niche: str
+    niche: Optional[str] = ""
     brand_name: Optional[str] = ""
     brand_voice: Optional[str] = ""
     vertical: Optional[str] = "commercial_insurance"

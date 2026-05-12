@@ -104,9 +104,10 @@ async def reconstruct_ad_from_blueprint(
         audience_goals=profile.goals or "",
         campaign_offer=request.campaign_offer,
         campaign_urgency=request.campaign_urgency,
-        campaign_messaging=request.campaign_messaging
+        campaign_messaging=request.campaign_messaging,
+        niche=request.niche or "",
     )
-    
+
     # Reconstruct the blueprint
     blueprint = AdBlueprint(**template.blueprint_json)
     
@@ -153,6 +154,7 @@ async def reconstruct_from_url(
         campaign_offer=request.campaign_offer,
         campaign_urgency=request.campaign_urgency,
         campaign_messaging=request.campaign_messaging,
+        niche=request.niche or "",
     )
 
     # Generic lead-gen blueprint used as fallback when no image is available

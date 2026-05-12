@@ -50,6 +50,7 @@ NEW BRAND DATA:
 - Campaign Offer: {campaign_offer}
 - Campaign Urgency: {campaign_urgency}
 - Key Messaging: {campaign_messaging}
+- Niche: {niche}
 
 CRITICAL RULES:
 1. Keep the blueprint's LAYOUT FRAMEWORK exactly (if it's a 4-panel comic, make this a 4-panel comic)
@@ -87,13 +88,14 @@ def build_reconstruction_prompt(
     audience_goals: str,
     campaign_offer: str,
     campaign_urgency: str,
-    campaign_messaging: str
+    campaign_messaging: str,
+    niche: str = ""
 ) -> str:
     """Build the complete prompt for ad reconstruction"""
     import json
-    
+
     blueprint_json = json.dumps(blueprint, indent=2)
-    
+
     return RECONSTRUCTION_PROMPT.format(
         blueprint_json=blueprint_json,
         brand_name=brand_name,
@@ -105,5 +107,6 @@ def build_reconstruction_prompt(
         audience_goals=audience_goals or "Desired outcomes",
         campaign_offer=campaign_offer,
         campaign_urgency=campaign_urgency or "",
-        campaign_messaging=campaign_messaging
+        campaign_messaging=campaign_messaging,
+        niche=niche or "same as original",
     )
