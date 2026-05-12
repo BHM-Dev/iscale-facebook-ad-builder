@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Rocket, Loader, X, CheckCircle2, ExternalLink } from 'lucide-react';
-import { getCampaigns, getAdSets, getPages, createCompleteAd } from '../lib/facebookApi';
+import { Rocket, Loader, X, CheckCircle2, ExternalLink, PlusCircle, ListFilter } from 'lucide-react';
+import { getCampaigns, getAdSets, getPages, createCompleteAd, createFacebookAdSet } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
 
 // Meta copy limits (characters before truncation)
@@ -34,7 +34,17 @@ export default function PushToMetaModal({
     const [pushPages, setPushPages] = useState([]);
     const [pushLoading, setPushLoading] = useState(false);
     const [pushSubmitting, setPushSubmitting] = useState(false);
-    const [successResult, setSuccessResult] = useState(null); // { adId, adsetName }
+    const [successResult, setSuccessResult] = useState(null);
+
+    // 'existing' = pick from list | 'new' = create fresh ad set
+    const [adsetMode, setAdsetMode] = useState('existing');
+    const [newAdset, setNewAdset] = useState({
+        name: '',
+        dailyBudget: '',
+        cloneFromId: '',   // ad set ID to copy targeting/optimization from
+    });
+
+    const [selectedCampaign, setSelectedCampaign] = useState(null);
 
     const [pushForm, setPushForm] = useState({
         adAccountId: localStorage.getItem('fb_ad_account_id') || '',
@@ -53,7 +63,7 @@ export default function PushToMetaModal({
             loadPushCampaigns(pushForm.adAccountId);
             loadPushPages(pushForm.adAccountId);
         }
-    }, []);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const loadPushCampaigns = async (adAccountId) => {
         if (!adAccountId) return;
@@ -67,6 +77,8 @@ export default function PushToMetaModal({
             setPushLoading(false);
         }
     };
+
+    const isCBOCampaign = selectedCampaign?.isCBO === true;
 
     const loadPushAdSets = async (campaignId) => {
         if (!campaignId) return;
@@ -90,16 +102,67 @@ export default function PushToMetaModal({
     };
 
     const handlePushToFacebook = async () => {
-        if (!pushForm.campaignId || !pushForm.adsetId || !pushForm.pageId || !pushForm.websiteUrl) {
+        // Validate shared fields
+        if (!pushForm.campaignId || !pushForm.pageId || !pushForm.websiteUrl) {
             showError('Please fill in all required fields');
             return;
         }
+
+        // Validate ad set section
+        if (adsetMode === 'existing' && !pushForm.adsetId) {
+            showError('Please select an ad set');
+            return;
+        }
+        if (adsetMode === 'new') {
+            if (!newAdset.name.trim()) { showError('Ad set name is required'); return; }
+            if (!newAdset.dailyBudget || isNaN(newAdset.dailyBudget) || Number(newAdset.dailyBudget) < 1) {
+                showError('Daily budget must be at least $1'); return;
+            }
+            if (!newAdset.cloneFromId) {
+                if (pushAdSets.length === 0) {
+                    showError('This campaign has no ad sets to clone targeting from. Create one in Ads Manager first, then retry.');
+                } else {
+                    showError('Select an ad set to clone targeting from');
+                }
+                return;
+            }
+        }
+
         setPushSubmitting(true);
+        let createdAdsetId = null;
+        let createdAdsetName = null;
         try {
-            const adsetObj = pushAdSets.find(a => a.id === pushForm.adsetId);
+            let targetAdsetId = pushForm.adsetId;
+            let targetAdsetName = pushAdSets.find(a => a.id === pushForm.adsetId)?.name || pushForm.adsetId;
+
+            if (adsetMode === 'new') {
+                // Clone targeting + settings from the chosen source ad set
+                const source = pushAdSets.find(a => a.id === newAdset.cloneFromId);
+                const adsetPayload = {
+                    name: newAdset.name.trim(),
+                    dailyBudget: Number(newAdset.dailyBudget), // backend handles cents conversion
+                    targeting: source?.targeting || {},
+                    optimizationGoal: source?.optimization_goal || 'LEAD_GENERATION',
+                    billingEvent: source?.billing_event || 'IMPRESSIONS',
+                    bidAmount: source?.bid_amount || null,
+                    status: 'PAUSED',
+                };
+                targetAdsetId = await createFacebookAdSet(
+                    adsetPayload,
+                    pushForm.campaignId,
+                    pushForm.adAccountId,
+                    'ABO'
+                );
+                targetAdsetName = newAdset.name.trim();
+                // Track so we can report partial failure if ad push fails
+                createdAdsetId = targetAdsetId;
+                createdAdsetName = targetAdsetName;
+            }
+
+            const adsetObj = pushAdSets.find(a => a.id === targetAdsetId) || {};
             const result = await createCompleteAd(
                 pushForm.campaignId,
-                { fbAdsetId: pushForm.adsetId, ...adsetObj },
+                { fbAdsetId: targetAdsetId, ...adsetObj },
                 {
                     mediaType: 'image',
                     imageUrl,
@@ -113,19 +176,31 @@ export default function PushToMetaModal({
                 pushForm.adAccountId,
                 'ABO'
             );
+
             // Persist selections for next use
             if (pushForm.pageId) localStorage.setItem('lastUsedPageId', pushForm.pageId);
             if (pushForm.adAccountId) localStorage.setItem('fb_ad_account_id', pushForm.adAccountId);
 
             setSuccessResult({
                 adId: result?.adId,
-                adsetName: adsetObj?.name || pushForm.adsetId,
+                adsetName: targetAdsetName,
+                isNewAdset: adsetMode === 'new',
                 campaignId: pushForm.campaignId,
                 adAccountId: pushForm.adAccountId,
             });
             if (onSuccess) onSuccess();
         } catch (e) {
-            showError(`Failed to push ad: ${e.message}`);
+            if (createdAdsetId) {
+                // Ad set was created successfully but ad push failed — give a direct link
+                const adsManagerUrl = pushForm.adAccountId && pushForm.campaignId
+                    ? `https://adsmanager.facebook.com/adsmanager/manage/adsets?act=${pushForm.adAccountId.replace('act_', '')}&selected_campaign_ids=${pushForm.campaignId}`
+                    : 'https://adsmanager.facebook.com';
+                showError(
+                    `Ad set "${createdAdsetName}" was created, but the ad failed to push. Open Ads Manager to delete the empty ad set and try again: ${adsManagerUrl}`
+                );
+            } else {
+                showError(`Failed to push ad: ${e.message}`);
+            }
         } finally {
             setPushSubmitting(false);
         }
@@ -135,7 +210,7 @@ export default function PushToMetaModal({
     const countColor = (len, limit) =>
         len > limit ? 'text-red-600 font-semibold' : len > limit * 0.85 ? 'text-amber-600' : 'text-gray-400';
 
-    // Success screen
+    // ── Success screen ────────────────────────────────────────────────────────
     if (successResult) {
         const adsManagerUrl = successResult.adAccountId && successResult.campaignId
             ? `https://adsmanager.facebook.com/adsmanager/manage/ads?act=${successResult.adAccountId.replace('act_', '')}&selected_campaign_ids=${successResult.campaignId}`
@@ -164,11 +239,14 @@ export default function PushToMetaModal({
                         )}
                         <div className="flex justify-between">
                             <span className="text-gray-500">Ad Set</span>
-                            <span className="font-medium text-gray-800 truncate max-w-[200px]">{successResult.adsetName}</span>
+                            <span className="font-medium text-gray-800 truncate max-w-[200px]">
+                                {successResult.isNewAdset && <span className="text-green-600 mr-1">New</span>}
+                                {successResult.adsetName}
+                            </span>
                         </div>
                         <div className="flex justify-between">
                             <span className="text-gray-500">Status</span>
-                            <span className="text-amber-700 font-medium">Paused (review in Ads Manager)</span>
+                            <span className="text-amber-700 font-medium">Paused — review in Ads Manager</span>
                         </div>
                     </div>
                     <div className="flex gap-3">
@@ -193,6 +271,7 @@ export default function PushToMetaModal({
         );
     }
 
+    // ── Main form ─────────────────────────────────────────────────────────────
     return (
         <div
             className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4"
@@ -236,7 +315,12 @@ export default function PushToMetaModal({
                         <select
                             value={pushForm.campaignId}
                             onChange={(e) => {
+                                const campaign = pushCampaigns.find(c => c.id === e.target.value) || null;
+                                setSelectedCampaign(campaign);
                                 setPushForm(p => ({ ...p, campaignId: e.target.value, adsetId: '' }));
+                                setPushAdSets([]);
+                                setAdsetMode('existing');
+                                setNewAdset({ name: '', dailyBudget: '', cloneFromId: '' });
                                 loadPushAdSets(e.target.value);
                             }}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
@@ -249,19 +333,117 @@ export default function PushToMetaModal({
                         </select>
                     </div>
 
-                    {/* Ad Set */}
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Ad Set *</label>
-                        <select
-                            value={pushForm.adsetId}
-                            onChange={(e) => setPushForm(p => ({ ...p, adsetId: e.target.value }))}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
-                            disabled={pushAdSets.length === 0}
-                        >
-                            <option value="">{pushAdSets.length === 0 ? 'Select a campaign first' : 'Select an ad set...'}</option>
-                            {pushAdSets.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                        </select>
-                    </div>
+                    {/* Ad Set — mode toggle + fields */}
+                    {pushForm.campaignId && (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Ad Set *</label>
+
+                            {/* Toggle */}
+                            <div className="flex gap-2 mb-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setAdsetMode('existing')}
+                                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                                        adsetMode === 'existing'
+                                            ? 'bg-green-50 border-green-500 text-green-700'
+                                            : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    <ListFilter size={14} />
+                                    Use existing
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setAdsetMode('new')}
+                                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                                        adsetMode === 'new'
+                                            ? 'bg-green-50 border-green-500 text-green-700'
+                                            : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    <PlusCircle size={14} />
+                                    Create new
+                                </button>
+                            </div>
+
+                            {adsetMode === 'existing' ? (
+                                <select
+                                    value={pushForm.adsetId}
+                                    onChange={(e) => setPushForm(p => ({ ...p, adsetId: e.target.value }))}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
+                                    disabled={pushLoading || pushAdSets.length === 0}
+                                >
+                                    <option value="">
+                                        {pushLoading
+                                            ? 'Loading...'
+                                            : pushAdSets.length === 0
+                                                ? 'No ad sets found — create one in Ads Manager first'
+                                                : 'Select an ad set...'}
+                                    </option>
+                                    {pushAdSets.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                </select>
+                            ) : (
+                                <div className="space-y-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                                    {/* CBO warning */}
+                                    {isCBOCampaign && (
+                                        <div className="flex items-start gap-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                                            <span className="mt-0.5 shrink-0">⚠️</span>
+                                            <span>This is a CBO campaign — budget is managed at the campaign level. The daily budget entered below may be ignored by Meta.</span>
+                                        </div>
+                                    )}
+                                    {/* Name */}
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">Ad Set Name *</label>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g. Church Insurance — Square — May 12"
+                                            value={newAdset.name}
+                                            onChange={(e) => setNewAdset(p => ({ ...p, name: e.target.value }))}
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 bg-white"
+                                        />
+                                    </div>
+                                    {/* Daily budget */}
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">Daily Budget (USD) *</label>
+                                        <div className="relative">
+                                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                step="1"
+                                                placeholder="50"
+                                                value={newAdset.dailyBudget}
+                                                onChange={(e) => setNewAdset(p => ({ ...p, dailyBudget: e.target.value }))}
+                                                className="w-full pl-7 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 bg-white"
+                                            />
+                                        </div>
+                                    </div>
+                                    {/* Clone targeting from */}
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">Clone targeting from *</label>
+                                        <select
+                                            value={newAdset.cloneFromId}
+                                            onChange={(e) => setNewAdset(p => ({ ...p, cloneFromId: e.target.value }))}
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 bg-white"
+                                            disabled={pushLoading || pushAdSets.length === 0}
+                                        >
+                                            <option value="">
+                                                {pushLoading
+                                                    ? 'Loading ad sets...'
+                                                    : pushAdSets.length === 0
+                                                        ? 'No ad sets in this campaign — pick a different campaign'
+                                                        : 'Pick a source ad set...'}
+                                            </option>
+                                            {pushAdSets.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                        </select>
+                                        <p className="text-xs text-gray-500 mt-1">Copies geo, age, placements, and optimization goal. Custom audiences are not copied.</p>
+                                    </div>
+                                    {/* PAUSED notice */}
+                                    <p className="text-xs text-amber-700">New ad sets are created as Paused — activate in Ads Manager after reviewing.</p>
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     {/* Facebook Page */}
                     <div>
@@ -364,8 +546,8 @@ export default function PushToMetaModal({
                         className="flex-1 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium flex items-center justify-center gap-2 disabled:bg-gray-300 disabled:cursor-not-allowed"
                     >
                         {pushSubmitting
-                            ? <><Loader className="animate-spin" size={18} /> Pushing...</>
-                            : <><Rocket size={18} /> Push Live</>
+                            ? <><Loader className="animate-spin" size={18} /> {adsetMode === 'new' ? 'Creating & Pushing...' : 'Pushing...'}</>
+                            : <><Rocket size={18} /> {adsetMode === 'new' ? 'Create Ad Set & Push' : 'Push Live'}</>
                         }
                     </button>
                 </div>
