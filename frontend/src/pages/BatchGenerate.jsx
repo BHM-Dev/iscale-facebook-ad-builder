@@ -277,7 +277,7 @@ export default function BatchGenerate() {
     if (!variants[0]?.headline.trim()) return;
     autoTriggeredVariants.current = true;
     generateAIVariants();
-  }, [variants, iterateAdId, generateAIVariants]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [variants, iterateAdId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Generation state
   const [running, setRunning] = useState(false);
