@@ -231,10 +231,13 @@ def apply_text_overlay(
         y = o_bbox[3] + gap_after_offer
 
     # ── CTA button ────────────────────────────────────────────────────────────
+    # Guard: never let the button start so low it clips off the bottom edge.
     if cta_text:
         label = cta_text.upper()
         c_size = int(H * 0.046)
         c_font = _load_font("Montserrat-ExtraBold.ttf", c_size)
+        _btn_h_est = int(H * 0.046) + 2 * int(H * 0.018)   # rough height before full measure
+        y = min(y, H - _btn_h_est - int(H * 0.04))          # keep CTA at least 4% above bottom
         pad_x = int(W * 0.048)
         pad_y = int(H * 0.018)
         t_bbox = draw.textbbox((0, 0), label, font=c_font)
