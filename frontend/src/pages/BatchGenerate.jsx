@@ -1,8 +1,9 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Plus, X, Zap, CheckCircle, AlertCircle, Clock, Upload, Image, ArrowRight, RefreshCw, Repeat2 } from 'lucide-react';
+import { Plus, X, Zap, CheckCircle, AlertCircle, Clock, Upload, Image, ArrowRight, RefreshCw, Repeat2, Rocket } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useToast } from '../context/ToastContext';
 import { authFetch } from '../lib/facebookApi';
+import BatchPushModal from '../components/BatchPushModal';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -237,6 +238,7 @@ export default function BatchGenerate() {
   const [allDone, setAllDone] = useState(false);
   const [generatingProgress, setGeneratingProgress] = useState(0);
   const [generatingTotal, setGeneratingTotal] = useState(0);
+  const [batchPushOpen, setBatchPushOpen] = useState(false);
 
   // ── Ref image upload ────────────────────────────────────────────────────────
   const uploadRefImage = useCallback(async (file) => {
@@ -709,7 +711,7 @@ export default function BatchGenerate() {
                 to="/generated-ads"
                 className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
               >
-                View in Generated Ads Library <ArrowRight size={11} />
+                View in Library <ArrowRight size={11} />
               </Link>
             )}
           </div>
@@ -733,18 +735,73 @@ export default function BatchGenerate() {
             })}
           </div>
 
-          {allDone && (
-            <div className="flex justify-center pt-2">
-              <Link
-                to="/generated-ads"
-                className="flex items-center gap-2 px-6 py-2.5 rounded-xl border border-indigo-200 text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors"
-              >
-                View all generated ads <ArrowRight size={14} />
-              </Link>
-            </div>
-          )}
+          {allDone && (() => {
+            // Build the items list for BatchPushModal from all successful results
+            const pushItems = Object.entries(results)
+              .filter(([, r]) => r.status === 'done' && r.imageUrl)
+              .map(([key, r]) => {
+                const { variantId, sizeId } = parseResultKey(key);
+                const variant = variants.find(v => v.id === variantId);
+                const sizeConfig = SIZE_OPTIONS.find(s => s.id === sizeId);
+                return {
+                  key,
+                  imageUrl: r.imageUrl,
+                  headline: variant?.headline || '',
+                  body: variant?.body || '',
+                  cta: 'LEARN_MORE', // BatchGenerate CTAs are display labels, not Meta enums — let modal handle
+                  variantName: variant?.headline ? variant.headline.slice(0, 30) : `Variant ${variantId}`,
+                  sizeLabel: sizeConfig?.label || sizeId,
+                };
+              });
+
+            return (
+              <div className="flex items-center justify-center gap-3 pt-2">
+                <Link
+                  to="/generated-ads"
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 bg-white hover:bg-gray-50 transition-colors"
+                >
+                  View in Library <ArrowRight size={14} />
+                </Link>
+                {pushItems.length > 0 && (
+                  <button
+                    onClick={() => setBatchPushOpen(true)}
+                    className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition-colors shadow-sm"
+                  >
+                    <Rocket size={15} />
+                    Push {pushItems.length} Ad{pushItems.length !== 1 ? 's' : ''} to Meta
+                  </button>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
+
+      {/* Batch Push Modal */}
+      {batchPushOpen && (() => {
+        const pushItems = Object.entries(results)
+          .filter(([, r]) => r.status === 'done' && r.imageUrl)
+          .map(([key, r]) => {
+            const { variantId, sizeId } = parseResultKey(key);
+            const variant = variants.find(v => v.id === variantId);
+            const sizeConfig = SIZE_OPTIONS.find(s => s.id === sizeId);
+            return {
+              key,
+              imageUrl: r.imageUrl,
+              headline: variant?.headline || '',
+              body: variant?.body || '',
+              cta: variant?.cta || 'LEARN_MORE',
+              variantName: variant?.headline ? variant.headline.slice(0, 30) : `Variant ${variantId}`,
+              sizeLabel: sizeConfig?.label || sizeId,
+            };
+          });
+        return (
+          <BatchPushModal
+            items={pushItems}
+            onClose={() => setBatchPushOpen(false)}
+          />
+        );
+      })()}
     </div>
   );
 }

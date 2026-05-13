@@ -102,7 +102,13 @@ class FacebookService:
             'is_adset_budget_sharing_enabled',
         ]
 
-        return account.get_campaigns(fields=fields)
+        # Fetch up to 500 campaigns; include ACTIVE and PAUSED so the push modal
+        # shows all usable campaigns regardless of spend state.
+        params = {
+            'limit': 500,
+            'effective_status': ['ACTIVE', 'PAUSED'],
+        }
+        return account.get_campaigns(fields=fields, params=params)
 
     def create_campaign(self, campaign_data, ad_account_id=None):
         """Create a new campaign."""
