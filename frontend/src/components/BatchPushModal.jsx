@@ -16,7 +16,7 @@ import { useToast } from '../context/ToastContext';
  *   preselectedAdsetId     {string}  Meta adset ID — pre-fills "clone from" and defaults to "Create new"
  *   preselectedAdsetName   {string}  Source adset name — used to suggest a new adset name
  */
-export default function BatchPushModal({ items, onClose, preselectedCampaignId = '', preselectedAdsetId = '', preselectedAdsetName = '' }) {
+export default function BatchPushModal({ items, onClose, preselectedCampaignId = '', preselectedAdsetId = '', preselectedAdsetName = '', preselectedWebsiteUrl = '' }) {
     const { showError } = useToast();
 
     // Shared form fields
@@ -27,7 +27,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     const [adSets, setAdSets] = useState([]);
     const [pages, setPages] = useState([]);
     const [pageId, setPageId] = useState(localStorage.getItem('lastUsedPageId') || '');
-    const [websiteUrl, setWebsiteUrl] = useState('');
+    const [websiteUrl, setWebsiteUrl] = useState(preselectedWebsiteUrl || '');
     const [sharedCta, setSharedCta] = useState('LEARN_MORE');
     const [loading, setLoading] = useState(false);
 

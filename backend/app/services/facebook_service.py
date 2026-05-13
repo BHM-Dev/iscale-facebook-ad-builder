@@ -1265,13 +1265,22 @@ class FacebookService:
             # Image URL: prefer direct image_url, fall back to thumbnail_url (video ads)
             image_url = creative.get('image_url') or creative.get('thumbnail_url')
 
-            logger.info("Fetched creative for ad %s: headline=%s image=%s", fb_ad_id, headline, image_url)
+            # Destination URL: link in link_data, or CTA value link
+            cta_value = cta_obj.get('value', {}) if isinstance(cta_obj, dict) else {}
+            link_url = (
+                oss.get('link_data', {}).get('link') or
+                cta_value.get('link') or
+                oss.get('video_data', {}).get('link_data', {}).get('link')
+            )
+
+            logger.info("Fetched creative for ad %s: headline=%s image=%s link=%s", fb_ad_id, headline, image_url, link_url)
 
             return {
                 "headline": headline,
                 "body": body,
                 "cta_label": cta_label,
                 "image_url": image_url,
+                "link_url": link_url,
                 "ad_name": ad_data.get('name'),
             }
 

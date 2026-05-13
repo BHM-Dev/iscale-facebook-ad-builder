@@ -274,6 +274,7 @@ export default function Dashboard() {
           reason: `Frequency ${ins.frequency.toFixed(1)} — ad fatigue risk`,
           severity: 'red',
           fb_adset_id: a.fb_adset_id,
+          fb_campaign_id: a.fb_campaign_id || '',
         });
       } else if (ins.frequency >= 3) {
         needsAttention.push({
@@ -282,6 +283,7 @@ export default function Dashboard() {
           reason: `Frequency ${ins.frequency.toFixed(1)} — monitor closely`,
           severity: 'orange',
           fb_adset_id: a.fb_adset_id,
+          fb_campaign_id: a.fb_campaign_id || '',
         });
       }
 
@@ -293,6 +295,7 @@ export default function Dashboard() {
           reason: `$${ins.spend.toFixed(0)} spent, 0 leads`,
           severity: 'red',
           fb_adset_id: a.fb_adset_id,
+          fb_campaign_id: a.fb_campaign_id || '',
         });
       }
 
@@ -304,6 +307,7 @@ export default function Dashboard() {
           reason: `RT ROAS ${rt.roas.toFixed(2)}x — losing money on ad spend`,
           severity: 'red',
           fb_adset_id: a.fb_adset_id,
+          fb_campaign_id: a.fb_campaign_id || '',
         });
       }
 
@@ -315,6 +319,7 @@ export default function Dashboard() {
           reason: `CPL $${ins.cpl.toFixed(0)} — ${Math.round(ins.cpl / blendedCpl)}x above blended avg`,
           severity: 'orange',
           fb_adset_id: a.fb_adset_id,
+          fb_campaign_id: a.fb_campaign_id || '',
         });
       }
     });
@@ -348,6 +353,8 @@ export default function Dashboard() {
       return {
         id: a.id,
         name: a.name,
+        fb_adset_id: a.fb_adset_id || '',
+        fb_campaign_id: a.fb_campaign_id || '',
         status: a.status,
         spend: ins?.spend || 0,
         leads: ins?.leads || 0,
@@ -482,7 +489,7 @@ export default function Dashboard() {
                     {item.fb_adset_id && (
                       <div className="flex items-center gap-1.5 flex-shrink-0">
                         <button
-                          onClick={() => navigate(`/batch-generate?adsetName=${encodeURIComponent(item.label)}`)}
+                          onClick={() => navigate(`/batch-generate?adsetName=${encodeURIComponent(item.label)}&adsetId=${encodeURIComponent(item.fb_adset_id || '')}&campaignId=${encodeURIComponent(item.fb_campaign_id || '')}`)}
                           className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-indigo-600 border border-indigo-100 bg-indigo-50 hover:bg-indigo-100 transition-colors"
                           title="Try new creative variants"
                         >
@@ -543,7 +550,7 @@ export default function Dashboard() {
                       )}
                     </div>
                     <button
-                      onClick={() => navigate(`/batch-generate?adsetName=${encodeURIComponent(a.name)}`)}
+                      onClick={() => navigate(`/batch-generate?adsetName=${encodeURIComponent(a.name)}&adsetId=${encodeURIComponent(a.fb_adset_id || '')}&campaignId=${encodeURIComponent(a.fb_campaign_id || '')}`)}
                       className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-indigo-600 border border-indigo-100 bg-indigo-50 hover:bg-indigo-100 transition-colors"
                       title="Generate more variants of this winning creative"
                     >

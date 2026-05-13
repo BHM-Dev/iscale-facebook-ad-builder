@@ -23,6 +23,9 @@ export default function AdRemix() {
     const [prefillSource, setPrefillSource] = useState(null); // winning ad data from performance page
     const [pendingBrandId, setPendingBrandId] = useState(null); // brand_id from drawer — resolved once brands load
     const [pendingNiche, setPendingNiche] = useState('');       // niche from ad set name, passed through to Batch Generate
+    const [remixFbCampaignId, setRemixFbCampaignId] = useState(''); // Meta campaign ID from source ad — for push modal pre-selection
+    const [remixFbAdsetId, setRemixFbAdsetId] = useState('');       // Meta adset ID from source ad
+    const [remixLinkUrl, setRemixLinkUrl] = useState('');            // destination URL from source ad — pre-fills push modal
     const [copied, setCopied] = useState(false);
     const [uploadingRef, setUploadingRef] = useState(false);
     const [refPreview, setRefPreview] = useState('');
@@ -79,6 +82,10 @@ export default function AdRemix() {
             setPrefillSource(creative);
             // Carry niche through from the ad set name (parsed upstream in RemixDrawer)
             if (creative.niche) setPendingNiche(creative.niche);
+            // Carry campaign / adset context and destination URL for the push modal
+            if (creative.fb_campaign_id) setRemixFbCampaignId(creative.fb_campaign_id);
+            if (creative.fb_adset_id) setRemixFbAdsetId(creative.fb_adset_id);
+            if (creative.link_url) setRemixLinkUrl(creative.link_url);
             // Pre-populate wizard: use the winning ad image as the template source
             setWizardData(prev => ({
                 ...prev,
@@ -294,7 +301,9 @@ export default function AdRemix() {
         setPushForm({
             adset_id: savedForm.adset_id || '',
             page_id: savedForm.page_id || '',
-            website_url: savedForm.website_url || '',
+            // Pre-fill URL from source ad (so Joel doesn't need to type it),
+            // falling back to any previously entered URL from this session.
+            website_url: savedForm.website_url || remixLinkUrl || '',
             lead_form_id: savedForm.lead_form_id || '',
             image_url: '',
             status: savedForm.status || 'PAUSED',
@@ -321,6 +330,16 @@ export default function AdRemix() {
             setAdSets(loadedAdSets);
             const pagesData = await pagesRes.json();
             setPages(Array.isArray(pagesData) ? pagesData : []);
+
+            // Auto-select the source adset when coming from Campaign Performance "Remix" flow.
+            // If the user already made a selection this session, keep it.
+            if (!savedForm.adset_id && remixFbAdsetId && loadedAdSets.length > 0) {
+                const byFbId = loadedAdSets.find(a => a.id === remixFbAdsetId || a.fb_adset_id === remixFbAdsetId);
+                if (byFbId) {
+                    setPushForm(f => ({ ...f, adset_id: byFbId.id }));
+                }
+            }
+
             // If the restored adset is a lead gen campaign and we have a page, fetch lead forms
             if (savedForm.adset_id && savedForm.page_id) {
                 const restoredAdset = loadedAdSets.find(a => a.id === savedForm.adset_id);
@@ -954,7 +973,7 @@ export default function AdRemix() {
                                                 const newId = e.target.value;
                                                 const newAdset = adSets.find(a => a.id === newId);
                                                 const newIsLeadGen = newAdset?.campaign?.objective === 'OUTCOME_LEADS';
-                                                setPushForm(f => ({ ...f, adset_id: newId, lead_form_id: '', website_url: '' }));
+                                                setPushForm(f => ({ ...f, adset_id: newId, lead_form_id: '', website_url: f.website_url || '' }));
                                                 if (newIsLeadGen && pushForm.page_id) fetchLeadForms(pushForm.page_id);
                                                 if (!newIsLeadGen) setLeadForms([]);
                                             }}

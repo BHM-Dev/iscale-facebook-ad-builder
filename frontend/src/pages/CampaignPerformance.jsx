@@ -140,8 +140,11 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adsBulk,
         body: creative.body || '',
         cta_label: creative.cta_label || '',
         image_url: creative.image_url || '',
+        link_url: creative.link_url || '',
         adsetName,
         campaign_id: campaignId,
+        fb_campaign_id: fbCampaignId || '',
+        fb_adset_id: fbAdsetId || '',
       });
     } catch (e) {
       showError(`Remix failed: ${e.message}`);
@@ -622,7 +625,7 @@ function RemixDrawer({ creative, brands, onClose, onLaunchWizard }) {
                       onClick={() => onLaunchWizard({ ...creative, headline: v.headline, body: v.body, niche })}
                       className="flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-purple-50 hover:bg-purple-100 text-purple-700 font-medium"
                     >
-                      <Sparkles size={10} /> Build Ad ↗
+                      <Sparkles size={10} /> Launch Wizard
                     </button>
                   </div>
                 </div>
@@ -1242,6 +1245,25 @@ export default function CampaignPerformance() {
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="text-xs text-gray-400">{adset.fb_adset_id}</span>
+                      {/* Adset-level Iterate → Batch Generate (uses top-spend ad if loaded) */}
+                      {adset.fb_adset_id && (
+                        <button
+                          onClick={() => {
+                            const topAd = adsetAds.sort((a, b) => (b.spend || 0) - (a.spend || 0))[0];
+                            const params = new URLSearchParams({
+                              adsetName: adset.name,
+                              campaignId: adset.fb_campaign_id || '',
+                              adsetId: adset.fb_adset_id || '',
+                            });
+                            if (topAd) { params.set('adId', topAd.ad_id); params.set('adName', topAd.ad_name || ''); }
+                            navigate(`/batch-generate?${params.toString()}`);
+                          }}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                          title="Generate new creative variants for this ad set"
+                        >
+                          <Repeat2 size={12} /> Iterate
+                        </button>
+                      )}
                       {/* Adset-level pause / resume button */}
                       {adset.fb_adset_id && (
                         <button
@@ -1322,10 +1344,8 @@ export default function CampaignPerformance() {
         brands={brands}
         onClose={() => setRemixDrawer(null)}
         onLaunchWizard={(data) => {
-          // Write to localStorage then open /ad-remix in a new tab so Joel
-          // keeps his place in the Campaign Performance table.
           localStorage.setItem('pendingRemixCreative', JSON.stringify(data));
-          window.open('/ad-remix', '_blank');
+          navigate('/ad-remix');
         }}
       />
     )}

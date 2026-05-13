@@ -161,6 +161,7 @@ export default function BatchGenerate() {
     return ['square'];
   });
   const [niche, setNiche] = useState('');
+  const [iterateLinkUrl, setIterateLinkUrl] = useState(''); // destination URL from source ad creative
 
   const toggleSize = useCallback((sizeId) => {
     setSelectedSizes(prev => {
@@ -238,6 +239,8 @@ export default function BatchGenerate() {
           setRefImagePreview(creative.image_url);
           setRefImageUrl(creative.image_url);
         }
+        // Pre-fill destination URL so Joel doesn't have to type it in the push modal
+        if (creative.link_url) setIterateLinkUrl(creative.link_url);
       })
       .catch(() => {});
   }, [iterateAdId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -875,6 +878,7 @@ export default function BatchGenerate() {
             preselectedCampaignId={iterateCampaignId}
             preselectedAdsetId={iterateAdsetId}
             preselectedAdsetName={iterateAdsetName}
+            preselectedWebsiteUrl={iterateLinkUrl}
           />
         );
       })()}
