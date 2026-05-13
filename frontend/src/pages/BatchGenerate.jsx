@@ -370,7 +370,7 @@ export default function BatchGenerate() {
     // generate a proper Flux scene description — it produces far better results than
     // a hand-built string, and it knows the niche context.
     const refPrompt = refImageUrl
-      ? `Maintain the exact visual composition, style, lighting, and aesthetic of the reference image.${niche ? ` Ad for ${niche}.` : ''} Keep the same background setting, subject positioning, and overall mood. The ad headline is: "${variant.headline}". High quality photorealistic advertising photography.`
+      ? `Maintain the exact visual composition, style, lighting, and aesthetic of the reference image.${niche ? ` Ad for ${niche}.` : ''} Keep the same background setting, subject positioning, and overall mood.${variant.headline ? ` The ad headline is: "${variant.headline}".` : ''} High quality photorealistic advertising photography.`
       : null;
 
     const payload = {
@@ -432,9 +432,15 @@ export default function BatchGenerate() {
   }, [niche, refImageUrl, overlayEnabled, overlayNicheLine, overlayOfferLine, overlayLogoUrl]);
 
   const handleGenerate = useCallback(async () => {
-    const valid = variants.filter(v => v.headline.trim());
+    // When overlay is on, headline is optional — the niche label + offer line carry the messaging.
+    // When overlay is off, headline is required as the primary ad copy.
+    const valid = overlayEnabled
+      ? variants.filter(v => v.headline.trim() || v.body.trim() || overlayNicheLine.trim() || overlayOfferLine.trim())
+      : variants.filter(v => v.headline.trim());
     if (valid.length === 0) {
-      showError('Add at least one headline before generating');
+      showError(overlayEnabled
+        ? 'Fill in at least one variant or add a Niche Label / Offer Line to the overlay'
+        : 'Add at least one headline before generating');
       return;
     }
 
@@ -478,7 +484,7 @@ export default function BatchGenerate() {
     } else {
       showSuccess(`Done — ${succeeded} saved, ${failed} failed`);
     }
-  }, [variants, selectedSizes, generateOne, showSuccess, showError]);
+  }, [variants, selectedSizes, generateOne, overlayEnabled, overlayNicheLine, overlayOfferLine, showSuccess, showError]);
 
   const handleRetry = useCallback(async (resultKey) => {
     const { variantId, sizeId } = parseResultKey(resultKey);
