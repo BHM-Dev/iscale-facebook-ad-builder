@@ -166,7 +166,7 @@ export default function BatchGenerate() {
   // Text overlay
   const [overlayEnabled, setOverlayEnabled] = useState(true);
   const [overlayNicheLine, setOverlayNicheLine] = useState('');
-  const [overlayOfferLine, setOverlayOfferLine] = useState('');
+  const [overlayOfferLine, setOverlayOfferLine] = useState('From $24.95/Month');
   // Logo: persisted in localStorage so Joel doesn't re-upload every session
   const [overlayLogoUrl, setOverlayLogoUrl] = useState(() => {
     try { return localStorage.getItem('overlayLogoUrl') || ''; } catch (_) { return ''; }
@@ -237,9 +237,11 @@ export default function BatchGenerate() {
     if (parsed) setNiche(parsed);
   }, [iterateAdsetName]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // overlayNicheLine is an optional override. When blank, the payload falls back
-  // to the niche field value — so Joel only needs to type the niche once.
-  // No sync effect needed; fallback is handled at payload-build time.
+  // Keep overlay niche label in sync with the Niche / Context field.
+  // If Joel wants a different label he can edit the Niche Label field directly.
+  useEffect(() => {
+    setOverlayNicheLine(niche);
+  }, [niche]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch ad creative data if arriving via the "Iterate" path (adId URL param)
   useEffect(() => {
@@ -377,7 +379,7 @@ export default function BatchGenerate() {
       ...(refImageUrl ? { productShots: [refImageUrl], useProductImage: true } : {}),
       ...(overlayEnabled ? {
         overlay_enabled: true,
-        overlay_niche_line: overlayNicheLine || niche,
+        overlay_niche_line: overlayNicheLine,
         overlay_offer_line: overlayOfferLine,
         overlay_cta: variant.cta,
         ...(overlayLogoUrl ? { overlay_logo_url: overlayLogoUrl } : {}),
@@ -743,12 +745,12 @@ export default function BatchGenerate() {
                   </label>
                   <input
                     type="text"
-                    placeholder={niche || 'e.g. Winery Business Insurance'}
+                    placeholder="e.g. Winery Business Insurance"
                     className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400"
                     value={overlayNicheLine}
                     onChange={e => setOverlayNicheLine(e.target.value)}
                   />
-                  <p className="text-xs text-gray-400 mt-1">Leave blank to use Niche / Context value. Type here to override.</p>
+                  <p className="text-xs text-gray-400 mt-1">Auto-fills from Niche / Context. Edit to override.</p>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Offer Line</label>
