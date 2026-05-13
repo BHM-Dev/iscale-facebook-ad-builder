@@ -126,12 +126,20 @@ export default function BatchGenerate() {
   const iterateCampaignId = searchParams.get('campaignId') || ''; // Meta campaign ID — pre-selects campaign in BatchPushModal
   const iterateAdsetId    = searchParams.get('adsetId')    || ''; // Meta adset ID — pre-selects "clone from" in BatchPushModal
 
-  // Parse the meaningful niche segment from a verbose ad set name like
-  // "Apr. 13 - Religious Organizations - Batch 1 - Mixed Avatar - Clean Start" → "Religious Organizations"
+  // Parse the meaningful niche segment from a verbose ad set name.
+  // Handles two naming patterns:
+  //   "Apr. 13 - Religious Organizations - Batch 1 - ..."  → "Religious Organizations"
+  //   "Jan. 5 - SCALE - Plumbing - ..."                    → "Plumbing"
+  // When parts[1] is a known status keyword, skip it and take parts[2].
+  const STATUS_KEYWORDS = ['SCALE', 'PAUSE', 'PAUSED', 'TEST', 'NICHE TESTING', 'TESTING', 'CUT', 'HOLD', 'WATCH', 'ACTIVE'];
   const extractNiche = (adsetName) => {
     if (!adsetName) return '';
     const parts = adsetName.split(' - ');
-    return parts.length >= 2 ? parts[1].trim() : adsetName;
+    if (parts.length < 2) return adsetName;
+    if (STATUS_KEYWORDS.includes(parts[1]?.trim().toUpperCase()) && parts.length >= 3) {
+      return parts[2].trim();
+    }
+    return parts[1].trim();
   };
 
   // Reference image
@@ -855,7 +863,7 @@ export default function BatchGenerate() {
               imageUrl: r.imageUrl,
               headline: variant?.headline || '',
               body: variant?.body || '',
-              cta: variant?.cta || 'LEARN_MORE',
+              cta: 'LEARN_MORE', // CTA_OPTIONS are display labels, not Meta enums — always use enum
               variantName: variant?.headline ? variant.headline.slice(0, 30) : `Variant ${variantId}`,
               sizeLabel: sizeConfig?.label || sizeId,
             };

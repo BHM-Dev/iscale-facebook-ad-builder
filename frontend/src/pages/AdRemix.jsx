@@ -727,45 +727,6 @@ export default function AdRemix() {
                     </div>
                 )}
 
-                {/* Step 6: Review & Generate */}
-                {currentStep === 6 && (
-                    <div>
-                        <h3 className="text-xl font-bold mb-4">Review & Generate</h3>
-                        <p className="text-gray-600 mb-6">Review your selections and generate the remixed ad concept</p>
-
-                        <div className="space-y-4 max-w-2xl">
-                            <div className="bg-gray-50 p-4 rounded-lg">
-                                <h4 className="font-bold text-gray-900 mb-2">Template</h4>
-                                <p className="text-gray-700">{wizardData.template?.name}</p>
-                            </div>
-
-                            <div className="bg-gray-50 p-4 rounded-lg">
-                                <h4 className="font-bold text-gray-900 mb-2">Brand</h4>
-                                <p className="text-gray-700">{wizardData.brand?.name}</p>
-                            </div>
-
-                            <div className="bg-gray-50 p-4 rounded-lg">
-                                <h4 className="font-bold text-gray-900 mb-2">Product</h4>
-                                <p className="text-gray-700">{wizardData.product?.name}</p>
-                            </div>
-
-                            <div className="bg-gray-50 p-4 rounded-lg">
-                                <h4 className="font-bold text-gray-900 mb-2">Audience</h4>
-                                <p className="text-gray-700">{wizardData.profile?.name}</p>
-                            </div>
-
-                            <div className="bg-gray-50 p-4 rounded-lg">
-                                <h4 className="font-bold text-gray-900 mb-2">Campaign</h4>
-                                <p className="text-gray-700"><strong>Offer:</strong> {wizardData.campaignDetails.offer}</p>
-                                {wizardData.campaignDetails.urgency && (
-                                    <p className="text-gray-700"><strong>Urgency:</strong> {wizardData.campaignDetails.urgency}</p>
-                                )}
-                                <p className="text-gray-700"><strong>Messaging:</strong> {wizardData.campaignDetails.messaging}</p>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
                 {/* Step 7: Results */}
                 {currentStep === 7 && adConcepts.length > 0 && (
                     <div>
@@ -857,7 +818,7 @@ export default function AdRemix() {
                     {/* Back button — available on all steps 2–7.
                         Sets skipAutoAdvance before decrementing so profile/product
                         auto-skip effects don't immediately re-trigger. */}
-                    {currentStep > 1 && currentStep < 7 && (
+                    {currentStep > 1 && currentStep <= 5 && (
                         <button
                             onClick={() => {
                                 skipAutoAdvance.current = true;

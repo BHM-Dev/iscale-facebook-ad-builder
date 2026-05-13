@@ -55,23 +55,28 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     const doneItems = items.filter(it => pushStatuses[it.key] === 'done');
     const errorItems = items.filter(it => pushStatuses[it.key] === 'error');
 
-    // Auto-load on mount; if a campaign is pre-selected, jump straight to loading its adsets
+    // Auto-load on mount
     useEffect(() => {
         const acctId = adAccountId;
         if (acctId) {
             loadPages(acctId);
-            loadCampaigns(acctId).then(loadedCampaigns => {
-                if (preselectedCampaignId && loadedCampaigns?.length) {
-                    const match = loadedCampaigns.find(c => c.id === preselectedCampaignId);
-                    if (match) {
-                        setSelectedCampaignId(match.id);
-                        setSelectedCampaign(match);
-                        loadAdSets(match.id);
-                    }
-                }
-            });
+            loadCampaigns(acctId);
         }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Once campaigns are available (either on mount or after user enters account ID),
+    // auto-select the preselected campaign and load its ad sets.
+    // This handles the race condition where fb_ad_account_id isn't in localStorage on first open.
+    useEffect(() => {
+        if (preselectedCampaignId && campaigns.length > 0 && !selectedCampaignId) {
+            const match = campaigns.find(c => c.id === preselectedCampaignId);
+            if (match) {
+                setSelectedCampaignId(match.id);
+                setSelectedCampaign(match);
+                loadAdSets(match.id);
+            }
+        }
+    }, [campaigns]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const loadCampaigns = async (acctId) => {
         if (!acctId) return [];
@@ -96,15 +101,24 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
             const data = await getAdSets(campaignId);
             const list = Array.isArray(data) ? data : [];
             setAdSets(list);
-            // When iterating from a known adset, pre-confirm clone source
-            if (preselectedAdsetId && list.find(a => a.id === preselectedAdsetId)) {
-                setNewAdset(prev => ({ ...prev, cloneFromId: preselectedAdsetId }));
-            } else if (preselectedAdsetId && list.length > 0) {
-                // preselectedAdsetId is the Meta fb_adset_id; adset list uses .id (DB id)
-                // try matching by fb_adset_id if available
-                const byFb = list.find(a => a.fb_adset_id === preselectedAdsetId);
-                if (byFb) setNewAdset(prev => ({ ...prev, cloneFromId: byFb.id }));
-                else setNewAdset(prev => ({ ...prev, cloneFromId: list[0].id }));
+            // When iterating from a known adset, pre-confirm clone source and pre-fill budget.
+            // Meta SDK returns adsets where a.id is the Meta adset ID, so match directly first.
+            // daily_budget from Meta is in cents — divide by 100 for dollars in the UI.
+            let sourceAdset = null;
+            if (preselectedAdsetId) {
+                sourceAdset = list.find(a => a.id === preselectedAdsetId)
+                    || list.find(a => a.fb_adset_id === preselectedAdsetId)
+                    || (list.length > 0 ? list[0] : null);
+            }
+            if (sourceAdset) {
+                const budgetDollars = sourceAdset.daily_budget
+                    ? Math.round(Number(sourceAdset.daily_budget) / 100)
+                    : '';
+                setNewAdset(prev => ({
+                    ...prev,
+                    cloneFromId: sourceAdset.id,
+                    dailyBudget: prev.dailyBudget || budgetDollars, // don't overwrite if Joel already typed one
+                }));
             }
         } catch {
             showError('Failed to load ad sets');
