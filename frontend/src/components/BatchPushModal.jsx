@@ -10,10 +10,13 @@ import { useToast } from '../context/ToastContext';
  * BatchPushModal — push multiple generated images to Meta in one operation.
  *
  * Props:
- *   items    {Array}    Each item: { key, imageUrl, headline, body, cta, variantName, sizeLabel }
- *   onClose  {function}
+ *   items                  {Array}   Each item: { key, imageUrl, headline, body, cta, variantName, sizeLabel }
+ *   onClose                {function}
+ *   preselectedCampaignId  {string}  Meta campaign ID — auto-selects campaign, skips dropdown
+ *   preselectedAdsetId     {string}  Meta adset ID — pre-fills "clone from" and defaults to "Create new"
+ *   preselectedAdsetName   {string}  Source adset name — used to suggest a new adset name
  */
-export default function BatchPushModal({ items, onClose }) {
+export default function BatchPushModal({ items, onClose, preselectedCampaignId = '', preselectedAdsetId = '', preselectedAdsetName = '' }) {
     const { showError } = useToast();
 
     // Shared form fields
@@ -28,10 +31,13 @@ export default function BatchPushModal({ items, onClose }) {
     const [sharedCta, setSharedCta] = useState('LEARN_MORE');
     const [loading, setLoading] = useState(false);
 
-    // Ad set mode
-    const [adsetMode, setAdsetMode] = useState('existing'); // 'existing' | 'new'
+    // Ad set mode — default to 'new' when iterating from a known campaign
+    const [adsetMode, setAdsetMode] = useState(preselectedCampaignId ? 'new' : 'existing');
     const [sharedAdsetId, setSharedAdsetId] = useState('');
-    const [newAdset, setNewAdset] = useState({ name: '', dailyBudget: '', cloneFromId: '' });
+    const suggestedAdsetName = preselectedAdsetName
+        ? `${preselectedAdsetName} - New Creative - ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+        : '';
+    const [newAdset, setNewAdset] = useState({ name: suggestedAdsetName, dailyBudget: '', cloneFromId: preselectedAdsetId });
 
     // Per-item copy overrides (editable inline)
     const [itemCopy, setItemCopy] = useState(() =>
@@ -49,22 +55,35 @@ export default function BatchPushModal({ items, onClose }) {
     const doneItems = items.filter(it => pushStatuses[it.key] === 'done');
     const errorItems = items.filter(it => pushStatuses[it.key] === 'error');
 
-    // Auto-load on mount if account already saved
+    // Auto-load on mount; if a campaign is pre-selected, jump straight to loading its adsets
     useEffect(() => {
-        if (adAccountId) {
-            loadCampaigns(adAccountId);
-            loadPages(adAccountId);
+        const acctId = adAccountId;
+        if (acctId) {
+            loadPages(acctId);
+            loadCampaigns(acctId).then(loadedCampaigns => {
+                if (preselectedCampaignId && loadedCampaigns?.length) {
+                    const match = loadedCampaigns.find(c => c.id === preselectedCampaignId);
+                    if (match) {
+                        setSelectedCampaignId(match.id);
+                        setSelectedCampaign(match);
+                        loadAdSets(match.id);
+                    }
+                }
+            });
         }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const loadCampaigns = async (acctId) => {
-        if (!acctId) return;
+        if (!acctId) return [];
         setLoading(true);
         try {
             const data = await getCampaigns(acctId);
-            setCampaigns(Array.isArray(data) ? data : []);
+            const list = Array.isArray(data) ? data : [];
+            setCampaigns(list);
+            return list;
         } catch {
             showError('Failed to load campaigns');
+            return [];
         } finally {
             setLoading(false);
         }
@@ -75,7 +94,18 @@ export default function BatchPushModal({ items, onClose }) {
         setLoading(true);
         try {
             const data = await getAdSets(campaignId);
-            setAdSets(Array.isArray(data) ? data : []);
+            const list = Array.isArray(data) ? data : [];
+            setAdSets(list);
+            // When iterating from a known adset, pre-confirm clone source
+            if (preselectedAdsetId && list.find(a => a.id === preselectedAdsetId)) {
+                setNewAdset(prev => ({ ...prev, cloneFromId: preselectedAdsetId }));
+            } else if (preselectedAdsetId && list.length > 0) {
+                // preselectedAdsetId is the Meta fb_adset_id; adset list uses .id (DB id)
+                // try matching by fb_adset_id if available
+                const byFb = list.find(a => a.fb_adset_id === preselectedAdsetId);
+                if (byFb) setNewAdset(prev => ({ ...prev, cloneFromId: byFb.id }));
+                else setNewAdset(prev => ({ ...prev, cloneFromId: list[0].id }));
+            }
         } catch {
             showError('Failed to load ad sets');
         } finally {
@@ -272,29 +302,38 @@ export default function BatchPushModal({ items, onClose }) {
                         />
                     </div>
 
-                    {/* Campaign */}
+                    {/* Campaign — locked when iterating from a known campaign */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Campaign *</label>
-                        <select
-                            value={selectedCampaignId}
-                            disabled={pushing || campaigns.length === 0}
-                            onChange={e => {
-                                const c = campaigns.find(x => x.id === e.target.value) || null;
-                                setSelectedCampaign(c);
-                                setSelectedCampaignId(e.target.value);
-                                setAdSets([]);
-                                setSharedAdsetId('');
-                                setAdsetMode('existing');
-                                setNewAdset({ name: '', dailyBudget: '', cloneFromId: '' });
-                                loadAdSets(e.target.value);
-                            }}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 disabled:bg-gray-50"
-                        >
-                            <option value="">
-                                {loading ? 'Loading...' : campaigns.length === 0 ? 'Enter Ad Account ID first' : 'Select a campaign...'}
-                            </option>
-                            {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        </select>
+                        {preselectedCampaignId && selectedCampaignId ? (
+                            <div className="flex items-center gap-2 px-3 py-2 bg-indigo-50 border border-indigo-200 rounded-lg text-sm">
+                                <span className="text-indigo-700 font-medium flex-1 truncate">
+                                    {campaigns.find(c => c.id === selectedCampaignId)?.name || selectedCampaignId}
+                                </span>
+                                <span className="text-xs text-indigo-400 shrink-0">From your campaign</span>
+                            </div>
+                        ) : (
+                            <select
+                                value={selectedCampaignId}
+                                disabled={pushing || campaigns.length === 0}
+                                onChange={e => {
+                                    const c = campaigns.find(x => x.id === e.target.value) || null;
+                                    setSelectedCampaign(c);
+                                    setSelectedCampaignId(e.target.value);
+                                    setAdSets([]);
+                                    setSharedAdsetId('');
+                                    setAdsetMode('existing');
+                                    setNewAdset({ name: suggestedAdsetName, dailyBudget: '', cloneFromId: '' });
+                                    loadAdSets(e.target.value);
+                                }}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 disabled:bg-gray-50"
+                            >
+                                <option value="">
+                                    {loading ? 'Loading...' : campaigns.length === 0 ? 'Enter Ad Account ID first' : 'Select a campaign...'}
+                                </option>
+                                {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                        )}
                     </div>
 
                     {/* Ad Set */}

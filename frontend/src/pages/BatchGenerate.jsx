@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Plus, X, Zap, CheckCircle, AlertCircle, Clock, Upload, Image, ArrowRight, RefreshCw, Repeat2, Rocket } from 'lucide-react';
+import { Plus, X, Zap, CheckCircle, AlertCircle, Clock, Upload, Image, ArrowRight, RefreshCw, Repeat2, Rocket, Loader } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useToast } from '../context/ToastContext';
 import { authFetch } from '../lib/facebookApi';
@@ -120,9 +120,11 @@ export default function BatchGenerate() {
   const [searchParams] = useSearchParams();
 
   // URL params from "Iterate →" button on Performance page
-  const iterateAdId      = searchParams.get('adId')     || '';
-  const iterateAdName    = searchParams.get('adName')   || '';
-  const iterateAdsetName = searchParams.get('adsetName') || '';
+  const iterateAdId       = searchParams.get('adId')       || '';
+  const iterateAdName     = searchParams.get('adName')     || '';
+  const iterateAdsetName  = searchParams.get('adsetName')  || '';
+  const iterateCampaignId = searchParams.get('campaignId') || ''; // Meta campaign ID — pre-selects campaign in BatchPushModal
+  const iterateAdsetId    = searchParams.get('adsetId')    || ''; // Meta adset ID — pre-selects "clone from" in BatchPushModal
 
   // Parse the meaningful niche segment from a verbose ad set name like
   // "Apr. 13 - Religious Organizations - Batch 1 - Mixed Avatar - Clean Start" → "Religious Organizations"
@@ -239,6 +241,7 @@ export default function BatchGenerate() {
   const [generatingProgress, setGeneratingProgress] = useState(0);
   const [generatingTotal, setGeneratingTotal] = useState(0);
   const [batchPushOpen, setBatchPushOpen] = useState(false);
+  const [generatingAIVariants, setGeneratingAIVariants] = useState(false);
 
   // ── Ref image upload ────────────────────────────────────────────────────────
   const uploadRefImage = useCallback(async (file) => {
@@ -402,6 +405,55 @@ export default function BatchGenerate() {
     if (!variant || !sizeConfig) return;
     await generateOne(variant, sizeConfig);
   }, [variants, generateOne]);
+
+  // Generate 3 AI copy variants from Variant 1 using the remix-variations endpoint
+  const generateAIVariants = useCallback(async () => {
+    const source = variants.find(v => v.headline.trim());
+    if (!source) { showError('Add a headline to Variant 1 first'); return; }
+    setGeneratingAIVariants(true);
+    try {
+      const res = await authFetch(`${API_URL}/copy-generation/remix-variations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_headline: source.headline,
+          source_body: source.body || '',
+          hook: source.headline,
+          niche: niche || extractNiche(iterateAdsetName),
+          vertical: 'commercial_insurance',
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      const aiVariants = Array.isArray(data?.variations) ? data.variations : Array.isArray(data) ? data : [];
+      if (!aiVariants.length) throw new Error('No variations returned');
+
+      // Fill or append up to 3 new variants after the source
+      setVariants(prev => {
+        const updated = [...prev];
+        aiVariants.slice(0, 3).forEach((v, i) => {
+          const slotIndex = updated.findIndex((u, idx) => idx > 0 && !u.headline.trim());
+          const newVariant = {
+            id: Date.now() + i,
+            headline: v.headline || '',
+            body: v.body || '',
+            cta: updated[0]?.cta || 'Get My Quote',
+          };
+          if (slotIndex !== -1) {
+            updated[slotIndex] = newVariant;
+          } else {
+            updated.push(newVariant);
+          }
+        });
+        return updated;
+      });
+      showSuccess(`${aiVariants.length} AI copy variants generated`);
+    } catch (e) {
+      showError(`AI variant generation failed: ${e.message}`);
+    } finally {
+      setGeneratingAIVariants(false);
+    }
+  }, [variants, niche, iterateAdsetName, showSuccess, showError]);
 
   const filledVariants = variants.filter(v => v.headline.trim());
   const totalToGenerate = filledVariants.length * selectedSizes.length;
@@ -586,13 +638,26 @@ export default function BatchGenerate() {
                 {variants.length} variant{variants.length !== 1 ? 's' : ''} · {selectedSizes.length} size{selectedSizes.length !== 1 ? 's' : ''} each
               </span>
             </h2>
-            <button
-              onClick={addVariant}
-              disabled={running}
-              className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-40 transition-colors"
-            >
-              <Plus size={13} /> Add Variant
-            </button>
+            <div className="flex items-center gap-3">
+              {/* AI variant generation — requires Variant 1 to have a headline */}
+              <button
+                onClick={generateAIVariants}
+                disabled={running || generatingAIVariants || !variants.find(v => v.headline.trim())}
+                className="flex items-center gap-1.5 text-xs font-medium text-purple-600 hover:text-purple-800 disabled:opacity-40 transition-colors"
+                title="Use AI to generate 3 copy variations from Variant 1"
+              >
+                {generatingAIVariants
+                  ? <><Loader size={12} className="animate-spin" /> Generating...</>
+                  : <><Zap size={12} /> AI Generate Variants</>}
+              </button>
+              <button
+                onClick={addVariant}
+                disabled={running}
+                className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-40 transition-colors"
+              >
+                <Plus size={13} /> Add Variant
+              </button>
+            </div>
           </div>
 
           <div className="space-y-3">
@@ -799,6 +864,9 @@ export default function BatchGenerate() {
           <BatchPushModal
             items={pushItems}
             onClose={() => setBatchPushOpen(false)}
+            preselectedCampaignId={iterateCampaignId}
+            preselectedAdsetId={iterateAdsetId}
+            preselectedAdsetName={iterateAdsetName}
           />
         );
       })()}

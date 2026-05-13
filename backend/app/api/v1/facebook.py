@@ -222,6 +222,7 @@ def read_saved_adsets(
             "fb_adset_id": a.fb_adset_id,
             "status": a.status,
             "campaign_id": a.campaign_id,
+            "fb_campaign_id": a.campaign.fb_campaign_id if a.campaign else None,
             "brand_id": a.brand_id,
             "brand_name": a.brand.name if a.brand else None,
         }

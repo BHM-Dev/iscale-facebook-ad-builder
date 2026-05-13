@@ -121,7 +121,7 @@ function RTStat({ label, value, highlight }) {
 
 // ── Creative breakdown table (ad-level) ──────────────────────────────────────
 // onRemix: ({ ad_id, ad_name, headline, body, cta_label, image_url, adsetName, campaign_id }) => void
-function AdsBreakdown({ fbAdsetId, adsetName, campaignId, adsBulk, adsLoading, rtAdsBulk, onAdStatusChange, onRemix }) {
+function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adsBulk, adsLoading, rtAdsBulk, onAdStatusChange, onRemix }) {
   const { showSuccess, showError } = useToast();
   const [pausingAds, setPausingAds] = useState(new Set());
   const [adStatuses, setAdStatuses] = useState({}); // local optimistic status overrides
@@ -319,7 +319,7 @@ function AdsBreakdown({ fbAdsetId, adsetName, campaignId, adsBulk, adsLoading, r
                     </button>
                     {/* Iterate → Batch Generate */}
                     <button
-                      onClick={() => navigate(`/batch-generate?adId=${encodeURIComponent(ad.ad_id)}&adName=${encodeURIComponent(ad.ad_name || ad.ad_id)}&adsetName=${encodeURIComponent(adsetName || '')}`)}
+                      onClick={() => navigate(`/batch-generate?adId=${encodeURIComponent(ad.ad_id)}&adName=${encodeURIComponent(ad.ad_name || ad.ad_id)}&adsetName=${encodeURIComponent(adsetName || '')}&campaignId=${encodeURIComponent(fbCampaignId || '')}&adsetId=${encodeURIComponent(fbAdsetId || '')}`)}
                       className="flex items-center gap-1 px-2 py-1 rounded text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors text-xs font-medium whitespace-nowrap"
                       title="Iterate more versions of this creative"
                     >
@@ -1292,6 +1292,7 @@ export default function CampaignPerformance() {
                   {isExpanded && (
                     <AdsBreakdown
                       fbAdsetId={adset.fb_adset_id}
+                      fbCampaignId={adset.fb_campaign_id || ''}
                       adsetName={adset.name}
                       campaignId={adset.campaign_id}
                       adsBulk={adsBulk}

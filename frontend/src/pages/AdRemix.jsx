@@ -157,7 +157,6 @@ export default function AdRemix() {
         { id: 3, name: 'Product', icon: Package },
         { id: 4, name: 'Profile', icon: Users },
         { id: 5, name: 'Campaign', icon: FileText },
-        { id: 6, name: 'Review', icon: Check }
     ];
 
     // Persist push modal form selections (except image_url which expires) across modal opens
@@ -871,15 +870,14 @@ export default function AdRemix() {
                         </button>
                     )}
 
-                    {/* Next button — steps 2–5 */}
-                    {currentStep >= 2 && currentStep <= 5 && (
+                    {/* Next button — steps 2–4 */}
+                    {currentStep >= 2 && currentStep <= 4 && (
                         <button
                             onClick={() => setCurrentStep(currentStep + 1)}
                             disabled={
                                 (currentStep === 2 && !wizardData.brand) ||
                                 (currentStep === 3 && !wizardData.product) ||
-                                (currentStep === 4 && !wizardData.profile) ||
-                                (currentStep === 5 && (!wizardData.campaignDetails.offer || !wizardData.campaignDetails.messaging))
+                                (currentStep === 4 && !wizardData.profile)
                             }
                             className="flex items-center gap-2 px-8 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium disabled:opacity-40 disabled:cursor-not-allowed"
                         >
@@ -888,7 +886,8 @@ export default function AdRemix() {
                         </button>
                     )}
 
-                    {currentStep === 6 && (
+                    {/* Step 5 — Generate Remix directly (removed Review step) */}
+                    {currentStep === 5 && (
                         <button
                             onClick={handleReconstruct}
                             disabled={!wizardData.brand || !wizardData.product || !wizardData.profile || !wizardData.campaignDetails.offer || !wizardData.campaignDetails.messaging}
