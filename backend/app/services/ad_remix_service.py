@@ -21,7 +21,7 @@ _anthropic_client = anthropic.Anthropic(api_key=_ANTHROPIC_API_KEY) if _ANTHROPI
 # Anthropic's vision API only accepts these media types
 _ALLOWED_MEDIA_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 
-_MODEL = "claude-3-7-sonnet-20250219"
+_MODEL = "claude-sonnet-4-5-20250929"
 
 
 async def deconstruct_template(template_image_url: str) -> AdBlueprint:

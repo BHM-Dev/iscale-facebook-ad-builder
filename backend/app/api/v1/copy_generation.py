@@ -17,7 +17,7 @@ COPY_GENERATION_PROMPT_ID = "copy_generation_system"
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 _anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 
-_MODEL = "claude-3-7-sonnet-20250219"
+_MODEL = "claude-sonnet-4-5-20250929"
 
 class CopyGenerationRequest(BaseModel):
     brand: Dict[str, Any]

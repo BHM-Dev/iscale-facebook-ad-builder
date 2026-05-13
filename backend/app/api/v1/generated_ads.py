@@ -127,7 +127,7 @@ from app.core.config import settings
 # ---------------------------------------------------------------------------
 _ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 _async_anthropic = _anthropic_sdk.AsyncAnthropic(api_key=_ANTHROPIC_KEY) if _ANTHROPIC_KEY else None
-_PROMPT_MODEL = "claude-3-5-haiku-20241022"
+_PROMPT_MODEL = "claude-haiku-4-5-20251001"
 
 # Negative prompt applied to all flux-2/pro-text-to-image calls.
 # Blocks the most common ad creative failure modes across financial/insurance verticals.
