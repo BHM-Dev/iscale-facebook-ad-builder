@@ -181,7 +181,18 @@ def apply_text_overlay(
     gap_after_niche    = int(H * 0.014)
     gap_after_headline = int(H * 0.015)
     gap_after_offer    = int(H * 0.022)
-    bottom_margin      = int(H * 0.08)
+
+    # Bottom of the text block targets ~75 % from the top of the image.
+    # This keeps text over the main scene content (not the ground/edge at the
+    # very bottom) while still sitting clearly in the lower-left, matching
+    # Joel's reference commercial-insurance ad style.
+    aspect = H / W
+    if aspect > 1.6:
+        block_bottom = int(H * 0.72)   # 9:16 story
+    elif aspect > 1.15:
+        block_bottom = int(H * 0.74)   # 4:5 portrait
+    else:
+        block_bottom = int(H * 0.75)   # 1:1 square
 
     total_h = 0
 
@@ -214,8 +225,8 @@ def apply_text_overlay(
         btn_h_pre = (t_bbox_pre[3] - t_bbox_pre[1]) + 2 * pad_y_pre
         total_h += btn_h_pre
 
-    # Anchor: bottom of block = H - bottom_margin
-    y = H - bottom_margin - total_h
+    # Set y so the bottom of the last element lands at block_bottom
+    y = block_bottom - total_h
 
     # ── Niche line (above headline) ───────────────────────────────────────────
     if niche_line:
