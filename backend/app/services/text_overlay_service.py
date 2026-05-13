@@ -150,13 +150,15 @@ def apply_text_overlay(
     offer_line: str = "",
     cta_text: str = "LEARN MORE",
     logo_url: str | None = None,
+    niche_line: str = "",
 ) -> bytes:
     """
     Composite text overlay onto `image_bytes` (PNG/JPEG).
 
     Layout (proportional — works for 1:1, 4:5, and 9:16):
       - Top-right:   logo badge (white rounded rect) if logo_url provided
-      - Lower-left:  headline (ExtraBoldItalic, large, white + black stroke)
+      - Lower-left:  niche_line (ExtraBold, medium, white + stroke) — e.g. "Winery Business Insurance"
+      - Below that:  headline (ExtraBoldItalic, large, white + black stroke)
       - Below that:  offer_line (Bold, medium, white + stroke)
       - Below that:  CTA orange pill button (ExtraBold, white caps)
 
@@ -171,14 +173,27 @@ def apply_text_overlay(
     LEFT = int(W * 0.055)
     text_max_w = int(W * 0.60)
 
-    # Vertical start — push lower for tall formats (story), higher for square
+    # Vertical start — push higher when niche_line is present so the extra line
+    # doesn't crowd the bottom.  Base positions calibrated for 1:1 / 4:5 / 9:16.
     aspect = H / W
     if aspect > 1.6:      # 9:16 story
-        y = int(H * 0.50)
+        y = int(H * 0.44) if niche_line else int(H * 0.50)
     elif aspect > 1.15:   # 4:5 portrait
-        y = int(H * 0.42)
+        y = int(H * 0.37) if niche_line else int(H * 0.42)
     else:                 # 1:1 square
-        y = int(H * 0.38)
+        y = int(H * 0.33) if niche_line else int(H * 0.38)
+
+    # ── Niche line (above headline) ───────────────────────────────────────────
+    if niche_line:
+        n_size = int(H * 0.042)
+        n_font = _load_font("Montserrat-ExtraBold.ttf", n_size)
+        n_stroke = max(2, n_size // 20)
+        draw.text(
+            (LEFT, y), niche_line, font=n_font, fill=_WHITE,
+            stroke_width=n_stroke, stroke_fill=_BLACK_STROKE,
+        )
+        n_bbox = draw.textbbox((LEFT, y), niche_line, font=n_font)
+        y = n_bbox[3] + int(H * 0.014)
 
     # ── Headline ──────────────────────────────────────────────────────────────
     if headline:

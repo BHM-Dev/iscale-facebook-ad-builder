@@ -28,6 +28,7 @@ class ImageGenerationRequest(BaseModel):
     niche: Optional[str] = None   # e.g. "Religious organizations", "Flower shops" — passed to AI prompt builder
     # Text overlay fields — baked into image after kie.ai generation
     overlay_enabled: bool = False
+    overlay_niche_line: Optional[str] = None   # e.g. "Winery Business Insurance" — rendered above headline
     overlay_offer_line: Optional[str] = None   # e.g. "From $24.95/Month"
     overlay_cta: Optional[str] = None          # Button text — uses ad_copy.cta if not set
     overlay_logo_url: Optional[str] = None     # Brand logo URL for top-right badge
@@ -485,6 +486,7 @@ async def generate_image(
                             offer_line=request.overlay_offer_line or '',
                             cta_text=_cta_text,
                             logo_url=request.overlay_logo_url,
+                            niche_line=request.overlay_niche_line or '',
                         )
 
                     # Save bytes to R2 or local uploads

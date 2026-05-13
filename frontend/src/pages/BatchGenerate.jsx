@@ -165,7 +165,9 @@ export default function BatchGenerate() {
 
   // Text overlay
   const [overlayEnabled, setOverlayEnabled] = useState(true);
-  const [overlayOfferLine, setOverlayOfferLine] = useState('From $24.95/Month');
+  const [overlayNicheLine, setOverlayNicheLine] = useState('');
+  const [overlayOfferLine, setOverlayOfferLine] = useState('');
+  const [overlayLogoUrl, setOverlayLogoUrl] = useState('');
 
   const toggleSize = useCallback((sizeId) => {
     setSelectedSizes(prev => {
@@ -226,6 +228,15 @@ export default function BatchGenerate() {
     const parsed = extractNiche(iterateAdsetName);
     if (parsed) setNiche(parsed);
   }, [iterateAdsetName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep overlay niche line in sync with the niche field (one source of truth).
+  // Only syncs while the overlay niche line hasn't been manually overridden.
+  const overlayNicheManualRef = useRef(false);
+  useEffect(() => {
+    if (!overlayNicheManualRef.current) {
+      setOverlayNicheLine(niche);
+    }
+  }, [niche]);
 
   // Fetch ad creative data if arriving via the "Iterate" path (adId URL param)
   useEffect(() => {
@@ -333,8 +344,10 @@ export default function BatchGenerate() {
       ...(refImageUrl ? { productShots: [refImageUrl], useProductImage: true } : {}),
       ...(overlayEnabled ? {
         overlay_enabled: true,
+        overlay_niche_line: overlayNicheLine,
         overlay_offer_line: overlayOfferLine,
         overlay_cta: variant.cta,
+        ...(overlayLogoUrl ? { overlay_logo_url: overlayLogoUrl } : {}),
       } : {}),
     };
 
@@ -378,7 +391,7 @@ export default function BatchGenerate() {
       setResults(prev => ({ ...prev, [key]: { status: 'failed', imageUrl: null, error: msg } }));
       return 'failed';
     }
-  }, [niche, refImageUrl, overlayEnabled, overlayOfferLine]);
+  }, [niche, refImageUrl, overlayEnabled, overlayNicheLine, overlayOfferLine, overlayLogoUrl]);
 
   const handleGenerate = useCallback(async () => {
     const valid = variants.filter(v => v.headline.trim());
@@ -684,6 +697,23 @@ export default function BatchGenerate() {
             {overlayEnabled && (
               <div className="p-4 space-y-3">
                 <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Niche Label
+                    <span className="ml-1 font-normal text-gray-400">optional</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Winery Business Insurance"
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    value={overlayNicheLine}
+                    onChange={e => {
+                      overlayNicheManualRef.current = true;
+                      setOverlayNicheLine(e.target.value);
+                    }}
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Appears above the headline. Auto-fills from Niche field — edit to override.</p>
+                </div>
+                <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Offer Line</label>
                   <input
                     type="text"
@@ -694,9 +724,23 @@ export default function BatchGenerate() {
                   />
                   <p className="text-xs text-gray-400 mt-1">Appears below the headline. Leave blank to omit.</p>
                 </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Brand Logo URL
+                    <span className="ml-1 font-normal text-gray-400">optional</span>
+                  </label>
+                  <input
+                    type="url"
+                    placeholder="https://example.com/logo.png"
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    value={overlayLogoUrl}
+                    onChange={e => setOverlayLogoUrl(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Placed in a white badge top-right. PNG with transparency works best.</p>
+                </div>
                 <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
                   <p className="text-xs text-amber-700">
-                    <span className="font-semibold">What gets baked in:</span> Variant headline (ExtraBold Italic, white + stroke), offer line, and an orange pill button using each variant's CTA text.
+                    <span className="font-semibold">Image layout (top to bottom):</span> Niche label → Headline → Offer line → CTA button. Logo badge top-right if URL provided.
                   </p>
                 </div>
               </div>
