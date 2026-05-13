@@ -245,6 +245,17 @@ export default function BatchGenerate() {
       .catch(() => {});
   }, [iterateAdId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Auto-trigger AI variant generation once when arriving via Iterate with a pre-filled headline.
+  // The ref prevents re-firing after the AI variants themselves fill in more headlines.
+  const autoTriggeredVariants = useRef(false);
+  useEffect(() => {
+    if (!iterateAdId) return;
+    if (autoTriggeredVariants.current) return;
+    if (!variants[0]?.headline.trim()) return;
+    autoTriggeredVariants.current = true;
+    generateAIVariants();
+  }, [variants, iterateAdId, generateAIVariants]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Generation state
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState({});  // `${variantId}-${sizeId}` → { status, imageUrl, error }
