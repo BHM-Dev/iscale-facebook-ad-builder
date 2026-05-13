@@ -173,60 +173,19 @@ def apply_text_overlay(
     LEFT = int(W * 0.055)
     text_max_w = int(W * 0.60)
 
-    # ── Pre-load fonts & measure total block height for bottom-anchoring ───────
-    # We measure every element that will render, sum the heights, then set
-    # y so the bottom of the CTA button lands ~8 % above the image bottom.
-    # This produces the bottom-left placement matching Joel's reference ads.
-
     gap_after_niche    = int(H * 0.014)
     gap_after_headline = int(H * 0.015)
     gap_after_offer    = int(H * 0.022)
 
-    # Bottom of the text block targets ~75 % from the top of the image.
-    # This keeps text over the main scene content (not the ground/edge at the
-    # very bottom) while still sitting clearly in the lower-left, matching
-    # Joel's reference commercial-insurance ad style.
+    # Fixed starting y — lower half of image, over scene content.
+    # Matches the position in Joel's reference commercial-insurance ads.
     aspect = H / W
-    if aspect > 1.6:
-        block_bottom = int(H * 0.72)   # 9:16 story
-    elif aspect > 1.15:
-        block_bottom = int(H * 0.74)   # 4:5 portrait
-    else:
-        block_bottom = int(H * 0.75)   # 1:1 square
-
-    total_h = 0
-
-    if niche_line:
-        n_size = int(H * 0.042)
-        n_font = _load_font("Montserrat-ExtraBold.ttf", n_size)
-        n_bbox = draw.textbbox((0, 0), niche_line, font=n_font)
-        total_h += (n_bbox[3] - n_bbox[1]) + gap_after_niche
-
-    if headline:
-        h_max = int(H * 0.115)
-        h_min = int(H * 0.060)
-        h_font_pre, h_lines_pre = _fit_headline_font(
-            draw, headline, text_max_w, h_max, h_min, "Montserrat-ExtraBoldItalic.ttf"
-        )
-        line_h_pre = int(h_font_pre.size * 1.12)
-        total_h += line_h_pre * len(h_lines_pre) + gap_after_headline
-
-    if offer_line:
-        o_size = int(H * 0.054)
-        o_font_pre = _load_font("Montserrat-Bold.ttf", o_size)
-        o_bbox = draw.textbbox((0, 0), offer_line, font=o_font_pre)
-        total_h += (o_bbox[3] - o_bbox[1]) + gap_after_offer
-
-    if cta_text:
-        c_size = int(H * 0.043)
-        c_font_pre = _load_font("Montserrat-ExtraBold.ttf", c_size)
-        pad_y_pre = int(H * 0.018)
-        t_bbox_pre = draw.textbbox((0, 0), cta_text.upper(), font=c_font_pre)
-        btn_h_pre = (t_bbox_pre[3] - t_bbox_pre[1]) + 2 * pad_y_pre
-        total_h += btn_h_pre
-
-    # Set y so the bottom of the last element lands at block_bottom
-    y = block_bottom - total_h
+    if aspect > 1.6:      # 9:16 story
+        y = int(H * 0.55)
+    elif aspect > 1.15:   # 4:5 portrait
+        y = int(H * 0.52)
+    else:                 # 1:1 square
+        y = int(H * 0.50)
 
     # ── Niche line (above headline) ───────────────────────────────────────────
     if niche_line:
@@ -242,10 +201,14 @@ def apply_text_overlay(
 
     # ── Headline ──────────────────────────────────────────────────────────────
     if headline:
-        # Reuse pre-computed font + lines from measurement pass
-        h_font, h_lines = h_font_pre, h_lines_pre
-        line_h = line_h_pre
+        h_max_size = int(H * 0.082)
+        h_min_size = int(H * 0.038)
+        h_font, h_lines = _fit_headline_font(
+            draw, headline, text_max_w, h_max_size, h_min_size,
+            "Montserrat-ExtraBoldItalic.ttf",
+        )
         stroke_w = max(2, h_font.size // 16)
+        line_h = int(h_font.size * 1.18)
 
         for line in h_lines:
             draw.text(
@@ -257,8 +220,9 @@ def apply_text_overlay(
 
     # ── Offer line ────────────────────────────────────────────────────────────
     if offer_line:
-        o_font = o_font_pre
-        o_stroke = max(2, int(H * 0.054) // 20)
+        o_size = int(H * 0.054)
+        o_font = _load_font("Montserrat-Bold.ttf", o_size)
+        o_stroke = max(2, o_size // 20)
         draw.text(
             (LEFT, y), offer_line, font=o_font, fill=_WHITE,
             stroke_width=o_stroke, stroke_fill=_BLACK_STROKE,
@@ -269,7 +233,8 @@ def apply_text_overlay(
     # ── CTA button ────────────────────────────────────────────────────────────
     if cta_text:
         label = cta_text.upper()
-        c_font = c_font_pre
+        c_size = int(H * 0.046)
+        c_font = _load_font("Montserrat-ExtraBold.ttf", c_size)
         pad_x = int(W * 0.048)
         pad_y = int(H * 0.018)
         t_bbox = draw.textbbox((0, 0), label, font=c_font)
