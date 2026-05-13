@@ -163,6 +163,10 @@ export default function BatchGenerate() {
   const [niche, setNiche] = useState('');
   const [iterateLinkUrl, setIterateLinkUrl] = useState(''); // destination URL from source ad creative
 
+  // Text overlay
+  const [overlayEnabled, setOverlayEnabled] = useState(true);
+  const [overlayOfferLine, setOverlayOfferLine] = useState('From $24.95/Month');
+
   const toggleSize = useCallback((sizeId) => {
     setSelectedSizes(prev => {
       if (prev.includes(sizeId)) {
@@ -327,6 +331,11 @@ export default function BatchGenerate() {
       imageSizes: [{ width: sizeConfig.width, height: sizeConfig.height, name: sizeConfig.label }],
       copy: { headline: variant.headline, body: variant.body, cta: variant.cta },
       ...(refImageUrl ? { productShots: [refImageUrl], useProductImage: true } : {}),
+      ...(overlayEnabled ? {
+        overlay_enabled: true,
+        overlay_offer_line: overlayOfferLine,
+        overlay_cta: variant.cta,
+      } : {}),
     };
 
     try {
@@ -369,7 +378,7 @@ export default function BatchGenerate() {
       setResults(prev => ({ ...prev, [key]: { status: 'failed', imageUrl: null, error: msg } }));
       return 'failed';
     }
-  }, [niche, refImageUrl]);
+  }, [niche, refImageUrl, overlayEnabled, overlayOfferLine]);
 
   const handleGenerate = useCallback(async () => {
     const valid = variants.filter(v => v.headline.trim());
@@ -648,6 +657,50 @@ export default function BatchGenerate() {
               />
               <p className="text-xs text-gray-400 mt-1.5">Gives the AI context for the image style and subject matter</p>
             </div>
+          </div>
+
+          {/* Text overlay */}
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-800">Text Overlay</h2>
+                <p className="text-xs text-gray-400 mt-0.5">Bakes headline + offer + CTA button into the image</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOverlayEnabled(v => !v)}
+                className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                  overlayEnabled ? 'bg-indigo-600' : 'bg-gray-200'
+                }`}
+                aria-pressed={overlayEnabled}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    overlayEnabled ? 'translate-x-4' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+            {overlayEnabled && (
+              <div className="p-4 space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Offer Line</label>
+                  <input
+                    type="text"
+                    placeholder="From $24.95/Month"
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    value={overlayOfferLine}
+                    onChange={e => setOverlayOfferLine(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Appears below the headline. Leave blank to omit.</p>
+                </div>
+                <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+                  <p className="text-xs text-amber-700">
+                    <span className="font-semibold">What gets baked in:</span> Variant headline (ExtraBold Italic, white + stroke), offer line, and an orange pill button using each variant's CTA text.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

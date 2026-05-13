@@ -26,6 +26,11 @@ class ImageGenerationRequest(BaseModel):
     customPrompt: Optional[str] = None
     useProductImage: bool = False  # Use uploaded product image as base
     niche: Optional[str] = None   # e.g. "Religious organizations", "Flower shops" — passed to AI prompt builder
+    # Text overlay fields — baked into image after kie.ai generation
+    overlay_enabled: bool = False
+    overlay_offer_line: Optional[str] = None   # e.g. "From $24.95/Month"
+    overlay_cta: Optional[str] = None          # Button text — uses ad_copy.cta if not set
+    overlay_logo_url: Optional[str] = None     # Brand logo URL for top-right badge
 
 def build_comprehensive_prompt(request: ImageGenerationRequest) -> str:
     """
@@ -461,7 +466,39 @@ async def generate_image(
                     external_url = await _kie_generate_image(prompt, width, height, input_image, None)
 
                     print(f"Downloading image from kie.ai: {external_url[:50]}...")
-                    image_url = await download_and_save_image(external_url, prefix="generated")
+
+                    # Download image bytes so we can optionally apply text overlay before saving
+                    async with httpx.AsyncClient() as _dl_client:
+                        _dl_resp = await _dl_client.get(external_url, timeout=30.0)
+                        _dl_resp.raise_for_status()
+                        image_bytes = _dl_resp.content
+
+                    # Apply Pillow text overlay if requested
+                    if request.overlay_enabled:
+                        from app.services.text_overlay_service import apply_text_overlay
+                        _headline  = request.ad_copy.get('headline', '') if request.ad_copy else ''
+                        _cta_text  = request.overlay_cta or (request.ad_copy.get('cta', 'LEARN MORE') if request.ad_copy else 'LEARN MORE')
+                        print(f"Applying text overlay — headline={_headline!r}, offer={request.overlay_offer_line!r}, cta={_cta_text!r}")
+                        image_bytes = apply_text_overlay(
+                            image_bytes=image_bytes,
+                            headline=_headline,
+                            offer_line=request.overlay_offer_line or '',
+                            cta_text=_cta_text,
+                            logo_url=request.overlay_logo_url,
+                        )
+
+                    # Save bytes to R2 or local uploads
+                    _unique_id = str(uuid.uuid4())
+                    _filename  = f"generated_{_unique_id}.png"
+                    if settings.r2_enabled:
+                        from app.api.v1.uploads import upload_to_r2
+                        image_url = await upload_to_r2(image_bytes, _filename, "image/png")
+                    else:
+                        _file_path = UPLOAD_DIR / _filename
+                        with open(_file_path, "wb") as _fh:
+                            _fh.write(image_bytes)
+                        image_url = f"/uploads/{_filename}"
+
                     print(f"Saved as: {image_url}")
 
                 except Exception as e:
