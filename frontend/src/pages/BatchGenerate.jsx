@@ -167,7 +167,15 @@ export default function BatchGenerate() {
   const [overlayEnabled, setOverlayEnabled] = useState(true);
   const [overlayNicheLine, setOverlayNicheLine] = useState('');
   const [overlayOfferLine, setOverlayOfferLine] = useState('');
-  const [overlayLogoUrl, setOverlayLogoUrl] = useState('');
+  // Logo: persisted in localStorage so Joel doesn't re-upload every session
+  const [overlayLogoUrl, setOverlayLogoUrl] = useState(() => {
+    try { return localStorage.getItem('overlayLogoUrl') || ''; } catch (_) { return ''; }
+  });
+  const [overlayLogoPreview, setOverlayLogoPreview] = useState(() => {
+    try { return localStorage.getItem('overlayLogoUrl') || ''; } catch (_) { return ''; }
+  });
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const logoFileInputRef = useRef(null);
 
   const toggleSize = useCallback((sizeId) => {
     setSelectedSizes(prev => {
@@ -314,6 +322,36 @@ export default function BatchGenerate() {
     const file = e.dataTransfer.files?.[0];
     if (file) uploadRefImage(file);
   }, [uploadRefImage]);
+
+  // ── Logo upload (overlay) ───────────────────────────────────────────────────
+  const uploadLogoImage = useCallback(async (file) => {
+    if (!file || !file.type.startsWith('image/')) {
+      showError('Please upload an image file (PNG with transparency works best)');
+      return;
+    }
+    setUploadingLogo(true);
+    setOverlayLogoPreview(URL.createObjectURL(file));
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await authFetch(`${API_URL}/uploads/`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!res.ok) throw new Error('Upload failed');
+      const data = await res.json();
+      const url = data.url || data.file_url || data.path;
+      const absUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
+      setOverlayLogoUrl(absUrl);
+      setOverlayLogoPreview(absUrl);
+      try { localStorage.setItem('overlayLogoUrl', absUrl); } catch (_) {}
+    } catch (e) {
+      showError(`Logo upload failed: ${e.message}`);
+      setOverlayLogoPreview('');
+    } finally {
+      setUploadingLogo(false);
+    }
+  }, [showError]);
 
   // ── Variant management ──────────────────────────────────────────────────────
   const addVariant = () => setVariants(prev => [...prev, newVariant(prev.length)]);
@@ -726,21 +764,61 @@ export default function BatchGenerate() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">
-                    Brand Logo URL
+                    Brand Logo
                     <span className="ml-1 font-normal text-gray-400">optional</span>
                   </label>
                   <input
-                    type="url"
-                    placeholder="https://example.com/logo.png"
-                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                    value={overlayLogoUrl}
-                    onChange={e => setOverlayLogoUrl(e.target.value)}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    ref={logoFileInputRef}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) uploadLogoImage(f); e.target.value = ''; }}
                   />
-                  <p className="text-xs text-gray-400 mt-1">Placed in a white badge top-right. PNG with transparency works best.</p>
+                  {overlayLogoPreview ? (
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={overlayLogoPreview}
+                        alt="Logo preview"
+                        className="h-10 w-auto rounded border border-gray-200 bg-gray-50 object-contain p-1"
+                      />
+                      <div className="flex flex-col gap-1">
+                        <button
+                          type="button"
+                          onClick={() => logoFileInputRef.current?.click()}
+                          disabled={uploadingLogo}
+                          className="text-xs text-indigo-600 hover:text-indigo-800 disabled:opacity-40"
+                        >
+                          {uploadingLogo ? 'Uploading…' : 'Replace'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOverlayLogoUrl('');
+                            setOverlayLogoPreview('');
+                            try { localStorage.removeItem('overlayLogoUrl'); } catch (_) {}
+                          }}
+                          className="text-xs text-red-400 hover:text-red-600"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => logoFileInputRef.current?.click()}
+                      disabled={uploadingLogo}
+                      className="flex items-center gap-2 text-sm border border-dashed border-gray-300 rounded-lg px-3 py-2 w-full text-gray-500 hover:border-indigo-400 hover:text-indigo-600 disabled:opacity-40 transition-colors"
+                    >
+                      <Upload size={13} />
+                      {uploadingLogo ? 'Uploading…' : 'Upload logo (PNG recommended)'}
+                    </button>
+                  )}
+                  <p className="text-xs text-gray-400 mt-1">Placed in a white badge top-right. Saved for future sessions.</p>
                 </div>
                 <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
                   <p className="text-xs text-amber-700">
-                    <span className="font-semibold">Image layout (top to bottom):</span> Niche label → Headline → Offer line → CTA button. Logo badge top-right if URL provided.
+                    <span className="font-semibold">Layout (top to bottom):</span> Niche label → Headline → Offer line → CTA button. Any empty field is skipped — no gap left behind. Logo badge top-right if uploaded.
                   </p>
                 </div>
               </div>
