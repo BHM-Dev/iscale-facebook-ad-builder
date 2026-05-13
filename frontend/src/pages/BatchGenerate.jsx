@@ -237,14 +237,9 @@ export default function BatchGenerate() {
     if (parsed) setNiche(parsed);
   }, [iterateAdsetName]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Keep overlay niche line in sync with the niche field (one source of truth).
-  // Only syncs while the overlay niche line hasn't been manually overridden.
-  const overlayNicheManualRef = useRef(false);
-  useEffect(() => {
-    if (!overlayNicheManualRef.current) {
-      setOverlayNicheLine(niche);
-    }
-  }, [niche]);
+  // overlayNicheLine is an optional override. When blank, the payload falls back
+  // to the niche field value — so Joel only needs to type the niche once.
+  // No sync effect needed; fallback is handled at payload-build time.
 
   // Fetch ad creative data if arriving via the "Iterate" path (adId URL param)
   useEffect(() => {
@@ -382,7 +377,7 @@ export default function BatchGenerate() {
       ...(refImageUrl ? { productShots: [refImageUrl], useProductImage: true } : {}),
       ...(overlayEnabled ? {
         overlay_enabled: true,
-        overlay_niche_line: overlayNicheLine,
+        overlay_niche_line: overlayNicheLine || niche,
         overlay_offer_line: overlayOfferLine,
         overlay_cta: variant.cta,
         ...(overlayLogoUrl ? { overlay_logo_url: overlayLogoUrl } : {}),
@@ -543,7 +538,8 @@ export default function BatchGenerate() {
     }
   }, [variants, niche, iterateAdsetName, showSuccess, showError]);
 
-  const filledVariants = variants.filter(v => v.headline.trim());
+  const overlayHasContent = overlayEnabled && (overlayNicheLine.trim() || niche.trim() || overlayOfferLine.trim());
+  const filledVariants = variants.filter(v => v.headline.trim() || v.body.trim() || overlayHasContent);
   const totalToGenerate = filledVariants.length * selectedSizes.length;
   const hasResults = Object.keys(results).length > 0;
 
@@ -747,15 +743,12 @@ export default function BatchGenerate() {
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g. Winery Business Insurance"
+                    placeholder={niche || 'e.g. Winery Business Insurance'}
                     className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400"
                     value={overlayNicheLine}
-                    onChange={e => {
-                      overlayNicheManualRef.current = true;
-                      setOverlayNicheLine(e.target.value);
-                    }}
+                    onChange={e => setOverlayNicheLine(e.target.value)}
                   />
-                  <p className="text-xs text-gray-400 mt-1">Appears above the headline. Auto-fills from Niche field — edit to override.</p>
+                  <p className="text-xs text-gray-400 mt-1">Leave blank to use Niche / Context value. Type here to override.</p>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Offer Line</label>
