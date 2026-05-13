@@ -123,6 +123,7 @@ function RTStat({ label, value, highlight }) {
 // onRemix: ({ ad_id, ad_name, headline, body, cta_label, image_url, adsetName, campaign_id }) => void
 function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adsBulk, adsLoading, rtAdsBulk, onAdStatusChange, onRemix }) {
   const { showSuccess, showError } = useToast();
+  const navigate = useNavigate();
   const [pausingAds, setPausingAds] = useState(new Set());
   const [adStatuses, setAdStatuses] = useState({}); // local optimistic status overrides
   const [remixingAd, setRemixingAd] = useState(null);
