@@ -529,7 +529,8 @@ async def generate_image(
                                     _ref_path = UPLOAD_DIR / _ref_name
                                     with open(_ref_path, "wb") as _rfh:
                                         _rfh.write(_ref_bytes)
-                                    input_image = f"/uploads/{_ref_name}"
+                                    # kie.ai needs a full https:// URL — relative paths don't work
+                                    input_image = f"{settings.PUBLIC_API_URL}/uploads/{_ref_name}"
                                 print(f"Reference image re-hosted at {_rw}×{_rh}: {input_image}")
                         except Exception as _ref_err:
                             print(f"WARNING: could not re-host reference image ({_ref_err}) — proceeding text-to-image")

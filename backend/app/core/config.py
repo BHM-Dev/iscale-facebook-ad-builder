@@ -57,6 +57,9 @@ class Settings:
     R2_SECRET_ACCESS_KEY: str = os.getenv("R2_SECRET_ACCESS_KEY", "")
     R2_BUCKET_NAME: str = os.getenv("R2_BUCKET_NAME", "")
     R2_PUBLIC_URL: str = os.getenv("R2_PUBLIC_URL", "")
+    # Public-facing base URL of this API server — used to build absolute URLs for
+    # local uploads when R2 is disabled. Must NOT have a trailing slash.
+    PUBLIC_API_URL: str = os.getenv("PUBLIC_API_URL", "https://adbuilder-api.velocitymx.io")
 
     @property
     def r2_enabled(self) -> bool:

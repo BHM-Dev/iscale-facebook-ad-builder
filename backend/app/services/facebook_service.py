@@ -1229,7 +1229,10 @@ class FacebookService:
             ad = Ad(fbid=fb_ad_id)
             ad_data = ad.api_get(fields=[
                 Ad.Field.name,
-                'creative{title,body,call_to_action,image_url,thumbnail_url,object_story_spec,asset_feed_spec}',
+                'creative{title,body,call_to_action,image_url,thumbnail_url,'
+                'object_story_spec{link_data{picture,message,name,link},'
+                'video_data{image_url,message,title}},'
+                'asset_feed_spec}',
             ])
 
             creative = ad_data.get('creative', {})
