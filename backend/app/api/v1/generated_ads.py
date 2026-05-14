@@ -268,39 +268,81 @@ KIE_AI_BASE_URL = "https://api.kie.ai/api/v1"
 
 @router.get("/test-kie")
 async def test_kie_connection():
-    """Diagnostic: calls kie.ai createTask with minimal payloads and returns raw responses.
-    No auth required. Hit GET /api/v1/generated-ads/test-kie to debug kie.ai issues."""
+    """Diagnostic: verifies kie.ai API contract by calling createTask with known payloads.
+    No auth required. Returns HTTP responses so we can confirm which model/schema combos
+    are accepted WITHOUT waiting for generation to complete (just createTask, no polling).
+
+    Tests run:
+      1. flux-kontext-pro, no inputImage           → should return code 422 (expected failure)
+      2. flux-kontext-pro, 512×512 white PNG URL   → should return code 200 + taskId (confirms fix works)
+    """
     api_key = settings.KIE_AI_API_KEY
     if not api_key:
         return {"error": "KIE_AI_API_KEY not configured on this server"}
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    # Build a tiny white placeholder image for the inputImage test
-    import io as _tio
-    from PIL import Image as _tPIL
-    _tph = _tPIL.new("RGB", (64, 64), color=(240, 240, 240))
-    _tbuf = _tio.BytesIO()
-    _tph.save(_tbuf, format="PNG")
-    import base64 as _b64
-    _tph_b64 = "data:image/png;base64," + _b64.b64encode(_tbuf.getvalue()).decode()
+
+    # Upload a 512×512 white placeholder to get a real public URL for test 2
+    placeholder_url = None
+    placeholder_error = None
+    try:
+        from PIL import Image as _tPIL
+        import io as _tio
+        _tph = _tPIL.new("RGB", (512, 512), color=(255, 255, 255))
+        _tbuf = _tio.BytesIO()
+        _tph.save(_tbuf, format="PNG")
+        _tph_bytes = _tbuf.getvalue()
+        _tph_name = f"test_placeholder_{str(uuid.uuid4())}.png"
+        if settings.r2_enabled:
+            from app.api.v1.uploads import upload_to_r2
+            placeholder_url = await upload_to_r2(_tph_bytes, _tph_name, "image/png")
+        else:
+            _tph_path = UPLOAD_DIR / _tph_name
+            with open(_tph_path, "wb") as _tph_fh:
+                _tph_fh.write(_tph_bytes)
+            placeholder_url = f"{settings.PUBLIC_API_URL}/uploads/{_tph_name}"
+    except Exception as _tph_err:
+        placeholder_error = str(_tph_err)
 
     tests = [
-        ("flux-kontext-pro no image (should fail)", {
-            "model": "flux-kontext-pro", "prompt": "test", "aspectRatio": "1:1", "outputFormat": "png",
+        ("1. flux-kontext-pro NO inputImage (expect code 422)", {
+            "model": "flux-kontext-pro",
+            "prompt": "A confident small business owner standing in front of their shop, natural lighting",
+            "aspectRatio": "1:1",
+            "outputFormat": "png",
         }),
-        ("flux-kontext-pro with placeholder URL N/A — skipped", None),  # placeholder needs real URL
     ]
-    # Only include tests with actual payloads
-    tests = [(label, p) for label, p in tests if p is not None]
+    if placeholder_url:
+        tests.append(("2. flux-kontext-pro WITH 512×512 white placeholder (expect code 200 + taskId)", {
+            "model": "flux-kontext-pro",
+            "prompt": "A confident small business owner standing in front of their shop, natural lighting",
+            "aspectRatio": "1:1",
+            "outputFormat": "png",
+            "inputImage": placeholder_url,
+        }))
+    else:
+        tests.append((f"2. SKIPPED — placeholder upload failed: {placeholder_error}", None))
+
     results = []
     async with httpx.AsyncClient(timeout=15.0) as client:
         for label, payload in tests:
+            if payload is None:
+                results.append({"label": label, "skipped": True})
+                continue
             try:
                 r = await client.post(f"{KIE_AI_BASE_URL}/jobs/createTask", headers=headers, json=payload)
                 results.append({"label": label, "http": r.status_code, "body": r.json()})
             except Exception as exc:
                 results.append({"label": label, "error": str(exc)})
-    return {"key_prefix": api_key[:8] + "...", "results": results}
+    return {
+        "key_prefix": api_key[:8] + "...",
+        "placeholder_url": placeholder_url,
+        "results": results,
+        "interpretation": {
+            "test_1_should_be": "code 422 — confirms flux-kontext-pro requires inputImage",
+            "test_2_should_be": "code 200 with taskId — confirms placeholder fix works",
+        }
+    }
 
 
 # Setup uploads directory (same as main.py StaticFiles mount)
