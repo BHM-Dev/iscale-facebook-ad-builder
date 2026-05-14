@@ -745,7 +745,7 @@ export default function BatchGenerate() {
             <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-semibold text-gray-800">Text Overlay</h2>
-                <p className="text-xs text-gray-400 mt-0.5">Bakes headline + offer + CTA button into the image</p>
+                <p className="text-xs text-gray-400 mt-0.5">Bakes niche label + offer line + logo into the image</p>
               </div>
               <button
                 type="button"
