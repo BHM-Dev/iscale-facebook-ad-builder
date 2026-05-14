@@ -12,14 +12,30 @@ Silently returns empty data if key is not configured.
 
 import logging
 import os
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.redtrack.io"
+
+# RedTrack reports dates in the account's configured timezone.
+# Set REDTRACK_TIMEZONE on the VPS to match what's set in RedTrack → Settings → General.
+# Default is UTC; Joel's RedTrack account may be set to America/New_York or similar.
+_RT_TZ_NAME = os.getenv("REDTRACK_TIMEZONE", "UTC")
+try:
+    _RT_TZ = ZoneInfo(_RT_TZ_NAME)
+except ZoneInfoNotFoundError:
+    logger.warning("REDTRACK_TIMEZONE '%s' not recognised — falling back to UTC", _RT_TZ_NAME)
+    _RT_TZ = ZoneInfo("UTC")
+
+
+def _today_in_rt_tz() -> date:
+    """Return today's date in RedTrack's configured timezone (not the VPS's UTC clock)."""
+    return datetime.now(tz=_RT_TZ).date()
 
 
 class RedTrackService:
@@ -41,8 +57,14 @@ class RedTrackService:
 
     @staticmethod
     def preset_to_dates(date_preset: str) -> tuple[str, str]:
-        """Convert a Meta-style date preset to (date_from, date_to) strings."""
-        today = date.today()
+        """Convert a Meta-style date preset to (date_from, date_to) strings.
+
+        Uses _today_in_rt_tz() so the date boundaries match RedTrack's own
+        reporting timezone rather than the VPS's UTC clock. Without this,
+        syncs at the edges of the day (early morning / late evening in Joel's
+        timezone) pull the wrong day's data.
+        """
+        today = _today_in_rt_tz()
         if date_preset == "today":
             return str(today), str(today)
         if date_preset == "yesterday":
