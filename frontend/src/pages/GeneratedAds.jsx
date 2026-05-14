@@ -677,8 +677,15 @@ export default function GeneratedAds() {
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                     {/* Media Preview Section */}
                                     <div className="space-y-4">
-                                        {/* Main Media */}
-                                        <div className="bg-gray-100 rounded-xl overflow-hidden aspect-square flex items-center justify-center relative">
+                                        {/* Main Media — aspect ratio adapts to format */}
+                                        {(() => {
+                                            const sizeName = (viewedImage.size_name || '').toLowerCase();
+                                            const dims = viewedImage.dimensions || '';
+                                            const isStory = sizeName.includes('story') || /1080.?x.?1920/i.test(dims);
+                                            const isPortrait = sizeName.includes('portrait') || /1080.?x.?1350/i.test(dims);
+                                            const aspectClass = isStory ? 'aspect-[9/16]' : isPortrait ? 'aspect-[4/5]' : 'aspect-square';
+                                            return (
+                                        <div className={`bg-gray-100 rounded-xl overflow-hidden ${aspectClass} flex items-center justify-center relative`}>
                                             {imgError ? (
                                                 <div className="p-8 text-center text-red-500 bg-red-50">
                                                     <p className="font-bold mb-2">Failed to load media</p>
@@ -705,6 +712,8 @@ export default function GeneratedAds() {
                                                 </div>
                                             )}
                                         </div>
+                                            );
+                                        })()}
 
                                         {/* Bundle Thumbnails */}
                                         {currentBundle.length > 1 && (

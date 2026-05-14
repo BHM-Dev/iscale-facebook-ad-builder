@@ -229,15 +229,21 @@ def apply_text_overlay(
 
     # ── Offer line ────────────────────────────────────────────────────────────
     if offer_line:
-        o_size = int(H * 0.066)   # slightly larger — prominent secondary line
+        # Cap font size by both height and width so tall/narrow formats (9:16)
+        # don't produce text wider than the image canvas.
+        o_size = min(int(H * 0.066), int(W * 0.075))
         o_font = _load_font("Montserrat-Bold.ttf", o_size)
         o_stroke = max(3, o_size // 18)
-        draw.text(
-            (LEFT, y), offer_line, font=o_font, fill=_WHITE,
-            stroke_width=o_stroke, stroke_fill=_BLACK_STROKE,
-        )
-        o_bbox = draw.textbbox((LEFT, y), offer_line, font=o_font)
-        y = o_bbox[3] + gap_after_offer
+        # Wrap offer line to fit within text_max_w — prevents right-edge clipping
+        o_lines = _wrap_to_width(draw, offer_line, o_font, text_max_w)
+        o_line_h = int(o_font.size * 1.15)
+        for o_line in o_lines:
+            draw.text(
+                (LEFT, y), o_line, font=o_font, fill=_WHITE,
+                stroke_width=o_stroke, stroke_fill=_BLACK_STROKE,
+            )
+            y += o_line_h
+        y += gap_after_offer
 
     # ── CTA button ────────────────────────────────────────────────────────────
     # Guard: never let the button start so low it clips off the bottom edge.
