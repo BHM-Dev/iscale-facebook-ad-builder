@@ -12,18 +12,22 @@ const BODY_LIMIT = 125;
  * Works from both GeneratedAds library and ImageAds results page.
  *
  * Props:
- *   imageUrl        {string}   URL of the image to push to Meta
- *   initialHeadline {string}   Pre-fill headline from the ad copy
- *   initialBody     {string}   Pre-fill body copy
- *   initialCta      {string}   Pre-fill CTA (defaults to LEARN_MORE)
- *   onClose         {function} Called when the modal should close
- *   onSuccess       {function} Optional — called after a successful push
+ *   imageUrl          {string}   URL of the image to push to Meta
+ *   initialHeadline   {string}   Pre-fill headline from the ad copy
+ *   initialBody       {string}   Pre-fill body copy
+ *   initialCta        {string}   Pre-fill CTA (defaults to LEARN_MORE)
+ *   initialWebsiteUrl {string}   Pre-fill destination URL
+ *   initialCampaignId {string}   Pre-select campaign in dropdown
+ *   onClose           {function} Called when the modal should close
+ *   onSuccess         {function} Optional — called after a successful push
  */
 export default function PushToMetaModal({
     imageUrl,
     initialHeadline = '',
     initialBody = '',
     initialCta = 'LEARN_MORE',
+    initialWebsiteUrl = '',
+    initialCampaignId = '',
     onClose,
     onSuccess,
 }) {
@@ -51,7 +55,7 @@ export default function PushToMetaModal({
         campaignId: '',
         adsetId: '',
         pageId: localStorage.getItem('lastUsedPageId') || '',
-        websiteUrl: '',
+        websiteUrl: initialWebsiteUrl || localStorage.getItem('lastUsedWebsiteUrl') || '',
         headline: initialHeadline,
         body: initialBody,
         cta: initialCta || 'LEARN_MORE',
@@ -64,6 +68,21 @@ export default function PushToMetaModal({
             loadPushPages(pushForm.adAccountId);
         }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Auto-select campaign once the list loads (from initialCampaignId or last used)
+    useEffect(() => {
+        const targetId = initialCampaignId || localStorage.getItem('lastUsedCampaignId') || '';
+        if (targetId && pushCampaigns.length > 0 && !pushForm.campaignId) {
+            const match = pushCampaigns.find(c => c.id === targetId);
+            if (match) {
+                setSelectedCampaign(match);
+                setPushForm(p => ({ ...p, campaignId: match.id, adsetId: '' }));
+                setPushAdSets([]);
+                setAdsetMode('existing');
+                loadPushAdSets(match.id);
+            }
+        }
+    }, [pushCampaigns]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const loadPushCampaigns = async (adAccountId) => {
         if (!adAccountId) return;
@@ -180,6 +199,8 @@ export default function PushToMetaModal({
             // Persist selections for next use
             if (pushForm.pageId) localStorage.setItem('lastUsedPageId', pushForm.pageId);
             if (pushForm.adAccountId) localStorage.setItem('fb_ad_account_id', pushForm.adAccountId);
+            if (pushForm.websiteUrl) localStorage.setItem('lastUsedWebsiteUrl', pushForm.websiteUrl);
+            if (pushForm.campaignId) localStorage.setItem('lastUsedCampaignId', pushForm.campaignId);
 
             setSuccessResult({
                 adId: result?.adId,

@@ -5,6 +5,7 @@ import { Download, Trash2, Search, Filter, CheckSquare, Square, FileDown, Extern
 import { useBrands } from '../context/BrandContext';
 import { useNavigate } from 'react-router-dom';
 import PushToMetaModal from '../components/PushToMetaModal';
+import BatchPushModal from '../components/BatchPushModal';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -37,11 +38,36 @@ export default function GeneratedAds() {
     const [imgError, setImgError] = useState(false);
     const [deleteConfirmation, setDeleteConfirmation] = useState({ show: false, bundleId: null, bundleAds: [] });
 
-    // Push to Campaign modal state
+    // Push to Campaign modal state (single ad)
     const [pushModal, setPushModal] = useState({ show: false, ad: null });
+    // Bulk push modal state (multi-select)
+    const [bulkPushOpen, setBulkPushOpen] = useState(false);
 
     const openPushModal = (ad) => {
         setPushModal({ show: true, ad });
+    };
+
+    // Build BatchPushModal items from currently selected bundles
+    const buildBulkPushItems = () => {
+        const seen = new Set();
+        return ads
+            .filter(ad => selectedBundles.has(ad.ad_bundle_id || `legacy_${ad.id}`) && ad.image_url)
+            .reduce((acc, ad) => {
+                const bundleId = ad.ad_bundle_id || `legacy_${ad.id}`;
+                if (!seen.has(bundleId)) {
+                    seen.add(bundleId);
+                    acc.push({
+                        key: `lib_${ad.id}`,
+                        imageUrl: ad.image_url,
+                        headline: ad.headline || '',
+                        body: ad.body || '',
+                        cta: ad.cta || 'LEARN_MORE',
+                        variantName: ad.headline ? ad.headline.slice(0, 30) : `Ad ${ad.id}`,
+                        sizeLabel: ad.size_name || '—',
+                    });
+                }
+                return acc;
+            }, []);
     };
 
     useEffect(() => {
@@ -402,11 +428,25 @@ export default function GeneratedAds() {
                         </span>
                         <div className="flex-1"></div>
                         <button
-                            onClick={handleUseInCampaignBuilder}
+                            onClick={() => {
+                                const items = buildBulkPushItems();
+                                if (items.length === 0) {
+                                    showError('No images available to push. Selected ads may still be generating or have failed.');
+                                } else {
+                                    setBulkPushOpen(true);
+                                }
+                            }}
                             className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
                         >
+                            <Rocket size={16} />
+                            Push to Meta
+                        </button>
+                        <button
+                            onClick={handleUseInCampaignBuilder}
+                            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                        >
                             <Zap size={16} />
-                            Use in Campaign Builder
+                            Campaign Builder
                         </button>
                         <button
                             onClick={handleExportCSV}
@@ -851,14 +891,14 @@ export default function GeneratedAds() {
                                             </div>
                                         </div>
 
-                                        {/* Push to Campaign Button */}
+                                        {/* Push to Meta Button */}
                                         {viewedImage.media_type !== 'video' && (
                                             <button
                                                 onClick={() => openPushModal(viewedImage)}
                                                 className="w-full py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold flex items-center justify-center gap-2 transition-colors mb-2"
                                             >
                                                 <Rocket size={20} />
-                                                Push to Campaign
+                                                Push to Meta
                                             </button>
                                         )}
 
@@ -927,14 +967,26 @@ export default function GeneratedAds() {
                 )
             }
 
-            {/* Push to Campaign Modal */}
+            {/* Single-ad Push to Meta Modal */}
             {pushModal.show && pushModal.ad && (
                 <PushToMetaModal
                     imageUrl={pushModal.ad.image_url}
                     initialHeadline={pushModal.ad.headline || ''}
                     initialBody={pushModal.ad.body || ''}
                     initialCta={pushModal.ad.cta || 'LEARN_MORE'}
+                    initialWebsiteUrl={localStorage.getItem('lastUsedWebsiteUrl') || ''}
+                    initialCampaignId={localStorage.getItem('lastUsedCampaignId') || ''}
                     onClose={() => setPushModal({ show: false, ad: null })}
+                />
+            )}
+
+            {/* Bulk Push to Meta Modal */}
+            {bulkPushOpen && (
+                <BatchPushModal
+                    items={buildBulkPushItems()}
+                    onClose={() => setBulkPushOpen(false)}
+                    preselectedCampaignId={localStorage.getItem('lastUsedCampaignId') || ''}
+                    preselectedWebsiteUrl={localStorage.getItem('lastUsedWebsiteUrl') || ''}
                 />
             )}
         </div>

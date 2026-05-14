@@ -29,7 +29,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     const [adSets, setAdSets] = useState([]);
     const [pages, setPages] = useState([]);
     const [pageId, setPageId] = useState(localStorage.getItem('lastUsedPageId') || '');
-    const [websiteUrl, setWebsiteUrl] = useState(preselectedWebsiteUrl || '');
+    const [websiteUrl, setWebsiteUrl] = useState(preselectedWebsiteUrl || localStorage.getItem('lastUsedWebsiteUrl') || '');
     const [sharedCta, setSharedCta] = useState('LEARN_MORE');
     const [loading, setLoading] = useState(false);
 
@@ -240,6 +240,8 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
         // Persist for next time
         if (pageId) localStorage.setItem('lastUsedPageId', pageId);
         if (adAccountId) localStorage.setItem('fb_ad_account_id', adAccountId);
+        if (websiteUrl) localStorage.setItem('lastUsedWebsiteUrl', websiteUrl);
+        if (selectedCampaignId) localStorage.setItem('lastUsedCampaignId', selectedCampaignId);
 
         setPushing(false);
         setIsDone(true);
