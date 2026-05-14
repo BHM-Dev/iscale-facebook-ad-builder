@@ -236,53 +236,43 @@ async def _build_ai_image_prompt(
                 "visually rich background throughout — no empty bands, no plain floor or sky taking up the lower half"
             )
 
-        system_prompt = f"""You are a senior art director writing Flux image generation prompts for Facebook ad creatives targeting small business owners who need insurance or financial services.
+        system_prompt = f"""You write Flux image generation prompts for Facebook ads. Keep it simple — show the subject clearly. Photorealistic photography only.
 
-ABSOLUTE RULES — never break these:
+THREE CATEGORIES — pick the one that fits and follow it exactly:
 
-1. CONTEMPORARY ONLY. All settings, clothing, and props must be modern. Zero historical figures, zero religious robes or vestments, zero halos, zero biblical imagery, zero medieval clothing, zero prayer or worship poses, zero candles, zero altars. Shoot like a 2024 editorial photographer, not a stock illustrator.
+CATEGORY 1 — PLACE / PROPERTY (church, winery, restaurant, hotel, gym, daycare, mosque, etc.)
+Show the building or location. NO PEOPLE in the scene.
+- Church / Religious Organization: brick or white-painted church building exterior, simple cross on facade, green lawn, blue sky, warm daylight. Clean neighborhood setting. Empty, no congregation.
+- Winery: rows of green grapevines at golden hour. OR oak barrels stacked in a warm cellar. OR red wine being poured into a glass, close-up.
+- Restaurant: well-lit dining room with set tables, warm interior lighting, before service. Empty.
+- Other places: show the exterior or interior of the specific building type, clean and well-lit, no people.
+Format: "Exterior/interior photograph of [specific building details], [time of day], [surroundings]. No people. No text, no logos. Photorealistic."
 
-2. TRANSLATE THE NICHE CORRECTLY — use the category that fits:
+CATEGORY 2 — TRADE / CRAFT (welding, plumbing, roofing, electrical, HVAC, construction, landscaping, etc.)
+Show the work in action. Hands, tools, the craft itself.
+- Welding: close-up of welder in full safety gear, bright orange arc sparks, dark industrial background.
+- Roofing: worker in hard hat and safety vest on a residential roofline, blue sky behind them.
+- Plumbing: plumber's hands connecting copper pipes, clean organized work area.
+- HVAC / Electrical: technician servicing a rooftop HVAC unit, OR hands at a clean breaker panel.
+- Other trades: the worker doing the specific task, tools visible, realistic setting.
+Format: "A [trade worker] [specific action], [setting], natural light. No text, no logos. Photorealistic."
 
-   PLACE / PROPERTY niches (church, mosque, synagogue, winery, restaurant, hotel, gym, daycare, etc.):
-   → Show the place itself. Beautiful exterior or interior. Professional photography.
-   → Church / Religious Organization = a beautiful contemporary church building exterior, warm natural light, inviting and modern — NOT a religious figure, NOT a ceremony, NOT stained glass icons.
-   → Winery = vineyard rows at golden hour, or wine barrels in a warm cellar, or wine being poured — NOT the owner.
-   → Restaurant = a warm, well-lit dining room before service, or a clean kitchen in action.
+CATEGORY 3 — PROFESSIONAL / SERVICE (lawyer, doctor, accountant, insurance agent, financial advisor, etc.)
+One professional, modern setting, confident and calm.
+- Auto / trucking: person standing beside or inside a modern vehicle, open road or parking lot, natural light.
+- Medical / dental: clean exam room with equipment, no patient.
+- All others: confident professional at a desk or standing in a clean contemporary office.
+Format: "A [professional] [action], [contemporary setting], natural light. No text, no logos. Photorealistic."
 
-   TRADE / CRAFT niches (welding, plumbing, roofing, electrical, HVAC, construction, landscaping, etc.):
-   → Show the craft in action. The work itself — tools, motion, the moment of skill.
-   → Welding = a welder in full gear with bright arc sparks flying, dramatic low-angle shot.
-   → Roofing = a worker in a safety vest on a residential or commercial roofline, blue sky behind.
-   → Plumbing = close-up of a plumber's hands doing clean, precise pipe work.
-   → HVAC / Electrical = technician in branded work shirt servicing a commercial HVAC unit or inspecting a circuit panel, clean industrial setting.
+COMPOSITION: {composition_note}
+MAX 60 WORDS. Return ONLY the prompt."""
 
-   PROFESSIONAL / PERSON niches (lawyer, accountant, doctor, insurance agent, financial advisor, etc.):
-   → Show a confident modern professional in a clean contemporary office or meeting room.
-   → Business casual, grounded expression, sense of expertise and calm.
-   → For vehicle / auto / driving niches: show a person near or inside a modern vehicle on an open road, warm natural light — NOT an office.
-   → For medical / dental / health niches: show a clean modern clinic or exam room with professional equipment — NOT a corporate office.
-
-3. EMOTIONAL BEAT = SECURITY AND CONFIDENCE. Whatever the scene, it should feel calm, grounded, and in control. Not worried, not celebrating, not religious.
-
-4. COMPOSITION: {composition_note}
-
-5. AVOID THESE FAILURES: generic couple smiling at camera, plain gray studio backdrop, handshakes, floating money, stock-photo poses, crowd scenes, abstract backgrounds, prayer hands, any worship imagery.
-
-6. FORMAT: Lead with "A [specific scene description] [setting details]." Then add lens, lighting, mood. End with: "No text, no logos, no watermarks, no footers. Photorealistic." Max 85 words.
-
-Return ONLY the image prompt. No explanation, no preamble."""
-
-        user_msg = f"""Write a Flux image prompt for this Facebook ad creative.
-
-Niche (= what kind of business this ad targets): {niche or product_name}
-{('Service / product: ' + product_name + ((' — ' + product_desc) if product_desc else '')) if product_name else ''}
-{('Ad headline (tone reference only — do NOT render text): ' + headline) if headline else ''}
-{('Visual direction hint: ' + vertical_hint) if vertical_hint else ''}
+        user_msg = f"""Niche: {niche or product_name}
 Lighting: {lighting}
 Mood: {mood}
+{('Hint: ' + vertical_hint) if vertical_hint else ''}
 
-Apply the correct niche category from the rules. Return ONLY the image prompt."""
+Pick the correct category. Return ONLY the image prompt."""
 
         response = await _async_anthropic.messages.create(
             model=_PROMPT_MODEL,
