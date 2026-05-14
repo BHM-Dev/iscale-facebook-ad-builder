@@ -322,20 +322,26 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
     else:
         aspect_ratio = "9:16"
 
-    # Both text-to-image and image-to-image use flux-kontext-pro with a flat
-    # top-level payload (camelCase fields, no nested "input" wrapper).
-    # The old "flux-2/pro-text-to-image" nested-input schema started returning
-    # "The input cannot be null" — kie.ai changed/deprecated that endpoint.
-    # flux-kontext-pro accepts text-to-image (no inputImage) and image-to-image
-    # (inputImage provided) through the same flat schema.
-    payload: Dict[str, Any] = {
-        "model": "flux-kontext-pro",
-        "prompt": prompt,
-        "aspectRatio": aspect_ratio,
-        "outputFormat": "png",
-    }
+    # kie.ai unified both models to the same flat camelCase schema.
+    # Old nested { "input": { "prompt": ..., "aspect_ratio": ... } } was deprecated.
+    # flux-kontext-pro = image-to-image (requires inputImage)
+    # flux-2/pro-text-to-image = pure text-to-image (no inputImage needed)
+    # Both now use the same flat top-level field structure.
     if input_image_url:
-        payload["inputImage"] = input_image_url
+        payload: Dict[str, Any] = {
+            "model": "flux-kontext-pro",
+            "prompt": prompt,
+            "aspectRatio": aspect_ratio,
+            "outputFormat": "png",
+            "inputImage": input_image_url,
+        }
+    else:
+        payload = {
+            "model": "flux-2/pro-text-to-image",
+            "prompt": prompt,
+            "aspectRatio": aspect_ratio,
+            "outputFormat": "png",
+        }
 
     async with httpx.AsyncClient(timeout=200.0) as client:
         # Create the task
@@ -345,9 +351,10 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
             headers=headers,
             json=payload
         )
-        create_resp.raise_for_status()
         task_data = create_resp.json()
-        print(f"kie.ai createTask response: {task_data}")
+        print(f"kie.ai createTask HTTP {create_resp.status_code}: {task_data}")
+        # Raise on non-2xx AFTER logging so we capture the body
+        create_resp.raise_for_status()
         if not task_data.get("data"):
             # Surface kie.ai's own error message when available (e.g. "Insufficient credits")
             kie_msg = task_data.get("msg") or task_data.get("message") or str(task_data)
