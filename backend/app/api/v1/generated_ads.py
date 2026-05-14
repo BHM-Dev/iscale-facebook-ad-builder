@@ -460,6 +460,8 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
     # inputImage is optional — include only when a valid re-hosted reference URL exists
     if input_image_url:
         payload["inputImage"] = input_image_url
+    if negative_prompt:
+        payload["negativePrompt"] = negative_prompt
 
     async with httpx.AsyncClient(timeout=200.0) as client:
         print(f"kie.ai generate payload: {payload}")
@@ -619,7 +621,7 @@ async def generate_image(
                             print(f"WARNING: could not re-host reference image ({_ref_err}) — proceeding text-to-image")
                             input_image = None
 
-                    external_url = await _kie_generate_image(prompt, width, height, input_image, None)
+                    external_url = await _kie_generate_image(prompt, width, height, input_image, _NEGATIVE_PROMPT)
 
                     print(f"Downloading image from kie.ai: {external_url[:50]}...")
 
