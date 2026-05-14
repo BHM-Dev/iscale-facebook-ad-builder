@@ -177,27 +177,36 @@ def apply_text_overlay(
     gap_after_headline = int(H * 0.015)
     gap_after_offer    = int(H * 0.022)
 
-    # Fixed starting y — lower half of image, over scene content.
-    # Matches the position in Joel's reference commercial-insurance ads.
+    # Starting y — text block anchors to lower-left, matching Joel's reference ads.
+    # Large niche text + offer + CTA naturally fills the lower ~40% of the image.
     aspect = H / W
     if aspect > 1.6:      # 9:16 story
-        y = int(H * 0.55)
+        y = int(H * 0.48)
     elif aspect > 1.15:   # 4:5 portrait
-        y = int(H * 0.52)
+        y = int(H * 0.43)
     else:                 # 1:1 square
-        y = int(H * 0.50)
+        y = int(H * 0.40)
 
-    # ── Niche line (above headline) ───────────────────────────────────────────
+    # ── Niche line — styled as the large bold-italic headline ─────────────────
+    # In Joel's ads the niche IS the hero text (e.g. "Winery Business Insurance").
+    # We use _fit_headline_font so it wraps to fit and scales to the largest
+    # size that stays within the left 60 % of the image width.
     if niche_line:
-        n_size = int(H * 0.042)
-        n_font = _load_font("Montserrat-ExtraBold.ttf", n_size)
-        n_stroke = max(2, n_size // 20)
-        draw.text(
-            (LEFT, y), niche_line, font=n_font, fill=_WHITE,
-            stroke_width=n_stroke, stroke_fill=_BLACK_STROKE,
+        n_max_size = int(H * 0.105)
+        n_min_size = int(H * 0.050)
+        n_font, n_lines = _fit_headline_font(
+            draw, niche_line, text_max_w, n_max_size, n_min_size,
+            "Montserrat-ExtraBoldItalic.ttf",
         )
-        n_bbox = draw.textbbox((LEFT, y), niche_line, font=n_font)
-        y = n_bbox[3] + gap_after_niche
+        n_stroke = max(3, n_font.size // 14)
+        n_line_h = int(n_font.size * 1.15)
+        for line in n_lines:
+            draw.text(
+                (LEFT, y), line, font=n_font, fill=_WHITE,
+                stroke_width=n_stroke, stroke_fill=_BLACK_STROKE,
+            )
+            y += n_line_h
+        y += gap_after_niche
 
     # ── Headline ──────────────────────────────────────────────────────────────
     if headline:
@@ -220,9 +229,9 @@ def apply_text_overlay(
 
     # ── Offer line ────────────────────────────────────────────────────────────
     if offer_line:
-        o_size = int(H * 0.054)
+        o_size = int(H * 0.066)   # slightly larger — prominent secondary line
         o_font = _load_font("Montserrat-Bold.ttf", o_size)
-        o_stroke = max(2, o_size // 20)
+        o_stroke = max(3, o_size // 18)
         draw.text(
             (LEFT, y), offer_line, font=o_font, fill=_WHITE,
             stroke_width=o_stroke, stroke_fill=_BLACK_STROKE,
