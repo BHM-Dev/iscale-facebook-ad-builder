@@ -263,18 +263,22 @@ Return ONLY the image prompt. No explanation, no preamble."""
         print(f"AI prompt generation failed, falling back to static prompt: {e}")
         return build_comprehensive_prompt(request)
 
-KIE_AI_BASE_URL = "https://api.kie.ai/api/v1"
+# ── kie.ai Flux Kontext API endpoints ──────────────────────────────────────────
+# Verified from https://docs.kie.ai/flux-kontext-api/ (2026-05)
+# POST  /generate   → returns { code, data: { taskId } }
+# GET   /record-info?taskId= → returns { code, data: { successFlag, response: { resultImageUrl } } }
+# successFlag: 0=generating, 1=success, 2=create_failed, 3=generate_failed
+# inputImage is OPTIONAL — omit entirely for text-to-image; include for image-to-image
+KIE_AI_BASE_URL = "https://api.kie.ai/api/v1/flux/kontext"
 
 
 @router.get("/test-kie")
 async def test_kie_connection():
-    """Diagnostic: verifies kie.ai API contract by calling createTask with known payloads.
-    No auth required. Returns HTTP responses so we can confirm which model/schema combos
-    are accepted WITHOUT waiting for generation to complete (just createTask, no polling).
+    """Diagnostic: verifies kie.ai Flux Kontext API is reachable and accepts payloads.
+    No auth required. Hits POST /generate only (no polling) so it returns fast.
 
-    Tests run:
-      1. flux-kontext-pro, no inputImage           → should return code 422 (expected failure)
-      2. flux-kontext-pro, 512×512 white PNG URL   → should return code 200 + taskId (confirms fix works)
+    Test 1: text-to-image (no inputImage) — should return code 200 + taskId
+    Test 2: image-to-image (R2 URL inputImage) — should return code 200 + taskId
     """
     api_key = settings.KIE_AI_API_KEY
     if not api_key:
@@ -282,20 +286,16 @@ async def test_kie_connection():
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
-    # Build a 512×512 white placeholder — encoded as base64 AND uploaded as URL
-    # so we can test both input formats in one pass.
-    from PIL import Image as _tPIL
-    import io as _tio
-    import base64 as _tb64
-    _tph = _tPIL.new("RGB", (512, 512), color=(255, 255, 255))
-    _tbuf = _tio.BytesIO()
-    _tph.save(_tbuf, format="JPEG")          # JPEG — smaller, widely supported
-    _tph_bytes = _tbuf.getvalue()
-    _tph_b64 = "data:image/jpeg;base64," + _tb64.b64encode(_tph_bytes).decode()
-
+    # Upload a small placeholder for the image-to-image test
     placeholder_url = None
     placeholder_error = None
     try:
+        from PIL import Image as _tPIL
+        import io as _tio
+        _tph = _tPIL.new("RGB", (512, 512), color=(255, 255, 255))
+        _tbuf = _tio.BytesIO()
+        _tph.save(_tbuf, format="JPEG")
+        _tph_bytes = _tbuf.getvalue()
         _tph_name = f"test_placeholder_{str(uuid.uuid4())}.jpg"
         if settings.r2_enabled:
             from app.api.v1.uploads import upload_to_r2
@@ -310,22 +310,15 @@ async def test_kie_connection():
 
     _prompt = "A confident small business owner standing in front of their shop, natural lighting"
     tests = [
-        ("1. NO inputImage (baseline, expect 422)", {
+        ("1. text-to-image (no inputImage)", {
             "model": "flux-kontext-pro",
             "prompt": _prompt,
             "aspectRatio": "1:1",
             "outputFormat": "png",
-        }),
-        ("2. inputImage = base64 JPEG data URI", {
-            "model": "flux-kontext-pro",
-            "prompt": _prompt,
-            "aspectRatio": "1:1",
-            "outputFormat": "png",
-            "inputImage": _tph_b64,
         }),
     ]
     if placeholder_url:
-        tests.append(("3. inputImage = R2 URL (JPEG)", {
+        tests.append(("2. image-to-image (R2 inputImage URL)", {
             "model": "flux-kontext-pro",
             "prompt": _prompt,
             "aspectRatio": "1:1",
@@ -333,7 +326,7 @@ async def test_kie_connection():
             "inputImage": placeholder_url,
         }))
     else:
-        tests.append((f"3. SKIPPED — URL upload failed: {placeholder_error}", None))
+        tests.append((f"2. SKIPPED — placeholder upload failed: {placeholder_error}", None))
 
     results = []
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -342,7 +335,7 @@ async def test_kie_connection():
                 results.append({"label": label, "skipped": True})
                 continue
             try:
-                r = await client.post(f"{KIE_AI_BASE_URL}/jobs/createTask", headers=headers, json=payload)
+                r = await client.post(f"{KIE_AI_BASE_URL}/generate", headers=headers, json=payload)
                 results.append({"label": label, "http": r.status_code, "body": r.json()})
             except Exception as exc:
                 results.append({"label": label, "error": str(exc)})
@@ -351,10 +344,8 @@ async def test_kie_connection():
         "placeholder_url": placeholder_url,
         "results": results,
         "interpretation": {
-            "test_1_should_be": "code 422 (no inputImage = known failure)",
-            "test_2_should_be": "code 200 + taskId = base64 works",
-            "test_3_should_be": "code 200 + taskId = URL works",
-            "next_step": "whichever of test 2 or 3 returns 200 is the correct inputImage format",
+            "both_tests_should_be": "code 200 with data.taskId present",
+            "endpoint_used": f"{KIE_AI_BASE_URL}/generate",
         }
     }
 
@@ -393,9 +384,15 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
                               input_image_url: str = None,
                               negative_prompt: str = None) -> str:
     """
-    Submit an image generation task to kie.ai and poll until complete.
-    Uses Flux Kontext for text-to-image and image-to-image.
+    Submit an image generation task to kie.ai Flux Kontext and poll until complete.
     Returns the generated image URL.
+
+    API contract (verified from docs.kie.ai/flux-kontext-api, 2026-05):
+      POST  {KIE_AI_BASE_URL}/generate
+      GET   {KIE_AI_BASE_URL}/record-info?taskId=
+      successFlag: 0=generating, 1=success, 2=create_failed, 3=generate_failed
+      image URL:   data.response.resultImageUrl
+      inputImage is OPTIONAL — omit for pure text-to-image.
     """
     api_key = settings.KIE_AI_API_KEY
     headers = {
@@ -403,7 +400,7 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
         "Content-Type": "application/json"
     }
 
-    # Map pixel dimensions to the closest kie.ai aspect ratio
+    # Map pixel dimensions to the closest supported kie.ai aspect ratio
     ratio = width / height
     if ratio >= 1.7:
         aspect_ratio = "16:9"
@@ -416,34 +413,7 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
     else:
         aspect_ratio = "9:16"
 
-    # flux-kontext-pro is the only confirmed model on this kie.ai account.
-    # It requires inputImage — always.  When the caller has no reference image,
-    # we generate a minimal 512×512 pure-white placeholder so Kontext has something
-    # to receive; white is the least color-influential neutral for diffusion models —
-    # it avoids the gray cast that a mid-gray placeholder would impart on generated output.
-    if not input_image_url:
-        try:
-            from PIL import Image as _PIL_Image_ph
-            import io as _io_ph
-            _ph_img = _PIL_Image_ph.new("RGB", (512, 512), color=(255, 255, 255))
-            _ph_buf = _io_ph.BytesIO()
-            _ph_img.save(_ph_buf, format="PNG")
-            _ph_bytes = _ph_buf.getvalue()
-            _ph_name  = f"placeholder_{str(uuid.uuid4())}.png"
-            if settings.r2_enabled:
-                from app.api.v1.uploads import upload_to_r2
-                input_image_url = await upload_to_r2(_ph_bytes, _ph_name, "image/png")
-            else:
-                _ph_path = UPLOAD_DIR / _ph_name
-                with open(_ph_path, "wb") as _ph_fh:
-                    _ph_fh.write(_ph_bytes)
-                input_image_url = f"{settings.PUBLIC_API_URL}/uploads/{_ph_name}"
-            print(f"No reference image — using neutral 512×512 placeholder: {input_image_url}")
-        except Exception as _ph_err:
-            print(f"WARNING: could not create placeholder image ({_ph_err})")
-            # If placeholder creation fails, try the call anyway — kie.ai might
-            # tolerate a missing inputImage in future API revisions.
-
+    # Build payload — inputImage is optional; include only when a reference image exists
     payload: Dict[str, Any] = {
         "model": "flux-kontext-pro",
         "prompt": prompt,
@@ -454,64 +424,56 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
         payload["inputImage"] = input_image_url
 
     async with httpx.AsyncClient(timeout=200.0) as client:
-        # Create the task
-        print(f"kie.ai createTask payload: {payload}")
+        # Submit generation task
+        print(f"kie.ai generate payload: {payload}")
         create_resp = await client.post(
-            f"{KIE_AI_BASE_URL}/jobs/createTask",
+            f"{KIE_AI_BASE_URL}/generate",
             headers=headers,
             json=payload
         )
         task_data = create_resp.json()
-        print(f"kie.ai createTask HTTP {create_resp.status_code}: {task_data}")
-        # Raise on non-2xx AFTER logging so we capture the body
+        print(f"kie.ai generate HTTP {create_resp.status_code}: {task_data}")
         create_resp.raise_for_status()
-        if not task_data.get("data"):
-            # Surface kie.ai's own error message when available (e.g. "Insufficient credits")
+
+        if not task_data.get("data") or not task_data["data"].get("taskId"):
             kie_msg = task_data.get("msg") or task_data.get("message") or str(task_data)
             raise ValueError(f"kie.ai error: {kie_msg}")
+
         task_id = task_data["data"]["taskId"]
         print(f"kie.ai task created: {task_id}")
 
-        # Poll until done (max ~3 minutes — story/9:16 can take longer than square)
-        # Use 5s sleep × 36 attempts = 180 seconds
-        _FAIL_STATES = {"fail", "failed", "error", "cancelled", "canceled"}
-
+        # Poll until done — successFlag: 0=generating, 1=success, 2=create_failed, 3=generate_failed
+        # Poll every 5s, max 36 attempts = 3 minutes
         for attempt in range(36):
             await asyncio.sleep(5)
             status_resp = await client.get(
-                f"{KIE_AI_BASE_URL}/jobs/recordInfo",
+                f"{KIE_AI_BASE_URL}/record-info",
                 headers=headers,
                 params={"taskId": task_id}
             )
             status_resp.raise_for_status()
             status_data = status_resp.json()
-            if not status_data.get("data"):
-                raise ValueError(f"kie.ai recordInfo returned no data: {status_data}")
-            state = status_data["data"].get("state", "")
-            # Normalise to lowercase so "FAIL" / "Failed" / "fail" all match
-            state_lower = state.lower() if state else ""
-            print(f"kie.ai task {task_id} state: {state!r} (attempt {attempt + 1}/36)")
+            data = status_data.get("data", {})
+            flag = data.get("successFlag")
+            print(f"kie.ai task {task_id} successFlag={flag!r} (attempt {attempt + 1}/36)")
 
-            if state_lower == "success":
-                result_json = status_data["data"].get("resultJson", "{}")
-                result = _json.loads(result_json) if isinstance(result_json, str) else result_json
-                image_url = result.get("resultUrls", [None])[0]
+            if flag == 1:  # SUCCESS
+                image_url = (data.get("response") or {}).get("resultImageUrl")
                 if not image_url:
-                    raise ValueError("kie.ai returned success but no image URL")
+                    raise ValueError("kie.ai returned success but no resultImageUrl")
                 return image_url
-            elif state_lower in _FAIL_STATES:
-                # Extract a useful message from the response if kie.ai provides one
+            elif flag in (2, 3):  # CREATE_TASK_FAILED or GENERATE_FAILED
                 kie_msg = (
-                    status_data["data"].get("msg")
-                    or status_data["data"].get("message")
+                    data.get("errorMessage")
+                    or data.get("msg")
                     or status_data.get("msg")
-                    or f"state={state!r}"
+                    or f"successFlag={flag}"
                 )
                 raise ValueError(f"kie.ai task failed: {kie_msg}")
+            # flag == 0: still generating — keep polling
 
     raise TimeoutError(
         f"kie.ai task {task_id} did not complete after 3 minutes. "
-        "This can happen when kie.ai is under load or credits are low. "
         "Check your kie.ai credit balance and try again."
     )
 
