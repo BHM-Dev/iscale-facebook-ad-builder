@@ -282,20 +282,24 @@ async def test_kie_connection():
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
-    # Upload a 512×512 white placeholder to get a real public URL for test 2
+    # Build a 512×512 white placeholder — encoded as base64 AND uploaded as URL
+    # so we can test both input formats in one pass.
+    from PIL import Image as _tPIL
+    import io as _tio
+    import base64 as _tb64
+    _tph = _tPIL.new("RGB", (512, 512), color=(255, 255, 255))
+    _tbuf = _tio.BytesIO()
+    _tph.save(_tbuf, format="JPEG")          # JPEG — smaller, widely supported
+    _tph_bytes = _tbuf.getvalue()
+    _tph_b64 = "data:image/jpeg;base64," + _tb64.b64encode(_tph_bytes).decode()
+
     placeholder_url = None
     placeholder_error = None
     try:
-        from PIL import Image as _tPIL
-        import io as _tio
-        _tph = _tPIL.new("RGB", (512, 512), color=(255, 255, 255))
-        _tbuf = _tio.BytesIO()
-        _tph.save(_tbuf, format="PNG")
-        _tph_bytes = _tbuf.getvalue()
-        _tph_name = f"test_placeholder_{str(uuid.uuid4())}.png"
+        _tph_name = f"test_placeholder_{str(uuid.uuid4())}.jpg"
         if settings.r2_enabled:
             from app.api.v1.uploads import upload_to_r2
-            placeholder_url = await upload_to_r2(_tph_bytes, _tph_name, "image/png")
+            placeholder_url = await upload_to_r2(_tph_bytes, _tph_name, "image/jpeg")
         else:
             _tph_path = UPLOAD_DIR / _tph_name
             with open(_tph_path, "wb") as _tph_fh:
@@ -304,24 +308,32 @@ async def test_kie_connection():
     except Exception as _tph_err:
         placeholder_error = str(_tph_err)
 
+    _prompt = "A confident small business owner standing in front of their shop, natural lighting"
     tests = [
-        ("1. flux-kontext-pro NO inputImage (expect code 422)", {
+        ("1. NO inputImage (baseline, expect 422)", {
             "model": "flux-kontext-pro",
-            "prompt": "A confident small business owner standing in front of their shop, natural lighting",
+            "prompt": _prompt,
             "aspectRatio": "1:1",
             "outputFormat": "png",
         }),
+        ("2. inputImage = base64 JPEG data URI", {
+            "model": "flux-kontext-pro",
+            "prompt": _prompt,
+            "aspectRatio": "1:1",
+            "outputFormat": "png",
+            "inputImage": _tph_b64,
+        }),
     ]
     if placeholder_url:
-        tests.append(("2. flux-kontext-pro WITH 512×512 white placeholder (expect code 200 + taskId)", {
+        tests.append(("3. inputImage = R2 URL (JPEG)", {
             "model": "flux-kontext-pro",
-            "prompt": "A confident small business owner standing in front of their shop, natural lighting",
+            "prompt": _prompt,
             "aspectRatio": "1:1",
             "outputFormat": "png",
             "inputImage": placeholder_url,
         }))
     else:
-        tests.append((f"2. SKIPPED — placeholder upload failed: {placeholder_error}", None))
+        tests.append((f"3. SKIPPED — URL upload failed: {placeholder_error}", None))
 
     results = []
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -339,8 +351,10 @@ async def test_kie_connection():
         "placeholder_url": placeholder_url,
         "results": results,
         "interpretation": {
-            "test_1_should_be": "code 422 — confirms flux-kontext-pro requires inputImage",
-            "test_2_should_be": "code 200 with taskId — confirms placeholder fix works",
+            "test_1_should_be": "code 422 (no inputImage = known failure)",
+            "test_2_should_be": "code 200 + taskId = base64 works",
+            "test_3_should_be": "code 200 + taskId = URL works",
+            "next_step": "whichever of test 2 or 3 returns 200 is the correct inputImage format",
         }
     }
 
