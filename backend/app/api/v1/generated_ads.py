@@ -505,18 +505,32 @@ async def generate_image(
                                 _ref_resp = await _ref_client.get(raw_input_image)
                                 _ref_resp.raise_for_status()
                                 _ref_bytes = _ref_resp.content
-                            # Save to R2 or local — same path as generated images
-                            _ref_id  = str(uuid.uuid4())
-                            _ref_name = f"ref_{_ref_id}.png"
-                            if settings.r2_enabled:
-                                from app.api.v1.uploads import upload_to_r2
-                                input_image = await upload_to_r2(_ref_bytes, _ref_name, "image/png")
+
+                            # Dimension check — kie.ai rejects images smaller than ~200px.
+                            # Facebook's creative.image_url is a 64×64 thumbnail; the full-size
+                            # image comes from object_story_spec.link_data.picture (now fixed in
+                            # facebook_service.py). If we still get a tiny image, skip it.
+                            from PIL import Image as _PIL_Image
+                            import io as _io
+                            _ref_img = _PIL_Image.open(_io.BytesIO(_ref_bytes))
+                            _rw, _rh = _ref_img.size
+                            print(f"Reference image dimensions: {_rw}×{_rh}")
+                            if _rw < 200 or _rh < 200:
+                                print(f"WARNING: reference image too small ({_rw}×{_rh}) — skipping inputImage, using text-to-image")
+                                input_image = None
                             else:
-                                _ref_path = UPLOAD_DIR / _ref_name
-                                with open(_ref_path, "wb") as _rfh:
-                                    _rfh.write(_ref_bytes)
-                                input_image = f"/uploads/{_ref_name}"
-                            print(f"Reference image re-hosted: {input_image}")
+                                # Save to R2 or local uploads so kie.ai can fetch from our stable URL
+                                _ref_id   = str(uuid.uuid4())
+                                _ref_name = f"ref_{_ref_id}.png"
+                                if settings.r2_enabled:
+                                    from app.api.v1.uploads import upload_to_r2
+                                    input_image = await upload_to_r2(_ref_bytes, _ref_name, "image/png")
+                                else:
+                                    _ref_path = UPLOAD_DIR / _ref_name
+                                    with open(_ref_path, "wb") as _rfh:
+                                        _rfh.write(_ref_bytes)
+                                    input_image = f"/uploads/{_ref_name}"
+                                print(f"Reference image re-hosted at {_rw}×{_rh}: {input_image}")
                         except Exception as _ref_err:
                             print(f"WARNING: could not re-host reference image ({_ref_err}) — proceeding text-to-image")
                             input_image = None

@@ -1262,8 +1262,17 @@ class FacebookService:
             cta_obj = creative.get('call_to_action', {})
             cta_label = cta_obj.get('type') if isinstance(cta_obj, dict) else None
 
-            # Image URL: prefer direct image_url, fall back to thumbnail_url (video ads)
-            image_url = creative.get('image_url') or creative.get('thumbnail_url')
+            # Image URL resolution (largest available wins):
+            # 1. object_story_spec.link_data.picture — full-size image (what we want for Remix/Iterate)
+            # 2. object_story_spec.video_data.image_url — video thumbnail (reasonably sized)
+            # 3. creative.image_url — 64×64 thumbnail ONLY (avoid for kie.ai inputImage)
+            # 4. creative.thumbnail_url — video preview fallback
+            image_url = (
+                oss.get('link_data', {}).get('picture') or
+                oss.get('video_data', {}).get('image_url') or
+                creative.get('image_url') or
+                creative.get('thumbnail_url')
+            )
 
             # Destination URL: link in link_data, or CTA value link
             cta_value = cta_obj.get('value', {}) if isinstance(cta_obj, dict) else {}
