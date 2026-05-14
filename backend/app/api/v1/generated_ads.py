@@ -263,13 +263,14 @@ Return ONLY the image prompt. No explanation, no preamble."""
         print(f"AI prompt generation failed, falling back to static prompt: {e}")
         return build_comprehensive_prompt(request)
 
-# ── kie.ai Flux Kontext API endpoints ──────────────────────────────────────────
-# Verified from https://docs.kie.ai/flux-kontext-api/ (2026-05)
-# POST  /generate   → returns { code, data: { taskId } }
-# GET   /record-info?taskId= → returns { code, data: { successFlag, response: { resultImageUrl } } }
-# successFlag: 0=generating, 1=success, 2=create_failed, 3=generate_failed
-# inputImage is OPTIONAL — omit entirely for text-to-image; include for image-to-image
-KIE_AI_BASE_URL = "https://api.kie.ai/api/v1/flux/kontext"
+# ── kie.ai API endpoints ────────────────────────────────────────────────────────
+# Verified from kie.ai logs (2026-05-13): successful calls use the /jobs/ endpoints
+# with model flux-2/pro-text-to-image and FLAT SNAKE_CASE payload schema.
+# POST /api/v1/jobs/createTask  → { code, data: { taskId } }
+# GET  /api/v1/jobs/recordInfo?taskId= → { code, data: { state, resultJson } }
+# state values (strings): "success", "fail", "failed", "error", "cancelled"
+# image URL: data.resultJson (JSON string) → resultUrls[0]
+KIE_AI_BASE_URL = "https://api.kie.ai/api/v1"
 
 
 @router.get("/test-kie")
@@ -310,20 +311,20 @@ async def test_kie_connection():
 
     _prompt = "A confident small business owner standing in front of their shop, natural lighting"
     tests = [
-        ("1. text-to-image (no inputImage)", {
-            "model": "flux-kontext-pro",
+        ("1. text-to-image, no input_image (primary path)", {
+            "model": "flux-2/pro-text-to-image",
             "prompt": _prompt,
-            "aspectRatio": "1:1",
-            "outputFormat": "png",
+            "aspect_ratio": "1:1",
+            "output_format": "png",
         }),
     ]
     if placeholder_url:
-        tests.append(("2. image-to-image (R2 inputImage URL)", {
-            "model": "flux-kontext-pro",
+        tests.append(("2. text-to-image with input_image URL (reference path)", {
+            "model": "flux-2/pro-text-to-image",
             "prompt": _prompt,
-            "aspectRatio": "1:1",
-            "outputFormat": "png",
-            "inputImage": placeholder_url,
+            "aspect_ratio": "1:1",
+            "output_format": "png",
+            "input_image": placeholder_url,
         }))
     else:
         tests.append((f"2. SKIPPED — placeholder upload failed: {placeholder_error}", None))
@@ -335,7 +336,7 @@ async def test_kie_connection():
                 results.append({"label": label, "skipped": True})
                 continue
             try:
-                r = await client.post(f"{KIE_AI_BASE_URL}/generate", headers=headers, json=payload)
+                r = await client.post(f"{KIE_AI_BASE_URL}/jobs/createTask", headers=headers, json=payload)
                 results.append({"label": label, "http": r.status_code, "body": r.json()})
             except Exception as exc:
                 results.append({"label": label, "error": str(exc)})
@@ -344,8 +345,8 @@ async def test_kie_connection():
         "placeholder_url": placeholder_url,
         "results": results,
         "interpretation": {
-            "both_tests_should_be": "code 200 with data.taskId present",
-            "endpoint_used": f"{KIE_AI_BASE_URL}/generate",
+            "both_tests_should_be": "code 200 with data.taskId — confirms endpoint and schema are correct",
+            "endpoint_used": f"{KIE_AI_BASE_URL}/jobs/createTask",
         }
     }
 
@@ -384,15 +385,15 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
                               input_image_url: str = None,
                               negative_prompt: str = None) -> str:
     """
-    Submit an image generation task to kie.ai Flux Kontext and poll until complete.
-    Returns the generated image URL.
+    Submit a generation task to kie.ai and poll until complete.
 
-    API contract (verified from docs.kie.ai/flux-kontext-api, 2026-05):
-      POST  {KIE_AI_BASE_URL}/generate
-      GET   {KIE_AI_BASE_URL}/record-info?taskId=
-      successFlag: 0=generating, 1=success, 2=create_failed, 3=generate_failed
-      image URL:   data.response.resultImageUrl
-      inputImage is OPTIONAL — omit for pure text-to-image.
+    Verified working contract from kie.ai logs (2026-05-13):
+      Model:    flux-2/pro-text-to-image
+      Endpoint: POST /api/v1/jobs/createTask
+      Schema:   flat snake_case (aspect_ratio, output_format — NOT camelCase)
+      Poll:     GET  /api/v1/jobs/recordInfo?taskId=
+      State:    data.state (string: "success" / "fail" / "failed" / "error")
+      Image:    data.resultJson (JSON string) → resultUrls[0]
     """
     api_key = settings.KIE_AI_API_KEY
     headers = {
@@ -400,7 +401,7 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
         "Content-Type": "application/json"
     }
 
-    # Map pixel dimensions to the closest supported kie.ai aspect ratio
+    # Map pixel dimensions to kie.ai aspect ratio strings
     ratio = width / height
     if ratio >= 1.7:
         aspect_ratio = "16:9"
@@ -413,26 +414,26 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
     else:
         aspect_ratio = "9:16"
 
-    # Build payload — inputImage is optional; include only when a reference image exists
+    # Flat snake_case schema — verified working in kie.ai logs
     payload: Dict[str, Any] = {
-        "model": "flux-kontext-pro",
+        "model": "flux-2/pro-text-to-image",
         "prompt": prompt,
-        "aspectRatio": aspect_ratio,
-        "outputFormat": "png",
+        "aspect_ratio": aspect_ratio,
+        "output_format": "png",
     }
+    # Include reference image only when a valid re-hosted URL is available
     if input_image_url:
-        payload["inputImage"] = input_image_url
+        payload["input_image"] = input_image_url
 
     async with httpx.AsyncClient(timeout=200.0) as client:
-        # Submit generation task
-        print(f"kie.ai generate payload: {payload}")
+        print(f"kie.ai createTask payload: {payload}")
         create_resp = await client.post(
-            f"{KIE_AI_BASE_URL}/generate",
+            f"{KIE_AI_BASE_URL}/jobs/createTask",
             headers=headers,
             json=payload
         )
         task_data = create_resp.json()
-        print(f"kie.ai generate HTTP {create_resp.status_code}: {task_data}")
+        print(f"kie.ai createTask HTTP {create_resp.status_code}: {task_data}")
         create_resp.raise_for_status()
 
         if not task_data.get("data") or not task_data["data"].get("taskId"):
@@ -442,35 +443,36 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
         task_id = task_data["data"]["taskId"]
         print(f"kie.ai task created: {task_id}")
 
-        # Poll until done — successFlag: 0=generating, 1=success, 2=create_failed, 3=generate_failed
         # Poll every 5s, max 36 attempts = 3 minutes
+        _FAIL_STATES = {"fail", "failed", "error", "cancelled", "canceled"}
         for attempt in range(36):
             await asyncio.sleep(5)
             status_resp = await client.get(
-                f"{KIE_AI_BASE_URL}/record-info",
+                f"{KIE_AI_BASE_URL}/jobs/recordInfo",
                 headers=headers,
                 params={"taskId": task_id}
             )
             status_resp.raise_for_status()
             status_data = status_resp.json()
             data = status_data.get("data", {})
-            flag = data.get("successFlag")
-            print(f"kie.ai task {task_id} successFlag={flag!r} (attempt {attempt + 1}/36)")
+            state = (data.get("state") or "").lower()
+            print(f"kie.ai task {task_id} state={state!r} (attempt {attempt + 1}/36)")
 
-            if flag == 1:  # SUCCESS
-                image_url = (data.get("response") or {}).get("resultImageUrl")
+            if state == "success":
+                result_json = data.get("resultJson", "{}")
+                result = _json.loads(result_json) if isinstance(result_json, str) else result_json
+                image_url = result.get("resultUrls", [None])[0]
                 if not image_url:
-                    raise ValueError("kie.ai returned success but no resultImageUrl")
+                    raise ValueError("kie.ai returned success but no image URL in resultUrls")
                 return image_url
-            elif flag in (2, 3):  # CREATE_TASK_FAILED or GENERATE_FAILED
+            elif state in _FAIL_STATES:
                 kie_msg = (
-                    data.get("errorMessage")
-                    or data.get("msg")
+                    data.get("msg") or data.get("message")
                     or status_data.get("msg")
-                    or f"successFlag={flag}"
+                    or f"state={state!r}"
                 )
                 raise ValueError(f"kie.ai task failed: {kie_msg}")
-            # flag == 0: still generating — keep polling
+            # else: still generating — keep polling
 
     raise TimeoutError(
         f"kie.ai task {task_id} did not complete after 3 minutes. "
