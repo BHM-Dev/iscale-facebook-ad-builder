@@ -255,11 +255,13 @@ ABSOLUTE RULES — never break these:
    → Welding = a welder in full gear with bright arc sparks flying, dramatic low-angle shot.
    → Roofing = a worker in a safety vest on a residential or commercial roofline, blue sky behind.
    → Plumbing = close-up of a plumber's hands doing clean, precise pipe work.
+   → HVAC / Electrical = technician in branded work shirt servicing a commercial HVAC unit or inspecting a circuit panel, clean industrial setting.
 
    PROFESSIONAL / PERSON niches (lawyer, accountant, doctor, insurance agent, financial advisor, etc.):
    → Show a confident modern professional in a clean contemporary office or meeting room.
    → Business casual, grounded expression, sense of expertise and calm.
    → For vehicle / auto / driving niches: show a person near or inside a modern vehicle on an open road, warm natural light — NOT an office.
+   → For medical / dental / health niches: show a clean modern clinic or exam room with professional equipment — NOT a corporate office.
 
 3. EMOTIONAL BEAT = SECURITY AND CONFIDENCE. Whatever the scene, it should feel calm, grounded, and in control. Not worried, not celebrating, not religious.
 
