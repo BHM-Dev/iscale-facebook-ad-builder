@@ -139,19 +139,33 @@ from app.core.config import settings
 # ---------------------------------------------------------------------------
 _ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 _async_anthropic = _anthropic_sdk.AsyncAnthropic(api_key=_ANTHROPIC_KEY) if _ANTHROPIC_KEY else None
-_PROMPT_MODEL = "claude-haiku-4-5-20251001"
+# Sonnet used for image prompt generation — Haiku was producing literal/costume imagery
+# (e.g. biblical figures for "Religious Organizations" niche). Sonnet follows the
+# contemporary-business-owner framing reliably. ~$0.003/call, acceptable for this task.
+_PROMPT_MODEL = "claude-sonnet-4-5-20250929"
 
 # Negative prompt applied to all flux-kontext-pro calls.
 # Blocks the most common ad creative failure modes across financial/insurance verticals.
 _NEGATIVE_PROMPT = (
+    # Text / graphics
     "text, words, letters, numbers, typography, headline, caption, speech bubble, "
     "watermark, logo, brand name, company name, signature, stamp, "
     "footer, bottom bar, header bar, legal disclaimer, fine print, tagline, slogan, "
     "insurance disclaimer, website address, phone number, social media handle, "
+    # Historical / costume / religious imagery
+    "halo, robes, religious robes, biblical figure, ancient clothing, medieval clothing, "
+    "historical costume, crown of thorns, prayer beads, cassock, nun habit, monk robe, "
+    "stained glass, candles, altar, religious iconography, divine light rays, "
+    "ancient, medieval, historical, biblical, cinematic religious lighting, "
+    "praying hands pose, hands clasped in prayer, worship pose, "
+    # Generic stock-photo failures
+    "generic couple smiling at camera, handshake, floating money, composite background, "
+    "plain gray studio backdrop, white seamless background, "
+    # Technical failures
     "blurry, out of focus, low quality, distorted, deformed, bad anatomy, extra fingers, "
-    "six fingers, multiple hands, ugly, multiple people, crowd, busy cluttered background, "
+    "six fingers, multiple hands, ugly, crowd, busy cluttered background, "
     "oversaturated, harsh shadows, grainy, noise, low resolution, "
-    "illustration, cartoon, 3D render, clipart, stock photo style, "
+    "illustration, cartoon, 3D render, clipart, "
     "lens flare, heavy vignette, HDR effect, collage, multiple scenes, split image"
 )
 
@@ -159,7 +173,7 @@ _NEGATIVE_PROMPT = (
 # Haiku performs significantly better with an explicit emotional target and scene vocabulary.
 _VERTICAL_HINTS: Dict[str, str] = {
     "auto insurance":        "Place the subject near or in a vehicle. Emotional beat: peace of mind, feeling protected on the road.",
-    "commercial insurance":  "Show a small business owner confidently in their environment (shop, office, restaurant). Emotional beat: security, running a tight operation.",
+    "commercial insurance":  "Show a modern business owner or property manager standing confidently at or near their contemporary commercial property — exterior of a building, inside a well-lit office, or surveying their shop floor. Contemporary business-casual clothing only. For church/religious org niches: show a modern administrator at a contemporary church building exterior or inside a contemporary office, NOT a religious figure or ceremony. Emotional beat: ownership, protection, peace of mind.",
     "home insurance":        "Subject at or around their home, sense of ownership and pride. Emotional beat: protected, settled.",
     "personal loans":        "Young adult achieving something (moving into new place, buying furniture, paying off a bill). Emotional beat: access, momentum, relief.",
     "debt relief":           "Person exhaling, unclenching shoulders, stepping outside into daylight. Emotional beat: relief, breathing room, fresh start — NOT paperwork or stress.",
@@ -182,7 +196,7 @@ async def _build_ai_image_prompt(
     aspect_ratio: str = "1:1",
 ) -> str:
     """
-    Use Claude Haiku to convert brand/product/copy context into a
+    Use Claude Sonnet to convert brand/product/copy context into a
     Flux-optimized visual scene description for Facebook ad creatives.
 
     aspect_ratio is passed so the model can tailor composition guidance
@@ -222,35 +236,44 @@ async def _build_ai_image_prompt(
                 "visually rich background throughout — no empty bands, no plain floor or sky taking up the lower half"
             )
 
-        system_prompt = f"""You are a professional art director who writes image generation prompts for Facebook ad creatives. Your prompts feed directly into Flux, a photorealistic image generation model.
+        system_prompt = f"""You are a senior art director writing Flux image generation prompts for Facebook ads. These ads target small business owners who need insurance or financial services.
 
-Your job is to translate ad copy and brand context into a vivid, specific visual scene description that Flux can render as a high-quality Facebook ad background image.
+ABSOLUTE RULES — never break these:
 
-Rules:
-- Describe a REAL SCENE with a real person in a real moment that emotionally matches the ad copy. Never do product photography for abstract services (insurance, loans, mortgages, debt relief).
-- Lead with the subject: "A [specific person description] [doing a specific action] in [specific setting]"
-- Include: photographic lens style (e.g. 85mm portrait lens), lighting quality, color mood, depth of field
-- Composition: {composition_note}
-- End with: "Facebook ad creative format, no text, no logos, no watermarks"
-- Max 80 words total
-- Never mention the brand name, product name, company name, or any specific text that would appear in the image
-- Avoid stock-photo clichés (handshakes, generic smiles at cameras, floating money). Be emotionally specific."""
+1. CONTEMPORARY ONLY. Every subject wears modern business-casual or work clothing. Zero historical figures, zero religious robes or vestments, zero halos, zero biblical imagery, zero medieval clothing, zero prayer or worship poses, zero candles, zero altars — regardless of what the niche says. "Religious Organizations" means the CUSTOMER TYPE, not what appears in the image.
 
-        user_msg = f"""Create a Flux image generation prompt for this Facebook ad:
+2. TRANSLATE THE NICHE INTO A BUSINESS SCENE. The niche tells you what kind of business needs insurance — it does NOT describe who appears in the image. Examples:
+   - "Religious Organizations" / "Church" → A modern pastor or church administrator in business casual, standing outside a contemporary brick church building, or at a desk in a clean modern office
+   - "Winery" → A winery owner in modern casual workwear walking their vineyard rows at golden hour
+   - "Restaurant" → A chef-owner surveying their well-lit dining room before opening
+   - "Auto Repair" → A shop owner in a clean branded work shirt in a bright, organized garage
+   - "Plumbing" → A plumbing contractor in a clean branded polo, standing in front of a service van outside a commercial building
+   - "Roofing" → A roofing contractor in a safety vest reviewing a tablet, standing in front of a completed commercial building
+   The person looks like a BUSINESS OWNER responsible for a property, not a practitioner of the activity.
 
-Vertical / service: {product_name}{(' — ' + product_desc) if product_desc else ''}
-{('Niche / target business type: ' + niche) if niche else ''}
+3. THE EMOTIONAL BEAT IS SECURITY AND CONFIDENCE. The subject looks calm, grounded, in control — like someone who has their business protected. Not worried, not celebrating, not praying.
+
+4. COMPOSITION: {composition_note}
+
+5. AVOID THESE FAILURES: generic couples smiling at camera, plain gray studio backdrops, handshakes, floating money, stock-photo poses, crowd scenes, abstract backgrounds.
+
+6. FORMAT: Lead with "A [specific modern person] [action] [contemporary setting]." Then add lens, lighting, mood. End with: "No text, no logos, no watermarks, no footers. Photorealistic."
+
+7. Max 85 words. Never mention brand names, company names, or insurance product names."""
+
+        user_msg = f"""Write a Flux image prompt for this Facebook ad.
+
+Service / product: {product_name}{(' — ' + product_desc) if product_desc else ''}
+{('Niche (= customer type, NOT image subject): ' + niche) if niche else ''}
+Emotional tone of the ad: {headline}
 Brand voice: {brand_voice}
-Brand color palette: {brand_color if brand_color else 'not specified'}
-Ad concept (emotional tone only — do NOT include any text in the image): {headline}
-Ad body copy (emotional context only — do NOT include any text in the image): {body if body else 'not provided'}
-Visual mood: {mood}
+{('Visual direction: ' + vertical_hint) if vertical_hint else ''}
 Lighting direction: {lighting}
-{('Vertical guidance: ' + vertical_hint) if vertical_hint else ''}
+Visual mood: {mood}
 
-CRITICAL: Your output must describe a PURELY VISUAL SCENE — no text, words, letters, headlines, captions, watermarks, logos, footers, disclaimers, or any graphic elements. The image must be clean photorealistic photography only.
+Remember: the niche is WHO BUYS this service — show that business owner at their contemporary property. Do not depict religious ceremony, worship, or any historical/costume imagery.
 
-Return ONLY the image prompt. No explanation, no preamble."""
+Return ONLY the image prompt."""
 
         response = await _async_anthropic.messages.create(
             model=_PROMPT_MODEL,
