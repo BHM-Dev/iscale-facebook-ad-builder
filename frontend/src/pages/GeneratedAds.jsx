@@ -281,6 +281,24 @@ export default function GeneratedAds() {
         navigate('/facebook-campaigns');
     };
 
+    // Convert size_name → short ratio label (e.g. "Square" → "1×1", "Story" → "9×16")
+    const sizeRatio = (ad) => {
+        const name = (ad.size_name || '').toLowerCase();
+        if (name.includes('story')) return '9×16';
+        if (name.includes('portrait')) return '4×5';
+        if (name.includes('square')) return '1×1';
+        // Fall back to parsing dimensions string e.g. "1080x1920"
+        const dims = ad.dimensions || '';
+        const m = dims.match(/(\d+)\s*[x×]\s*(\d+)/i);
+        if (m) {
+            const w = parseInt(m[1]), h = parseInt(m[2]);
+            if (h > w * 1.6) return '9×16';
+            if (h > w * 1.1) return '4×5';
+            return '1×1';
+        }
+        return ad.size_name || dims || '—';
+    };
+
     // Modal Helpers
     const openModal = (bundle) => {
         const bundleId = bundle[0].ad_bundle_id || `legacy_${bundle[0].id}`;
@@ -483,16 +501,6 @@ export default function GeneratedAds() {
                                             )}
                                         </button>
 
-                                        {/* Size Badge — shows actual size name(s) so Joel can tell Square vs Story vs Portrait at a glance */}
-                                        {!isBroken && (
-                                            <div className="absolute bottom-3 right-3 bg-black/70 backdrop-blur-sm text-white px-3 py-1.5 rounded-lg text-xs font-medium">
-                                                {bundle.length === 1
-                                                    ? (mainAd.size_name || mainAd.dimensions || '1 Size')
-                                                    : bundle.map(ad => ad.size_name || ad.dimensions).filter(Boolean).join(' · ') || `${bundle.length} Sizes`
-                                                }
-                                            </div>
-                                        )}
-
                                         {/* Delete Button — visible on group hover (CSS group class on card) */}
                                         <button
                                             onClick={(e) => handleDelete(bundleId, e)}
@@ -502,6 +510,20 @@ export default function GeneratedAds() {
                                             <Trash2 size={16} />
                                         </button>
                                     </div>
+
+                                    {/* Dimension strip — below image on white background, always readable */}
+                                    {!isBroken && (
+                                        <div className="flex items-center justify-center gap-1.5 px-3 py-2 border-t border-gray-100 bg-white">
+                                            {bundle.map((ad, i) => (
+                                                <span
+                                                    key={i}
+                                                    className="text-xs font-semibold text-gray-600 bg-gray-100 rounded px-2 py-0.5 tracking-wide"
+                                                >
+                                                    {sizeRatio(ad)}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             );
                         })}
@@ -579,12 +601,13 @@ export default function GeneratedAds() {
                                                             />
                                                         )}
                                                     </div>
-                                                    <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
-                                                        {bundle.length === 1
-                                                            ? (mainAd.size_name || mainAd.dimensions || '1 Size')
-                                                            : bundle.map(ad => ad.size_name || ad.dimensions).filter(Boolean).join(' · ') || `${bundle.length} Sizes`
-                                                        }
-                                                    </span>
+                                                    <div className="flex gap-1 flex-wrap">
+                                                        {bundle.map((ad, i) => (
+                                                            <span key={i} className="text-xs font-semibold text-gray-600 bg-gray-100 px-2 py-0.5 rounded tracking-wide">
+                                                                {sizeRatio(ad)}
+                                                            </span>
+                                                        ))}
+                                                    </div>
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4">
