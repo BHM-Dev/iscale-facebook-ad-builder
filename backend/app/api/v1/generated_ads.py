@@ -311,6 +311,90 @@ def _get_niche_override(niche: str) -> str | None:
     return None
 
 
+# ── Pexels stock photo integration ─────────────────────────────────────────────
+# For place/property niches where AI generation reliably fails, we pull curated
+# stock photos from Pexels instead of kie.ai. Pexels is free (200 req/hr,
+# 20k/month), commercially licensed, no attribution required.
+# Multiple queries per niche → random selection → variety across runs.
+_PEXELS_QUERIES: Dict[str, list] = {
+    "religious":  ["church sunday service congregation", "church interior worship service", "church community gathering"],
+    "church":     ["church building exterior steeple", "church congregation pews", "church community"],
+    "mosque":     ["mosque exterior architecture", "mosque interior prayer hall"],
+    "synagogue":  ["synagogue exterior", "synagogue interior"],
+    "winery":     ["vineyard grapevines golden hour", "wine cellar barrels", "wine pouring glass red"],
+    "restaurant": ["restaurant dining room interior", "restaurant kitchen chef cooking", "upscale restaurant tables"],
+    "bar ":       ["bar interior cocktails", "bartender pouring drinks"],
+    "brewery":    ["craft brewery fermentation tanks", "brewery interior industrial"],
+    "daycare":    ["daycare classroom teacher children", "preschool colorful classroom"],
+    "gym":        ["gym fitness equipment workout", "gym interior treadmills weights"],
+    "trucking":   ["semi truck highway open road", "truck driver cab steering wheel", "freight trucks depot"],
+    "welding":    ["welder sparks metal industrial", "welding arc sparks workshop"],
+    "plumbing":   ["plumber pipe work professional", "plumbing pipes tools"],
+    "roofing":    ["roofer roof residential work", "roofing contractor shingles"],
+    "landscaping":["landscaping crew lawn garden", "landscape gardening professional"],
+    "auto repair":["auto mechanic car repair shop", "mechanic working on engine"],
+    "dental":     ["dental office exam room", "dentist clinic modern"],
+    "medical":    ["medical clinic exam room", "doctor office professional"],
+}
+
+def _get_pexels_query(niche: str) -> str | None:
+    """Return a randomly selected Pexels search query for the given niche."""
+    import random
+    niche_lower = niche.lower()
+    for key, queries in _PEXELS_QUERIES.items():
+        if key in niche_lower:
+            return random.choice(queries)
+    return None
+
+
+async def _pexels_fetch_image(query: str, aspect_ratio: str = "1:1") -> str | None:
+    """
+    Search Pexels for a stock photo matching the query and return a usable image URL.
+    Returns None on any failure so caller can fall back to kie.ai.
+
+    orientation mapping:
+      9:16, 3:4  → portrait
+      16:9, 4:3  → landscape
+      1:1        → square (Pexels doesn't have square, use landscape and crop is fine)
+    """
+    api_key = settings.PEXELS_API_KEY
+    if not api_key:
+        print("PEXELS_API_KEY not configured — skipping Pexels")
+        return None
+
+    import random
+    orientation = "portrait" if aspect_ratio in ("9:16", "3:4") else "landscape"
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                "https://api.pexels.com/v1/search",
+                headers={"Authorization": api_key},
+                params={
+                    "query": query,
+                    "per_page": 15,
+                    "orientation": orientation,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        photos = data.get("photos", [])
+        if not photos:
+            print(f"Pexels returned 0 results for '{query}'")
+            return None
+
+        photo = random.choice(photos)
+        # Use large2x (1880px wide) for quality; fall back to large (940px)
+        url = photo.get("src", {}).get("large2x") or photo.get("src", {}).get("large")
+        print(f"📸 Pexels photo selected: id={photo.get('id')} url={url[:60] if url else 'None'}")
+        return url
+
+    except Exception as e:
+        print(f"Pexels fetch failed ({e}) — falling back to kie.ai")
+        return None
+
+
 async def _build_ai_image_prompt(
     request: "ImageGenerationRequest",
     aspect_ratio: str = "1:1",
@@ -704,7 +788,25 @@ async def generate_image(
                             print(f"WARNING: could not re-host reference image ({_ref_err}) — proceeding text-to-image")
                             input_image = None
 
-                    external_url = await _kie_generate_image(prompt, width, height, input_image, _NEGATIVE_PROMPT)
+                    # ── Pexels first for known place/property niches ──────────
+                    # AI generation reliably fails for niches like religious orgs,
+                    # wineries, restaurants. Pexels returns curated stock photos
+                    # that match what Joel is actually running. kie.ai is the
+                    # fallback if Pexels isn't configured or returns no results.
+                    _niche_label = (request.niche or "").strip()
+                    _pexels_query = _get_pexels_query(_niche_label)
+                    external_url = None
+
+                    if _pexels_query:
+                        _ar = _get_aspect_ratio(width, height)
+                        external_url = await _pexels_fetch_image(_pexels_query, _ar)
+                        if external_url:
+                            print(f"✅ Using Pexels image for niche '{_niche_label}' (query: '{_pexels_query}')")
+                        else:
+                            print(f"⚠️  Pexels failed for '{_niche_label}' — falling back to kie.ai")
+
+                    if not external_url:
+                        external_url = await _kie_generate_image(prompt, width, height, input_image, _NEGATIVE_PROMPT)
 
                     print(f"Downloading image from kie.ai: {external_url[:50]}...")
 

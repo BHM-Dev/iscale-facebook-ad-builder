@@ -37,6 +37,7 @@ class Settings:
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
     FAL_AI_API_KEY: str = os.getenv("FAL_AI_API_KEY", "")
     KIE_AI_API_KEY: str = os.getenv("KIE_AI_API_KEY", "")
+    PEXELS_API_KEY: str = os.getenv("PEXELS_API_KEY", "")
     FACEBOOK_ACCESS_TOKEN: str = os.getenv("FACEBOOK_ACCESS_TOKEN", "")
 
     # Auth settings - SECRET_KEY is required
