@@ -191,69 +191,123 @@ def _get_vertical_hint(product_name: str, product_desc: str) -> str:
     return ""
 
 
-# Hardcoded Flux prompts for niches that reliably fail with LLM-generated prompts.
-# These bypass Sonnet entirely — the word "religious" / "church" in any prompt
-# causes Flux to default to faces, couples, or clergy. Hardcoded scenes are specific
-# enough that Flux has no room to interpret.
-# Composition note is appended at call time. Keep base prompt under 50 words.
-_NICHE_OVERRIDES: Dict[str, str] = {
-    "religious": (
+# Hardcoded Flux prompt lists for niches that fail with LLM-generated prompts.
+# Each niche has multiple scene options — one is picked randomly per generation
+# so Joel sees variety across runs. All scenes are written as specific Flux-ready
+# descriptions with no ambiguous language that Flux could misinterpret.
+# Rules per scene: contemporary only, specific setting, controlled people/no-people.
+_NICHE_OVERRIDES: Dict[str, list] = {
+    "religious": [
+        # Exterior
         "Wide-angle exterior photograph of a white wooden church with a tall steeple, "
         "green lawn, oak trees, clear blue sky, warm morning sunlight. "
-        "Empty, no people. No text, no logos. Photorealistic."
-    ),
-    "church": (
-        "Wide-angle exterior photograph of a red brick church with arched windows and a "
-        "white steeple, tree-lined sidewalk, blue sky, bright daylight. "
-        "Empty, no people. No text, no logos. Photorealistic."
-    ),
-    "mosque": (
+        "No people. No text, no logos. Photorealistic.",
+        # Congregation in pews
+        "Interior of a bright modern church sanctuary, diverse congregation of 20 people "
+        "in contemporary clothing seated in wooden pews, large wooden cross at the front, "
+        "sunlight streaming through clear windows, warm community atmosphere. "
+        "No text, no logos. Photorealistic.",
+        # Small prayer group
+        "Four diverse adults in casual modern clothing seated around a round table in a "
+        "church meeting room, small wooden cross on the wall behind them, coffee cups on "
+        "the table, relaxed and engaged conversation, warm overhead lighting. "
+        "No text, no logos. Photorealistic.",
+        # Sunday service
+        "Wide shot of a modern church interior during Sunday service, congregation in "
+        "contemporary dress seated in pews, pastor in business casual at the front, "
+        "bright natural light, welcoming community feel. "
+        "No text, no logos. Photorealistic.",
+    ],
+    "church": [
+        "Wide-angle exterior of a red brick church with arched windows and white steeple, "
+        "tree-lined sidewalk, blue sky, bright daylight. No people. No text, no logos. Photorealistic.",
+        "Diverse group of adults in modern casual clothing gathered outside a brick church "
+        "entrance on a sunny day, smiling and talking, contemporary setting, natural light. "
+        "No text, no logos. Photorealistic.",
+        "Interior of a contemporary church hall, rows of chairs facing a simple wooden cross, "
+        "warm lighting, clean modern space, empty before service. No text, no logos. Photorealistic.",
+    ],
+    "mosque": [
         "Exterior photograph of a modern mosque with a white dome and minaret, "
-        "green courtyard, clear sky, warm afternoon light. "
-        "Empty, no people. No text, no logos. Photorealistic."
-    ),
-    "synagogue": (
-        "Exterior photograph of a stone synagogue with Star of David above the entrance, "
-        "manicured grounds, blue sky, soft daylight. "
-        "Empty, no people. No text, no logos. Photorealistic."
-    ),
-    "winery": (
+        "green courtyard, clear sky, warm afternoon light. No people. No text, no logos. Photorealistic.",
+        "Interior of a modern mosque prayer hall, ornate geometric tile floor, high ceilings, "
+        "soft natural light through arched windows, peaceful and empty. No text, no logos. Photorealistic.",
+    ],
+    "synagogue": [
+        "Exterior of a stone synagogue, manicured grounds, blue sky, soft daylight. "
+        "No people. No text, no logos. Photorealistic.",
+        "Interior of a synagogue sanctuary with wooden pews, menorah at the front, "
+        "warm lighting, stained glass casting soft color. Empty. No text, no logos. Photorealistic.",
+    ],
+    "winery": [
         "Rows of lush green grapevines on a hillside vineyard, golden afternoon light, "
-        "rolling hills in background, clear sky. "
-        "No people. No text, no logos. Photorealistic."
-    ),
-    "restaurant": (
-        "Interior photograph of a warm restaurant dining room, white tablecloths, "
-        "pendant lighting, wood floors, set for service, before opening. "
-        "Empty, no people. No text, no logos. Photorealistic."
-    ),
-    "bar ": (
+        "rolling hills in background, clear sky. No people. No text, no logos. Photorealistic.",
+        "Oak wine barrels stacked in a warm stone cellar, soft warm lighting, rustic brick walls. "
+        "No people. No text, no logos. Photorealistic.",
+        "Close-up of deep red wine being poured into a clean glass, dark background, "
+        "warm studio lighting, rich color. No text, no logos. Photorealistic.",
+        "Winery tasting room interior, wooden bar, wine bottles on shelves, warm lighting, "
+        "rustic elegant decor. Empty. No text, no logos. Photorealistic.",
+    ],
+    "restaurant": [
+        "Interior of a warm restaurant dining room, white tablecloths, pendant lighting, "
+        "wood floors, set for service. Empty. No text, no logos. Photorealistic.",
+        "Restaurant kitchen, chef in white coat plating food at a stainless steel counter, "
+        "clean organized workspace, bright overhead lighting. No text, no logos. Photorealistic.",
+        "Upscale restaurant bar area, backlit bottles, polished dark wood counter, "
+        "warm amber lighting. Empty. No text, no logos. Photorealistic.",
+    ],
+    "bar ": [
         "Interior of a clean upscale bar, backlit bottles, polished counter, warm lighting. "
-        "Empty, no people. No text, no logos. Photorealistic."
-    ),
-    "brewery": (
+        "Empty. No text, no logos. Photorealistic.",
+        "Bartender in neat uniform pouring a cocktail behind a polished bar, warm lighting, "
+        "bottles on shelves, professional setting. No text, no logos. Photorealistic.",
+    ],
+    "brewery": [
         "Interior of a craft brewery with large stainless steel fermentation tanks, "
-        "warm industrial lighting, brick walls. "
-        "No people. No text, no logos. Photorealistic."
-    ),
-    "daycare": (
+        "warm industrial lighting, brick walls. No people. No text, no logos. Photorealistic.",
+        "Brewer in casual work clothes checking gauges on a large fermentation tank, "
+        "modern brewery interior, industrial lighting. No text, no logos. Photorealistic.",
+    ],
+    "daycare": [
         "Bright cheerful daycare classroom interior, colorful low tables and chairs, "
         "natural light through large windows, educational posters on walls. "
-        "Empty, no people. No text, no logos. Photorealistic."
-    ),
-    "gym": (
+        "Empty. No text, no logos. Photorealistic.",
+        "Daycare teacher in casual clothes reading a book to three small children seated "
+        "in a circle on a colorful rug, bright classroom, warm natural light. "
+        "No text, no logos. Photorealistic.",
+    ],
+    "gym": [
         "Modern gym interior with rows of treadmills and free weights, "
-        "bright lighting, clean polished floors. "
-        "Empty, no people. No text, no logos. Photorealistic."
-    ),
+        "bright lighting, clean polished floors. Empty. No text, no logos. Photorealistic.",
+        "Person in athletic wear working out on a cable machine in a clean modern gym, "
+        "natural light, focused expression, contemporary fitness setting. No text, no logos. Photorealistic.",
+    ],
+    "trucking": [
+        "Semi-truck cab with a professional driver in the seat, modern highway, "
+        "open road, clear sky, natural light. No text, no logos. Photorealistic.",
+        "Row of clean semi-trucks parked at a modern logistics depot, morning light, "
+        "wide shot. No people. No text, no logos. Photorealistic.",
+        "Close-up of a truck driver's hands on a large steering wheel, open highway "
+        "visible through the windshield, warm natural light. No text, no logos. Photorealistic.",
+    ],
+    "welding": [
+        "Close-up of a welder in full safety gear and dark visor, bright orange arc sparks "
+        "flying, dark industrial workshop background. No text, no logos. Photorealistic.",
+        "Welder in protective gear and gloves working on a steel beam in a well-lit "
+        "industrial shop, sparks and heat visible, professional setting. No text, no logos. Photorealistic.",
+    ],
 }
 
 def _get_niche_override(niche: str) -> str | None:
-    """Return a hardcoded Flux prompt if the niche matches a known override key."""
+    """Return a randomly selected hardcoded Flux prompt for known failing niches."""
+    import random
     niche_lower = niche.lower()
-    for key, prompt in _NICHE_OVERRIDES.items():
+    for key, prompts in _NICHE_OVERRIDES.items():
         if key in niche_lower:
-            return prompt
+            chosen = random.choice(prompts)
+            print(f"🏛️  Niche override for '{niche}': picked scene {prompts.index(chosen)+1}/{len(prompts)}")
+            return chosen
     return None
 
 
