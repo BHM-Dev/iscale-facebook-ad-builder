@@ -322,35 +322,24 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
     else:
         aspect_ratio = "9:16"
 
-    # flux-kontext-pro is an image-editing model — it requires inputImage.
-    # For pure text-to-image (no product shot), use flux-2/pro-text-to-image
-    # which has a different nested-input schema.
+    # Both text-to-image and image-to-image use flux-kontext-pro with a flat
+    # top-level payload (camelCase fields, no nested "input" wrapper).
+    # The old "flux-2/pro-text-to-image" nested-input schema started returning
+    # "The input cannot be null" — kie.ai changed/deprecated that endpoint.
+    # flux-kontext-pro accepts text-to-image (no inputImage) and image-to-image
+    # (inputImage provided) through the same flat schema.
+    payload: Dict[str, Any] = {
+        "model": "flux-kontext-pro",
+        "prompt": prompt,
+        "aspectRatio": aspect_ratio,
+        "outputFormat": "png",
+    }
     if input_image_url:
-        model = "flux-kontext-pro"
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "aspectRatio": aspect_ratio,   # camelCase for kontext
-            "outputFormat": "png",
-            "inputImage": input_image_url,
-        }
-    else:
-        model = "flux-2/pro-text-to-image"
-        # NOTE: flux-2/pro-text-to-image does NOT support negative_prompt.
-        # The only supported input fields are: prompt, aspect_ratio, resolution, nsfw_checker.
-        # Sending unsupported fields causes immediate task failure (state: fail).
-        input_block: Dict[str, Any] = {
-            "prompt": prompt,
-            "aspect_ratio": aspect_ratio,  # snake_case inside input
-            "resolution": "1K",
-        }
-        payload = {
-            "model": model,
-            "input": input_block,
-        }
+        payload["inputImage"] = input_image_url
 
     async with httpx.AsyncClient(timeout=200.0) as client:
         # Create the task
+        print(f"kie.ai createTask payload: {payload}")
         create_resp = await client.post(
             f"{KIE_AI_BASE_URL}/jobs/createTask",
             headers=headers,
