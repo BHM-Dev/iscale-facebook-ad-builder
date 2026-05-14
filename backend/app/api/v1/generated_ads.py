@@ -198,17 +198,19 @@ async def _build_ai_image_prompt(
         niche = request.niche or ""
         vertical_hint = _get_vertical_hint(product_name, product_desc)
 
-        # Composition guidance differs by orientation
+        # Composition guidance differs by orientation.
+        # Text is composited onto the image via Pillow post-generation, so the
+        # image must fill the FULL frame — no empty bands or dead space.
         is_portrait = aspect_ratio in ("9:16", "3:4")
         if is_portrait:
             composition_note = (
-                "vertical story format — subject centered in the middle third of the frame, "
-                "clear safe zones at both top and bottom for UI chrome, no key elements in top or bottom 20%"
+                "vertical story format — rich scene content filling the full frame top to bottom, "
+                "subject positioned center-to-upper area, visually engaging background throughout"
             )
         else:
             composition_note = (
-                "clean empty space at the bottom third for text overlay, "
-                "subject prominent in upper two-thirds"
+                "full-bleed scene filling every corner of the frame, subject prominent and engaging, "
+                "visually rich background throughout — no empty bands, no plain floor or sky taking up the lower half"
             )
 
         system_prompt = f"""You are a professional art director who writes image generation prompts for Facebook ad creatives. Your prompts feed directly into Flux, a photorealistic image generation model.
