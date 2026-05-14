@@ -77,10 +77,9 @@ def build_comprehensive_prompt(request: ImageGenerationRequest) -> str:
         f"Primary Color: {brand_color}" if brand_color else "",
     ]
 
-    # Add copy context (headline)
-    if request.ad_copy and request.ad_copy.get('headline'):
-        parts.append(f"Context: Visual representation of \"{request.ad_copy.get('headline')}\"")
-    
+    # NOTE: headline intentionally excluded — it causes kie.ai to render text visually.
+    # The image should be a pure visual scene with no text baked in.
+
     # Add template art direction
     parts.append(f"Art Direction: {mood}, {lighting}, {composition}, {design_style}")
 
@@ -145,7 +144,10 @@ _PROMPT_MODEL = "claude-haiku-4-5-20251001"
 # Negative prompt applied to all flux-kontext-pro calls.
 # Blocks the most common ad creative failure modes across financial/insurance verticals.
 _NEGATIVE_PROMPT = (
-    "text, words, letters, watermark, logo, brand name, signature, caption, speech bubble, "
+    "text, words, letters, numbers, typography, headline, caption, speech bubble, "
+    "watermark, logo, brand name, company name, signature, stamp, "
+    "footer, bottom bar, header bar, legal disclaimer, fine print, tagline, slogan, "
+    "insurance disclaimer, website address, phone number, social media handle, "
     "blurry, out of focus, low quality, distorted, deformed, bad anatomy, extra fingers, "
     "six fingers, multiple hands, ugly, multiple people, crowd, busy cluttered background, "
     "oversaturated, harsh shadows, grainy, noise, low resolution, "
@@ -240,11 +242,13 @@ Vertical / service: {product_name}{(' — ' + product_desc) if product_desc else
 {('Niche / target business type: ' + niche) if niche else ''}
 Brand voice: {brand_voice}
 Brand color palette: {brand_color if brand_color else 'not specified'}
-Ad headline: {headline}
-Ad body copy: {body if body else 'not provided'}
+Ad concept (emotional tone only — do NOT include any text in the image): {headline}
+Ad body copy (emotional context only — do NOT include any text in the image): {body if body else 'not provided'}
 Visual mood: {mood}
 Lighting direction: {lighting}
 {('Vertical guidance: ' + vertical_hint) if vertical_hint else ''}
+
+CRITICAL: Your output must describe a PURELY VISUAL SCENE — no text, words, letters, headlines, captions, watermarks, logos, footers, disclaimers, or any graphic elements. The image must be clean photorealistic photography only.
 
 Return ONLY the image prompt. No explanation, no preamble."""
 

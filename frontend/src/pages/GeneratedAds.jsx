@@ -64,11 +64,15 @@ export default function GeneratedAds() {
                         cta: ad.cta || 'LEARN_MORE',
                         variantName: ad.headline ? ad.headline.slice(0, 30) : `Ad ${ad.id}`,
                         sizeLabel: ad.size_name || '—',
+                        niche: ad.niche || ad.overlay_niche_line || '',
                     });
                 }
                 return acc;
             }, []);
     };
+
+    // Extract the dominant niche from bulk push items (first non-empty value)
+    const getBulkNiche = (items) => items.find(it => it.niche)?.niche || '';
 
     useEffect(() => {
         fetchAds();
@@ -976,19 +980,24 @@ export default function GeneratedAds() {
                     initialCta={pushModal.ad.cta || 'LEARN_MORE'}
                     initialWebsiteUrl={localStorage.getItem('lastUsedWebsiteUrl') || ''}
                     initialCampaignId={localStorage.getItem('lastUsedCampaignId') || ''}
+                    niche={pushModal.ad.niche || pushModal.ad.overlay_niche_line || ''}
                     onClose={() => setPushModal({ show: false, ad: null })}
                 />
             )}
 
             {/* Bulk Push to Meta Modal */}
-            {bulkPushOpen && (
-                <BatchPushModal
-                    items={buildBulkPushItems()}
-                    onClose={() => setBulkPushOpen(false)}
-                    preselectedCampaignId={localStorage.getItem('lastUsedCampaignId') || ''}
-                    preselectedWebsiteUrl={localStorage.getItem('lastUsedWebsiteUrl') || ''}
-                />
-            )}
+            {bulkPushOpen && (() => {
+                const bulkItems = buildBulkPushItems();
+                return (
+                    <BatchPushModal
+                        items={bulkItems}
+                        onClose={() => setBulkPushOpen(false)}
+                        preselectedCampaignId={localStorage.getItem('lastUsedCampaignId') || ''}
+                        preselectedWebsiteUrl={localStorage.getItem('lastUsedWebsiteUrl') || ''}
+                        niche={getBulkNiche(bulkItems)}
+                    />
+                );
+            })()}
         </div>
     );
 }

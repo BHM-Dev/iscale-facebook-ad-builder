@@ -28,6 +28,7 @@ export default function PushToMetaModal({
     initialCta = 'LEARN_MORE',
     initialWebsiteUrl = '',
     initialCampaignId = '',
+    niche = '',
     onClose,
     onSuccess,
 }) {
@@ -40,10 +41,11 @@ export default function PushToMetaModal({
     const [pushSubmitting, setPushSubmitting] = useState(false);
     const [successResult, setSuccessResult] = useState(null);
 
-    // 'existing' = pick from list | 'new' = create fresh ad set
-    const [adsetMode, setAdsetMode] = useState('existing');
+    // Always default to 'new' — Joel always creates a fresh ad set when pushing
+    const [adsetMode, setAdsetMode] = useState('new');
+    const _today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     const [newAdset, setNewAdset] = useState({
-        name: '',
+        name: niche ? `${_today} - ${niche} - Testing` : `${_today} - Testing`,
         dailyBudget: '',
         cloneFromId: '',   // ad set ID to copy targeting/optimization from
     });
@@ -78,7 +80,7 @@ export default function PushToMetaModal({
                 setSelectedCampaign(match);
                 setPushForm(p => ({ ...p, campaignId: match.id, adsetId: '' }));
                 setPushAdSets([]);
-                setAdsetMode('existing');
+                // Do NOT override adsetMode — keep the 'new' default
                 loadPushAdSets(match.id);
             }
         }
@@ -340,8 +342,9 @@ export default function PushToMetaModal({
                                 setSelectedCampaign(campaign);
                                 setPushForm(p => ({ ...p, campaignId: e.target.value, adsetId: '' }));
                                 setPushAdSets([]);
-                                setAdsetMode('existing');
-                                setNewAdset({ name: '', dailyBudget: '', cloneFromId: '' });
+                                // Keep adsetMode as 'new' (user can switch to existing if needed)
+                                // Preserve the niche-derived name; clear only targeting clone
+                                setNewAdset(p => ({ ...p, cloneFromId: '' }));
                                 loadPushAdSets(e.target.value);
                             }}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"

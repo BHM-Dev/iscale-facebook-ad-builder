@@ -386,7 +386,7 @@ export default function BatchGenerate() {
     // generate a proper Flux scene description — it produces far better results than
     // a hand-built string, and it knows the niche context.
     const refPrompt = refImageUrl
-      ? `Maintain the exact visual composition, style, lighting, and aesthetic of the reference image.${niche ? ` Ad for ${niche}.` : ''} Keep the same background setting, subject positioning, and overall mood.${variant.headline ? ` The ad headline is: "${variant.headline}".` : ''} High quality photorealistic advertising photography.`
+      ? `Maintain the exact visual composition, style, lighting, and aesthetic of the reference image.${niche ? ` Ad for ${niche}.` : ''} Keep the same background setting, subject positioning, and overall mood. High quality photorealistic advertising photography. No text, no words, no captions, no watermarks, no logos, no footer.`
       : null;
 
     const payload = {
@@ -1040,6 +1040,7 @@ export default function BatchGenerate() {
                   cta: ctaToEnum(variant?.cta),
                   variantName: variant?.headline ? variant.headline.slice(0, 30) : `Variant ${variantId}`,
                   sizeLabel: sizeConfig?.label || sizeId,
+                  niche: niche || '',
                 };
               });
 
@@ -1082,6 +1083,7 @@ export default function BatchGenerate() {
               cta: ctaToEnum(variant?.cta),
               variantName: variant?.headline ? variant.headline.slice(0, 30) : `Variant ${variantId}`,
               sizeLabel: sizeConfig?.label || sizeId,
+              niche: niche || '',
             };
           });
         return (
@@ -1092,6 +1094,7 @@ export default function BatchGenerate() {
             preselectedAdsetId={iterateAdsetId}
             preselectedAdsetName={iterateAdsetName}
             preselectedWebsiteUrl={iterateLinkUrl}
+            niche={niche || ''}
           />
         );
       })()}

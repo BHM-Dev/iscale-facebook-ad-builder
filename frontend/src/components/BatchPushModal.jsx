@@ -18,7 +18,7 @@ const FB_API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api/
  *   preselectedAdsetId     {string}  Meta adset ID — pre-fills "clone from" and defaults to "Create new"
  *   preselectedAdsetName   {string}  Source adset name — used to suggest a new adset name
  */
-export default function BatchPushModal({ items, onClose, preselectedCampaignId = '', preselectedAdsetId = '', preselectedAdsetName = '', preselectedWebsiteUrl = '' }) {
+export default function BatchPushModal({ items, onClose, preselectedCampaignId = '', preselectedAdsetId = '', preselectedAdsetName = '', preselectedWebsiteUrl = '', niche = '' }) {
     const { showError } = useToast();
 
     // Shared form fields
@@ -33,12 +33,15 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     const [sharedCta, setSharedCta] = useState('LEARN_MORE');
     const [loading, setLoading] = useState(false);
 
-    // Ad set mode — default to 'new' when iterating from a known campaign
-    const [adsetMode, setAdsetMode] = useState(preselectedCampaignId ? 'new' : 'existing');
+    // Ad set mode — always default to 'new' so Joel creates a fresh ad set each push
+    const [adsetMode, setAdsetMode] = useState('new');
     const [sharedAdsetId, setSharedAdsetId] = useState('');
-    const suggestedAdsetName = preselectedAdsetName
-        ? `${preselectedAdsetName} - New Creative - ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
-        : '';
+    const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const suggestedAdsetName = niche
+        ? `${today} - ${niche} - Testing`
+        : preselectedAdsetName
+        ? `${preselectedAdsetName} - New Creative - ${today}`
+        : `${today} - Testing`;
     const [newAdset, setNewAdset] = useState({ name: suggestedAdsetName, dailyBudget: '', cloneFromId: preselectedAdsetId });
 
     // Per-item copy overrides (editable inline)
