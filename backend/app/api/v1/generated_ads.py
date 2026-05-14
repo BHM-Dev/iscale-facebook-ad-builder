@@ -490,10 +490,37 @@ async def generate_image(
             if use_kie:
                 try:
                     # Use `or None` to coerce an empty string URL (failed upload) to None
-                    input_image = (request.productShots[0] or None) if request.useProductImage and request.productShots else None
-                    # negative_prompt is NOT supported by flux-2/pro-text-to-image (causes task failure).
-                    # flux-kontext-pro ignores it too. Pass None for now; retained in signature
-                    # in case a future kie.ai model supports it.
+                    raw_input_image = (request.productShots[0] or None) if request.useProductImage and request.productShots else None
+
+                    # Re-host the input image on our own server before passing to kie.ai.
+                    # External URLs (Facebook CDN, etc.) often:
+                    #   1. Require auth tokens — kie.ai can't fetch them
+                    #   2. Are thumbnails (64x64) that are too small for flux-kontext-pro
+                    #   3. Expire within hours
+                    # Downloading and re-uploading ensures kie.ai gets a stable public URL.
+                    input_image = None
+                    if raw_input_image:
+                        try:
+                            async with httpx.AsyncClient(timeout=20.0) as _ref_client:
+                                _ref_resp = await _ref_client.get(raw_input_image)
+                                _ref_resp.raise_for_status()
+                                _ref_bytes = _ref_resp.content
+                            # Save to R2 or local — same path as generated images
+                            _ref_id  = str(uuid.uuid4())
+                            _ref_name = f"ref_{_ref_id}.png"
+                            if settings.r2_enabled:
+                                from app.api.v1.uploads import upload_to_r2
+                                input_image = await upload_to_r2(_ref_bytes, _ref_name, "image/png")
+                            else:
+                                _ref_path = UPLOAD_DIR / _ref_name
+                                with open(_ref_path, "wb") as _rfh:
+                                    _rfh.write(_ref_bytes)
+                                input_image = f"/uploads/{_ref_name}"
+                            print(f"Reference image re-hosted: {input_image}")
+                        except Exception as _ref_err:
+                            print(f"WARNING: could not re-host reference image ({_ref_err}) — proceeding text-to-image")
+                            input_image = None
+
                     external_url = await _kie_generate_image(prompt, width, height, input_image, None)
 
                     print(f"Downloading image from kie.ai: {external_url[:50]}...")
