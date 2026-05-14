@@ -265,6 +265,31 @@ Return ONLY the image prompt. No explanation, no preamble."""
 
 KIE_AI_BASE_URL = "https://api.kie.ai/api/v1"
 
+
+@router.get("/test-kie")
+async def test_kie_connection():
+    """Diagnostic: calls kie.ai createTask with minimal payloads and returns raw responses.
+    No auth required. Hit GET /api/v1/generated-ads/test-kie to debug kie.ai issues."""
+    api_key = settings.KIE_AI_API_KEY
+    if not api_key:
+        return {"error": "KIE_AI_API_KEY not configured on this server"}
+
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    tests = [
+        ("flux-2/pro-text-to-image flat", {"model": "flux-2/pro-text-to-image", "prompt": "test", "aspectRatio": "1:1", "outputFormat": "png"}),
+        ("flux-kontext-pro no image",      {"model": "flux-kontext-pro",          "prompt": "test", "aspectRatio": "1:1", "outputFormat": "png"}),
+    ]
+    results = []
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for label, payload in tests:
+            try:
+                r = await client.post(f"{KIE_AI_BASE_URL}/jobs/createTask", headers=headers, json=payload)
+                results.append({"label": label, "http": r.status_code, "body": r.json()})
+            except Exception as exc:
+                results.append({"label": label, "error": str(exc)})
+    return {"key_prefix": api_key[:8] + "...", "results": results}
+
+
 # Setup uploads directory (same as main.py StaticFiles mount)
 UPLOAD_DIR = settings.upload_dir
 os.makedirs(UPLOAD_DIR, mode=0o755, exist_ok=True)
