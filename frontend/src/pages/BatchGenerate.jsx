@@ -937,11 +937,11 @@ export default function BatchGenerate() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Body Copy <span className="text-gray-400 font-normal">· 100–220 chars</span></label>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Body Copy <span className="text-gray-400 font-normal">· 250–500 chars · short lines, line breaks</span></label>
                       <textarea
-                        rows={3}
-                        placeholder="Most drivers don't realize they're overpaying until it's too late. Takes 60 seconds. No commitment."
-                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none disabled:bg-gray-50 disabled:text-gray-500"
+                        rows={7}
+                        placeholder={"Hook line one.\nHook line two.\n\nProblem detail. Specific scenario.\nMost assume their policy covers it.\n\nIt doesn't.\nWe specialize in this niche.\n\nQuote in 7 minutes.\nSee your rate now."}
+                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-y disabled:bg-gray-50 disabled:text-gray-500 font-mono"
                         value={variant.body}
                         onChange={e => updateVariant(variant.id, 'body', e.target.value)}
                         disabled={running}

@@ -64,7 +64,7 @@ Return ONLY valid JSON with this exact structure:
 {{
   "headline_remix": "Write a new headline that fits the blueprint's text hierarchy but sells the new product",
   "visual_description": "Describe the new image in detail. Keep the blueprint's layout framework but feature the new product/audience. Be specific about composition, colors, subjects.",
-  "body_copy": "Write the supporting text/bullets adapted to the new brand. Match the blueprint's narrative arc.",
+  "body_copy": "Write the supporting body copy adapted to the new brand. Match the blueprint's narrative arc AND use Joel's line-break format: short lines (one thought each), 4 sections separated by blank lines (\\n\\n) — Hook / Problem Agitation / Solution+Niche / CTA Close. Lines within a section separated by \\n. NEVER a single flowing paragraph. Total 250–500 characters.",
   "cta_button": "A call to action that fits the blueprint's style and the new product",
   "image_generation_prompt": "A detailed, visual prompt for Fal.ai/Midjourney. Focus on concrete visual descriptions: layout, subjects, lighting, style, composition. Include aspect ratio and negative prompts. Example: 'A 4-panel comic book style grid showing [specific scene]. Retro pop art aesthetic, bold primary colors, Ben-Day dots texture. Clean composition with negative space for text. --ar 4:5 --no text, watermark, blurry'"
 }}

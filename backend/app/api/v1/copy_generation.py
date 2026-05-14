@@ -122,19 +122,62 @@ Format options:
 - Identity/niche: Call out the exact avatar ("If you're a [descriptor]…"). Make them feel seen. CTA.
 - Social proof: Lead with volume, results, or trust signal. Bullet the simplicity. CTA.
 
-Formatting constraints:
+---
+
+BODY COPY FORMAT — THIS IS MANDATORY. READ CAREFULLY.
+
+Do NOT write body copy as one flowing paragraph. That is the #1 tell of AI-generated copy and it will be rejected.
+
+REQUIRED FORMAT: Short lines. Deliberate line breaks. White space between sections.
+This is the rhythm of Schwartz's best copy — written to be read aloud, not skimmed like prose.
+
+Structure every body in 4 sections separated by blank lines:
+
+  1. HOOK (1–2 short lines) — sharp emotional opening. One thought per line.
+  2. PROBLEM AGITATION (2–3 short lines) — specific, visceral. Real scenarios, not abstract.
+  3. SOLUTION / MECHANISM (2–3 short lines) — the niche, the differentiator, what earns trust.
+  4. CTA CLOSE (1–2 short lines) — action + time signal ("Quote in 7 minutes." / "See your rate now.")
+
+REFERENCE EXAMPLE (religious org insurance — study this rhythm):
+  Your church has survived decades.
+  But one storm can change everything.
+
+  A roof collapse. A flooded basement. An HVAC system that dies in January.
+  Most pastors assume their policy covers it.
+
+  Until they file a claim and find out it doesn't.
+  We specialize in religious organization insurance.
+
+  Churches. Mosques. Synagogues. Faith-based nonprofits.
+  Not generic business policies.
+
+  Coverage built for the buildings your congregation calls home.
+
+  Quote in 7 minutes.
+  See your rate now.
+
+FORMATTING RULES:
+- Each section separated by a blank line (\\n\\n in the JSON)
+- Each line within a section ends with a line break (\\n)
+- No single line longer than 65 characters
+- Total body length: 250–500 characters including line breaks
+- Output \\n for line breaks and \\n\\n for paragraph breaks inside the JSON string value
+
+---
+
+FIELD CONSTRAINTS:
 - Headline: under 40 characters. Question, bold statement, or curiosity gap.
-- Body: 100–220 characters. Line breaks between bullet points if using bullets.
+- Body: formatted as shown above — NEVER a single paragraph block.
 - CTA: under 20 characters. Approved list only.
 
 ---
 
-Return ONLY valid JSON in this exact format — no markdown, no code fences, no explanatory text:
+Return ONLY valid JSON — no markdown, no code fences, no explanatory text:
 {{
   "variations": [
     {{
       "headline": "Short, direct headline under 40 chars",
-      "body": "Body copy matching the diagnosed awareness stage and avatar voice",
+      "body": "Hook line one.\\nHook line two.\\n\\nProblem detail one.\\nProblem detail two.\\n\\nSolution line.\\nNiche line.\\n\\nQuote in 7 minutes.\\nSee your rate now.",
       "cta": "Approved lead gen CTA"
     }}
   ]
@@ -205,7 +248,7 @@ async def regenerate_field(request: FieldRegenerationRequest):
     try:
         field_prompts = {
             "headline": "Generate a new headline (under 40 characters)",
-            "body": "Generate new body copy (under 125 characters for bullets, or up to 200 for storytelling)",
+            "body": "Generate new body copy using Joel's line-break format: short lines (one thought each), 4 sections (Hook / Problem Agitation / Solution+Niche / CTA Close), sections separated by blank lines (\\n\\n), lines within sections separated by \\n. Total 250–500 characters. NEVER a single paragraph.",
             "cta": "Generate a new call-to-action (under 20 characters)"
         }
 
@@ -229,7 +272,7 @@ Rules:
 - This is a saturated market (Stage 3–4 Schwartz sophistication) — avoid generic tired claims like "save on insurance" or "lower your rate" unless you give them a specific mechanism or angle that feels new
 - Match the Schwartz awareness stage that fits the pain: if avatar is Problem-Aware (knows they have a problem), lead with the pain; if Solution-Aware, lead with the outcome
 - For headlines: question, bold statement, identity call-out, or curiosity gap — under 40 characters
-- For body: 100–220 characters. No guaranteed savings, no absolute superlatives, no e-commerce language
+- For body: 250–500 characters. NEVER a single paragraph. Use short lines with \n line breaks between each line and \n\n between sections (Hook / Problem / Solution / CTA close). Study the Joel format: each line is its own thought, sections separated by blank lines. No guaranteed savings, no absolute superlatives, no e-commerce language
 - For CTAs: use ONLY — "Get My Quote", "See My Rate", "Check If I Qualify", "Compare Rates", "Get a Free Quote", "See Options", "Find Out Now", "Get Started"
 - Sounds like a human wrote it, not AI
 
@@ -292,11 +335,10 @@ REMIX PARAMETERS:
 RULES:
 - Each variation keeps the same emotional core as the winning ad but uses different words, structure, or proof
 - Headline: under 60 characters, punchy, no clickbait, no ALL CAPS
-- Body: 2-4 sentences max, conversational, written like a person not a brand
-  # NOTE (UI): Meta recommends ≤125 characters for primary text in some placements (e.g. Feed).
-  # The 2-4 sentence guideline above routinely produces 150-250+ char bodies. This is a prompt
-  # tuning tradeoff — shorter bodies lose conversational tone. If Joel flags truncation in
-  # previews, revisit with a tighter constraint (e.g. "2 sentences max, under 130 characters").
+- Body: MANDATORY FORMAT — short lines with deliberate line breaks, NOT a single paragraph block.
+  Structure: Hook (1–2 lines) + blank line + Problem agitation (2–3 lines) + blank line + Solution/niche (2–3 lines) + blank line + CTA close (1–2 lines).
+  Use \n between lines within a section and \n\n between sections. Total 250–500 characters.
+  Reference rhythm — each line is one thought, read it like speech: "Your church has survived decades.\nBut one storm can change everything.\n\nA roof collapse. A flooded basement.\nMost assume their policy covers it.\n\nIt doesn't.\nWe specialize in religious org insurance.\n\nQuote in 7 minutes.\nSee your rate now."
 - Do NOT use: "Are you...", "Did you know...", discount language, urgency pressure tactics, emojis
 - Write for awareness Stage 3-4 (solution-aware to product-aware) — they know their problem exists
 - Use the niche context naturally if provided
