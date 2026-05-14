@@ -146,21 +146,22 @@ _BLACK_STROKE = (0, 0, 0, 220)
 
 def apply_text_overlay(
     image_bytes: bytes,
-    headline: str = "",
+    headline: str = "",        # unused — headline goes in Meta ad copy, not the image
     offer_line: str = "",
-    cta_text: str = "LEARN MORE",
+    cta_text: str = "",        # unused — CTA goes in Meta ad copy, not the image
     logo_url: str | None = None,
     niche_line: str = "",
 ) -> bytes:
     """
-    Composite text overlay onto `image_bytes` (PNG/JPEG).
+    Composite a minimal overlay onto `image_bytes` (PNG/JPEG).
 
-    Layout (proportional — works for 1:1, 4:5, and 9:16):
-      - Top-right:   logo badge (white rounded rect) if logo_url provided
-      - Lower-left:  niche_line (ExtraBold, medium, white + stroke) — e.g. "Winery Business Insurance"
-      - Below that:  headline (ExtraBoldItalic, large, white + black stroke)
-      - Below that:  offer_line (Bold, medium, white + stroke)
-      - Below that:  CTA orange pill button (ExtraBold, white caps)
+    The image carries only what belongs on the creative itself:
+      - Top-right:  logo badge (white rounded rect) if logo_url provided
+      - Lower-left: niche_line — the hero text (e.g. "Winery Business Insurance")
+      - Below that: offer_line — supporting line (e.g. "From $24.95/Month")
+
+    Headline and CTA are NOT rendered here — they belong in Meta's ad copy
+    fields (primary_text, headline, call_to_action), not baked into the image.
 
     Returns PNG bytes of the composited image.
     """
@@ -172,25 +173,20 @@ def apply_text_overlay(
 
     LEFT = int(W * 0.055)
     text_max_w = int(W * 0.60)
+    gap_after_niche = int(H * 0.014)
 
-    gap_after_niche    = int(H * 0.014)
-    gap_after_headline = int(H * 0.015)
-    gap_after_offer    = int(H * 0.022)
-
-    # Starting y — text block anchors to lower-left, matching Joel's reference ads.
-    # Large niche text + offer + CTA naturally fills the lower ~40% of the image.
+    # Anchor text block in the lower-left.
+    # With only niche + offer (no headline or CTA), start lower so
+    # the photo subject stays visible and text doesn't crowd the middle.
     aspect = H / W
     if aspect > 1.6:      # 9:16 story
-        y = int(H * 0.48)
+        y = int(H * 0.62)
     elif aspect > 1.15:   # 4:5 portrait
-        y = int(H * 0.43)
+        y = int(H * 0.58)
     else:                 # 1:1 square
-        y = int(H * 0.40)
+        y = int(H * 0.55)
 
-    # ── Niche line — styled as the large bold-italic headline ─────────────────
-    # In Joel's ads the niche IS the hero text (e.g. "Winery Business Insurance").
-    # We use _fit_headline_font so it wraps to fit and scales to the largest
-    # size that stays within the left 60 % of the image width.
+    # ── Niche line — hero text on the image ───────────────────────────────────
     if niche_line:
         n_max_size = int(H * 0.105)
         n_min_size = int(H * 0.050)
@@ -208,33 +204,11 @@ def apply_text_overlay(
             y += n_line_h
         y += gap_after_niche
 
-    # ── Headline ──────────────────────────────────────────────────────────────
-    if headline:
-        h_max_size = int(H * 0.082)
-        h_min_size = int(H * 0.038)
-        h_font, h_lines = _fit_headline_font(
-            draw, headline, text_max_w, h_max_size, h_min_size,
-            "Montserrat-ExtraBoldItalic.ttf",
-        )
-        stroke_w = max(2, h_font.size // 16)
-        line_h = int(h_font.size * 1.18)
-
-        for line in h_lines:
-            draw.text(
-                (LEFT, y), line, font=h_font, fill=_WHITE,
-                stroke_width=stroke_w, stroke_fill=_BLACK_STROKE,
-            )
-            y += line_h
-        y += gap_after_headline
-
     # ── Offer line ────────────────────────────────────────────────────────────
     if offer_line:
-        # Cap font size by both height and width so tall/narrow formats (9:16)
-        # don't produce text wider than the image canvas.
         o_size = min(int(H * 0.066), int(W * 0.075))
         o_font = _load_font("Montserrat-Bold.ttf", o_size)
         o_stroke = max(3, o_size // 18)
-        # Wrap offer line to fit within text_max_w — prevents right-edge clipping
         o_lines = _wrap_to_width(draw, offer_line, o_font, text_max_w)
         o_line_h = int(o_font.size * 1.15)
         for o_line in o_lines:
@@ -243,32 +217,6 @@ def apply_text_overlay(
                 stroke_width=o_stroke, stroke_fill=_BLACK_STROKE,
             )
             y += o_line_h
-        y += gap_after_offer
-
-    # ── CTA button ────────────────────────────────────────────────────────────
-    # Guard: never let the button start so low it clips off the bottom edge.
-    if cta_text:
-        label = cta_text.upper()
-        c_size = int(H * 0.046)
-        c_font = _load_font("Montserrat-ExtraBold.ttf", c_size)
-        _btn_h_est = int(H * 0.046) + 2 * int(H * 0.018)   # rough height before full measure
-        y = min(y, H - _btn_h_est - int(H * 0.04))          # keep CTA at least 4% above bottom
-        pad_x = int(W * 0.048)
-        pad_y = int(H * 0.018)
-        t_bbox = draw.textbbox((0, 0), label, font=c_font)
-        btn_w = (t_bbox[2] - t_bbox[0]) + 2 * pad_x
-        btn_h = (t_bbox[3] - t_bbox[1]) + 2 * pad_y
-        radius = btn_h // 2
-
-        draw.rounded_rectangle(
-            [LEFT, y, LEFT + btn_w, y + btn_h],
-            radius=radius,
-            fill=_CTA_ORANGE,
-        )
-        # Centre text inside the pill
-        tx = LEFT + pad_x - t_bbox[0]
-        ty = y + pad_y - t_bbox[1]
-        draw.text((tx, ty), label, font=c_font, fill=_WHITE)
 
     # ── Logo badge (top-right) ─────────────────────────────────────────────────
     if logo_url:
