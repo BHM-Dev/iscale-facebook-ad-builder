@@ -169,17 +169,17 @@ _NEGATIVE_PROMPT = (
     "lens flare, heavy vignette, HDR effect, collage, multiple scenes, split image"
 )
 
-# Per-vertical emotional direction for the image prompt.
-# Haiku performs significantly better with an explicit emotional target and scene vocabulary.
+# Vertical hints used only in build_comprehensive_prompt() fallback (no Anthropic key).
+# The Sonnet-based _build_ai_image_prompt() uses the niche field directly.
 _VERTICAL_HINTS: Dict[str, str] = {
-    "auto insurance":        "Place the subject near or in a vehicle. Emotional beat: peace of mind, feeling protected on the road.",
-    "commercial insurance":  "Show a modern business owner or property manager standing confidently at or near their contemporary commercial property — exterior of a building, inside a well-lit office, or surveying their shop floor. Contemporary business-casual clothing only. For church/religious org niches: show a modern administrator at a contemporary church building exterior or inside a contemporary office, NOT a religious figure or ceremony. Emotional beat: ownership, protection, peace of mind.",
-    "home insurance":        "Subject at or around their home, sense of ownership and pride. Emotional beat: protected, settled.",
-    "personal loans":        "Young adult achieving something (moving into new place, buying furniture, paying off a bill). Emotional beat: access, momentum, relief.",
-    "debt relief":           "Person exhaling, unclenching shoulders, stepping outside into daylight. Emotional beat: relief, breathing room, fresh start — NOT paperwork or stress.",
-    "reverse mortgage":      "Active 60s–70s adult doing something enjoyable — gardening, traveling, time with family. Emotional beat: earned freedom, enjoying retirement on their own terms.",
-    "mortgage":              "Family or individual in front of a home or receiving keys. Emotional beat: milestone, new beginning.",
-    "health insurance":      "Active, healthy-looking person in natural surroundings. Emotional beat: vitality, peace of mind.",
+    "auto insurance":    "A car on an open road, golden light, clean landscape.",
+    "commercial insurance": "A small business storefront or commercial building exterior, clean daylight.",
+    "home insurance":    "A well-kept house exterior, warm afternoon light.",
+    "personal loans":    "A young adult in a modern apartment or coffee shop, relaxed and focused.",
+    "debt relief":       "A person stepping outside into sunlight, open space, sense of relief.",
+    "reverse mortgage":  "An older adult enjoying outdoor time — gardening, walking, relaxing.",
+    "mortgage":          "A house with a sold sign, warm afternoon light.",
+    "health insurance":  "An active person outdoors in natural light.",
 }
 
 def _get_vertical_hint(product_name: str, product_desc: str) -> str:
@@ -236,42 +236,42 @@ async def _build_ai_image_prompt(
                 "visually rich background throughout — no empty bands, no plain floor or sky taking up the lower half"
             )
 
-        system_prompt = f"""You are a senior art director writing Flux image generation prompts for Facebook ads. These ads target small business owners who need insurance or financial services.
+        system_prompt = f"""You are an art director writing Flux image generation prompts for Facebook ad creatives.
 
-ABSOLUTE RULES — never break these:
+The niche tells you exactly what to show. Keep it simple and direct — just show the subject.
 
-1. CONTEMPORARY ONLY. Every subject wears modern business-casual or work clothing. Zero historical figures, zero religious robes or vestments, zero halos, zero biblical imagery, zero medieval clothing, zero prayer or worship poses, zero candles, zero altars — regardless of what the niche says. "Religious Organizations" means the CUSTOMER TYPE, not what appears in the image.
+NICHE → IMAGE RULES:
 
-2. TRANSLATE THE NICHE INTO A BUSINESS SCENE. The niche tells you what kind of business needs insurance — it does NOT describe who appears in the image. Examples:
-   - "Religious Organizations" / "Church" → A modern pastor or church administrator in business casual, standing outside a contemporary brick church building, or at a desk in a clean modern office
-   - "Winery" → A winery owner in modern casual workwear walking their vineyard rows at golden hour
-   - "Restaurant" → A chef-owner surveying their well-lit dining room before opening
-   - "Auto Repair" → A shop owner in a clean branded work shirt in a bright, organized garage
-   - "Plumbing" → A plumbing contractor in a clean branded polo, standing in front of a service van outside a commercial building
-   - "Roofing" → A roofing contractor in a safety vest reviewing a tablet, standing in front of a completed commercial building
-   The person looks like a BUSINESS OWNER responsible for a property, not a practitioner of the activity.
+PLACE / PROPERTY niches (church, mosque, synagogue, restaurant, winery, hotel, gym, daycare, etc.):
+→ Show the place itself. Beautiful exterior or interior. No person required.
+→ Church = a beautiful church building exterior or interior, warm light through the windows.
+→ Winery = vineyard rows at golden hour, wine barrels in a cellar, or wine being poured.
+→ Restaurant = a warm, well-lit dining room or kitchen in action.
 
-3. THE EMOTIONAL BEAT IS SECURITY AND CONFIDENCE. The subject looks calm, grounded, in control — like someone who has their business protected. Not worried, not celebrating, not praying.
+TRADE / CRAFT niches (welding, plumbing, roofing, electrical, HVAC, construction, etc.):
+→ Show the work in action. The craft itself.
+→ Welding = a welder at work with bright arc sparks, dramatic safety-visor shot.
+→ Roofing = roofer on a residential roof against a blue sky.
+→ Plumbing = close-up of clean pipe work or a plumber's hands at work.
 
-4. COMPOSITION: {composition_note}
+PROFESSIONAL / PERSON niches (lawyer, accountant, doctor, insurance agent, etc.):
+→ Show a modern professional in a contemporary office.
 
-5. AVOID THESE FAILURES: generic couples smiling at camera, plain gray studio backdrops, handshakes, floating money, stock-photo poses, crowd scenes, abstract backgrounds.
+RULES:
+- Photorealistic, high-quality photography
+- Composition: {composition_note}
+- No text, no logos, no watermarks, no footers in the image
+- Max 75 words
 
-6. FORMAT: Lead with "A [specific modern person] [action] [contemporary setting]." Then add lens, lighting, mood. End with: "No text, no logos, no watermarks, no footers. Photorealistic."
+Return ONLY the image prompt. No explanation."""
 
-7. Max 85 words. Never mention brand names, company names, or insurance product names."""
+        user_msg = f"""Write a Flux image prompt.
 
-        user_msg = f"""Write a Flux image prompt for this Facebook ad.
+Niche / subject: {niche or product_name}
+Lighting: {lighting}
+Mood: {mood}
 
-Service / product: {product_name}{(' — ' + product_desc) if product_desc else ''}
-{('Niche (= customer type, NOT image subject): ' + niche) if niche else ''}
-Emotional tone of the ad: {headline}
-Brand voice: {brand_voice}
-{('Visual direction: ' + vertical_hint) if vertical_hint else ''}
-Lighting direction: {lighting}
-Visual mood: {mood}
-
-Remember: the niche is WHO BUYS this service — show that business owner at their contemporary property. Do not depict religious ceremony, worship, or any historical/costume imagery.
+Just show what the niche is. Simple, clean, photorealistic. No text, no logos, no watermarks in the image.
 
 Return ONLY the image prompt."""
 
