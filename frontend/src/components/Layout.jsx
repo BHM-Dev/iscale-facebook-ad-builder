@@ -74,7 +74,7 @@ export default function Layout() {
                 { label: 'Customer Profiles', path: '/profiles' }
             ]
         },
-        { icon: FileImage, label: 'Generated Ads', path: '/generated-ads' },
+        { icon: FileImage, label: 'Ad Library', path: '/generated-ads' },
         {
             icon: Target,
             label: 'Facebook',
