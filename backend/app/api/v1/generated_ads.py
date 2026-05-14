@@ -142,7 +142,7 @@ _ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 _async_anthropic = _anthropic_sdk.AsyncAnthropic(api_key=_ANTHROPIC_KEY) if _ANTHROPIC_KEY else None
 _PROMPT_MODEL = "claude-haiku-4-5-20251001"
 
-# Negative prompt applied to all flux-2/pro-text-to-image calls.
+# Negative prompt applied to all flux-kontext-pro calls.
 # Blocks the most common ad creative failure modes across financial/insurance verticals.
 _NEGATIVE_PROMPT = (
     "text, words, letters, watermark, logo, brand name, signature, caption, speech bubble, "
@@ -275,10 +275,23 @@ async def test_kie_connection():
         return {"error": "KIE_AI_API_KEY not configured on this server"}
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    # Build a tiny white placeholder image for the inputImage test
+    import io as _tio
+    from PIL import Image as _tPIL
+    _tph = _tPIL.new("RGB", (64, 64), color=(240, 240, 240))
+    _tbuf = _tio.BytesIO()
+    _tph.save(_tbuf, format="PNG")
+    import base64 as _b64
+    _tph_b64 = "data:image/png;base64," + _b64.b64encode(_tbuf.getvalue()).decode()
+
     tests = [
-        ("flux-2/pro-text-to-image flat", {"model": "flux-2/pro-text-to-image", "prompt": "test", "aspectRatio": "1:1", "outputFormat": "png"}),
-        ("flux-kontext-pro no image",      {"model": "flux-kontext-pro",          "prompt": "test", "aspectRatio": "1:1", "outputFormat": "png"}),
+        ("flux-kontext-pro no image (should fail)", {
+            "model": "flux-kontext-pro", "prompt": "test", "aspectRatio": "1:1", "outputFormat": "png",
+        }),
+        ("flux-kontext-pro with placeholder URL N/A — skipped", None),  # placeholder needs real URL
     ]
+    # Only include tests with actual payloads
+    tests = [(label, p) for label, p in tests if p is not None]
     results = []
     async with httpx.AsyncClient(timeout=15.0) as client:
         for label, payload in tests:
@@ -347,26 +360,42 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
     else:
         aspect_ratio = "9:16"
 
-    # kie.ai unified both models to the same flat camelCase schema.
-    # Old nested { "input": { "prompt": ..., "aspect_ratio": ... } } was deprecated.
-    # flux-kontext-pro = image-to-image (requires inputImage)
-    # flux-2/pro-text-to-image = pure text-to-image (no inputImage needed)
-    # Both now use the same flat top-level field structure.
+    # flux-kontext-pro is the only confirmed model on this kie.ai account.
+    # It requires inputImage — always.  When the caller has no reference image,
+    # we generate a minimal 512×512 pure-white placeholder so Kontext has something
+    # to receive; white is the least color-influential neutral for diffusion models —
+    # it avoids the gray cast that a mid-gray placeholder would impart on generated output.
+    if not input_image_url:
+        try:
+            from PIL import Image as _PIL_Image_ph
+            import io as _io_ph
+            _ph_img = _PIL_Image_ph.new("RGB", (512, 512), color=(255, 255, 255))
+            _ph_buf = _io_ph.BytesIO()
+            _ph_img.save(_ph_buf, format="PNG")
+            _ph_bytes = _ph_buf.getvalue()
+            _ph_name  = f"placeholder_{str(uuid.uuid4())}.png"
+            if settings.r2_enabled:
+                from app.api.v1.uploads import upload_to_r2
+                input_image_url = await upload_to_r2(_ph_bytes, _ph_name, "image/png")
+            else:
+                _ph_path = UPLOAD_DIR / _ph_name
+                with open(_ph_path, "wb") as _ph_fh:
+                    _ph_fh.write(_ph_bytes)
+                input_image_url = f"{settings.PUBLIC_API_URL}/uploads/{_ph_name}"
+            print(f"No reference image — using neutral 512×512 placeholder: {input_image_url}")
+        except Exception as _ph_err:
+            print(f"WARNING: could not create placeholder image ({_ph_err})")
+            # If placeholder creation fails, try the call anyway — kie.ai might
+            # tolerate a missing inputImage in future API revisions.
+
+    payload: Dict[str, Any] = {
+        "model": "flux-kontext-pro",
+        "prompt": prompt,
+        "aspectRatio": aspect_ratio,
+        "outputFormat": "png",
+    }
     if input_image_url:
-        payload: Dict[str, Any] = {
-            "model": "flux-kontext-pro",
-            "prompt": prompt,
-            "aspectRatio": aspect_ratio,
-            "outputFormat": "png",
-            "inputImage": input_image_url,
-        }
-    else:
-        payload = {
-            "model": "flux-2/pro-text-to-image",
-            "prompt": prompt,
-            "aspectRatio": aspect_ratio,
-            "outputFormat": "png",
-        }
+        payload["inputImage"] = input_image_url
 
     async with httpx.AsyncClient(timeout=200.0) as client:
         # Create the task
