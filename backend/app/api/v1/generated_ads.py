@@ -191,6 +191,72 @@ def _get_vertical_hint(product_name: str, product_desc: str) -> str:
     return ""
 
 
+# Hardcoded Flux prompts for niches that reliably fail with LLM-generated prompts.
+# These bypass Sonnet entirely — the word "religious" / "church" in any prompt
+# causes Flux to default to faces, couples, or clergy. Hardcoded scenes are specific
+# enough that Flux has no room to interpret.
+# Composition note is appended at call time. Keep base prompt under 50 words.
+_NICHE_OVERRIDES: Dict[str, str] = {
+    "religious": (
+        "Wide-angle exterior photograph of a white wooden church with a tall steeple, "
+        "green lawn, oak trees, clear blue sky, warm morning sunlight. "
+        "Empty, no people. No text, no logos. Photorealistic."
+    ),
+    "church": (
+        "Wide-angle exterior photograph of a red brick church with arched windows and a "
+        "white steeple, tree-lined sidewalk, blue sky, bright daylight. "
+        "Empty, no people. No text, no logos. Photorealistic."
+    ),
+    "mosque": (
+        "Exterior photograph of a modern mosque with a white dome and minaret, "
+        "green courtyard, clear sky, warm afternoon light. "
+        "Empty, no people. No text, no logos. Photorealistic."
+    ),
+    "synagogue": (
+        "Exterior photograph of a stone synagogue with Star of David above the entrance, "
+        "manicured grounds, blue sky, soft daylight. "
+        "Empty, no people. No text, no logos. Photorealistic."
+    ),
+    "winery": (
+        "Rows of lush green grapevines on a hillside vineyard, golden afternoon light, "
+        "rolling hills in background, clear sky. "
+        "No people. No text, no logos. Photorealistic."
+    ),
+    "restaurant": (
+        "Interior photograph of a warm restaurant dining room, white tablecloths, "
+        "pendant lighting, wood floors, set for service, before opening. "
+        "Empty, no people. No text, no logos. Photorealistic."
+    ),
+    "bar ": (
+        "Interior of a clean upscale bar, backlit bottles, polished counter, warm lighting. "
+        "Empty, no people. No text, no logos. Photorealistic."
+    ),
+    "brewery": (
+        "Interior of a craft brewery with large stainless steel fermentation tanks, "
+        "warm industrial lighting, brick walls. "
+        "No people. No text, no logos. Photorealistic."
+    ),
+    "daycare": (
+        "Bright cheerful daycare classroom interior, colorful low tables and chairs, "
+        "natural light through large windows, educational posters on walls. "
+        "Empty, no people. No text, no logos. Photorealistic."
+    ),
+    "gym": (
+        "Modern gym interior with rows of treadmills and free weights, "
+        "bright lighting, clean polished floors. "
+        "Empty, no people. No text, no logos. Photorealistic."
+    ),
+}
+
+def _get_niche_override(niche: str) -> str | None:
+    """Return a hardcoded Flux prompt if the niche matches a known override key."""
+    niche_lower = niche.lower()
+    for key, prompt in _NICHE_OVERRIDES.items():
+        if key in niche_lower:
+            return prompt
+    return None
+
+
 async def _build_ai_image_prompt(
     request: "ImageGenerationRequest",
     aspect_ratio: str = "1:1",
@@ -211,68 +277,41 @@ async def _build_ai_image_prompt(
     try:
         product_name = request.product.get("name", "") if request.product else ""
         product_desc = request.product.get("description", "") if request.product else ""
-        brand_voice = request.brand.get("voice", "professional") if request.brand else "professional"
-        brand_color = request.brand.get("colors", {}).get("primary", "") if request.brand else ""
-        headline = request.ad_copy.get("headline", "") if request.ad_copy else ""
-        body = request.ad_copy.get("body", "") if request.ad_copy else ""
         mood = request.template.get("mood", "engaging") if request.template else "engaging"
         lighting = request.template.get("lighting", "natural") if request.template else "natural"
 
         niche = (request.niche or "").strip()
-        vertical_hint = _get_vertical_hint(product_name, product_desc)
 
         # Composition guidance differs by orientation.
-        # Text is composited onto the image via Pillow post-generation, so the
-        # image must fill the FULL frame — no empty bands or dead space.
         is_portrait = aspect_ratio in ("9:16", "3:4")
-        if is_portrait:
-            composition_note = (
-                "vertical story format — rich scene content filling the full frame top to bottom, "
-                "subject positioned center-to-upper area, visually engaging background throughout"
-            )
-        else:
-            composition_note = (
-                "full-bleed scene filling every corner of the frame, subject prominent and engaging, "
-                "visually rich background throughout — no empty bands, no plain floor or sky taking up the lower half"
-            )
+        composition_note = (
+            "vertical full-frame composition, subject fills frame top to bottom"
+            if is_portrait else
+            "full-bleed horizontal composition, subject fills the entire frame"
+        )
 
-        system_prompt = f"""You write Flux image generation prompts for Facebook ads. Keep it simple — show the subject clearly. Photorealistic photography only.
+        # ── Hardcoded override — bypass Sonnet for known failing niches ──────────
+        # Certain keywords (religious, church, winery, etc.) cause Flux to default
+        # to faces/people/couples regardless of prompt instructions. For these we
+        # return a specific architectural scene directly, no LLM in the loop.
+        override = _get_niche_override(niche or product_name)
+        if override:
+            print(f"🏛️  Niche override applied for '{niche or product_name}': skipping Sonnet")
+            return f"{override} {composition_note}"
 
-THREE CATEGORIES — pick the one that fits and follow it exactly:
+        # ── Sonnet prompt for everything else ────────────────────────────────────
+        system_prompt = """You write short Flux image generation prompts for Facebook ads.
 
-CATEGORY 1 — PLACE / PROPERTY (church, winery, restaurant, hotel, gym, daycare, mosque, etc.)
-Show the building or location. NO PEOPLE in the scene.
-- Church / Religious Organization: brick or white-painted church building exterior, simple cross on facade, green lawn, blue sky, warm daylight. Clean neighborhood setting. Empty, no congregation.
-- Winery: rows of green grapevines at golden hour. OR oak barrels stacked in a warm cellar. OR red wine being poured into a glass, close-up.
-- Restaurant: well-lit dining room with set tables, warm interior lighting, before service. Empty.
-- Other places: show the exterior or interior of the specific building type, clean and well-lit, no people.
-Format: "Exterior/interior photograph of [specific building details], [time of day], [surroundings]. No people. No text, no logos. Photorealistic."
+Rules:
+- Buildings / places (hotel, gym, office, warehouse, marina, etc.): show the exterior or interior. No people.
+- Trades (welding, plumbing, roofing, HVAC, construction, etc.): show the worker doing the job. Tools, action, craft.
+- Professionals (lawyer, doctor, accountant, etc.): one person at a desk or in their workspace.
+- Vehicles / transport: the vehicle itself or a driver in context.
+- No illustrations. No stock-photo couples. No gray backdrops. Photorealistic only.
+- End every prompt with: No written text, no typography, no logos in the image. Photorealistic.
+- Max 45 words. Return ONLY the prompt."""
 
-CATEGORY 2 — TRADE / CRAFT (welding, plumbing, roofing, electrical, HVAC, construction, landscaping, etc.)
-Show the work in action. Hands, tools, the craft itself.
-- Welding: close-up of welder in full safety gear, bright orange arc sparks, dark industrial background.
-- Roofing: worker in hard hat and safety vest on a residential roofline, blue sky behind them.
-- Plumbing: plumber's hands connecting copper pipes, clean organized work area.
-- HVAC / Electrical: technician servicing a rooftop HVAC unit, OR hands at a clean breaker panel.
-- Other trades: the worker doing the specific task, tools visible, realistic setting.
-Format: "A [trade worker] [specific action], [setting], natural light. No text, no logos. Photorealistic."
-
-CATEGORY 3 — PROFESSIONAL / SERVICE (lawyer, doctor, accountant, insurance agent, financial advisor, etc.)
-One professional, modern setting, confident and calm.
-- Auto / trucking: person standing beside or inside a modern vehicle, open road or parking lot, natural light.
-- Medical / dental: clean exam room with equipment, no patient.
-- All others: confident professional at a desk or standing in a clean contemporary office.
-Format: "A [professional] [action], [contemporary setting], natural light. No text, no logos. Photorealistic."
-
-COMPOSITION: {composition_note}
-MAX 60 WORDS. Return ONLY the prompt."""
-
-        user_msg = f"""Niche: {niche or product_name}
-Lighting: {lighting}
-Mood: {mood}
-{('Hint: ' + vertical_hint) if vertical_hint else ''}
-
-Pick the correct category. Return ONLY the image prompt."""
+        user_msg = f"Niche: {niche or product_name}\nLighting: {lighting}\nMood: {mood}\n\nWrite the Flux prompt."
 
         response = await _async_anthropic.messages.create(
             model=_PROMPT_MODEL,
