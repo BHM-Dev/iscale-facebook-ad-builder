@@ -218,7 +218,7 @@ async def _build_ai_image_prompt(
         mood = request.template.get("mood", "engaging") if request.template else "engaging"
         lighting = request.template.get("lighting", "natural") if request.template else "natural"
 
-        niche = request.niche or ""
+        niche = (request.niche or "").strip()
         vertical_hint = _get_vertical_hint(product_name, product_desc)
 
         # Composition guidance differs by orientation.
@@ -236,48 +236,55 @@ async def _build_ai_image_prompt(
                 "visually rich background throughout — no empty bands, no plain floor or sky taking up the lower half"
             )
 
-        system_prompt = f"""You are an art director writing Flux image generation prompts for Facebook ad creatives.
+        system_prompt = f"""You are a senior art director writing Flux image generation prompts for Facebook ad creatives targeting small business owners who need insurance or financial services.
 
-The niche tells you exactly what to show. Keep it simple and direct — just show the subject.
+ABSOLUTE RULES — never break these:
 
-NICHE → IMAGE RULES:
+1. CONTEMPORARY ONLY. All settings, clothing, and props must be modern. Zero historical figures, zero religious robes or vestments, zero halos, zero biblical imagery, zero medieval clothing, zero prayer or worship poses, zero candles, zero altars. Shoot like a 2024 editorial photographer, not a stock illustrator.
 
-PLACE / PROPERTY niches (church, mosque, synagogue, restaurant, winery, hotel, gym, daycare, etc.):
-→ Show the place itself. Beautiful exterior or interior. No person required.
-→ Church = a beautiful church building exterior or interior, warm light through the windows.
-→ Winery = vineyard rows at golden hour, wine barrels in a cellar, or wine being poured.
-→ Restaurant = a warm, well-lit dining room or kitchen in action.
+2. TRANSLATE THE NICHE CORRECTLY — use the category that fits:
 
-TRADE / CRAFT niches (welding, plumbing, roofing, electrical, HVAC, construction, etc.):
-→ Show the work in action. The craft itself.
-→ Welding = a welder at work with bright arc sparks, dramatic safety-visor shot.
-→ Roofing = roofer on a residential roof against a blue sky.
-→ Plumbing = close-up of clean pipe work or a plumber's hands at work.
+   PLACE / PROPERTY niches (church, mosque, synagogue, winery, restaurant, hotel, gym, daycare, etc.):
+   → Show the place itself. Beautiful exterior or interior. Professional photography.
+   → Church / Religious Organization = a beautiful contemporary church building exterior, warm natural light, inviting and modern — NOT a religious figure, NOT a ceremony, NOT stained glass icons.
+   → Winery = vineyard rows at golden hour, or wine barrels in a warm cellar, or wine being poured — NOT the owner.
+   → Restaurant = a warm, well-lit dining room before service, or a clean kitchen in action.
 
-PROFESSIONAL / PERSON niches (lawyer, accountant, doctor, insurance agent, etc.):
-→ Show a modern professional in a contemporary office.
+   TRADE / CRAFT niches (welding, plumbing, roofing, electrical, HVAC, construction, landscaping, etc.):
+   → Show the craft in action. The work itself — tools, motion, the moment of skill.
+   → Welding = a welder in full gear with bright arc sparks flying, dramatic low-angle shot.
+   → Roofing = a worker in a safety vest on a residential or commercial roofline, blue sky behind.
+   → Plumbing = close-up of a plumber's hands doing clean, precise pipe work.
 
-RULES:
-- Photorealistic, high-quality photography
-- Composition: {composition_note}
-- No text, no logos, no watermarks, no footers in the image
-- Max 75 words
+   PROFESSIONAL / PERSON niches (lawyer, accountant, doctor, insurance agent, financial advisor, etc.):
+   → Show a confident modern professional in a clean contemporary office or meeting room.
+   → Business casual, grounded expression, sense of expertise and calm.
+   → For vehicle / auto / driving niches: show a person near or inside a modern vehicle on an open road, warm natural light — NOT an office.
 
-Return ONLY the image prompt. No explanation."""
+3. EMOTIONAL BEAT = SECURITY AND CONFIDENCE. Whatever the scene, it should feel calm, grounded, and in control. Not worried, not celebrating, not religious.
 
-        user_msg = f"""Write a Flux image prompt.
+4. COMPOSITION: {composition_note}
 
-Niche / subject: {niche or product_name}
+5. AVOID THESE FAILURES: generic couple smiling at camera, plain gray studio backdrop, handshakes, floating money, stock-photo poses, crowd scenes, abstract backgrounds, prayer hands, any worship imagery.
+
+6. FORMAT: Lead with "A [specific scene description] [setting details]." Then add lens, lighting, mood. End with: "No text, no logos, no watermarks, no footers. Photorealistic." Max 85 words.
+
+Return ONLY the image prompt. No explanation, no preamble."""
+
+        user_msg = f"""Write a Flux image prompt for this Facebook ad creative.
+
+Niche (= what kind of business this ad targets): {niche or product_name}
+{('Service / product: ' + product_name + ((' — ' + product_desc) if product_desc else '')) if product_name else ''}
+{('Ad headline (tone reference only — do NOT render text): ' + headline) if headline else ''}
+{('Visual direction hint: ' + vertical_hint) if vertical_hint else ''}
 Lighting: {lighting}
 Mood: {mood}
 
-Just show what the niche is. Simple, clean, photorealistic. No text, no logos, no watermarks in the image.
-
-Return ONLY the image prompt."""
+Apply the correct niche category from the rules. Return ONLY the image prompt."""
 
         response = await _async_anthropic.messages.create(
             model=_PROMPT_MODEL,
-            max_tokens=200,
+            max_tokens=300,
             messages=[{"role": "user", "content": user_msg}],
             system=system_prompt,
         )
