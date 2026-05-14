@@ -483,10 +483,13 @@ export default function GeneratedAds() {
                                             )}
                                         </button>
 
-                                        {/* Size Badge */}
+                                        {/* Size Badge — shows actual size name(s) so Joel can tell Square vs Story vs Portrait at a glance */}
                                         {!isBroken && (
                                             <div className="absolute bottom-3 right-3 bg-black/70 backdrop-blur-sm text-white px-3 py-1.5 rounded-lg text-xs font-medium">
-                                                {bundle.length} Size{bundle.length > 1 ? 's' : ''}
+                                                {bundle.length === 1
+                                                    ? (mainAd.size_name || mainAd.dimensions || '1 Size')
+                                                    : bundle.map(ad => ad.size_name || ad.dimensions).filter(Boolean).join(' · ') || `${bundle.length} Sizes`
+                                                }
                                             </div>
                                         )}
 
@@ -577,7 +580,10 @@ export default function GeneratedAds() {
                                                         )}
                                                     </div>
                                                     <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
-                                                        {bundle.length} Size{bundle.length > 1 ? 's' : ''}
+                                                        {bundle.length === 1
+                                                            ? (mainAd.size_name || mainAd.dimensions || '1 Size')
+                                                            : bundle.map(ad => ad.size_name || ad.dimensions).filter(Boolean).join(' · ') || `${bundle.length} Sizes`
+                                                        }
                                                     </span>
                                                 </div>
                                             </td>
