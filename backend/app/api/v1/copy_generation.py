@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import anthropic
+import asyncio
 import os
 import json
 from sqlalchemy.orm import Session
@@ -13,9 +14,9 @@ router = APIRouter()
 
 COPY_GENERATION_PROMPT_ID = "copy_generation_system"
 
-# Anthropic client — instantiated once at module level
+# AsyncAnthropic client — non-blocking in FastAPI's async event loop
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-_anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
+_anthropic_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 
 _MODEL = "claude-sonnet-4-5-20250929"
 
@@ -172,7 +173,7 @@ async def generate_copy(request: CopyGenerationRequest, db: Session = Depends(ge
             else:
                 prompt = _build_default_prompt(count, request)
 
-        response = _anthropic_client.messages.create(
+        response = await _anthropic_client.messages.create(
             model=_MODEL,
             max_tokens=2048,
             messages=[
@@ -234,7 +235,7 @@ Rules:
 
 Return ONLY the new {request.field} text, nothing else."""
 
-        response = _anthropic_client.messages.create(
+        response = await _anthropic_client.messages.create(
             model=_MODEL,
             max_tokens=512,
             messages=[
@@ -304,7 +305,7 @@ Return ONLY valid JSON, no markdown:
 {{"variations": [{{"headline": "...", "body": "..."}}, {{"headline": "...", "body": "..."}}, {{"headline": "...", "body": "..."}}]}}"""
 
     try:
-        response = _anthropic_client.messages.create(
+        response = await _anthropic_client.messages.create(
             model=_MODEL,
             max_tokens=1024,
             messages=[

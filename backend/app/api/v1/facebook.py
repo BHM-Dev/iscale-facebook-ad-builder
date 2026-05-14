@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Dict, Any, Optional
 from app.services.facebook_service import FacebookService
 try:
-    from facebook_business.exceptions import FacebookBadObjectError
+    from facebook_business.exceptions import FacebookBadObjectError, FacebookRequestError
 except ImportError:
     FacebookBadObjectError = Exception  # fallback so catch still works
 
@@ -778,6 +778,12 @@ CTA_MAP = {
     "learn more": "LEARN_MORE",
     "get quote": "GET_QUOTE",
     "get my quote": "GET_QUOTE",
+    "get a free quote": "GET_QUOTE",
+    "see my rate": "GET_QUOTE",
+    "compare rates": "GET_QUOTE",
+    "check if i qualify": "GET_QUOTE",
+    "see options": "LEARN_MORE",
+    "find out now": "LEARN_MORE",
     "sign up": "SIGN_UP",
     "contact us": "CONTACT_US",
     "apply now": "APPLY_NOW",
@@ -882,6 +888,14 @@ def push_to_meta(
 
     except (ValueError, RuntimeError, FacebookBadObjectError) as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except FacebookRequestError as e:
+        # Parse Meta's structured error body for a readable message
+        try:
+            body = e.body()
+            meta_msg = body.get("error", {}).get("message") or str(e)
+        except Exception:
+            meta_msg = str(e)
+        raise HTTPException(status_code=400, detail=f"Meta API error: {meta_msg}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Push to Meta failed: {str(e)}")
 

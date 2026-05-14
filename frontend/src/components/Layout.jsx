@@ -61,7 +61,7 @@ export default function Layout() {
             subItems: [
                 { label: 'Image Ad',         path: '/image-ads',       icon: Image },
                 { label: 'Batch Generate',   path: '/batch-generate',  icon: Zap },
-                { label: 'Build New Ad',     path: '/ad-remix',        icon: Shuffle },
+                { label: 'Ad Remix',         path: '/ad-remix',        icon: Shuffle },
                 { label: 'Video Ad',         path: '/video-ads',       icon: Video },
             ]
         },

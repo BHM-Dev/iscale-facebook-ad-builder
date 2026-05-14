@@ -28,6 +28,25 @@ const CTA_OPTIONS = [
   'Sign Up',
 ];
 
+// Map CTA display labels → Meta API enum values
+const CTA_LABEL_TO_ENUM = {
+  'learn more':          'LEARN_MORE',
+  'get my quote':        'GET_QUOTE',
+  'see my rate':         'GET_QUOTE',
+  'check if i qualify':  'GET_QUOTE',
+  'compare rates':       'GET_QUOTE',
+  'get a free quote':    'GET_QUOTE',
+  'see options':         'LEARN_MORE',
+  'find out now':        'LEARN_MORE',
+  'get started':         'GET_STARTED',
+  'apply now':           'APPLY_NOW',
+  'contact us':          'CONTACT_US',
+  'sign up':             'SIGN_UP',
+};
+function ctaToEnum(label) {
+  return CTA_LABEL_TO_ENUM[(label || '').toLowerCase()] || 'LEARN_MORE';
+}
+
 function newVariant(index = 0) {
   return { id: Date.now() + index, headline: '', body: '', cta: 'Get My Quote' };
 }
@@ -415,6 +434,13 @@ export default function BatchGenerate() {
             sizeName: sizeConfig.label,
             dimensions: `${sizeConfig.width}x${sizeConfig.height}`,
             mediaType: 'image',
+            // Persist overlay settings so Iterate/Remix can reconstruct what was baked in
+            niche,
+            overlayEnabled,
+            overlayNicheLine: overlayEnabled ? overlayNicheLine : null,
+            overlayOfferLine: overlayEnabled ? overlayOfferLine : null,
+            overlayCta: overlayEnabled ? (variant.cta || null) : null,
+            overlayLogoUrl: overlayEnabled ? (overlayLogoUrl || null) : null,
           }],
         }),
       }).catch(() => {});
@@ -1011,7 +1037,7 @@ export default function BatchGenerate() {
                   imageUrl: r.imageUrl,
                   headline: variant?.headline || '',
                   body: variant?.body || '',
-                  cta: 'LEARN_MORE', // BatchGenerate CTAs are display labels, not Meta enums — let modal handle
+                  cta: ctaToEnum(variant?.cta),
                   variantName: variant?.headline ? variant.headline.slice(0, 30) : `Variant ${variantId}`,
                   sizeLabel: sizeConfig?.label || sizeId,
                 };
@@ -1019,12 +1045,6 @@ export default function BatchGenerate() {
 
             return (
               <div className="flex items-center justify-center gap-3 pt-2">
-                <Link
-                  to="/generated-ads"
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 bg-white hover:bg-gray-50 transition-colors"
-                >
-                  View in Library <ArrowRight size={14} />
-                </Link>
                 {pushItems.length > 0 && (
                   <button
                     onClick={() => setBatchPushOpen(true)}
@@ -1034,6 +1054,12 @@ export default function BatchGenerate() {
                     Push {pushItems.length} Ad{pushItems.length !== 1 ? 's' : ''} to Meta
                   </button>
                 )}
+                <Link
+                  to="/generated-ads"
+                  className="text-sm text-gray-500 hover:text-gray-700 underline underline-offset-2"
+                >
+                  View in Library
+                </Link>
               </div>
             );
           })()}
@@ -1053,7 +1079,7 @@ export default function BatchGenerate() {
               imageUrl: r.imageUrl,
               headline: variant?.headline || '',
               body: variant?.body || '',
-              cta: 'LEARN_MORE', // CTA_OPTIONS are display labels, not Meta enums — always use enum
+              cta: ctaToEnum(variant?.cta),
               variantName: variant?.headline ? variant.headline.slice(0, 30) : `Variant ${variantId}`,
               sizeLabel: sizeConfig?.label || sizeId,
             };

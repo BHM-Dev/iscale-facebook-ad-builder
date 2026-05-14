@@ -111,6 +111,13 @@ class GeneratedAdCreate(BaseModel):
     videoUrl: Optional[str] = None
     videoId: Optional[str] = None  # Facebook video ID
     thumbnailUrl: Optional[str] = None
+    # Text overlay fields — saved so Iterate/Remix can reconstruct overlay settings
+    niche: Optional[str] = None
+    overlayEnabled: Optional[bool] = False
+    overlayNicheLine: Optional[str] = None
+    overlayOfferLine: Optional[str] = None
+    overlayCta: Optional[str] = None
+    overlayLogoUrl: Optional[str] = None
 
 class BatchSaveRequest(BaseModel):
     ads: List[GeneratedAdCreate]
@@ -476,20 +483,26 @@ async def generate_image(
                         _dl_resp.raise_for_status()
                         image_bytes = _dl_resp.content
 
-                    # Apply Pillow text overlay if requested
+                    # Apply Pillow text overlay if requested.
+                    # Isolated in its own try/except so a font/render error never
+                    # discards a perfectly good kie.ai image — falls back to un-overlaid.
                     if request.overlay_enabled:
                         from app.services.text_overlay_service import apply_text_overlay
                         _headline  = request.ad_copy.get('headline', '') if request.ad_copy else ''
                         _cta_text  = request.overlay_cta or (request.ad_copy.get('cta', 'LEARN MORE') if request.ad_copy else 'LEARN MORE')
                         print(f"Applying text overlay — headline={_headline!r}, offer={request.overlay_offer_line!r}, cta={_cta_text!r}")
-                        image_bytes = apply_text_overlay(
-                            image_bytes=image_bytes,
-                            headline=_headline,
-                            offer_line=request.overlay_offer_line or '',
-                            cta_text=_cta_text,
-                            logo_url=request.overlay_logo_url,
-                            niche_line=request.overlay_niche_line or '',
-                        )
+                        try:
+                            image_bytes = apply_text_overlay(
+                                image_bytes=image_bytes,
+                                headline=_headline,
+                                offer_line=request.overlay_offer_line or '',
+                                cta_text=_cta_text,
+                                logo_url=request.overlay_logo_url,
+                                niche_line=request.overlay_niche_line or '',
+                            )
+                        except Exception as _overlay_err:
+                            # Log and continue — image saves without overlay rather than failing entirely
+                            print(f"WARNING: text overlay failed, saving un-overlaid image: {_overlay_err}")
 
                     # Save bytes to R2 or local uploads
                     _unique_id = str(uuid.uuid4())
@@ -572,7 +585,14 @@ def get_generated_ads(
         "media_type": ad.media_type or 'image',
         "video_url": ad.video_url,
         "video_id": ad.video_id,
-        "thumbnail_url": ad.thumbnail_url
+        "thumbnail_url": ad.thumbnail_url,
+        # Text overlay fields — used by Iterate/Remix to pre-populate overlay settings
+        "niche": ad.niche,
+        "overlay_enabled": ad.overlay_enabled or False,
+        "overlay_niche_line": ad.overlay_niche_line,
+        "overlay_offer_line": ad.overlay_offer_line,
+        "overlay_cta": ad.overlay_cta,
+        "overlay_logo_url": ad.overlay_logo_url,
     } for ad in ads]
 
 @router.delete("/{ad_id}")
@@ -674,7 +694,14 @@ def batch_save_ads(
             media_type=ad_data.mediaType or 'image',
             video_url=ad_data.videoUrl,
             video_id=ad_data.videoId,
-            thumbnail_url=ad_data.thumbnailUrl
+            thumbnail_url=ad_data.thumbnailUrl,
+            # Text overlay fields
+            niche=ad_data.niche,
+            overlay_enabled=ad_data.overlayEnabled or False,
+            overlay_niche_line=ad_data.overlayNicheLine,
+            overlay_offer_line=ad_data.overlayOfferLine,
+            overlay_cta=ad_data.overlayCta,
+            overlay_logo_url=ad_data.overlayLogoUrl,
         )
         db.add(new_ad)
         saved_ads.append(new_ad)

@@ -166,11 +166,15 @@ export default function AdRemix() {
         { id: 5, name: 'Campaign', icon: FileText },
     ];
 
-    // Persist push modal form selections (except image_url which expires) across modal opens
+    // Persist push modal form selections (except image_url which expires) across modal opens.
+    // page_id also goes to localStorage so it survives across sessions (saves Joel from picking it every time).
     useEffect(() => {
         if (!pushModal) return; // only persist while modal is open
         const { image_url: _ignored, ...toSave } = pushForm;
         try { sessionStorage.setItem('pushModalForm', JSON.stringify(toSave)); } catch (_) {}
+        if (pushForm.page_id) {
+            try { localStorage.setItem('lastUsedPageId', pushForm.page_id); } catch (_) {}
+        }
     }, [pushForm, pushModal]);
 
     const updateData = (field, value) => {
@@ -298,9 +302,11 @@ export default function AdRemix() {
             const saved = sessionStorage.getItem('pushModalForm');
             if (saved) savedForm = JSON.parse(saved);
         } catch (_) {}
+        const lastPageId = localStorage.getItem('lastUsedPageId') || '';
         setPushForm({
             adset_id: savedForm.adset_id || '',
-            page_id: savedForm.page_id || '',
+            // sessionStorage has same-session preference; fall back to localStorage for cross-session persistence
+            page_id: savedForm.page_id || lastPageId,
             // Pre-fill URL from source ad (so Joel doesn't need to type it),
             // falling back to any previously entered URL from this session.
             website_url: savedForm.website_url || remixLinkUrl || '',

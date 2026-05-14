@@ -3,8 +3,10 @@ import {
     Rocket, Loader, X, CheckCircle2, AlertCircle, ExternalLink,
     PlusCircle, ListFilter, ChevronDown, ChevronUp
 } from 'lucide-react';
-import { getCampaigns, getAdSets, getPages, createCompleteAd, createFacebookAdSet } from '../lib/facebookApi';
+import { getCampaigns, getAdSets, getPages, createCompleteAd, createFacebookAdSet, authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
+
+const FB_API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1') + '/facebook';
 
 /**
  * BatchPushModal — push multiple generated images to Meta in one operation.
@@ -55,13 +57,27 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     const doneItems = items.filter(it => pushStatuses[it.key] === 'done');
     const errorItems = items.filter(it => pushStatuses[it.key] === 'error');
 
-    // Auto-load on mount
+    // Auto-load on mount — fetch ad account ID from backend config so Joel never has to type it
     useEffect(() => {
-        const acctId = adAccountId;
-        if (acctId) {
-            loadPages(acctId);
-            loadCampaigns(acctId);
-        }
+        const bootstrap = async () => {
+            let acctId = adAccountId;
+            if (!acctId) {
+                try {
+                    const cfgRes = await authFetch(`${FB_API_BASE}/config`);
+                    const cfg = cfgRes?.ok ? await cfgRes.json() : null;
+                    if (cfg?.ad_account_id) {
+                        acctId = cfg.ad_account_id;
+                        setAdAccountId(acctId);
+                        localStorage.setItem('fb_ad_account_id', acctId);
+                    }
+                } catch (_) { /* fall through — user can type it */ }
+            }
+            if (acctId) {
+                loadPages(acctId);
+                loadCampaigns(acctId);
+            }
+        };
+        bootstrap();
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Once campaigns are available (either on mount or after user enters account ID),
@@ -168,6 +184,10 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
 
         if (adsetMode === 'new') {
             const source = adSets.find(a => a.id === newAdset.cloneFromId);
+            // Pass special_ad_categories from the parent campaign so the backend
+            // can enforce HEC targeting restrictions (age/gender/geo).
+            // Without this, Meta returns error 2909035 on insurance campaigns.
+            const campaignSpecialCats = selectedCampaign?.specialAdCategories || [];
             const payload = {
                 name: newAdset.name.trim(),
                 dailyBudget: Number(newAdset.dailyBudget),
@@ -176,6 +196,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                 billingEvent: source?.billing_event || 'IMPRESSIONS',
                 bidAmount: source?.bid_amount || null,
                 status: 'PAUSED',
+                specialAdCategories: campaignSpecialCats,
             };
             try {
                 targetAdsetId = await createFacebookAdSet(payload, selectedCampaignId, adAccountId, 'ABO');

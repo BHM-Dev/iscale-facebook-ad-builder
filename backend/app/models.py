@@ -300,6 +300,13 @@ class GeneratedAd(Base):
     video_url = Column(String, nullable=True)
     video_id = Column(String, nullable=True)  # Facebook video ID
     thumbnail_url = Column(String, nullable=True)
+    # Text overlay fields — store what was baked into the image so Iterate/Remix can reconstruct settings
+    niche = Column(String, nullable=True)
+    overlay_enabled = Column(Boolean, default=False, nullable=True)
+    overlay_niche_line = Column(String, nullable=True)
+    overlay_offer_line = Column(String, nullable=True)
+    overlay_cta = Column(String, nullable=True)
+    overlay_logo_url = Column(String, nullable=True)
 
     brand = relationship("Brand", back_populates="generated_ads")
     template = relationship("WinningAd", back_populates="generated_ads")
