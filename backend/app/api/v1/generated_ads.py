@@ -240,7 +240,7 @@ _NICHE_OVERRIDES: Dict[str, list] = {
         "Upscale restaurant bar area, backlit bottles, polished dark wood counter, "
         "warm amber lighting. Empty. No text, no logos. Photorealistic.",
     ],
-    "bar ": [
+    "bar": [
         "Interior of a clean upscale bar, backlit bottles, polished counter, warm lighting. "
         "Empty. No text, no logos. Photorealistic.",
         "Bartender in neat uniform pouring a cocktail behind a polished bar, warm lighting, "
@@ -306,7 +306,7 @@ _PEXELS_QUERIES: Dict[str, list] = {
     "synagogue":  ["synagogue exterior", "synagogue interior"],
     "winery":     ["vineyard grapevines golden hour", "wine cellar barrels", "wine pouring glass red"],
     "restaurant": ["restaurant dining room interior", "restaurant kitchen chef cooking", "upscale restaurant tables"],
-    "bar ":       ["bar interior cocktails", "bartender pouring drinks"],
+    "bar":        ["bar interior cocktails", "bartender pouring drinks"],
     "brewery":    ["craft brewery fermentation tanks", "brewery interior industrial"],
     "daycare":    ["daycare classroom teacher children", "preschool colorful classroom"],
     "gym":        ["gym fitness equipment workout", "gym interior treadmills weights"],
@@ -756,6 +756,9 @@ async def generate_image(
     if rehost_failed and effective_image_mode == "iterate":
         print("⚠️  Reference image unavailable — switching from iterate to style_ref mode")
         effective_image_mode = "style_ref"
+    # Propagate the resolved mode back onto the request so _build_ai_image_prompt
+    # reads the correct value (it reads request.imageMode directly).
+    request.imageMode = effective_image_mode
 
     # Build prompts per aspect-ratio bucket — one Sonnet call per unique AR.
     # Custom prompt bypasses AI entirely.
