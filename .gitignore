@@ -51,6 +51,9 @@ backend/uploads/*.png
 backend/uploads/*.jpg
 backend/uploads/*.webp
 
+# Font cache — auto-downloaded at runtime by text_overlay_service.py
+backend/fonts/
+
 # Backups
 *.sql
 .vercel

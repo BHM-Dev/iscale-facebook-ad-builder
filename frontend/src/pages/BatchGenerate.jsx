@@ -257,9 +257,12 @@ export default function BatchGenerate() {
   }, [iterateAdsetName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep overlay niche label in sync with the Niche / Context field.
+  // Convert snake_case → Title Case so "commercial_insurance" becomes "Commercial Insurance".
   // If Joel wants a different label he can edit the Niche Label field directly.
   useEffect(() => {
-    setOverlayNicheLine(niche);
+    if (!niche) { setOverlayNicheLine(niche); return; }
+    const readable = niche.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    setOverlayNicheLine(readable);
   }, [niche]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch ad creative data if arriving via the "Iterate" path (adId URL param)

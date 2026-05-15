@@ -821,7 +821,7 @@ export default function GeneratedAds() {
                                                                     </div>
                                                                 )}
                                                                 <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] py-0.5 text-center truncate px-1">
-                                                                    {(ad.size_name || '').split(' ')[0]}
+                                                                    {sizeRatio(ad)}
                                                                 </div>
                                                             </button>
                                                         );
@@ -840,22 +840,31 @@ export default function GeneratedAds() {
                                                 Ad Copy
                                             </h4>
                                             <div className="space-y-3">
-                                                <div>
-                                                    <label className="text-xs font-medium text-amber-700 uppercase">Headline</label>
-                                                    <p className="font-bold text-gray-900 mt-1">{viewedImage.headline}</p>
-                                                </div>
-                                                <div>
-                                                    <label className="text-xs font-medium text-amber-700 uppercase">Body Text</label>
-                                                    <p className="text-gray-700 text-sm whitespace-pre-line mt-1">{viewedImage.body}</p>
-                                                </div>
-                                                <div>
-                                                    <label className="text-xs font-medium text-amber-700 uppercase">Call to Action</label>
-                                                    <div className="mt-1">
-                                                        <span className="inline-block px-3 py-1 bg-amber-600 text-white rounded-full text-sm font-medium">
-                                                            {viewedImage.cta}
-                                                        </span>
+                                                {viewedImage.headline ? (
+                                                    <div>
+                                                        <label className="text-xs font-medium text-amber-700 uppercase">Headline</label>
+                                                        <p className="font-bold text-gray-900 mt-1">{viewedImage.headline}</p>
                                                     </div>
-                                                </div>
+                                                ) : null}
+                                                {viewedImage.body ? (
+                                                    <div>
+                                                        <label className="text-xs font-medium text-amber-700 uppercase">Body Text</label>
+                                                        <p className="text-gray-700 text-sm whitespace-pre-line mt-1">{viewedImage.body}</p>
+                                                    </div>
+                                                ) : null}
+                                                {viewedImage.cta ? (
+                                                    <div>
+                                                        <label className="text-xs font-medium text-amber-700 uppercase">Call to Action</label>
+                                                        <div className="mt-1">
+                                                            <span className="inline-block px-3 py-1 bg-amber-600 text-white rounded-full text-sm font-medium">
+                                                                {viewedImage.cta}
+                                                        </span>
+                                                        </div>
+                                                    </div>
+                                                ) : null}
+                                                {!viewedImage.headline && !viewedImage.body && !viewedImage.cta && (
+                                                    <p className="text-gray-400 text-sm italic">No copy saved with this image.</p>
+                                                )}
                                             </div>
                                         </div>
 
