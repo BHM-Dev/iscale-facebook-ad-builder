@@ -194,6 +194,7 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adsBulk,
 
   return (
     <div className="mt-3 rounded-lg border border-gray-100 overflow-hidden">
+      <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead>
           <tr className="bg-gray-50 border-b border-gray-100">
@@ -346,6 +347,7 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adsBulk,
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -661,7 +663,7 @@ export default function CampaignPerformance() {
   const [sortBy, setSortBy] = useState(() => {
     const view = searchParams.get('view');
     if (view === 'top-performers') return 'roas';
-    return 'status';
+    return 'spend';
   });
   const [dashboardView, setDashboardView] = useState(() => searchParams.get('view')); // banner state
 
@@ -675,6 +677,13 @@ export default function CampaignPerformance() {
   const [adsLoading, setAdsLoading]     = useState(false);
   const [rtAdsBulk, setRtAdsBulk]       = useState(null);  // RT data keyed by ad_id (sub3)
   const [expandedAdsets, setExpandedAdsets] = useState(new Set());
+  // Campaign-level collapse — starts with all open; add campaignId to collapse it
+  const [collapsedCampaigns, setCollapsedCampaigns] = useState(new Set());
+  const toggleCampaign = (key) => setCollapsedCampaigns(prev => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
 
   // Adset-level manual pause state
   const [pausingAdsets, setPausingAdsets] = useState(new Set());
@@ -978,6 +987,33 @@ export default function CampaignPerformance() {
     return list;
   }, [adsets, statusFilter, sortBy, bulkInsights, isFlagged, adsetStatusOverrides]);
 
+  // Group the sorted adsets by campaign, then sort groups by total spend descending.
+  // Orphaned adsets (no campaign_id) fall into a catch-all group at the bottom.
+  const groupedCampaigns = useMemo(() => {
+    const map = new Map();
+    for (const adset of visibleAdsets) {
+      const key = adset.campaign_id ?? '__orphaned';
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
+          campaignId: adset.campaign_id ?? null,
+          campaignName: adset.campaign_name ?? 'Other',
+          campaignStatus: adset.campaign_status ?? null,
+          adsets: [],
+          totalSpend: 0,
+        });
+      }
+      const group = map.get(key);
+      group.adsets.push(adset);
+      group.totalSpend += bulkInsights?.[adset.fb_adset_id]?.spend ?? 0;
+    }
+    return [...map.values()].sort((a, b) => {
+      if (a.key === '__orphaned') return 1;
+      if (b.key === '__orphaned') return -1;
+      return b.totalSpend - a.totalSpend;
+    });
+  }, [visibleAdsets, bulkInsights]);
+
   return (
     <>
     <div className="max-w-6xl mx-auto space-y-8">
@@ -1073,7 +1109,7 @@ export default function CampaignPerformance() {
             }
           </div>
           <button
-            onClick={() => { setDashboardView(null); setSearchParams({}); setStatusFilter('ACTIVE'); setSortBy('status'); }}
+            onClick={() => { setDashboardView(null); setSearchParams({}); setStatusFilter('ACTIVE'); setSortBy('spend'); }}
             className="ml-4 hover:opacity-70 transition-opacity"
           >
             <X size={14} />
@@ -1085,11 +1121,9 @@ export default function CampaignPerformance() {
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
           <h2 className="font-semibold text-gray-900 flex items-center gap-2">
-            <Target size={16} className="text-gray-400" /> Ad Set Performance
+            <Target size={16} className="text-gray-400" /> Performance
             <span className="text-xs text-gray-400 font-normal">
-              {statusFilter === 'all'
-                ? `${adsets.filter(a => a.fb_adset_id).length} total`
-                : `${visibleAdsets.length} ${statusFilter.toLowerCase()}`}
+              {groupedCampaigns.length} campaign{groupedCampaigns.length !== 1 ? 's' : ''} · {visibleAdsets.length} ad set{visibleAdsets.length !== 1 ? 's' : ''}
             </span>
           </h2>
           <div className="flex items-center gap-2">
@@ -1140,188 +1174,233 @@ export default function CampaignPerformance() {
              'No launched ad sets found. Create and launch a campaign first.'}
           </div>
         ) : (
-          <div className="divide-y divide-gray-50">
-            {visibleAdsets.map(adset => {
-              const isExpanded = expandedAdsets.has(adset.fb_adset_id);
-              const hasAds = adsBulk && adsBulk[adset.fb_adset_id]?.length > 0;
-              const effectiveStatus = adsetStatusOverrides[adset.fb_adset_id] ?? adset.status;
-              const isPausingAdset = pausingAdsets.has(adset.fb_adset_id);
-              // Flag any poor-performing creatives in this adset
-              const adsetAds = adsBulk?.[adset.fb_adset_id] || [];
-              const adsetAvgCpl = adsetAds.filter(a => a.leads > 0).length > 0
-                ? adsetAds.filter(a => a.leads > 0).reduce((s, a) => s + a.cpl, 0) / adsetAds.filter(a => a.leads > 0).length
-                : null;
-              const hasPoorCreatives = adsetAds.some(a => {
-                const isPoorRoas = (a.roas != null && a.roas < 1);
-                const isHighCpl = adsetAvgCpl != null && a.cpl != null && a.cpl > adsetAvgCpl * 1.4 && a.spend > 20;
-                const isNoLeads = a.spend >= 20 && a.leads === 0;
-                return isPoorRoas || isHighCpl || isNoLeads;
-              });
+          <div>
+            {groupedCampaigns.map(group => {
+              const isCampaignOpen = !collapsedCampaigns.has(group.key);
+              const activeCount = group.adsets.filter(a =>
+                (adsetStatusOverrides[a.fb_adset_id] ?? a.status) === 'ACTIVE'
+              ).length;
 
               return (
-                <div key={adset.id} className={`group px-6 py-4 ${effectiveStatus === 'PAUSED' ? 'opacity-60' : ''}`}>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center flex-wrap gap-2">
-                      {/* Expand / collapse toggle */}
-                      <button
-                        onClick={() => setExpandedAdsets(prev => {
-                          const next = new Set(prev);
-                          next.has(adset.fb_adset_id) ? next.delete(adset.fb_adset_id) : next.add(adset.fb_adset_id);
-                          return next;
-                        })}
-                        className="text-gray-400 hover:text-gray-600 transition-colors"
-                        title={isExpanded ? 'Hide creative breakdown' : 'Show creative breakdown'}
-                      >
-                        {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                      </button>
-                      <span className="font-medium text-gray-900 text-sm">{adset.name}</span>
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                        effectiveStatus === 'ACTIVE'
-                          ? 'bg-green-100 text-green-700'
-                          : 'bg-gray-100 text-gray-500'
-                      }`}>
-                        {effectiveStatus}
+                <div key={group.key} className="border-b border-gray-100 last:border-b-0">
+                  {/* ── Campaign header row ───────────────────────────── */}
+                  <button
+                    onClick={() => toggleCampaign(group.key)}
+                    className="w-full flex items-center justify-between px-6 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-left border-b border-gray-100"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      {isCampaignOpen
+                        ? <ChevronDown size={16} className="text-gray-500 flex-shrink-0" />
+                        : <ChevronRight size={16} className="text-gray-500 flex-shrink-0" />
+                      }
+                      <span className="font-semibold text-gray-800 text-sm truncate">{group.campaignName}</span>
+                      {group.campaignStatus && (
+                        <span className={`flex-shrink-0 text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                          group.campaignStatus === 'ACTIVE'
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-gray-200 text-gray-500'
+                        }`}>
+                          {group.campaignStatus}
+                        </span>
+                      )}
+                      <span className="flex-shrink-0 text-xs text-gray-400">
+                        {activeCount > 0 ? `${activeCount} active` : `${group.adsets.length}`} ad set{group.adsets.length !== 1 ? 's' : ''}
                       </span>
-                      {hasAds && (
-                        <span className="text-xs text-gray-400">
-                          {adsBulk[adset.fb_adset_id].length} creative{adsBulk[adset.fb_adset_id].length !== 1 ? 's' : ''}
+                    </div>
+                    <div className="flex items-center gap-3 flex-shrink-0 ml-4">
+                      {bulkInsightsLoading ? (
+                        <span className="text-xs text-gray-300 animate-pulse">loading…</span>
+                      ) : group.totalSpend > 0 ? (
+                        <span className="text-sm font-bold text-gray-700">
+                          ${group.totalSpend.toFixed(0)}
+                          <span className="text-xs font-normal text-gray-400 ml-1">spent</span>
                         </span>
-                      )}
-                      {/* Brand assignment pill */}
-                      {(() => {
-                        const cb = campaignBrands[adset.id];
-                        const isAssigning = assigningBrand === adset.id;
-                        return (
-                          <span className="relative group">
-                            <select
-                              value={cb?.brand_id || ''}
-                              disabled={isAssigning}
-                              onChange={e => {
-                                const selected = brands.find(b => b.id === e.target.value);
-                                assignBrandToAdset(adset.id, e.target.value || null, selected?.name || null);
-                              }}
-                              className={`text-xs px-2 py-0.5 rounded-full border cursor-pointer appearance-none pr-5 ${
-                                cb ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-blue-300'
-                              } disabled:opacity-50`}
-                              title="Assign brand to this campaign"
-                            >
-                              <option value="">{isAssigning ? 'Saving…' : '+ Assign brand'}</option>
-                              {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                            </select>
-                            {cb && <Tag size={9} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" />}
-                          </span>
-                        );
-                      })()}
+                      ) : null}
+                    </div>
+                  </button>
 
-                      {hasPoorCreatives && !isExpanded && (
-                        <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-orange-50 text-orange-600 flex items-center gap-1 cursor-pointer"
-                          onClick={() => setExpandedAdsets(prev => { const next = new Set(prev); next.add(adset.fb_adset_id); return next; })}
-                          title="Click to see flagged creatives"
-                        >
-                          <AlertTriangle size={10} /> Poor creative(s)
-                        </span>
-                      )}
-                      {(() => {
-                        const adsetRules = rules.filter(r => r.adset_id === adset.id);
-                        const activeRule = adsetRules.find(r => r.is_active && !r.triggered_at);
-                        const triggeredRule = adsetRules.find(r => r.triggered_at);
-                        if (triggeredRule) return (
-                          <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700 flex items-center gap-1">
-                            <PauseCircle size={10} /> Rule triggered
-                          </span>
+                  {/* ── Ad sets within this campaign ──────────────────── */}
+                  {isCampaignOpen && (
+                    <div className="divide-y divide-gray-50">
+                      {group.adsets.map(adset => {
+                        const isExpanded = expandedAdsets.has(adset.fb_adset_id);
+                        const hasAds = adsBulk && adsBulk[adset.fb_adset_id]?.length > 0;
+                        const effectiveStatus = adsetStatusOverrides[adset.fb_adset_id] ?? adset.status;
+                        const isPausingAdset = pausingAdsets.has(adset.fb_adset_id);
+                        const adsetAds = adsBulk?.[adset.fb_adset_id] || [];
+                        const adsetAvgCpl = adsetAds.filter(a => a.leads > 0).length > 0
+                          ? adsetAds.filter(a => a.leads > 0).reduce((s, a) => s + a.cpl, 0) / adsetAds.filter(a => a.leads > 0).length
+                          : null;
+                        const hasPoorCreatives = adsetAds.some(a => {
+                          const isPoorRoas = (a.roas != null && a.roas < 1);
+                          const isHighCpl = adsetAvgCpl != null && a.cpl != null && a.cpl > adsetAvgCpl * 1.4 && a.spend > 20;
+                          const isNoLeads = a.spend >= 20 && a.leads === 0;
+                          return isPoorRoas || isHighCpl || isNoLeads;
+                        });
+
+                        return (
+                          <div key={adset.id} className={`group pl-10 pr-6 py-4 ${effectiveStatus === 'PAUSED' ? 'opacity-60' : ''}`}>
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center flex-wrap gap-2">
+                                {/* Expand / collapse creative breakdown */}
+                                <button
+                                  onClick={() => setExpandedAdsets(prev => {
+                                    const next = new Set(prev);
+                                    next.has(adset.fb_adset_id) ? next.delete(adset.fb_adset_id) : next.add(adset.fb_adset_id);
+                                    return next;
+                                  })}
+                                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                                  title={isExpanded ? 'Hide creative breakdown' : 'Show creative breakdown'}
+                                >
+                                  {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                </button>
+                                <span className="font-medium text-gray-900 text-sm">{adset.name}</span>
+                                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                                  effectiveStatus === 'ACTIVE'
+                                    ? 'bg-green-100 text-green-700'
+                                    : 'bg-gray-100 text-gray-500'
+                                }`}>
+                                  {effectiveStatus}
+                                </span>
+                                {hasAds && (
+                                  <span className="text-xs text-gray-400">
+                                    {adsBulk[adset.fb_adset_id].length} creative{adsBulk[adset.fb_adset_id].length !== 1 ? 's' : ''}
+                                  </span>
+                                )}
+                                {/* Brand assignment pill */}
+                                {(() => {
+                                  const cb = campaignBrands[adset.id];
+                                  const isAssigning = assigningBrand === adset.id;
+                                  return (
+                                    <span className="relative group">
+                                      <select
+                                        value={cb?.brand_id || ''}
+                                        disabled={isAssigning}
+                                        onChange={e => {
+                                          const selected = brands.find(b => b.id === e.target.value);
+                                          assignBrandToAdset(adset.id, e.target.value || null, selected?.name || null);
+                                        }}
+                                        className={`text-xs px-2 py-0.5 rounded-full border cursor-pointer appearance-none pr-5 ${
+                                          cb ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-blue-300'
+                                        } disabled:opacity-50`}
+                                        title="Assign brand to this ad set"
+                                      >
+                                        <option value="">{isAssigning ? 'Saving…' : '+ Assign brand'}</option>
+                                        {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                                      </select>
+                                      {cb && <Tag size={9} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" />}
+                                    </span>
+                                  );
+                                })()}
+                                {hasPoorCreatives && !isExpanded && (
+                                  <span
+                                    className="text-xs px-2 py-0.5 rounded-full font-medium bg-orange-50 text-orange-600 flex items-center gap-1 cursor-pointer"
+                                    onClick={() => setExpandedAdsets(prev => { const next = new Set(prev); next.add(adset.fb_adset_id); return next; })}
+                                    title="Click to see flagged creatives"
+                                  >
+                                    <AlertTriangle size={10} /> Poor creative(s)
+                                  </span>
+                                )}
+                                {(() => {
+                                  const adsetRules = rules.filter(r => r.adset_id === adset.id);
+                                  const activeRule = adsetRules.find(r => r.is_active && !r.triggered_at);
+                                  const triggeredRule = adsetRules.find(r => r.triggered_at);
+                                  if (triggeredRule) return (
+                                    <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700 flex items-center gap-1">
+                                      <PauseCircle size={10} /> Rule triggered
+                                    </span>
+                                  );
+                                  if (activeRule) return (
+                                    <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-indigo-50 text-indigo-600 flex items-center gap-1">
+                                      <Zap size={10} /> Rule active
+                                    </span>
+                                  );
+                                  return null;
+                                })()}
+                              </div>
+                              <div className="flex items-center gap-3">
+                                {adset.fb_adset_id && (
+                                  <button
+                                    onClick={() => {
+                                      const topAd = adsetAds.sort((a, b) => (b.spend || 0) - (a.spend || 0))[0];
+                                      const params = new URLSearchParams({
+                                        adsetName: adset.name,
+                                        campaignId: adset.fb_campaign_id || '',
+                                        adsetId: adset.fb_adset_id || '',
+                                      });
+                                      if (topAd) { params.set('adId', topAd.ad_id); params.set('adName', topAd.ad_name || ''); }
+                                      navigate(`/batch-generate?${params.toString()}`);
+                                    }}
+                                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                                    title="Generate new creative variants for this ad set"
+                                  >
+                                    <Repeat2 size={12} /> Iterate
+                                  </button>
+                                )}
+                                {adset.fb_adset_id && (
+                                  <button
+                                    onClick={() => toggleAdsetStatus(adset)}
+                                    disabled={isPausingAdset}
+                                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 ${
+                                      effectiveStatus === 'PAUSED'
+                                        ? 'bg-green-50 text-green-700 hover:bg-green-100'
+                                        : 'bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600'
+                                    }`}
+                                    title={effectiveStatus === 'PAUSED' ? 'Resume ad set' : 'Pause ad set'}
+                                  >
+                                    {isPausingAdset
+                                      ? <RefreshCw size={12} className="animate-spin" />
+                                      : effectiveStatus === 'PAUSED' ? <PlayCircle size={12} /> : <PauseCircle size={12} />
+                                    }
+                                    {effectiveStatus === 'PAUSED' ? 'Resume' : 'Pause'}
+                                  </button>
+                                )}
+                                <button
+                                  onClick={async () => {
+                                    if (!window.confirm(`Remove "${adset.name}" from this app?\n\nAny auto-pause rules for this ad set will also be deleted. The ad set itself will not be affected in Meta.`)) return;
+                                    try {
+                                      const res = await authFetch(`${API_BASE}/facebook/adsets/saved/${adset.id}`, { method: 'DELETE' });
+                                      if (!res.ok) throw new Error('Failed to remove');
+                                      setAdsets(prev => prev.filter(a => a.id !== adset.id));
+                                      showSuccess(`"${adset.name}" removed`);
+                                    } catch (e) { showError(e.message); }
+                                  }}
+                                  className="ml-1 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-all"
+                                  title="Remove from app (does not affect Meta)"
+                                >
+                                  <X size={13} />
+                                </button>
+                              </div>
+                            </div>
+                            <InsightsCard
+                              fbAdsetId={adset.fb_adset_id}
+                              adsetName={adset.name}
+                              adAccountId={adAccountId}
+                              datePreset={datePreset}
+                              bulkData={bulkInsights}
+                              bulkLoading={bulkInsightsLoading}
+                              bulkError={bulkInsightsError}
+                            />
+                            {isExpanded && (
+                              <AdsBreakdown
+                                fbAdsetId={adset.fb_adset_id}
+                                fbCampaignId={adset.fb_campaign_id || ''}
+                                adsetName={adset.name}
+                                campaignId={adset.campaign_id}
+                                adsBulk={adsBulk}
+                                adsLoading={adsLoading}
+                                rtAdsBulk={rtAdsBulk}
+                                onAdStatusChange={() => loadAdsBulk(adAccountId, datePreset, datePreset === 'custom' ? dateFrom : null, datePreset === 'custom' ? dateTo : null)}
+                                onRemix={(creative) => {
+                                  const cb = campaignBrands[adset.id];
+                                  setRemixDrawer({ ...creative, brand_id: cb?.brand_id || '', brand_name: cb?.brand_name || '' });
+                                }}
+                              />
+                            )}
+                          </div>
                         );
-                        if (activeRule) return (
-                          <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-indigo-50 text-indigo-600 flex items-center gap-1">
-                            <Zap size={10} /> Rule active
-                          </span>
-                        );
-                        return null;
-                      })()}
+                      })}
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs text-gray-400">{adset.fb_adset_id}</span>
-                      {/* Adset-level Iterate → Batch Generate (uses top-spend ad if loaded) */}
-                      {adset.fb_adset_id && (
-                        <button
-                          onClick={() => {
-                            const topAd = adsetAds.sort((a, b) => (b.spend || 0) - (a.spend || 0))[0];
-                            const params = new URLSearchParams({
-                              adsetName: adset.name,
-                              campaignId: adset.fb_campaign_id || '',
-                              adsetId: adset.fb_adset_id || '',
-                            });
-                            if (topAd) { params.set('adId', topAd.ad_id); params.set('adName', topAd.ad_name || ''); }
-                            navigate(`/batch-generate?${params.toString()}`);
-                          }}
-                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors"
-                          title="Generate new creative variants for this ad set"
-                        >
-                          <Repeat2 size={12} /> Iterate
-                        </button>
-                      )}
-                      {/* Adset-level pause / resume button */}
-                      {adset.fb_adset_id && (
-                        <button
-                          onClick={() => toggleAdsetStatus(adset)}
-                          disabled={isPausingAdset}
-                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 ${
-                            effectiveStatus === 'PAUSED'
-                              ? 'bg-green-50 text-green-700 hover:bg-green-100'
-                              : 'bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600'
-                          }`}
-                          title={effectiveStatus === 'PAUSED' ? 'Resume ad set' : 'Pause ad set'}
-                        >
-                          {isPausingAdset
-                            ? <RefreshCw size={12} className="animate-spin" />
-                            : effectiveStatus === 'PAUSED' ? <PlayCircle size={12} /> : <PauseCircle size={12} />
-                          }
-                          {effectiveStatus === 'PAUSED' ? 'Resume' : 'Pause'}
-                        </button>
-                      )}
-                      {/* Remove from app (does not affect Meta) */}
-                      <button
-                        onClick={async () => {
-                          if (!window.confirm(`Remove "${adset.name}" from this app?\n\nAny auto-pause rules for this ad set will also be deleted. The ad set itself will not be affected in Meta.`)) return;
-                          try {
-                            const res = await authFetch(`${API_BASE}/facebook/adsets/saved/${adset.id}`, { method: 'DELETE' });
-                            if (!res.ok) throw new Error('Failed to remove');
-                            setAdsets(prev => prev.filter(a => a.id !== adset.id));
-                            showSuccess(`"${adset.name}" removed`);
-                          } catch (e) { showError(e.message); }
-                        }}
-                        className="ml-1 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-all"
-                        title="Remove from app (does not affect Meta)"
-                      >
-                        <X size={13} />
-                      </button>
-                    </div>
-                  </div>
-                  <InsightsCard
-                    fbAdsetId={adset.fb_adset_id}
-                    adsetName={adset.name}
-                    adAccountId={adAccountId}
-                    datePreset={datePreset}
-                    bulkData={bulkInsights}
-                    bulkLoading={bulkInsightsLoading}
-                    bulkError={bulkInsightsError}
-                  />
-                  {/* Creative breakdown — only renders when expanded */}
-                  {isExpanded && (
-                    <AdsBreakdown
-                      fbAdsetId={adset.fb_adset_id}
-                      fbCampaignId={adset.fb_campaign_id || ''}
-                      adsetName={adset.name}
-                      campaignId={adset.campaign_id}
-                      adsBulk={adsBulk}
-                      adsLoading={adsLoading}
-                      rtAdsBulk={rtAdsBulk}
-                      onAdStatusChange={() => loadAdsBulk(adAccountId, datePreset, datePreset === 'custom' ? dateFrom : null, datePreset === 'custom' ? dateTo : null)}
-                      onRemix={(creative) => {
-                        // Key by adset.id (our internal DB id) — brand is now stored per-adset.
-                        const cb = campaignBrands[adset.id];
-                        setRemixDrawer({ ...creative, brand_id: cb?.brand_id || '', brand_name: cb?.brand_name || '' });
-                      }}
-                    />
                   )}
                 </div>
               );
