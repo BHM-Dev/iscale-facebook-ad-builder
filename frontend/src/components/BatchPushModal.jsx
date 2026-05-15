@@ -30,7 +30,13 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     const [pages, setPages] = useState([]);
     const [pageId, setPageId] = useState(localStorage.getItem('lastUsedPageId') || '');
     const [websiteUrl, setWebsiteUrl] = useState(preselectedWebsiteUrl || localStorage.getItem('lastUsedWebsiteUrl') || '');
-    const [sharedCta, setSharedCta] = useState('LEARN_MORE');
+    const [sharedCta, setSharedCta] = useState(() => {
+        // Default to the most common CTA across items so the dropdown reflects what Joel already chose
+        if (!items.length) return 'LEARN_MORE';
+        const counts = {};
+        items.forEach(it => { const c = it.cta || 'LEARN_MORE'; counts[c] = (counts[c] || 0) + 1; });
+        return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+    });
     const [loading, setLoading] = useState(false);
 
     // Ad set mode — always default to 'new' so Joel creates a fresh ad set each push
@@ -174,12 +180,18 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
 
     const handlePushAll = async () => {
         if (!validate()) return;
+        const campaignLabel = campaigns.find(c => c.id === selectedCampaignId)?.name || selectedCampaignId;
+        const adsetLabel = adsetMode === 'existing'
+            ? (adSets.find(a => a.id === sharedAdsetId)?.name || sharedAdsetId)
+            : `New ad set: "${newAdset.name}"`;
+        if (!window.confirm(`Push ${items.length} ad${items.length !== 1 ? 's' : ''} to Meta?\n\nCampaign: ${campaignLabel}\nAd Set: ${adsetLabel}\nDestination: ${websiteUrl}\n\nAds will be created as PAUSED.`)) return;
+        setPushStatuses({});
+        setPushErrors({});
         setPushing(true);
         setIsDone(false);
 
         // Initialise all items as pending
         setPushStatuses(Object.fromEntries(items.map(it => [it.key, 'pending'])));
-        setPushErrors({});
 
         // Create new ad set once if needed, then reuse the ID for all items
         let targetAdsetId = sharedAdsetId;
@@ -362,7 +374,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                     setSelectedCampaignId(e.target.value);
                                     setAdSets([]);
                                     setSharedAdsetId('');
-                                    setAdsetMode('existing');
+                                    // Keep adsetMode as 'new' — Joel should always explicitly choose to use existing
                                     setNewAdset({ name: suggestedAdsetName, dailyBudget: '', cloneFromId: '' });
                                     loadAdSets(e.target.value);
                                 }}

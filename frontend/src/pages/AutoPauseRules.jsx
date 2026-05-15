@@ -45,14 +45,21 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
 
         <div className="space-y-4">
           <Field label="Ad Set">
-            <select className="input-base" value={form.adset_id} onChange={e => setForm({...form, adset_id: e.target.value})}>
-              {adsets.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
+            {adsets.length === 0 ? (
+              <div className="px-3 py-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg">
+                No tracked ad sets found. Add ad sets in Campaign Performance first.
+              </div>
+            ) : (
+              <select className="input-base" value={form.adset_id} onChange={e => setForm({...form, adset_id: e.target.value})}>
+                {adsets.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            )}
           </Field>
 
           <Field label="Metric">
             <select className="input-base" value={form.metric} onChange={e => setForm({...form, metric: e.target.value})}>
               <option value="cpl">Cost Per Lead (CPL)</option>
+              <option value="cpa">Cost Per Action (CPA)</option>
               <option value="ctr">Click-Through Rate (CTR)</option>
               <option value="roas">ROAS</option>
             </select>
@@ -88,7 +95,7 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
 
         <div className="flex gap-3 mt-6">
           <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
-          <button onClick={save} disabled={saving} className="flex-1 btn-primary">
+          <button onClick={save} disabled={saving || adsets.length === 0} className="flex-1 btn-primary">
             {saving ? 'Saving...' : 'Create Rule'}
           </button>
         </div>
@@ -138,6 +145,7 @@ export default function AutoPauseRules() {
   }, [loadRules, loadAdsets]);
 
   const deleteRule = async (ruleId) => {
+    if (!window.confirm('Delete this auto-pause rule? This cannot be undone.')) return;
     try {
       const res = await authFetch(`${API_BASE}/auto-pause/rules/${ruleId}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to delete rule');

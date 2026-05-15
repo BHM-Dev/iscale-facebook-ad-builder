@@ -185,7 +185,7 @@ export default function BatchGenerate() {
   // Text overlay
   const [overlayEnabled, setOverlayEnabled] = useState(true);
   const [overlayNicheLine, setOverlayNicheLine] = useState('');
-  const [overlayOfferLine, setOverlayOfferLine] = useState('From $24.95/Month');
+  const [overlayOfferLine, setOverlayOfferLine] = useState('');
   // Logo: persisted in localStorage so Joel doesn't re-upload every session
   const [overlayLogoUrl, setOverlayLogoUrl] = useState(() => {
     try { return localStorage.getItem('overlayLogoUrl') || ''; } catch (_) { return ''; }
@@ -529,7 +529,7 @@ export default function BatchGenerate() {
           source_body: source.body || '',
           hook: source.headline,
           niche: niche || extractNiche(iterateAdsetName),
-          vertical: 'commercial_insurance',
+          vertical: niche || extractNiche(iterateAdsetName) || 'commercial_insurance',
         }),
       });
       if (!res.ok) throw new Error(await res.text());
