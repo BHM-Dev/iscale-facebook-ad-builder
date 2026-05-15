@@ -24,10 +24,8 @@ export default function GeneratedAds() {
     const [selectedBrand, setSelectedBrand] = useState('');
     const [viewMode, setViewMode] = useState(() => {
         try {
-            console.log('Initializing GeneratedAds viewMode');
             return localStorage.getItem('generatedAdsViewMode') || 'grid';
         } catch (e) {
-            console.error('Error accessing localStorage:', e);
             return 'grid';
         }
     });
@@ -154,8 +152,6 @@ export default function GeneratedAds() {
     const handleDelete = (bundleId, e) => {
         e.stopPropagation();
 
-        console.log('Delete clicked for bundle:', bundleId);
-
         // Find all ads in this bundle
         const bundleAds = ads.filter(ad => (ad.ad_bundle_id || `legacy_${ad.id}`) === bundleId);
 
@@ -173,12 +169,9 @@ export default function GeneratedAds() {
         // Close modal immediately
         setDeleteConfirmation({ show: false, bundleId: null, bundleAds: [] });
 
-        console.log(`Deleting ${bundleAds.length} ads from bundle ${bundleId}`);
-
         try {
             // Delete all ads in the bundle
             const deletePromises = bundleAds.map(ad => {
-                console.log(`Deleting ad ${ad.id}`);
                 return authFetch(`${API_URL}/generated-ads/${ad.id}`, {
                     method: 'DELETE'
                 }).then(response => {
@@ -190,8 +183,6 @@ export default function GeneratedAds() {
             });
 
             await Promise.all(deletePromises);
-
-            console.log('All ads deleted successfully');
 
             // Show success message first
             showSuccess(`Successfully deleted ${bundleAds.length} ad${bundleAds.length > 1 ? 's' : ''}`);
@@ -217,7 +208,6 @@ export default function GeneratedAds() {
     };
 
     const cancelDelete = () => {
-        console.log('Delete cancelled by user');
         setDeleteConfirmation({ show: false, bundleId: null, bundleAds: [] });
     };
 
@@ -270,6 +260,7 @@ export default function GeneratedAds() {
     const handleClearBroken = async () => {
         const toDelete = [...brokenBundles];
         if (toDelete.length === 0) return;
+        if (!window.confirm(`Remove ${toDelete.length} broken bundle${toDelete.length !== 1 ? 's' : ''}?\n\nNote: a broken thumbnail may be a temporary load failure. This permanently deletes the records.`)) return;
         for (const bundleId of toDelete) {
             const bundleAds = ads.filter(ad => (ad.ad_bundle_id || `legacy_${ad.id}`) === bundleId);
             try {
@@ -343,7 +334,6 @@ export default function GeneratedAds() {
         ? bundles.find(b => (b[0].ad_bundle_id || `legacy_${b[0].id}`) === selectedBundleId)
         : null;
 
-    console.log('Rendering GeneratedAds', { brands, adsCount: ads.length, viewMode });
 
     return (
         <div className="max-w-7xl mx-auto">
@@ -447,10 +437,11 @@ export default function GeneratedAds() {
                         </button>
                         <button
                             onClick={handleUseInCampaignBuilder}
-                            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                            className="flex items-center gap-2 px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors text-sm font-medium"
+                            title="Opens the legacy manual campaign builder"
                         >
                             <Zap size={16} />
-                            Campaign Builder
+                            Legacy Builder
                         </button>
                         <button
                             onClick={handleExportCSV}
@@ -988,7 +979,7 @@ export default function GeneratedAds() {
                     initialBody={pushModal.ad.body || ''}
                     initialCta={pushModal.ad.cta || 'LEARN_MORE'}
                     initialWebsiteUrl={localStorage.getItem('lastUsedWebsiteUrl') || ''}
-                    initialCampaignId={localStorage.getItem('lastUsedCampaignId') || ''}
+                    initialCampaignId={sessionStorage.getItem('lastUsedCampaignId') || ''}
                     niche={pushModal.ad.niche || pushModal.ad.overlay_niche_line || ''}
                     onClose={() => setPushModal({ show: false, ad: null })}
                 />
@@ -1001,7 +992,7 @@ export default function GeneratedAds() {
                     <BatchPushModal
                         items={bulkItems}
                         onClose={() => setBulkPushOpen(false)}
-                        preselectedCampaignId={localStorage.getItem('lastUsedCampaignId') || ''}
+                        preselectedCampaignId={sessionStorage.getItem('lastUsedCampaignId') || ''}
                         preselectedWebsiteUrl={localStorage.getItem('lastUsedWebsiteUrl') || ''}
                         niche={getBulkNiche(bulkItems)}
                     />

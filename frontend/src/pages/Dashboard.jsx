@@ -400,7 +400,7 @@ export default function Dashboard() {
             title="Pull latest RedTrack revenue data for this date range"
           >
             <RefreshCw size={13} className={syncingRT ? 'animate-spin' : ''} />
-            Sync RT
+            Sync RedTrack
           </button>
           <button
             onClick={() => load(activeRange)}
@@ -549,13 +549,13 @@ export default function Dashboard() {
                         <div className="text-xs text-gray-400">${a.rtCpl.toFixed(2)} CPL</div>
                       )}
                     </div>
-                    <button
-                      onClick={() => navigate(`/batch-generate?adsetName=${encodeURIComponent(a.name)}&adsetId=${encodeURIComponent(a.fb_adset_id || '')}&campaignId=${encodeURIComponent(a.fb_campaign_id || '')}`)}
+                    <Link
+                      to={`/campaign-performance`}
                       className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-indigo-600 border border-indigo-100 bg-indigo-50 hover:bg-indigo-100 transition-colors"
-                      title="Generate more variants of this winning creative"
+                      title="View this ad set in Campaign Performance"
                     >
-                      <Repeat2 size={11} /> Iterate
-                    </button>
+                      View
+                    </Link>
                   </div>
                 </div>
               ))}

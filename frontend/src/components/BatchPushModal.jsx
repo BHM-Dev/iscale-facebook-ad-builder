@@ -244,7 +244,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
         if (pageId) localStorage.setItem('lastUsedPageId', pageId);
         if (adAccountId) localStorage.setItem('fb_ad_account_id', adAccountId);
         if (websiteUrl) localStorage.setItem('lastUsedWebsiteUrl', websiteUrl);
-        if (selectedCampaignId) localStorage.setItem('lastUsedCampaignId', selectedCampaignId);
+        if (selectedCampaignId) sessionStorage.setItem('lastUsedCampaignId', selectedCampaignId);
 
         setPushing(false);
         setIsDone(true);

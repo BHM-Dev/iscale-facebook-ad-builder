@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2, Sparkles, Tag, ChevronLeft } from 'lucide-react';
+import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2, Sparkles, Tag, ChevronLeft, BarChart2, Database, ShieldAlert } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
@@ -325,29 +325,30 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adsBulk,
                       }
                       Remix
                     </button>
-                    {/* Iterate → Batch Generate */}
+                    {/* More Variants → Batch Generate pre-filled with this ad */}
                     <button
                       onClick={() => navigate(`/batch-generate?adId=${encodeURIComponent(ad.ad_id)}&adName=${encodeURIComponent(ad.ad_name || ad.ad_id)}&adsetName=${encodeURIComponent(adsetName || '')}&campaignId=${encodeURIComponent(fbCampaignId || '')}&adsetId=${encodeURIComponent(fbAdsetId || '')}`)}
                       className="flex items-center gap-1 px-2 py-1 rounded text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors text-xs font-medium whitespace-nowrap"
-                      title="Iterate more versions of this creative"
+                      title="Generate more creative variants from this ad"
                     >
-                      <Repeat2 size={11} /> Iterate
+                      <Repeat2 size={11} /> More Variants
                     </button>
                     {/* Pause / Resume */}
                     <button
                       onClick={() => toggleAdStatus(ad)}
                       disabled={isPausing}
-                      className={`p-1 rounded transition-colors ${
+                      className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
                         isPaused
-                          ? 'text-green-600 hover:bg-green-50'
-                          : 'text-gray-400 hover:bg-gray-100 hover:text-gray-700'
-                      } disabled:opacity-40`}
-                      title={isPaused ? 'Resume ad' : 'Pause ad'}
+                          ? 'text-green-700 bg-green-50 hover:bg-green-100'
+                          : 'text-gray-500 bg-gray-100 hover:bg-red-50 hover:text-red-600'
+                      }`}
+                      title={isPaused ? 'Resume this ad' : 'Pause this ad'}
                     >
                       {isPausing
-                        ? <RefreshCw size={13} className="animate-spin" />
-                        : isPaused ? <PlayCircle size={13} /> : <PauseCircle size={13} />
+                        ? <RefreshCw size={11} className="animate-spin" />
+                        : isPaused ? <PlayCircle size={11} /> : <PauseCircle size={11} />
                       }
+                      {isPaused ? 'Resume' : 'Pause'}
                     </button>
                   </div>
                 </td>
@@ -703,6 +704,9 @@ export default function CampaignPerformance() {
   const [campaignBrands, setCampaignBrands] = useState({});
   const [assigningBrand, setAssigningBrand] = useState(null); // adset.id currently being saved
 
+  // Add-rule modal state
+  const [showAddRuleModal, setShowAddRuleModal] = useState(false);
+
   // Remix drawer state
   const [remixDrawer, setRemixDrawer] = useState(null); // { ad, adsetName, brand_id, brand_name }
 
@@ -1030,31 +1034,39 @@ export default function CampaignPerformance() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <TrendingDown size={26} className="text-red-500" />
-            Performance &amp; Auto-Pause
+            <BarChart2 size={26} className="text-indigo-500" />
+            Campaign Performance
           </h1>
           <p className="text-gray-500 text-sm mt-1">
-            Live Meta Insights · Rules checked every 30 minutes automatically
+            Live Meta insights · RedTrack conversions · Auto-pause rules
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <button
+            onClick={() => setShowAddRuleModal(true)}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-orange-200 text-orange-600 bg-orange-50 hover:bg-orange-100 transition-colors"
+            title="Create an auto-pause rule for any tracked ad set"
+          >
+            <ShieldAlert size={14} />
+            + Add Rule
+          </button>
+          <button
             onClick={syncFromMeta}
             disabled={syncing}
             className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
-            title="Import all campaigns and ad sets from Meta into this app"
+            title="Import campaign + ad set structure from Meta Ads Manager"
           >
             <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
-            {syncing ? 'Syncing...' : 'Sync from Meta'}
+            {syncing ? 'Syncing...' : 'Sync Meta'}
           </button>
           <button
             onClick={syncRedTrack}
             disabled={syncingRT}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-50"
-            title="Pull latest RedTrack conversion data into cache"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-blue-200 text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-50"
+            title="Pull latest RedTrack conversion + revenue data into cache"
           >
-            <RefreshCw size={14} className={syncingRT ? 'animate-spin' : ''} />
-            {syncingRT ? 'Syncing RT...' : 'Sync RedTrack'}
+            <Database size={14} className={syncingRT ? 'animate-pulse' : ''} />
+            {syncingRT ? 'Syncing...' : 'Sync RedTrack'}
           </button>
           <div className="flex flex-col items-end gap-1">
             <div className="flex items-center gap-2">
@@ -1347,24 +1359,10 @@ export default function CampaignPerformance() {
                                   <button
                                     onClick={e => {
                                       e.stopPropagation();
-                                      const topAd = adsetAds.sort((a, b) => (b.spend || 0) - (a.spend || 0))[0];
-                                      const params = new URLSearchParams({
-                                        adsetName: adset.name,
-                                        campaignId: adset.fb_campaign_id || '',
-                                        adsetId: adset.fb_adset_id || '',
-                                      });
-                                      if (topAd) { params.set('adId', topAd.ad_id); params.set('adName', topAd.ad_name || ''); }
-                                      navigate(`/batch-generate?${params.toString()}`);
+                                      const currentStatus = adsetStatusOverrides[adset.fb_adset_id] ?? adset.status;
+                                      if (currentStatus === 'ACTIVE' && !window.confirm(`Pause "${adset.name}"?\n\nThis will stop delivery immediately in Meta.`)) return;
+                                      toggleAdsetStatus(adset);
                                     }}
-                                    className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors"
-                                    title="Generate new creative variants"
-                                  >
-                                    <Repeat2 size={11} /> Iterate
-                                  </button>
-                                )}
-                                {adset.fb_adset_id && (
-                                  <button
-                                    onClick={e => { e.stopPropagation(); toggleAdsetStatus(adset); }}
                                     disabled={isPausingAdset}
                                     className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
                                       effectiveStatus === 'PAUSED'
@@ -1440,6 +1438,15 @@ export default function CampaignPerformance() {
       </div>
 
     </div>
+
+    {/* ── Add Rule Modal ───────────────────────────────────────────────────── */}
+    {showAddRuleModal && (
+      <AddRuleModal
+        adsets={adsets}
+        onClose={() => setShowAddRuleModal(false)}
+        onCreated={() => { setShowAddRuleModal(false); }}
+      />
+    )}
 
     {/* ── Remix Drawer ─────────────────────────────────────────────────────── */}
     {remixDrawer && (

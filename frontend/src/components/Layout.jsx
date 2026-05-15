@@ -79,9 +79,9 @@ export default function Layout() {
             icon: Target,
             label: 'Facebook',
             subItems: [
-                { label: 'Campaign Builder', path: '/facebook-campaigns', icon: Megaphone },
                 { label: 'Performance',      path: '/campaign-performance', icon: TrendingDown },
-                { label: 'Auto-Pause Rules', path: '/auto-pause-rules', icon: PauseCircle },
+                { label: 'Auto-Pause Rules', path: '/auto-pause-rules',    icon: PauseCircle },
+                { label: 'Campaign Builder', path: '/facebook-campaigns',  icon: Megaphone },
             ]
         },
     ];

@@ -164,6 +164,8 @@ export default function AdRemix() {
         { id: 3, name: 'Product', icon: Package },
         { id: 4, name: 'Profile', icon: Users },
         { id: 5, name: 'Campaign', icon: FileText },
+        { id: 6, name: 'Generate', icon: Sparkles },
+        { id: 7, name: 'Results', icon: CheckCircle },
     ];
 
     // Persist push modal form selections (except image_url which expires) across modal opens.
@@ -854,16 +856,17 @@ export default function AdRemix() {
                     {/* Back button — available on all steps 2–7.
                         Sets skipAutoAdvance before decrementing so profile/product
                         auto-skip effects don't immediately re-trigger. */}
-                    {currentStep > 1 && currentStep <= 5 && (
+                    {currentStep > 1 && currentStep <= 7 && (
                         <button
                             onClick={() => {
                                 skipAutoAdvance.current = true;
-                                setCurrentStep(currentStep - 1);
+                                // From Results (7), go back to Campaign (5) to re-generate
+                                setCurrentStep(currentStep === 7 ? 5 : currentStep - 1);
                             }}
                             className="flex items-center gap-2 px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium"
                         >
                             <ChevronLeft size={20} />
-                            Back
+                            {currentStep === 7 ? 'Edit & Re-generate' : 'Back'}
                         </button>
                     )}
 
