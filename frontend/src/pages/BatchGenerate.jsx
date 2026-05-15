@@ -380,18 +380,13 @@ export default function BatchGenerate() {
     const key = `${variant.id}-${sizeConfig.id}`;
     setResults(prev => ({ ...prev, [key]: { status: 'generating', imageUrl: null, error: null } }));
 
-    // When a reference image is provided, we keep a custom prompt so Flux maintains
-    // the visual style of that reference. When there's no reference image, we pass
-    // the copy + niche as structured fields and let the backend AI (Claude Haiku)
-    // generate a proper Flux scene description — it produces far better results than
-    // a hand-built string, and it knows the niche context.
-    const refPrompt = refImageUrl
-      ? `Maintain the exact visual composition, style, lighting, and aesthetic of the reference image.${niche ? ` Ad for ${niche}.` : ''} Keep the same background setting, subject positioning, and overall mood. High quality photorealistic advertising photography. No text, no words, no captions, no watermarks, no logos, no footer.`
-      : null;
-
+    // imageMode:
+    //   "style_ref" — reference image provides visual style influence only;
+    //                 backend (Sonnet) generates a fresh scene prompt around the niche.
+    //   no reference — text-to-image; Pexels for place/property niches, kie.ai for trades.
     const payload = {
-      ...(refPrompt ? { customPrompt: refPrompt } : {}),
       ...(niche ? { niche } : {}),
+      imageMode: 'style_ref',
       count: 1,
       imageSizes: [{ width: sizeConfig.width, height: sizeConfig.height, name: sizeConfig.label }],
       copy: { headline: variant.headline, body: variant.body, cta: variant.cta },

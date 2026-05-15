@@ -365,14 +365,25 @@ export default function AdRemix() {
         if (!pushModal?.image_generation_prompt) return;
         setImageGenerating(true);
         try {
+            // Use the winning ad's image as a reference (iterate mode) when available.
+            // kie.ai will preserve the scene and adjust lighting/mood only.
+            // Falls back to text-to-image if no reference image exists.
+            const referenceImageUrl = wizardData.template?.image_url || null;
+            const payload = {
+                customPrompt: pushModal.image_generation_prompt,
+                count: 1,
+                imageSizes: [{ width: 1080, height: 1080, name: 'Square' }],
+                niche: wizardData.offer?.niche || '',
+                imageMode: 'iterate',
+                ...(referenceImageUrl && {
+                    useProductImage: true,
+                    productShots: [referenceImageUrl],
+                }),
+            };
             const res = await authFetch(`${API_URL}/generated-ads/generate-image`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    customPrompt: pushModal.image_generation_prompt,
-                    count: 1,
-                    imageSizes: [{ width: 1080, height: 1080, name: 'Square' }],
-                }),
+                body: JSON.stringify(payload),
             });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));

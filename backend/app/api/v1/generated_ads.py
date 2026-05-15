@@ -26,6 +26,10 @@ class ImageGenerationRequest(BaseModel):
     customPrompt: Optional[str] = None
     useProductImage: bool = False  # Use uploaded product image as base
     niche: Optional[str] = None   # e.g. "Religious organizations", "Flower shops" — passed to AI prompt builder
+    # imageMode controls how a reference image (productShots[0]) is used:
+    #   "iterate"   — Ad Remix path: preserve exact scene, change only lighting/mood (Flux image-to-image)
+    #   "style_ref" — Batch Generate path: use reference for visual style only, Sonnet generates fresh scene
+    imageMode: str = "iterate"
     # Text overlay fields — baked into image after kie.ai generation
     overlay_enabled: bool = False
     overlay_niche_line: Optional[str] = None   # e.g. "Winery Business Insurance" — rendered above headline
@@ -144,30 +148,9 @@ _async_anthropic = _anthropic_sdk.AsyncAnthropic(api_key=_ANTHROPIC_KEY) if _ANT
 # contemporary-business-owner framing reliably. ~$0.003/call, acceptable for this task.
 _PROMPT_MODEL = "claude-sonnet-4-5-20250929"
 
-# Negative prompt applied to all flux-kontext-pro calls.
-# Blocks the most common ad creative failure modes across financial/insurance verticals.
-_NEGATIVE_PROMPT = (
-    # Text / graphics
-    "text, words, letters, numbers, typography, headline, caption, speech bubble, "
-    "watermark, logo, brand name, company name, signature, stamp, "
-    "footer, bottom bar, header bar, legal disclaimer, fine print, tagline, slogan, "
-    "insurance disclaimer, website address, phone number, social media handle, "
-    # Historical / costume / religious imagery
-    "halo, robes, religious robes, biblical figure, ancient clothing, medieval clothing, "
-    "historical costume, crown of thorns, prayer beads, cassock, nun habit, monk robe, "
-    "stained glass, candles, altar, religious iconography, divine light rays, "
-    "ancient, medieval, historical, biblical, cinematic religious lighting, "
-    "praying hands pose, hands clasped in prayer, worship pose, "
-    # Generic stock-photo failures
-    "generic couple smiling at camera, handshake, floating money, composite background, "
-    "plain gray studio backdrop, white seamless background, "
-    # Technical failures
-    "blurry, out of focus, low quality, distorted, deformed, bad anatomy, extra fingers, "
-    "six fingers, multiple hands, ugly, crowd, busy cluttered background, "
-    "oversaturated, harsh shadows, grainy, noise, low resolution, "
-    "illustration, cartoon, 3D render, clipart, "
-    "lens flare, heavy vignette, HDR effect, collage, multiple scenes, split image"
-)
+# NOTE: negativePrompt is NOT supported by flux-kontext-pro (confirmed via docs.kie.ai).
+# It is a Stable Diffusion convention that Flux silently ignores. All content guidance
+# must be expressed in the positive prompt. The _NEGATIVE_PROMPT block has been removed.
 
 # Vertical hints used only in build_comprehensive_prompt() fallback (no Anthropic key).
 # The Sonnet-based _build_ai_image_prompt() uses the niche field directly.
@@ -398,29 +381,35 @@ async def _pexels_fetch_image(query: str, aspect_ratio: str = "1:1") -> str | No
 async def _build_ai_image_prompt(
     request: "ImageGenerationRequest",
     aspect_ratio: str = "1:1",
+    has_input_image: bool = False,
 ) -> str:
     """
-    Use Claude Sonnet to convert brand/product/copy context into a
-    Flux-optimized visual scene description for Facebook ad creatives.
+    Build a Flux prompt based on mode:
 
-    aspect_ratio is passed so the model can tailor composition guidance
-    (portrait/story vs. square/landscape).
+    has_input_image=False (text-to-image):
+      - Pexels handles place/property niches; this path handles trades/professionals.
+      - Niche overrides return hardcoded scene descriptions for known-failing niches.
+      - Sonnet generates a fresh scene for everything else.
 
-    Falls back to build_comprehensive_prompt() if the API call fails or
-    if ANTHROPIC_API_KEY is not configured.
+    has_input_image=True, imageMode="iterate" (Ad Remix):
+      - Preservation-first prompt: keep exact scene, adjust lighting/mood only.
+      - Skips niche overrides — the reference image IS the scene.
+
+    has_input_image=True, imageMode="style_ref" (Batch Generate):
+      - Reference image provides visual style influence to kie.ai via inputImage.
+      - Sonnet generates a fresh scene prompt (same as text-to-image path).
+      - Niche overrides still apply.
     """
     if not _async_anthropic:
         return build_comprehensive_prompt(request)
 
     try:
         product_name = request.product.get("name", "") if request.product else ""
-        product_desc = request.product.get("description", "") if request.product else ""
         mood = request.template.get("mood", "engaging") if request.template else "engaging"
         lighting = request.template.get("lighting", "natural") if request.template else "natural"
-
         niche = (request.niche or "").strip()
+        image_mode = (request.imageMode or "iterate").strip()
 
-        # Composition guidance differs by orientation.
         is_portrait = aspect_ratio in ("9:16", "3:4")
         composition_note = (
             "vertical full-frame composition, subject fills frame top to bottom"
@@ -428,16 +417,30 @@ async def _build_ai_image_prompt(
             "full-bleed horizontal composition, subject fills the entire frame"
         )
 
-        # ── Hardcoded override — bypass Sonnet for known failing niches ──────────
-        # Certain keywords (religious, church, winery, etc.) cause Flux to default
-        # to faces/people/couples regardless of prompt instructions. For these we
-        # return a specific architectural scene directly, no LLM in the loop.
+        # ── iterate mode: preservation-first prompt ───────────────────────────────
+        # Reference image is a winning ad. Keep scene intact, shift only mood/light.
+        if has_input_image and image_mode == "iterate":
+            niche_context = f" The ad is for {niche}." if niche else ""
+            prompt = (
+                f"Keep the exact same scene, composition, subject, and background."
+                f"{niche_context}"
+                f" Adjust the lighting to feel {lighting} and the mood to feel {mood}."
+                f" {composition_note}."
+                f" No written text, no typography, no logos in the image."
+            )
+            print(f"🔄 Iterate prompt ({aspect_ratio}): {prompt}")
+            return prompt
+
+        # ── style_ref or text-to-image: generate fresh scene ─────────────────────
+        # Niche overrides bypass Sonnet for known Flux failure niches.
+        # Skip overrides in style_ref only if you want fresh generation regardless —
+        # currently we apply them to ensure quality for place/property niches.
         override = _get_niche_override(niche or product_name)
         if override:
-            print(f"🏛️  Niche override applied for '{niche or product_name}': skipping Sonnet")
+            print(f"🏛️  Niche override for '{niche or product_name}': skipping Sonnet")
             return f"{override} {composition_note}"
 
-        # ── Sonnet prompt for everything else ────────────────────────────────────
+        # Sonnet generates scene for trades, professionals, and everything else
         system_prompt = """You write short Flux image generation prompts for Facebook ads.
 
 Rules:
@@ -459,7 +462,7 @@ Rules:
         )
 
         ai_prompt = response.content[0].text.strip()
-        print(f"🤖 AI-enhanced image prompt ({aspect_ratio}): {ai_prompt}")
+        print(f"🤖 AI scene prompt ({aspect_ratio}, mode={image_mode}): {ai_prompt}")
         return ai_prompt
 
     except Exception as e:
@@ -585,8 +588,7 @@ async def download_and_save_image(image_url: str, prefix: str = "generated") -> 
         return image_url
 
 async def _kie_generate_image(prompt: str, width: int, height: int,
-                              input_image_url: str = None,
-                              negative_prompt: str = None) -> str:
+                              input_image_url: str = None) -> str:
     """
     Submit a generation task to kie.ai and poll until complete.
 
@@ -618,17 +620,19 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
         aspect_ratio = "9:16"
 
     # camelCase schema — verified working via /test-kie (2026-05-14)
+    # promptUpsampling: True adds detail for text-to-image; False for image editing
+    # (can cause unwanted drift when modifying a reference image).
+    # negativePrompt is NOT supported by flux-kontext-pro — confirmed via docs.kie.ai.
     payload: Dict[str, Any] = {
         "model": "flux-kontext-pro",
         "prompt": prompt,
         "aspectRatio": aspect_ratio,
         "outputFormat": "png",
+        "promptUpsampling": not bool(input_image_url),  # True=text-to-image, False=editing
     }
     # inputImage is optional — include only when a valid re-hosted reference URL exists
     if input_image_url:
         payload["inputImage"] = input_image_url
-    if negative_prompt:
-        payload["negativePrompt"] = negative_prompt
 
     async with httpx.AsyncClient(timeout=200.0) as client:
         print(f"kie.ai generate payload: {payload}")
@@ -698,12 +702,6 @@ async def generate_image(
     else:
         print("KIE_AI_API_KEY not set — using placeholder images")
 
-    # Build prompts per aspect-ratio bucket so portrait (9:16, 3:4) gets different
-    # composition guidance from square/landscape — but we don't call the AI more than
-    # once per unique ratio, keeping cost minimal.
-    # Custom prompt bypasses AI entirely — Joel has full manual control.
-    _prompt_cache: Dict[str, str] = {}
-
     def _get_aspect_ratio(w: int, h: int) -> str:
         ratio = w / h
         if ratio >= 1.7:   return "16:9"
@@ -712,13 +710,70 @@ async def generate_image(
         elif ratio >= 0.7: return "3:4"
         else:              return "9:16"
 
+    # ── Resolve reference image ONCE before the generation loops ─────────────────
+    # Must happen before prompt building so _build_ai_image_prompt knows whether
+    # a reference image is present (affects prompt mode: iterate vs. fresh scene).
+    # Re-hosting is done once regardless of how many sizes are generated.
+    raw_input_image = (request.productShots[0] or None) if request.useProductImage and request.productShots else None
+    input_image: Optional[str] = None
+    rehost_failed = False  # track failure so we can fall back to standard prompt
+
+    if raw_input_image and use_kie:
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as _ref_client:
+                _ref_resp = await _ref_client.get(raw_input_image)
+                _ref_resp.raise_for_status()
+                _ref_bytes = _ref_resp.content
+
+            from PIL import Image as _PIL_Image
+            import io as _io
+            _ref_img = _PIL_Image.open(_io.BytesIO(_ref_bytes))
+            _rw, _rh = _ref_img.size
+            print(f"Reference image dimensions: {_rw}×{_rh}")
+
+            if _rw < 200 or _rh < 200:
+                print(f"WARNING: reference image too small ({_rw}×{_rh}) — skipping inputImage")
+                rehost_failed = True
+            else:
+                _ref_id   = str(uuid.uuid4())
+                _ref_name = f"ref_{_ref_id}.png"
+                if settings.r2_enabled:
+                    from app.api.v1.uploads import upload_to_r2
+                    input_image = await upload_to_r2(_ref_bytes, _ref_name, "image/png")
+                else:
+                    _ref_path = UPLOAD_DIR / _ref_name
+                    with open(_ref_path, "wb") as _rfh:
+                        _rfh.write(_ref_bytes)
+                    input_image = f"{settings.PUBLIC_API_URL}/uploads/{_ref_name}"
+                print(f"Reference image re-hosted at {_rw}×{_rh}: {input_image}")
+        except Exception as _ref_err:
+            print(f"WARNING: could not re-host reference image ({_ref_err}) — proceeding text-to-image")
+            rehost_failed = True
+
+    # If re-hosting failed and we're in iterate mode, fall back to fresh-scene mode
+    # so the preservation prompt doesn't run without a reference image.
+    effective_image_mode = request.imageMode or "iterate"
+    if rehost_failed and effective_image_mode == "iterate":
+        print("⚠️  Reference image unavailable — switching from iterate to style_ref mode")
+        effective_image_mode = "style_ref"
+
+    # Build prompts per aspect-ratio bucket — one Sonnet call per unique AR.
+    # Custom prompt bypasses AI entirely.
+    _prompt_cache: Dict[str, str] = {}
+
     async def _get_prompt_for_size(w: int, h: int) -> str:
         if request.customPrompt:
             return request.customPrompt
         ar = _get_aspect_ratio(w, h)
         if ar not in _prompt_cache:
-            _prompt_cache[ar] = await _build_ai_image_prompt(request, aspect_ratio=ar)
+            _prompt_cache[ar] = await _build_ai_image_prompt(
+                request,
+                aspect_ratio=ar,
+                has_input_image=bool(input_image),
+            )
         return _prompt_cache[ar]
+
+    _niche_label = (request.niche or "").strip()
 
     for i in range(request.count):
         for size in request.imageSizes:
@@ -733,80 +788,30 @@ async def generate_image(
             print(f"{'='*80}")
             print(f"📦 Brand: {request.brand.get('name') if request.brand else 'None'}")
             print(f"📦 Product: {request.product.get('name') if request.product else 'None'}")
-            print(f"📦 Product Desc: {request.product.get('description') if request.product else 'None'}")
-            print(f"📦 Template Type: {request.template.get('type') if request.template else 'None'}")
+            print(f"📦 Mode: {effective_image_mode} | has_input_image: {bool(input_image)}")
             print(f"📦 Copy Headline: {request.ad_copy.get('headline') if request.ad_copy else 'None'}")
             print(f"\n📝 FULL GENERATED PROMPT:")
             print(f"{prompt}")
             print(f"{'='*80}\n")
             if use_kie:
                 try:
-                    # Use `or None` to coerce an empty string URL (failed upload) to None
-                    raw_input_image = (request.productShots[0] or None) if request.useProductImage and request.productShots else None
-
-                    # Re-host the input image on our own server before passing to kie.ai.
-                    # External URLs (Facebook CDN, etc.) often:
-                    #   1. Require auth tokens — kie.ai can't fetch them
-                    #   2. Are thumbnails (64x64) that are too small for flux-kontext-pro
-                    #   3. Expire within hours
-                    # Downloading and re-uploading ensures kie.ai gets a stable public URL.
-                    input_image = None
-                    if raw_input_image:
-                        try:
-                            async with httpx.AsyncClient(timeout=20.0) as _ref_client:
-                                _ref_resp = await _ref_client.get(raw_input_image)
-                                _ref_resp.raise_for_status()
-                                _ref_bytes = _ref_resp.content
-
-                            # Dimension check — kie.ai rejects images smaller than ~200px.
-                            # Facebook's creative.image_url is a 64×64 thumbnail; the full-size
-                            # image comes from object_story_spec.link_data.picture (now fixed in
-                            # facebook_service.py). If we still get a tiny image, skip it.
-                            from PIL import Image as _PIL_Image
-                            import io as _io
-                            _ref_img = _PIL_Image.open(_io.BytesIO(_ref_bytes))
-                            _rw, _rh = _ref_img.size
-                            print(f"Reference image dimensions: {_rw}×{_rh}")
-                            if _rw < 200 or _rh < 200:
-                                print(f"WARNING: reference image too small ({_rw}×{_rh}) — skipping inputImage, using text-to-image")
-                                input_image = None
-                            else:
-                                # Save to R2 or local uploads so kie.ai can fetch from our stable URL
-                                _ref_id   = str(uuid.uuid4())
-                                _ref_name = f"ref_{_ref_id}.png"
-                                if settings.r2_enabled:
-                                    from app.api.v1.uploads import upload_to_r2
-                                    input_image = await upload_to_r2(_ref_bytes, _ref_name, "image/png")
-                                else:
-                                    _ref_path = UPLOAD_DIR / _ref_name
-                                    with open(_ref_path, "wb") as _rfh:
-                                        _rfh.write(_ref_bytes)
-                                    # kie.ai needs a full https:// URL — relative paths don't work
-                                    input_image = f"{settings.PUBLIC_API_URL}/uploads/{_ref_name}"
-                                print(f"Reference image re-hosted at {_rw}×{_rh}: {input_image}")
-                        except Exception as _ref_err:
-                            print(f"WARNING: could not re-host reference image ({_ref_err}) — proceeding text-to-image")
-                            input_image = None
-
-                    # ── Pexels first for known place/property niches ──────────
-                    # AI generation reliably fails for niches like religious orgs,
-                    # wineries, restaurants. Pexels returns curated stock photos
-                    # that match what Joel is actually running. kie.ai is the
-                    # fallback if Pexels isn't configured or returns no results.
-                    _niche_label = (request.niche or "").strip()
-                    _pexels_query = _get_pexels_query(_niche_label)
+                    # ── Pexels: only for text-to-image (no reference image) ───────
+                    # When a reference image is present (iterate/style_ref mode),
+                    # skip Pexels entirely — kie.ai handles it with inputImage.
                     external_url = None
 
-                    if _pexels_query:
-                        _ar = _get_aspect_ratio(width, height)
-                        external_url = await _pexels_fetch_image(_pexels_query, _ar)
-                        if external_url:
-                            print(f"✅ Using Pexels image for niche '{_niche_label}' (query: '{_pexels_query}')")
-                        else:
-                            print(f"⚠️  Pexels failed for '{_niche_label}' — falling back to kie.ai")
+                    if not input_image:
+                        _pexels_query = _get_pexels_query(_niche_label)
+                        if _pexels_query:
+                            _ar = _get_aspect_ratio(width, height)
+                            external_url = await _pexels_fetch_image(_pexels_query, _ar)
+                            if external_url:
+                                print(f"✅ Pexels image for '{_niche_label}' (query: '{_pexels_query}')")
+                            else:
+                                print(f"⚠️  Pexels failed for '{_niche_label}' — falling back to kie.ai")
 
                     if not external_url:
-                        external_url = await _kie_generate_image(prompt, width, height, input_image, _NEGATIVE_PROMPT)
+                        external_url = await _kie_generate_image(prompt, width, height, input_image)
 
                     print(f"Downloading image from kie.ai: {external_url[:50]}...")
 
