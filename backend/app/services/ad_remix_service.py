@@ -12,11 +12,11 @@ from app.utils.json_utils import extract_json_from_response
 import os
 
 
-# Anthropic client — instantiated once at module level
+# AsyncAnthropic client — non-blocking in FastAPI's async event loop.
 # Guard against missing key: instantiate only if key is present so a missing
 # ANTHROPIC_API_KEY fails gracefully at request time, not at server startup.
 _ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-_anthropic_client = anthropic.Anthropic(api_key=_ANTHROPIC_API_KEY) if _ANTHROPIC_API_KEY else None
+_anthropic_client = anthropic.AsyncAnthropic(api_key=_ANTHROPIC_API_KEY) if _ANTHROPIC_API_KEY else None
 
 # Anthropic's vision API only accepts these media types
 _ALLOWED_MEDIA_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
@@ -54,7 +54,7 @@ async def deconstruct_template(template_image_url: str) -> AdBlueprint:
             # Default to jpeg for unknown types rather than hard-erroring on the Anthropic side
             content_type = 'image/jpeg'
 
-        response = _anthropic_client.messages.create(
+        response = await _anthropic_client.messages.create(
             model=_MODEL,
             max_tokens=2048,
             messages=[
@@ -129,7 +129,7 @@ async def reconstruct_ad(
             niche=brand_data.niche or "",
         )
 
-        response = _anthropic_client.messages.create(
+        response = await _anthropic_client.messages.create(
             model=_MODEL,
             max_tokens=2048,
             messages=[
@@ -142,8 +142,14 @@ async def reconstruct_ad(
         if not response_text:
             raise ValueError("Model returned an empty response (possible content filter or rate limit)")
 
+        print(f"[ad_remix] raw Claude response:\n{response_text[:2000]}")
+
         # Parse the JSON response
         concept_data = extract_json_from_response(response_text)
+
+        print(f"[ad_remix] parsed concept_data keys: {list(concept_data.keys())}")
+        print(f"[ad_remix] headline_remix={concept_data.get('headline_remix', 'MISSING')!r}")
+        print(f"[ad_remix] body_copy={str(concept_data.get('body_copy', 'MISSING'))[:200]!r}")
 
         # Validate and return as AdConcept
         return AdConcept(**concept_data)
