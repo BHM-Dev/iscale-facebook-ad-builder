@@ -142,14 +142,8 @@ async def reconstruct_ad(
         if not response_text:
             raise ValueError("Model returned an empty response (possible content filter or rate limit)")
 
-        print(f"[ad_remix] raw Claude response:\n{response_text[:2000]}")
-
         # Parse the JSON response
         concept_data = extract_json_from_response(response_text)
-
-        print(f"[ad_remix] parsed concept_data keys: {list(concept_data.keys())}")
-        print(f"[ad_remix] headline_remix={concept_data.get('headline_remix', 'MISSING')!r}")
-        print(f"[ad_remix] body_copy={str(concept_data.get('body_copy', 'MISSING'))[:200]!r}")
 
         # Validate and return as AdConcept
         return AdConcept(**concept_data)
