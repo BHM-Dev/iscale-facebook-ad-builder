@@ -8,6 +8,17 @@ import { useToast } from '../context/ToastContext';
 
 const FB_API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1') + '/facebook';
 
+// Shared CTA options — enum value + human label used in both the shared and per-item dropdowns
+const CTA_OPTIONS = [
+    ['LEARN_MORE',  'Learn More'],
+    ['GET_QUOTE',   'Get Quote'],
+    ['SIGN_UP',     'Sign Up'],
+    ['CONTACT_US',  'Contact Us'],
+    ['SHOP_NOW',    'Shop Now'],
+    ['DOWNLOAD',    'Download'],
+    ['BOOK_NOW',    'Book Now'],
+];
+
 /**
  * BatchPushModal — push multiple generated images to Meta in one operation.
  *
@@ -362,7 +373,14 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                 <span className="text-indigo-700 font-medium flex-1 truncate">
                                     {campaigns.find(c => c.id === selectedCampaignId)?.name || selectedCampaignId}
                                 </span>
-                                <span className="text-xs text-indigo-400 shrink-0">From your campaign</span>
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedCampaignId('')}
+                                    className="text-xs text-indigo-400 hover:text-indigo-600 underline shrink-0 transition-colors"
+                                    title="Pick a different campaign"
+                                >
+                                    Change
+                                </button>
                             </div>
                         ) : (
                             <select
@@ -547,15 +565,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                             }}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 disabled:bg-gray-50"
                         >
-                            {[
-                                ['LEARN_MORE', 'Learn More'],
-                                ['GET_QUOTE', 'Get Quote'],
-                                ['SIGN_UP', 'Sign Up'],
-                                ['CONTACT_US', 'Contact Us'],
-                                ['SHOP_NOW', 'Shop Now'],
-                                ['DOWNLOAD', 'Download'],
-                                ['BOOK_NOW', 'Book Now'],
-                            ].map(([val, label]) => (
+                            {CTA_OPTIONS.map(([val, label]) => (
                                 <option key={val} value={val}>{label}</option>
                             ))}
                         </select>
@@ -635,9 +645,9 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                                         onChange={e => setItemCopy(p => ({ ...p, [item.key]: { ...p[item.key], cta: e.target.value } }))}
                                                         className="w-full mt-1 px-2 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 bg-white"
                                                     >
-                                                        {['LEARN_MORE','SHOP_NOW','SIGN_UP','CONTACT_US','DOWNLOAD','BOOK_NOW','GET_QUOTE'].map(c =>
-                                                            <option key={c} value={c}>{c.replace(/_/g,' ')}</option>
-                                                        )}
+                                                        {CTA_OPTIONS.map(([val, label]) => (
+                                                            <option key={val} value={val}>{label}</option>
+                                                        ))}
                                                     </select>
                                                 </div>
                                             </div>

@@ -1216,10 +1216,10 @@ export default function CampaignPerformance() {
                       }
                       <span className="font-semibold text-gray-800 text-sm truncate">{group.campaignName}</span>
                       {group.campaignStatus && (
-                        <span className={`flex-shrink-0 text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                        <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded border font-medium ${
                           group.campaignStatus === 'ACTIVE'
-                            ? 'bg-green-100 text-green-700'
-                            : 'bg-gray-200 text-gray-500'
+                            ? 'border-green-400 text-green-700 bg-white'
+                            : 'border-gray-300 text-gray-500 bg-white'
                         }`}>
                           {group.campaignStatus}
                         </span>
