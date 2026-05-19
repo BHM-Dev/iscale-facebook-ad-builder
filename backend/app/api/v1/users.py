@@ -8,6 +8,8 @@ from app.core.security import get_password_hash
 from app.core.deps import get_current_superuser, require_role
 from app.schemas.auth import (
     UserResponse,
+    UserCreate,
+    UserCreateFull,
     UserUpdate,
     UserRoleUpdate,
     RoleCreate,
@@ -20,6 +22,42 @@ router = APIRouter()
 
 
 # User management endpoints (superuser only)
+@router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def create_user(
+    user_data: UserCreateFull,
+    current_user: User = Depends(get_current_superuser),
+    db: Session = Depends(get_db),
+):
+    """Create a new user with optional admin flag and roles (superuser only)."""
+    existing = db.query(User).filter(User.email == user_data.email).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+
+    new_user = User(
+        email=user_data.email,
+        hashed_password=get_password_hash(user_data.password),
+        name=user_data.name,
+        is_superuser=user_data.is_superuser,
+        is_active=True,
+    )
+
+    # Assign explicit role_ids if provided; otherwise default to 'admin' role for
+    # superusers or 'viewer' for regular users.
+    if user_data.role_ids:
+        roles = db.query(Role).filter(Role.id.in_(user_data.role_ids)).all()
+        new_user.roles = roles
+    else:
+        default_role_name = "admin" if user_data.is_superuser else "viewer"
+        default_role = db.query(Role).filter(Role.name == default_role_name).first()
+        if default_role:
+            new_user.roles = [default_role]
+
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user
+
+
 @router.get("/", response_model=List[UserResponse])
 async def list_users(
     skip: int = 0,

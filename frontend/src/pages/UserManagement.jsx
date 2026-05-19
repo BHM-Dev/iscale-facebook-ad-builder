@@ -14,7 +14,7 @@ const UserManagement = () => {
     const [selectedRoles, setSelectedRoles] = useState([]);
     const [userToDelete, setUserToDelete] = useState(null);
     const [showAddModal, setShowAddModal] = useState(false);
-    const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role_ids: [] });
+    const [newUser, setNewUser] = useState({ name: '', email: '', password: '', is_superuser: false, role_ids: [] });
     const [addingUser, setAddingUser] = useState(false);
     const [showEditUserModal, setShowEditUserModal] = useState(false);
     const [editUserFormData, setEditUserFormData] = useState({ id: '', name: '', email: '', password: '' });
@@ -151,37 +151,27 @@ const UserManagement = () => {
 
         setAddingUser(true);
         try {
-            // First register the user
-            const registerResponse = await authFetch(`${API_URL}/auth/register`, {
+            const response = await authFetch(`${API_URL}/users/`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     email: newUser.email,
                     password: newUser.password,
-                    name: newUser.name || null
+                    name: newUser.name || null,
+                    is_superuser: newUser.is_superuser,
+                    role_ids: newUser.role_ids,
                 }),
             });
 
-            if (!registerResponse.ok) {
-                const data = await registerResponse.json();
+            if (!response.ok) {
+                const data = await response.json();
                 showError(data.detail || 'Failed to create user');
                 return;
             }
 
-            const createdUser = await registerResponse.json();
-
-            // Then assign roles if any selected
-            if (newUser.role_ids.length > 0) {
-                await authFetch(`${API_URL}/users/${createdUser.id}/roles`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ role_ids: newUser.role_ids }),
-                });
-            }
-
             showSuccess('User created successfully');
             setShowAddModal(false);
-            setNewUser({ name: '', email: '', password: '', role_ids: [] });
+            setNewUser({ name: '', email: '', password: '', is_superuser: false, role_ids: [] });
             fetchUsers();
         } catch (err) {
             showError('Failed to create user');
@@ -439,7 +429,7 @@ const UserManagement = () => {
                             <button
                                 onClick={() => {
                                     setShowAddModal(false);
-                                    setNewUser({ name: '', email: '', password: '', role_ids: [] });
+                                    setNewUser({ name: '', email: '', password: '', is_superuser: false, role_ids: [] });
                                 }}
                                 className="text-gray-400 hover:text-gray-500"
                             >
@@ -490,9 +480,32 @@ const UserManagement = () => {
                                 />
                             </div>
 
+                            {/* Admin toggle */}
+                            <div>
+                                <label className="flex items-start gap-3 p-4 bg-purple-50 border border-purple-200 rounded-lg cursor-pointer hover:bg-purple-100 transition-colors">
+                                    <input
+                                        type="checkbox"
+                                        checked={newUser.is_superuser}
+                                        onChange={(e) => setNewUser(prev => ({ ...prev, is_superuser: e.target.checked, role_ids: [] }))}
+                                        className="w-4 h-4 mt-0.5 text-purple-600 bg-white border-gray-300 rounded focus:ring-purple-500"
+                                    />
+                                    <div>
+                                        <div className="font-semibold text-gray-900 flex items-center gap-2">
+                                            <Shield size={14} className="text-purple-600" />
+                                            Admin access
+                                        </div>
+                                        <div className="text-xs text-gray-500 mt-0.5">
+                                            Full access — can create and manage all users, brands, campaigns, and settings.
+                                        </div>
+                                    </div>
+                                </label>
+                            </div>
+
+                            {/* Role picker — only shown for non-admin users */}
+                            {!newUser.is_superuser && (
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Roles
+                                    Role
                                 </label>
                                 <div className="space-y-2">
                                     {roles.map((role) => (
@@ -507,7 +520,7 @@ const UserManagement = () => {
                                                 className="w-4 h-4 text-amber-600 bg-white border-gray-300 rounded focus:ring-amber-500"
                                             />
                                             <div>
-                                                <div className="font-medium text-gray-900">{role.name}</div>
+                                                <div className="font-medium text-gray-900 capitalize">{role.name}</div>
                                                 {role.description && (
                                                     <div className="text-xs text-gray-500">{role.description}</div>
                                                 )}
@@ -516,13 +529,14 @@ const UserManagement = () => {
                                     ))}
                                 </div>
                             </div>
+                            )}
 
                             <div className="flex justify-end gap-3 pt-2">
                                 <button
                                     type="button"
                                     onClick={() => {
                                         setShowAddModal(false);
-                                        setNewUser({ name: '', email: '', password: '', role_ids: [] });
+                                        setNewUser({ name: '', email: '', password: '', is_superuser: false, role_ids: [] });
                                     }}
                                     className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors font-medium"
                                 >

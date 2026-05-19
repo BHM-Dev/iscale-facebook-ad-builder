@@ -29,6 +29,13 @@ class UserCreate(UserBase):
     password: str
 
 
+class UserCreateFull(UserBase):
+    """Extended create schema used by superusers — supports admin flag and role assignment."""
+    password: str
+    is_superuser: bool = False
+    role_ids: List[str] = []
+
+
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     name: Optional[str] = None
