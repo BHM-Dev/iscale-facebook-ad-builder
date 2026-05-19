@@ -300,88 +300,10 @@ def _get_niche_override(niche: str) -> str | None:
     return None
 
 
-# ── Pexels stock photo integration ─────────────────────────────────────────────
-# For place/property niches where AI generation reliably fails, we pull curated
-# stock photos from Pexels instead of kie.ai. Pexels is free (200 req/hr,
-# 20k/month), commercially licensed, no attribution required.
-# Multiple queries per niche → random selection → variety across runs.
-_PEXELS_QUERIES: Dict[str, list] = {
-    "religious":  ["small group church fellowship hall cross", "community church congregation gathering", "small church exterior neighborhood steeple"],
-    "church":     ["church fellowship hall small group meeting", "small community church exterior", "church members gathering cross wall"],
-    "mosque":     ["mosque exterior architecture", "mosque interior prayer hall"],
-    "synagogue":  ["synagogue exterior", "synagogue interior"],
-    "winery":     ["vineyard grapevines golden hour", "wine cellar barrels", "wine pouring glass red"],
-    "restaurant": ["restaurant dining room interior", "restaurant kitchen chef cooking", "upscale restaurant tables"],
-    "bar":        ["bar interior cocktails", "bartender pouring drinks"],
-    "brewery":    ["craft brewery fermentation tanks", "brewery interior industrial"],
-    "daycare":    ["daycare classroom teacher children", "preschool colorful classroom"],
-    "gym":        ["gym fitness equipment workout", "gym interior treadmills weights"],
-    "trucking":   ["semi truck highway open road", "truck driver cab steering wheel", "freight trucks depot"],
-    "welding":    ["welder sparks metal industrial", "welding arc sparks workshop"],
-    "plumbing":   ["plumber pipe work professional", "plumbing pipes tools"],
-    "roofing":    ["roofer roof residential work", "roofing contractor shingles"],
-    "landscaping":["landscaping crew lawn garden", "landscape gardening professional"],
-    "auto repair":["auto mechanic car repair shop", "mechanic working on engine"],
-    "dental":     ["dental office exam room", "dentist clinic modern"],
-    "medical":    ["medical clinic exam room", "doctor office professional"],
-}
-
-def _get_pexels_query(niche: str) -> str | None:
-    """Return a randomly selected Pexels search query for the given niche."""
-    import random
-    niche_lower = niche.lower()
-    for key, queries in _PEXELS_QUERIES.items():
-        if key in niche_lower:
-            return random.choice(queries)
-    return None
-
-
-async def _pexels_fetch_image(query: str, aspect_ratio: str = "1:1") -> str | None:
-    """
-    Search Pexels for a stock photo matching the query and return a usable image URL.
-    Returns None on any failure so caller can fall back to kie.ai.
-
-    orientation mapping:
-      9:16, 3:4  → portrait
-      16:9, 4:3  → landscape
-      1:1        → square (Pexels doesn't have square, use landscape and crop is fine)
-    """
-    api_key = settings.PEXELS_API_KEY
-    if not api_key:
-        print("PEXELS_API_KEY not configured — skipping Pexels")
-        return None
-
-    import random
-    orientation = "portrait" if aspect_ratio in ("9:16", "3:4") else "landscape"
-
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(
-                "https://api.pexels.com/v1/search",
-                headers={"Authorization": api_key},
-                params={
-                    "query": query,
-                    "per_page": 15,
-                    "orientation": orientation,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-
-        photos = data.get("photos", [])
-        if not photos:
-            print(f"Pexels returned 0 results for '{query}'")
-            return None
-
-        photo = random.choice(photos)
-        # Use large2x (1880px wide) for quality; fall back to large (940px)
-        url = photo.get("src", {}).get("large2x") or photo.get("src", {}).get("large")
-        print(f"📸 Pexels photo selected: id={photo.get('id')} url={url[:60] if url else 'None'}")
-        return url
-
-    except Exception as e:
-        print(f"Pexels fetch failed ({e}) — falling back to kie.ai")
-        return None
+# Pexels removed — all image generation now goes through kie.ai Nano Banana Pro.
+# Nano Banana (Google Gemini 2.5 Flash Image via kie.ai) handles both
+# text-to-image (fresh background scenes) and image-to-image (background swap
+# preserving logo/text), which is how Joel works in his manual flow.
 
 
 async def _build_ai_image_prompt(
@@ -390,11 +312,10 @@ async def _build_ai_image_prompt(
     has_input_image: bool = False,
 ) -> str:
     """
-    Build a Flux prompt based on mode:
+    Build a Nano Banana prompt based on mode:
 
     has_input_image=False (text-to-image):
-      - Pexels handles place/property niches; this path handles trades/professionals.
-      - Niche overrides return hardcoded scene descriptions for known-failing niches.
+      - Niche overrides return hardcoded scene descriptions for specific niches.
       - Sonnet generates a fresh scene for everything else.
 
     has_input_image=True, imageMode="iterate" (Ad Remix):
@@ -423,42 +344,49 @@ async def _build_ai_image_prompt(
             "full-bleed horizontal composition, subject fills the entire frame"
         )
 
-        # ── iterate mode: preservation-first prompt ───────────────────────────────
-        # Reference image is a winning ad. Keep scene intact, shift only mood/light.
+        # ── iterate mode: background-swap prompt for Nano Banana ─────────────────
+        # Reference image is a winning ad with text/logo overlay baked in.
+        # Nano Banana (Gemini) swaps the background scene while preserving the
+        # foreground overlay elements — matching Joel's manual Nano flow.
         if has_input_image and image_mode == "iterate":
-            niche_context = f" The ad is for {niche}." if niche else ""
+            niche_context = f" The ad targets {niche} business owners." if niche else ""
             prompt = (
-                f"Keep the exact same scene, composition, subject, and background."
+                f"Replace the background with a fresh photorealistic scene"
+                f" that feels {lighting} and {mood}."
                 f"{niche_context}"
-                f" Adjust the lighting to feel {lighting} and the mood to feel {mood}."
-                f" {composition_note}."
-                f" No written text, no typography, no logos in the image."
+                f" Preserve all text overlays, logos, CTA buttons, and any foreground"
+                f" design elements exactly as they appear in the reference image."
+                f" The new background should complement the business context"
+                f" without distracting from the overlay content."
+                f" {composition_note}. Photorealistic, contemporary professional setting."
             )
-            print(f"🔄 Iterate prompt ({aspect_ratio}): {prompt}")
+            print(f"🔄 Iterate (background-swap) prompt ({aspect_ratio}): {prompt}")
             return prompt
 
         # ── style_ref or text-to-image: generate fresh scene ─────────────────────
-        # Niche overrides bypass Sonnet for known Flux failure niches.
-        # Skip overrides in style_ref only if you want fresh generation regardless —
-        # currently we apply them to ensure quality for place/property niches.
+        # Niche overrides bypass Sonnet for niches that benefit from curated prompts.
+        # Applied in all non-iterate modes to ensure scene quality for known niches.
         override = _get_niche_override(niche or product_name)
         if override:
             print(f"🏛️  Niche override for '{niche or product_name}': skipping Sonnet")
             return f"{override} {composition_note}"
 
-        # Sonnet generates scene for trades, professionals, and everything else
-        system_prompt = """You write short Flux image generation prompts for Facebook ads.
+        # Sonnet generates scene for trades, professionals, and everything else.
+        # Tuned for Nano Banana (Google Gemini 2.5 Flash Image) — natural language
+        # descriptions work best; avoid Flux-specific syntax.
+        system_prompt = """You write short image generation prompts for Google Gemini (Nano Banana Pro) for Facebook ad backgrounds.
 
 Rules:
 - Buildings / places (hotel, gym, office, warehouse, marina, etc.): show the exterior or interior. No people.
 - Trades (welding, plumbing, roofing, HVAC, construction, etc.): show the worker doing the job. Tools, action, craft.
 - Professionals (lawyer, doctor, accountant, etc.): one person at a desk or in their workspace.
 - Vehicles / transport: the vehicle itself or a driver in context.
+- Natural signage on buildings is OK (adds authenticity). Do NOT include advertising copy, watermarks, or text overlays.
 - No illustrations. No stock-photo couples. No gray backdrops. Photorealistic only.
-- End every prompt with: No written text, no typography, no logos in the image. Photorealistic.
+- End every prompt with: Photorealistic, contemporary professional setting.
 - Max 45 words. Return ONLY the prompt."""
 
-        user_msg = f"Niche: {niche or product_name}\nLighting: {lighting}\nMood: {mood}\n\nWrite the Flux prompt."
+        user_msg = f"Niche: {niche or product_name}\nLighting: {lighting}\nMood: {mood}\n\nWrite the image prompt."
 
         response = await _async_anthropic.messages.create(
             model=_PROMPT_MODEL,
@@ -693,6 +621,128 @@ async def _kie_generate_image(prompt: str, width: int, height: int,
     )
 
 
+# ── Nano Banana Pro (Google Gemini via kie.ai jobs API) ─────────────────────────
+# All image generation — both fresh scenes and background swaps — now routes
+# through this function. The underlying model is Gemini 2.5 Flash Image, the
+# same engine Joel uses manually when he "runs images through Nano Banana".
+#
+# API contract (docs.kie.ai/market/google/pro-image-to-image):
+#   Submit: POST https://api.kie.ai/api/v1/jobs/createTask
+#   Poll:   GET  https://api.kie.ai/api/v1/jobs/recordInfo?taskId=
+#   State:  data.state  →  "waiting"|"queuing"|"generating"|"success"|"fail"
+#   Output: parse data.resultJson (JSON string) → resultUrls[0]
+#   Images: image_input is an array of URLs — empty for text-to-image,
+#           [reference_url] for image-to-image (background swap).
+KIE_AI_JOBS_URL = "https://api.kie.ai/api/v1/jobs"
+
+
+async def _kie_generate_nano(
+    prompt: str,
+    width: int,
+    height: int,
+    input_image_url: str = None,
+) -> str:
+    """
+    Generate an image via kie.ai Nano Banana Pro (Gemini 2.5 Flash Image).
+
+    text-to-image:  pass no input_image_url — Nano creates a fresh scene.
+    image-to-image: pass a re-hosted reference URL — Nano swaps the background
+                    while preserving text, logos, and overlay elements per the
+                    prompt instruction. This matches Joel's manual Nano flow.
+
+    Returns the generated image URL.
+    """
+    import json as _json
+
+    api_key = settings.KIE_AI_API_KEY
+    if not api_key:
+        raise ValueError("KIE_AI_API_KEY not configured — cannot generate image")
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    # Map pixel dimensions to aspect ratio string
+    ratio = width / height
+    if ratio >= 1.7:   aspect_ratio = "16:9"
+    elif ratio >= 1.2: aspect_ratio = "4:3"
+    elif ratio >= 0.9: aspect_ratio = "1:1"
+    elif ratio >= 0.7: aspect_ratio = "3:4"
+    else:              aspect_ratio = "9:16"
+
+    image_input = [input_image_url] if input_image_url else []
+
+    payload = {
+        "model": "nano-banana-pro",
+        "input": {
+            "prompt": prompt,
+            "image_input": image_input,
+            "aspect_ratio": aspect_ratio,
+            "resolution": "1K",
+            "output_format": "png",
+        },
+    }
+
+    async with httpx.AsyncClient(timeout=200.0) as client:
+        print(f"Nano Banana submit — AR={aspect_ratio} img_input={bool(image_input)} prompt={prompt[:80]!r}")
+        create_resp = await client.post(
+            f"{KIE_AI_JOBS_URL}/createTask",
+            headers=headers,
+            json=payload,
+        )
+        task_data = create_resp.json()
+        print(f"Nano Banana HTTP {create_resp.status_code}: {task_data}")
+        create_resp.raise_for_status()
+
+        if not task_data.get("data") or not task_data["data"].get("taskId"):
+            kie_msg = task_data.get("msg") or task_data.get("message") or str(task_data)
+            raise ValueError(f"Nano Banana error: {kie_msg}")
+
+        task_id = task_data["data"]["taskId"]
+        print(f"Nano Banana task created: {task_id}")
+
+        # Poll every 5s, max 60 attempts = 5 minutes
+        # Nano Banana can take longer than Flux for complex scenes
+        for attempt in range(60):
+            await asyncio.sleep(5)
+            status_resp = await client.get(
+                f"{KIE_AI_JOBS_URL}/recordInfo",
+                headers=headers,
+                params={"taskId": task_id},
+            )
+            status_resp.raise_for_status()
+            status_data = status_resp.json()
+            data = status_data.get("data", {})
+            state = data.get("state", "")
+            print(f"Nano Banana {task_id} state={state!r} (attempt {attempt + 1}/60)")
+
+            if state == "success":
+                result_json_str = data.get("resultJson", "")
+                try:
+                    result = _json.loads(result_json_str)
+                    image_url = result.get("resultUrls", [None])[0]
+                except Exception:
+                    image_url = None
+                if not image_url:
+                    raise ValueError("Nano Banana returned success but no resultUrls in resultJson")
+                return image_url
+
+            elif state in ("fail", "failed", "error"):
+                fail_msg = (
+                    data.get("failMsg") or data.get("errorMessage")
+                    or data.get("msg") or status_data.get("msg")
+                    or f"state={state}"
+                )
+                raise ValueError(f"Nano Banana task failed: {fail_msg}")
+            # waiting / queuing / generating — keep polling
+
+    raise TimeoutError(
+        f"Nano Banana task {task_id} did not complete after 5 minutes. "
+        "Check your kie.ai credit balance and try again."
+    )
+
+
 @router.post("/generate-image")
 async def generate_image(
     request: ImageGenerationRequest,
@@ -804,23 +854,11 @@ async def generate_image(
             print(f"{'='*80}\n")
             if use_kie:
                 try:
-                    # ── Pexels: only for text-to-image (no reference image) ───────
-                    # When a reference image is present (iterate/style_ref mode),
-                    # skip Pexels entirely — kie.ai handles it with inputImage.
-                    external_url = None
-
-                    if not input_image:
-                        _pexels_query = _get_pexels_query(_niche_label)
-                        if _pexels_query:
-                            _ar = _get_aspect_ratio(width, height)
-                            external_url = await _pexels_fetch_image(_pexels_query, _ar)
-                            if external_url:
-                                print(f"✅ Pexels image for '{_niche_label}' (query: '{_pexels_query}')")
-                            else:
-                                print(f"⚠️  Pexels failed for '{_niche_label}' — falling back to kie.ai")
-
-                    if not external_url:
-                        external_url = await _kie_generate_image(prompt, width, height, input_image)
+                    # All image generation routes through Nano Banana Pro.
+                    # text-to-image: no input_image → fresh scene from prompt.
+                    # image-to-image: input_image present → Nano swaps background
+                    #   while preserving text/logos, matching Joel's manual flow.
+                    external_url = await _kie_generate_nano(prompt, width, height, input_image)
 
                     print(f"Downloading image from kie.ai: {external_url[:50]}...")
 
