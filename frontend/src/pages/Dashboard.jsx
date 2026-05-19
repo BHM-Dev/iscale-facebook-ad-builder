@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { TrendingDown, Wand2, Star, ShoppingBag, AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown, PauseCircle, PlayCircle, Repeat2 } from 'lucide-react';
+import { TrendingDown, Wand2, Star, ShoppingBag, AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown, PauseCircle, PlayCircle, Repeat2, MessageSquare, Send, Sparkles } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { authFetch } from '../lib/facebookApi';
@@ -128,6 +128,11 @@ export default function Dashboard() {
   const [bulkInsights, setBulkInsights] = useState({});
   const [rules, setRules] = useState([]);
 
+  // AI Insights panel state
+  const [aiQuery, setAiQuery] = useState('');
+  const [aiAnswer, setAiAnswer] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+
   // Date filter state
   const [preset, setPreset] = useState('today');
   const [dateFrom, setDateFrom] = useState('');
@@ -223,6 +228,27 @@ export default function Dashboard() {
       setPausingAdsets(prev => { const next = new Set(prev); next.delete(fb_adset_id); return next; });
     }
   }, []);
+
+  const askAI = async () => {
+    if (!aiQuery.trim() || aiLoading) return;
+    setAiLoading(true);
+    setAiAnswer('');
+    try {
+      const adAccountId = localStorage.getItem('fb_ad_account_id') || '';
+      const res = await authFetch(`${API_URL}/ai-insights/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: aiQuery.trim(), ad_account_id: adAccountId || undefined }),
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Query failed'); }
+      const data = await res.json();
+      setAiAnswer(data.answer);
+    } catch (e) {
+      showError(e.message || 'AI query failed — try again');
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   // Initial load
   useEffect(() => { load(activeRange); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -587,6 +613,68 @@ export default function Dashboard() {
             );
           })}
         </div>
+      </div>
+
+      {/* Ask AI — Meta MCP powered */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+        <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2 mb-3">
+          <Sparkles size={15} className="text-violet-500" />
+          Ask AI
+          <span className="text-xs font-normal text-gray-400 ml-1">— powered by Claude + live Meta data</span>
+        </h2>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={aiQuery}
+            onChange={e => setAiQuery(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && askAI()}
+            placeholder="e.g. What are my worst performing ad sets this week?"
+            className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-transparent"
+            disabled={aiLoading}
+          />
+          <button
+            onClick={askAI}
+            disabled={aiLoading || !aiQuery.trim()}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+          >
+            {aiLoading
+              ? <><RefreshCw size={13} className="animate-spin" /> Thinking…</>
+              : <><Send size={13} /> Ask</>
+            }
+          </button>
+        </div>
+        {!aiAnswer && !aiLoading && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {[
+              'What are my worst ad sets today?',
+              'Which creatives have the highest CPL?',
+              'Show me frequency issues across all campaigns',
+              'Any pixel or tracking problems I should know about?',
+            ].map(q => (
+              <button
+                key={q}
+                onClick={() => { setAiQuery(q); }}
+                className="text-xs px-2.5 py-1 rounded-full border border-gray-200 text-gray-500 hover:border-violet-300 hover:text-violet-600 transition-colors"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
+        {aiAnswer && (
+          <div className="mt-3 p-4 bg-gray-50 rounded-lg border border-gray-100">
+            <div className="flex items-start gap-2">
+              <MessageSquare size={14} className="text-violet-400 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">{aiAnswer}</p>
+            </div>
+            <button
+              onClick={() => { setAiAnswer(''); setAiQuery(''); }}
+              className="mt-2 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              Clear
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
