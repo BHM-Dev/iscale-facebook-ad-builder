@@ -837,6 +837,8 @@ async def generate_image(
                         from app.services.text_overlay_service import apply_text_overlay
                         _headline  = request.ad_copy.get('headline', '') if request.ad_copy else ''
                         _cta_text  = request.overlay_cta or (request.ad_copy.get('cta', 'LEARN MORE') if request.ad_copy else 'LEARN MORE')
+                        # Normalize Meta API enums to display text (LEARN_MORE → LEARN MORE)
+                        _cta_text = _cta_text.replace('_', ' ').upper()
                         print(f"Applying text overlay — headline={_headline!r}, offer={request.overlay_offer_line!r}, cta={_cta_text!r}")
                         try:
                             image_bytes = apply_text_overlay(

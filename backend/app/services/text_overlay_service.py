@@ -178,7 +178,7 @@ def apply_text_overlay(
     image_bytes: bytes,
     headline: str = "",        # unused — headline goes in Meta ad copy, not the image
     offer_line: str = "",
-    cta_text: str = "",        # unused — CTA goes in Meta ad copy, not the image
+    cta_text: str = "",        # rendered as orange rounded-pill button below offer line
     logo_url: str | None = None,
     niche_line: str = "",
     target_width: int = 0,
@@ -191,9 +191,11 @@ def apply_text_overlay(
       - Top-right:  logo badge (white rounded rect) if logo_url provided
       - Lower-left: niche_line — the hero text (e.g. "Winery Business Insurance")
       - Below that: offer_line — supporting line (e.g. "From $24.95/Month")
+      - Below that: cta_text — orange rounded-pill button (e.g. "Learn More")
 
-    Headline and CTA are NOT rendered here — they belong in Meta's ad copy
-    fields (primary_text, headline, call_to_action), not baked into the image.
+    Headline belongs in Meta's ad copy fields (primary_text, headline), not baked
+    into the image. CTA IS rendered here — it is a visual design element matching
+    Joel's reference ad style.
 
     target_width / target_height: if provided, center-crop and resize the source
     image to these exact dimensions before compositing. This prevents letterboxing
@@ -217,15 +219,15 @@ def apply_text_overlay(
     gap_after_niche = int(H * 0.014)
 
     # Anchor text block in the lower-left.
-    # With only niche + offer (no headline or CTA), start lower so
-    # the photo subject stays visible and text doesn't crowd the middle.
+    # Positions account for niche line + offer line + CTA pill button.
+    # Set slightly higher than the old no-CTA positions to prevent clipping.
     aspect = H / W
     if aspect > 1.6:      # 9:16 story
-        y = int(H * 0.62)
+        y = int(H * 0.54)
     elif aspect > 1.15:   # 4:5 portrait
-        y = int(H * 0.58)
+        y = int(H * 0.50)
     else:                 # 1:1 square
-        y = int(H * 0.55)
+        y = int(H * 0.47)
 
     # ── Niche line — hero text on the image ───────────────────────────────────
     if niche_line:
@@ -258,6 +260,38 @@ def apply_text_overlay(
                 stroke_width=o_stroke, stroke_fill=_BLACK_STROKE,
             )
             y += o_line_h
+
+    # ── CTA button (orange rounded pill) ──────────────────────────────────────
+    if cta_text:
+        cta_gap = int(H * 0.018)          # space between offer line and button
+        y += cta_gap
+
+        btn_font_size = min(int(H * 0.052), int(W * 0.060))
+        btn_font = _load_font("Montserrat-ExtraBold.ttf", btn_font_size)
+
+        # Measure text to size the pill
+        bbox = draw.textbbox((0, 0), cta_text, font=btn_font)
+        txt_w = bbox[2] - bbox[0]
+        txt_h = bbox[3] - bbox[1]
+
+        pad_x = int(btn_font_size * 1.0)   # horizontal padding inside pill
+        pad_y = int(btn_font_size * 0.45)  # vertical padding inside pill
+        btn_w = max(txt_w + 2 * pad_x, int(W * 0.28))  # never narrower than 28% of canvas
+        btn_h = txt_h + 2 * pad_y
+        radius = btn_h // 2                # full pill shape
+
+        btn_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        btn_draw = ImageDraw.Draw(btn_layer)
+        btn_draw.rounded_rectangle(
+            [LEFT, y, LEFT + btn_w, y + btn_h],
+            radius=radius,
+            fill=_CTA_ORANGE,
+        )
+        # Center text vertically inside pill (textbbox origin can have y offset)
+        txt_x = LEFT + pad_x - bbox[0]
+        txt_y = y + pad_y - bbox[1]
+        btn_draw.text((txt_x, txt_y), cta_text, font=btn_font, fill=_WHITE)
+        overlay = Image.alpha_composite(overlay, btn_layer)
 
     # ── Logo badge (top-right) ─────────────────────────────────────────────────
     if logo_url:
