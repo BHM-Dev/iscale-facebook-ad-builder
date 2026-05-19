@@ -407,6 +407,7 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
           <Field label="Metric">
             <select className="input-base" value={form.metric} onChange={e => setForm({...form, metric: e.target.value})}>
               <option value="cpl">Cost Per Lead (CPL)</option>
+              <option value="cpa">Cost Per Action (CPA)</option>
               <option value="ctr">Click-Through Rate (CTR)</option>
               <option value="roas">ROAS</option>
             </select>

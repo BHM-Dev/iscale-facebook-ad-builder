@@ -3,6 +3,7 @@ import { TrendingDown, Wand2, Star, ShoppingBag, AlertTriangle, TrendingUp, Refr
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { authFetch } from '../lib/facebookApi';
+import { useToast } from '../context/ToastContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -117,6 +118,7 @@ function DateFilter({ preset, setPreset, dateFrom, setDateFrom, dateTo, setDateT
 export default function Dashboard() {
   const { authFetch: authFetchCtx } = useAuth();
   const navigate = useNavigate();
+  const { showError } = useToast();
   const [loading, setLoading] = useState(true);
   const [syncingRT, setSyncingRT] = useState(false);
   const [pausingAdsets, setPausingAdsets] = useState(new Set());
@@ -216,7 +218,7 @@ export default function Dashboard() {
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
       setPausedOverrides(prev => new Set(prev).add(fb_adset_id));
     } catch (e) {
-      // silently fail — user can try again from Performance page
+      showError(e.message || 'Failed to pause ad set. Check your Meta connection and try again in Performance.');
     } finally {
       setPausingAdsets(prev => { const next = new Set(prev); next.delete(fb_adset_id); return next; });
     }
@@ -370,7 +372,7 @@ export default function Dashboard() {
 
   const quickActions = [
     { label: 'Performance', description: 'Live ad set & creative stats', icon: TrendingDown, path: '/campaign-performance', color: 'from-indigo-600 to-indigo-500', primary: true },
-    { label: 'Build Creatives', description: 'Create new image or video ads', icon: Wand2, path: '/build-creatives', color: 'from-amber-500 to-orange-500' },
+    { label: 'Build Creatives', description: 'Create new image or video ads', icon: Wand2, path: '/batch-generate', color: 'from-amber-500 to-orange-500' },
     { label: 'Manage Brands', description: 'Update brand assets and profiles', icon: ShoppingBag, path: '/brands', color: 'from-orange-500 to-red-500' },
     { label: 'Browse Templates', description: 'Explore winning ad templates', icon: Star, path: '/winning-ads', color: 'from-amber-600 to-yellow-600' },
   ];

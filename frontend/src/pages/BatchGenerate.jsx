@@ -1024,7 +1024,8 @@ export default function BatchGenerate() {
 
           {allDone && (() => {
             // Build the items list for BatchPushModal from all successful results
-            const pushItems = Object.entries(results)
+            const allEntries = Object.entries(results);
+            const pushItems = allEntries
               .filter(([, r]) => r.status === 'done' && r.imageUrl)
               .map(([key, r]) => {
                 const { variantId, sizeId } = parseResultKey(key);
@@ -1041,9 +1042,17 @@ export default function BatchGenerate() {
                   niche: niche || '',
                 };
               });
+            const failedCount = allEntries.filter(([, r]) => r.status === 'failed').length;
 
             return (
-              <div className="flex items-center justify-center gap-3 pt-2">
+              <div className="flex flex-col items-center gap-2 pt-2">
+                {failedCount > 0 && (
+                  <p className="text-sm text-red-500 flex items-center gap-1.5 font-medium">
+                    <AlertCircle size={15} />
+                    {failedCount} image{failedCount !== 1 ? 's' : ''} failed to generate and will not be pushed.
+                  </p>
+                )}
+                <div className="flex items-center justify-center gap-3">
                 {pushItems.length > 0 && (
                   <button
                     onClick={() => setBatchPushOpen(true)}
@@ -1059,6 +1068,7 @@ export default function BatchGenerate() {
                 >
                   View in Library
                 </Link>
+              </div>
               </div>
             );
           })()}

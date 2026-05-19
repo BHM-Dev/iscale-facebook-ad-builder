@@ -506,6 +506,9 @@ export default function AdRemix() {
                     niche: pendingNiche || ""
                 };
 
+            // Advance to step 6 (Generating) before firing requests
+            setCurrentStep(6);
+
             // Fire 3 parallel requests — Gemini returns different variations each time
             const fetchOne = () => authFetch(endpoint, {
                 method: 'POST',
@@ -856,7 +859,7 @@ export default function AdRemix() {
                     {/* Back button — available on all steps 2–7.
                         Sets skipAutoAdvance before decrementing so profile/product
                         auto-skip effects don't immediately re-trigger. */}
-                    {currentStep > 1 && currentStep <= 7 && (
+                    {currentStep > 1 && currentStep <= 7 && currentStep !== 6 && (
                         <button
                             onClick={() => {
                                 skipAutoAdvance.current = true;
