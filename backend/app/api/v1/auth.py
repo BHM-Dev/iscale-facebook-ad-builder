@@ -1,6 +1,7 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Form, Request
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
+import os
 
 from app.database import get_db
 from app.core.rate_limit import limiter
@@ -20,8 +21,50 @@ from app.schemas.auth import (
     UserResponse,
     UserLogin,
 )
+from pydantic import BaseModel, EmailStr
+from typing import Optional
 
 router = APIRouter()
+
+
+# ── One-time admin bootstrap ────────────────────────────────────────────────────
+class BootstrapRequest(BaseModel):
+    email: EmailStr
+    password: str
+    name: Optional[str] = "Admin"
+    secret_key: str   # must match SECRET_KEY env var on the server
+
+
+@router.post("/bootstrap", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def bootstrap_admin(body: BootstrapRequest, db: Session = Depends(get_db)):
+    """
+    One-time endpoint to create the first admin/superuser account.
+    Protected by SECRET_KEY — pass it as 'secret_key' in the request body.
+    Safe to call repeatedly: raises 400 if an account with that email already exists.
+    """
+    server_secret = os.getenv("SECRET_KEY", "")
+    if not server_secret or body.secret_key != server_secret:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid secret key")
+
+    existing = db.query(User).filter(User.email == body.email).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+
+    user = User(
+        email=body.email,
+        hashed_password=get_password_hash(body.password),
+        name=body.name,
+        is_superuser=True,
+        is_active=True,
+    )
+    admin_role = db.query(Role).filter(Role.name == "admin").first()
+    if admin_role:
+        user.roles = [admin_role]
+
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
