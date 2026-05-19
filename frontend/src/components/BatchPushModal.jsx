@@ -16,7 +16,6 @@ const CTA_OPTIONS = [
     ['CONTACT_US',  'Contact Us'],
     ['SHOP_NOW',    'Shop Now'],
     ['DOWNLOAD',    'Download'],
-    ['BOOK_TRAVEL',  'Book Now'],
 ];
 
 /**

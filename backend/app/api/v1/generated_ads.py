@@ -181,36 +181,39 @@ def _get_vertical_hint(product_name: str, product_desc: str) -> str:
 # Rules per scene: contemporary only, specific setting, controlled people/no-people.
 _NICHE_OVERRIDES: Dict[str, list] = {
     "religious": [
-        # Church administrator at desk — business/professional context for insurance ad
-        "Male church administrator in business casual clothing sitting at a clean office desk, "
-        "reviewing printed documents and forms, laptop open beside him, modern church office "
-        "setting with a framed cross subtly visible on the wall behind, natural window light, "
-        "focused professional expression. No text, no logos. Photorealistic.",
-        # Leadership meeting — professional setting
-        "Three diverse adults in business casual clothing seated around a conference table in "
-        "a bright modern church office, reviewing documents together, coffee cups and notepads "
-        "on the table, collegial professional atmosphere. "
+        # Small group meeting in fellowship hall — cross on the wall, authentic church community feel
+        "A small group of six diverse adults seated in a semicircle of folding chairs in a modest "
+        "church fellowship hall, engaged in friendly conversation, a large wooden cross mounted "
+        "prominently on the wall behind them, simple decor, warm overhead lighting, coffee cups "
+        "and notebooks in hand. Casual community atmosphere, not a formal service. "
         "No text, no logos. Photorealistic.",
-        # Exterior — clean architectural shot for property insurance context
-        "Wide-angle exterior photograph of a white wooden church with a tall steeple, "
-        "green lawn, oak trees, clear blue sky, warm morning sunlight. "
-        "No people. No text, no logos. Photorealistic.",
-        # Handshake — trust/protection
-        "Close-up of two professionals shaking hands in a bright modern office, "
-        "business casual attire, warm natural window light, neutral background. "
+        # Church exterior — small community church, not megachurch
+        "Wide-angle exterior of a small white clapboard community church with a modest steeple, "
+        "simple sign out front, green lawn, mature oak trees, neighborhood street visible, "
+        "warm afternoon sunlight. Humble and welcoming, not a megachurch. "
         "No text, no logos. Photorealistic.",
+        # Church office with clear religious context
+        "A pastor in casual clergy attire seated at a modest wood-paneled office desk, "
+        "reviewing printed documents, a wooden cross and framed scripture verse on the wall, "
+        "church bulletin board visible in background, warm natural light from a window. "
+        "No text, no logos. Photorealistic.",
+        # Congregation gathering — friendly post-service mingling
+        "Small group of church members chatting warmly in a simple church lobby after a service, "
+        "cross and religious artwork visible on the walls, modest interior, natural light, "
+        "relaxed friendly atmosphere. No text, no logos. Photorealistic.",
     ],
     "church": [
-        # Church admin at desk
-        "Female church administrator in smart casual clothing at a tidy office desk, "
-        "pen in hand reviewing a document, small wooden cross on the wall, "
-        "warm professional office environment, natural light. No text, no logos. Photorealistic.",
-        # Exterior — property context
-        "Wide-angle exterior of a red brick church with arched windows and white steeple, "
-        "tree-lined sidewalk, blue sky, bright daylight. No people. No text, no logos. Photorealistic.",
-        # Meeting
-        "Two professionals in business casual seated at a round office table reviewing "
-        "printed paperwork, relaxed professional setting, warm overhead lighting. "
+        # Fellowship hall small group — cross visible
+        "Six adults seated in folding chairs in a circle in a modest church fellowship hall, "
+        "wooden cross on the wall, casual friendly gathering, coffee cups, warm lighting. "
+        "No text, no logos. Photorealistic.",
+        # Small church exterior
+        "Exterior of a modest red brick community church with a white steeple, "
+        "tree-lined street, simple signage, blue sky, bright daylight. "
+        "No text, no logos. Photorealistic.",
+        # Church hallway conversation
+        "Two church members having a friendly conversation in a church hallway, "
+        "cross and religious artwork visible on the walls, warm and welcoming atmosphere. "
         "No text, no logos. Photorealistic.",
     ],
     "mosque": [
@@ -303,8 +306,8 @@ def _get_niche_override(niche: str) -> str | None:
 # 20k/month), commercially licensed, no attribution required.
 # Multiple queries per niche → random selection → variety across runs.
 _PEXELS_QUERIES: Dict[str, list] = {
-    "religious":  ["church administrator office desk documents", "nonprofit office meeting professional", "church exterior building architecture"],
-    "church":     ["church building exterior steeple", "nonprofit administrator office professional", "church community meeting"],
+    "religious":  ["small group church fellowship hall cross", "community church congregation gathering", "small church exterior neighborhood steeple"],
+    "church":     ["church fellowship hall small group meeting", "small community church exterior", "church members gathering cross wall"],
     "mosque":     ["mosque exterior architecture", "mosque interior prayer hall"],
     "synagogue":  ["synagogue exterior", "synagogue interior"],
     "winery":     ["vineyard grapevines golden hour", "wine cellar barrels", "wine pouring glass red"],
