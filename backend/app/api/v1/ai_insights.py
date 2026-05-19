@@ -5,9 +5,12 @@ POST /api/v1/ai-insights/query
   Body: { "query": "...", "ad_account_id": "act_123" }
   Returns: { "answer": "..." }
 
-Claude calls the Meta MCP server (mcp.facebook.com/ads) using the stored
-FACEBOOK_ACCESS_TOKEN so it has live access to the account's campaigns,
-ad sets, and performance data when answering Joel's questions.
+When META_MCP_TOKEN is set, Claude connects to the Meta Ads MCP server
+(mcp.facebook.com/ads) using Joel's personal user access token and pulls
+live campaign/ad set data to answer questions.
+
+When META_MCP_TOKEN is not set, Claude answers from general Meta Ads
+knowledge and notes that live data requires the token to be configured.
 """
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -24,7 +27,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-FACEBOOK_ACCESS_TOKEN = os.getenv("FACEBOOK_ACCESS_TOKEN")
+META_MCP_TOKEN = os.getenv("META_MCP_TOKEN", "").strip()
 META_MCP_URL = "https://mcp.facebook.com/ads"
 
 _anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
@@ -39,7 +42,7 @@ class InsightQueryResponse(BaseModel):
     answer: str
 
 
-SYSTEM_PROMPT = """You are an expert Meta Ads analyst for a performance marketing team.
+SYSTEM_PROMPT_WITH_MCP = """You are an expert Meta Ads analyst for a performance marketing team.
 You have direct access to live Meta ad account data via the Meta Ads MCP tools.
 
 When answering questions:
@@ -52,81 +55,72 @@ When answering questions:
 
 You are talking to Joel, the media buyer who manages these campaigns daily."""
 
+SYSTEM_PROMPT_NO_MCP = (
+    SYSTEM_PROMPT_WITH_MCP
+    + "\n\nNote: You do not have live Meta account access in this session — "
+    "META_MCP_TOKEN is not configured. Answer from general Meta Ads knowledge "
+    "and be upfront about this. Direct the user to Campaign Performance in the "
+    "app for live numbers."
+)
+
+
+def _extract_text(response) -> str:
+    parts = [block.text for block in response.content if hasattr(block, "text")]
+    return "\n".join(parts).strip() or "No response generated."
+
 
 @router.post("/query", response_model=InsightQueryResponse)
 def query_insights(body: InsightQueryRequest, current_user: User = Depends(get_current_active_user)):
     if not _anthropic_client:
         raise HTTPException(503, "AI service not configured — ANTHROPIC_API_KEY missing")
-    if not FACEBOOK_ACCESS_TOKEN:
-        raise HTTPException(503, "Meta access token not configured — FACEBOOK_ACCESS_TOKEN missing")
 
-    # Append ad account context to the query if provided
     query = body.query
     if body.ad_account_id:
         query = f"[Ad account: {body.ad_account_id}]\n\n{query}"
 
-    def _extract_text(response) -> str:
-        parts = [block.text for block in response.content if hasattr(block, "text")]
-        return "\n".join(parts).strip() or "No response generated."
+    if META_MCP_TOKEN:
+        # Live path — Claude + Meta MCP using Joel's personal user token
+        try:
+            response = _anthropic_client.beta.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=1024,
+                system=SYSTEM_PROMPT_WITH_MCP,
+                messages=[{"role": "user", "content": query}],
+                mcp_servers=[
+                    {
+                        "type": "url",
+                        "url": META_MCP_URL,
+                        "name": "meta-ads",
+                        "authorization_token": META_MCP_TOKEN,
+                    }
+                ],
+                betas=["mcp-client-2025-04-04"],
+            )
+            return InsightQueryResponse(answer=_extract_text(response))
 
-    # --- Attempt 1: Claude + Meta MCP (live account data) ---
-    try:
-        response = _anthropic_client.beta.messages.create(
-            model="claude-sonnet-4-5-20250929",
-            max_tokens=1024,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": query}],
-            mcp_servers=[
-                {
-                    "type": "url",
-                    "url": META_MCP_URL,
-                    "name": "meta-ads",
-                    "authorization_token": FACEBOOK_ACCESS_TOKEN,
-                }
-            ],
-            betas=["mcp-client-2025-04-04"],
-        )
-        return InsightQueryResponse(answer=_extract_text(response))
-
-    except anthropic.APIError as e:
-        error_str = str(e).lower()
-        is_mcp_auth = "authentication error" in error_str and "mcp" in error_str
-        is_mcp_invalid = "invalid_request_error" in error_str and "mcp" in error_str
-
-        if not (is_mcp_auth or is_mcp_invalid):
-            # Non-MCP error — don't retry, surface it
-            logger.error("Anthropic API error in ai_insights: %s", e)
+        except anthropic.APIError as e:
+            logger.error("Anthropic API error in ai_insights (MCP path): %s", e)
             raise HTTPException(502, f"AI service error: {str(e)}")
 
-        # MCP auth failed — the system token isn't accepted by Meta's MCP server.
-        # Fall back to Claude answering from general knowledge, flagging the limitation.
-        logger.warning("Meta MCP auth failed, falling back to non-MCP response: %s", e)
+        except Exception as e:
+            logger.error("Unexpected error in ai_insights (MCP path): %s", e)
+            raise HTTPException(500, f"Query failed: {str(e)}")
 
-    except Exception as e:
-        logger.error("Unexpected error in ai_insights (MCP attempt): %s", e)
-        raise HTTPException(500, f"Query failed: {str(e)}")
+    else:
+        # No-token path — Claude from general knowledge, no MCP
+        try:
+            response = _anthropic_client.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=1024,
+                system=SYSTEM_PROMPT_NO_MCP,
+                messages=[{"role": "user", "content": query}],
+            )
+            return InsightQueryResponse(answer=_extract_text(response))
 
-    # --- Fallback: Claude without live Meta data ---
-    fallback_system = (
-        SYSTEM_PROMPT
-        + "\n\nIMPORTANT: You do NOT have live access to this Meta account right now — "
-        "the Meta data connection requires a fresh OAuth token. Answer the question as best "
-        "you can from general Meta Ads knowledge, and be upfront that you're working without "
-        "live account data. Suggest the user check Campaign Performance in the app for live numbers."
-    )
-    try:
-        response = _anthropic_client.messages.create(
-            model="claude-sonnet-4-5-20250929",
-            max_tokens=1024,
-            system=fallback_system,
-            messages=[{"role": "user", "content": query}],
-        )
-        answer = _extract_text(response)
-        return InsightQueryResponse(answer=f"⚠️ Live Meta data unavailable (token needs refresh) — answering from general knowledge:\n\n{answer}")
+        except anthropic.APIError as e:
+            logger.error("Anthropic API error in ai_insights (no-MCP path): %s", e)
+            raise HTTPException(502, f"AI service error: {str(e)}")
 
-    except anthropic.APIError as e:
-        logger.error("Anthropic fallback error in ai_insights: %s", e)
-        raise HTTPException(502, f"AI service error: {str(e)}")
-    except Exception as e:
-        logger.error("Unexpected fallback error in ai_insights: %s", e)
-        raise HTTPException(500, f"Query failed: {str(e)}")
+        except Exception as e:
+            logger.error("Unexpected error in ai_insights (no-MCP path): %s", e)
+            raise HTTPException(500, f"Query failed: {str(e)}")
