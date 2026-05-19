@@ -65,6 +65,11 @@ def query_insights(body: InsightQueryRequest, current_user: User = Depends(get_c
     if body.ad_account_id:
         query = f"[Ad account: {body.ad_account_id}]\n\n{query}"
 
+    def _extract_text(response) -> str:
+        parts = [block.text for block in response.content if hasattr(block, "text")]
+        return "\n".join(parts).strip() or "No response generated."
+
+    # --- Attempt 1: Claude + Meta MCP (live account data) ---
     try:
         response = _anthropic_client.beta.messages.create(
             model="claude-sonnet-4-5-20250929",
@@ -81,19 +86,47 @@ def query_insights(body: InsightQueryRequest, current_user: User = Depends(get_c
             ],
             betas=["mcp-client-2025-04-04"],
         )
-
-        # Extract text from the response content blocks
-        answer_parts = []
-        for block in response.content:
-            if hasattr(block, "text"):
-                answer_parts.append(block.text)
-
-        answer = "\n".join(answer_parts).strip() or "No response generated."
-        return InsightQueryResponse(answer=answer)
+        return InsightQueryResponse(answer=_extract_text(response))
 
     except anthropic.APIError as e:
-        logger.error("Anthropic API error in ai_insights: %s", e)
+        error_str = str(e).lower()
+        is_mcp_auth = "authentication error" in error_str and "mcp" in error_str
+        is_mcp_invalid = "invalid_request_error" in error_str and "mcp" in error_str
+
+        if not (is_mcp_auth or is_mcp_invalid):
+            # Non-MCP error — don't retry, surface it
+            logger.error("Anthropic API error in ai_insights: %s", e)
+            raise HTTPException(502, f"AI service error: {str(e)}")
+
+        # MCP auth failed — the system token isn't accepted by Meta's MCP server.
+        # Fall back to Claude answering from general knowledge, flagging the limitation.
+        logger.warning("Meta MCP auth failed, falling back to non-MCP response: %s", e)
+
+    except Exception as e:
+        logger.error("Unexpected error in ai_insights (MCP attempt): %s", e)
+        raise HTTPException(500, f"Query failed: {str(e)}")
+
+    # --- Fallback: Claude without live Meta data ---
+    fallback_system = (
+        SYSTEM_PROMPT
+        + "\n\nIMPORTANT: You do NOT have live access to this Meta account right now — "
+        "the Meta data connection requires a fresh OAuth token. Answer the question as best "
+        "you can from general Meta Ads knowledge, and be upfront that you're working without "
+        "live account data. Suggest the user check Campaign Performance in the app for live numbers."
+    )
+    try:
+        response = _anthropic_client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=1024,
+            system=fallback_system,
+            messages=[{"role": "user", "content": query}],
+        )
+        answer = _extract_text(response)
+        return InsightQueryResponse(answer=f"⚠️ Live Meta data unavailable (token needs refresh) — answering from general knowledge:\n\n{answer}")
+
+    except anthropic.APIError as e:
+        logger.error("Anthropic fallback error in ai_insights: %s", e)
         raise HTTPException(502, f"AI service error: {str(e)}")
     except Exception as e:
-        logger.error("Unexpected error in ai_insights: %s", e)
+        logger.error("Unexpected fallback error in ai_insights: %s", e)
         raise HTTPException(500, f"Query failed: {str(e)}")
