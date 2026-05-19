@@ -846,6 +846,8 @@ async def generate_image(
                                 cta_text=_cta_text,
                                 logo_url=request.overlay_logo_url,
                                 niche_line=request.overlay_niche_line or '',
+                                target_width=width,
+                                target_height=height,
                             )
                         except Exception as _overlay_err:
                             # Log and continue — image saves without overlay rather than failing entirely

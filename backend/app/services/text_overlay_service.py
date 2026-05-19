@@ -144,6 +144,36 @@ _WHITE      = (255, 255, 255, 255)
 _BLACK_STROKE = (0, 0, 0, 220)
 
 
+def _crop_to_target(img: Image.Image, target_w: int, target_h: int) -> Image.Image:
+    """
+    Center-crop img to the target aspect ratio, then resize to target_w × target_h.
+
+    Pexels returns landscape photos even for 1:1 requests (it has no square
+    orientation filter). Without this step the saved image has letterbox bars or
+    wrong aspect ratio, making text and logo positions look wrong.
+    """
+    src_w, src_h = img.size
+    target_ratio = target_w / target_h
+    src_ratio = src_w / src_h
+
+    if abs(src_ratio - target_ratio) < 0.01:
+        # Already the right ratio — just resize
+        return img.resize((target_w, target_h), Image.LANCZOS)
+
+    if src_ratio > target_ratio:
+        # Source is too wide — crop sides
+        new_w = int(src_h * target_ratio)
+        left = (src_w - new_w) // 2
+        img = img.crop((left, 0, left + new_w, src_h))
+    else:
+        # Source is too tall — crop top/bottom
+        new_h = int(src_w / target_ratio)
+        top = (src_h - new_h) // 2
+        img = img.crop((0, top, src_w, top + new_h))
+
+    return img.resize((target_w, target_h), Image.LANCZOS)
+
+
 def apply_text_overlay(
     image_bytes: bytes,
     headline: str = "",        # unused — headline goes in Meta ad copy, not the image
@@ -151,6 +181,8 @@ def apply_text_overlay(
     cta_text: str = "",        # unused — CTA goes in Meta ad copy, not the image
     logo_url: str | None = None,
     niche_line: str = "",
+    target_width: int = 0,
+    target_height: int = 0,
 ) -> bytes:
     """
     Composite a minimal overlay onto `image_bytes` (PNG/JPEG).
@@ -163,9 +195,18 @@ def apply_text_overlay(
     Headline and CTA are NOT rendered here — they belong in Meta's ad copy
     fields (primary_text, headline, call_to_action), not baked into the image.
 
+    target_width / target_height: if provided, center-crop and resize the source
+    image to these exact dimensions before compositing. This prevents letterboxing
+    when Pexels returns landscape photos for a square 1:1 request.
+
     Returns PNG bytes of the composited image.
     """
     img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+
+    # Crop/resize to target canvas if dimensions were specified
+    if target_width > 0 and target_height > 0:
+        img = _crop_to_target(img, target_width, target_height)
+
     W, H = img.size
 
     overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -225,8 +266,8 @@ def apply_text_overlay(
             resp.raise_for_status()
             logo_img = Image.open(io.BytesIO(resp.content)).convert("RGBA")
 
-            max_logo_w = int(W * 0.23)
-            max_logo_h = int(H * 0.095)
+            max_logo_w = int(W * 0.30)
+            max_logo_h = int(H * 0.12)
             logo_img.thumbnail((max_logo_w, max_logo_h), Image.LANCZOS)
             lw, lh = logo_img.size
 
