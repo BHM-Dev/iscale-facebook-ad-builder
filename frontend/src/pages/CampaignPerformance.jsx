@@ -1270,6 +1270,12 @@ export default function CampaignPerformance() {
                         const kpiBadCpl  = d?.cpl != null && d.cpl > 60;
                         const kpiBadRoas = (rt?.roas != null && rt.roas < 1) || (rt == null && d?.roas != null && d.roas < 1);
                         const kpiBadProfit = rt?.profit != null && rt.profit < 0;
+                        // CPA = same value as CPL in this system (backend aliases cpa → cpl).
+                        // When a CPA rule exists for this adset, swap the label from CPL → CPA
+                        // so Joel sees the metric his rule is actually watching. Avoids showing
+                        // two identical dollar amounts side-by-side.
+                        const adsetHasCpaRule = rules.some(r => r.adset_id === adset.id && r.metric === 'cpa');
+                        const kpiBadCpa  = d?.cpl != null && d?.cpl > 60;
 
                         const toggleExpand = () => setExpandedAdsets(prev => {
                           const next = new Set(prev);
@@ -1324,10 +1330,10 @@ export default function CampaignPerformance() {
                                 {bulkInsightsLoading && !d && (
                                   <span className="text-[10px] text-gray-300 animate-pulse">loading…</span>
                                 )}
-                                {kpiSpend  && <InlineKpi label="Spend"  value={kpiSpend} />}
-                                {kpiCpl    && <InlineKpi label="CPL"    value={kpiCpl}    bad={kpiBadCpl} />}
-                                {kpiRoas   && <InlineKpi label="ROAS"   value={kpiRoas}   blue={rt?.roas != null} bad={kpiBadRoas} />}
-                                {kpiProfit && <InlineKpi label="Profit" value={kpiProfit} blue bad={kpiBadProfit} />}
+                                {kpiSpend  && <InlineKpi label="Spend"               value={kpiSpend} />}
+                                {kpiCpl    && <InlineKpi label={adsetHasCpaRule ? 'CPA' : 'CPL'} value={kpiCpl} bad={adsetHasCpaRule ? kpiBadCpa : kpiBadCpl} />}
+                                {kpiRoas   && <InlineKpi label="ROAS"                value={kpiRoas}   blue={rt?.roas != null} bad={kpiBadRoas} />}
+                                {kpiProfit && <InlineKpi label="Profit"              value={kpiProfit} blue bad={kpiBadProfit} />}
 
                                 {/* Brand pill */}
                                 {(() => {
