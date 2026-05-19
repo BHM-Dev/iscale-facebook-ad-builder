@@ -34,7 +34,7 @@ export default function GeneratedAds() {
     const [selectedBundleId, setSelectedBundleId] = useState(null);
     const [viewedImage, setViewedImage] = useState(null);
     const [imgError, setImgError] = useState(false);
-    const [deleteConfirmation, setDeleteConfirmation] = useState({ show: false, bundleId: null, bundleAds: [] });
+    const [deleteConfirmation, setDeleteConfirmation] = useState({ show: false, bundleId: null, bundleAds: [], isBatch: false });
 
     // Push to Campaign modal state (single ad)
     const [pushModal, setPushModal] = useState({ show: false, ad: null });
@@ -151,64 +151,47 @@ export default function GeneratedAds() {
 
     const handleDelete = (bundleId, e) => {
         e.stopPropagation();
-
-        // Find all ads in this bundle
         const bundleAds = ads.filter(ad => (ad.ad_bundle_id || `legacy_${ad.id}`) === bundleId);
+        setDeleteConfirmation({ show: true, bundleId, bundleAds, isBatch: false });
+    };
 
-        // Show confirmation modal
-        setDeleteConfirmation({
-            show: true,
-            bundleId,
-            bundleAds
-        });
+    const handleBatchDelete = () => {
+        if (selectedBundles.size === 0) return;
+        const allAds = ads.filter(ad => selectedBundles.has(ad.ad_bundle_id || `legacy_${ad.id}`));
+        setDeleteConfirmation({ show: true, bundleId: null, bundleAds: allAds, isBatch: true });
     };
 
     const confirmDelete = async () => {
-        const { bundleId, bundleAds } = deleteConfirmation;
+        const { bundleId, bundleAds, isBatch } = deleteConfirmation;
 
         // Close modal immediately
-        setDeleteConfirmation({ show: false, bundleId: null, bundleAds: [] });
+        setDeleteConfirmation({ show: false, bundleId: null, bundleAds: [], isBatch: false });
 
         try {
-            // Delete all ads in the bundle
-            const deletePromises = bundleAds.map(ad => {
-                return authFetch(`${API_URL}/generated-ads/${ad.id}`, {
-                    method: 'DELETE'
-                }).then(response => {
-                    if (!response.ok) {
-                        throw new Error(`Failed to delete ad ${ad.id}`);
-                    }
-                    return response.json();
-                });
-            });
-
+            const deletePromises = bundleAds.map(ad =>
+                authFetch(`${API_URL}/generated-ads/${ad.id}`, { method: 'DELETE' })
+                    .then(r => { if (!r.ok) throw new Error(`Failed to delete ad ${ad.id}`); })
+            );
             await Promise.all(deletePromises);
 
-            // Show success message first
-            showSuccess(`Successfully deleted ${bundleAds.length} ad${bundleAds.length > 1 ? 's' : ''}`);
+            const deletedIds = new Set(bundleAds.map(a => a.id));
+            showSuccess(`Deleted ${bundleAds.length} ad${bundleAds.length !== 1 ? 's' : ''}`);
+            setAds(prev => prev.filter(ad => !deletedIds.has(ad.id)));
 
-            // Remove deleted ads from local state (instead of refetching)
-            setAds(prevAds => prevAds.filter(ad => !bundleAds.find(deletedAd => deletedAd.id === ad.id)));
-
-            // Remove from selected bundles
-            setSelectedBundles(prev => {
-                const newSet = new Set(prev);
-                newSet.delete(bundleId);
-                return newSet;
-            });
-
-            // Close modal if open
-            if (selectedBundleId === bundleId) {
-                setSelectedBundleId(null);
+            if (isBatch) {
+                setSelectedBundles(new Set());
+            } else {
+                setSelectedBundles(prev => { const s = new Set(prev); s.delete(bundleId); return s; });
+                if (selectedBundleId === bundleId) setSelectedBundleId(null);
             }
         } catch (error) {
-            console.error('Error deleting bundle:', error);
-            showError(`Failed to delete ad bundle: ${error.message}`);
+            console.error('Error deleting:', error);
+            showError(`Failed to delete: ${error.message}`);
         }
     };
 
     const cancelDelete = () => {
-        setDeleteConfirmation({ show: false, bundleId: null, bundleAds: [] });
+        setDeleteConfirmation({ show: false, bundleId: null, bundleAds: [], isBatch: false });
     };
 
     const handleExportCSV = async () => {
@@ -416,7 +399,7 @@ export default function GeneratedAds() {
 
                 {/* Batch Actions */}
                 {selectedBundles.size > 0 && (
-                    <div className="flex items-center gap-3 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                    <div className="flex items-center gap-3 p-3 bg-purple-50 border border-purple-200 rounded-lg flex-wrap">
                         <span className="text-sm font-medium text-purple-900">
                             {selectedBundles.size} bundle{selectedBundles.size > 1 ? 's' : ''} selected
                         </span>
@@ -449,6 +432,13 @@ export default function GeneratedAds() {
                         >
                             <FileDown size={16} />
                             Export CSV
+                        </button>
+                        <button
+                            onClick={handleBatchDelete}
+                            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium"
+                        >
+                            <Trash2 size={16} />
+                            Delete Selected
                         </button>
                         <button
                             onClick={() => setSelectedBundles(new Set())}
@@ -941,14 +931,20 @@ export default function GeneratedAds() {
                                     <Trash2 className="text-red-600" size={24} />
                                 </div>
                                 <div>
-                                    <h3 className="text-xl font-bold text-gray-900">Delete Ad Bundle?</h3>
+                                    <h3 className="text-xl font-bold text-gray-900">
+                                        {deleteConfirmation.isBatch
+                                            ? `Delete ${deleteConfirmation.isBatch && selectedBundles.size} Bundle${selectedBundles.size !== 1 ? 's' : ''}?`
+                                            : 'Delete Ad Bundle?'}
+                                    </h3>
                                     <p className="text-sm text-gray-500">This action cannot be undone</p>
                                 </div>
                             </div>
 
                             <p className="text-gray-700 mb-6">
-                                Are you sure you want to delete this bundle with <strong>{deleteConfirmation.bundleAds.length} ad{deleteConfirmation.bundleAds.length > 1 ? 's' : ''}</strong>?
-                                All ad creatives will be permanently removed.
+                                {deleteConfirmation.isBatch
+                                    ? <>Are you sure you want to delete <strong>{selectedBundles.size} bundle{selectedBundles.size !== 1 ? 's' : ''}</strong> ({deleteConfirmation.bundleAds.length} ad{deleteConfirmation.bundleAds.length !== 1 ? 's' : ''} total)? All creatives will be permanently removed.</>
+                                    : <>Are you sure you want to delete this bundle with <strong>{deleteConfirmation.bundleAds.length} ad{deleteConfirmation.bundleAds.length > 1 ? 's' : ''}</strong>? All ad creatives will be permanently removed.</>
+                                }
                             </p>
 
                             <div className="flex gap-3">
