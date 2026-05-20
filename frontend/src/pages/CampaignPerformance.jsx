@@ -945,6 +945,17 @@ export default function CampaignPerformance() {
     finally { setSyncingRT(false); }
   };
 
+  // Blended CPL across all adsets with data — mirrors Dashboard.jsx logic.
+  const blendedCpl = useMemo(() => {
+    if (!bulkInsights) return null;
+    let totalSpend = 0, totalLeads = 0;
+    Object.values(bulkInsights).forEach(ins => {
+      totalSpend += ins.spend ?? 0;
+      totalLeads += ins.leads ?? 0;
+    });
+    return totalLeads > 0 ? totalSpend / totalLeads : null;
+  }, [bulkInsights]);
+
   // Helper: is this ad set flagged for attention?
   // Criteria must stay in sync with Dashboard.jsx needsAttention logic.
   const isFlagged = useCallback((a) => {
@@ -954,8 +965,10 @@ export default function CampaignPerformance() {
     if (ins.spend > 50 && ins.leads === 0) return true;
     if (rules.some(r => r.triggered_at && r.adset_id === a.id)) return true;
     if (ins.redtrack?.roas != null && ins.redtrack.roas < 1 && ins.spend > 30) return true;
+    // CPL well above blended average (>1.5x) with meaningful spend — mirrors Dashboard
+    if (blendedCpl != null && ins.cpl != null && ins.cpl > blendedCpl * 1.5 && ins.spend > 30) return true;
     return false;
-  }, [bulkInsights, rules]);
+  }, [bulkInsights, rules, blendedCpl]);
 
   const visibleAdsets = useMemo(() => {
     let list = adsets.filter(a => a.fb_adset_id);
