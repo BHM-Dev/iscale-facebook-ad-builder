@@ -4,6 +4,25 @@ Auto-loaded by Claude Code at session start. Every line is actionable context. N
 
 ---
 
+## AI Tool Routing
+
+This repo is worked on by both **Claude Code** and **OpenAI Codex**. Use the right tool for the job to manage token costs.
+
+| Task | Tool |
+|------|------|
+| Multi-agent builds (3+ parallel agents) | Claude Code |
+| MCP tools — Slack DMs, browser automation, Loom review | Claude Code only |
+| Pre-push review agent pairs | Claude Code |
+| DB migrations + pre-push checklist | Claude Code |
+| Simple file edits, new fields, wiring endpoints, UI tweaks | Either |
+| Boilerplate, adding a column, fixing a typo | Codex preferred |
+
+**Sync rule:** Always `git pull origin develop` before starting a session in either tool. Always push when done. The CLAUDE.md and the repo are the source of truth — session history is not.
+
+**Codex limitations:** No MCP servers (can't DM Golden, can't read Slack/Loom, can't control browser). For anything requiring those, switch to Claude Code.
+
+---
+
 ## What This App Is
 
 Facebook ad builder used daily by Joel Welch (media buyer). Connects to Meta Ads API. Manages the full lifecycle: competitor research → ad creation → campaign launch → performance monitoring.
