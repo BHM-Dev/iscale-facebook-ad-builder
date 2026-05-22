@@ -9,7 +9,7 @@ except ImportError:
     FacebookBadObjectError = Exception  # fallback so catch still works
 
 logger = logging.getLogger(__name__)
-from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, User, Brand
+from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, User, Brand, GeneratedAd
 from app.database import get_db
 from app.core.deps import get_current_active_user, require_permission
 from sqlalchemy.orm import Session
@@ -736,12 +736,21 @@ def assign_brand_to_adset(
 @router.get("/ads/{fb_ad_id}/creative")
 def get_ad_creative(
     fb_ad_id: str,
+    db: Session = Depends(get_db),
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Fetch headline, body, CTA, and image URL for a single ad — used to pre-populate Ad Remix."""
+    """Fetch headline, body, CTA, and image URL for a single ad — used to pre-populate Ad Remix and Iterate.
+    Also enriches the response with overlay fields (offer line, logo URL) from the local DB if available.
+    """
     try:
-        return service.get_ad_creative(fb_ad_id)
+        creative = service.get_ad_creative(fb_ad_id)
+        # Enrich with overlay fields from local GeneratedAd record if one exists for this fb_ad_id.
+        # This restores the offer line and logo URL on Iterate so Joel doesn't have to retype them.
+        db_ad = db.query(GeneratedAd).filter(GeneratedAd.fb_ad_id == fb_ad_id).first()
+        creative["overlay_offer_line"] = db_ad.overlay_offer_line if db_ad else None
+        creative["overlay_logo_url"] = db_ad.overlay_logo_url if db_ad else None
+        return creative
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

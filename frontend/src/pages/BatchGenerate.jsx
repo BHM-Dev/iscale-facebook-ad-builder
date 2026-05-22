@@ -286,6 +286,16 @@ export default function BatchGenerate() {
         }
         // Pre-fill destination URL so Joel doesn't have to type it in the push modal
         if (creative.link_url) setIterateLinkUrl(creative.link_url);
+        // Restore overlay fields from local DB record so Joel doesn't have to retype them
+        if (creative.overlay_offer_line) {
+          setOverlayOfferLine(creative.overlay_offer_line);
+          try { localStorage.setItem('overlayOfferLine', creative.overlay_offer_line); } catch(_) {}
+        }
+        if (creative.overlay_logo_url) {
+          setOverlayLogoUrl(creative.overlay_logo_url);
+          setOverlayLogoPreview(creative.overlay_logo_url);
+          try { localStorage.setItem('overlayLogoUrl', creative.overlay_logo_url); } catch(_) {}
+        }
       })
       .catch(() => {});
   }, [iterateAdId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -446,7 +456,9 @@ export default function BatchGenerate() {
         }),
       }).catch(() => {});
 
-      setResults(prev => ({ ...prev, [key]: { status: 'done', imageUrl, error: null } }));
+      // Store generatedAdId so BatchPushModal can write back the Meta ad ID after push,
+      // enabling the Iterate flow to restore overlay fields from the local DB.
+      setResults(prev => ({ ...prev, [key]: { status: 'done', imageUrl, generatedAdId: adId, error: null } }));
       return 'done';
     } catch (e) {
       const msg = e.message === 'Failed to fetch' ? 'Network timeout — try again' : e.message;
@@ -1092,6 +1104,7 @@ export default function BatchGenerate() {
             return {
               key,
               imageUrl: r.imageUrl,
+              generatedAdId: r.generatedAdId || null, // local DB id — written back after push to link fb_ad_id
               headline: variant?.headline || '',
               body: variant?.body || '',
               cta: ctaToEnum(variant?.cta),

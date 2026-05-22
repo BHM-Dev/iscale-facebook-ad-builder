@@ -1107,3 +1107,31 @@ def batch_save_ads(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/{ad_id}/fb-ad-id")
+def set_generated_ad_fb_id(
+    ad_id: str,
+    body: Dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("ads:write"))
+):
+    """Write back the Meta ad ID to a GeneratedAd record after a successful batch push.
+    This enables the Iterate flow to restore overlay fields (offer line, logo URL) from the local DB.
+    Body: { "fb_ad_id": "<meta_ad_id>" }
+    """
+    fb_ad_id = (body.get("fb_ad_id") or "").strip()
+    if not fb_ad_id:
+        raise HTTPException(status_code=400, detail="fb_ad_id is required")
+
+    ad = db.query(GeneratedAd).filter(GeneratedAd.id == ad_id).first()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Generated ad not found")
+
+    ad.fb_ad_id = fb_ad_id
+    try:
+        db.commit()
+        return {"id": ad_id, "fb_ad_id": fb_ad_id}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))

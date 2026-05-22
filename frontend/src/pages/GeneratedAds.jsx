@@ -57,6 +57,7 @@ export default function GeneratedAds() {
                     acc.push({
                         key: `lib_${ad.id}`,
                         imageUrl: ad.image_url,
+                        generatedAdId: ad.id, // local DB id — written back after push to link fb_ad_id
                         headline: ad.headline || '',
                         body: ad.body || '',
                         cta: ad.cta || 'LEARN_MORE',

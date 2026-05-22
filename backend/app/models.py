@@ -300,6 +300,8 @@ class GeneratedAd(Base):
     video_url = Column(String, nullable=True)
     video_id = Column(String, nullable=True)  # Facebook video ID
     thumbnail_url = Column(String, nullable=True)
+    # Meta ad ID — written back after batch push so Iterate can restore overlay fields from this record
+    fb_ad_id = Column(String, nullable=True, index=True)
     # Text overlay fields — store what was baked into the image so Iterate/Remix can reconstruct settings
     niche = Column(String, nullable=True)
     overlay_enabled = Column(Boolean, default=False, nullable=True)

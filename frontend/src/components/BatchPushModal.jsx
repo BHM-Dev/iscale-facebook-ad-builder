@@ -7,6 +7,7 @@ import { getCampaigns, getAdSets, getPages, createCompleteAd, createFacebookAdSe
 import { useToast } from '../context/ToastContext';
 
 const FB_API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1') + '/facebook';
+const GEN_ADS_API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1') + '/generated-ads';
 
 // Shared CTA options — enum value + human label used in both the shared and per-item dropdowns
 const CTA_OPTIONS = [
@@ -239,7 +240,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
             setPushStatuses(prev => ({ ...prev, [item.key]: 'pushing' }));
             const copy = itemCopy[item.key];
             try {
-                await createCompleteAd(
+                const pushResult = await createCompleteAd(
                     selectedCampaignId,
                     { fbAdsetId: targetAdsetId, ...adsetObj },
                     {
@@ -255,6 +256,15 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                     adAccountId,
                     'ABO'
                 );
+                // Write back the Meta ad ID to the local GeneratedAd record so the Iterate flow
+                // can restore overlay fields (offer line, logo URL) from the local DB.
+                if (pushResult?.adId && item.generatedAdId) {
+                    authFetch(`${GEN_ADS_API_BASE}/${item.generatedAdId}/fb-ad-id`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ fb_ad_id: pushResult.adId }),
+                    }).catch(() => {}); // fire-and-forget — don't block the UI on failure
+                }
                 setPushStatuses(prev => ({ ...prev, [item.key]: 'done' }));
             } catch (e) {
                 setPushStatuses(prev => ({ ...prev, [item.key]: 'error' }));

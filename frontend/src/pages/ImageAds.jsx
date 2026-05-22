@@ -1,7 +1,7 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
-import React, { useState, useEffect } from 'react';
-import { ChevronRight, ChevronLeft, Check, Briefcase, Package, Users, Image, Hash, FileText, Sparkles, Download, ChevronDown, ChevronUp, Settings, CheckCircle2, ArrowRight, Rocket } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { ChevronRight, ChevronLeft, Check, Briefcase, Package, Users, Image, Hash, FileText, Sparkles, Download, ChevronDown, ChevronUp, Settings, CheckCircle2, ArrowRight, Rocket, Upload } from 'lucide-react';
 import { useBrands } from '../context/BrandContext';
 import ImageTemplateSelector from '../components/ImageTemplateSelector';
 import BrandSelectionStep from '../components/steps/BrandSelectionStep';
@@ -61,6 +61,49 @@ export default function ImageAds() {
             localStorage.setItem('imageAds_campaignDetails', JSON.stringify(wizardData.campaignDetails));
         }
     }, [wizardData.campaignDetails]);
+
+    // Overlay state — shared localStorage keys with BatchGenerate and AdRemix
+    const [overlayEnabled, setOverlayEnabled] = useState(true);
+    const [overlayOfferLine, setOverlayOfferLine] = useState(() => {
+        try { return localStorage.getItem('overlayOfferLine') || ''; } catch (_) { return ''; }
+    });
+    const [overlayLogoUrl, setOverlayLogoUrl] = useState(() => {
+        try { return localStorage.getItem('overlayLogoUrl') || ''; } catch (_) { return ''; }
+    });
+    const [overlayLogoPreview, setOverlayLogoPreview] = useState(() => {
+        try { return localStorage.getItem('overlayLogoUrl') || ''; } catch (_) { return ''; }
+    });
+    const [uploadingLogo, setUploadingLogo] = useState(false);
+    const logoFileInputRef = useRef(null);
+
+    const uploadLogoImage = useCallback(async (file) => {
+        if (!file || !file.type.startsWith('image/')) {
+            showError('Please upload an image file (PNG with transparency works best)');
+            return;
+        }
+        setUploadingLogo(true);
+        setOverlayLogoPreview(URL.createObjectURL(file));
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await authFetch(`${API_URL}/uploads/`, {
+                method: 'POST',
+                body: formData,
+            });
+            if (!res.ok) throw new Error('Upload failed');
+            const data = await res.json();
+            const url = data.url || data.file_url || data.path;
+            const absUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
+            setOverlayLogoUrl(absUrl);
+            setOverlayLogoPreview(absUrl);
+            try { localStorage.setItem('overlayLogoUrl', absUrl); } catch (_) {}
+        } catch (e) {
+            showError(`Logo upload failed: ${e.message}`);
+            setOverlayLogoPreview('');
+        } finally {
+            setUploadingLogo(false);
+        }
+    }, [showError, authFetch]);
 
     const steps = [
         { id: 1, name: 'Brand', icon: Briefcase },
@@ -174,7 +217,12 @@ export default function ImageAds() {
                 model: wizardData.model,
                 productShots: wizardData.useProductShots ? wizardData.product?.product_shots : [],
                 useProductImage: wizardData.useProductShots,
-                customPrompt: customImagePrompt
+                customPrompt: customImagePrompt,
+                overlay_enabled: overlayEnabled,
+                overlay_niche_line: overlayEnabled ? (wizardData.template?.niche || wizardData.template?.template_category || wizardData.template?.name || '') : null,
+                overlay_offer_line: overlayEnabled ? (overlayOfferLine || null) : null,
+                overlay_cta: overlayEnabled ? (copy?.cta || 'GET MY QUOTE') : null,
+                overlay_logo_url: overlayEnabled ? (overlayLogoUrl || null) : null,
             })
         });
 
@@ -499,6 +547,18 @@ export default function ImageAds() {
                     <CampaignDetailsStep
                         details={wizardData.campaignDetails}
                         onChange={updateCampaignDetails}
+                        overlayEnabled={overlayEnabled}
+                        setOverlayEnabled={setOverlayEnabled}
+                        overlayOfferLine={overlayOfferLine}
+                        setOverlayOfferLine={setOverlayOfferLine}
+                        overlayLogoUrl={overlayLogoUrl}
+                        setOverlayLogoUrl={setOverlayLogoUrl}
+                        overlayLogoPreview={overlayLogoPreview}
+                        setOverlayLogoPreview={setOverlayLogoPreview}
+                        uploadingLogo={uploadingLogo}
+                        logoFileInputRef={logoFileInputRef}
+                        uploadLogoImage={uploadLogoImage}
+                        niche={wizardData.template?.niche || wizardData.template?.template_category || wizardData.template?.name || ''}
                     />
                 )}
 
@@ -819,7 +879,15 @@ function ImageSizeStep({ selectedSizes = [], onSelect, resolution, onResolutionC
     );
 }
 
-function CampaignDetailsStep({ details, onChange }) {
+function CampaignDetailsStep({
+    details, onChange,
+    overlayEnabled, setOverlayEnabled,
+    overlayOfferLine, setOverlayOfferLine,
+    overlayLogoUrl, setOverlayLogoUrl,
+    overlayLogoPreview, setOverlayLogoPreview,
+    uploadingLogo, logoFileInputRef, uploadLogoImage,
+    niche
+}) {
     const offerInputRef = React.useRef(null);
 
     React.useEffect(() => {
@@ -888,6 +956,120 @@ function CampaignDetailsStep({ details, onChange }) {
                     <p className="text-xs text-gray-500 mt-1">
                         Overrides the template's default subject matter/angle.
                     </p>
+                </div>
+
+                {/* Text Overlay Panel */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                        <div>
+                            <h4 className="text-sm font-semibold text-gray-800">Text Overlay</h4>
+                            <p className="text-xs text-gray-400 mt-0.5">Bakes niche label + offer line + logo into the image</p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setOverlayEnabled(v => !v)}
+                            className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                                overlayEnabled ? 'bg-amber-600' : 'bg-gray-200'
+                            }`}
+                            aria-pressed={overlayEnabled}
+                        >
+                            <span
+                                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                    overlayEnabled ? 'translate-x-4' : 'translate-x-0'
+                                }`}
+                            />
+                        </button>
+                    </div>
+                    {overlayEnabled && (
+                        <div className="p-4 space-y-3">
+                            <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                    Niche Label
+                                    <span className="ml-1 font-normal text-gray-400">read-only — derived from template</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    readOnly
+                                    value={niche}
+                                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-gray-500 cursor-default"
+                                    placeholder="No niche — select a template in Step 4"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">Offer Line</label>
+                                <input
+                                    type="text"
+                                    placeholder="From $24.95/Month"
+                                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                                    value={overlayOfferLine}
+                                    onChange={e => {
+                                        setOverlayOfferLine(e.target.value);
+                                        try { localStorage.setItem('overlayOfferLine', e.target.value); } catch (_) {}
+                                    }}
+                                />
+                                <p className="text-xs text-gray-400 mt-1">Appears below the headline. Leave blank to omit.</p>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                    Brand Logo
+                                    <span className="ml-1 font-normal text-gray-400">optional</span>
+                                </label>
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    ref={logoFileInputRef}
+                                    onChange={e => { const f = e.target.files?.[0]; if (f) uploadLogoImage(f); e.target.value = ''; }}
+                                />
+                                {overlayLogoPreview ? (
+                                    <div className="flex items-center gap-3">
+                                        <img
+                                            src={overlayLogoPreview}
+                                            alt="Logo preview"
+                                            className="h-10 w-auto rounded border border-gray-200 bg-gray-50 object-contain p-1"
+                                        />
+                                        <div className="flex flex-col gap-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => logoFileInputRef.current?.click()}
+                                                disabled={uploadingLogo}
+                                                className="text-xs text-amber-600 hover:text-amber-800 disabled:opacity-40"
+                                            >
+                                                {uploadingLogo ? 'Uploading…' : 'Replace'}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setOverlayLogoUrl('');
+                                                    setOverlayLogoPreview('');
+                                                    try { localStorage.removeItem('overlayLogoUrl'); } catch (_) {}
+                                                }}
+                                                className="text-xs text-red-400 hover:text-red-600"
+                                            >
+                                                Remove
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        onClick={() => logoFileInputRef.current?.click()}
+                                        disabled={uploadingLogo}
+                                        className="flex items-center gap-2 text-sm border border-dashed border-gray-300 rounded-lg px-3 py-2 w-full text-gray-500 hover:border-amber-400 hover:text-amber-600 disabled:opacity-40 transition-colors"
+                                    >
+                                        <Upload size={13} />
+                                        {uploadingLogo ? 'Uploading…' : 'Upload logo (PNG recommended)'}
+                                    </button>
+                                )}
+                                <p className="text-xs text-gray-400 mt-1">Placed in a white badge top-right. Saved for future sessions.</p>
+                            </div>
+                            <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+                                <p className="text-xs text-amber-700">
+                                    <span className="font-semibold">Layout (top to bottom):</span> Niche label → Headline → Offer line → CTA button. Any empty field is skipped — no gap left behind. Logo badge top-right if uploaded.
+                                </p>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
