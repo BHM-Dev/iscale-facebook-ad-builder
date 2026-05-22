@@ -23,6 +23,109 @@ This repo is worked on by both **Claude Code** and **OpenAI Codex**. Use the rig
 
 ---
 
+## Codex Quick Reference
+
+Codex doesn't get the MCP toolset Claude Code has. This section is the operating manual — read it before doing anything.
+
+### Preflight (every session)
+
+```bash
+git pull origin develop
+python3 scripts/check_alembic_heads.py   # only if you'll touch migrations
+```
+
+Look at "Still pending" at the bottom of this file. Don't invent work — pick from the list or work on what the user describes.
+
+### File map — where things live
+
+**Backend (`backend/app/`):**
+- Routes (all prefixed `/api/v1`): `api/v1/{brands,products,profiles,facebook,ad_remix,copy_generation,auto_pause,generated_ads,research,uploads,dashboard,templates}.py`
+- Models: `models.py` — single file, every SQLAlchemy class lives here
+- Services: `services/{facebook_service,ad_remix_service,slack_service,scheduler_service,research_service,scraper}.py`
+- Config: `core/config.py` (validates `DATABASE_URL` is Postgres at startup)
+- DB: `app/database.py`
+- Bootstrap script: `backend/init_db.py` (NOT inside `app/` — run from `backend/`)
+- Migrations: `backend/alembic/versions/*.py`
+
+**Frontend (`frontend/src/`):**
+- Pages: `pages/{Dashboard,CampaignPerformance,AdRemix,BatchGenerate,ImageAds,Brands,Products,CustomerProfiles,FacebookCampaigns,GeneratedAds,Research,WinningAds}.jsx`
+- Components: `components/{Layout,Toast,Wizard,BulkAdCreation,AdCreativeStep,...}.jsx`
+- Context: `context/{ToastContext,BrandContext,CampaignContext}.jsx`
+- API helper: `lib/facebookApi.js` — named export `authFetch`
+
+### Patterns you MUST follow
+
+- **Frontend API calls:** `import { authFetch } from '../lib/facebookApi'`. Never raw `fetch()` — auth header is missing.
+- **User notifications:** `import { useToast } from '../context/ToastContext'` → `showSuccess/showError/showWarning/showInfo`. Never `alert()`.
+- **Confirmations:** Custom modal with backdrop blur, red button for destructive. Never `confirm()`.
+- **New column on existing table:** Raw SQL — `op.execute("ALTER TABLE x ADD COLUMN IF NOT EXISTS new_col TYPE")`. Never `op.add_column()`.
+- **New table:** Wrap `op.create_table()` in a `has_table()` guard (see "Alembic Migration Rules" below).
+- **New migration:** `down_revision` points to current head. Run `python3 scripts/check_alembic_heads.py` — must return single head.
+- **Brand state:** Keyed by `adset.id`, never `campaign_id`.
+- **Meta ad ID field:** `ad.ad_id` from `ads-bulk` endpoint, not `ad.id`.
+
+### Files you must NOT edit alone — STOP and hand off to Claude Code
+
+These trigger the mandatory 2-agent pre-push review (see "Pre-Push Rule — Ad Launch Features"):
+- `frontend/src/components/BulkAdCreation.jsx`
+- `frontend/src/components/AdCreativeStep.jsx`
+- `frontend/src/lib/facebookApi.js`
+- `backend/app/services/facebook_service.py`
+
+Also hand off for: anything with a DB migration, anything needing Slack/Loom/browser/Meta MCP, multi-file architectural changes, anything where you'd ask "should I do X or Y."
+
+### Common task templates
+
+**Rename a nav link / change UI copy:**
+1. `grep -r "Old Text" frontend/src/` — confirm every usage
+2. Edit each location
+3. Confirm no test references the old string
+4. Push (pure string swaps don't need agent review)
+
+**Add a column to an existing model:**
+1. Edit the SQLAlchemy class in `backend/app/models.py`
+2. Create a migration in `backend/alembic/versions/` — `down_revision` = current head
+3. Raw SQL: `op.execute("ALTER TABLE x ADD COLUMN IF NOT EXISTS new_col TYPE")`
+4. Run `python3 scripts/check_alembic_heads.py`
+5. **STOP.** Hand off to Claude Code (migration → Golden DM required).
+
+**Add a field to an existing form:**
+1. Add input to the form component
+2. Add field to API payload in the submit handler
+3. Add field to backend Pydantic schema + route handler
+4. If persisted: add to model + migration (see column template)
+5. **STOP** if any trigger file or migration touched — hand off to Claude Code.
+
+**Wire a new API endpoint to an existing page:**
+1. Add the route in `backend/app/api/v1/<file>.py`
+2. Register the router in `backend/app/main.py` if it's a new file
+3. Add the `authFetch` call in the frontend page
+4. **STOP.** Hand off to Claude Code.
+
+### Push protocol
+
+**Codex does not push feature code.** End every feature session with:
+
+> "Edits done — ready for Claude Code 2-agent review + push."
+
+**Codex may push directly only when ALL of these are true:**
+- Change is limited to `CLAUDE.md`, `README.md`, or in-code comment-only edits
+- No file in the never-push list below was touched
+- No new dependency, env var, or config was added
+
+**Never-push list (Codex must always hand off):**
+- Anything under `backend/alembic/versions/`
+- `backend/app/models.py`
+- `backend/app/main.py`
+- The four trigger files: `frontend/src/components/BulkAdCreation.jsx`, `frontend/src/components/AdCreativeStep.jsx`, `frontend/src/lib/facebookApi.js`, `backend/app/services/facebook_service.py`
+- Any `*_SPEC.md` or files under `docs/` (spec changes have downstream code impact)
+
+For anything else: commit locally if useful, but the final push goes through Claude Code so the pre-push review agents run.
+
+**Note for Codex:** Claude Code has a `PreToolUse` hook in `.claude/settings.json` that blocks `git push` until two parallel pressure-test agents have run. That's working as intended, not a bug — it enforces the rule above.
+
+---
+
 ## What This App Is
 
 Facebook ad builder used daily by Joel Welch (media buyer). Connects to Meta Ads API. Manages the full lifecycle: competitor research → ad creation → campaign launch → performance monitoring.
@@ -37,9 +140,17 @@ Facebook ad builder used daily by Joel Welch (media buyer). Connects to Meta Ads
 
 ## Infrastructure (Current — 2026-04-27 and later)
 
+- **Backend runs in Docker on the VPS** (confirmed 2026-05-22 by Golden). There is NO local `venv` on the VPS — any script that needs the app's Python deps must be run inside the running backend container.
+- VPS shell access pattern (when Golden runs ad-hoc scripts, e.g. account creation, one-off migrations):
+  ```bash
+  docker exec -it <backend-container> python -c "..."
+  # or
+  docker exec -it <backend-container> bash
+  ```
 - Env vars are set directly on the VPS by Golden. Never set them via Railway.
-- To request a new env var: message Golden in `C041GSZD1NG` with the var name — he adds it server-side and restarts.
-- Deployment = Golden restarts the server. Startup sequence runs automatically on every restart (see below).
+- To request a new env var: message Golden directly at `D075KSE1A1L` with the var name — he adds it server-side and restarts.
+- Restart command: `docker compose restart backend` (Golden runs this when env vars change or a manual restart is needed).
+- Code deploys auto-trigger on push to `develop`. Env var changes and ad-hoc scripts require Golden manual action.
 - `REDTRACK_API_KEY` — confirmed added 2026-04-27.
 - `SLACK_BOT_TOKEN` — confirm status with Golden.
 
@@ -403,20 +514,38 @@ python3 scripts/check_alembic_heads.py
 
 API docs: `http://localhost:8000/api/v1/docs`
 
+### VPS shell tasks (Docker)
+
+For anything that needs to run inside the production backend (account creation, ad-hoc migration, one-off DB script), ask Golden to run it via `docker exec` — the VPS does not have a local venv. Example pattern Golden used 2026-05-22 to create Steven's admin:
+
+```bash
+docker exec -it <backend-container> python -c "
+from init_db import seed_roles_and_permissions, create_superuser
+seed_roles_and_permissions()
+create_superuser('<email>', '<password>', '<name>')
+"
+```
+
+Do not suggest `./venv/bin/python ...` or `source venv/bin/activate` for VPS work — there is no venv on the VPS.
+
 ---
 
 ## Deployment Checklist
 
-1. Push to `sunbunzz627` fork
-2. Open PR targeting `BHM-Dev:develop`
-3. If PR includes a DB migration → message Golden in `C041GSZD1NG` with the `alembic upgrade head` instruction
-4. Code-only pushes → no message to Golden needed (server restarts on his schedule)
-5. Golden merges, pulls to VPS, restarts server
-6. Post-deploy: check server logs for `Uvicorn running on http://0.0.0.0:8080`
+1. Push directly to `BHM-Dev:develop` (`git push origin develop`) — there is no `sunbunzz627` fork; the dev workflow is push-direct, not PR-based.
+2. VPS auto-deploys on every push to `develop` — Golden's container picks up the new code automatically.
+3. If the push includes a DB migration → DM Golden at `D075KSE1A1L` with the `alembic upgrade head` instruction. He runs it inside the backend container via `docker exec`.
+4. Env var changes → DM Golden at `D075KSE1A1L`. He adds the var, runs `docker compose restart backend`.
+5. Code-only pushes → no message to Golden needed (auto-deploy handles it).
+6. Post-deploy: check `https://adbuilder-api.velocitymx.io/api/v1/docs` is reachable.
 
 ---
 
 ## Pending Features / Known Gaps
+
+### Recently shipped (2026-05-22)
+- [x] **Steven's admin account created on VPS** — Golden ran `docker exec` into backend container; superuser `ssun@brighthorizonsmedia.com` confirmed created. Confirmed Docker-on-VPS architecture (no local venv).
+- [x] AI Tool Routing + Codex Quick Reference added to CLAUDE.md so Codex sessions can jump in cold.
 
 ### Recently shipped (2026-05-21 session)
 - [x] CTA button (orange pill) baked into overlays via `text_overlay_service.py`
@@ -430,7 +559,6 @@ API docs: `http://localhost:8000/api/v1/docs`
 - [x] `--timeout-keep-alive 300` on uvicorn — fixes Ad Remix connection drops during kie.ai polling
 
 ### Still pending
-- [ ] **Steven's admin account** — bootstrap curl command ready, waiting on Golden to confirm `SECRET_KEY` value or run it on VPS
 - [ ] OpenAI API swap (waiting on Golden to add keys): `gpt-5.1` for `/generate`, `gpt-4.1-mini` for `/remix-variations`
 - [ ] ImageAds "Quick Generate" mode — skip wizard, go straight to niche+copy+generate for media buyers with existing copy
 - [ ] Rename "Ad Remix" nav link → "Build New Ad"
