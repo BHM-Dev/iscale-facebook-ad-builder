@@ -3,7 +3,7 @@
 
 export const PROMPT_CATEGORIES = {
     AD_COPY: 'Ad Copy Generation',
-    AD_REMIX: 'Ad Remix Engine',
+    AD_REMIX: 'Build New Ad',
     IMAGE_GENERATION: 'Image Generation',
     RESEARCH: 'Research & Analysis'
 };

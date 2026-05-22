@@ -565,7 +565,7 @@ export default function AdRemix() {
             <div className="mb-8">
                 <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
                     <Sparkles size={32} className="text-purple-600" />
-                    Ad Remix Engine
+                    Build New Ad
                 </h1>
                 <p className="text-gray-600 mt-1">Deconstruct winning ads and reconstruct them with your brand</p>
             </div>
@@ -627,7 +627,7 @@ export default function AdRemix() {
                 {currentStep === 1 && (
                     <div>
                         <h3 className="text-xl font-bold mb-2">How do you want to start?</h3>
-                        <p className="text-gray-500 mb-8">Pick a starting point — Ad Remix will build a new creative concept from it using your brand and audience.</p>
+                        <p className="text-gray-500 mb-8">Pick a starting point — this tool will build a new creative concept from it using your brand and audience.</p>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-2xl">
                             {/* Path A: From a live winning ad */}

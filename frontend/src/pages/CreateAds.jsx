@@ -31,7 +31,7 @@ const TOOLS = [
         iconColor: 'text-green-600',
         borderHover: 'hover:border-green-200',
         ctaColor: 'text-green-600',
-        title: 'Ad Remix',
+        title: 'Build New Ad',
         description: 'Deconstruct a winning ad into its blueprint and regenerate it with your own brand, product, and copy.',
     },
     {
