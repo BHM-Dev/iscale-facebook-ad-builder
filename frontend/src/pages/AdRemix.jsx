@@ -371,16 +371,31 @@ export default function AdRemix() {
             // kie.ai will preserve the scene and adjust lighting/mood only.
             // Falls back to text-to-image if no reference image exists.
             const referenceImageUrl = wizardData.template?.image_url || null;
+
+            // Carry overlay settings from BatchGenerate localStorage so Ad Remix
+            // images are consistently branded (niche label, offer line, CTA, logo).
+            const savedLogoUrl = (() => { try { return localStorage.getItem('overlayLogoUrl') || ''; } catch (_) { return ''; } })();
+            const savedOfferLine = (() => { try { return localStorage.getItem('overlayOfferLine') || ''; } catch (_) { return ''; } })();
+            const nicheLabel = pendingNiche || '';
+            const ctaText = pushModal.cta_button || 'GET MY QUOTE';
+            const overlayHasContent = nicheLabel || savedOfferLine || savedLogoUrl;
+
             const payload = {
                 customPrompt: pushModal.image_generation_prompt,
                 count: 1,
                 imageSizes: [{ width: 1080, height: 1080, name: 'Square' }],
-                niche: wizardData.offer?.niche || '',
+                niche: nicheLabel,
                 imageMode: 'iterate',
                 ...(referenceImageUrl && {
                     useProductImage: true,
                     productShots: [referenceImageUrl],
                 }),
+                // Text overlay — mirrors BatchGenerate behaviour
+                overlay_enabled: overlayHasContent ? true : false,
+                overlay_niche_line: nicheLabel || null,
+                overlay_offer_line: savedOfferLine || null,
+                overlay_cta: ctaText || null,
+                overlay_logo_url: savedLogoUrl || null,
             };
             const res = await authFetch(`${API_URL}/generated-ads/generate-image`, {
                 method: 'POST',
@@ -1094,6 +1109,18 @@ export default function AdRemix() {
                                     ) : (
                                         /* No image yet — generate or paste */
                                         <div className="space-y-2">
+                                            {/* Overlay preview — mirrors BatchGenerate amber callout */}
+                                            {(pendingNiche || (() => { try { return localStorage.getItem('overlayOfferLine'); } catch(_){return '';} })() || (() => { try { return localStorage.getItem('overlayLogoUrl'); } catch(_){return '';} })()) && (
+                                                <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
+                                                    <span className="font-semibold">Overlay will include:</span>{' '}
+                                                    {[
+                                                        pendingNiche,
+                                                        (() => { try { return localStorage.getItem('overlayOfferLine') || ''; } catch(_){return '';} })(),
+                                                        pushModal?.cta_button || 'GET MY QUOTE',
+                                                    ].filter(Boolean).join(' · ')}
+                                                    {(() => { try { return localStorage.getItem('overlayLogoUrl'); } catch(_){return '';} })() ? ' · logo' : ''}
+                                                </div>
+                                            )}
                                             <button
                                                 type="button"
                                                 onClick={handleGenerateImageInline}

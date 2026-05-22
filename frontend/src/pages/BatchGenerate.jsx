@@ -185,7 +185,10 @@ export default function BatchGenerate() {
   // Text overlay
   const [overlayEnabled, setOverlayEnabled] = useState(true);
   const [overlayNicheLine, setOverlayNicheLine] = useState('');
-  const [overlayOfferLine, setOverlayOfferLine] = useState('');
+  // Offer line: persisted in localStorage so Joel doesn't retype every session
+  const [overlayOfferLine, setOverlayOfferLine] = useState(() => {
+    try { return localStorage.getItem('overlayOfferLine') || ''; } catch (_) { return ''; }
+  });
   // Logo: persisted in localStorage so Joel doesn't re-upload every session
   const [overlayLogoUrl, setOverlayLogoUrl] = useState(() => {
     try { return localStorage.getItem('overlayLogoUrl') || ''; } catch (_) { return ''; }
@@ -783,7 +786,10 @@ export default function BatchGenerate() {
                     placeholder="From $24.95/Month"
                     className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400"
                     value={overlayOfferLine}
-                    onChange={e => setOverlayOfferLine(e.target.value)}
+                    onChange={e => {
+                      setOverlayOfferLine(e.target.value);
+                      try { localStorage.setItem('overlayOfferLine', e.target.value); } catch (_) {}
+                    }}
                   />
                   <p className="text-xs text-gray-400 mt-1">Appears below the headline. Leave blank to omit.</p>
                 </div>

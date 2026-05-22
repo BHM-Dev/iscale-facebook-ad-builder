@@ -48,4 +48,4 @@ EXPOSE 8000
 # Create tables from models, seed DB (roles + optional admin), run any pending
 # Alembic migrations (idempotent — baseline skips CREATE TABLE if tables exist),
 # then start the application.
-CMD python init_db.py && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+CMD python init_db.py && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --timeout-keep-alive 300
