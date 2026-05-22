@@ -11,7 +11,7 @@ Facebook ad builder used daily by Joel Welch (media buyer). Connects to Meta Ads
 **Tech stack:** React 19 + Vite + TailwindCSS (frontend) | FastAPI + PostgreSQL (backend) | Python 3.11+  
 **Hosting:** AWS Lightsail VPS (Golden's server). NOT Railway — do not reference Railway dashboard or Railway env vars.  
 **Repo:** `BHM-Dev/iscale-facebook-ad-builder`  
-**Deploy:** Push to `sunbunzz627` fork → PR to `BHM-Dev:develop` → Golden reviews + merges + restarts VPS. NO auto-deploy.  
+**Deploy:** Push directly to `BHM-Dev:develop` (`git push origin develop`). VPS auto-deploys on every push. **Only message Golden if the push includes a DB migration.**  
 **Storage:** Cloudflare R2 (S3-compatible) for generated/uploaded images when `r2_enabled` is true.
 
 ---
@@ -41,17 +41,19 @@ Joel thinks in Meta Ads Manager terms. Any UX that diverges from how Ads Manager
 
 | Page | Route | Purpose |
 |------|-------|---------|
-| Dashboard | `/` | Performance overview |
+| Dashboard | `/` | Performance overview. Needs Attention click-through fixed (2026-05-21) |
 | Campaign Performance | `/campaign-performance` | Live Meta insights, brand assignment, Remix drawer |
-| Ad Remix | `/ad-remix` | 6-step wizard: Template → Brand → Product → Profile → Campaign → Review |
-| Batch Generate | `/batch-generate` | Bulk image generation with copy variants |
+| Ad Remix | `/ad-remix` | 6-step wizard. Overlay fields wired (2026-05-21). |
+| Batch Generate | `/batch-generate` | Bulk image generation. Gold standard for overlays. Reads `adId` param from Iterate. |
+| Image Ads | `/image-ads` | Full 8-step wizard. Overlay panel added to Step 7 (2026-05-21). |
 | Brands | `/brands` | Brand management |
 | Products | `/products` | Product management (stored inside brands) |
 | Customer Profiles | `/profiles` | Audience profiles linked to brands |
 | Winning Ads | `/winning-ads` | Template library |
 | Facebook Campaigns | `/facebook-campaigns` | Campaign/ad set/ad management |
 | Research | `/research` | Competitor ad scraping |
-| Generated Ads | `/generated-ads` | Gallery of AI-generated ads |
+| Generated Ads | `/generated-ads` | Gallery of AI-generated ads. Batch delete added. |
+| User Management | `/users` | Admin-only. Create users with optional superuser flag. |
 
 ---
 
@@ -83,7 +85,7 @@ If `alembic upgrade head` fails, backend never starts. ALL endpoints (including 
 **Chain must be linear — single head only.** `scripts/check_alembic_heads.py` blocks `git push` if multiple heads exist. Run it before every push.
 
 **Current chain:**
-`1b02d74254e5` → `d8f2e1a7b4c9` → `e3a1f9b2c8d4` → `f4b2c8d9e1a7` → `a1b3c5d7e9f2` → `b2c4d6e8f0a1` → `g5c3d9e0f2b8` → `h6d4e0f1g3c9`
+`1b02d74254e5` → `d8f2e1a7b4c9` → `e3a1f9b2c8d4` → `f4b2c8d9e1a7` → `a1b3c5d7e9f2` → `b2c4d6e8f0a1` → `g5c3d9e0f2b8` → `h6d4e0f1g3c9` → `i7e5f1g2h4d0` → `j8f6g2h3i5e1`
 
 Every new migration's `down_revision` must point to the current single head. The branched chain was the root cause of the login outage on 2026-05-10.
 
@@ -122,6 +124,8 @@ URLs from Meta's CDN expire within minutes to hours. `reconstruct-from-url` endp
 
 - `pendingRemixCreative` — written by Remix drawer "Build Ad ↗", read by `/ad-remix` on mount, deleted immediately after reading
 - `pendingBatchCopy` — written by Ad Remix results page, read by `/batch-generate`
+- `overlayLogoUrl` — **shared across BatchGenerate, AdRemix, ImageAds**. Written on logo upload, read on mount by all three pages. R2 URL, doesn't expire.
+- `overlayOfferLine` — **shared across BatchGenerate, AdRemix, ImageAds**. Written on every keystroke, read on mount. Persists the "From $24.95/Month" line so Joel never retypes it.
 
 ### Copy Generation
 
@@ -138,8 +142,10 @@ Avatar voice matching baked in by vertical: auto insurance, commercial, personal
 | `PATCH` | `/facebook/adsets/{id}/brand` | Assign or clear brand on an adset |
 | `POST` | `/copy-generation/remix-variations` | Generate 3 remix copy variations (Gemini) |
 | `POST` | `/ad-remix/reconstruct-from-url` | Generate ad concept from Meta image URL (with expiry fallback) |
-| `GET` | `/facebook/ads/{fb_ad_id}/creative` | Fetch headline/body/image from Meta for any ad ID |
+| `GET` | `/facebook/ads/{fb_ad_id}/creative` | Fetch headline/body/image from Meta + overlay fields from local DB |
 | `GET` | `/auto-pause/insights/{fb_adset_id}` | Live Meta Insights for a single ad set |
+| `POST` | `/auth/bootstrap` | One-time admin account creation. Validated against `SECRET_KEY`. |
+| `PATCH` | `/generated-ads/{id}/fb-ad-id` | Write Meta ad ID back to local DB after push. Enables Iterate to restore overlays. |
 
 ### `FacebookService()` Constructor
 
@@ -393,14 +399,28 @@ API docs: `http://localhost:8000/api/v1/docs`
 
 ## Pending Features / Known Gaps
 
-- [ ] OpenAI API swap (waiting on Golden to add keys to VPS): `gpt-5.1` for `/generate`, `gpt-4.1-mini` for `/remix-variations`
+### Recently shipped (2026-05-21 session)
+- [x] CTA button (orange pill) baked into overlays via `text_overlay_service.py`
+- [x] Pexels removed — all image generation via kie.ai (Flux Kontext Pro)
+- [x] Batch delete in Generated Ads library
+- [x] User Management — admin toggle, `POST /users/` endpoint
+- [x] `POST /auth/bootstrap` — first admin account creation without VPS access
+- [x] Dashboard Needs Attention click-through fixed (CPL criterion added to `isFlagged`)
+- [x] Overlay consistency: offer line persists in localStorage, AdRemix wired, ImageAds overlay panel added
+- [x] Iterate restores overlay (offer line + logo) from local DB via `fb_ad_id` write-back
+- [x] `--timeout-keep-alive 300` on uvicorn — fixes Ad Remix connection drops during kie.ai polling
+
+### Still pending
+- [ ] **Steven's admin account** — bootstrap curl command ready, waiting on Golden to confirm `SECRET_KEY` value or run it on VPS
+- [ ] OpenAI API swap (waiting on Golden to add keys): `gpt-5.1` for `/generate`, `gpt-4.1-mini` for `/remix-variations`
+- [ ] ImageAds "Quick Generate" mode — skip wizard, go straight to niche+copy+generate for media buyers with existing copy
 - [ ] Rename "Ad Remix" nav link → "Build New Ad"
-- [ ] Slack Campaign Intelligence Bot — spec at `SLACK_INTELLIGENCE_SPEC.md`. On-demand (`@AdBuilder update`), daily 9am ET proactive, threshold alerts. Gemini analysis assigns SCALE/WATCH/CUT tiers.
+- [ ] Slack Campaign Intelligence Bot — spec at `SLACK_INTELLIGENCE_SPEC.md`
 - [ ] Auto-pause scaling rules (increase budget when CPL drops below threshold)
 - [ ] Ad-level pausing (pause individual ads, not just ad sets)
 - [ ] Rule audit log (persistent trigger history with metric values)
-- [ ] Time-window restrictions on auto-pause rules (avoid noisy early-morning data)
-- [ ] CI `alembic-round-trip` test fix — pre-existing failure; baseline migration `downgrade()` missing `op.drop_table()` calls for several tables
+- [ ] Time-window restrictions on auto-pause rules
+- [ ] CI `alembic-round-trip` test fix — pre-existing failure
 - [ ] Weekly UX audit cron posting to `#media-buys`
 
 ---
