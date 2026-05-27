@@ -126,6 +126,7 @@ export default function Dashboard() {
   const [insightsError, setInsightsError] = useState(null);
   const [adsets, setAdsets] = useState([]);
   const [bulkInsights, setBulkInsights] = useState({});
+  const [nicheSummary, setNicheSummary] = useState([]);
   const [rules, setRules] = useState([]);
 
   // AI Insights panel state
@@ -144,6 +145,7 @@ export default function Dashboard() {
     setLoading(true);
     setInsightsError(null);
     setBulkInsights({}); // clear stale data so KPIs show — while loading
+    setNicheSummary([]);
     try {
       // Always use the backend-configured account ID as the source of truth.
       // Fall back to localStorage only if the config endpoint is unavailable.
@@ -175,9 +177,10 @@ export default function Dashboard() {
         return authFetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(tid));
       };
 
-      const [adsetsRes, insightsRes, rulesRes] = await Promise.all([
+      const [adsetsRes, insightsRes, nicheRes, rulesRes] = await Promise.all([
         timedFetch(`${API_URL}/facebook/adsets/saved`, 10000),
         timedFetch(`${API_URL}/auto-pause/insights-bulk?${insightsParams}`, 25000),
+        timedFetch(`${API_URL}/dashboard/niche-summary?${insightsParams}`, 25000),
         timedFetch(`${API_URL}/auto-pause/rules`, 10000),
       ]);
       if (adsetsRes.ok)   setAdsets(await adsetsRes.json());
@@ -187,13 +190,18 @@ export default function Dashboard() {
         const err = await insightsRes.json().catch(() => ({}));
         setInsightsError(err.detail || `Meta API error (${insightsRes.status}) — try a different date range`);
       }
+      if (nicheRes.ok) {
+        setNicheSummary(await nicheRes.json());
+      } else {
+        showError(`Niche summary unavailable (${nicheRes.status})`);
+      }
       if (rulesRes.ok)    setRules(await rulesRes.json());
     } catch (e) {
       if (e.name !== 'AbortError') setInsightsError('Request timed out — check your connection and try again');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [showError]);
 
   const syncRT = useCallback(async () => {
     setSyncingRT(true);
@@ -267,6 +275,24 @@ export default function Dashboard() {
   const rtConvs      = rows.reduce((s, r) => s + (r.redtrack?.conversions || 0), 0);
   const rtRoas       = totalSpend > 0 && rtRevenue > 0 ? rtRevenue / totalSpend : null;
   const activeCount  = adsets.filter(a => a.status === 'ACTIVE').length;
+  const cplRanks = nicheSummary
+    .filter(row => row.avg_cpl != null)
+    .map(row => row.avg_cpl)
+    .sort((a, b) => a - b);
+
+  function formatMoney(value) {
+    return value != null
+      ? `$${Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      : '—';
+  }
+
+  function cplClass(avgCpl) {
+    if (avgCpl == null || cplRanks.length < 2) return 'text-gray-500';
+    const rank = cplRanks.findIndex(value => value === avgCpl);
+    if (rank < Math.ceil(cplRanks.length / 3)) return 'text-green-600';
+    if (rank >= Math.floor((cplRanks.length * 2) / 3)) return 'text-red-600';
+    return 'text-gray-700';
+  }
 
   // Human-readable subtitle for selected range
   const rangeLabel = activeRange.dateFrom && activeRange.dateTo
@@ -480,6 +506,62 @@ export default function Dashboard() {
           highlight={rtRoas != null && rtRoas < 1}
           warn={rtRoas != null && rtRoas >= 1 && rtRoas < 1.5}
         />
+      </div>
+
+      {/* Performance by Niche */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h2 className="font-semibold text-gray-900 flex items-center gap-2 text-sm">
+            <TrendingUp size={15} className="text-indigo-500" />
+            Performance by Niche
+          </h2>
+          <span className="text-xs text-gray-400">{rangeLabel}</span>
+        </div>
+        {loading ? (
+          <div className="p-5 space-y-3">
+            {[0, 1, 2].map(row => (
+              <div key={row} className="grid grid-cols-5 gap-4 items-center">
+                <div className="col-span-2 h-4 rounded bg-gray-100 animate-pulse" />
+                <div className="h-4 rounded bg-gray-100 animate-pulse" />
+                <div className="h-4 rounded bg-gray-100 animate-pulse" />
+                <div className="h-4 rounded bg-gray-100 animate-pulse" />
+              </div>
+            ))}
+          </div>
+        ) : nicheSummary.length === 0 ? (
+          <div className="px-5 py-8 text-center text-sm text-gray-400">
+            No niche data available for this period.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  <th className="px-5 py-3">Niche</th>
+                  <th className="px-5 py-3 text-right">Ad Sets</th>
+                  <th className="px-5 py-3 text-right">Spend</th>
+                  <th className="px-5 py-3 text-right">CPL</th>
+                  <th className="px-5 py-3 text-right">ROAS</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {nicheSummary.map(row => (
+                  <tr key={row.niche} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-5 py-3 font-medium text-gray-900">{row.niche}</td>
+                    <td className="px-5 py-3 text-right text-gray-500">{row.adset_count}</td>
+                    <td className="px-5 py-3 text-right text-gray-700">{formatMoney(row.total_spend)}</td>
+                    <td className={`px-5 py-3 text-right font-semibold ${cplClass(row.avg_cpl)}`}>
+                      {formatMoney(row.avg_cpl)}
+                    </td>
+                    <td className="px-5 py-3 text-right text-gray-700">
+                      {row.avg_roas != null ? `${Number(row.avg_roas).toFixed(2)}x` : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Needs Attention + Top Performers */}
