@@ -543,6 +543,10 @@ Do not suggest `./venv/bin/python ...` or `source venv/bin/activate` for VPS wor
 
 ## Pending Features / Known Gaps
 
+### Recently shipped (2026-05-27)
+- [x] **Performance by Niche dashboard section** — New table on Dashboard aggregates Meta ad set performance by niche (extracted from ad set name pattern `[Date] - [Niche] - [Batch]`). Shows Niche | Ad Sets | Spend | CPL | Leads. `adset_name` now flows through `get_account_insights_bulk()` → `GET /dashboard/niche-summary` endpoint. CPL color-rank guard: only fires when ≥5 niches to avoid misleading coloring with small datasets.
+- [x] **Rename "Ad Remix" → "Build New Ad"** — Nav link, sidebar label, page h1, tool card, and `prompts.js` constant all updated. AdRemix.jsx route (`/ad-remix`) unchanged — internal only.
+
 ### Recently shipped (2026-05-22)
 - [x] **Steven's admin account created on VPS** — Golden ran `docker exec` into backend container; superuser `ssun@brighthorizonsmedia.com` confirmed created. Confirmed Docker-on-VPS architecture (no local venv).
 - [x] AI Tool Routing + Codex Quick Reference added to CLAUDE.md so Codex sessions can jump in cold.
@@ -560,8 +564,10 @@ Do not suggest `./venv/bin/python ...` or `source venv/bin/activate` for VPS wor
 
 ### Still pending
 - [ ] OpenAI API swap (waiting on Golden to add keys): `gpt-5.1` for `/generate`, `gpt-4.1-mini` for `/remix-variations`
+- [ ] **AdRemix.jsx h1/subhead copy mismatch** — h1 says "Build New Ad" but subhead still says "Deconstruct winning ads and reconstruct them with your brand." Subhead needs a rewrite to match the new framing. (Codex task — pure copy edit, no trigger files.)
+- [ ] **README.md / BUILD_SUMMARY.md doc drift** — user-facing feature descriptions still say "Ad Remix" in several places. (Codex task — docs only, no agent review needed.)
 - [ ] ImageAds "Quick Generate" mode — skip wizard, go straight to niche+copy+generate for media buyers with existing copy
-- [ ] Rename "Ad Remix" nav link → "Build New Ad"
+- [ ] Template-first Quick Generate — Joel's real workflow starts from a proven winning ad, not from scratch. Tool needs a "start from my winning ad" entry point on the Dashboard or Campaign Performance page.
 - [ ] Slack Campaign Intelligence Bot — spec at `SLACK_INTELLIGENCE_SPEC.md`
 - [ ] Auto-pause scaling rules (increase budget when CPL drops below threshold)
 - [ ] Ad-level pausing (pause individual ads, not just ad sets)
