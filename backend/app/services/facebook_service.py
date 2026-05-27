@@ -993,6 +993,7 @@ class FacebookService:
             if not fb_adset_id:
                 continue
 
+            adset_name = str(row.get('adset_name') or '')
             spend      = float(row.get('spend', 0) or 0)
             impressions = int(row.get('impressions', 0) or 0)
             reach       = int(row.get('reach', 0) or 0)
@@ -1033,6 +1034,7 @@ class FacebookService:
                 roas = round(revenue / spend, 2)
 
             out[fb_adset_id] = {
+                'adset_name':  adset_name,
                 'spend':       round(spend, 2),
                 'leads':       leads,
                 'cpl':         round(cpl, 2) if cpl is not None else None,
