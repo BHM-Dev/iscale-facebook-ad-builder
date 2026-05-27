@@ -287,7 +287,7 @@ export default function Dashboard() {
   }
 
   function cplClass(avgCpl) {
-    if (avgCpl == null || cplRanks.length < 2) return 'text-gray-500';
+    if (avgCpl == null || cplRanks.length < 5) return 'text-gray-500';
     const rank = cplRanks.findIndex(value => value === avgCpl);
     if (rank < Math.ceil(cplRanks.length / 3)) return 'text-green-600';
     if (rank >= Math.floor((cplRanks.length * 2) / 3)) return 'text-red-600';
@@ -541,7 +541,7 @@ export default function Dashboard() {
                   <th className="px-5 py-3 text-right">Ad Sets</th>
                   <th className="px-5 py-3 text-right">Spend</th>
                   <th className="px-5 py-3 text-right">CPL</th>
-                  <th className="px-5 py-3 text-right">ROAS</th>
+                  <th className="px-5 py-3 text-right">Leads</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -554,7 +554,7 @@ export default function Dashboard() {
                       {formatMoney(row.avg_cpl)}
                     </td>
                     <td className="px-5 py-3 text-right text-gray-700">
-                      {row.avg_roas != null ? `${Number(row.avg_roas).toFixed(2)}x` : '—'}
+                      {row.total_leads != null ? row.total_leads : '—'}
                     </td>
                   </tr>
                 ))}

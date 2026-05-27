@@ -63,23 +63,19 @@ def get_niche_summary(
                     "niche": niche,
                     "adset_count": 0,
                     "total_spend": 0.0,
+                    "total_leads": 0,
                     "cpl_total": 0.0,
                     "cpl_count": 0,
-                    "roas_total": 0.0,
-                    "roas_count": 0,
                 },
             )
 
             bucket["adset_count"] += 1
             bucket["total_spend"] += float(row.get("spend") or 0)
+            bucket["total_leads"] += int(row.get("leads") or 0)
 
             if row.get("cpl") is not None:
                 bucket["cpl_total"] += float(row["cpl"])
                 bucket["cpl_count"] += 1
-
-            if row.get("roas") is not None:
-                bucket["roas_total"] += float(row["roas"])
-                bucket["roas_count"] += 1
 
         summary = []
         for bucket in by_niche.values():
@@ -87,8 +83,8 @@ def get_niche_summary(
                 "niche": bucket["niche"],
                 "adset_count": bucket["adset_count"],
                 "total_spend": round(bucket["total_spend"], 2),
+                "total_leads": bucket["total_leads"],
                 "avg_cpl": round(bucket["cpl_total"] / bucket["cpl_count"], 2) if bucket["cpl_count"] else None,
-                "avg_roas": round(bucket["roas_total"] / bucket["roas_count"], 2) if bucket["roas_count"] else None,
             })
 
         return sorted(summary, key=lambda item: item["total_spend"], reverse=True)
