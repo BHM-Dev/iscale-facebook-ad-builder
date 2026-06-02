@@ -7,7 +7,7 @@ import os
 import json
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Prompt
+from app.models import AdCopyLibrary, Prompt
 from app.utils.json_utils import extract_json_from_response
 
 router = APIRouter()
@@ -19,6 +19,36 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 _anthropic_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 
 _MODEL = "claude-sonnet-4-5-20250929"
+
+
+def _get_library_examples(db: Session, niche: str | None = None, limit: int = 5) -> str:
+    """Return formatted few-shot examples from Joel's copy library.
+    Prefers pinned entries, then filters by niche if provided.
+    Returns empty string if library is empty."""
+    q = db.query(AdCopyLibrary)
+    if niche:
+        q = q.filter(AdCopyLibrary.niche.ilike(f"%{niche}%"))
+    entries = (
+        q.order_by(AdCopyLibrary.is_pinned.desc(), AdCopyLibrary.imported_at.desc())
+        .limit(limit)
+        .all()
+    )
+    if not entries:
+        return ""
+    lines = ["---\n\nJOEL'S REAL ADS — STUDY THESE. Match this voice, rhythm, and vocabulary exactly. Do NOT copy them — write new ads in the same style.\n"]
+    for i, e in enumerate(entries, 1):
+        lines.append(f"Example {i} ({e.niche or 'General'}):\nHeadline: {e.headline}\nBody:\n{e.body}\n")
+    return "\n".join(lines)
+
+
+def _inject_library_examples(prompt: str, library_examples: str) -> str:
+    if not library_examples or "JOEL'S REAL ADS" in prompt:
+        return prompt
+    marker = "STEP 4 — LEAD GEN COMPLIANCE RULES"
+    if marker in prompt:
+        return prompt.replace(marker, f"{library_examples}\n\n{marker}", 1)
+    return f"{prompt}\n\n{library_examples}"
+
 
 class CopyGenerationRequest(BaseModel):
     brand: Dict[str, Any]
@@ -38,7 +68,7 @@ class FieldRegenerationRequest(BaseModel):
     template: Optional[Dict[str, Any]] = None
     campaignDetails: Dict[str, str]
 
-def _build_default_prompt(count: int, request: "CopyGenerationRequest") -> str:
+def _build_default_prompt(count: int, request: "CopyGenerationRequest", library_examples: str = "") -> str:
     return f"""You are a direct response copywriter trained on Eugene Schwartz's Breakthrough Advertising. You write Facebook lead gen ads for financial and insurance verticals — auto insurance, commercial insurance, home insurance, reverse mortgage, personal loans, debt relief.
 
 Your job is not to write "ad copy." Your job is to take a mass desire that already exists inside this avatar — a frustration, a fear, a hope — and channel it precisely toward one action: clicking to qualify. You do not create desire. You locate it and focus it.
@@ -99,6 +129,8 @@ Examples of avatar voice by vertical:
 Use short sentences. Use "you." Use the specific words they use — not polished corporate language. The copy should feel like it was written by someone who understood them, not by someone selling at them. AI-generated language is fine as long as it reads naturally — no stiff phrasing, no robotic transitions.
 
 ---
+
+{library_examples}
 
 STEP 4 — LEAD GEN COMPLIANCE RULES (never break these)
 
@@ -193,6 +225,8 @@ async def generate_copy(request: CopyGenerationRequest, db: Session = Depends(ge
 
     try:
         count = request.variationCount
+        niche = request.campaignDetails.get('niche') or None
+        library_examples = _get_library_examples(db, niche=niche)
 
         # Use explicit custom prompt if provided, otherwise check DB for an edited system prompt,
         # then fall back to the built-in default
@@ -212,9 +246,12 @@ async def generate_copy(request: CopyGenerationRequest, db: Session = Depends(ge
                     offer=request.campaignDetails.get('offer', ''),
                     messaging=request.campaignDetails.get('messaging', ''),
                     design_style=request.template.get('design_style', 'Modern and clean') if request.template else 'Modern and clean',
+                    library_examples=library_examples,
                 )
             else:
-                prompt = _build_default_prompt(count, request)
+                prompt = _build_default_prompt(count, request, library_examples=library_examples)
+
+        prompt = _inject_library_examples(prompt, library_examples)
 
         response = await _anthropic_client.messages.create(
             model=_MODEL,
@@ -239,13 +276,14 @@ async def generate_copy(request: CopyGenerationRequest, db: Session = Depends(ge
         raise HTTPException(status_code=500, detail=f"Copy generation failed: {str(e)}")
 
 @router.post("/regenerate-field")
-async def regenerate_field(request: FieldRegenerationRequest):
+async def regenerate_field(request: FieldRegenerationRequest, db: Session = Depends(get_db)):
     """Regenerate a specific field (headline, body, or cta)"""
 
     if not _anthropic_client:
         raise HTTPException(status_code=500, detail="Anthropic API key not configured")
 
     try:
+        library_examples = _get_library_examples(db)
         field_prompts = {
             "headline": "Generate a new headline (under 40 characters)",
             "body": "Generate new body copy using Joel's line-break format: short lines (one thought each), 4 sections (Hook / Problem Agitation / Solution+Niche / CTA Close), sections separated by blank lines (\\n\\n), lines within sections separated by \\n. Total 250–500 characters. NEVER a single paragraph.",
@@ -265,6 +303,8 @@ CORE MESSAGE: {request.campaignDetails.get('messaging')}
 Current {request.field}: {request.currentValue}
 
 {field_prompts.get(request.field, 'Generate new copy')} that is DIFFERENT from the current value above.
+
+{library_examples}
 
 Rules:
 - Write in the avatar's voice — short sentences, "you" language, words they'd actually use (think Reddit/forum voice, not corporate ad copy)
@@ -306,7 +346,7 @@ class RemixVariationsRequest(BaseModel):
 
 
 @router.post("/remix-variations")
-async def remix_variations(request: RemixVariationsRequest):
+async def remix_variations(request: RemixVariationsRequest, db: Session = Depends(get_db)):
     """Generate 3 remix variations of a winning ad using a new hook and/or niche.
 
     Kept separate from /generate because remix has a fundamentally different input
@@ -317,6 +357,8 @@ async def remix_variations(request: RemixVariationsRequest):
 
     if not _anthropic_client:
         raise HTTPException(status_code=500, detail="Anthropic API key not configured")
+
+    library_examples = _get_library_examples(db, niche=request.niche or None)
 
     prompt = f"""You are a direct response copywriter trained on Eugene Schwartz's Breakthrough Advertising. You write Facebook lead gen ads for {request.vertical.replace('_', ' ')} — NOT ecommerce. No discounts, no products to buy. Ads drive form submissions.
 
@@ -331,6 +373,8 @@ REMIX PARAMETERS:
 - Niche: {request.niche or 'same as original'}
 - Brand: {request.brand_name or 'not specified'}
 {f'- Brand voice: {request.brand_voice}' if request.brand_voice else ''}
+
+{library_examples}
 
 RULES:
 - Each variation keeps the same emotional core as the winning ad but uses different words, structure, or proof

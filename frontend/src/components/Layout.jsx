@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Package, Users, Video, Wand2, Settings, LogOut, Image, ShoppingBag, Target, ChevronLeft, ChevronRight, FileImage, Search, ChevronDown, UserCog, TrendingDown, Zap, Shuffle, PauseCircle, Megaphone } from 'lucide-react';
+import { LayoutDashboard, Package, Users, Video, Wand2, Settings, LogOut, Image, ShoppingBag, Target, ChevronLeft, ChevronRight, FileImage, Search, ChevronDown, UserCog, TrendingDown, Zap, Shuffle, PauseCircle, Megaphone, BookOpen } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
@@ -84,6 +84,7 @@ export default function Layout() {
                 { label: 'Campaign Builder', path: '/facebook-campaigns',  icon: Megaphone },
             ]
         },
+        { icon: BookOpen, label: 'Copy Library', path: '/copy-library' },
     ];
 
     const toggleMenu = (label) => {

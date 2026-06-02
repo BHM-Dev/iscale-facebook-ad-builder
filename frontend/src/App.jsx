@@ -34,6 +34,7 @@ import ResearchSettings from './pages/ResearchSettings';
 import BrandScrapes from './pages/BrandScrapes';
 import AdRemix from './pages/AdRemix';
 import BatchGenerate from './pages/BatchGenerate';
+import CopyLibrary from './pages/CopyLibrary';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
 import UserManagement from './pages/UserManagement';
@@ -71,6 +72,7 @@ function App() {
                   <Route path="auto-pause-rules" element={<AutoPauseRules />} />
                   <Route path="winning-ads" element={<WinningAds />} />
                   <Route path="generated-ads" element={<GeneratedAds />} />
+                  <Route path="copy-library" element={<CopyLibrary />} />
                   <Route path="brands" element={<Brands />} />
                   <Route path="products" element={<Products />} />
                   <Route path="profiles" element={<CustomerProfiles />} />
