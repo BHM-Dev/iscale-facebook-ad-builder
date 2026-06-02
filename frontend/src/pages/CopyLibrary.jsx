@@ -44,6 +44,21 @@ function BodyCell({ text }) {
   );
 }
 
+function SortHeader({ label, colKey, sortKey, sortDir, onSort }) {
+  const active = sortKey === colKey;
+  return (
+    <th
+      className="px-5 py-3 w-px whitespace-nowrap cursor-pointer select-none hover:text-gray-700"
+      onClick={() => onSort(colKey)}
+    >
+      {label}
+      <span className="ml-1 text-gray-400">
+        {active ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+      </span>
+    </th>
+  );
+}
+
 export default function CopyLibrary() {
   const { showSuccess, showError, showWarning } = useToast();
   const [entries, setEntries] = useState([]);
@@ -51,6 +66,8 @@ export default function CopyLibrary() {
   const [syncing, setSyncing] = useState(false);
   const [selectedNiche, setSelectedNiche] = useState('');
   const [showSyncBanner, setShowSyncBanner] = useState(false);
+  const [sortKey, setSortKey] = useState('imported_at');
+  const [sortDir, setSortDir] = useState('desc');
 
   const niches = useMemo(() => {
     const values = entries
@@ -63,6 +80,24 @@ export default function CopyLibrary() {
     if (!selectedNiche) return entries;
     return entries.filter(entry => entry.niche === selectedNiche);
   }, [entries, selectedNiche]);
+
+  const sortedEntries = useMemo(() => {
+    return [...filteredEntries].sort((a, b) => {
+      const av = a[sortKey] ?? '';
+      const bv = b[sortKey] ?? '';
+      const cmp = String(av).localeCompare(String(bv), undefined, { numeric: true });
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [filteredEntries, sortKey, sortDir]);
+
+  const handleSort = (colKey) => {
+    if (sortKey === colKey) {
+      setSortDir(current => current === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(colKey);
+      setSortDir('asc');
+    }
+  };
 
   const loadEntries = async () => {
     setLoading(true);
@@ -203,9 +238,9 @@ export default function CopyLibrary() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
-                <th className="px-5 py-3 w-px whitespace-nowrap">Niche</th>
-                <th className="px-5 py-3 w-px whitespace-nowrap">Status</th>
-                <th className="px-5 py-3">Headline</th>
+                <SortHeader label="Niche" colKey="niche" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Headline" colKey="headline" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-5 py-3">Body</th>
                 <th className="px-5 py-3 text-center">Pinned</th>
                 <th className="px-5 py-3 text-center">Delete</th>
@@ -221,7 +256,7 @@ export default function CopyLibrary() {
                   </td>
                 </tr>
               ) : (
-                filteredEntries.map(entry => (
+                sortedEntries.map(entry => (
                   <tr key={entry.id} className="hover:bg-gray-50 transition-colors align-top">
                     <td className="px-5 py-4 w-px font-medium text-gray-900 whitespace-nowrap">{entry.niche || 'General'}</td>
                     <td className="px-5 py-4 w-px whitespace-nowrap">
@@ -236,7 +271,7 @@ export default function CopyLibrary() {
                       )}
                     </td>
                     <td className="px-5 py-4 text-gray-800 min-w-48">{entry.headline}</td>
-                    <td className="px-5 py-4 min-w-96"><BodyCell text={entry.body} /></td>
+                    <td className="px-5 py-4 min-w-96 w-full"><BodyCell text={entry.body} /></td>
                     <td className="px-5 py-4 text-center">
                       <button
                         type="button"
