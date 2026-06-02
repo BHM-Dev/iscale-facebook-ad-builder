@@ -203,8 +203,8 @@ export default function CopyLibrary() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
-                <th className="px-5 py-3">Niche</th>
-                <th className="px-5 py-3">Status</th>
+                <th className="px-5 py-3 w-px whitespace-nowrap">Niche</th>
+                <th className="px-5 py-3 w-px whitespace-nowrap">Status</th>
                 <th className="px-5 py-3">Headline</th>
                 <th className="px-5 py-3">Body</th>
                 <th className="px-5 py-3 text-center">Pinned</th>
@@ -223,8 +223,8 @@ export default function CopyLibrary() {
               ) : (
                 filteredEntries.map(entry => (
                   <tr key={entry.id} className="hover:bg-gray-50 transition-colors align-top">
-                    <td className="px-5 py-4 font-medium text-gray-900 whitespace-nowrap">{entry.niche || 'General'}</td>
-                    <td className="px-5 py-4 whitespace-nowrap">
+                    <td className="px-5 py-4 w-px font-medium text-gray-900 whitespace-nowrap">{entry.niche || 'General'}</td>
+                    <td className="px-5 py-4 w-px whitespace-nowrap">
                       {entry.status && (
                         <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
                           entry.status === 'ACTIVE'
