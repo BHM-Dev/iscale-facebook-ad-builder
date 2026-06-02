@@ -577,6 +577,7 @@ Do not suggest `./venv/bin/python ...` or `source venv/bin/activate` for VPS wor
 
 ### Still pending
 - [ ] **Copy Library performance data** — pull ad-level spend + CPL from Meta during sync, populate existing `spend`/`cpl` columns, add Spend + CPL columns to table (sortable). Phase 2: weight few-shot injection toward low-CPL pinned ads. Full spec: `COPY_LIBRARY_PERFORMANCE_SPEC.md`. Touches `facebook_service.py` — 2-agent review required.
+- [ ] **Research section Phase 1** — card gallery UI, 3 verticals (Commercial Insurance, Auto Insurance, Home Services w/ 7 sub-verticals), pre-configured keyword sets, angle tagging, "Use as Inspiration" → Build New Ad localStorage handoff. Full spec: `RESEARCH_PHASE1_SPEC.md`. Touches `models.py` (angle_tag migration) + `AdRemix.jsx`.
 - [ ] OpenAI API swap (waiting on Golden to add keys): `gpt-5.1` for `/generate`, `gpt-4.1-mini` for `/remix-variations`
 - [ ] **AdRemix.jsx h1/subhead copy mismatch** — h1 says "Build New Ad" but subhead still says "Deconstruct winning ads and reconstruct them with your brand." Subhead needs a rewrite to match the new framing. (Codex task — pure copy edit, no trigger files.)
 - [ ] **README.md / BUILD_SUMMARY.md doc drift** — user-facing feature descriptions still say "Ad Remix" in several places. (Codex task — docs only, no agent review needed.)
