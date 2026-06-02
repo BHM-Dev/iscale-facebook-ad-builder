@@ -522,6 +522,24 @@ class BrandScrapedAd(Base):
     brand_scrape = relationship("BrandScrape", back_populates="ads")
 
 
+class AdCopyLibrary(Base):
+    """Joel's real winning ad copy — used as few-shot examples in copy generation prompts."""
+    __tablename__ = "ad_copy_library"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    fb_ad_id = Column(String, unique=True, index=True, nullable=False)
+    fb_adset_id = Column(String, nullable=True, index=True)
+    adset_name = Column(String, nullable=True)            # raw adset name from Meta
+    niche = Column(String, nullable=True, index=True)     # extracted from adset name
+    headline = Column(Text, nullable=False)
+    body = Column(Text, nullable=False)
+    cta_type = Column(String, nullable=True)
+    spend = Column(Numeric(precision=10, scale=2), nullable=True)   # for ranking
+    cpl = Column(Numeric(precision=8, scale=2), nullable=True)      # lower = better
+    is_pinned = Column(Boolean, default=False)            # Joel pins his best examples
+    imported_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class RedTrackCache(Base):
     """Cached RedTrack report data per Meta ad set, refreshed every 30 minutes."""
     __tablename__ = "redtrack_cache"

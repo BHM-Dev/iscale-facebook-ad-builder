@@ -58,7 +58,7 @@ def find_heads(versions_dir: str) -> dict[str, str]:
         if down_match:
             raw = down_match.group(1).strip()
             # Extract all quoted revision IDs from the value
-            for r in re.findall(r"['\"]([0-9a-f]{12})['\"]", raw):
+            for r in re.findall(r"['\"](\w{12})['\"]", raw):
                 down_refs.add(r)
 
     return {r: revisions[r] for r in revisions if r not in down_refs}

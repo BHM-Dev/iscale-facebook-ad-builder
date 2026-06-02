@@ -1304,3 +1304,98 @@ class FacebookService:
             msg = err.get('message') or str(e)
             logger.error("Failed to fetch creative for ad %s: %s", fb_ad_id, msg)
             raise RuntimeError(f"Facebook API: {msg}") from e
+
+    def get_account_ads_with_creative(self, ad_account_id=None):
+        """Bulk-fetch all ACTIVE/PAUSED ads with their creative text for the copy library.
+
+        Uses a single paginated batch call with nested creative fields — much more
+        efficient than calling get_ad_creative() per ad.
+
+        Returns a list of dicts:
+            {
+                "fb_ad_id": str,
+                "fb_adset_id": str,
+                "adset_name": str,      # raw name — caller extracts niche
+                "ad_name": str,
+                "headline": str | None,
+                "body": str | None,
+                "cta_type": str | None,
+            }
+
+        Ads missing both headline and body are skipped (no usable copy text).
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        account = self._get_account(ad_account_id)
+
+        # NOTE: The facebook-business SDK silently drops nested field syntax like
+        # 'adset{name}' (same issue as 'campaign{objective}' in get_adsets).
+        # We do NOT request adset_name here — the caller looks it up from the
+        # local DB (FacebookAdSet table) using the returned fb_adset_id.
+        try:
+            ads = account.get_ads(
+                fields=[
+                    'id',
+                    'name',
+                    'adset_id',
+                    'creative{title,body,'
+                    'object_story_spec{link_data{name,message},'
+                    'video_data{title,message}},'
+                    'asset_feed_spec}',
+                ],
+                params={
+                    'effective_status': ['ACTIVE', 'PAUSED'],
+                    'limit': 500,
+                },
+            )
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            msg = err.get('message') or str(e)
+            logger.error("get_account_ads_with_creative failed: %s", msg)
+            raise RuntimeError(f"Facebook API: {msg}") from e
+
+        results = []
+        for ad in ads:
+            fb_ad_id = str(ad.get('id') or '')
+            if not fb_ad_id:
+                continue
+
+            creative = ad.get('creative') or {}
+            oss = creative.get('object_story_spec') or {}
+            afs = creative.get('asset_feed_spec') or {}
+            link_data = oss.get('link_data') or {}
+            video_data = oss.get('video_data') or {}
+
+            # Headline: title → link_data.name → video_data.title → asset_feed_spec.titles[0]
+            headline = (
+                creative.get('title') or
+                link_data.get('name') or
+                video_data.get('title') or
+                ((afs.get('titles') or [{}])[0].get('text'))
+            )
+
+            # Body: body → link_data.message → video_data.message → asset_feed_spec.bodies[0]
+            body_text = (
+                creative.get('body') or
+                link_data.get('message') or
+                video_data.get('message') or
+                ((afs.get('bodies') or [{}])[0].get('text'))
+            )
+
+            # Skip ads with no usable copy
+            if not headline and not body_text:
+                continue
+
+            results.append({
+                'fb_ad_id': fb_ad_id,
+                'fb_adset_id': str(ad.get('adset_id') or ''),
+                # adset_name intentionally omitted — caller enriches via DB lookup
+                'ad_name': str(ad.get('name') or ''),
+                'headline': headline or '',
+                'body': body_text or '',
+            })
+
+        logger.info("get_account_ads_with_creative: fetched %d ads with copy", len(results))
+        return results
