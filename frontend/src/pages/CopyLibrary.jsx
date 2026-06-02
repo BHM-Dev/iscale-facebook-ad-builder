@@ -165,7 +165,7 @@ export default function CopyLibrary() {
 
       {showSyncBanner && (
         <div className="flex items-start justify-between gap-4 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-800">
-          <span>Library synced. Once copy injection is enabled, the AI will write in your voice based on these examples.</span>
+          <span>Library synced. The AI will now use these examples to match your voice when generating copy.</span>
           <button
             type="button"
             onClick={() => setShowSyncBanner(false)}
