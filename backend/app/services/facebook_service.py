@@ -1305,6 +1305,40 @@ class FacebookService:
             logger.error("Failed to fetch creative for ad %s: %s", fb_ad_id, msg)
             raise RuntimeError(f"Facebook API: {msg}") from e
 
+    def get_adset_name_map(self, ad_account_id=None) -> dict:
+        """Fetch all ad set IDs → names for the account in one call.
+
+        Used by the copy library sync to resolve adset names without relying on
+        the local FacebookAdSet DB table (which may lag or be incomplete).
+
+        Returns {} on failure so the caller can fall back gracefully.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        account = self._get_account(ad_account_id)
+        try:
+            cursor = account.get_ad_sets(
+                fields=['id', 'name'],
+                params={
+                    'effective_status': ['ACTIVE', 'PAUSED', 'ARCHIVED'],
+                    'limit': 500,
+                },
+            )
+            # Paginate through all pages — accounts with >500 adsets need explicit
+            # pagination because the SDK cursor only materialises one page at a time.
+            result = {}
+            while True:
+                for a in cursor:
+                    result[str(a['id'])] = str(a.get('name') or '')
+                if not cursor.load_next_page():
+                    break
+            logger.info("get_adset_name_map: fetched %d ad sets", len(result))
+            return result
+        except Exception as exc:
+            logger.warning("get_adset_name_map failed (%s) — falling back to empty map", exc)
+            return {}
+
     def get_account_ads_with_creative(self, ad_account_id=None):
         """Bulk-fetch all ACTIVE/PAUSED ads with their creative text for the copy library.
 
@@ -1331,14 +1365,15 @@ class FacebookService:
 
         # NOTE: The facebook-business SDK silently drops nested field syntax like
         # 'adset{name}' (same issue as 'campaign{objective}' in get_adsets).
-        # We do NOT request adset_name here — the caller looks it up from the
-        # local DB (FacebookAdSet table) using the returned fb_adset_id.
+        # We do NOT request adset_name here — the caller resolves it via
+        # get_adset_name_map() and passes the result separately.
         try:
             ads = account.get_ads(
                 fields=[
                     'id',
                     'name',
                     'adset_id',
+                    'effective_status',
                     'creative{title,body,'
                     'object_story_spec{link_data{name,message},'
                     'video_data{title,message}},'
@@ -1391,10 +1426,11 @@ class FacebookService:
             results.append({
                 'fb_ad_id': fb_ad_id,
                 'fb_adset_id': str(ad.get('adset_id') or ''),
-                # adset_name intentionally omitted — caller enriches via DB lookup
+                # adset_name intentionally omitted — caller resolves via get_adset_name_map()
                 'ad_name': str(ad.get('name') or ''),
                 'headline': headline or '',
                 'body': body_text or '',
+                'status': str(ad.get('effective_status') or ''),
             })
 
         logger.info("get_account_ads_with_creative: fetched %d ads with copy", len(results))

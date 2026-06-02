@@ -6,10 +6,11 @@ Routes:
   PATCH /{id}/pin         Toggle is_pinned on an entry
   DELETE /{id}            Remove an entry from the library
 """
+import re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import AdCopyLibrary, FacebookAdSet, User
+from app.models import AdCopyLibrary, User
 from app.services.facebook_service import FacebookService
 from app.core.deps import get_current_active_user
 import logging
@@ -18,13 +19,34 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Patterns that indicate the extracted value is a batch/test tag, not a real niche.
+# If the niche extraction produces one of these, fall back to None (displayed as "General").
+_NON_NICHE_RE = re.compile(
+    r'^(batch[\s\d]|set[\s\d]|v\d[\s_]|scale|open$|image$|calls$|test|broad|'
+    r'retarget|phase[\s\d]|round[\s\d]|\d{4}-\d{2}-\d{2}|gbc\s*\|)',
+    re.IGNORECASE,
+)
 
-def _extract_niche(adset_name: str) -> str:
-    """Extract niche from ad set name pattern '[Date] - [Niche] - [Batch info]'."""
+
+def _extract_niche(adset_name: str) -> str | None:
+    """Extract niche from ad set name pattern '[Date] - [Niche] - [Batch info]'.
+
+    Returns None for empty names or when the extracted candidate looks like a
+    batch/test label rather than a real niche. The caller stores None and the
+    frontend displays it as 'General'.
+    """
     if not adset_name:
-        return "Unknown"
+        return None
     parts = adset_name.split(" - ")
-    return parts[1].strip() if len(parts) >= 2 else adset_name
+    if len(parts) < 2:
+        # No separator — can't extract niche reliably; store the full name if
+        # it doesn't look like a batch tag, otherwise None.
+        return None if _NON_NICHE_RE.match(adset_name.strip()) else adset_name.strip() or None
+
+    candidate = parts[1].strip()
+    if not candidate or _NON_NICHE_RE.match(candidate):
+        return None
+    return candidate
 
 
 @router.post("/sync")
@@ -35,11 +57,15 @@ def sync_copy_library(
 ):
     """Pull all ACTIVE/PAUSED ads from Meta and upsert into the library.
 
-    Adset names (used for niche extraction) are looked up from the local
-    FacebookAdSet table rather than fetched from Meta — the SDK silently drops
-    nested field syntax like 'adset{name}'.
+    Adset names are fetched directly from Meta (via get_adset_name_map) rather
+    than from the local DB, so niche extraction works even for adsets that
+    haven't been pulled into the local FacebookAdSet table yet.
 
-    Existing entries are updated (headline/body/niche).
+    Niche extraction applies a blocklist filter to reject batch/test tags
+    (e.g., 'Batch 3', 'V2', 'SCALE') — those are stored as NULL and displayed
+    as 'General' in the UI.
+
+    Existing entries are updated (headline/body/niche/status).
     Entries already in the library are NOT deleted on sync — Joel may have
     intentionally removed them.
 
@@ -49,20 +75,12 @@ def sync_copy_library(
         svc = FacebookService()
         ads = svc.get_account_ads_with_creative(ad_account_id=ad_account_id)
     except Exception as exc:
-        logger.error("Meta API error during copy library sync: %s", exc)
+        logger.error("Meta API error during copy library sync (ads): %s", exc)
         raise HTTPException(status_code=502, detail=f"Meta API error: {str(exc)}")
 
-    # Build adset_id → adset_name map from local DB
-    # (populated by the scheduled Meta sync that runs on login)
-    adset_ids = {ad["fb_adset_id"] for ad in ads if ad.get("fb_adset_id")}
-    adset_name_map: dict[str, str] = {}
-    if adset_ids:
-        rows = (
-            db.query(FacebookAdSet.fb_adset_id, FacebookAdSet.name)
-            .filter(FacebookAdSet.fb_adset_id.in_(adset_ids))
-            .all()
-        )
-        adset_name_map = {row.fb_adset_id: row.name for row in rows}
+    # Fetch adset names directly from Meta — more complete than the local DB
+    # which only contains adsets synced since last login.
+    adset_name_map = svc.get_adset_name_map(ad_account_id=ad_account_id)
 
     created = 0
     updated = 0
@@ -72,18 +90,27 @@ def sync_copy_library(
         fb_adset_id = ad.get("fb_adset_id") or ""
         adset_name = adset_name_map.get(fb_adset_id, "")
         niche = _extract_niche(adset_name)
+        status = ad.get("status") or None
 
         existing = db.query(AdCopyLibrary).filter(
             AdCopyLibrary.fb_ad_id == fb_ad_id
         ).first()
 
         if existing:
-            # Refresh copy text in case the ad was edited in Meta
             existing.headline = ad["headline"]
             existing.body = ad["body"]
             existing.fb_adset_id = fb_adset_id or existing.fb_adset_id
             existing.adset_name = adset_name or existing.adset_name
-            existing.niche = niche
+            # Use the best available adset name so a failed map call (adset_name="")
+            # doesn't silently wipe an existing niche value.  If _extract_niche()
+            # returns None (name doesn't parse cleanly), preserve whatever niche
+            # was already stored rather than overwriting it with None.
+            effective_adset_name = adset_name or existing.adset_name or ""
+            new_niche = _extract_niche(effective_adset_name)
+            if new_niche is not None:
+                existing.niche = new_niche
+            # else: keep existing.niche — don't overwrite a valid value with None
+            existing.status = status
             updated += 1
         else:
             entry = AdCopyLibrary(
@@ -93,6 +120,7 @@ def sync_copy_library(
                 niche=niche,
                 headline=ad["headline"],
                 body=ad["body"],
+                status=status,
                 is_pinned=False,
             )
             db.add(entry)
@@ -105,8 +133,8 @@ def sync_copy_library(
         "updated": updated,
         "total": created + updated,
         "message": (
-            "Library synced. Copy injection is coming soon — once enabled, "
-            "the AI will write in your voice based on these ads."
+            "Library synced. The AI will now use these examples to match "
+            "your voice when generating copy."
         ),
     }
 
@@ -119,10 +147,7 @@ def list_copy_library(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Return library entries, pinned first, then by import date descending.
-
-    CPL and spend are always null until a future performance sync pipeline is built.
-    """
+    """Return library entries, pinned first, then by import date descending."""
     q = db.query(AdCopyLibrary)
 
     if niche:
@@ -149,6 +174,7 @@ def list_copy_library(
             "headline": e.headline,
             "body": e.body,
             "cta_type": e.cta_type,
+            "status": e.status,
             "is_pinned": e.is_pinned,
             "imported_at": e.imported_at.isoformat() if e.imported_at else None,
         }

@@ -536,6 +536,7 @@ class AdCopyLibrary(Base):
     cta_type = Column(String, nullable=True)
     spend = Column(Numeric(precision=10, scale=2), nullable=True)   # for ranking
     cpl = Column(Numeric(precision=8, scale=2), nullable=True)      # lower = better
+    status = Column(String, nullable=True)                # ACTIVE | PAUSED — from Meta at sync time
     is_pinned = Column(Boolean, default=False)            # Joel pins his best examples
     imported_at = Column(DateTime(timezone=True), server_default=func.now())
 
