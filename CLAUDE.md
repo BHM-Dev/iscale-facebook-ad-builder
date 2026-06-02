@@ -214,8 +214,8 @@ If `alembic upgrade head` fails, backend never starts. ALL endpoints (including 
 
 **Chain must be linear — single head only.** `scripts/check_alembic_heads.py` blocks `git push` if multiple heads exist. Run it before every push.
 
-**Current chain:**
-`1b02d74254e5` → `d8f2e1a7b4c9` → `e3a1f9b2c8d4` → `f4b2c8d9e1a7` → `a1b3c5d7e9f2` → `b2c4d6e8f0a1` → `g5c3d9e0f2b8` → `h6d4e0f1g3c9` → `i7e5f1g2h4d0` → `j8f6g2h3i5e1`
+**Current chain (head: `m1i9j5k6l8h4`):**
+`1b02d74254e5` → `d8f2e1a7b4c9` → `e3a1f9b2c8d4` → `f4b2c8d9e1a7` → `a1b3c5d7e9f2` → `b2c4d6e8f0a1` → `g5c3d9e0f2b8` → `h6d4e0f1g3c9` → `i7e5f1g2h4d0` → `j8f6g2h3i5e1` → `k9g7h3i4j6f2` → `l0h8i4j5k7g3` → `m1i9j5k6l8h4`
 
 Every new migration's `down_revision` must point to the current single head. The branched chain was the root cause of the login outage on 2026-05-10.
 
@@ -253,6 +253,7 @@ URLs from Meta's CDN expire within minutes to hours. `reconstruct-from-url` endp
 ### localStorage Handoffs Between Pages
 
 - `pendingRemixCreative` — written by Remix drawer "Build Ad ↗", read by `/ad-remix` on mount, deleted immediately after reading
+- `pendingResearchInspiration` — written by Research section "Use as Inspiration", read by `/ad-remix` on mount. Does NOT pre-fill copy — only shows a blue context banner + passes `research_inspiration` object to the reconstruct payload for Phase 3 AI use.
 - `pendingBatchCopy` — written by Ad Remix results page, read by `/batch-generate`
 - `overlayLogoUrl` — **shared across BatchGenerate, AdRemix, ImageAds**. Written on logo upload, read on mount by all three pages. R2 URL, doesn't expire.
 - `overlayOfferLine` — **shared across BatchGenerate, AdRemix, ImageAds**. Written on every keystroke, read on mount. Persists the "From $24.95/Month" line so Joel never retypes it.
@@ -575,9 +576,11 @@ Do not suggest `./venv/bin/python ...` or `source venv/bin/activate` for VPS wor
 - [x] Iterate restores overlay (offer line + logo) from local DB via `fb_ad_id` write-back
 - [x] `--timeout-keep-alive 300` on uvicorn — fixes Ad Remix connection drops during kie.ai polling
 
+### Recently shipped (2026-06-02 session 2)
+- [x] **Research Phase 1** — full UI rebuild: card gallery, two-column Browse/Saved layout, 3 pre-configured verticals (Commercial Insurance, Auto Insurance, Home Services with 7 sub-verticals). Pre-configured keyword sets in `backend/app/core/vertical_config.py`. `angle_tag` column added to `scraped_ads` (migration `m1i9j5k6l8h4`). New backend routes: `GET /vertical-config`, `POST /search-and-save-vertical`, `GET /config-verticals/{id}/browse-ads`, `PATCH /scraped-ads/{id}/angle`. "Use as Inspiration" writes `pendingResearchInspiration` to localStorage → navigates to `/ad-remix` where a blue banner appears with competitor context. `research_inspiration` field wired through reconstruct payload (Phase 3 AI use).
+
 ### Still pending
 - [ ] **Copy Library performance data** — pull ad-level spend + CPL from Meta during sync, populate existing `spend`/`cpl` columns, add Spend + CPL columns to table (sortable). Phase 2: weight few-shot injection toward low-CPL pinned ads. Full spec: `COPY_LIBRARY_PERFORMANCE_SPEC.md`. Touches `facebook_service.py` — 2-agent review required.
-- [ ] **Research section Phase 1** — card gallery UI, 3 verticals (Commercial Insurance, Auto Insurance, Home Services w/ 7 sub-verticals), pre-configured keyword sets, angle tagging, "Use as Inspiration" → Build New Ad localStorage handoff. Full spec: `RESEARCH_PHASE1_SPEC.md`. Touches `models.py` (angle_tag migration) + `AdRemix.jsx`.
 - [ ] OpenAI API swap (waiting on Golden to add keys): `gpt-5.1` for `/generate`, `gpt-4.1-mini` for `/remix-variations`
 - [ ] **AdRemix.jsx h1/subhead copy mismatch** — h1 says "Build New Ad" but subhead still says "Deconstruct winning ads and reconstruct them with your brand." Subhead needs a rewrite to match the new framing. (Codex task — pure copy edit, no trigger files.)
 - [ ] **README.md / BUILD_SUMMARY.md doc drift** — user-facing feature descriptions still say "Ad Remix" in several places. (Codex task — docs only, no agent review needed.)
