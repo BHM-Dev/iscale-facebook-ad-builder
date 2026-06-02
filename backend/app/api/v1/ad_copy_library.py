@@ -8,6 +8,7 @@ Routes:
 """
 import re
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import AdCopyLibrary, User
@@ -22,9 +23,18 @@ router = APIRouter()
 # Patterns that indicate the extracted value is a batch/test tag, not a real niche.
 # If the niche extraction produces one of these, fall back to None (displayed as "General").
 _NON_NICHE_RE = re.compile(
-    r'^(batch[\s\d]|set[\s\d]|v\d[\s_]|scale|open$|image$|calls$|test|broad|'
-    r'retarget|phase[\s\d]|round[\s\d]|\d{4}-\d{2}-\d{2}|gbc\s*\|)',
+    r'^(batch[\s\d]|set[\s\d]|v\d+[\s_.-]?$|v\d+[\s_.-]|scale|open$|image$|'
+    r'calls$|test|broad|retarget|phase[\s\d]|round[\s\d]|\d{4}-\d{2}-\d{2}|'
+    r'gbc\s*\||unknown$)',
     re.IGNORECASE,
+)
+
+# Strip leading emoji / Unicode pictograph characters from niche candidates.
+# e.g. "🐴 HORSES & STABLE" → "HORSES & STABLE"
+_LEADING_EMOJI_RE = re.compile(
+    r'^[\U0001F000-\U0001FFFF\U00002600-\U000027FF\U00002B00-\U00002BFF'
+    r'\U0000FE00-\U0000FE0F‍]+\s*',
+    re.UNICODE,
 )
 
 
@@ -34,6 +44,9 @@ def _extract_niche(adset_name: str) -> str | None:
     Returns None for empty names or when the extracted candidate looks like a
     batch/test label rather than a real niche. The caller stores None and the
     frontend displays it as 'General'.
+
+    Leading emoji are stripped from the candidate (e.g. '🐴 HORSES & STABLE'
+    becomes 'HORSES & STABLE').
     """
     if not adset_name:
         return None
@@ -41,11 +54,15 @@ def _extract_niche(adset_name: str) -> str | None:
     if len(parts) < 2:
         # No separator — can't extract niche reliably; store the full name if
         # it doesn't look like a batch tag, otherwise None.
-        return None if _NON_NICHE_RE.match(adset_name.strip()) else adset_name.strip() or None
+        candidate = _LEADING_EMOJI_RE.sub('', adset_name.strip()).strip()
+        return None if (not candidate or _NON_NICHE_RE.match(candidate)) else candidate
 
-    candidate = parts[1].strip()
+    candidate = _LEADING_EMOJI_RE.sub('', parts[1].strip()).strip()
     if not candidate or _NON_NICHE_RE.match(candidate):
         return None
+    # Normalize ALL-CAPS names (e.g. "HORSES & STABLE" → "Horses & Stable")
+    if candidate == candidate.upper():
+        candidate = candidate.title()
     return candidate
 
 
@@ -82,6 +99,12 @@ def sync_copy_library(
     # which only contains adsets synced since last login.
     adset_name_map = svc.get_adset_name_map(ad_account_id=ad_account_id)
 
+    # One-time cleanup: null out legacy "Unknown" niche strings written by the
+    # old sync code that couldn't resolve adset names. NULL displays as "General"
+    # which is correct. Rows not touched by this sync (deleted/archived ads) also
+    # benefit from this cleanup.
+    db.execute(text("UPDATE ad_copy_library SET niche = NULL WHERE niche = 'Unknown'"))
+
     created = 0
     updated = 0
 
@@ -101,15 +124,18 @@ def sync_copy_library(
             existing.body = ad["body"]
             existing.fb_adset_id = fb_adset_id or existing.fb_adset_id
             existing.adset_name = adset_name or existing.adset_name
-            # Use the best available adset name so a failed map call (adset_name="")
-            # doesn't silently wipe an existing niche value.  If _extract_niche()
-            # returns None (name doesn't parse cleanly), preserve whatever niche
-            # was already stored rather than overwriting it with None.
-            effective_adset_name = adset_name or existing.adset_name or ""
-            new_niche = _extract_niche(effective_adset_name)
-            if new_niche is not None:
-                existing.niche = new_niche
-            # else: keep existing.niche — don't overwrite a valid value with None
+            if adset_name:
+                # Fresh name from Meta — always re-extract. This clears any stale
+                # "Unknown" or mis-tagged values written by previous sync versions.
+                existing.niche = _extract_niche(adset_name)
+            else:
+                # Map miss — fall back to stored name but only overwrite if we
+                # get a valid niche (don't wipe a good value with None).
+                fallback = existing.adset_name or ""
+                if fallback:
+                    new_niche = _extract_niche(fallback)
+                    if new_niche is not None:
+                        existing.niche = new_niche
             existing.status = status
             updated += 1
         else:
