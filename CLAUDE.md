@@ -543,6 +543,19 @@ Do not suggest `./venv/bin/python ...` or `source venv/bin/activate` for VPS wor
 
 ## Pending Features / Known Gaps
 
+### Recently shipped (2026-06-02)
+- [x] **Ad Copy Library** — pulls all ACTIVE/PAUSED ads from Meta, stores headline+body in `ad_copy_library` table, auto-injects 5 relevant examples as few-shot style reference into every copy generation call (`/generate`, `/remix-variations`, `/regenerate-field`). Joel never needs to manually reference it — injection is automatic.
+- [x] **Copy Library page** (`/copy-library`) — Sync from Meta button, table with Niche/Headline/Body/Pin/Delete, post-sync banner, client-side niche filter. `BookOpen` nav entry in sidebar.
+- [x] **Niche extraction + blocklist** — `_NON_NICHE_RE` filters "Batch 3", "V2", "SCALE", "RETARGET", "BROAD", "PHASE 2" etc. → stored as `null`, shown as "General". Real niche extracted from `[Date] - [Niche] - [Batch]` pattern.
+- [x] **Adset names from Meta API** — `get_adset_name_map()` fetches all adset names directly from Meta (paginated, handles >500 adsets) so niche extraction works even for adsets not yet in the local DB. Fixes "Unknown" niches.
+- [x] **Status field on Copy Library** — `effective_status` stored per ad in `status` column (migration `l0h8i4j5k7g3`). Frontend status badge: Codex task queued (see below).
+- [x] **Niche wipe protection** — if `get_adset_name_map()` fails or adset not in map, falls back to `existing.adset_name`; also guards against overwriting a valid niche with `None` when `_extract_niche()` can't parse.
+
+### Pending Codex tasks (2026-06-02)
+- [x] **Status badge in CopyLibrary.jsx** — green for ACTIVE, gray for PAUSED; `colSpan` bumped to 6; skeleton row updated. Shipped `832ef1f`.
+- [x] **AdRemix.jsx subhead copy fix** — updated to "Start from a winning ad and rebuild it with your brand voice." Shipped `832ef1f`.
+- [x] **README.md / BUILD_SUMMARY.md doc drift** — "Ad Remix" references updated. Shipped `832ef1f`.
+
 ### Recently shipped (2026-05-27)
 - [x] **Performance by Niche dashboard section** — New table on Dashboard aggregates Meta ad set performance by niche (extracted from ad set name pattern `[Date] - [Niche] - [Batch]`). Shows Niche | Ad Sets | Spend | CPL | Leads. `adset_name` now flows through `get_account_insights_bulk()` → `GET /dashboard/niche-summary` endpoint. CPL color-rank guard: only fires when ≥5 niches to avoid misleading coloring with small datasets.
 - [x] **Rename "Ad Remix" → "Build New Ad"** — Nav link, sidebar label, page h1, tool card, and `prompts.js` constant all updated. AdRemix.jsx route (`/ad-remix`) unchanged — internal only.
@@ -563,6 +576,7 @@ Do not suggest `./venv/bin/python ...` or `source venv/bin/activate` for VPS wor
 - [x] `--timeout-keep-alive 300` on uvicorn — fixes Ad Remix connection drops during kie.ai polling
 
 ### Still pending
+- [ ] **Copy Library performance data** — pull ad-level spend + CPL from Meta during sync, populate existing `spend`/`cpl` columns, add Spend + CPL columns to table (sortable). Phase 2: weight few-shot injection toward low-CPL pinned ads. Full spec: `COPY_LIBRARY_PERFORMANCE_SPEC.md`. Touches `facebook_service.py` — 2-agent review required.
 - [ ] OpenAI API swap (waiting on Golden to add keys): `gpt-5.1` for `/generate`, `gpt-4.1-mini` for `/remix-variations`
 - [ ] **AdRemix.jsx h1/subhead copy mismatch** — h1 says "Build New Ad" but subhead still says "Deconstruct winning ads and reconstruct them with your brand." Subhead needs a rewrite to match the new framing. (Codex task — pure copy edit, no trigger files.)
 - [ ] **README.md / BUILD_SUMMARY.md doc drift** — user-facing feature descriptions still say "Ad Remix" in several places. (Codex task — docs only, no agent review needed.)
