@@ -360,8 +360,8 @@ Run through every item before committing or pushing any backend change. These bu
 
 ### Final gate
 - [ ] Read the diff one more time (`git diff HEAD`). Ask: "If this breaks, what's the symptom and the 5-minute fix?"
-- [ ] If it involves a DB migration: Golden applies it on VPS restart. Verify the fix path is clear.
-- [ ] Does this push include a DB migration? If yes → **message Golden in `C041GSZD1NG`** with the `alembic upgrade head` instruction. Code-only pushes don't need a message.
+- [ ] If it involves a DB migration: `alembic upgrade head` runs automatically on deploy — no action needed, no message to Golden.
+- [ ] Does this push include a new **env var**? If yes → DM Golden at `D075KSE1A1L` with the var name. That's the only post-push action that requires human intervention.
 
 ---
 
@@ -534,9 +534,9 @@ Do not suggest `./venv/bin/python ...` or `source venv/bin/activate` for VPS wor
 
 1. Push directly to `BHM-Dev:develop` (`git push origin develop`) — there is no `sunbunzz627` fork; the dev workflow is push-direct, not PR-based.
 2. VPS auto-deploys on every push to `develop` — Golden's container picks up the new code automatically.
-3. If the push includes a DB migration → DM Golden at `D075KSE1A1L` with the `alembic upgrade head` instruction. He runs it inside the backend container via `docker exec`.
-4. Env var changes → DM Golden at `D075KSE1A1L`. He adds the var, runs `docker compose restart backend`.
-5. Code-only pushes → no message to Golden needed (auto-deploy handles it).
+3. `alembic upgrade head` runs automatically as part of the Docker startup sequence — confirmed by Golden 2026-06-02. **Do NOT message Golden about migrations.**
+4. **Never message Golden after a push** — code and migrations are fully automated.
+5. Env var changes → DM Golden at `D075KSE1A1L`. He adds the var, runs `docker compose restart backend`. This is the ONLY reason to message Golden.
 6. Post-deploy: check `https://adbuilder-api.velocitymx.io/api/v1/docs` is reachable.
 
 ---
@@ -582,6 +582,6 @@ Do not suggest `./venv/bin/python ...` or `source venv/bin/activate` for VPS wor
 
 | Person | Role | Slack | When to contact |
 |--------|------|-------|-----------------|
-| Golden | Dev lead, VPS admin | `C041GSZD1NG` | ONLY when push includes a DB migration. Code-only pushes = no message needed. |
+| Golden | Dev lead, VPS admin | `C041GSZD1NG` | **Only for new env vars** — migrations and code deploys are fully automated. Never message after a push. |
 | Joel Welch | Primary user (media buyer) | `C08G7PJJ6NB` | Bug reports, UX feedback |
 | Steven Sun | CEO / product decisions | — | All product decisions |
