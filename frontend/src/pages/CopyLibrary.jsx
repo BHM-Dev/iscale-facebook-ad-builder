@@ -11,6 +11,7 @@ function SkeletonRows() {
       {[0, 1, 2].map(row => (
         <tr key={row} className="border-b border-gray-50">
           <td className="px-5 py-4"><div className="h-4 w-32 bg-gray-100 rounded animate-pulse" /></td>
+          <td className="px-5 py-4"><div className="h-5 w-16 bg-gray-100 rounded animate-pulse" /></td>
           <td className="px-5 py-4"><div className="h-4 w-44 bg-gray-100 rounded animate-pulse" /></td>
           <td className="px-5 py-4"><div className="h-4 w-full max-w-xl bg-gray-100 rounded animate-pulse" /></td>
           <td className="px-5 py-4 text-center"><div className="h-8 w-8 mx-auto bg-gray-100 rounded-lg animate-pulse" /></td>
@@ -203,6 +204,7 @@ export default function CopyLibrary() {
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
                 <th className="px-5 py-3">Niche</th>
+                <th className="px-5 py-3">Status</th>
                 <th className="px-5 py-3">Headline</th>
                 <th className="px-5 py-3">Body</th>
                 <th className="px-5 py-3 text-center">Pinned</th>
@@ -214,7 +216,7 @@ export default function CopyLibrary() {
                 <SkeletonRows />
               ) : filteredEntries.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-5 py-12 text-center text-sm text-gray-400">
+                  <td colSpan={6} className="px-5 py-12 text-center text-sm text-gray-400">
                     No ads in library yet. Click 'Sync from Meta' to import your ads.
                   </td>
                 </tr>
@@ -222,6 +224,17 @@ export default function CopyLibrary() {
                 filteredEntries.map(entry => (
                   <tr key={entry.id} className="hover:bg-gray-50 transition-colors align-top">
                     <td className="px-5 py-4 font-medium text-gray-900 whitespace-nowrap">{entry.niche || 'General'}</td>
+                    <td className="px-5 py-4 whitespace-nowrap">
+                      {entry.status && (
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                          entry.status === 'ACTIVE'
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-gray-100 text-gray-600'
+                        }`}>
+                          {entry.status}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-5 py-4 text-gray-800 min-w-48">{entry.headline}</td>
                     <td className="px-5 py-4 min-w-96"><BodyCell text={entry.body} /></td>
                     <td className="px-5 py-4 text-center">

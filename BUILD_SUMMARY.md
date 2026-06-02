@@ -22,8 +22,8 @@ Scrapes Facebook Ad Library for competitor ads. Outputs structured data on creat
 ### 3. AI Ad Generation
 Generates Facebook ad creatives (image and video) using Google Gemini + kie.ai. Takes brand, product, and customer profile as input. Groups generated ads by `ad_bundle_id` so variants from the same session stay together. Ads go to a gallery where they can be reviewed, selected, and launched.
 
-### 4. Ad Remix Engine
-Deconstructs winning ads into structural blueprints (hook type, visual structure, CTA format, copy pattern). Reconstructs those blueprints with a new brand's assets and voice. Lets Joel apply what works for one brand to another without starting from scratch.
+### 4. Build New Ad
+Starts from winning ads and rebuilds them into structural blueprints (hook type, visual structure, CTA format, copy pattern) with a new brand's assets and voice. Lets Joel apply what works for one brand to another without starting from scratch.
 
 ### 5. Winning Ads Library
 Internal template library. Ads that prove out get saved here with their blueprint JSON. The remix engine pulls from this library.

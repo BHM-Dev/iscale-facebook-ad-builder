@@ -41,7 +41,7 @@ Facebook Ad Builder is a full-stack application that streamlines the entire Face
 - **Competitor Intelligence** — Scrape and analyze ads from the Facebook Ad Library
 - **AI Content Generation** — Create ad copy and images using Google Gemini and Fal.ai
 - **Brand Management** — Maintain consistent brand voice, colors, and assets
-- **Template System** — Deconstruct winning ads into reusable blueprints
+- **Template System** — Rebuild winning ads into reusable blueprints
 - **Campaign Management** — Create and manage Facebook campaigns via API
 
 ---
@@ -62,7 +62,7 @@ Create and manage brand profiles with:
 Generate high-converting ads using AI:
 - **Copy Generation** — Compelling headlines, body text, and CTAs
 - **Image Generation** — AI-created visuals via Fal.ai
-- **Ad Remix** — Transform winning competitor ads into your brand style
+- **Build New Ad** — Transform winning competitor ads into your brand style
 
 ### 📋 Template Library
 Build a library of proven ad structures:

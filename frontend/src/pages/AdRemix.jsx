@@ -567,7 +567,7 @@ export default function AdRemix() {
                     <Sparkles size={32} className="text-purple-600" />
                     Build New Ad
                 </h1>
-                <p className="text-gray-600 mt-1">Deconstruct winning ads and reconstruct them with your brand</p>
+                <p className="text-gray-600 mt-1">Start from a winning ad and rebuild it with your brand voice.</p>
             </div>
 
             {/* Progress Steps */}
