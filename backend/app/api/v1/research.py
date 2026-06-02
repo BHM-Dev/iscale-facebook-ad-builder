@@ -511,18 +511,6 @@ async def delete_brand_scrape(scrape_id: str, db: Session = Depends(get_db)):
     raise HTTPException(status_code=500, detail="Failed to delete brand scrape")
 
 
-@router.post("/scraped-ads/{ad_id}/save")
-def save_scraped_ad(ad_id: str, db: Session = Depends(get_db)):
-    """Mark a scraped ad as saved to the user's curated research library."""
-    from app.models import ScrapedAd
-    ad = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
-    if not ad:
-        raise HTTPException(status_code=404, detail="Ad not found")
-    ad.is_saved = True
-    db.commit()
-    return {"id": ad_id, "is_saved": True}
-
-
 @router.delete("/scraped-ads/{ad_id}/save")
 def unsave_scraped_ad(ad_id: str, db: Session = Depends(get_db)):
     """Remove a scraped ad from the user's curated research library."""
@@ -543,15 +531,292 @@ def get_saved_ads(db: Session = Depends(get_db)):
     return [
         {
             "id": ad.id,
+            "brand_name": ad.brand_name,
             "headline": ad.headline,
             "ad_copy": ad.ad_copy,
             "cta_text": ad.cta_text,
-            "image_url": ad.image_url,
-            "video_url": ad.video_url,
             "media_type": ad.media_type,
             "ad_link": ad.ad_link,
+            "start_date": ad.start_date,
+            "seen_count": ad.seen_count or 1,
+            "angle_tag": ad.angle_tag,
             "is_saved": ad.is_saved,
             "created_at": ad.created_at.isoformat() if ad.created_at else None,
+            "last_seen": ad.last_seen.isoformat() if ad.last_seen else None,
         }
         for ad in ads
     ]
+
+
+# ============= Pre-configured Vertical Endpoints =============
+
+@router.get("/vertical-config")
+def get_vertical_config():
+    """Return pre-configured keyword sets for each research vertical.
+
+    Frontend reads this on mount so keyword sets are never hardcoded in JS.
+    Includes angle tag definitions.
+    """
+    from app.core.vertical_config import VERTICAL_KEYWORD_SETS, ANGLE_TAGS
+    return {
+        "verticals": VERTICAL_KEYWORD_SETS,
+        "angle_tags": ANGLE_TAGS,
+    }
+
+
+@router.post("/scraped-ads/{ad_id}/save")
+def save_scraped_ad_with_angle(
+    ad_id: str,
+    angle_tag: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Mark a scraped ad as saved and optionally assign an angle tag."""
+    from app.models import ScrapedAd
+    ad = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Ad not found")
+    ad.is_saved = True
+    if angle_tag is not None:
+        ad.angle_tag = angle_tag
+    db.commit()
+    return {"id": ad_id, "is_saved": True, "angle_tag": ad.angle_tag}
+
+
+@router.patch("/scraped-ads/{ad_id}/angle")
+def update_angle_tag(
+    ad_id: str,
+    angle_tag: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Update the angle tag on a scraped ad (can also clear it by passing null)."""
+    from app.models import ScrapedAd
+    ad = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Ad not found")
+    ad.angle_tag = angle_tag
+    db.commit()
+    return {"id": ad_id, "angle_tag": ad.angle_tag}
+
+
+@router.get("/config-verticals/{config_id}/browse-ads")
+def get_vertical_browse_ads(
+    config_id: str,
+    sub_vertical: str | None = None,
+    angle_tag: str | None = None,
+    active_only: bool = False,
+    advertiser: str | None = None,
+    limit: int = 500,
+    db: Session = Depends(get_db),
+):
+    """Return all unique scraped ads for a pre-configured vertical (flat list for card gallery).
+
+    config_id must match a key in VERTICAL_KEYWORD_SETS (e.g. 'commercial_insurance').
+    For Home Services, pass sub_vertical to scope to a sub-vertical label.
+    Deduplicates by content_hash. Applies optional angle/active/advertiser filters.
+    """
+    from app.models import ScrapedAd, SavedSearch, Vertical, FacebookPage, PageBlacklist
+    from app.core.vertical_config import VERTICAL_KEYWORD_SETS
+    from sqlalchemy import func, distinct
+    from datetime import datetime, timedelta
+
+    if config_id not in VERTICAL_KEYWORD_SETS:
+        raise HTTPException(status_code=404, detail=f"Unknown vertical config: {config_id}")
+
+    config = VERTICAL_KEYWORD_SETS[config_id]
+
+    # Determine the vertical label(s) to look up in the DB.
+    if config_id == "home_services" and sub_vertical:
+        sub = config.get("sub_verticals", {}).get(sub_vertical)
+        if not sub:
+            raise HTTPException(status_code=404, detail=f"Unknown sub-vertical: {sub_vertical}")
+        vertical_labels = [sub["label"]]
+    elif config_id == "home_services":
+        # All home services sub-verticals
+        vertical_labels = [sv["label"] for sv in config.get("sub_verticals", {}).values()]
+    else:
+        vertical_labels = [config["label"]]
+
+    # Find DB verticals matching these labels
+    verticals = db.query(Vertical).filter(Vertical.name.in_(vertical_labels)).all()
+    if not verticals:
+        return []  # No searches run yet for this vertical
+
+    vertical_ids = [v.id for v in verticals]
+
+    # Get all searches for these verticals
+    search_ids = [
+        s.id
+        for s in db.query(SavedSearch.id).filter(SavedSearch.vertical_id.in_(vertical_ids)).all()
+    ]
+    if not search_ids:
+        return []
+
+    # Get blacklisted page names
+    blacklisted_names = {
+        p.page_name.lower()
+        for p in db.query(PageBlacklist.page_name).all()
+    }
+
+    # Build query — one row per unique content_hash (or ad ID for legacy ads)
+    unique_key = func.coalesce(ScrapedAd.content_hash, ScrapedAd.id)
+    subq = (
+        db.query(
+            unique_key.label("unique_key"),
+            func.min(ScrapedAd.id).label("min_id"),
+        )
+        .filter(ScrapedAd.search_id.in_(search_ids))
+        .group_by(unique_key)
+        .subquery()
+    )
+
+    query = db.query(ScrapedAd).join(subq, ScrapedAd.id == subq.c.min_id)
+
+    # Filters
+    if angle_tag:
+        query = query.filter(ScrapedAd.angle_tag == angle_tag)
+    if advertiser:
+        query = query.filter(ScrapedAd.brand_name.ilike(f"%{advertiser}%"))
+    if active_only:
+        cutoff = datetime.utcnow() - timedelta(days=30)
+        query = query.filter(ScrapedAd.last_seen >= cutoff)
+
+    ads = query.order_by(ScrapedAd.last_seen.desc().nullslast()).limit(limit).all()
+
+    # Compute running duration and filter blacklisted advertisers
+    now = datetime.utcnow()
+    result = []
+    for ad in ads:
+        if ad.brand_name and ad.brand_name.lower() in blacklisted_names:
+            continue
+
+        running_days = None
+        if ad.start_date:
+            try:
+                start = datetime.fromisoformat(ad.start_date.replace("Z", "+00:00").replace("+00:00", ""))
+                running_days = (now - start).days
+            except Exception:
+                pass
+
+        # "Active" proxy: seen within last 30 days
+        is_active = False
+        if ad.last_seen:
+            is_active = (now - ad.last_seen.replace(tzinfo=None)).days <= 30
+
+        result.append({
+            "id": ad.id,
+            "brand_name": ad.brand_name,
+            "headline": ad.headline,
+            "ad_copy": ad.ad_copy,
+            "cta_text": ad.cta_text,
+            "ad_link": ad.ad_link,
+            "start_date": ad.start_date,
+            "running_days": running_days,
+            "is_active": is_active,
+            "seen_count": ad.seen_count or 1,
+            "angle_tag": ad.angle_tag,
+            "is_saved": ad.is_saved,
+            "last_seen": ad.last_seen.isoformat() if ad.last_seen else None,
+        })
+
+    return result
+
+
+@router.post("/search-and-save-vertical")
+async def search_and_save_vertical(
+    vertical_id: str,
+    sub_vertical: str | None = None,
+    limit_per_keyword: int = 200,
+    db: Session = Depends(get_db),
+):
+    """Run all keyword searches for a pre-configured vertical and save results.
+
+    Looks up or creates the DB Vertical records matching the config labels,
+    then runs each keyword through the existing search_and_save service.
+    Returns aggregate stats: total_new, total_duplicate, keywords_run.
+
+    For home_services, pass sub_vertical (e.g. 'floor_installation') to refresh
+    only that sub-vertical. Omit sub_vertical to refresh all home services trades.
+    """
+    from app.core.vertical_config import VERTICAL_KEYWORD_SETS
+    from app.models import Vertical
+    from app.schemas.research import AdSearchRequest
+    from app.services.research_service import ResearchService
+    from app.services.rate_limiter import rate_limiter
+
+    if vertical_id not in VERTICAL_KEYWORD_SETS:
+        raise HTTPException(status_code=404, detail=f"Unknown vertical: {vertical_id}")
+
+    config = VERTICAL_KEYWORD_SETS[vertical_id]
+
+    # Build list of (label, keywords) pairs to process
+    pairs: list[tuple[str, list[str]]] = []
+
+    if vertical_id == "home_services":
+        sub_verticals = config.get("sub_verticals", {})
+        if sub_vertical:
+            if sub_vertical not in sub_verticals:
+                raise HTTPException(status_code=404, detail=f"Unknown sub-vertical: {sub_vertical}")
+            sv = sub_verticals[sub_vertical]
+            pairs = [(sv["label"], sv["keywords"])]
+        else:
+            pairs = [(sv["label"], sv["keywords"]) for sv in sub_verticals.values()]
+    else:
+        pairs = [(config["label"], config["keywords"])]
+
+    # Check rate limit up-front (rough check — actual enforcement per keyword)
+    allowed, remaining, reset_seconds = rate_limiter.check_limit(db)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded. Try again in {reset_seconds} seconds.",
+        )
+
+    service = ResearchService(db)
+    total_new = 0
+    total_duplicate = 0
+    keywords_run = 0
+
+    for label, keywords in pairs:
+        # Look up or create the DB Vertical for this label
+        vertical = db.query(Vertical).filter(Vertical.name == label).first()
+        if not vertical:
+            vertical = Vertical(name=label, description=f"Auto-created for {label} research vertical")
+            db.add(vertical)
+            db.commit()
+            db.refresh(vertical)
+
+        for keyword in keywords:
+            try:
+                allowed, remaining, _ = rate_limiter.check_limit(db)
+                if not allowed:
+                    break  # Hit rate limit mid-run — stop gracefully
+
+                request = AdSearchRequest(
+                    query=keyword,
+                    platform="facebook",
+                    limit=limit_per_keyword,
+                    country="US",
+                    offset=0,
+                    exclude_ids=[],
+                    negative_keywords=[],
+                    vertical_id=vertical.id,
+                    search_type="one_time",
+                    schedule_config=None,
+                )
+                saved_search, ads = await service.search_and_save(request)
+                total_new += saved_search.ads_new or 0
+                total_duplicate += saved_search.ads_duplicate or 0
+                keywords_run += 1
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Keyword search failed for '%s': %s", keyword, exc
+                )
+                # Continue with remaining keywords — non-fatal
+
+    return {
+        "total_new": total_new,
+        "total_duplicate": total_duplicate,
+        "keywords_run": keywords_run,
+        "message": f"Refreshed {keywords_run} keywords — {total_new} new ads found",
+    }

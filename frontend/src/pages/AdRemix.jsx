@@ -21,6 +21,7 @@ export default function AdRemix() {
     const [adConcept, setAdConcept] = useState(null);       // single concept (legacy)
     const [adConcepts, setAdConcepts] = useState([]);        // 3 parallel variations
     const [prefillSource, setPrefillSource] = useState(null); // winning ad data from performance page
+    const [researchInspiration, setResearchInspiration] = useState(null); // competitor ad from Research section
     const [pendingBrandId, setPendingBrandId] = useState(null); // brand_id from drawer — resolved once brands load
     const [pendingNiche, setPendingNiche] = useState('');       // niche from ad set name, passed through to Batch Generate
     const [remixFbCampaignId, setRemixFbCampaignId] = useState(''); // Meta campaign ID from source ad — for push modal pre-selection
@@ -116,6 +117,21 @@ export default function AdRemix() {
         }
     }, []);
 
+    // On mount: check for a competitor ad passed in from the Research section
+    useEffect(() => {
+        const raw = localStorage.getItem('pendingResearchInspiration');
+        if (!raw) return;
+        try {
+            const inspiration = JSON.parse(raw);
+            localStorage.removeItem('pendingResearchInspiration');
+            setResearchInspiration(inspiration);
+            // Research inspiration does NOT pre-fill offer/messaging — Joel writes original copy.
+            // We only pass the competitor context so the AI can write in the right angle.
+        } catch (e) {
+            // malformed localStorage — ignore
+        }
+    }, []);
+
     // Resolve pendingBrandId → full brand object once the brands list is available.
     // Also auto-selects the product if the brand only has one, skipping to Profile.
     useEffect(() => {
@@ -198,6 +214,7 @@ export default function AdRemix() {
         setAdConcept(null);
         setAdConcepts([]);
         setPrefillSource(null);
+        setResearchInspiration(null);
         setCopied(false);
         localStorage.removeItem('remixResult');
         setWizardData({
@@ -508,7 +525,8 @@ export default function AdRemix() {
                     campaign_offer: wizardData.campaignDetails.offer,
                     campaign_urgency: wizardData.campaignDetails.urgency,
                     campaign_messaging: wizardData.campaignDetails.messaging,
-                    niche: pendingNiche || ""
+                    niche: pendingNiche || "",
+                    research_inspiration: researchInspiration || null,
                 }
                 : {
                     template_id: wizardData.template.id,
@@ -518,7 +536,8 @@ export default function AdRemix() {
                     campaign_offer: wizardData.campaignDetails.offer,
                     campaign_urgency: wizardData.campaignDetails.urgency,
                     campaign_messaging: wizardData.campaignDetails.messaging,
-                    niche: pendingNiche || ""
+                    niche: pendingNiche || "",
+                    research_inspiration: researchInspiration || null,
                 };
 
             // Advance to step 6 (Generating) before firing requests
@@ -612,6 +631,31 @@ export default function AdRemix() {
                 </div>
             )}
 
+            {/* Research inspiration banner — shown when launched from Research section */}
+            {researchInspiration && (
+                <div className="mb-4 flex items-center justify-between gap-3 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-sm">
+                    <div className="flex items-start gap-2">
+                        <Zap size={15} className="text-blue-500 mt-0.5 flex-shrink-0" />
+                        <span className="text-blue-700">
+                            Inspired by{' '}
+                            <strong className="text-blue-800">{researchInspiration.advertiser}</strong>
+                            {researchInspiration.angle && (
+                                <> — <span className="capitalize">{researchInspiration.angle.replace('_', ' ')}</span> angle</>
+                            )}
+                            . Writing original copy for your brand.
+                        </span>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setResearchInspiration(null)}
+                        className="flex-shrink-0 text-blue-400 hover:text-blue-600"
+                        aria-label="Dismiss inspiration context"
+                    >
+                        <X size={14} />
+                    </button>
+                </div>
+            )}
+
             {/* Step Content */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 min-h-[500px]">
                 {loading && (
@@ -627,7 +671,13 @@ export default function AdRemix() {
                 {currentStep === 1 && (
                     <div>
                         <h3 className="text-xl font-bold mb-2">How do you want to start?</h3>
-                        <p className="text-gray-500 mb-8">Pick a starting point — this tool will build a new creative concept from it using your brand and audience.</p>
+                        <p className="text-gray-500 mb-4">Pick a starting point — this tool will build a new creative concept from it using your brand and audience.</p>
+                        {researchInspiration && (
+                            <div className="mb-6 px-4 py-3 bg-blue-50 border border-blue-100 rounded-lg text-sm text-blue-700">
+                                The <strong>{researchInspiration.advertiser}</strong> ad is saved as angle context.
+                                Now pick your image source below — the AI will write original copy in your voice with that angle in mind.
+                            </div>
+                        )}
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-2xl">
                             {/* Path A: From a live winning ad */}
