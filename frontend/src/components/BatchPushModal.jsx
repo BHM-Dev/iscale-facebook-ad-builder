@@ -41,6 +41,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     const [pages, setPages] = useState([]);
     const [pageId, setPageId] = useState(localStorage.getItem('lastUsedPageId') || '');
     const [websiteUrl, setWebsiteUrl] = useState(preselectedWebsiteUrl || localStorage.getItem('lastUsedWebsiteUrl') || '');
+    const [fieldErrors, setFieldErrors] = useState({});
     const [sharedCta, setSharedCta] = useState(() => {
         // Default to the most common CTA across items so the dropdown reflects what Joel already chose
         if (!items.length) return 'LEARN_MORE';
@@ -79,6 +80,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
 
     // Auto-load on mount — fetch ad account ID from backend config so Joel never has to type it
     useEffect(() => {
+        setFieldErrors({});
         const bootstrap = async () => {
             let acctId = adAccountId;
             if (!acctId) {
@@ -174,21 +176,23 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     };
 
     const validate = () => {
-        if (!adAccountId.trim()) { showError('Ad Account ID is required'); return false; }
-        if (!selectedCampaignId) { showError('Select a campaign'); return false; }
-        if (!pageId) { showError('Select a Facebook Page'); return false; }
-        if (!websiteUrl.trim()) { showError('Destination URL is required'); return false; }
-        if (adsetMode === 'existing' && !sharedAdsetId) { showError('Select an ad set'); return false; }
+        const errors = {};
+        if (!adAccountId.trim()) errors.adAccountId = 'Ad Account ID is required';
+        if (!selectedCampaignId) errors.campaign = 'Select a campaign';
+        if (!pageId) errors.page = 'Select a Facebook page';
+        if (!websiteUrl.trim()) errors.websiteUrl = 'Destination URL is required';
+        if (adsetMode === 'existing' && !sharedAdsetId) errors.adset = 'Select an ad set';
         if (adsetMode === 'new') {
-            if (!newAdset.name.trim()) { showError('Ad set name is required'); return false; }
+            if (!newAdset.name.trim()) errors.adsetName = 'Ad set name is required';
             if (!newAdset.dailyBudget || isNaN(newAdset.dailyBudget) || Number(newAdset.dailyBudget) < 1) {
-                showError('Daily budget must be at least $1'); return false;
+                errors.dailyBudget = 'Daily budget must be at least $1';
             }
             if (!newAdset.cloneFromId && adSets.length > 0) {
-                showError('Select an ad set to clone targeting from'); return false;
+                errors.cloneFrom = 'Select an ad set to clone targeting from';
             }
         }
-        return true;
+        setFieldErrors(errors);
+        return Object.keys(errors).length === 0;
     };
 
     const handlePushAll = async () => {
@@ -365,10 +369,21 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                             placeholder="act_123456789"
                             value={adAccountId}
                             disabled={pushing}
-                            onChange={e => { setAdAccountId(e.target.value); setCampaigns([]); setAdSets([]); setSelectedCampaignId(''); }}
+                            onChange={e => {
+                                setAdAccountId(e.target.value);
+                                setFieldErrors(p => ({ ...p, adAccountId: undefined }));
+                                setCampaigns([]);
+                                setAdSets([]);
+                                setSelectedCampaignId('');
+                            }}
                             onBlur={() => { loadCampaigns(adAccountId); loadPages(adAccountId); }}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 disabled:bg-gray-50"
+                            className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 disabled:bg-gray-50 ${
+                                fieldErrors.adAccountId ? 'border-red-400 focus:ring-red-500' : 'border-gray-300 focus:ring-green-500'
+                            }`}
                         />
+                        {fieldErrors.adAccountId && (
+                            <p className="text-xs text-red-600 mt-1">{fieldErrors.adAccountId}</p>
+                        )}
                     </div>
 
                     {/* Campaign — locked when iterating from a known campaign */}
@@ -396,19 +411,25 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                     const c = campaigns.find(x => x.id === e.target.value) || null;
                                     setSelectedCampaign(c);
                                     setSelectedCampaignId(e.target.value);
+                                    setFieldErrors(p => ({ ...p, campaign: undefined }));
                                     setAdSets([]);
                                     setSharedAdsetId('');
                                     // Keep adsetMode as 'new' — Joel should always explicitly choose to use existing
                                     setNewAdset({ name: suggestedAdsetName, dailyBudget: '', cloneFromId: '' });
                                     loadAdSets(e.target.value);
                                 }}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 disabled:bg-gray-50"
+                                className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 disabled:bg-gray-50 ${
+                                    fieldErrors.campaign ? 'border-red-400 focus:ring-red-500' : 'border-gray-300 focus:ring-green-500'
+                                }`}
                             >
                                 <option value="">
                                     {loading ? 'Loading...' : campaigns.length === 0 ? 'Enter Ad Account ID first' : 'Select a campaign...'}
                                 </option>
                                 {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                             </select>
+                        )}
+                        {fieldErrors.campaign && (
+                            <p className="text-xs text-red-600 mt-1">{fieldErrors.campaign}</p>
                         )}
                     </div>
 
@@ -440,17 +461,27 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                             </div>
 
                             {adsetMode === 'existing' ? (
-                                <select
-                                    value={sharedAdsetId}
-                                    disabled={pushing || loading || adSets.length === 0}
-                                    onChange={e => setSharedAdsetId(e.target.value)}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 disabled:bg-gray-50"
-                                >
-                                    <option value="">
-                                        {loading ? 'Loading...' : adSets.length === 0 ? 'No ad sets — create one first' : 'Select an ad set...'}
-                                    </option>
-                                    {adSets.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                                </select>
+                                <>
+                                    <select
+                                        value={sharedAdsetId}
+                                        disabled={pushing || loading || adSets.length === 0}
+                                        onChange={e => {
+                                            setSharedAdsetId(e.target.value);
+                                            setFieldErrors(p => ({ ...p, adset: undefined }));
+                                        }}
+                                        className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 disabled:bg-gray-50 ${
+                                            fieldErrors.adset ? 'border-red-400 focus:ring-red-500' : 'border-gray-300 focus:ring-green-500'
+                                        }`}
+                                    >
+                                        <option value="">
+                                            {loading ? 'Loading...' : adSets.length === 0 ? 'No ad sets — create one first' : 'Select an ad set...'}
+                                        </option>
+                                        {adSets.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                    </select>
+                                    {fieldErrors.adset && (
+                                        <p className="text-xs text-red-600 mt-1">{fieldErrors.adset}</p>
+                                    )}
+                                </>
                             ) : (
                                 <div className="space-y-3 p-3 bg-green-50 border border-green-200 rounded-lg">
                                     {/* Empty targeting warning */}
@@ -479,9 +510,17 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                             placeholder="e.g. Church Insurance — Square — May 12"
                                             value={newAdset.name}
                                             disabled={pushing}
-                                            onChange={e => setNewAdset(p => ({ ...p, name: e.target.value }))}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-green-500"
+                                            onChange={e => {
+                                                setNewAdset(p => ({ ...p, name: e.target.value }));
+                                                setFieldErrors(p => ({ ...p, adsetName: undefined }));
+                                            }}
+                                            className={`w-full px-3 py-2 border rounded-lg text-sm bg-white focus:ring-2 ${
+                                                fieldErrors.adsetName ? 'border-red-400 focus:ring-red-500' : 'border-gray-300 focus:ring-green-500'
+                                            }`}
                                         />
+                                        {fieldErrors.adsetName && (
+                                            <p className="text-xs text-red-600 mt-1">{fieldErrors.adsetName}</p>
+                                        )}
                                     </div>
                                     <div>
                                         <label className="block text-xs font-medium text-gray-600 mb-1">Daily Budget (USD) *</label>
@@ -491,24 +530,40 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                                 type="number" min="1" step="1" placeholder="50"
                                                 value={newAdset.dailyBudget}
                                                 disabled={pushing}
-                                                onChange={e => setNewAdset(p => ({ ...p, dailyBudget: e.target.value }))}
-                                                className="w-full pl-7 pr-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-green-500"
+                                                onChange={e => {
+                                                    setNewAdset(p => ({ ...p, dailyBudget: e.target.value }));
+                                                    setFieldErrors(p => ({ ...p, dailyBudget: undefined }));
+                                                }}
+                                                className={`w-full pl-7 pr-3 py-2 border rounded-lg text-sm bg-white focus:ring-2 ${
+                                                    fieldErrors.dailyBudget ? 'border-red-400 focus:ring-red-500' : 'border-gray-300 focus:ring-green-500'
+                                                }`}
                                             />
                                         </div>
+                                        {fieldErrors.dailyBudget && (
+                                            <p className="text-xs text-red-600 mt-1">{fieldErrors.dailyBudget}</p>
+                                        )}
                                     </div>
                                     <div>
                                         <label className="block text-xs font-medium text-gray-600 mb-1">Clone targeting from *</label>
                                         <select
                                             value={newAdset.cloneFromId}
                                             disabled={pushing || loading || adSets.length === 0}
-                                            onChange={e => setNewAdset(p => ({ ...p, cloneFromId: e.target.value }))}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-green-500"
+                                            onChange={e => {
+                                                setNewAdset(p => ({ ...p, cloneFromId: e.target.value }));
+                                                setFieldErrors(p => ({ ...p, cloneFrom: undefined }));
+                                            }}
+                                            className={`w-full px-3 py-2 border rounded-lg text-sm bg-white focus:ring-2 ${
+                                                fieldErrors.cloneFrom ? 'border-red-400 focus:ring-red-500' : 'border-gray-300 focus:ring-green-500'
+                                            }`}
                                         >
                                             <option value="">
                                                 {loading ? 'Loading...' : adSets.length === 0 ? 'No ad sets in this campaign' : 'Pick a source ad set...'}
                                             </option>
                                             {adSets.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                                         </select>
+                                        {fieldErrors.cloneFrom && (
+                                            <p className="text-xs text-red-600 mt-1">{fieldErrors.cloneFrom}</p>
+                                        )}
                                         <p className="text-xs text-gray-500 mt-1">Copies geo, age, placements & optimization. Custom audiences not copied.</p>
                                     </div>
                                     <p className="text-xs text-amber-700">New ad set is created as Paused — activate in Ads Manager after reviewing.</p>
@@ -525,8 +580,13 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                 <select
                                     value={pageId}
                                     disabled={pushing}
-                                    onChange={e => setPageId(e.target.value)}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 disabled:bg-gray-50"
+                                    onChange={e => {
+                                        setPageId(e.target.value);
+                                        setFieldErrors(p => ({ ...p, page: undefined }));
+                                    }}
+                                    className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 disabled:bg-gray-50 ${
+                                        fieldErrors.page ? 'border-red-400 focus:ring-red-500' : 'border-gray-300 focus:ring-green-500'
+                                    }`}
                                 >
                                     <option value="">Select a page...</option>
                                     {pages.map(pg => <option key={pg.id} value={pg.id}>{pg.name}</option>)}
@@ -536,9 +596,17 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                     type="text" placeholder="Page ID"
                                     value={pageId}
                                     disabled={pushing}
-                                    onChange={e => setPageId(e.target.value)}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 disabled:bg-gray-50"
+                                    onChange={e => {
+                                        setPageId(e.target.value);
+                                        setFieldErrors(p => ({ ...p, page: undefined }));
+                                    }}
+                                    className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 disabled:bg-gray-50 ${
+                                        fieldErrors.page ? 'border-red-400 focus:ring-red-500' : 'border-gray-300 focus:ring-green-500'
+                                    }`}
                                 />
+                            )}
+                            {fieldErrors.page && (
+                                <p className="text-xs text-red-600 mt-1">{fieldErrors.page}</p>
                             )}
                         </div>
                         <div>
@@ -547,9 +615,17 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                 type="url" placeholder="https://..."
                                 value={websiteUrl}
                                 disabled={pushing}
-                                onChange={e => setWebsiteUrl(e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 disabled:bg-gray-50"
+                                onChange={e => {
+                                    setWebsiteUrl(e.target.value);
+                                    setFieldErrors(p => ({ ...p, websiteUrl: undefined }));
+                                }}
+                                className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 disabled:bg-gray-50 ${
+                                    fieldErrors.websiteUrl ? 'border-red-400 focus:ring-red-500' : 'border-gray-300 focus:ring-green-500'
+                                }`}
                             />
+                            {fieldErrors.websiteUrl && (
+                                <p className="text-xs text-red-600 mt-1">{fieldErrors.websiteUrl}</p>
+                            )}
                         </div>
                     </div>
 
