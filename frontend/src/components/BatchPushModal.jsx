@@ -147,9 +147,11 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                     || (list.length > 0 ? list[0] : null);
             }
             if (sourceAdset) {
-                const budgetDollars = sourceAdset.daily_budget
-                    ? Math.round(Number(sourceAdset.daily_budget) / 100)
-                    : '';
+                // Only pre-fill budget if source ad set has a real non-zero value.
+                // CBO campaigns store budget at campaign level — ad sets return daily_budget=0 or null,
+                // which would pre-fill "$0" and silently block the push with a validation error.
+                const budgetCents = Number(sourceAdset.daily_budget) || 0;
+                const budgetDollars = budgetCents > 0 ? Math.round(budgetCents / 100) : '';
                 setNewAdset(prev => ({
                     ...prev,
                     cloneFromId: sourceAdset.id,
@@ -191,11 +193,6 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
 
     const handlePushAll = async () => {
         if (!validate()) return;
-        const campaignLabel = campaigns.find(c => c.id === selectedCampaignId)?.name || selectedCampaignId;
-        const adsetLabel = adsetMode === 'existing'
-            ? (adSets.find(a => a.id === sharedAdsetId)?.name || sharedAdsetId)
-            : `New ad set: "${newAdset.name}"`;
-        if (!window.confirm(`Push ${items.length} ad${items.length !== 1 ? 's' : ''} to Meta?\n\nCampaign: ${campaignLabel}\nAd Set: ${adsetLabel}\nDestination: ${websiteUrl}\n\nAds will be created as PAUSED.`)) return;
         setPushStatuses({});
         setPushErrors({});
         setPushing(true);
