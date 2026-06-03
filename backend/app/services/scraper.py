@@ -290,13 +290,13 @@ class FacebookAdsLibraryAPI:
         """
         exclude_ids = set(exclude_ids or [])
         negative_keywords = [kw.lower() for kw in (negative_keywords or [])]
-        from playwright.async_api import async_playwright
-        import urllib.parse
-        import json
 
         ads = []
 
         try:
+            from playwright.async_api import async_playwright
+            import urllib.parse
+            import json
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)
                 context = await browser.new_context(

@@ -775,6 +775,7 @@ async def search_and_save_vertical(
     total_new = 0
     total_duplicate = 0
     keywords_run = 0
+    first_error: str | None = None
 
     for label, keywords in pairs:
         # Look up or create the DB Vertical for this label
@@ -808,15 +809,22 @@ async def search_and_save_vertical(
                 total_duplicate += saved_search.ads_duplicate or 0
                 keywords_run += 1
             except Exception as exc:
-                import logging
+                import logging, traceback
                 logging.getLogger(__name__).warning(
-                    "Keyword search failed for '%s': %s", keyword, exc
+                    "Keyword search failed for '%s': %s\n%s", keyword, exc, traceback.format_exc()
                 )
-                # Continue with remaining keywords — non-fatal
+                if first_error is None:
+                    first_error = f"{type(exc).__name__}: {exc}"
+                # Roll back any partial transaction so the next keyword gets a clean session
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
 
     return {
         "total_new": total_new,
         "total_duplicate": total_duplicate,
         "keywords_run": keywords_run,
         "message": f"Refreshed {keywords_run} keywords — {total_new} new ads found",
+        "first_error": first_error,  # None when all succeed; error class + message when any fail
     }
