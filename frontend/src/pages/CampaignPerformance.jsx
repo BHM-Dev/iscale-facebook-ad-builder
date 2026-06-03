@@ -633,7 +633,7 @@ function RemixDrawer({ creative, brands, onClose, onLaunchWizard }) {
                       onClick={() => onLaunchWizard({ ...creative, headline: v.headline, body: v.body, niche })}
                       className="flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-purple-50 hover:bg-purple-100 text-purple-700 font-medium"
                     >
-                      <Sparkles size={10} /> Launch Wizard
+                      <Sparkles size={10} /> Build Ad ↗
                     </button>
                   </div>
                 </div>

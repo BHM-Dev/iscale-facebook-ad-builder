@@ -366,15 +366,19 @@ export default function Dashboard() {
       }
 
       // CPL well above blended average (>1.5x) with meaningful spend
+      // Skip if RT ROAS ≥ 1 — high CPL but still profitable means it doesn't need attention
       if (blendedCpl != null && ins.cpl != null && ins.cpl > blendedCpl * 1.5 && ins.spend > 30) {
-        needsAttention.push({
-          id: `cpl-${a.id}`,
-          label: a.name,
-          reason: `CPL $${ins.cpl.toFixed(0)} — ${Math.round(ins.cpl / blendedCpl)}x above blended avg`,
-          severity: 'orange',
-          fb_adset_id: a.fb_adset_id,
-          fb_campaign_id: a.fb_campaign_id || '',
-        });
+        const rtRoas = rt?.roas;
+        if (rtRoas == null || rtRoas < 1) {
+          needsAttention.push({
+            id: `cpl-${a.id}`,
+            label: a.name,
+            reason: `CPL $${ins.cpl.toFixed(0)} — ${Math.round(ins.cpl / blendedCpl)}x above blended avg`,
+            severity: 'orange',
+            fb_adset_id: a.fb_adset_id,
+            fb_campaign_id: a.fb_campaign_id || '',
+          });
+        }
       }
     });
 
