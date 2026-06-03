@@ -1266,16 +1266,20 @@ export default function CampaignPerformance() {
                         const adsetAvgCpl = adsetAds.filter(a => a.leads > 0).length > 0
                           ? adsetAds.filter(a => a.leads > 0).reduce((s, a) => s + a.cpl, 0) / adsetAds.filter(a => a.leads > 0).length
                           : null;
+
+                        // Inline KPI values for the collapsed row (declared here so hasPoorCreatives can use rt)
+                        const d = bulkInsights?.[adset.fb_adset_id];
+                        const rt = d?.redtrack;
+
                         const hasPoorCreatives = adsetAds.some(a => {
-                          const isPoorRoas = (a.roas != null && a.roas < 1);
+                          // Suppress Meta ROAS < 1 if ad set is demonstrably profitable by RT data.
+                          // Meta underattributes conversions — RT is the source of truth for profitability.
+                          const adsetProfitableByRt = rt?.roas != null && rt.roas >= 1;
+                          const isPoorRoas = (a.roas != null && a.roas < 1) && !adsetProfitableByRt;
                           const isHighCpl = adsetAvgCpl != null && a.cpl != null && a.cpl > adsetAvgCpl * 1.4 && a.spend > 20;
                           const isNoLeads = a.spend >= 20 && a.leads === 0;
                           return isPoorRoas || isHighCpl || isNoLeads;
                         });
-
-                        // Inline KPI values for the collapsed row
-                        const d = bulkInsights?.[adset.fb_adset_id];
-                        const rt = d?.redtrack;
                         const kpiSpend   = d != null ? `$${d.spend.toFixed(0)}` : null;
                         const kpiCpl     = d?.cpl != null ? `$${d.cpl.toFixed(2)}` : null;
                         const kpiRoas    = rt?.roas != null ? `${rt.roas.toFixed(2)}x` : (d?.roas != null ? `${d.roas.toFixed(2)}x` : null);
