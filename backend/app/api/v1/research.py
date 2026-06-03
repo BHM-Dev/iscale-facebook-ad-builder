@@ -747,6 +747,7 @@ async def search_and_save_vertical(
         raise HTTPException(status_code=404, detail=f"Unknown vertical: {vertical_id}")
 
     config = VERTICAL_KEYWORD_SETS[vertical_id]
+    negative_keywords = config.get("negative_keywords", [])
 
     # Build list of (label, keywords) pairs to process
     pairs: list[tuple[str, list[str]]] = []
@@ -799,7 +800,7 @@ async def search_and_save_vertical(
                     country="US",
                     offset=0,
                     exclude_ids=[],
-                    negative_keywords=[],
+                    negative_keywords=negative_keywords,
                     vertical_id=vertical.id,
                     search_type="one_time",
                     schedule_config=None,
