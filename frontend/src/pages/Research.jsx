@@ -385,9 +385,8 @@ export default function Research() {
       });
       if (!res.ok) throw new Error('Clear failed');
       const result = await res.json();
-      showSuccess(`Cleared ${result.deleted} ads — refresh to pull fresh results`);
-      loadBrowseAds();
-      loadSavedAds();
+      showSuccess(`Cleared ${result.deleted} ads — pulling fresh results now…`);
+      handleRefresh();
     } catch (e) {
       showError(e.message || 'Clear failed');
     } finally {
@@ -683,9 +682,15 @@ export default function Research() {
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-2">Clear all unsaved ads?</h3>
             <p className="text-sm text-gray-600 mb-6">
-              This removes all non-saved ads for the <strong>{activeVertical.replace(/_/g, ' ')}</strong> vertical.
-              Use this after tightening keyword filters to remove irrelevant ads pulled by old searches.
-              Your <strong>saved ads are kept</strong>.
+              {activeVertical === 'home_services' ? (
+                <>This removes all non-saved ads across <strong>all Home Services sub-verticals</strong>.
+                Use this after tightening keyword filters to remove irrelevant ads pulled by old searches.
+                Your <strong>saved ads are kept</strong>.</>
+              ) : (
+                <>This removes all non-saved ads for the <strong>{activeVertical.replace(/_/g, ' ')}</strong> vertical.
+                Use this after tightening keyword filters to remove irrelevant ads pulled by old searches.
+                Your <strong>saved ads are kept</strong>.</>
+              )}
             </p>
             <div className="flex gap-3 justify-end">
               <button
