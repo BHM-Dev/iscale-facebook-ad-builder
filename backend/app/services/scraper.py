@@ -23,7 +23,11 @@ class FacebookAdsLibraryAPI:
 
     def __init__(self, db: Session = None):
         self.base_url = "https://graph.facebook.com/v21.0/ads_archive"
-        self.access_token = os.getenv("FACEBOOK_ADS_LIBRARY_TOKEN") or os.getenv("VITE_FACEBOOK_ACCESS_TOKEN")
+        self.access_token = (
+            os.getenv("FACEBOOK_ADS_LIBRARY_TOKEN")
+            or os.getenv("VITE_FACEBOOK_ACCESS_TOKEN")
+            or os.getenv("FACEBOOK_ACCESS_TOKEN")  # Same Meta token used for push-to-meta
+        )
         self.db = db
 
     async def search_ads(self, query: str, limit: int = 10, country: str = "US", offset: int = 0, exclude_ids: List[str] = None, negative_keywords: List[str] = None):

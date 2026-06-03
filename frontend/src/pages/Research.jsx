@@ -322,25 +322,42 @@ export default function Research() {
   // ── Actions ──────────────────────────────────────────────────
   const handleRefresh = async () => {
     setRefreshing(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90000); // 90s hard cap
+
     try {
       const params = new URLSearchParams({ vertical_id: activeVertical });
       if (activeSubVertical) params.set('sub_vertical', activeSubVertical);
-      params.set('limit_per_keyword', '200');
+      params.set('limit_per_keyword', '50');
 
       const res = await authFetch(`${API_URL}/research/search-and-save-vertical?${params}`, {
         method: 'POST',
+        signal: controller.signal,
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || 'Refresh failed');
       }
       const result = await res.json();
-      showSuccess(result.message || `Refresh complete — ${result.total_new} new ads`);
-      loadBrowseAds();
-      loadSavedAds();
+      if (result.keywords_run === 0) {
+        showError('Refresh failed — Facebook token may be missing. Ping Steve or Golden to check the API config.');
+      } else if (result.total_new === 0) {
+        showSuccess(`Already up to date — ${result.keywords_run} keywords checked, no new ads`);
+        loadBrowseAds();
+        loadSavedAds();
+      } else {
+        showSuccess(result.message || `Refresh complete — ${result.total_new} new ads`);
+        loadBrowseAds();
+        loadSavedAds();
+      }
     } catch (e) {
-      showError(e.message || 'Refresh failed');
+      if (e.name === 'AbortError') {
+        showError('Refresh timed out after 90s — try a single sub-vertical instead of all Home Services');
+      } else {
+        showError(e.message || 'Refresh failed');
+      }
     } finally {
+      clearTimeout(timeoutId);
       setRefreshing(false);
     }
   };
