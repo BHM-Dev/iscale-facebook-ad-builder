@@ -25,6 +25,7 @@ class ScrapedAdBase(BaseModel):
     platforms: Optional[List[str]] = None  # ['facebook', 'instagram']
     start_date: Optional[str] = None  # When ad started running
     media_type: Optional[str] = None  # 'image', 'video', or 'carousel'
+    media_url: Optional[str] = None  # Primary image or video thumbnail URL from Facebook Ad Library (may expire)
 
 class ScrapedAdCreate(ScrapedAdBase):
     pass

@@ -437,6 +437,7 @@ class ScrapedAd(Base):
     platforms = Column(JSON, nullable=True)  # ['facebook', 'instagram'] etc
     start_date = Column(String, nullable=True)  # When ad started running
     media_type = Column(String, nullable=True)  # 'image', 'video', or 'carousel'
+    media_url = Column(String, nullable=True)  # Primary image/video thumbnail URL — may expire (Facebook CDN)
     first_seen = Column(DateTime(timezone=True), server_default=func.now())  # First time ad was scraped
     last_seen = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())  # Last time ad was seen
     seen_count = Column(Integer, default=1)  # Number of times this ad has been encountered in scrapes

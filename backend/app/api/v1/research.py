@@ -709,6 +709,7 @@ def get_vertical_browse_ads(
             "ad_copy": ad.ad_copy,
             "cta_text": ad.cta_text,
             "ad_link": ad.ad_link,
+            "media_url": ad.media_url,
             "start_date": ad.start_date,
             "running_days": running_days,
             "is_active": is_active,

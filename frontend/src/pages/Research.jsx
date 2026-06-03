@@ -121,6 +121,18 @@ function SaveButton({ ad, isSaved, onSave, onUnsave, angleTags }) {
 function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, angleTags }) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-sm transition-shadow flex flex-col gap-3">
+      {/* Facebook CDN media URLs are temporary; hide expired thumbnails without disrupting the card. */}
+      {ad.media_url && (
+        <div className="rounded-lg overflow-hidden bg-gray-100 -mx-4 -mt-4 mb-1">
+          <img
+            src={ad.media_url}
+            alt=""
+            className="w-full object-cover max-h-48"
+            onError={(e) => { e.target.parentElement.style.display = 'none'; }}
+          />
+        </div>
+      )}
+
       {/* Header: status dot + advertiser */}
       <div className="flex items-center gap-2">
         <span className={`flex items-center gap-1 text-xs font-medium ${ad.is_active ? 'text-green-600' : 'text-gray-400'}`}>

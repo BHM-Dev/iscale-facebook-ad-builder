@@ -139,7 +139,7 @@ class FacebookAdsLibraryAPI:
                     "search_terms": query,
                     "ad_active_status": "ACTIVE",
                     "limit": batch_size,
-                    "fields": "id,ad_creative_bodies,ad_creative_link_titles,ad_creative_link_captions,ad_snapshot_url,page_name,impressions,spend,currency,publisher_platforms,ad_delivery_start_time,ad_delivery_stop_time"
+                    "fields": "id,ad_creative_bodies,ad_creative_link_titles,ad_creative_link_captions,snapshot_url,ad_snapshot_url,page_name,impressions,spend,currency,publisher_platforms,ad_delivery_start_time,ad_delivery_stop_time"
                 }
 
                 if after_cursor:
@@ -264,6 +264,8 @@ class FacebookAdsLibraryAPI:
         # Detect media type (default to 'image' for now - can be enhanced later with snapshot analysis)
         # TODO: Parse ad_snapshot_url or use creative fields to detect video vs image vs carousel
         media_type = "image"
+        # Facebook Ads Library CDN URLs are temporary and may expire after the scrape window.
+        media_url = ad_data.get("snapshot_url") or ad_data.get("ad_snapshot_url")
 
         return ScrapedAdCreate(
             brand_name=ad_data.get("page_name", "Unknown Brand"),
@@ -275,13 +277,14 @@ class FacebookAdsLibraryAPI:
             ad_link=fb_library_url,
             platforms=platforms,
             start_date=start_date,
-            media_type=media_type
+            media_type=media_type,
+            media_url=media_url
         )
 
     async def _fallback_search(self, query: str, limit: int, country: str = "US", offset: int = 0, exclude_ids: List[str] = None, negative_keywords: List[str] = None) -> List[ScrapedAdCreate]:
         """
         Scrape Facebook Ads Library using Playwright.
-        Extracts ad text data from DOM without media.
+        Extracts ad text data plus the first likely creative image URL from DOM.
 
         Args:
             offset: Number of scroll batches to skip before collecting (for pagination)
@@ -471,6 +474,11 @@ class FacebookAdsLibraryAPI:
                             const dateMatch = text.match(/Started running on\\s+([A-Za-z]+\\s+\\d+,?\\s*\\d*)/);
                             if (dateMatch) startDate = dateMatch[1];
 
+                            // Facebook CDN image URLs are temporary. Keep the fresh URL only for MVP thumbnails.
+                            const creativeImage = Array.from(adContainer.querySelectorAll('img'))
+                                .find(img => img.naturalWidth > 150 && (img.currentSrc || img.src));
+                            const imageUrl = creativeImage ? (creativeImage.currentSrc || creativeImage.src) : null;
+
                             results.push({
                                 external_id: libraryId,
                                 brand_name: brandName,
@@ -478,7 +486,8 @@ class FacebookAdsLibraryAPI:
                                 ad_copy: adCopy.substring(0, 500),
                                 cta_text: ctaText,
                                 platforms: platforms.length > 0 ? platforms : null,
-                                start_date: startDate
+                                start_date: startDate,
+                                image_url: imageUrl
                             });
                         });
 
@@ -528,7 +537,8 @@ class FacebookAdsLibraryAPI:
                             external_id=ad_data['external_id'],
                             ad_link=fb_library_url,
                             platforms=ad_data.get('platforms'),
-                            start_date=ad_data.get('start_date')
+                            start_date=ad_data.get('start_date'),
+                            media_url=ad_data.get('image_url')
                         )
                         ads.append(ad)
 
