@@ -722,6 +722,52 @@ def get_vertical_browse_ads(
     return result
 
 
+@router.delete("/config-verticals/{config_id}/ads")
+def clear_vertical_ads(
+    config_id: str,
+    db: Session = Depends(get_db),
+):
+    """Delete all non-saved scraped ads for a pre-configured vertical.
+
+    Finds the matching Vertical records by label, then deletes all ScrapedAd rows
+    linked to those verticals' SavedSearches where is_saved=False.
+    Saved ads (is_saved=True) are preserved.
+    """
+    from app.models import ScrapedAd, SavedSearch, Vertical
+    from app.core.vertical_config import VERTICAL_KEYWORD_SETS
+
+    if config_id not in VERTICAL_KEYWORD_SETS:
+        raise HTTPException(status_code=404, detail=f"Unknown vertical config: {config_id}")
+
+    config = VERTICAL_KEYWORD_SETS[config_id]
+
+    # Determine vertical labels (same logic as get_vertical_browse_ads)
+    if config_id == "home_services":
+        vertical_labels = [sv["label"] for sv in config.get("sub_verticals", {}).values()]
+    else:
+        vertical_labels = [config["label"]]
+
+    verticals = db.query(Vertical).filter(Vertical.name.in_(vertical_labels)).all()
+    if not verticals:
+        return {"deleted": 0}
+
+    vertical_ids = [v.id for v in verticals]
+    search_ids = [
+        s.id
+        for s in db.query(SavedSearch.id).filter(SavedSearch.vertical_id.in_(vertical_ids)).all()
+    ]
+    if not search_ids:
+        return {"deleted": 0}
+
+    deleted = (
+        db.query(ScrapedAd)
+        .filter(ScrapedAd.search_id.in_(search_ids), ScrapedAd.is_saved == False)  # noqa: E712
+        .delete(synchronize_session="fetch")
+    )
+    db.commit()
+    return {"deleted": deleted}
+
+
 @router.post("/search-and-save-vertical")
 async def search_and_save_vertical(
     vertical_id: str,

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Zap, X } from 'lucide-react';
+import { FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, Zap, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -254,6 +254,8 @@ export default function Research() {
   const [savedAdIds, setSavedAdIds] = useState(new Set());
   const [browseLoading, setBrowseLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [showClearModal, setShowClearModal] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   // Filters
   const [angleFilter, setAngleFilter] = useState('');
@@ -374,6 +376,25 @@ export default function Research() {
     }
   };
 
+  const handleClear = async () => {
+    setClearing(true);
+    setShowClearModal(false);
+    try {
+      const res = await authFetch(`${API_URL}/research/config-verticals/${activeVertical}/ads`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) throw new Error('Clear failed');
+      const result = await res.json();
+      showSuccess(`Cleared ${result.deleted} ads — refresh to pull fresh results`);
+      loadBrowseAds();
+      loadSavedAds();
+    } catch (e) {
+      showError(e.message || 'Clear failed');
+    } finally {
+      setClearing(false);
+    }
+  };
+
   const handleSave = async (ad, angleTag) => {
     // Optimistic update
     setSavedAdIds(prev => new Set([...prev, ad.id]));
@@ -446,15 +467,27 @@ export default function Research() {
           <p className="text-sm text-gray-500 mt-0.5">Study what's working in your markets before you write.</p>
         </div>
         <div className="flex flex-col items-end gap-1">
-          <button
-            type="button"
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
-            {refreshing ? 'Refreshing…' : 'Refresh Vertical'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowClearModal(true)}
+              disabled={clearing || refreshing}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              title="Delete all unsaved ads for this vertical"
+            >
+              <Trash2 size={14} />
+              {clearing ? 'Clearing…' : 'Clear Ads'}
+            </button>
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={refreshing || clearing}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
+              {refreshing ? 'Refreshing…' : 'Refresh Vertical'}
+            </button>
+          </div>
           {refreshing && (
             <p className="text-xs text-gray-400">Pulling ads from Facebook — may take up to 60s</p>
           )}
@@ -643,6 +676,36 @@ export default function Research() {
           )}
         </div>
       </div>
+
+      {/* Clear Ads confirmation modal */}
+      {showClearModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Clear all unsaved ads?</h3>
+            <p className="text-sm text-gray-600 mb-6">
+              This removes all non-saved ads for the <strong>{activeVertical.replace(/_/g, ' ')}</strong> vertical.
+              Use this after tightening keyword filters to remove irrelevant ads pulled by old searches.
+              Your <strong>saved ads are kept</strong>.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setShowClearModal(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleClear}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg"
+              >
+                Clear Ads
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
