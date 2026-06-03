@@ -286,6 +286,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     const adsManagerUrl = adAccountId && selectedCampaignId
         ? `https://adsmanager.facebook.com/adsmanager/manage/ads?act=${adAccountId.replace('act_', '')}&selected_campaign_ids=${selectedCampaignId}`
         : 'https://adsmanager.facebook.com';
+    const fieldErrorMessages = Object.values(fieldErrors).filter(Boolean);
 
     // ── Done screen ───────────────────────────────────────────────────────────
     if (isDone) {
@@ -360,6 +361,21 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                 </div>
 
                 <div className="overflow-y-auto flex-1 px-6 py-4 space-y-5">
+                    {fieldErrorMessages.length > 0 && (
+                        <div className="border border-red-200 bg-red-50 rounded-lg px-3 py-2.5">
+                            <div className="flex items-start gap-2">
+                                <AlertCircle size={15} className="text-red-600 mt-0.5 shrink-0" />
+                                <div>
+                                    <p className="text-sm font-medium text-red-800">Fix these fields before pushing</p>
+                                    <ul className="mt-1 space-y-0.5 text-xs text-red-700 list-disc list-inside">
+                                        {fieldErrorMessages.map(error => (
+                                            <li key={error}>{error}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Ad Account */}
                     <div>
