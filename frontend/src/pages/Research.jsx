@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, Zap, X } from 'lucide-react';
+import { Ban, FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, Zap, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -118,7 +118,7 @@ function SaveButton({ ad, isSaved, onSave, onUnsave, angleTags }) {
 }
 
 // ── Ad Card ─────────────────────────────────────────────────────
-function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, angleTags }) {
+function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage, angleTags }) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-sm transition-shadow flex flex-col gap-3">
       {/* Facebook CDN media URLs are temporary; hide expired thumbnails without disrupting the card. */}
@@ -186,6 +186,15 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, angleTags }
           onUnsave={onUnsave}
           angleTags={angleTags}
         />
+        <button
+          type="button"
+          onClick={() => onBlockPage(ad)}
+          className="inline-flex items-center gap-1 px-1.5 py-1 text-xs font-medium text-gray-400 hover:text-red-500 transition-colors"
+          title="Block this advertiser"
+        >
+          <Ban size={11} />
+          Block page
+        </button>
       </div>
     </div>
   );
@@ -240,7 +249,7 @@ function SkeletonCard() {
 // ── Main page ────────────────────────────────────────────────────
 export default function Research() {
   const { authFetch } = useAuth();
-  const { showSuccess, showError } = useToast();
+  const { showSuccess, showError, showInfo } = useToast();
   const navigate = useNavigate();
 
   const [verticalConfig, setVerticalConfig] = useState(null);
@@ -441,6 +450,29 @@ export default function Research() {
     navigate('/ad-remix');
   };
 
+  const handleBlockPage = async (ad) => {
+    const pageName = ad.brand_name || '';
+    if (!pageName) {
+      showInfo('Page already blocked');
+      return;
+    }
+
+    try {
+      const res = await authFetch(
+        `${API_URL}/research/blacklist?page_name=${encodeURIComponent(pageName)}&reason=user_blocked`,
+        { method: 'POST' },
+      );
+      if (!res.ok) {
+        showInfo('Page already blocked');
+        return;
+      }
+      setBrowseAds(prev => prev.filter(a => a.brand_name !== pageName));
+      showSuccess(`${pageName} blocked — won't appear again`);
+    } catch (e) {
+      showInfo('Page already blocked');
+    }
+  };
+
   // ── Derived ───────────────────────────────────────────────────
   const angleTags = verticalConfig?.angle_tags || [];
   const config = verticalConfig?.verticals || {};
@@ -637,6 +669,7 @@ export default function Research() {
                   onSave={handleSave}
                   onUnsave={handleUnsave}
                   onUseAsInspiration={handleUseAsInspiration}
+                  onBlockPage={handleBlockPage}
                   angleTags={angleTags}
                 />
               ))}
