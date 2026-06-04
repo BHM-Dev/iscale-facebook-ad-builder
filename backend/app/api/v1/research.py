@@ -657,16 +657,6 @@ def get_vertical_browse_ads(
         | {p.lower() for p in ALWAYS_BLOCKED_PAGES}
     )
 
-    # Relevance terms — at least one must appear in ad text to pass through.
-    # Prevents Meta's broad/semantic match from bleeding in off-topic ads.
-    if config_id == "home_services" and sub_vertical:
-        sv_config = config.get("sub_verticals", {}).get(sub_vertical, {})
-        relevance_terms = [t.lower() for t in sv_config.get("relevance_terms", [])]
-    elif config_id == "home_services":
-        relevance_terms = []  # All sub-verticals shown — skip; too many term sets to combine safely
-    else:
-        relevance_terms = [t.lower() for t in config.get("relevance_terms", [])]
-
     # Build query — one row per unique content_hash (or ad ID for legacy ads)
     unique_key = func.coalesce(ScrapedAd.content_hash, ScrapedAd.id)
     subq = (
@@ -699,12 +689,6 @@ def get_vertical_browse_ads(
         # Page blacklist check (DB list + hardcoded always-blocked set)
         if ad.brand_name and ad.brand_name.lower() in blacklisted_names:
             continue
-
-        # Relevance filter — at least one vertical-specific term must appear in the ad text
-        if relevance_terms:
-            text = f"{ad.brand_name or ''} {ad.headline or ''} {ad.ad_copy or ''} {ad.cta_text or ''}".lower()
-            if not any(t in text for t in relevance_terms):
-                continue
 
         running_days = None
         if ad.start_date:
