@@ -138,7 +138,7 @@ class FacebookAdsLibraryAPI:
                     "access_token": self.access_token,
                     "ad_reached_countries": country,
                     "search_terms": query,
-                    "ad_active_status": "ACTIVE",
+                    "ad_active_status": "ALL",
                     "limit": batch_size,
                     "fields": "id,ad_creative_bodies,ad_creative_link_titles,ad_creative_link_captions,snapshot_url,ad_snapshot_url,page_name,impressions,spend,currency,publisher_platforms,ad_delivery_start_time,ad_delivery_stop_time"
                 }
