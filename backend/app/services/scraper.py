@@ -50,6 +50,7 @@ class FacebookAdsLibraryAPI:
             - api_calls_made: Number of API calls
         """
         print(f"Searching Facebook Ads Library for '{query}' in {country} (offset={offset}, negative_keywords={negative_keywords})")
+        print(f"[scraper] token={'SET' if self.access_token else 'MISSING'}, using={'API' if self.access_token else 'fallback'}")
 
         # Try API first if token available
         if self.access_token:
@@ -146,6 +147,9 @@ class FacebookAdsLibraryAPI:
                     params["after"] = after_cursor
 
                 print(f"Calling API: {self.base_url} (batch {total_api_calls + 1}, requesting {batch_size} ads)")
+                if total_api_calls == 0:
+                    log_params = {**params, "access_token": "SET"}
+                    print(f"[scraper] API URL sample: {httpx.URL(self.base_url, params=log_params)}")
                 response = await client.get(self.base_url, params=params)
                 response.raise_for_status()
 
@@ -288,6 +292,14 @@ class FacebookAdsLibraryAPI:
         exclude_ids = set(exclude_ids or [])
         negative_keywords = [kw.lower() for kw in (negative_keywords or [])]
 
+        # Mirror API-path filtering: request negatives plus persistent keyword blacklist.
+        if self.db:
+            from app.models import KeywordBlacklist
+            blacklisted_keywords = [k.keyword.lower() for k in self.db.query(KeywordBlacklist).all()]
+            negative_keywords = negative_keywords + blacklisted_keywords
+            if blacklisted_keywords:
+                print(f"Fallback filtering {len(blacklisted_keywords)} blacklisted keywords")
+
         ads = []
 
         try:
@@ -326,8 +338,8 @@ class FacebookAdsLibraryAPI:
 
                 # Scroll to load more ads and trigger lazy loading
                 # offset controls how deep we scroll (for pagination)
-                base_scrolls = min(5, (limit // 3) + 1)
-                total_scrolls = base_scrolls + (offset * 3)  # Each "page" = 3 more scrolls
+                base_scrolls = min(12, max(8, (limit // 2) + 2))
+                total_scrolls = base_scrolls + (offset * 5)  # Each "page" = 5 more scrolls
 
                 print(f"Scrolling {total_scrolls} times (base={base_scrolls}, offset={offset})")
 
