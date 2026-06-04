@@ -794,6 +794,11 @@ async def search_and_save_vertical(
     if vertical_id not in VERTICAL_KEYWORD_SETS:
         raise HTTPException(status_code=404, detail=f"Unknown vertical: {vertical_id}")
 
+    print(
+        f"[research] search-and-save-vertical called: vertical_id={vertical_id} "
+        f"sub_vertical={sub_vertical} limit_per_keyword={limit_per_keyword}"
+    )
+
     config = VERTICAL_KEYWORD_SETS[vertical_id]
     negative_keywords = config.get("negative_keywords", [])
 
@@ -854,6 +859,10 @@ async def search_and_save_vertical(
                     schedule_config=None,
                 )
                 saved_search, ads = await service.search_and_save(request)
+                print(
+                    f"[research] scraper returned {len(ads)} ads for "
+                    f"vertical='{label}' keyword='{keyword}'"
+                )
                 total_new += saved_search.ads_new or 0
                 total_duplicate += saved_search.ads_duplicate or 0
                 keywords_run += 1

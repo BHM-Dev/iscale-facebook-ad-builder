@@ -74,7 +74,7 @@ class FacebookAdsLibraryAPI:
 
                 return ads
             except Exception as e:
-                print(f"API search failed: {e}, falling back to scraper")
+                print(f"[scraper] API search failed: {type(e).__name__}: {e}, falling back to scraper")
 
         # Fallback to scraper
         return await self._fallback_search(query, limit, country, offset, exclude_ids or [], negative_keywords or [])
@@ -154,6 +154,11 @@ class FacebookAdsLibraryAPI:
                 response.raise_for_status()
 
                 data = response.json()
+                raw_count = len(data.get("data", []))
+                print(
+                    f"[scraper] API raw response: status={response.status_code} "
+                    f"data_count={raw_count} paging={data.get('paging')} error={data.get('error')}"
+                )
                 total_api_calls += 1
 
                 if not data.get("data"):
@@ -163,6 +168,7 @@ class FacebookAdsLibraryAPI:
                 batch_ads = data["data"]
                 total_ads_returned += len(batch_ads)
                 print(f"API returned {len(batch_ads)} ads in this batch")
+                kept_before_batch = len(ads)
 
                 for ad_data in batch_ads:
                     ad_id = ad_data.get("id")
@@ -203,6 +209,8 @@ class FacebookAdsLibraryAPI:
 
                     if len(ads) >= limit:
                         break
+
+                print(f"[scraper] after negative filter: {len(ads) - kept_before_batch} ads kept from {raw_count} raw")
 
                 # Check if we have pagination cursor for next batch
                 if data.get("paging", {}).get("next"):
