@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from app.models import ScrapedAd, SavedSearch, FacebookPage
+from app.models import ScrapedAd, SavedSearch, FacebookPage, Vertical
 from app.schemas.research import AdSearchRequest, ScrapedAdCreate
 from typing import Optional
 import uuid
@@ -15,11 +15,137 @@ class ResearchService:
     def __init__(self, db: Session):
         self.db = db
 
+    COMMERCIAL_INSURANCE_POSITIVE_PHRASES = {
+        "business insurance": 4,
+        "commercial insurance": 4,
+        "small business insurance": 5,
+        "contractor insurance": 5,
+        "trucking insurance": 5,
+        "restaurant insurance": 5,
+        "salon insurance": 5,
+        "general liability insurance": 5,
+        "general liability insurance for small business": 6,
+        "commercial property insurance": 5,
+        "business owners policy": 5,
+        "bop insurance": 5,
+        "workers comp insurance": 4,
+        "workers compensation insurance": 4,
+        "certificate of insurance": 4,
+        "coverage for your business": 4,
+        "protect your business": 3,
+        "business insurance quote": 5,
+        "get a quote": 2,
+    }
+
+    COMMERCIAL_INSURANCE_CONTEXT_TERMS = {
+        "insurance": 2,
+        "coverage": 1,
+        "liability": 2,
+        "commercial": 2,
+        "business": 2,
+        "contractor": 2,
+        "trucking": 2,
+        "restaurant": 2,
+        "salon": 2,
+        "property": 1,
+        "quote": 1,
+        "policy": 1,
+        "bop": 2,
+        "workers comp": 2,
+    }
+
+    COMMERCIAL_INSURANCE_BAD_TERMS = {
+        "personal injury": -8,
+        "injury attorney": -8,
+        "attorney": -6,
+        "lawyer": -6,
+        "lawsuit": -6,
+        "class action": -8,
+        "car accident": -6,
+        "accident attorney": -8,
+        "therapy": -6,
+        "mental health": -6,
+        "depression": -6,
+        "coaching": -6,
+        "fitness": -5,
+        "athlete": -5,
+        "pro athlete": -8,
+    }
+
     @staticmethod
     def compute_content_hash(ad_data) -> str:
         """Compute hash from ad content for deduplication."""
         content = f"{ad_data.brand_name or ''}|{ad_data.headline or ''}|{ad_data.ad_copy or ''}|{ad_data.cta_text or ''}"
         return hashlib.sha256(content.encode('utf-8')).hexdigest()
+
+    @staticmethod
+    def _ad_text(ad_data: ScrapedAdCreate) -> str:
+        return " ".join([
+            ad_data.brand_name or "",
+            ad_data.headline or "",
+            ad_data.ad_copy or "",
+            ad_data.cta_text or "",
+        ]).lower()
+
+    def _commercial_insurance_relevance_score(self, ad_data: ScrapedAdCreate, query: str) -> tuple[int, list[str]]:
+        """Score commercial-insurance intent before saving broad Ads Library matches."""
+        text = self._ad_text(ad_data)
+        score = 0
+        reasons: list[str] = []
+
+        query_lower = (query or "").lower().strip()
+        if query_lower and query_lower in text:
+            score += 3
+            reasons.append(f"query:{query_lower}")
+
+        for phrase, weight in self.COMMERCIAL_INSURANCE_POSITIVE_PHRASES.items():
+            if phrase in text:
+                score += weight
+                reasons.append(f"+{phrase}")
+
+        for term, weight in self.COMMERCIAL_INSURANCE_CONTEXT_TERMS.items():
+            if term in text:
+                score += weight
+                reasons.append(f"+{term}")
+
+        for term, penalty in self.COMMERCIAL_INSURANCE_BAD_TERMS.items():
+            if term in text:
+                score += penalty
+                reasons.append(f"{penalty}:{term}")
+
+        return score, reasons
+
+    def _filter_ads_by_vertical_relevance(
+        self,
+        ads: list[ScrapedAdCreate],
+        request: AdSearchRequest,
+        vertical_label: str | None,
+    ) -> tuple[list[ScrapedAdCreate], int]:
+        """Apply a positive relevance gate for verticals where broad matching is noisy."""
+        if not vertical_label or "commercial insurance" not in vertical_label.lower():
+            return ads, 0
+
+        kept = []
+        rejected = 0
+        min_score = 3
+
+        for ad in ads:
+            score, reasons = self._commercial_insurance_relevance_score(ad, request.query)
+            if score >= min_score:
+                kept.append(ad)
+            else:
+                rejected += 1
+                print(
+                    "[research relevance] rejected "
+                    f"query='{request.query}' page='{ad.brand_name}' score={score} reasons={reasons[:5]}"
+                )
+
+        print(
+            "[research relevance] "
+            f"vertical='{vertical_label}' query='{request.query}' raw={len(ads)} kept={len(kept)} "
+            f"low_relevance_rejected={rejected} threshold={min_score}"
+        )
+        return kept, rejected
 
     async def search_and_save(self, request: AdSearchRequest):
         """Execute search and save as SavedSearch with all ads"""
@@ -37,6 +163,13 @@ class ResearchService:
             request.exclude_ids,
             request.negative_keywords
         )
+
+        vertical_label = None
+        if request.vertical_id:
+            vertical = self.db.query(Vertical).filter(Vertical.id == request.vertical_id).first()
+            vertical_label = vertical.name if vertical else None
+
+        ads, _ = self._filter_ads_by_vertical_relevance(ads, request, vertical_label)
 
         # Track statistics
         ads_requested = request.limit
