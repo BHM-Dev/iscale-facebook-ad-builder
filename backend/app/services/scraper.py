@@ -178,7 +178,7 @@ class FacebookAdsLibraryAPI:
                             blacklist_filtered += 1
                             continue
 
-                    # Filter negative keywords (whole word matching)
+                    # Filter negative keywords (substring matching)
                     if all_negative_keywords:
                         text_to_check = ' '.join([
                             parsed_ad.brand_name or '',
@@ -187,15 +187,9 @@ class FacebookAdsLibraryAPI:
                             parsed_ad.cta_text or ''
                         ]).lower()
 
-                        # Use whole word matching with word boundaries
-                        import re
-                        should_filter = False
-                        for kw in all_negative_keywords:
-                            # Match whole word only (surrounded by word boundaries)
-                            pattern = r'\b' + re.escape(kw) + r'\b'
-                            if re.search(pattern, text_to_check):
-                                should_filter = True
-                                break
+                        # Substring match — handles plurals, acronyms, and multi-word phrases
+                        # that word-boundary regex (\b) misses (e.g. "pro athlete" vs "pro athletes")
+                        should_filter = any(kw in text_to_check for kw in all_negative_keywords)
 
                         if should_filter:
                             filtered_count += 1
