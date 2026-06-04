@@ -773,7 +773,7 @@ def clear_vertical_ads(
 async def search_and_save_vertical(
     vertical_id: str,
     sub_vertical: str | None = None,
-    limit_per_keyword: int = 200,
+    limit_per_keyword: int = 20,
     db: Session = Depends(get_db),
 ):
     """Run all keyword searches for a pre-configured vertical and save results.

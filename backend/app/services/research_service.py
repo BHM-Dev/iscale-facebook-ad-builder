@@ -150,18 +150,44 @@ class ResearchService:
 
         kept = []
         rejected = 0
-        min_score = 3
+        scored_ads = []
+        min_score = 2
 
         for ad in ads:
             score, reasons = self._commercial_insurance_relevance_score(ad, request.query)
+            scored_ads.append((score, reasons, ad))
             if score >= min_score:
                 kept.append(ad)
             else:
                 rejected += 1
+                text_preview = self._ad_text(ad)[:1200]
                 print(
                     "[research relevance] rejected "
-                    f"query='{request.query}' page='{ad.brand_name}' score={score} reasons={reasons[:5]}"
+                    f"query='{request.query}' page='{ad.brand_name}' score={score} reasons={reasons[:5]} "
+                    f"text='{text_preview}'"
                 )
+
+        # Facebook's fallback HTML scrape can produce sparse copy. If the hard gate would
+        # leave Joel with fewer than 3 cards, keep the best borderline candidates rather
+        # than returning an empty Research view. Strong negative matches still stay out.
+        min_results = min(3, len(ads), request.limit or len(ads))
+        if len(kept) < min_results:
+            kept_ids = {id(ad) for ad in kept}
+            candidates = sorted(scored_ads, key=lambda item: item[0], reverse=True)
+            for score, reasons, ad in candidates:
+                if len(kept) >= min_results:
+                    break
+                if id(ad) in kept_ids:
+                    continue
+                has_penalty = any(reason.startswith("-") for reason in reasons)
+                if score >= 1 or (len(ads) <= 3 and score >= 0 and not has_penalty):
+                    kept.append(ad)
+                    kept_ids.add(id(ad))
+                    rejected = max(0, rejected - 1)
+                    print(
+                        "[research relevance] recovered borderline ad "
+                        f"query='{request.query}' page='{ad.brand_name}' score={score} reasons={reasons[:5]}"
+                    )
 
         print(
             "[research relevance] "

@@ -27,11 +27,7 @@ VERTICAL_KEYWORD_SETS = {
             "business insurance quote",
             "trucking insurance",
             "restaurant insurance",
-            "salon insurance",
             "general liability insurance for small business",
-            "commercial property insurance",
-            "business owners policy",
-            "BOP insurance",
         ],
         "negative_keywords": [
             # Personal injury / legal
