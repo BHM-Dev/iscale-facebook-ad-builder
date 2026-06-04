@@ -346,12 +346,12 @@ export default function Research() {
   const handleRefresh = async () => {
     setRefreshing(true);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90000); // 90s hard cap
+    const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 min cap
 
     try {
       const params = new URLSearchParams({ vertical_id: activeVertical });
       if (activeSubVertical) params.set('sub_vertical', activeSubVertical);
-      params.set('limit_per_keyword', '50');
+      params.set('limit_per_keyword', '20');
 
       const res = await authFetch(`${API_URL}/research/search-and-save-vertical?${params}`, {
         method: 'POST',
@@ -375,7 +375,7 @@ export default function Research() {
       }
     } catch (e) {
       if (e.name === 'AbortError') {
-        showError('Refresh timed out after 90s — try a single sub-vertical instead of all Home Services');
+        showError('Refresh timed out — try a single sub-vertical tab instead of pulling all at once.');
       } else {
         showError(e.message || 'Refresh failed');
       }
