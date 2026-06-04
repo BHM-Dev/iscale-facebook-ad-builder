@@ -35,6 +35,24 @@ class ResearchService:
         "protect your business": 3,
         "business insurance quote": 5,
         "get a quote": 2,
+        # CI products not in original vocab
+        "umbrella insurance": 4,
+        "umbrella coverage": 3,
+        "umbrella policy": 3,
+        "commercial umbrella": 4,
+        "surety bond": 4,
+        "bonding insurance": 4,
+        "professional liability insurance": 5,
+        "errors and omissions": 3,
+        "e&o insurance": 4,
+        "employment practices liability": 4,
+        "epli": 3,
+        "builders risk insurance": 4,
+        "builders risk": 3,
+        "commercial auto insurance": 5,
+        "fleet insurance": 4,
+        "inland marine insurance": 4,
+        "product liability insurance": 4,
     }
 
     COMMERCIAL_INSURANCE_CONTEXT_TERMS = {
@@ -52,6 +70,11 @@ class ResearchService:
         "policy": 1,
         "bop": 2,
         "workers comp": 2,
+        "umbrella": 1,
+        "surety": 2,
+        "bonding": 2,
+        "fleet": 1,
+        "epli": 2,
     }
 
     COMMERCIAL_INSURANCE_BAD_TERMS = {
