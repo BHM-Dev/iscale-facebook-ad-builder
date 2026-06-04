@@ -172,17 +172,17 @@ class ResearchService:
         # than returning an empty Research view. Strong negative matches still stay out.
         min_results = min(3, len(ads), request.limit or len(ads))
         if len(kept) < min_results:
-            kept_ids = {id(ad) for ad in kept}
+            kept_hashes = {self.compute_content_hash(ad) for ad in kept}
             candidates = sorted(scored_ads, key=lambda item: item[0], reverse=True)
             for score, reasons, ad in candidates:
                 if len(kept) >= min_results:
                     break
-                if id(ad) in kept_ids:
+                if self.compute_content_hash(ad) in kept_hashes:
                     continue
                 has_penalty = any(reason.startswith("-") for reason in reasons)
                 if score >= 1 or (len(ads) <= 3 and score >= 0 and not has_penalty):
                     kept.append(ad)
-                    kept_ids.add(id(ad))
+                    kept_hashes.add(self.compute_content_hash(ad))
                     rejected = max(0, rejected - 1)
                     print(
                         "[research relevance] recovered borderline ad "
