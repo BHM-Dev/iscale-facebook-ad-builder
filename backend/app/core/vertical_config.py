@@ -7,6 +7,17 @@ Exposed via GET /api/v1/research/vertical-config so the frontend reads them
 without hardcoding. Update here only — no frontend deploy needed.
 """
 
+# Pages that are always blocked regardless of vertical — no DB entry needed.
+# Add pages here when Meta's broad-match search returns them consistently and
+# they are clearly irrelevant (drama apps, unrelated industries, etc.).
+ALWAYS_BLOCKED_PAGES = [
+    "popkon chase3",
+    "popkon chase1 drama",
+    "popkon chase1",
+    "novelwhisper-a",
+    "legal authority lab",
+]
+
 VERTICAL_KEYWORD_SETS = {
     "commercial_insurance": {
         "label": "Commercial Insurance",
@@ -73,6 +84,14 @@ VERTICAL_KEYWORD_SETS = {
             "temporary housing",
             "rv rental",
         ],
+        # At least one relevance term must appear in the ad text.
+        # Filters ads that Meta returns via broad/semantic match but have no
+        # insurance-related content (drama apps, coaching, unrelated industries).
+        "relevance_terms": [
+            "insurance", "insure", "insured", "coverage", "policy",
+            "liability", "premium", "quote", "bop", "commercial",
+            "protect your business", "business owner",
+        ],
     },
     "auto_insurance": {
         "label": "Auto Insurance",
@@ -89,6 +108,10 @@ VERTICAL_KEYWORD_SETS = {
             "SR-22",
         ],
         "negative_keywords": ["home insurance", "life insurance", "health insurance"],
+        "relevance_terms": [
+            "insurance", "insure", "insured", "coverage", "policy",
+            "premium", "quote", "auto", "vehicle", "driver", "car",
+        ],
     },
     "home_services": {
         "label": "Home Services",
@@ -104,6 +127,7 @@ VERTICAL_KEYWORD_SETS = {
                     "floor replacement",
                     "new floors",
                 ],
+                "relevance_terms": ["floor", "flooring", "hardwood", "laminate", "vinyl", "tile", "carpet"],
             },
             "interior_painting": {
                 "label": "Interior Painting",
@@ -115,6 +139,7 @@ VERTICAL_KEYWORD_SETS = {
                     "home painting",
                     "interior paint",
                 ],
+                "relevance_terms": ["paint", "painting", "painter", "coat", "interior", "wall"],
             },
             "mold_remediation": {
                 "label": "Mold Remediation",
@@ -125,6 +150,7 @@ VERTICAL_KEYWORD_SETS = {
                     "black mold",
                     "mold testing",
                 ],
+                "relevance_terms": ["mold", "mildew", "remediation", "water damage", "moisture", "fungus"],
             },
             "patio_remodel": {
                 "label": "Patio Remodel",
@@ -136,6 +162,7 @@ VERTICAL_KEYWORD_SETS = {
                     "deck installation",
                     "outdoor living space",
                 ],
+                "relevance_terms": ["patio", "deck", "outdoor", "pergola", "hardscape", "backyard"],
             },
             "fence_gate": {
                 "label": "Fence & Gate",
@@ -147,6 +174,7 @@ VERTICAL_KEYWORD_SETS = {
                     "wood fence",
                     "vinyl fence",
                 ],
+                "relevance_terms": ["fence", "fencing", "gate", "privacy", "picket", "wood fence", "vinyl fence"],
             },
             "gutters": {
                 "label": "Gutters",
@@ -157,6 +185,7 @@ VERTICAL_KEYWORD_SETS = {
                     "gutter contractor",
                     "new gutters",
                 ],
+                "relevance_terms": ["gutter", "downspout", "rain gutter", "drainage", "eavestrough"],
             },
             "tree_service": {
                 "label": "Tree Service",
@@ -168,6 +197,7 @@ VERTICAL_KEYWORD_SETS = {
                     "stump removal",
                     "arborist",
                 ],
+                "relevance_terms": ["tree", "stump", "arborist", "branch", "pruning", "trimming"],
             },
         },
     },
