@@ -1491,7 +1491,7 @@ export default function CampaignPerformance() {
 
     {/* ── Floating Ask AI ─────────────────────────────────────────────────── */}
     {askAiOpen && (
-      <div className="fixed inset-x-3 bottom-20 z-50 sm:inset-x-auto sm:right-6 sm:w-[380px]">
+      <div className="fixed inset-x-3 bottom-20 z-[60] sm:inset-x-auto sm:right-6 sm:w-[380px]">
         <div className="bg-white rounded-xl border border-gray-200 shadow-2xl overflow-hidden">
           <div className="flex items-start justify-between px-4 py-3 border-b border-gray-100">
             <div>
@@ -1566,7 +1566,7 @@ export default function CampaignPerformance() {
     )}
     <button
       onClick={() => setAskAiOpen(open => !open)}
-      className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full bg-gray-900 px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-gray-800 transition-colors"
+      className="fixed bottom-6 right-6 z-[60] flex items-center gap-2 rounded-full bg-gray-900 px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-gray-800 transition-colors"
       title="Ask AI about campaign performance"
     >
       <MessageSquare size={16} />
