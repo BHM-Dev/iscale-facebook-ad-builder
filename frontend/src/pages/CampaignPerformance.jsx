@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2, Sparkles, Tag, ChevronLeft, BarChart2, Database, ShieldAlert } from 'lucide-react';
+import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2, Sparkles, Tag, ChevronLeft, BarChart2, Database, ShieldAlert, MessageSquare, Send } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
@@ -711,6 +711,12 @@ export default function CampaignPerformance() {
   // Remix drawer state
   const [remixDrawer, setRemixDrawer] = useState(null); // { ad, adsetName, brand_id, brand_name }
 
+  // Floating Ask AI state
+  const [askAiOpen, setAskAiOpen] = useState(false);
+  const [aiQuery, setAiQuery] = useState('');
+  const [aiAnswer, setAiAnswer] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+
   const loadAdsets = useCallback(async () => {
     setLoadingAdsets(true);
     try {
@@ -943,6 +949,26 @@ export default function CampaignPerformance() {
       }
     } catch (e) { showError(e.message); }
     finally { setSyncingRT(false); }
+  };
+
+  const askAI = async () => {
+    if (!aiQuery.trim() || aiLoading) return;
+    setAiLoading(true);
+    setAiAnswer('');
+    try {
+      const res = await authFetch(`${API_BASE}/ai-insights/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: aiQuery.trim(), ad_account_id: adAccountId || undefined }),
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Query failed'); }
+      const data = await res.json();
+      setAiAnswer(data.answer);
+    } catch (e) {
+      showError(e.message || 'AI query failed — try again');
+    } finally {
+      setAiLoading(false);
+    }
   };
 
   // Blended CPL across all adsets with data — mirrors Dashboard.jsx logic.
@@ -1462,6 +1488,90 @@ export default function CampaignPerformance() {
       </div>
 
     </div>
+
+    {/* ── Floating Ask AI ─────────────────────────────────────────────────── */}
+    {askAiOpen && (
+      <div className="fixed inset-x-3 bottom-20 z-50 sm:inset-x-auto sm:right-6 sm:w-[380px]">
+        <div className="bg-white rounded-xl border border-gray-200 shadow-2xl overflow-hidden">
+          <div className="flex items-start justify-between px-4 py-3 border-b border-gray-100">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                <Sparkles size={15} className="text-violet-500" />
+                Ask AI
+              </h2>
+              <p className="text-xs text-gray-400 mt-0.5">powered by Claude + live Meta data</p>
+            </div>
+            <button
+              onClick={() => setAskAiOpen(false)}
+              className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+              title="Close Ask AI"
+            >
+              <X size={17} />
+            </button>
+          </div>
+          <div className="p-4">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={aiQuery}
+                onChange={e => setAiQuery(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && askAI()}
+                placeholder="Ask about performance..."
+                className="min-w-0 flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-transparent"
+                disabled={aiLoading}
+              />
+              <button
+                onClick={askAI}
+                disabled={aiLoading || !aiQuery.trim()}
+                className="flex items-center justify-center w-10 h-10 rounded-lg text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+                title="Ask AI"
+              >
+                {aiLoading ? <RefreshCw size={14} className="animate-spin" /> : <Send size={14} />}
+              </button>
+            </div>
+            {!aiAnswer && !aiLoading && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {[
+                  'What are my worst ad sets today?',
+                  'Which niches are underperforming this week?',
+                  'What should I pause right now?',
+                ].map(q => (
+                  <button
+                    key={q}
+                    onClick={() => setAiQuery(q)}
+                    className="text-xs px-2.5 py-1 rounded-full border border-gray-200 text-gray-500 hover:border-violet-300 hover:text-violet-600 transition-colors"
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
+            )}
+            {aiAnswer && (
+              <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-100 max-h-72 overflow-y-auto">
+                <div className="flex items-start gap-2">
+                  <MessageSquare size={14} className="text-violet-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">{aiAnswer}</p>
+                </div>
+                <button
+                  onClick={() => { setAiAnswer(''); setAiQuery(''); }}
+                  className="mt-2 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
+    <button
+      onClick={() => setAskAiOpen(open => !open)}
+      className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full bg-gray-900 px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-gray-800 transition-colors"
+      title="Ask AI about campaign performance"
+    >
+      <MessageSquare size={16} />
+      Ask AI
+    </button>
 
     {/* ── Add Rule Modal ───────────────────────────────────────────────────── */}
     {showAddRuleModal && (
