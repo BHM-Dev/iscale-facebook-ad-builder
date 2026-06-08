@@ -66,7 +66,7 @@ Generate high-converting ads using AI:
 
 ### 📋 Template Library
 Build a library of proven ad structures:
-- Deconstruct successful ads into blueprints
+- Save successful ads as reusable blueprints
 - Reuse templates across brands and products
 - Track performance by template type
 

@@ -26,7 +26,7 @@ Generates Facebook ad creatives (image and video) using Google Gemini + kie.ai. 
 Starts from winning ads and rebuilds them into structural blueprints (hook type, visual structure, CTA format, copy pattern) with a new brand's assets and voice. Lets Joel apply what works for one brand to another without starting from scratch.
 
 ### 5. Winning Ads Library
-Internal template library. Ads that prove out get saved here with their blueprint JSON. The remix engine pulls from this library.
+Internal template library. Ads that prove out get saved here with their blueprint JSON. The Build New Ad engine pulls from this library.
 
 ### 6. Facebook Campaign Management
 Full campaign creation wizard:

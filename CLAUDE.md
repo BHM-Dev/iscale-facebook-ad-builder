@@ -582,8 +582,8 @@ Do not suggest `./venv/bin/python ...` or `source venv/bin/activate` for VPS wor
 ### Still pending
 - [ ] **Copy Library performance data** — pull ad-level spend + CPL from Meta during sync, populate existing `spend`/`cpl` columns, add Spend + CPL columns to table (sortable). Phase 2: weight few-shot injection toward low-CPL pinned ads. Full spec: `COPY_LIBRARY_PERFORMANCE_SPEC.md`. Touches `facebook_service.py` — 2-agent review required.
 - [ ] OpenAI API swap (waiting on Golden to add keys): `gpt-5.1` for `/generate`, `gpt-4.1-mini` for `/remix-variations`
-- [ ] **AdRemix.jsx h1/subhead copy mismatch** — h1 says "Build New Ad" but subhead still says "Deconstruct winning ads and reconstruct them with your brand." Subhead needs a rewrite to match the new framing. (Codex task — pure copy edit, no trigger files.)
-- [ ] **README.md / BUILD_SUMMARY.md doc drift** — user-facing feature descriptions still say "Ad Remix" in several places. (Codex task — docs only, no agent review needed.)
+- [x] **AdRemix.jsx h1/subhead copy mismatch** — shipped in `832ef1f`. Subhead now reads "Start from a winning ad and rebuild it with your brand voice."
+- [x] **README.md / BUILD_SUMMARY.md doc drift** — fixed user-facing "Deconstruct" / "remix engine" wording (README.md:69, BUILD_SUMMARY.md:29).
 - [ ] ImageAds "Quick Generate" mode — skip wizard, go straight to niche+copy+generate for media buyers with existing copy
 - [ ] Template-first Quick Generate — Joel's real workflow starts from a proven winning ad, not from scratch. Tool needs a "start from my winning ad" entry point on the Dashboard or Campaign Performance page.
 - [ ] Slack Campaign Intelligence Bot — spec at `SLACK_INTELLIGENCE_SPEC.md`
