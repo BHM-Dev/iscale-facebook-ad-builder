@@ -7,6 +7,93 @@ import { useToast } from '../context/ToastContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
+function MarkdownAnswer({ text }) {
+  const lines = text.split('\n');
+  const elements = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Horizontal rule
+    if (/^---+$/.test(line.trim())) {
+      elements.push(<hr key={i} className="my-3 border-gray-200" />);
+      i++; continue;
+    }
+
+    // Table: detect header row followed by separator
+    if (i + 1 < lines.length && /^\|.*\|$/.test(line) && /^\|[-| :]+\|$/.test(lines[i + 1])) {
+      const headers = line.split('|').filter((_, idx, arr) => idx > 0 && idx < arr.length - 1).map(h => h.trim());
+      i += 2; // skip header + separator
+      const rows = [];
+      while (i < lines.length && /^\|.*\|$/.test(lines[i])) {
+        const cells = lines[i].split('|').filter((_, idx, arr) => idx > 0 && idx < arr.length - 1).map(c => c.trim());
+        rows.push(cells);
+        i++;
+      }
+      elements.push(
+        <div key={`table-${i}`} className="overflow-x-auto my-2">
+          <table className="text-xs w-full border-collapse">
+            <thead>
+              <tr className="bg-gray-100">
+                {headers.map((h, hi) => (
+                  <th key={hi} className="px-2 py-1.5 text-left font-semibold text-gray-700 border border-gray-200">{renderInline(h)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, ri) => (
+                <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                  {row.map((cell, ci) => (
+                    <td key={ci} className="px-2 py-1.5 border border-gray-200 text-gray-700">{renderInline(cell)}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+      continue;
+    }
+
+    // Heading ##
+    const h2 = line.match(/^##\s+(.+)/);
+    if (h2) {
+      elements.push(<p key={i} className="font-semibold text-gray-900 text-sm mt-3 mb-1">{renderInline(h2[1])}</p>);
+      i++; continue;
+    }
+
+    // Heading ###
+    const h3 = line.match(/^###\s+(.+)/);
+    if (h3) {
+      elements.push(<p key={i} className="font-medium text-gray-800 text-sm mt-2 mb-0.5">{renderInline(h3[1])}</p>);
+      i++; continue;
+    }
+
+    // Blank line
+    if (line.trim() === '') {
+      elements.push(<div key={i} className="h-1.5" />);
+      i++; continue;
+    }
+
+    // Regular paragraph
+    elements.push(<p key={i} className="text-sm text-gray-800 leading-relaxed">{renderInline(line)}</p>);
+    i++;
+  }
+
+  return <div className="space-y-0.5">{elements}</div>;
+}
+
+function renderInline(text) {
+  // Split on **bold** markers
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) => {
+    const bold = part.match(/^\*\*(.+)\*\*$/);
+    if (bold) return <strong key={i} className="font-semibold text-gray-900">{bold[1]}</strong>;
+    return part;
+  });
+}
+
 const PRESETS = [
   { value: 'today',    label: 'Today' },
   { value: 'yesterday', label: 'Yesterday' },
@@ -538,7 +625,7 @@ export default function Dashboard() {
               <div className="mt-3 p-4 bg-gray-50 rounded-lg border border-gray-100">
                 <div className="flex items-start gap-2">
                   <MessageSquare size={14} className="text-violet-400 flex-shrink-0 mt-0.5" />
-                  <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">{aiAnswer}</p>
+                  <MarkdownAnswer text={aiAnswer} />
                 </div>
                 <button
                   onClick={() => { setAiAnswer(''); setAiQuery(''); }}
