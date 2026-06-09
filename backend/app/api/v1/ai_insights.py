@@ -94,7 +94,7 @@ def query_insights(body: InsightQueryRequest, current_user: User = Depends(get_c
                         "authorization_token": META_MCP_TOKEN,
                     }
                 ],
-                betas=["mcp-client-2025-04-04"],
+                betas=["mcp-client-2025-11-20"],
             )
             return InsightQueryResponse(answer=_extract_text(response))
 
