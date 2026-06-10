@@ -829,7 +829,7 @@ export default function CampaignPerformance() {
     const attemptScroll = () => rowRefs.current[targetAdsetId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     window.setTimeout(attemptScroll, 150);
     window.setTimeout(attemptScroll, 1500);
-  }, [adsets, searchParams, groupedCampaigns]);
+  }, [adsets, searchParams]);
 
 
   const syncFromMeta = async () => {
