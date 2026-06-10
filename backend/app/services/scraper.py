@@ -30,7 +30,7 @@ class FacebookAdsLibraryAPI:
         )
         self.db = db
 
-    async def search_ads(self, query: str, limit: int = 10, country: str = "US", offset: int = 0, exclude_ids: List[str] = None, negative_keywords: List[str] = None):
+    async def search_ads(self, query: str, limit: int = 10, country: str = "US", offset: int = 0, exclude_ids: List[str] = None, negative_keywords: List[str] = None, use_scraper_only: bool = False):
         """
         Search Facebook Ads Library using API or fallback to scraper.
 
@@ -51,6 +51,11 @@ class FacebookAdsLibraryAPI:
         """
         print(f"Searching Facebook Ads Library for '{query}' in {country} (offset={offset}, negative_keywords={negative_keywords})")
         print(f"[scraper] token={'SET' if self.access_token else 'MISSING'}, using={'API' if self.access_token else 'fallback'}")
+
+        # Skip API and go straight to Playwright when caller requests it
+        # (API's semantic search returns spam for research keywords)
+        if use_scraper_only:
+            return await self._fallback_search(query, limit, country, offset, exclude_ids or [], negative_keywords or [])
 
         # Try API first if token available
         if self.access_token:

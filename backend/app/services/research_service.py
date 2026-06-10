@@ -203,14 +203,17 @@ class ResearchService:
         # Create scraper with db session for logging
         scraper = FacebookAdsLibraryAPI(db=self.db)
 
-        # Execute search
+        # Execute search — use Playwright scraper directly for vertical research.
+        # The Ads Library API returns semantic spam for insurance/niche keywords;
+        # Playwright mirrors the UI search which gives clean, relevant results.
         ads = await scraper.search_ads(
             request.query,
             request.limit,
             request.country,
             request.offset,
             request.exclude_ids,
-            request.negative_keywords
+            request.negative_keywords,
+            use_scraper_only=bool(request.vertical_id),
         )
 
         vertical_label = None
