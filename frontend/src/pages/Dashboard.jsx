@@ -223,10 +223,10 @@ export default function Dashboard() {
   const [aiDatePreset, setAiDatePreset] = useState('last_7d');
 
   // Date filter state
-  const [preset, setPreset] = useState('today');
+  const [preset, setPreset] = useState(() => localStorage.getItem('bhm_date_preset') || 'today');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [activeRange, setActiveRange] = useState({ preset: 'today', dateFrom: null, dateTo: null });
+  const [activeRange, setActiveRange] = useState(() => ({ preset: localStorage.getItem('bhm_date_preset') || 'today', dateFrom: null, dateTo: null }));
 
   const load = useCallback(async (range) => {
     const { preset: p, dateFrom: df, dateTo: dt } = range || { preset: 'today', dateFrom: null, dateTo: null };
@@ -351,6 +351,7 @@ export default function Dashboard() {
 
   function handleApply(range) {
     setActiveRange(range);
+    if (range.preset) localStorage.setItem('bhm_date_preset', range.preset);
     load(range);
   }
 

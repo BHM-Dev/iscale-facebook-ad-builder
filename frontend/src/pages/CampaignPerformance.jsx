@@ -658,7 +658,7 @@ export default function CampaignPerformance() {
   // Inherit date from Dashboard URL params (preset / date_from / date_to)
   const [datePreset, setDatePreset] = useState(() => {
     if (searchParams.get('date_from') && searchParams.get('date_to')) return 'custom';
-    return searchParams.get('preset') || 'today';
+    return searchParams.get('preset') || localStorage.getItem('bhm_date_preset') || 'today';
   });
   const [dateFrom, setDateFrom] = useState(() => searchParams.get('date_from') || '');
   const [dateTo, setDateTo] = useState(() => searchParams.get('date_to') || '');
@@ -830,6 +830,11 @@ export default function CampaignPerformance() {
       setPausingAdsets(prev => { const next = new Set(prev); next.delete(adset.fb_adset_id); return next; });
     }
   }, [adsetStatusOverrides, timedFetch, showSuccess, showError]);
+
+  // Persist non-custom date presets so they survive navigation
+  useEffect(() => {
+    if (datePreset !== 'custom') localStorage.setItem('bhm_date_preset', datePreset);
+  }, [datePreset]);
 
   // Track whether the initial mount load has fired — prevents datePreset effect
   // from double-firing on mount before the account ID is resolved
