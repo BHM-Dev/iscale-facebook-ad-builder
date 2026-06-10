@@ -825,10 +825,11 @@ export default function CampaignPerformance() {
     }
 
     setHighlightedAdsetId(targetAdsetId);
-    window.setTimeout(() => {
-      rowRefs.current[targetAdsetId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 150);
-  }, [adsets, searchParams]);
+    // Retry scroll — the row won't be in the DOM until bulkInsights loads and has_spend filter passes
+    const attemptScroll = () => rowRefs.current[targetAdsetId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(attemptScroll, 150);
+    window.setTimeout(attemptScroll, 1500);
+  }, [adsets, searchParams, groupedCampaigns]);
 
 
   const syncFromMeta = async () => {
@@ -1354,9 +1355,9 @@ export default function CampaignPerformance() {
                                   ref={node => {
                                     if (node) rowRefs.current[adset.fb_adset_id] = node;
                                   }}
-                                  className={`group transition-colors ${effectiveStatus === 'PAUSED' ? 'opacity-60' : ''} ${isHighlighted ? 'bg-indigo-50 border-l-4 border-l-indigo-500' : 'hover:bg-gray-50/70'}`}
+                                  className={`group transition-colors ${effectiveStatus === 'PAUSED' ? 'opacity-60' : ''} ${isHighlighted ? 'bg-indigo-50' : 'hover:bg-gray-50/70'}`}
                                 >
-                                  <td className="px-6 py-3 align-middle">
+                                  <td className={`px-6 py-3 align-middle ${isHighlighted ? 'border-l-4 border-indigo-500' : ''}`}>
                                     <button
                                       onClick={toggleExpand}
                                       className="flex items-center gap-2 min-w-0 text-left"
