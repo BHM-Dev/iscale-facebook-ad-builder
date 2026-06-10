@@ -567,7 +567,7 @@ export default function CampaignPerformance() {
     if (view === 'top-performers') return 'roas';
     return 'spend';
   });
-  const [dashboardView, setDashboardView] = useState(() => searchParams.get('view')); // banner state
+  const dashboardView = searchParams.get('view'); // derived live from URL — never stale
 
   // Bulk insights state — one API call replaces N per-row calls
   const [bulkInsights, setBulkInsights]       = useState(null);
@@ -1180,7 +1180,7 @@ export default function CampaignPerformance() {
             }
           </div>
           <button
-            onClick={() => { setDashboardView(null); setSearchParams({}); setStatusFilter('ACTIVE'); setSortBy('spend'); setHighlightedAdsetId(null); }}
+            onClick={() => { setSearchParams({}); setStatusFilter('ACTIVE'); setSortBy('spend'); setHighlightedAdsetId(null); }}
             className="ml-4 hover:opacity-70 transition-opacity"
           >
             <X size={14} />
@@ -1202,7 +1202,7 @@ export default function CampaignPerformance() {
             <select
               className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               value={statusFilter}
-              onChange={e => { setStatusFilter(e.target.value); setDashboardView(null); }}
+              onChange={e => { setStatusFilter(e.target.value); setSearchParams(p => { const n = new URLSearchParams(p); n.delete('view'); n.delete('adsetId'); return n; }); setHighlightedAdsetId(null); }}
             >
               <option value="all">All ad sets</option>
               <option value="ACTIVE">Active only</option>
@@ -1214,7 +1214,7 @@ export default function CampaignPerformance() {
             <select
               className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               value={sortBy}
-              onChange={e => { setSortBy(e.target.value); setDashboardView(null); }}
+              onChange={e => { setSortBy(e.target.value); setSearchParams(p => { const n = new URLSearchParams(p); n.delete('view'); n.delete('adsetId'); return n; }); setHighlightedAdsetId(null); }}
             >
               <option value="status">Sort: Active first</option>
               <option value="spend">Sort: Spend ↓</option>
