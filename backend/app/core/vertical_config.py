@@ -16,6 +16,10 @@ ALWAYS_BLOCKED_PAGES = [
     "popkon chase1",
     "novelwhisper-a",
     "legal authority lab",
+    # Home service contractors — not insurance advertisers
+    "jlo ganite llc",
+    "dandy painting",
+    "proclaim roofing",
 ]
 
 VERTICAL_KEYWORD_SETS = {
@@ -65,28 +69,48 @@ VERTICAL_KEYWORD_SETS = {
             "individual plan",
             "family plan",
             "self-employed health",
-            # Wrong insurance verticals — use specific phrases to avoid filtering
-            # carriers who offer both commercial + personal lines
+            # Wrong insurance verticals
             "compare car insurance",
             "overpaying for car insurance",
             "save on car insurance",
             "compare auto insurance",
-            # Entertainment / drama (Meta broad match returns these)
+            # Entertainment / drama
             "heiress",
             "mistress",
             "drama",
             "episode",
-            # Business coaching / lead gen (not insurance advertisers)
+            # Business coaching / lead gen
             "masterclass",
             "restaurant coaching",
             "qualified leads",
             "exclusive leads",
-            # Home improvement / unrelated services (broad match bleed)
+            # Home improvement / unrelated services
             "electrical panel",
             "panel upgrade",
             "hail damage",
             "temporary housing",
             "rv rental",
+            # Contractors/tradespeople advertising their OWN services
+            # (they mention being insured but are not selling insurance)
+            "free in-home visit",
+            "free in-home estimate",
+            "we come to you",
+            "upgrade your fireplace",
+            "natural stone",
+            "stone installation",
+            "fireplace makeover",
+            "interior painting",
+            "exterior painting",
+            "roof replacement",
+            "roof repair",
+            "gutter installation",
+            "floor installation",
+            "deck installation",
+            "fence installation",
+            "tree removal",
+            "pressure washing",
+            "remodeling",
+            "renovation",
         ],
         # At least one relevance term must appear in the ad text.
         # Filters ads that Meta returns via broad/semantic match but have no

@@ -93,6 +93,21 @@ class ResearchService:
         "fitness": -5,
         "athlete": -5,
         "pro athlete": -8,
+        # Contractors/tradespeople advertising their own services
+        # (mention insurance but are not selling it)
+        "fully insured": -6,
+        "we're fully insured": -8,
+        "free in-home": -7,
+        "we come to you": -6,
+        "years of experience": -3,
+        "google reviews": -4,
+        "homeowners": -3,
+        "natural stone": -8,
+        "fireplace": -7,
+        "painting": -5,
+        "roofing": -4,
+        "remodeling": -6,
+        "renovation": -6,
     }
 
     @staticmethod
