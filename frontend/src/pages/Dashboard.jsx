@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { TrendingDown, Wand2, Star, ShoppingBag, AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown, PauseCircle, PlayCircle, Repeat2, MessageSquare, Send, Sparkles } from 'lucide-react';
+import { TrendingDown, Wand2, Star, ShoppingBag, AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, PauseCircle, PlayCircle, Repeat2, MessageSquare, Send, Sparkles } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { authFetch } from '../lib/facebookApi';
@@ -220,7 +220,6 @@ export default function Dashboard() {
   const [aiQuery, setAiQuery] = useState('');
   const [aiAnswer, setAiAnswer] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiExpanded, setAiExpanded] = useState(false);
 
   // Date filter state
   const [preset, setPreset] = useState('today');
@@ -567,21 +566,14 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Ask AI — Meta MCP powered */}
+      {/* Ask AI */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <button
-          onClick={() => setAiExpanded(open => !open)}
-          className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-gray-50 transition-colors"
-        >
-          <span className="flex items-center gap-2">
-            <Sparkles size={15} className="text-violet-500" />
-            <span className="text-sm font-semibold text-gray-900">Ask AI</span>
-            <span className="hidden sm:inline text-xs font-normal text-gray-400">powered by Claude + live Meta data</span>
-          </span>
-          <ChevronDown size={15} className={`text-gray-400 transition-transform ${aiExpanded ? 'rotate-180' : ''}`} />
-        </button>
-        {aiExpanded && (
-          <div className="px-5 pb-5">
+        <div className="flex items-center gap-2 px-5 pt-4 pb-3 border-b border-gray-100">
+          <Sparkles size={15} className="text-violet-500" />
+          <span className="text-sm font-semibold text-gray-900">Ask AI</span>
+          <span className="hidden sm:inline text-xs font-normal text-gray-400">powered by Claude + live Meta data</span>
+        </div>
+        <div className="px-5 pb-5 pt-3">
             <div className="flex gap-2">
               <input
                 type="text"
@@ -636,7 +628,6 @@ export default function Dashboard() {
               </div>
             )}
           </div>
-        )}
       </div>
 
       {/* KPI Row */}
