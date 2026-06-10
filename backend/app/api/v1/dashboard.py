@@ -8,10 +8,22 @@ router = APIRouter()
 
 
 def extract_niche(adset_name: str) -> str:
+    import re
     if not adset_name:
         return "Unknown"
-    parts = adset_name.split(" - ")
-    return parts[1].strip() if len(parts) >= 2 else adset_name
+    NON_NICHE = re.compile(
+        r'^(batch\s*\d+|v\d+|scale|retarget|broad|phase\s*\d+|test|duplicate|copy)$',
+        re.IGNORECASE
+    )
+    parts = [p.strip() for p in adset_name.split(" - ")]
+    # Try parts[1:] first (standard [Date] - [Niche] - [Batch] format)
+    for part in parts[1:]:
+        if part and not NON_NICHE.match(part) and not re.match(r'^\d{1,2}/\d{1,2}', part):
+            return part
+    # Fallback: if parts[0] looks like a niche (not a date), use it
+    if parts and not re.match(r'^\d{1,2}/\d{1,2}', parts[0]):
+        return parts[0]
+    return "General"
 
 @router.get("/stats")
 def get_dashboard_stats(db: Session = Depends(get_db)):
@@ -64,6 +76,7 @@ def get_niche_summary(
                     "adset_count": 0,
                     "total_spend": 0.0,
                     "total_leads": 0,
+                    "total_revenue": 0.0,
                     "cpl_total": 0.0,
                     "cpl_count": 0,
                 },
@@ -72,6 +85,7 @@ def get_niche_summary(
             bucket["adset_count"] += 1
             bucket["total_spend"] += float(row.get("spend") or 0)
             bucket["total_leads"] += int(row.get("leads") or 0)
+            bucket["total_revenue"] += float(row.get("revenue") or 0)
 
             if row.get("cpl") is not None:
                 bucket["cpl_total"] += float(row["cpl"])
@@ -79,11 +93,16 @@ def get_niche_summary(
 
         summary = []
         for bucket in by_niche.values():
+            total_spend = bucket["total_spend"]
+            total_revenue = bucket["total_revenue"]
+            avg_roas = round(total_revenue / total_spend, 2) if total_spend > 0 and total_revenue > 0 else None
             summary.append({
                 "niche": bucket["niche"],
                 "adset_count": bucket["adset_count"],
-                "total_spend": round(bucket["total_spend"], 2),
+                "total_spend": round(total_spend, 2),
                 "total_leads": bucket["total_leads"],
+                "total_revenue": round(total_revenue, 2),
+                "avg_roas": avg_roas,
                 "avg_cpl": round(bucket["cpl_total"] / bucket["cpl_count"], 2) if bucket["cpl_count"] else None,
             })
 

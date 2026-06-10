@@ -29,7 +29,7 @@ router = APIRouter()
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 _anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 
-VALID_PRESETS = {"today", "yesterday", "last_7d", "last_14d", "last_30d", "this_month", "last_month"}
+VALID_PRESETS = {"today", "yesterday", "last_3d", "last_7d", "last_14d", "last_30d", "this_month", "last_month"}
 
 SYSTEM_PROMPT = """You are an expert Meta Ads analyst embedded inside a media buyer's ad management tool.
 

@@ -220,6 +220,7 @@ export default function Dashboard() {
   const [aiQuery, setAiQuery] = useState('');
   const [aiAnswer, setAiAnswer] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiDatePreset, setAiDatePreset] = useState('last_7d');
 
   // Date filter state
   const [preset, setPreset] = useState('today');
@@ -333,7 +334,7 @@ export default function Dashboard() {
       const res = await authFetch(`${API_URL}/ai-insights/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: aiQuery.trim(), ad_account_id: adAccountId || undefined }),
+        body: JSON.stringify({ query: aiQuery.trim(), ad_account_id: adAccountId || undefined, date_preset: aiDatePreset }),
       });
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Query failed'); }
       const data = await res.json();
@@ -574,6 +575,27 @@ export default function Dashboard() {
           <span className="hidden sm:inline text-xs font-normal text-gray-400">powered by Claude + live Meta data</span>
         </div>
         <div className="px-5 pb-5 pt-3">
+            <div className="flex gap-2 mb-2">
+              {[
+                { value: 'yesterday', label: 'Yesterday' },
+                { value: 'last_3d',   label: 'Last 3 Days' },
+                { value: 'last_7d',   label: 'Last 7 Days' },
+                { value: 'last_30d',  label: 'Last 30 Days' },
+                { value: 'this_month', label: 'MTD' },
+              ].map(p => (
+                <button
+                  key={p.value}
+                  onClick={() => setAiDatePreset(p.value)}
+                  className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                    aiDatePreset === p.value
+                      ? 'border-violet-400 bg-violet-50 text-violet-700 font-medium'
+                      : 'border-gray-200 text-gray-500 hover:border-violet-300 hover:text-violet-600'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
             <div className="flex gap-2">
               <input
                 type="text"
@@ -675,8 +697,10 @@ export default function Dashboard() {
         {loading ? (
           <div className="p-5 space-y-3">
             {[0, 1, 2].map(row => (
-              <div key={row} className="grid grid-cols-5 gap-4 items-center">
+              <div key={row} className="grid grid-cols-7 gap-4 items-center">
                 <div className="col-span-2 h-4 rounded bg-gray-100 animate-pulse" />
+                <div className="h-4 rounded bg-gray-100 animate-pulse" />
+                <div className="h-4 rounded bg-gray-100 animate-pulse" />
                 <div className="h-4 rounded bg-gray-100 animate-pulse" />
                 <div className="h-4 rounded bg-gray-100 animate-pulse" />
                 <div className="h-4 rounded bg-gray-100 animate-pulse" />
@@ -695,6 +719,8 @@ export default function Dashboard() {
                   <th className="px-5 py-3">Niche</th>
                   <th className="px-5 py-3 text-right">Ad Sets</th>
                   <th className="px-5 py-3 text-right">Spend</th>
+                  <th className="px-5 py-3 text-right">Revenue</th>
+                  <th className="px-5 py-3 text-right">ROAS</th>
                   <th className="px-5 py-3 text-right">CPL</th>
                   <th className="px-5 py-3 text-right">Leads</th>
                 </tr>
@@ -705,6 +731,17 @@ export default function Dashboard() {
                     <td className="px-5 py-3 font-medium text-gray-900">{row.niche}</td>
                     <td className="px-5 py-3 text-right text-gray-500">{row.adset_count}</td>
                     <td className="px-5 py-3 text-right text-gray-700">{formatMoney(row.total_spend)}</td>
+                    <td className="px-5 py-3 text-right text-gray-700">
+                      {row.total_revenue > 0 ? formatMoney(row.total_revenue) : '—'}
+                    </td>
+                    <td className={`px-5 py-3 text-right font-semibold ${
+                      row.avg_roas == null ? 'text-gray-400'
+                      : row.avg_roas >= 2 ? 'text-green-600'
+                      : row.avg_roas >= 1 ? 'text-gray-700'
+                      : 'text-red-600'
+                    }`}>
+                      {row.avg_roas != null ? `${row.avg_roas.toFixed(1)}x` : '—'}
+                    </td>
                     <td className={`px-5 py-3 text-right font-semibold ${cplClass(row.avg_cpl)}`}>
                       {formatMoney(row.avg_cpl)}
                     </td>
