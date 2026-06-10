@@ -1,7 +1,8 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useState, useRef } from 'react';
-import { Plus, X, Copy, Check, Upload, Loader, Star } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Plus, X, Copy, Check, Upload, Loader, Star, Sparkles } from 'lucide-react';
 import ImageTemplateSelector from '../components/ImageTemplateSelector';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -49,6 +50,7 @@ const AnalysisField = ({ label, value, fullWidth = false }) => {
 const WinningAds = () => {
     const { showError } = useToast();
     const { authFetch } = useAuth();
+    const navigate = useNavigate();
     const [selectedTemplate, setSelectedTemplate] = useState(null);
     const [uploading, setUploading] = useState(false);
     const [refreshKey, setRefreshKey] = useState(0);
@@ -161,12 +163,29 @@ const WinningAds = () => {
                     >
                         <div className="p-6 border-b border-gray-200 flex justify-between items-center sticky top-0 bg-white z-10">
                             <h2 className="text-2xl font-bold text-gray-900">Template Details</h2>
-                            <button
-                                onClick={() => setSelectedTemplate(null)}
-                                className="text-gray-400 hover:text-gray-600 transition-colors"
-                            >
-                                <X size={24} />
-                            </button>
+                            <div className="flex items-center gap-3">
+                                <button
+                                    onClick={() => {
+                                        localStorage.setItem('pendingWinningAdTemplate', JSON.stringify({
+                                            id: selectedTemplate.id,
+                                            name: selectedTemplate.name,
+                                            image_url: selectedTemplate.image_url,
+                                            recreation_prompt: selectedTemplate.recreation_prompt || null,
+                                        }));
+                                        navigate('/ad-remix');
+                                    }}
+                                    className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors"
+                                >
+                                    <Sparkles size={16} />
+                                    Build Ad from This
+                                </button>
+                                <button
+                                    onClick={() => setSelectedTemplate(null)}
+                                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                                >
+                                    <X size={24} />
+                                </button>
+                            </div>
                         </div>
                         <div className="p-6">
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

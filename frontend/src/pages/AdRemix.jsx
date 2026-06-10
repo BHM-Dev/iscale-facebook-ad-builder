@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { ChevronRight, ChevronLeft, Sparkles, Check, Image, FileText, Briefcase, Package, Users, Zap, Copy, CheckCircle, Upload, RefreshCw, TrendingUp, ExternalLink, X, Globe } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Sparkles, Check, Image, FileText, Briefcase, Package, Users, Zap, Copy, CheckCircle, Upload, RefreshCw, TrendingUp, ExternalLink, X, Globe, Star } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useBrands } from '../context/BrandContext';
 import { useToast } from '../context/ToastContext';
@@ -22,6 +22,7 @@ export default function AdRemix() {
     const [adConcepts, setAdConcepts] = useState([]);        // 3 parallel variations
     const [prefillSource, setPrefillSource] = useState(null); // winning ad data from performance page
     const [researchInspiration, setResearchInspiration] = useState(null); // competitor ad from Research section
+    const [winningAdTemplate, setWinningAdTemplate] = useState(null); // template from Browse Templates page
     const [pendingBrandId, setPendingBrandId] = useState(null); // brand_id from drawer — resolved once brands load
     const [pendingNiche, setPendingNiche] = useState('');       // niche from ad set name, passed through to Batch Generate
     const [remixFbCampaignId, setRemixFbCampaignId] = useState(''); // Meta campaign ID from source ad — for push modal pre-selection
@@ -112,6 +113,31 @@ export default function AdRemix() {
                 // No brand pre-assigned — stop at Brand step so Joel can pick one.
                 setCurrentStep(2);
             }
+        } catch (e) {
+            // malformed localStorage — ignore
+        }
+    }, []);
+
+    // On mount: check for a template image passed in from Browse Templates
+    useEffect(() => {
+        // If pendingRemixCreative is also present, let that effect handle the mount
+        if (localStorage.getItem('pendingRemixCreative')) return;
+        const raw = localStorage.getItem('pendingWinningAdTemplate');
+        if (!raw) return;
+        try {
+            const tmpl = JSON.parse(raw);
+            localStorage.removeItem('pendingWinningAdTemplate');
+            setWinningAdTemplate(tmpl);
+            setWizardData(prev => ({
+                ...prev,
+                template: {
+                    id: tmpl.id,
+                    name: tmpl.name,
+                    image_url: tmpl.image_url,
+                    fromTemplate: true,
+                },
+            }));
+            setCurrentStep(2); // image is set — skip to Brand selection
         } catch (e) {
             // malformed localStorage — ignore
         }
@@ -628,6 +654,26 @@ export default function AdRemix() {
                         <span className="text-purple-700">{prefillSource.ad_name}</span>
                         <p className="text-purple-600 text-xs mt-0.5">Headline and body pre-filled from the live ad. Select your brand and audience to generate variations.</p>
                     </div>
+                </div>
+            )}
+
+            {/* Winning ad template banner — shown when launched from Browse Templates */}
+            {winningAdTemplate && (
+                <div className="mb-4 flex items-center justify-between gap-3 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-sm">
+                    <div className="flex items-start gap-2">
+                        <Star size={15} className="text-amber-500 mt-0.5 flex-shrink-0" />
+                        <span className="text-amber-800">
+                            Building from template: <strong>{winningAdTemplate.name}</strong>. Image pre-loaded — pick your brand below.
+                        </span>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setWinningAdTemplate(null)}
+                        className="flex-shrink-0 text-amber-400 hover:text-amber-600"
+                        aria-label="Dismiss template context"
+                    >
+                        <X size={14} />
+                    </button>
                 </div>
             )}
 
