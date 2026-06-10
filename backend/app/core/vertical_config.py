@@ -50,13 +50,18 @@ VERTICAL_KEYWORD_SETS = {
             "salon business insurance",
             "construction company insurance",
             "landscaping business insurance",
-            # Competitor brand names — returns their actual running ads directly
-            "Hiscox business insurance",
-            "NEXT Insurance small business",
-            "Simply Business insurance",
-            "biBERK insurance",
-            "Thimble insurance",
-            "CoverWallet business insurance",
+            # Competitor brand names — search by brand name only (compound queries return 0)
+            "Hiscox",
+            "NEXT Insurance",
+            "Simply Business",
+            "biBERK",
+            "Thimble",
+            "CoverWallet",
+            "Insureon",
+            "Coterie Insurance",
+            "Pie Insurance",
+            "The Hartford small business",
+            "Progressive commercial",
         ],
         "negative_keywords": [
             # Personal injury / legal
