@@ -613,6 +613,7 @@ export default function CampaignPerformance() {
   const [savingBudget, setSavingBudget] = useState(null);
   const [highlightedAdsetId, setHighlightedAdsetId] = useState(null);
   const rowRefs = useRef({});
+  const scrolledToRef = useRef(null); // tracks which adsetId we've already scrolled to
 
   const loadAdsets = useCallback(async () => {
     setLoadingAdsets(true);
@@ -845,6 +846,7 @@ export default function CampaignPerformance() {
     }
 
     setHighlightedAdsetId(targetAdsetId);
+    scrolledToRef.current = null; // reset so scroll effect fires for this new target
   }, [adsets, targetAdsetId]);
 
 
@@ -1026,8 +1028,9 @@ export default function CampaignPerformance() {
   useEffect(() => {
     if (!targetAdsetId || targetAdsetId === 'null') return;
     if (!visibleAdsets.some(a => a.fb_adset_id === targetAdsetId)) return;
+    if (scrolledToRef.current === targetAdsetId) return; // already scrolled, don't re-fire on filter changes
 
-    setHighlightedAdsetId(targetAdsetId);
+    scrolledToRef.current = targetAdsetId;
     window.requestAnimationFrame(() => {
       rowRefs.current[targetAdsetId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
