@@ -1407,9 +1407,11 @@ export default function CampaignPerformance() {
                             <DollarSign size={12} />
                             {group.campaignBudgetOptimization === 'CBO' && group.campaignDailyBudget
                               ? `$${(group.campaignDailyBudget / 100).toFixed(0)}/day`
-                              : group.campaignBudgetOptimization === 'ABO'
-                                ? 'ABO'
-                                : 'Budget'
+                              : group.campaignBudgetOptimization === 'CBO'
+                                ? 'CBO'
+                                : group.campaignBudgetOptimization === 'ABO'
+                                  ? 'ABO'
+                                  : 'Budget'
                             }
                           </button>
 
@@ -1628,11 +1630,11 @@ export default function CampaignPerformance() {
                                             setEditingBudget(adset.fb_adset_id);
                                             setBudgetInput(adset.daily_budget ? String(Math.round(adset.daily_budget / 100)) : '');
                                           }}
-                                          className="text-xs text-gray-400 hover:text-indigo-600 px-1.5 py-0.5 rounded border border-transparent hover:border-indigo-200 transition-colors flex items-center gap-1"
+                                          className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-white border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 text-gray-600 hover:text-indigo-700 transition-colors shadow-sm font-medium"
                                           title="Edit daily budget"
                                         >
                                           <DollarSign size={11} />
-                                          {adset.daily_budget ? `${Math.round(adset.daily_budget / 100)}/day` : 'No budget'}
+                                          {adset.daily_budget ? `$${Math.round(adset.daily_budget / 100)}/day` : 'Set budget'}
                                         </button>
                                       )}
                                     </div>
