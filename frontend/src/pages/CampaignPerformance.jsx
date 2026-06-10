@@ -611,6 +611,10 @@ export default function CampaignPerformance() {
   const [editingBudget, setEditingBudget] = useState(null);
   const [budgetInput, setBudgetInput] = useState('');
   const [savingBudget, setSavingBudget] = useState(null);
+  const [budgetPopover, setBudgetPopover] = useState(null);
+  const [campaignBudgetInput, setCampaignBudgetInput] = useState('');
+  const [campaignBudgetType, setCampaignBudgetType] = useState('CBO');
+  const [savingCampaignBudget, setSavingCampaignBudget] = useState(null);
   const [highlightedAdsetId, setHighlightedAdsetId] = useState(null);
   const rowRefs = useRef({});
   const scrolledToRef = useRef(null); // tracks which adsetId we've already scrolled to
@@ -797,6 +801,13 @@ export default function CampaignPerformance() {
 
   useEffect(() => { loadAdsets(); loadRules(); }, [loadAdsets, loadRules]);
 
+  useEffect(() => {
+    if (!budgetPopover) return;
+    const handler = () => setBudgetPopover(null);
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [budgetPopover]);
+
   // Sync filter/sort state when URL params change (handles component staying mounted across navigations)
   useEffect(() => {
     const view = searchParams.get('view');
@@ -936,6 +947,38 @@ export default function CampaignPerformance() {
     }
   };
 
+  const saveCampaignBudget = async (fbCampaignId) => {
+    const isCBO = campaignBudgetType === 'CBO';
+    const dollars = parseFloat(campaignBudgetInput);
+    if (isCBO && (!dollars || dollars < 1)) {
+      showError('Enter a valid budget ($1 minimum)');
+      return;
+    }
+
+    setSavingCampaignBudget(fbCampaignId);
+    try {
+      const res = await authFetch(`${API_BASE}/facebook/campaigns/${fbCampaignId}/budget`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          daily_budget_cents: isCBO ? Math.round(dollars * 100) : null,
+          budget_optimization: campaignBudgetType,
+        }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed'); }
+      showSuccess(isCBO
+        ? `Campaign budget set to $${dollars.toFixed(0)}/day`
+        : 'Campaign switched to ABO — set budgets on each ad set below'
+      );
+      setBudgetPopover(null);
+      loadAdsets();
+    } catch (e) {
+      showError(e.message || 'Campaign budget update failed');
+    } finally {
+      setSavingCampaignBudget(null);
+    }
+  };
+
   const askAI = async () => {
     if (!aiQuery.trim() || aiLoading) return;
     setAiLoading(true);
@@ -1068,6 +1111,9 @@ export default function CampaignPerformance() {
     const targetAdsetId = searchParams.get('adsetId');
     return [...map.values()].map(group => ({
       ...group,
+      fbCampaignId: group.adsets[0]?.fb_campaign_id ?? null,
+      campaignBudgetOptimization: group.adsets[0]?.campaign_budget_optimization ?? null,
+      campaignDailyBudget: group.adsets[0]?.campaign_daily_budget ?? null,
       cpl: group.totalSpend > 0 && group.totalLeads > 0 ? group.totalSpend / group.totalLeads : null,
       rtRoas: group.totalSpend > 0 && group.totalRevenue > 0 ? group.totalRevenue / group.totalSpend : null,
       hasTarget: targetAdsetId ? group.adsets.some(a => a.fb_adset_id === targetAdsetId) : false,
@@ -1293,9 +1339,17 @@ export default function CampaignPerformance() {
 
               return (
                 <div key={group.key} className="border-b border-gray-100 last:border-b-0">
-                  <button
+                  <div
                     onClick={() => toggleCampaign(group.key)}
                     className="w-full grid grid-cols-[minmax(260px,1fr)_auto] gap-4 px-6 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-left border-b border-gray-100"
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleCampaign(group.key);
+                      }
+                    }}
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       {isCampaignOpen
@@ -1316,20 +1370,129 @@ export default function CampaignPerformance() {
                         {activeCount > 0 ? `${activeCount} active` : `${group.adsets.length}`} ad set{group.adsets.length !== 1 ? 's' : ''}
                       </span>
                     </div>
-                    <div className="grid grid-cols-4 gap-5 text-right">
-                      {[
-                        ['Spend', bulkInsightsLoading ? '--' : formatMoneyCell(group.totalSpend)],
-                        ['Leads', bulkInsightsLoading ? '--' : formatNumberCell(group.totalLeads)],
-                        ['CPL', bulkInsightsLoading ? '--' : formatMoneyCell(group.cpl, 2)],
-                        ['ROAS', bulkInsightsLoading ? '--' : formatRoasCell(group.rtRoas)],
-                      ].map(([label, value]) => (
-                        <span key={label} className="min-w-[58px]">
-                          <span className="block text-[10px] uppercase tracking-wide text-gray-400">{label}</span>
-                          <span className="block text-sm font-semibold text-gray-800">{value}</span>
-                        </span>
-                      ))}
+                    <div className="flex items-center gap-5 text-right">
+                      <div className="grid grid-cols-4 gap-5">
+                        {[
+                          ['Spend', bulkInsightsLoading ? '--' : formatMoneyCell(group.totalSpend)],
+                          ['Leads', bulkInsightsLoading ? '--' : formatNumberCell(group.totalLeads)],
+                          ['CPL', bulkInsightsLoading ? '--' : formatMoneyCell(group.cpl, 2)],
+                          ['ROAS', bulkInsightsLoading ? '--' : formatRoasCell(group.rtRoas)],
+                        ].map(([label, value]) => (
+                          <span key={label} className="min-w-[58px]">
+                            <span className="block text-[10px] uppercase tracking-wide text-gray-400">{label}</span>
+                            <span className="block text-sm font-semibold text-gray-800">{value}</span>
+                          </span>
+                        ))}
+                      </div>
+
+                      {group.fbCampaignId && (
+                        <div className="relative" onClick={e => e.stopPropagation()}>
+                          <button
+                            onClick={() => {
+                              if (budgetPopover === group.fbCampaignId) {
+                                setBudgetPopover(null);
+                              } else {
+                                setBudgetPopover(group.fbCampaignId);
+                                setCampaignBudgetType(group.campaignBudgetOptimization || 'CBO');
+                                setCampaignBudgetInput(
+                                  group.campaignDailyBudget
+                                    ? (group.campaignDailyBudget / 100).toFixed(0)
+                                    : ''
+                                );
+                              }
+                            }}
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 transition-colors text-gray-700 hover:text-indigo-700 text-xs font-medium shadow-sm"
+                            title="Edit campaign budget settings"
+                          >
+                            <DollarSign size={12} />
+                            {group.campaignBudgetOptimization === 'CBO' && group.campaignDailyBudget
+                              ? `$${(group.campaignDailyBudget / 100).toFixed(0)}/day`
+                              : group.campaignBudgetOptimization === 'ABO'
+                                ? 'ABO'
+                                : 'Budget'
+                            }
+                          </button>
+
+                          {budgetPopover === group.fbCampaignId && (
+                            <div
+                              className="absolute right-0 top-10 w-64 bg-white rounded-xl border border-gray-200 shadow-lg p-4 z-50 text-left"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              <div className="text-xs font-semibold text-gray-700 mb-3">Campaign Budget Settings</div>
+
+                              <div className="mb-3">
+                                <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-1.5">Budget Type</div>
+                                <div className="grid grid-cols-2 gap-1 bg-gray-100 rounded-lg p-0.5">
+                                  {['CBO', 'ABO'].map(type => (
+                                    <button
+                                      key={type}
+                                      onClick={() => setCampaignBudgetType(type)}
+                                      className={`py-1.5 rounded-md text-xs font-semibold transition-all ${
+                                        campaignBudgetType === type
+                                          ? 'bg-white text-indigo-700 shadow-sm'
+                                          : 'text-gray-500'
+                                      }`}
+                                    >
+                                      {type}
+                                      <span className="text-[10px] font-normal text-gray-400 block">
+                                        {type === 'CBO' ? 'Campaign level' : 'Ad set level'}
+                                      </span>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {campaignBudgetType === 'CBO' && (
+                                <div className="mb-3">
+                                  <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Daily Budget</div>
+                                  <div className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-2.5 py-1.5 focus-within:ring-1 focus-within:ring-indigo-400 focus-within:border-indigo-300">
+                                    <span className="text-gray-400 text-xs">$</span>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      step="1"
+                                      value={campaignBudgetInput}
+                                      onChange={e => setCampaignBudgetInput(e.target.value)}
+                                      onKeyDown={e => {
+                                        if (e.key === 'Enter') saveCampaignBudget(group.fbCampaignId);
+                                        if (e.key === 'Escape') setBudgetPopover(null);
+                                      }}
+                                      placeholder="e.g. 500"
+                                      className="flex-1 text-sm font-semibold focus:outline-none text-gray-800 w-full"
+                                      autoFocus
+                                    />
+                                    <span className="text-gray-400 text-xs">/day</span>
+                                  </div>
+                                </div>
+                              )}
+
+                              {campaignBudgetType === 'ABO' && (
+                                <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-2">
+                                  Removes campaign budget. Set budgets on each ad set individually using the $ Budget button on each row.
+                                </div>
+                              )}
+
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => setBudgetPopover(null)}
+                                  className="flex-1 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={() => saveCampaignBudget(group.fbCampaignId)}
+                                  disabled={savingCampaignBudget === group.fbCampaignId}
+                                  className="flex-1 py-1.5 text-xs rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50"
+                                >
+                                  {savingCampaignBudget === group.fbCampaignId ? 'Saving...' : 'Save'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                  </button>
+                  </div>
 
                   {isCampaignOpen && (
                     <div className="overflow-x-auto">
@@ -1338,6 +1501,7 @@ export default function CampaignPerformance() {
                           <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-gray-400">
                             <th className="px-6 py-2.5 min-w-[300px]">Ad Set Name</th>
                             <th className="px-3 py-2.5">Status</th>
+                            <th className="px-3 py-2.5">Budget</th>
                             <th className="px-3 py-2.5 text-right">Spend</th>
                             <th className="px-3 py-2.5 text-right">Leads</th>
                             <th className="px-3 py-2.5 text-right">CPL</th>
@@ -1416,11 +1580,15 @@ export default function CampaignPerformance() {
                                     </button>
                                   </td>
                                   <td className="px-3 py-3 align-middle">
-                                    <div className="flex flex-col items-start gap-1">
-                                      <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-                                        effectiveStatus === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                                      }`}>{effectiveStatus}</span>
-                                      {editingBudget === adset.fb_adset_id ? (
+                                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                                      effectiveStatus === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                                    }`}>{effectiveStatus}</span>
+                                  </td>
+                                  <td className="px-3 py-3 align-middle">
+                                    <div className="flex items-center">
+                                      {group.campaignBudgetOptimization === 'CBO' ? (
+                                        <span className="text-gray-400 italic text-[11px]">-- CBO</span>
+                                      ) : editingBudget === adset.fb_adset_id ? (
                                         <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                                           <span className="text-xs text-gray-400">$</span>
                                           <input
@@ -1464,7 +1632,7 @@ export default function CampaignPerformance() {
                                           title="Edit daily budget"
                                         >
                                           <DollarSign size={11} />
-                                          {adset.daily_budget ? `${Math.round(adset.daily_budget / 100)}/day` : 'Budget'}
+                                          {adset.daily_budget ? `${Math.round(adset.daily_budget / 100)}/day` : 'No budget'}
                                         </button>
                                       )}
                                     </div>
@@ -1552,7 +1720,7 @@ export default function CampaignPerformance() {
                                 </tr>
                                 {isExpanded && (
                                   <tr className="bg-gray-50/40">
-                                    <td colSpan={9} className="px-6 pb-4 pt-2 border-t border-gray-100">
+                                    <td colSpan={10} className="px-6 pb-4 pt-2 border-t border-gray-100">
                                       {/* Adset-level diagnostic strip */}
                                       {d && (
                                         <div className="mb-3 flex flex-wrap gap-x-5 gap-y-1.5 pb-3 border-b border-gray-100">

@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
 from app.services.facebook_service import FacebookService
 from facebook_business.adobjects.adset import AdSet
+from facebook_business.adobjects.campaign import Campaign
 try:
     from facebook_business.exceptions import FacebookBadObjectError, FacebookRequestError
 except ImportError:
@@ -20,6 +21,10 @@ router = APIRouter()
 
 class BudgetUpdateRequest(BaseModel):
     daily_budget_cents: int = Field(..., ge=100)
+
+class CampaignBudgetUpdateRequest(BaseModel):
+    daily_budget_cents: Optional[int] = Field(None, ge=100)
+    budget_optimization: str = Field(..., pattern="^(CBO|ABO)$")
 
 def get_facebook_service():
     service = FacebookService()
@@ -137,6 +142,8 @@ def sync_from_meta(
         if existing:
             existing.name = c.get("name", existing.name)
             existing.status = c.get("status", existing.status)
+            existing.budget_type = budget_type
+            existing.daily_budget = int(c["daily_budget"]) if c.get("daily_budget") else None
             updated_campaigns += 1
             campaign_db = existing
         else:
@@ -145,6 +152,8 @@ def sync_from_meta(
                 name=c.get("name", "Imported Campaign"),
                 objective=c.get("objective", "OUTCOME_LEADS"),
                 budget_type=budget_type,
+                budget_schedule_type="DAILY" if c.get("daily_budget") else None,
+                daily_budget=int(c["daily_budget"]) if c.get("daily_budget") else None,
                 status=c.get("status", "PAUSED"),
                 fb_campaign_id=fb_id,
                 special_ad_categories=c.get("special_ad_categories", []),
@@ -230,6 +239,8 @@ def read_saved_adsets(
             "fb_campaign_id": a.campaign.fb_campaign_id if a.campaign else None,
             "campaign_name": a.campaign.name if a.campaign else None,
             "campaign_status": a.campaign.status if a.campaign else None,
+            "campaign_budget_optimization": a.campaign.budget_type if a.campaign else None,
+            "campaign_daily_budget": a.campaign.daily_budget if a.campaign else None,
             "daily_budget": a.daily_budget,
             "brand_id": a.brand_id,
             "brand_name": a.brand.name if a.brand else None,
@@ -261,6 +272,50 @@ def update_adset_budget(
     except Exception as e:
         db.rollback()
         logger.exception("Update ad set budget failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/campaigns/{fb_campaign_id}/budget")
+def update_campaign_budget(
+    fb_campaign_id: str,
+    body: CampaignBudgetUpdateRequest,
+    service: FacebookService = Depends(get_facebook_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("campaigns:write")),
+):
+    """Update a campaign's budget mode directly in Meta and mirror it locally when present."""
+    try:
+        campaign = Campaign(fbid=fb_campaign_id, api=service.api)
+        if body.budget_optimization == "CBO":
+            if body.daily_budget_cents is None:
+                raise HTTPException(status_code=400, detail="daily_budget_cents is required for CBO")
+            campaign.api_update(fields=[], params={"daily_budget": int(body.daily_budget_cents)})
+        else:
+            # Switch to ABO: remove campaign-level budget optimization
+            campaign.api_update(fields=[], params={"campaign_budget_optimization": False})
+
+        local_campaign = db.query(FacebookCampaign).filter(FacebookCampaign.fb_campaign_id == fb_campaign_id).first()
+        if local_campaign:
+            local_campaign.budget_type = body.budget_optimization
+            if body.budget_optimization == "CBO":
+                local_campaign.daily_budget = int(body.daily_budget_cents)
+                local_campaign.budget_schedule_type = "DAILY"
+            else:
+                local_campaign.daily_budget = None
+                local_campaign.budget_schedule_type = None
+            db.commit()
+
+        return {
+            "success": True,
+            "fb_campaign_id": fb_campaign_id,
+            "budget_optimization": body.budget_optimization,
+            "daily_budget_cents": body.daily_budget_cents,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception("Update campaign budget failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
