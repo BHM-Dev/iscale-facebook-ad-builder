@@ -186,6 +186,16 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
           onUnsave={onUnsave}
           angleTags={angleTags}
         />
+        <a
+          href={`https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&q=${encodeURIComponent(ad.brand_name || '')}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 px-1.5 py-1 text-xs font-medium text-gray-400 hover:text-indigo-600 transition-colors"
+          title="View all ads from this advertiser"
+        >
+          <ExternalLink size={11} />
+          All ads
+        </a>
         <button
           type="button"
           onClick={() => onBlockPage(ad)}
@@ -193,7 +203,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
           title="Block this advertiser"
         >
           <Ban size={11} />
-          Block page
+          Block
         </button>
       </div>
     </div>

@@ -22,12 +22,20 @@ VERTICAL_KEYWORD_SETS = {
     "commercial_insurance": {
         "label": "Commercial Insurance",
         "keywords": [
-            "small business insurance",
-            "contractor insurance",
-            "business insurance quote",
-            "trucking insurance",
-            "restaurant insurance",
-            "general liability insurance for small business",
+            # Niche-specific — these yield clean results vs generic broad terms
+            "commercial trucking insurance",
+            "contractor liability insurance",
+            "restaurant business insurance",
+            "salon business insurance",
+            "construction company insurance",
+            "landscaping business insurance",
+            # Competitor brand names — returns their actual running ads directly
+            "Hiscox business insurance",
+            "NEXT Insurance small business",
+            "Simply Business insurance",
+            "biBERK insurance",
+            "Thimble insurance",
+            "CoverWallet business insurance",
         ],
         "negative_keywords": [
             # Personal injury / legal
