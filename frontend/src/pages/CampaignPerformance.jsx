@@ -821,8 +821,6 @@ export default function CampaignPerformance() {
     window.setTimeout(() => {
       rowRefs.current[targetAdsetId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 150);
-    const clearHighlight = window.setTimeout(() => setHighlightedAdsetId(null), 2200);
-    return () => window.clearTimeout(clearHighlight);
   }, [adsets, searchParams]);
 
 
@@ -1028,16 +1026,20 @@ export default function CampaignPerformance() {
       group.totalLeads += insight?.leads ?? 0;
       group.totalRevenue += insight?.redtrack?.revenue ?? 0;
     }
+    const targetAdsetId = searchParams.get('adsetId');
     return [...map.values()].map(group => ({
       ...group,
       cpl: group.totalSpend > 0 && group.totalLeads > 0 ? group.totalSpend / group.totalLeads : null,
       rtRoas: group.totalSpend > 0 && group.totalRevenue > 0 ? group.totalRevenue / group.totalSpend : null,
+      hasTarget: targetAdsetId ? group.adsets.some(a => a.fb_adset_id === targetAdsetId) : false,
     })).sort((a, b) => {
       if (a.key === '__orphaned') return 1;
       if (b.key === '__orphaned') return -1;
+      if (a.hasTarget) return -1;
+      if (b.hasTarget) return 1;
       return b.totalSpend - a.totalSpend;
     });
-  }, [visibleAdsets, bulkInsights]);
+  }, [visibleAdsets, bulkInsights, searchParams]);
 
   const formatMoneyCell = (value, decimals = 0) => (
     value != null ? `$${Number(value).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}` : '--'
@@ -1160,18 +1162,25 @@ export default function CampaignPerformance() {
       {/* Dashboard deep-link banner */}
       {dashboardView && (
         <div className={`flex items-center justify-between rounded-xl px-4 py-3 text-sm font-medium border ${
-          dashboardView === 'attention'
-            ? 'bg-orange-50 border-orange-200 text-orange-800'
-            : 'bg-green-50 border-green-200 text-green-800'
+          highlightedAdsetId
+            ? 'bg-indigo-50 border-indigo-200 text-indigo-800'
+            : dashboardView === 'attention'
+              ? 'bg-orange-50 border-orange-200 text-orange-800'
+              : 'bg-green-50 border-green-200 text-green-800'
         }`}>
           <div className="flex items-center gap-2">
-            {dashboardView === 'attention'
-              ? <><AlertTriangle size={15} /> Showing flagged ad sets — high frequency, zero-lead spend, or auto-paused</>
-              : <><TrendingUp size={15} /> Showing top performers — sorted by RT ROAS, active with spend</>
+            {highlightedAdsetId
+              ? (() => {
+                  const target = adsets.find(a => a.fb_adset_id === highlightedAdsetId);
+                  return <><Target size={15} /> Viewing: <span className="font-semibold">{target?.name ?? highlightedAdsetId}</span></>;
+                })()
+              : dashboardView === 'attention'
+                ? <><AlertTriangle size={15} /> Showing flagged ad sets — high frequency, zero-lead spend, or auto-paused</>
+                : <><TrendingUp size={15} /> Showing top performers — sorted by RT ROAS, active with spend</>
             }
           </div>
           <button
-            onClick={() => { setDashboardView(null); setSearchParams({}); setStatusFilter('ACTIVE'); setSortBy('spend'); }}
+            onClick={() => { setDashboardView(null); setSearchParams({}); setStatusFilter('ACTIVE'); setSortBy('spend'); setHighlightedAdsetId(null); }}
             className="ml-4 hover:opacity-70 transition-opacity"
           >
             <X size={14} />
@@ -1338,7 +1347,7 @@ export default function CampaignPerformance() {
                                   ref={node => {
                                     if (node) rowRefs.current[adset.fb_adset_id] = node;
                                   }}
-                                  className={`group transition-colors ${effectiveStatus === 'PAUSED' ? 'opacity-60' : ''} ${isHighlighted ? 'bg-amber-50 ring-2 ring-inset ring-amber-300' : 'hover:bg-gray-50/70'}`}
+                                  className={`group transition-colors ${effectiveStatus === 'PAUSED' ? 'opacity-60' : ''} ${isHighlighted ? 'bg-indigo-50 border-l-4 border-l-indigo-500' : 'hover:bg-gray-50/70'}`}
                                 >
                                   <td className="px-6 py-3 align-middle">
                                     <button
