@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { TrendingDown, Wand2, Star, ShoppingBag, AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown, PauseCircle, PlayCircle, Repeat2, MessageSquare, Send, Sparkles } from 'lucide-react';
+import { AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown, PauseCircle, Repeat2, MessageSquare, Send, Sparkles, DollarSign } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
@@ -203,7 +203,7 @@ function DateFilter({ preset, setPreset, dateFrom, setDateFrom, dateTo, setDateT
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { showError } = useToast();
+  const { showSuccess, showError } = useToast();
   const [loading, setLoading] = useState(true);
   const [syncingRT, setSyncingRT] = useState(false);
   const [pausingAdsets, setPausingAdsets] = useState(new Set());
@@ -219,6 +219,13 @@ export default function Dashboard() {
   const [aiAnswer, setAiAnswer] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiDatePreset, setAiDatePreset] = useState('last_7d');
+  const [budgetPopover, setBudgetPopover] = useState(null);
+  const [campaignBudgetInput, setCampaignBudgetInput] = useState('');
+  const [campaignBudgetType, setCampaignBudgetType] = useState('CBO');
+  const [savingCampaignBudget, setSavingCampaignBudget] = useState(null);
+  const [editingBudget, setEditingBudget] = useState(null);
+  const [budgetInput, setBudgetInput] = useState('');
+  const [savingBudget, setSavingBudget] = useState(null);
 
   // Date filter state
   const [preset, setPreset] = useState(() => localStorage.getItem('bhm_date_preset') || 'today');
@@ -323,6 +330,66 @@ export default function Dashboard() {
     }
   }, [showError]);
 
+  useEffect(() => {
+    if (!budgetPopover) return;
+    const handler = () => setBudgetPopover(null);
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [budgetPopover]);
+
+  const saveCampaignBudget = async (fbCampaignId) => {
+    const isCBO = campaignBudgetType === 'CBO';
+    const dollars = parseFloat(campaignBudgetInput);
+    if (isCBO && (!dollars || dollars < 1)) {
+      showError('Enter a valid budget ($1 minimum)');
+      return;
+    }
+    setSavingCampaignBudget(fbCampaignId);
+    try {
+      const res = await authFetch(`${API_URL}/facebook/campaigns/${fbCampaignId}/budget`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          daily_budget_cents: isCBO ? Math.round(dollars * 100) : null,
+          budget_optimization: campaignBudgetType,
+        }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed'); }
+      showSuccess(isCBO ? `Campaign budget set to $${dollars.toFixed(0)}/day` : 'Switched to ABO');
+      setBudgetPopover(null);
+      load(activeRange);
+    } catch (e) {
+      showError(e.message || 'Failed');
+    } finally {
+      setSavingCampaignBudget(null);
+    }
+  };
+
+  const saveAdsetBudget = async (fbAdsetId) => {
+    const dollars = parseFloat(budgetInput);
+    if (!dollars || dollars < 1) {
+      showError('Enter a valid budget');
+      return;
+    }
+    setSavingBudget(fbAdsetId);
+    try {
+      const res = await authFetch(`${API_URL}/facebook/adsets/${fbAdsetId}/budget`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ daily_budget_cents: Math.round(dollars * 100) }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed'); }
+      showSuccess(`Budget set to $${dollars.toFixed(0)}/day`);
+      setEditingBudget(null);
+      setBudgetInput('');
+      load(activeRange);
+    } catch (e) {
+      showError(e.message || 'Failed');
+    } finally {
+      setSavingBudget(null);
+    }
+  };
+
   const askAI = async () => {
     if (!aiQuery.trim() || aiLoading) return;
     setAiLoading(true);
@@ -411,7 +478,9 @@ export default function Dashboard() {
       if (ins.frequency >= 5) {
         needsAttention.push({
           id: `freq-${a.id}`,
+          adset: a,
           label: a.name,
+          campaignName: a.campaign_name || '',
           reason: `Frequency ${ins.frequency.toFixed(1)} — ad fatigue risk`,
           severity: 'red',
           fb_adset_id: a.fb_adset_id,
@@ -420,7 +489,9 @@ export default function Dashboard() {
       } else if (ins.frequency >= 3) {
         needsAttention.push({
           id: `freq-warn-${a.id}`,
+          adset: a,
           label: a.name,
+          campaignName: a.campaign_name || '',
           reason: `Frequency ${ins.frequency.toFixed(1)} — monitor closely`,
           severity: 'orange',
           fb_adset_id: a.fb_adset_id,
@@ -432,7 +503,9 @@ export default function Dashboard() {
       if (ins.spend > 50 && ins.leads === 0) {
         needsAttention.push({
           id: `noleads-${a.id}`,
+          adset: a,
           label: a.name,
+          campaignName: a.campaign_name || '',
           reason: `$${ins.spend.toFixed(0)} spent, 0 leads`,
           severity: 'red',
           fb_adset_id: a.fb_adset_id,
@@ -444,7 +517,9 @@ export default function Dashboard() {
       if (rt?.roas != null && rt.roas < 1 && ins.spend > 30) {
         needsAttention.push({
           id: `roas-${a.id}`,
+          adset: a,
           label: a.name,
+          campaignName: a.campaign_name || '',
           reason: `RT ROAS ${rt.roas.toFixed(2)}x — losing money on ad spend`,
           severity: 'red',
           fb_adset_id: a.fb_adset_id,
@@ -459,7 +534,9 @@ export default function Dashboard() {
         if (rtRoas == null || rtRoas < 1) {
           needsAttention.push({
             id: `cpl-${a.id}`,
+            adset: a,
             label: a.name,
+            campaignName: a.campaign_name || '',
             reason: `CPL $${ins.cpl.toFixed(0)} — ${Math.round(ins.cpl / blendedCpl)}x above blended avg`,
             severity: 'orange',
             fb_adset_id: a.fb_adset_id,
@@ -497,8 +574,10 @@ export default function Dashboard() {
       const ins = bulkInsights[a.fb_adset_id];
       const rt  = ins?.redtrack;
       return {
+        adset: a,
         id: a.id,
         name: a.name,
+        campaignName: a.campaign_name || '',
         fb_adset_id: a.fb_adset_id || '',
         fb_campaign_id: a.fb_campaign_id || '',
         status: a.status,
@@ -512,14 +591,128 @@ export default function Dashboard() {
     })
     .filter(a => a.spend >= 50 && a.rtRoas != null && a.rtRoas > 0)
     .sort((a, b) => b.rtRoas - a.rtRoas)
-    .slice(0, 4);
+    .slice(0, 8);
 
-  const quickActions = [
-    { label: 'Performance', description: 'Live ad set & creative stats', icon: TrendingDown, path: '/campaign-performance', color: 'from-indigo-600 to-indigo-500', primary: true },
-    { label: 'Build Creatives', description: 'Create new image or video ads', icon: Wand2, path: '/batch-generate', color: 'from-amber-500 to-orange-500' },
-    { label: 'Manage Brands', description: 'Update brand assets and profiles', icon: ShoppingBag, path: '/brands', color: 'from-orange-500 to-red-500' },
-    { label: 'Browse Templates', description: 'Explore winning ad templates', icon: Star, path: '/winning-ads', color: 'from-amber-600 to-yellow-600' },
-  ];
+  const BudgetButton = ({ adset }) => {
+    const isCBO = adset.campaign_budget_optimization === 'CBO';
+    const fbCampaignId = adset.fb_campaign_id;
+
+    if (isCBO) {
+      return (
+        <div className="relative" onClick={e => e.stopPropagation()}>
+          <button
+            onClick={() => {
+              if (budgetPopover === fbCampaignId) {
+                setBudgetPopover(null);
+              } else {
+                setBudgetPopover(fbCampaignId);
+                setCampaignBudgetType('CBO');
+                setCampaignBudgetInput(adset.campaign_daily_budget ? (adset.campaign_daily_budget / 100).toFixed(0) : '');
+              }
+            }}
+            className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-white border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 text-gray-600 hover:text-indigo-700 transition-colors shadow-sm font-medium"
+          >
+            <DollarSign size={11} />
+            {adset.campaign_daily_budget ? `$${(adset.campaign_daily_budget / 100).toFixed(0)}/day` : 'CBO'}
+          </button>
+
+          {budgetPopover === fbCampaignId && (
+            <div
+              className="absolute right-0 top-9 w-64 bg-white rounded-xl border border-gray-200 shadow-lg p-4 z-50 text-left"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="text-xs font-semibold text-gray-700 mb-3">Campaign Budget Settings</div>
+              <div className="mb-3">
+                <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Daily Budget</div>
+                <div className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-2.5 py-1.5 focus-within:ring-1 focus-within:ring-indigo-400">
+                  <span className="text-gray-400 text-xs">$</span>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={campaignBudgetInput}
+                    onChange={e => setCampaignBudgetInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') saveCampaignBudget(fbCampaignId);
+                      if (e.key === 'Escape') setBudgetPopover(null);
+                    }}
+                    placeholder="e.g. 500"
+                    className="flex-1 text-sm font-semibold focus:outline-none text-gray-800 w-full"
+                    autoFocus
+                  />
+                  <span className="text-gray-400 text-xs">/day</span>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setBudgetPopover(null)}
+                  className="flex-1 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => saveCampaignBudget(fbCampaignId)}
+                  disabled={savingCampaignBudget === fbCampaignId}
+                  className="flex-1 py-1.5 text-xs rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {savingCampaignBudget === fbCampaignId ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (editingBudget === adset.fb_adset_id) {
+      return (
+        <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+          <span className="text-xs text-gray-400">$</span>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={budgetInput}
+            onChange={e => setBudgetInput(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') saveAdsetBudget(adset.fb_adset_id);
+              if (e.key === 'Escape') { setEditingBudget(null); setBudgetInput(''); }
+            }}
+            className="w-20 text-xs border border-gray-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            autoFocus
+          />
+          <span className="text-xs text-gray-400">/day</span>
+          <button
+            onClick={() => saveAdsetBudget(adset.fb_adset_id)}
+            disabled={savingBudget === adset.fb_adset_id}
+            className="text-green-600 hover:text-green-700 disabled:opacity-40 text-xs"
+          >
+            ✓
+          </button>
+          <button
+            onClick={() => { setEditingBudget(null); setBudgetInput(''); }}
+            className="text-gray-400 hover:text-gray-600 text-xs"
+          >
+            ×
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <button
+        onClick={e => {
+          e.stopPropagation();
+          setEditingBudget(adset.fb_adset_id);
+          setBudgetInput(adset.daily_budget ? String(Math.round(adset.daily_budget / 100)) : '');
+        }}
+        className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-white border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 text-gray-600 hover:text-indigo-700 transition-colors shadow-sm font-medium"
+      >
+        <DollarSign size={11} />
+        {adset.daily_budget ? `$${Math.round(adset.daily_budget / 100)}/day` : 'Set budget'}
+      </button>
+    );
+  };
 
   return (
     <div className="max-w-7xl mx-auto space-y-8">
@@ -685,6 +878,146 @@ export default function Dashboard() {
         />
       </div>
 
+      <div className="space-y-4">
+        {/* Top Performers */}
+        <div className="bg-white border-b border-gray-200">
+          <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+            <h2 className="font-semibold text-gray-900 flex items-center gap-2 text-sm">
+              <TrendingUp size={15} className="text-green-500" />
+              Top Performers
+              <span className="text-xs text-gray-400 font-normal">by RT ROAS · has spend</span>
+            </h2>
+            <Link to={perfLink('top-performers')} className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
+              View all in Performance <ArrowRight size={11} />
+            </Link>
+          </div>
+          {loading ? (
+            <div className="px-5 py-6 text-center text-sm text-gray-400">Loading...</div>
+          ) : topPerformers.length === 0 ? (
+            <div className="px-5 py-6 text-center text-sm text-gray-400">
+              No RT data yet — sync RedTrack from the Performance page.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100">
+                    <th className="px-5 py-2 text-left">Ad Set</th>
+                    <th className="px-3 py-2 text-right">Spend</th>
+                    <th className="px-3 py-2 text-right">CPL</th>
+                    <th className="px-3 py-2 text-right">RT ROAS</th>
+                    <th className="px-3 py-2 text-left">Budget</th>
+                    <th className="px-3 py-2 text-left">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {topPerformers.map(a => (
+                    <tr key={a.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-5 py-3">
+                        <Link to={perfLink('top-performers', a.fb_adset_id)} className="block">
+                          <div className="font-medium text-gray-900 truncate max-w-[280px]" title={a.name}>
+                            {a.name}
+                          </div>
+                          {a.campaignName && (
+                            <div className="text-xs text-gray-400 truncate max-w-[280px]">{a.campaignName}</div>
+                          )}
+                        </Link>
+                      </td>
+                      <td className="px-3 py-3 text-right font-medium text-gray-800">${a.spend.toFixed(0)}</td>
+                      <td className="px-3 py-3 text-right text-gray-600">{a.rtCpl != null ? `$${a.rtCpl.toFixed(2)}` : '—'}</td>
+                      <td className="px-3 py-3 text-right font-bold text-green-600">{a.rtRoas.toFixed(2)}x</td>
+                      <td className="px-3 py-3"><BudgetButton adset={a.adset} /></td>
+                      <td className="px-3 py-3">
+                        <button
+                          onClick={() => navigate(`/batch-generate?adsetName=${encodeURIComponent(a.name)}&adsetId=${encodeURIComponent(a.fb_adset_id)}&campaignId=${encodeURIComponent(a.fb_campaign_id)}`)}
+                          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-indigo-600 border border-indigo-100 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                        >
+                          <Repeat2 size={11} /> Iterate
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Needs Attention */}
+        <div className="bg-white border-b border-gray-200">
+          <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+            <h2 className="font-semibold text-gray-900 flex items-center gap-2 text-sm">
+              <AlertTriangle size={15} className="text-orange-500" />
+              Needs Attention
+            </h2>
+            <Link to={perfLink('attention')} className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
+              View all in Performance <ArrowRight size={11} />
+            </Link>
+          </div>
+          {loading ? (
+            <div className="px-5 py-6 text-center text-sm text-gray-400">Loading...</div>
+          ) : attentionList.length === 0 ? (
+            <div className="px-5 py-6 text-center text-sm text-gray-400">
+              <span className="text-green-500 font-medium">All clear</span> — no issues flagged.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100">
+                    <th className="px-5 py-2 text-left">Ad Set</th>
+                    <th className="px-3 py-2 text-left">Issue</th>
+                    <th className="px-3 py-2 text-right">Spend</th>
+                    <th className="px-3 py-2 text-right">CPL</th>
+                    <th className="px-3 py-2 text-left">Budget</th>
+                    <th className="px-3 py-2 text-left">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {attentionList.map(item => {
+                    const isPausing = item.fb_adset_id && pausingAdsets.has(item.fb_adset_id);
+                    const ins = bulkInsights[item.fb_adset_id] || {};
+                    return (
+                      <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-5 py-3">
+                          <Link to={perfLink('attention', item.fb_adset_id)} className="block">
+                            <div className="flex items-center gap-2">
+                              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${item.severity === 'red' ? 'bg-red-500' : 'bg-orange-400'}`} />
+                              <div className="font-medium text-gray-900 truncate max-w-[260px]" title={item.label}>{item.label}</div>
+                            </div>
+                            {item.campaignName && (
+                              <div className="text-xs text-gray-400 truncate max-w-[260px] pl-4">{item.campaignName}</div>
+                            )}
+                          </Link>
+                        </td>
+                        <td className="px-3 py-3">
+                          <span className={`text-xs ${item.severity === 'red' ? 'text-red-600' : 'text-orange-500'}`}>{item.reason}</span>
+                        </td>
+                        <td className="px-3 py-3 text-right font-medium text-gray-800">{ins.spend != null ? `$${ins.spend.toFixed(0)}` : '—'}</td>
+                        <td className="px-3 py-3 text-right text-red-600 font-semibold">{ins.cpl != null ? `$${ins.cpl.toFixed(2)}` : '—'}</td>
+                        <td className="px-3 py-3">{item.adset && <BudgetButton adset={item.adset} />}</td>
+                        <td className="px-3 py-3">
+                          {item.fb_adset_id && (
+                            <button
+                              onClick={() => pauseAdset(item.fb_adset_id)}
+                              disabled={isPausing}
+                              className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-gray-500 border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-40"
+                            >
+                              {isPausing ? <RefreshCw size={11} className="animate-spin" /> : <PauseCircle size={11} />}
+                              Pause
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Performance by Niche */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
@@ -754,139 +1087,6 @@ export default function Dashboard() {
             </table>
           </div>
         )}
-      </div>
-
-      {/* Needs Attention + Top Performers */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-        {/* Needs Attention */}
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900 flex items-center gap-2 text-sm">
-              <AlertTriangle size={15} className="text-orange-500" />
-              Needs Attention
-            </h2>
-            <Link to={perfLink('attention')} className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
-              View all <ArrowRight size={11} />
-            </Link>
-          </div>
-          {loading ? (
-            <div className="px-5 py-8 text-center text-sm text-gray-400">Loading...</div>
-          ) : attentionList.length === 0 ? (
-            <div className="px-5 py-8 text-center text-sm text-gray-400">
-              <div className="text-green-500 font-medium mb-1">All clear</div>
-              No issues flagged for this period.
-            </div>
-          ) : (
-            <div className="divide-y divide-gray-50">
-              {attentionList.map(item => {
-                const isPausing = item.fb_adset_id && pausingAdsets.has(item.fb_adset_id);
-                return (
-                  <div key={item.id} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
-                    <div className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${item.severity === 'red' ? 'bg-red-500' : 'bg-orange-400'}`} />
-                    <Link to={perfLink('attention', item.fb_adset_id)} className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-800 truncate">{item.label}</div>
-                      <div className={`text-xs mt-0.5 ${item.severity === 'red' ? 'text-red-600' : 'text-orange-500'}`}>{item.reason}</div>
-                    </Link>
-                    {item.fb_adset_id && (
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
-                        <button
-                          onClick={() => navigate(`/batch-generate?adsetName=${encodeURIComponent(item.label)}&adsetId=${encodeURIComponent(item.fb_adset_id || '')}&campaignId=${encodeURIComponent(item.fb_campaign_id || '')}`)}
-                          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-indigo-600 border border-indigo-100 bg-indigo-50 hover:bg-indigo-100 transition-colors"
-                          title="Try new creative variants"
-                        >
-                          <Repeat2 size={11} /> Iterate
-                        </button>
-                        <button
-                          onClick={() => pauseAdset(item.fb_adset_id, item.label)}
-                          disabled={isPausing}
-                          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-gray-500 border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-40"
-                          title={`Pause ${item.label}`}
-                        >
-                          {isPausing ? <RefreshCw size={11} className="animate-spin" /> : <PauseCircle size={11} />}
-                          Pause
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Top Performers */}
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900 flex items-center gap-2 text-sm">
-              <TrendingUp size={15} className="text-green-500" />
-              Top Performers
-              <span className="text-xs text-gray-400 font-normal">by RT ROAS</span>
-            </h2>
-            <Link to={perfLink('top-performers')} className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
-              View all <ArrowRight size={11} />
-            </Link>
-          </div>
-          {loading ? (
-            <div className="px-5 py-8 text-center text-sm text-gray-400">Loading...</div>
-          ) : topPerformers.length === 0 ? (
-            <div className="px-5 py-8 text-center text-sm text-gray-400">
-              No RT data yet — sync RedTrack from the Performance page.
-            </div>
-          ) : (
-            <div className="divide-y divide-gray-50">
-              {topPerformers.map((a, i) => (
-                <div key={a.id} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
-                  <span className="text-xs font-bold text-gray-300 w-4 flex-shrink-0">{i + 1}</span>
-                  <Link to={perfLink('top-performers', a.fb_adset_id)} className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-gray-800 truncate">{a.name}</div>
-                    <div className="text-xs text-gray-400 mt-0.5">
-                      ${a.spend.toFixed(0)} spend · {a.leads} leads · {a.rtConvs} RT convs
-                    </div>
-                  </Link>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <div className="text-right">
-                      <div className="text-sm font-bold text-green-600">{a.rtRoas.toFixed(2)}x</div>
-                      {a.rtCpl != null && (
-                        <div className="text-xs text-gray-400">${a.rtCpl.toFixed(2)} CPL</div>
-                      )}
-                    </div>
-                    <Link
-                      to={perfLink('top-performers', a.fb_adset_id)}
-                      className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-indigo-600 border border-indigo-100 bg-indigo-50 hover:bg-indigo-100 transition-colors"
-                      title="View this ad set in Campaign Performance"
-                    >
-                      View
-                    </Link>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Quick Actions */}
-      <div>
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Quick Actions</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {quickActions.map((action) => {
-            const Icon = action.icon;
-            return (
-              <Link
-                key={action.path}
-                to={action.path}
-                className={`group bg-white rounded-xl border shadow-sm p-5 hover:shadow-md transition-all ${action.primary ? 'border-indigo-200 bg-indigo-50/40' : 'border-gray-200'}`}
-              >
-                <div className={`bg-gradient-to-r ${action.color} w-10 h-10 rounded-lg flex items-center justify-center mb-3 group-hover:scale-105 transition-transform`}>
-                  <Icon className="text-white" size={20} />
-                </div>
-                <div className={`text-sm font-semibold mb-0.5 ${action.primary ? 'text-indigo-700' : 'text-gray-900'}`}>{action.label}</div>
-                <div className="text-xs text-gray-500">{action.description}</div>
-              </Link>
-            );
-          })}
-        </div>
       </div>
 
     </div>
