@@ -1276,12 +1276,26 @@ export default function CampaignPerformance() {
       {/* Ad Set Performance Table */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="font-semibold text-gray-900 flex items-center gap-2">
-            <Target size={16} className="text-gray-400" /> Performance
-            <span className="text-xs text-gray-400 font-normal">
-              {groupedCampaigns.length} campaign{groupedCampaigns.length !== 1 ? 's' : ''} · {visibleAdsets.length} ad set{visibleAdsets.length !== 1 ? 's' : ''}
-            </span>
-          </h2>
+          <div className="flex items-center gap-3">
+            <h2 className="font-semibold text-gray-900 flex items-center gap-2">
+              <Target size={16} className="text-gray-400" /> Performance
+              <span className="text-xs text-gray-400 font-normal">
+                {groupedCampaigns.length} campaign{groupedCampaigns.length !== 1 ? 's' : ''} · {visibleAdsets.length} ad set{visibleAdsets.length !== 1 ? 's' : ''}
+              </span>
+            </h2>
+            <button
+              onClick={() => {
+                if (collapsedCampaigns.size === groupedCampaigns.length) {
+                  setCollapsedCampaigns(new Set());
+                } else {
+                  setCollapsedCampaigns(new Set(groupedCampaigns.map(g => g.key)));
+                }
+              }}
+              className="text-xs text-gray-500 hover:text-indigo-600 px-2 py-1 rounded-lg border border-gray-200 hover:border-indigo-200 transition-colors"
+            >
+              {collapsedCampaigns.size === groupedCampaigns.length ? 'Expand all' : 'Collapse all'}
+            </button>
+          </div>
           <div className="flex items-center gap-2">
             {/* Status filter */}
             <select
@@ -1307,19 +1321,6 @@ export default function CampaignPerformance() {
               <option value="roas">Sort: RT ROAS ↓</option>
               <option value="name">Sort: Name A–Z</option>
             </select>
-            <button
-              onClick={() => {
-                if (collapsedCampaigns.size === groupedCampaigns.length) {
-                  setCollapsedCampaigns(new Set());
-                } else {
-                  setCollapsedCampaigns(new Set(groupedCampaigns.map(g => g.key)));
-                }
-              }}
-              className="text-xs text-gray-500 hover:text-indigo-600 px-2 py-1.5 rounded-lg border border-gray-200 hover:border-indigo-200 transition-colors"
-              title={collapsedCampaigns.size === groupedCampaigns.length ? 'Expand all campaigns' : 'Collapse all campaigns'}
-            >
-              {collapsedCampaigns.size === groupedCampaigns.length ? 'Expand all' : 'Collapse all'}
-            </button>
             <button
               onClick={() => { loadAdsets(); loadBulkInsights(adAccountId, datePreset, datePreset === 'custom' ? dateFrom : null, datePreset === 'custom' ? dateTo : null); }}
               className="text-gray-400 hover:text-gray-600 transition-colors"
@@ -1399,7 +1400,8 @@ export default function CampaignPerformance() {
                       </div>
 
                       {group.fbCampaignId && (
-                        <div className="relative" onClick={e => e.stopPropagation()}>
+                        <div className="relative text-right" onClick={e => e.stopPropagation()}>
+                          <span className="block text-[10px] uppercase tracking-wide text-gray-400 mb-1">Budget</span>
                           <button
                             onClick={() => {
                               if (budgetPopover === group.fbCampaignId) {
