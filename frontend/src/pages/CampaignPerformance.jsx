@@ -797,7 +797,7 @@ export default function CampaignPerformance() {
 
   useEffect(() => {
     const targetAdsetId = searchParams.get('adsetId');
-    if (!targetAdsetId || adsets.length === 0) return;
+    if (!targetAdsetId || targetAdsetId === 'null' || adsets.length === 0) return;
 
     const target = adsets.find(a => a.fb_adset_id === targetAdsetId);
     if (!target) return;
@@ -1505,6 +1505,40 @@ export default function CampaignPerformance() {
                                 {isExpanded && (
                                   <tr className="bg-gray-50/40">
                                     <td colSpan={9} className="px-6 pb-4 pt-2 border-t border-gray-100">
+                                      {/* Adset-level diagnostic strip */}
+                                      {d && (
+                                        <div className="mb-3 flex flex-wrap gap-x-5 gap-y-1.5 pb-3 border-b border-gray-100">
+                                          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide self-center w-8">Meta</span>
+                                          {[
+                                            { l: 'Reach', v: d.reach?.toLocaleString() ?? '—' },
+                                            { l: 'Impressions', v: d.impressions?.toLocaleString() ?? '—' },
+                                            { l: 'Frequency', v: d.frequency != null ? d.frequency.toFixed(2) : '—', bad: d.frequency >= 5, warn: d.frequency >= 3 && d.frequency < 5 },
+                                            { l: 'Clicks', v: d.clicks?.toLocaleString() ?? '—' },
+                                            { l: 'CTR', v: d.ctr ? `${parseFloat(d.ctr).toFixed(2)}%` : '—' },
+                                          ].map(({ l, v, bad, warn }) => (
+                                            <div key={l} className="flex flex-col">
+                                              <span className="text-[10px] text-gray-400">{l}</span>
+                                              <span className={`text-xs font-semibold ${bad ? 'text-red-600' : warn ? 'text-orange-500' : 'text-gray-800'}`}>{v}</span>
+                                            </div>
+                                          ))}
+                                          {rt && (
+                                            <>
+                                              <span className="text-[10px] font-semibold text-blue-400 uppercase tracking-wide self-center w-8 ml-2">RT</span>
+                                              {[
+                                                { l: 'Convs', v: rt.conversions ?? '—' },
+                                                { l: 'Quality', v: rt.quality_rate != null ? `${(rt.quality_rate * 100).toFixed(0)}%` : d.leads > 0 ? `${((rt.conversions / d.leads) * 100).toFixed(0)}%` : '—', bad: (rt.quality_rate ?? 1) < 0.5 },
+                                                { l: 'Revenue', v: rt.revenue != null ? `$${rt.revenue.toFixed(2)}` : '—' },
+                                                { l: 'Profit', v: rt.profit != null ? `$${rt.profit.toFixed(2)}` : '—', bad: rt.profit != null && rt.profit < 0 },
+                                              ].map(({ l, v, bad }) => (
+                                                <div key={l} className="flex flex-col">
+                                                  <span className="text-[10px] text-blue-400">{l}</span>
+                                                  <span className={`text-xs font-semibold ${bad ? 'text-red-600' : 'text-blue-700'}`}>{v}</span>
+                                                </div>
+                                              ))}
+                                            </>
+                                          )}
+                                        </div>
+                                      )}
                                       <AdsBreakdown
                                         fbAdsetId={adset.fb_adset_id}
                                         fbCampaignId={adset.fb_campaign_id || ''}
