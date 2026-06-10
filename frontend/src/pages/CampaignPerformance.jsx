@@ -568,6 +568,7 @@ export default function CampaignPerformance() {
     return 'spend';
   });
   const dashboardView = searchParams.get('view'); // derived live from URL — never stale
+  const targetAdsetId = searchParams.get('adsetId');
 
   // Bulk insights state — one API call replaces N per-row calls
   const [bulkInsights, setBulkInsights]       = useState(null);
@@ -802,12 +803,31 @@ export default function CampaignPerformance() {
     else if (view === 'top-performers') { setStatusFilter('has_spend'); setSortBy('roas'); }
   }, [searchParams]);
 
+  // Sync Dashboard-provided date params when this component stays mounted across navigations.
   useEffect(() => {
-    const targetAdsetId = searchParams.get('adsetId');
-    if (!targetAdsetId || targetAdsetId === 'null' || adsets.length === 0) return;
+    const nextFrom = searchParams.get('date_from') || '';
+    const nextTo = searchParams.get('date_to') || '';
+    const nextPreset = nextFrom && nextTo
+      ? 'custom'
+      : searchParams.get('preset') || localStorage.getItem('bhm_date_preset') || 'today';
+
+    setDatePreset(nextPreset);
+    setDateFrom(nextFrom);
+    setDateTo(nextTo);
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!targetAdsetId || targetAdsetId === 'null') {
+      setHighlightedAdsetId(null);
+      return;
+    }
+    if (adsets.length === 0) return;
 
     const target = adsets.find(a => a.fb_adset_id === targetAdsetId);
-    if (!target) return;
+    if (!target) {
+      setHighlightedAdsetId(null);
+      return;
+    }
 
     setExpandedAdsets(prev => {
       if (prev.has(targetAdsetId)) return prev;
@@ -825,11 +845,7 @@ export default function CampaignPerformance() {
     }
 
     setHighlightedAdsetId(targetAdsetId);
-    // Retry scroll — the row won't be in the DOM until bulkInsights loads and has_spend filter passes
-    const attemptScroll = () => rowRefs.current[targetAdsetId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    window.setTimeout(attemptScroll, 150);
-    window.setTimeout(attemptScroll, 1500);
-  }, [adsets, searchParams]);
+  }, [adsets, targetAdsetId]);
 
 
   const syncFromMeta = async () => {
@@ -1007,6 +1023,16 @@ export default function CampaignPerformance() {
     return list;
   }, [adsets, statusFilter, sortBy, bulkInsights, isFlagged, adsetStatusOverrides]);
 
+  useEffect(() => {
+    if (!targetAdsetId || targetAdsetId === 'null') return;
+    if (!visibleAdsets.some(a => a.fb_adset_id === targetAdsetId)) return;
+
+    setHighlightedAdsetId(targetAdsetId);
+    window.requestAnimationFrame(() => {
+      rowRefs.current[targetAdsetId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }, [targetAdsetId, visibleAdsets]);
+
   // Group the sorted adsets by campaign, then sort groups by total spend descending.
   // Orphaned adsets (no campaign_id) fall into a catch-all group at the bottom.
   const groupedCampaigns = useMemo(() => {
@@ -1041,10 +1067,10 @@ export default function CampaignPerformance() {
       rtRoas: group.totalSpend > 0 && group.totalRevenue > 0 ? group.totalRevenue / group.totalSpend : null,
       hasTarget: targetAdsetId ? group.adsets.some(a => a.fb_adset_id === targetAdsetId) : false,
     })).sort((a, b) => {
-      if (a.key === '__orphaned') return 1;
-      if (b.key === '__orphaned') return -1;
       if (a.hasTarget) return -1;
       if (b.hasTarget) return 1;
+      if (a.key === '__orphaned') return 1;
+      if (b.key === '__orphaned') return -1;
       return b.totalSpend - a.totalSpend;
     });
   }, [visibleAdsets, bulkInsights, searchParams]);
