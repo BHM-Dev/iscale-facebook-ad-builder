@@ -1157,9 +1157,9 @@ export default function CampaignPerformance() {
 
   return (
     <>
-    <div className="max-w-6xl mx-auto space-y-8">
+    <div className="-m-5 space-y-0">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-5 pt-5 pb-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <BarChart2 size={26} className="text-indigo-500" />
@@ -1246,7 +1246,7 @@ export default function CampaignPerformance() {
 
       {/* Dashboard deep-link banner */}
       {dashboardView && (
-        <div className={`flex items-center justify-between rounded-xl px-4 py-3 text-sm font-medium border ${
+        <div className={`flex items-center justify-between mx-5 mb-2 rounded-xl px-4 py-3 text-sm font-medium border ${
           highlightedAdsetId
             ? 'bg-indigo-50 border-indigo-200 text-indigo-800'
             : dashboardView === 'attention'
@@ -1274,7 +1274,7 @@ export default function CampaignPerformance() {
       )}
 
       {/* Ad Set Performance Table */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className="bg-white overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <h2 className="font-semibold text-gray-900 flex items-center gap-2">
