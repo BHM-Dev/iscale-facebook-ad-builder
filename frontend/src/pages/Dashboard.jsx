@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { TrendingDown, Wand2, Star, ShoppingBag, AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, PauseCircle, PlayCircle, Repeat2, MessageSquare, Send, Sparkles } from 'lucide-react';
+import { TrendingDown, Wand2, Star, ShoppingBag, AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown, PauseCircle, PlayCircle, Repeat2, MessageSquare, Send, Sparkles } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { authFetch } from '../lib/facebookApi';
