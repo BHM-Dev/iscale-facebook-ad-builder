@@ -170,41 +170,47 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
       </div>
 
       {/* Actions */}
-      <div className="flex items-center gap-2 pt-1 border-t border-gray-100">
-        <button
-          type="button"
-          onClick={() => onUseAsInspiration(ad)}
-          className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors"
-        >
-          <Zap size={12} />
-          Use as Inspiration
-        </button>
-        <SaveButton
-          ad={ad}
-          isSaved={isSaved}
-          onSave={onSave}
-          onUnsave={onUnsave}
-          angleTags={angleTags}
-        />
-        <a
-          href={`https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&q=${encodeURIComponent(ad.brand_name || '')}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 px-1.5 py-1 text-xs font-medium text-gray-400 hover:text-indigo-600 transition-colors"
-          title="View all ads from this advertiser"
-        >
-          <ExternalLink size={11} />
-          All ads
-        </a>
-        <button
-          type="button"
-          onClick={() => onBlockPage(ad)}
-          className="inline-flex items-center gap-1 px-1.5 py-1 text-xs font-medium text-gray-400 hover:text-red-500 transition-colors"
-          title="Block this advertiser"
-        >
-          <Ban size={11} />
-          Block
-        </button>
+      <div className="flex flex-col gap-1.5 pt-1 border-t border-gray-100">
+        {/* Primary row */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onUseAsInspiration(ad)}
+            className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors"
+          >
+            <Zap size={12} />
+            Use as Inspiration
+          </button>
+          <SaveButton
+            ad={ad}
+            isSaved={isSaved}
+            onSave={onSave}
+            onUnsave={onUnsave}
+            angleTags={angleTags}
+          />
+        </div>
+        {/* Secondary row */}
+        <div className="flex items-center gap-2">
+          <a
+            href={`https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&q=${encodeURIComponent(ad.brand_name || '')}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded-md border border-gray-200 text-xs font-medium text-gray-500 hover:text-indigo-600 hover:border-indigo-200 transition-colors"
+            title="View all ads from this advertiser"
+          >
+            <ExternalLink size={11} />
+            View all ads
+          </a>
+          <button
+            type="button"
+            onClick={() => onBlockPage(ad)}
+            className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded-md border border-gray-200 text-xs font-medium text-gray-500 hover:text-red-500 hover:border-red-200 transition-colors"
+            title="Block this advertiser"
+          >
+            <Ban size={11} />
+            Block advertiser
+          </button>
+        </div>
       </div>
     </div>
   );
