@@ -20,6 +20,23 @@ ALWAYS_BLOCKED_PAGES = [
     "jlo ganite llc",
     "dandy painting",
     "proclaim roofing",
+    # Salon/suite operators
+    "phenix salon suites - houston westheimer",
+    "my salon suite",
+    # Construction/trade
+    "total civil construction",
+    "hireline construction jobs",
+    "home builders association of columbia",
+    # Business coaches/consultants
+    "the small business planner",
+    "kevin blackler",
+    "zack zitting",
+    "launch pros agency",
+    "nak business solutions",
+    # Unrelated professionals
+    "stanly community college sbc",
+    "legal nationwide.",
+    "health by heatherrene",
 ]
 
 VERTICAL_KEYWORD_SETS = {
@@ -90,7 +107,7 @@ VERTICAL_KEYWORD_SETS = {
             "hail damage",
             "temporary housing",
             "rv rental",
-            # Contractors/tradespeople advertising their OWN services
+            # Contractors/tradespeople/service businesses advertising their OWN services
             # (they mention being insured but are not selling insurance)
             "free in-home visit",
             "free in-home estimate",
@@ -111,6 +128,35 @@ VERTICAL_KEYWORD_SETS = {
             "pressure washing",
             "remodeling",
             "renovation",
+            # Salon/suite franchise operators (buying insurance, not selling)
+            "salon suite",
+            "salon suites",
+            "booth rental",
+            "rent a suite",
+            # Construction/trade companies (not insurers)
+            "construction jobs",
+            "construction hiring",
+            "general contractor",
+            "subcontractor",
+            # Hiring / recruiting signals
+            "we're hiring",
+            "now hiring",
+            "join our team",
+            "open positions",
+            # Business coaches, consultants, educators (not insurers)
+            "business coach",
+            "business planner",
+            "small business coach",
+            "community college",
+            "trade association",
+            "builders association",
+            "contractors association",
+            # Unrelated professionals
+            "realtor",
+            "real estate agent",
+            "medical billing",
+            "bookkeeper",
+            "accounting firm",
         ],
         # At least one relevance term must appear in the ad text.
         # Filters ads that Meta returns via broad/semantic match but have no

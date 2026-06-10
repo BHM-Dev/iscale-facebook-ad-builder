@@ -94,20 +94,37 @@ class ResearchService:
         "athlete": -5,
         "pro athlete": -8,
         # Contractors/tradespeople advertising their own services
-        # (mention insurance but are not selling it)
         "fully insured": -6,
         "we're fully insured": -8,
         "free in-home": -7,
         "we come to you": -6,
-        "years of experience": -3,
         "google reviews": -4,
-        "homeowners": -3,
         "natural stone": -8,
         "fireplace": -7,
         "painting": -5,
         "roofing": -4,
         "remodeling": -6,
         "renovation": -6,
+        # Salon/suite operators (buying insurance, not selling)
+        "salon suite": -8,
+        "booth rental": -8,
+        "rent a chair": -8,
+        # Hiring/recruiting signals
+        "now hiring": -7,
+        "we're hiring": -7,
+        "join our team": -6,
+        "open positions": -6,
+        # Business coaches/consultants (not insurers)
+        "business coach": -7,
+        "business planner": -6,
+        "community college": -8,
+        "trade association": -7,
+        "builders association": -8,
+        # Unrelated professionals
+        "realtor": -8,
+        "real estate": -5,
+        "medical billing": -8,
+        "bookkeeper": -7,
     }
 
     @staticmethod
