@@ -1,7 +1,6 @@
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { TrendingDown, Wand2, Star, ShoppingBag, AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown, PauseCircle, PlayCircle, Repeat2, MessageSquare, Send, Sparkles } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
 import { authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
 
@@ -203,7 +202,6 @@ function DateFilter({ preset, setPreset, dateFrom, setDateFrom, dateTo, setDateT
 }
 
 export default function Dashboard() {
-  const { authFetch: authFetchCtx } = useAuth();
   const navigate = useNavigate();
   const { showError } = useToast();
   const [loading, setLoading] = useState(true);
@@ -248,7 +246,7 @@ export default function Dashboard() {
           const id = cfg.ad_account_id || '';
           if (id) { adAccountId = id; localStorage.setItem('fb_ad_account_id', id); }
         }
-      } catch (_) { clearTimeout(tid); /* use cached or empty */ }
+      } catch { clearTimeout(tid); /* use cached or empty */ }
 
       const insightsParams = new URLSearchParams();
       if (adAccountId) insightsParams.set('ad_account_id', adAccountId);
@@ -304,11 +302,11 @@ export default function Dashboard() {
       if (result.synced > 0) {
         load(activeRange); // re-fetch dashboard with fresh RT data
       }
-    } catch (_) { /* silently fail — RT sync is best-effort */ }
+    } catch { /* silently fail — RT sync is best-effort */ }
     finally { setSyncingRT(false); }
   }, [activeRange, load]);
 
-  const pauseAdset = useCallback(async (fb_adset_id, adsetName) => {
+  const pauseAdset = useCallback(async (fb_adset_id) => {
     setPausingAdsets(prev => new Set(prev).add(fb_adset_id));
     try {
       const res = await authFetch(`${API_URL}/facebook/adsets/${fb_adset_id}/status`, {
@@ -323,7 +321,7 @@ export default function Dashboard() {
     } finally {
       setPausingAdsets(prev => { const next = new Set(prev); next.delete(fb_adset_id); return next; });
     }
-  }, []);
+  }, [showError]);
 
   const askAI = async () => {
     if (!aiQuery.trim() || aiLoading) return;
@@ -480,8 +478,9 @@ export default function Dashboard() {
 
   // Build a Campaign Performance URL that carries the active date so the page
   // loads with the same date range the Dashboard is currently showing.
-  const perfLink = (view) => {
+  const perfLink = (view, adsetId = '') => {
     const params = new URLSearchParams({ view });
+    if (adsetId) params.set('adsetId', adsetId);
     if (dateFrom && dateTo) {
       params.set('date_from', dateFrom);
       params.set('date_to', dateTo);
@@ -785,7 +784,7 @@ export default function Dashboard() {
                 return (
                   <div key={item.id} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
                     <div className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${item.severity === 'red' ? 'bg-red-500' : 'bg-orange-400'}`} />
-                    <Link to={perfLink('attention')} className="flex-1 min-w-0">
+                    <Link to={perfLink('attention', item.fb_adset_id)} className="flex-1 min-w-0">
                       <div className="text-sm font-medium text-gray-800 truncate">{item.label}</div>
                       <div className={`text-xs mt-0.5 ${item.severity === 'red' ? 'text-red-600' : 'text-orange-500'}`}>{item.reason}</div>
                     </Link>
@@ -839,7 +838,7 @@ export default function Dashboard() {
               {topPerformers.map((a, i) => (
                 <div key={a.id} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
                   <span className="text-xs font-bold text-gray-300 w-4 flex-shrink-0">{i + 1}</span>
-                  <Link to={perfLink('top-performers')} className="flex-1 min-w-0">
+                  <Link to={perfLink('top-performers', a.fb_adset_id)} className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-gray-800 truncate">{a.name}</div>
                     <div className="text-xs text-gray-400 mt-0.5">
                       ${a.spend.toFixed(0)} spend · {a.leads} leads · {a.rtConvs} RT convs

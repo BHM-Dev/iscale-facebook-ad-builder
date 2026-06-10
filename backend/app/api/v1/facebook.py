@@ -1,8 +1,10 @@
 import logging
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
 from app.services.facebook_service import FacebookService
+from facebook_business.adobjects.adset import AdSet
 try:
     from facebook_business.exceptions import FacebookBadObjectError, FacebookRequestError
 except ImportError:
@@ -15,6 +17,9 @@ from app.core.deps import get_current_active_user, require_permission
 from sqlalchemy.orm import Session
 
 router = APIRouter()
+
+class BudgetUpdateRequest(BaseModel):
+    daily_budget_cents: int = Field(..., ge=100)
 
 def get_facebook_service():
     service = FacebookService()
@@ -225,11 +230,38 @@ def read_saved_adsets(
             "fb_campaign_id": a.campaign.fb_campaign_id if a.campaign else None,
             "campaign_name": a.campaign.name if a.campaign else None,
             "campaign_status": a.campaign.status if a.campaign else None,
+            "daily_budget": a.daily_budget,
             "brand_id": a.brand_id,
             "brand_name": a.brand.name if a.brand else None,
         }
         for a in adsets
     ]
+
+
+@router.patch("/adsets/{fb_adset_id}/budget")
+def update_adset_budget(
+    fb_adset_id: str,
+    body: BudgetUpdateRequest,
+    service: FacebookService = Depends(get_facebook_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("campaigns:write")),
+):
+    """Update an ad set's daily budget directly in Meta and mirror it locally when present."""
+    try:
+        adset = AdSet(fbid=fb_adset_id, api=service.api)
+        adset.api_update(fields=[], params={"daily_budget": int(body.daily_budget_cents)})
+
+        local_adset = db.query(FacebookAdSet).filter(FacebookAdSet.fb_adset_id == fb_adset_id).first()
+        if local_adset:
+            local_adset.daily_budget = int(body.daily_budget_cents)
+            local_adset.budget_schedule_type = "DAILY"
+            db.commit()
+
+        return {"success": True, "fb_adset_id": fb_adset_id, "daily_budget_cents": body.daily_budget_cents}
+    except Exception as e:
+        db.rollback()
+        logger.exception("Update ad set budget failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/adsets/saved/{adset_id}")
@@ -909,4 +941,3 @@ def push_to_meta(
         raise HTTPException(status_code=400, detail=f"Meta API error: {meta_msg}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Push to Meta failed: {str(e)}")
-
