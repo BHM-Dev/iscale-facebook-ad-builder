@@ -1308,6 +1308,19 @@ export default function CampaignPerformance() {
               <option value="name">Sort: Name A–Z</option>
             </select>
             <button
+              onClick={() => {
+                if (collapsedCampaigns.size === groupedCampaigns.length) {
+                  setCollapsedCampaigns(new Set());
+                } else {
+                  setCollapsedCampaigns(new Set(groupedCampaigns.map(g => g.key)));
+                }
+              }}
+              className="text-xs text-gray-500 hover:text-indigo-600 px-2 py-1.5 rounded-lg border border-gray-200 hover:border-indigo-200 transition-colors"
+              title={collapsedCampaigns.size === groupedCampaigns.length ? 'Expand all campaigns' : 'Collapse all campaigns'}
+            >
+              {collapsedCampaigns.size === groupedCampaigns.length ? 'Expand all' : 'Collapse all'}
+            </button>
+            <button
               onClick={() => { loadAdsets(); loadBulkInsights(adAccountId, datePreset, datePreset === 'custom' ? dateFrom : null, datePreset === 'custom' ? dateTo : null); }}
               className="text-gray-400 hover:text-gray-600 transition-colors"
               title="Refresh"
@@ -1503,7 +1516,15 @@ export default function CampaignPerformance() {
                           <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-gray-400">
                             <th className="px-6 py-2.5 min-w-[300px]">Ad Set Name</th>
                             <th className="px-3 py-2.5">Status</th>
-                            <th className="px-3 py-2.5">Budget</th>
+                            <th className="px-3 py-2.5">
+                              <span className="flex items-center gap-1">
+                                Budget
+                                <span
+                                  className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-gray-200 text-gray-500 text-[9px] font-bold cursor-help leading-none"
+                                  title="CBO (Campaign Budget Optimization): budget is set at the campaign level — use the $ button on the campaign header row. ABO (Ad Set Budget Optimization): each ad set has its own budget — use the $ Set budget button on each row. '$X/day' = live CBO budget. '-- CBO' = this adset's budget is controlled by the campaign."
+                                >?</span>
+                              </span>
+                            </th>
                             <th className="px-3 py-2.5 text-right">Spend</th>
                             <th className="px-3 py-2.5 text-right">Leads</th>
                             <th className="px-3 py-2.5 text-right">CPL</th>
