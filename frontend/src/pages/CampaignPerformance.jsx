@@ -1030,9 +1030,11 @@ export default function CampaignPerformance() {
     if (!visibleAdsets.some(a => a.fb_adset_id === targetAdsetId)) return;
     if (scrolledToRef.current === targetAdsetId) return; // already scrolled, don't re-fire on filter changes
 
-    scrolledToRef.current = targetAdsetId;
     window.requestAnimationFrame(() => {
-      rowRefs.current[targetAdsetId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const row = rowRefs.current[targetAdsetId];
+      if (!row) return;
+      scrolledToRef.current = targetAdsetId;
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
   }, [targetAdsetId, visibleAdsets]);
 

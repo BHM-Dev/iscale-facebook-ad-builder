@@ -852,7 +852,7 @@ export default function Dashboard() {
                       )}
                     </div>
                     <Link
-                      to={`/campaign-performance`}
+                      to={perfLink('top-performers', a.fb_adset_id)}
                       className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-indigo-600 border border-indigo-100 bg-indigo-50 hover:bg-indigo-100 transition-colors"
                       title="View this ad set in Campaign Performance"
                     >
