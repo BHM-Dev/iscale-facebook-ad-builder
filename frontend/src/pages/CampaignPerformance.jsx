@@ -1516,7 +1516,7 @@ export default function CampaignPerformance() {
                       <table className="w-full text-sm">
                         <thead className="bg-white border-b border-gray-100 sticky top-0 z-10">
                           <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-                            <th className="px-6 py-2.5 min-w-[300px]">Ad Set Name</th>
+                            <th className="px-6 py-2.5 min-w-[200px] max-w-[260px]">Ad Set Name</th>
                             <th className="px-3 py-2.5">Status</th>
                             <th className="px-3 py-2.5">
                               <span className="flex items-center gap-1">
@@ -1586,7 +1586,7 @@ export default function CampaignPerformance() {
                                       <span className="flex-shrink-0 text-gray-400">
                                         {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                       </span>
-                                      <span className="font-medium text-gray-900 truncate">{adset.name}</span>
+                                      <span className="font-medium text-gray-900 truncate" title={adset.name}>{adset.name}</span>
                                       {hasPoorCreatives && !isExpanded && (
                                         <span className="flex-shrink-0 text-xs px-1.5 py-0.5 rounded font-medium bg-orange-50 text-orange-600 flex items-center gap-1">
                                           <AlertTriangle size={10} /> Poor creative
