@@ -795,6 +795,13 @@ export default function CampaignPerformance() {
 
   useEffect(() => { loadAdsets(); loadRules(); }, [loadAdsets, loadRules]);
 
+  // Sync filter/sort state when URL params change (handles component staying mounted across navigations)
+  useEffect(() => {
+    const view = searchParams.get('view');
+    if (view === 'attention') { setStatusFilter('flagged'); setSortBy('spend'); }
+    else if (view === 'top-performers') { setStatusFilter('has_spend'); setSortBy('roas'); }
+  }, [searchParams]);
+
   useEffect(() => {
     const targetAdsetId = searchParams.get('adsetId');
     if (!targetAdsetId || targetAdsetId === 'null' || adsets.length === 0) return;
