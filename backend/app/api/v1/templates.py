@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from pydantic import BaseModel
 from app.database import get_db
 from app.models import WinningAd as WinningAdModel, User
 from app.schemas.template import WinningAd
 from app.core.deps import get_current_active_user, require_permission
+from app.core.config import settings
 import uuid
 
 router = APIRouter()
@@ -66,6 +68,26 @@ import os
 UPLOAD_DIR = Path(__file__).parent.parent.parent.parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+
+class BulkDeleteRequest(BaseModel):
+    ids: List[str]
+
+
+@router.post("/bulk-delete")
+def bulk_delete_templates(
+    request: BulkDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    if not request.ids:
+        return {"message": "No templates to delete", "deleted": 0}
+    deleted_count = db.query(WinningAdModel).filter(
+        WinningAdModel.id.in_(request.ids)
+    ).delete(synchronize_session=False)
+    db.commit()
+    return {"message": f"Deleted {deleted_count} templates", "deleted": deleted_count}
+
+
 @router.post("/upload")
 async def upload_winning_ad(
     images: List[UploadFile] = File(...),
@@ -74,20 +96,23 @@ async def upload_winning_ad(
 ):
     saved_ads = []
     for image in images:
-        # Generate unique filename
         filename = f"template_{uuid.uuid4()}_{image.filename}"
-        file_path = UPLOAD_DIR / filename
-        
-        # Save file
-        with file_path.open("wb") as buffer:
-            shutil.copyfileobj(image.file, buffer)
-            
-        # Create DB record
-        # Note: In a real app, we'd probably analyze the image here or let the user fill in details
-        # For now, we create a basic record
+        file_content = await image.read()
+
+        if settings.r2_enabled:
+            from app.api.v1.uploads import upload_to_r2
+            image_url = await upload_to_r2(
+                file_content, filename, image.content_type or "image/jpeg"
+            )
+        else:
+            file_path = UPLOAD_DIR / filename
+            with file_path.open("wb") as buffer:
+                buffer.write(file_content)
+            image_url = f"{settings.PUBLIC_API_URL}/uploads/{filename}"
+
         new_ad = WinningAdModel(
             name=image.filename,
-            image_url=f"/uploads/{filename}",
+            image_url=image_url,
             filename=filename,
             template_category="Uploaded",
             design_style="Unknown"
@@ -96,5 +121,5 @@ async def upload_winning_ad(
         db.commit()
         db.refresh(new_ad)
         saved_ads.append(new_ad)
-        
+
     return {"message": f"Successfully uploaded {len(saved_ads)} templates", "ads": saved_ads}

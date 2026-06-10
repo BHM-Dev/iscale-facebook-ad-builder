@@ -3,9 +3,11 @@ import { useBrands } from '../context/BrandContext';
 import BrandForm from '../components/BrandForm';
 import { Plus, Edit2, Trash2, Briefcase, LayoutGrid, List } from 'lucide-react';
 import ConfirmationModal from '../components/ConfirmationModal';
+import { useToast } from '../context/ToastContext';
 
 const Brands = () => {
     const { brands, addBrand, updateBrand, deleteBrand } = useBrands();
+    const { showError, showSuccess } = useToast();
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [editingBrand, setEditingBrand] = useState(null);
     const [viewMode, setViewMode] = useState(localStorage.getItem('preferred_view_mode') || 'list'); // 'list' or 'grid'
@@ -17,14 +19,20 @@ const Brands = () => {
 
     const [brandToDelete, setBrandToDelete] = useState(null);
 
-    const handleSave = (brandData) => {
-        if (editingBrand) {
-            updateBrand(editingBrand.id, brandData);
-        } else {
-            addBrand(brandData);
+    const handleSave = async (brandData) => {
+        try {
+            if (editingBrand) {
+                await updateBrand(editingBrand.id, brandData);
+                showSuccess('Brand updated');
+            } else {
+                await addBrand(brandData);
+                showSuccess('Brand created');
+            }
+            setIsFormOpen(false);
+            setEditingBrand(null);
+        } catch (err) {
+            showError(err.message || 'Failed to save brand');
         }
-        setIsFormOpen(false);
-        setEditingBrand(null);
     };
 
     const handleEdit = (brand) => {
@@ -36,9 +44,14 @@ const Brands = () => {
         setBrandToDelete(id);
     };
 
-    const confirmDelete = () => {
+    const confirmDelete = async () => {
         if (brandToDelete) {
-            deleteBrand(brandToDelete);
+            try {
+                await deleteBrand(brandToDelete);
+                showSuccess('Brand deleted');
+            } catch (err) {
+                showError(err.message || 'Failed to delete brand');
+            }
             setBrandToDelete(null);
         }
     };

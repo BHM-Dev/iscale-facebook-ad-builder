@@ -73,51 +73,39 @@ export const BrandProvider = ({ children }) => {
 
     // Brand Management
     const addBrand = async (brand) => {
-        try {
-            const newBrand = {
-                ...brand,
-                id: crypto.randomUUID()
-            };
-
-            await authFetch(`${API_URL}/brands`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(newBrand)
-            });
-
-            await loadData();
-        } catch (error) {
-            console.error('Error adding brand:', error);
-            throw error;
+        const newBrand = { ...brand, id: crypto.randomUUID() };
+        const res = await authFetch(`${API_URL}/brands`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newBrand)
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || `Failed to save brand (${res.status})`);
         }
+        await loadData();
     };
 
     const updateBrand = async (id, updatedBrand) => {
-        try {
-            await authFetch(`${API_URL}/brands/${id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(updatedBrand)
-            });
-
-            await loadData();
-        } catch (error) {
-            console.error('Error updating brand:', error);
-            throw error;
+        const res = await authFetch(`${API_URL}/brands/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updatedBrand)
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || `Failed to update brand (${res.status})`);
         }
+        await loadData();
     };
 
     const deleteBrand = async (id) => {
-        try {
-            await authFetch(`${API_URL}/brands/${id}`, {
-                method: 'DELETE'
-            });
-
-            await loadData();
-        } catch (error) {
-            console.error('Error deleting brand:', error);
-            throw error;
+        const res = await authFetch(`${API_URL}/brands/${id}`, { method: 'DELETE' });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || `Failed to delete brand (${res.status})`);
         }
+        await loadData();
     };
 
     // Product Management (standalone - kept for compatibility)
