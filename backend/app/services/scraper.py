@@ -50,7 +50,8 @@ class FacebookAdsLibraryAPI:
             - api_calls_made: Number of API calls
         """
         print(f"Searching Facebook Ads Library for '{query}' in {country} (offset={offset}, negative_keywords={negative_keywords})")
-        print(f"[scraper] token={'SET' if self.access_token else 'MISSING'}, using={'API' if self.access_token else 'fallback'}")
+        mode = 'scraper-only' if use_scraper_only else ('API' if self.access_token else 'fallback')
+        print(f"[scraper] token={'SET' if self.access_token else 'MISSING'}, using={mode}")
 
         # Skip API and go straight to Playwright when caller requests it
         # (API's semantic search returns spam for research keywords)
@@ -527,10 +528,10 @@ class FacebookAdsLibraryAPI:
                     for ad_data in ads_data:
                         # Check all text fields for negative keywords
                         text_to_check = ' '.join([
-                            ad_data.get('brand_name', ''),
-                            ad_data.get('headline', ''),
-                            ad_data.get('ad_copy', ''),
-                            ad_data.get('cta_text', '')
+                            ad_data.get('brand_name') or '',
+                            ad_data.get('headline') or '',
+                            ad_data.get('ad_copy') or '',
+                            ad_data.get('cta_text') or '',
                         ]).lower()
 
                         # Skip if any negative keyword found
