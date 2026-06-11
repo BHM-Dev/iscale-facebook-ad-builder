@@ -226,6 +226,7 @@ export default function Dashboard() {
   const [editingBudget, setEditingBudget] = useState(null);
   const [budgetInput, setBudgetInput] = useState('');
   const [savingBudget, setSavingBudget] = useState(null);
+  const [scalingAdset, setScalingAdset] = useState(new Set());
 
   // Date filter state
   const [preset, setPreset] = useState(() => localStorage.getItem('bhm_date_preset') || 'today');
@@ -390,6 +391,51 @@ export default function Dashboard() {
     }
   };
 
+  const scaleAdset = async (a) => {
+    const isCBO = a.adset.campaign_budget_optimization === 'CBO';
+    const currentCents = isCBO
+      ? a.adset.campaign_daily_budget
+      : a.adset.daily_budget;
+
+    if (!currentCents || currentCents <= 0) {
+      showError('Set a budget first before scaling');
+      return;
+    }
+
+    const newCents = Math.round(currentCents * 1.2);
+    const scaleKey = isCBO ? `cbo-${a.fb_campaign_id}` : a.fb_adset_id;
+    setScalingAdset(prev => new Set(prev).add(scaleKey));
+
+    try {
+      if (isCBO) {
+        const res = await authFetch(`${API_URL}/facebook/campaigns/${a.fb_campaign_id}/budget`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ daily_budget_cents: newCents, budget_optimization: 'CBO' }),
+        });
+        if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed'); }
+        showSuccess(`Campaign budget scaled to $${(newCents / 100).toFixed(0)}/day (+20%)`);
+      } else {
+        const res = await authFetch(`${API_URL}/facebook/adsets/${a.fb_adset_id}/budget`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ daily_budget_cents: newCents }),
+        });
+        if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed'); }
+        showSuccess(`Ad set budget scaled to $${(newCents / 100).toFixed(0)}/day (+20%)`);
+      }
+      load(activeRange);
+    } catch (e) {
+      showError(e.message || 'Scale failed');
+    } finally {
+      setScalingAdset(prev => {
+        const next = new Set(prev);
+        next.delete(scaleKey);
+        return next;
+      });
+    }
+  };
+
   const askAI = async () => {
     if (!aiQuery.trim() || aiLoading) return;
     setAiLoading(true);
@@ -455,15 +501,18 @@ export default function Dashboard() {
 
   // ── Needs Attention ─────────────────────────────────────────────────────────
   const triggeredRules = rules.filter(r => r.triggered_at);
-  const needsAttention = [];
+  const attentionMap = new Map();
 
   triggeredRules.forEach(r => {
-    needsAttention.push({
-      id: `rule-${r.id}`,
+    const key = `rule-${r.id}`;
+    attentionMap.set(key, {
+      id: key,
       label: r.adset_name || 'Ad set',
-      reason: `Auto-paused: ${r.trigger_reason}`,
+      campaignName: '',
+      fb_adset_id: null,
+      adset: null,
       severity: 'red',
-      fb_adset_id: null, // already paused — no action button needed
+      reasons: [{ severity: 'red', text: `Auto-paused: ${r.trigger_reason}` }],
     });
   });
 
@@ -473,58 +522,23 @@ export default function Dashboard() {
       const ins = bulkInsights[a.fb_adset_id];
       if (!ins) return;
       const rt = ins.redtrack;
+      const issues = [];
 
       // Ad fatigue
       if (ins.frequency >= 5) {
-        needsAttention.push({
-          id: `freq-${a.id}`,
-          adset: a,
-          label: a.name,
-          campaignName: a.campaign_name || '',
-          reason: `Frequency ${ins.frequency.toFixed(1)} — ad fatigue risk`,
-          severity: 'red',
-          fb_adset_id: a.fb_adset_id,
-          fb_campaign_id: a.fb_campaign_id || '',
-        });
+        issues.push({ severity: 'red', text: `Freq ${ins.frequency.toFixed(1)} — fatigue risk` });
       } else if (ins.frequency >= 3) {
-        needsAttention.push({
-          id: `freq-warn-${a.id}`,
-          adset: a,
-          label: a.name,
-          campaignName: a.campaign_name || '',
-          reason: `Frequency ${ins.frequency.toFixed(1)} — monitor closely`,
-          severity: 'orange',
-          fb_adset_id: a.fb_adset_id,
-          fb_campaign_id: a.fb_campaign_id || '',
-        });
+        issues.push({ severity: 'orange', text: `Freq ${ins.frequency.toFixed(1)} — monitor` });
       }
 
       // Spend with no leads
       if (ins.spend > 50 && ins.leads === 0) {
-        needsAttention.push({
-          id: `noleads-${a.id}`,
-          adset: a,
-          label: a.name,
-          campaignName: a.campaign_name || '',
-          reason: `$${ins.spend.toFixed(0)} spent, 0 leads`,
-          severity: 'red',
-          fb_adset_id: a.fb_adset_id,
-          fb_campaign_id: a.fb_campaign_id || '',
-        });
+        issues.push({ severity: 'red', text: `$${ins.spend.toFixed(0)} spent, 0 leads` });
       }
 
       // RT ROAS below 1x (actively losing money)
       if (rt?.roas != null && rt.roas < 1 && ins.spend > 30) {
-        needsAttention.push({
-          id: `roas-${a.id}`,
-          adset: a,
-          label: a.name,
-          campaignName: a.campaign_name || '',
-          reason: `RT ROAS ${rt.roas.toFixed(2)}x — losing money on ad spend`,
-          severity: 'red',
-          fb_adset_id: a.fb_adset_id,
-          fb_campaign_id: a.fb_campaign_id || '',
-        });
+        issues.push({ severity: 'red', text: `RT ROAS ${rt.roas.toFixed(2)}x — losing money` });
       }
 
       // CPL well above blended average (>1.5x) with meaningful spend
@@ -532,26 +546,25 @@ export default function Dashboard() {
       if (blendedCpl != null && ins.cpl != null && ins.cpl > blendedCpl * 1.5 && ins.spend > 30) {
         const rtRoas = rt?.roas;
         if (rtRoas == null || rtRoas < 1) {
-          needsAttention.push({
-            id: `cpl-${a.id}`,
-            adset: a,
-            label: a.name,
-            campaignName: a.campaign_name || '',
-            reason: `CPL $${ins.cpl.toFixed(0)} — ${Math.round(ins.cpl / blendedCpl)}x above blended avg`,
-            severity: 'orange',
-            fb_adset_id: a.fb_adset_id,
-            fb_campaign_id: a.fb_campaign_id || '',
-          });
+          issues.push({ severity: 'orange', text: `CPL $${ins.cpl.toFixed(0)} — ${Math.round(ins.cpl / blendedCpl)}x avg` });
         }
       }
+
+      if (issues.length === 0) return;
+
+      attentionMap.set(a.fb_adset_id, {
+        id: `adset-${a.id}`,
+        adset: a,
+        label: a.name,
+        campaignName: a.campaign_name || '',
+        severity: issues.some(i => i.severity === 'red') ? 'red' : 'orange',
+        reasons: issues,
+        fb_adset_id: a.fb_adset_id,
+        fb_campaign_id: a.fb_campaign_id || '',
+      });
     });
 
-  const seen = new Set();
-  const attentionList = needsAttention.filter(item => {
-    if (seen.has(item.id)) return false;
-    seen.add(item.id);
-    return true;
-  }).slice(0, 5);
+  const attentionList = Array.from(attentionMap.values()).slice(0, 8);
 
   // Build a Campaign Performance URL that carries the active date so the page
   // loads with the same date range the Dashboard is currently showing.
@@ -587,6 +600,7 @@ export default function Dashboard() {
         rtRoas: rt?.roas,
         rtCpl: rt?.cpl,
         rtConvs: rt?.conversions || 0,
+        frequency: ins?.frequency ?? null,
       };
     })
     .filter(a => a.spend >= 50 && a.rtRoas != null && a.rtRoas > 0)
@@ -906,6 +920,7 @@ export default function Dashboard() {
                     <th className="px-3 py-2 text-right">Spend</th>
                     <th className="px-3 py-2 text-right">CPL</th>
                     <th className="px-3 py-2 text-right">RT ROAS</th>
+                    <th className="px-3 py-2 text-right">Freq</th>
                     <th className="px-3 py-2 text-left">Budget</th>
                     <th className="px-3 py-2 text-left">Action</th>
                   </tr>
@@ -926,14 +941,43 @@ export default function Dashboard() {
                       <td className="px-3 py-3 text-right font-medium text-gray-800">${a.spend.toFixed(0)}</td>
                       <td className="px-3 py-3 text-right text-gray-600">{a.rtCpl != null ? `$${a.rtCpl.toFixed(2)}` : '—'}</td>
                       <td className="px-3 py-3 text-right font-bold text-green-600">{a.rtRoas.toFixed(2)}x</td>
+                      <td className="px-3 py-3 text-right text-xs font-medium">
+                        {a.frequency != null ? (
+                          <span className={
+                            a.frequency >= 4 ? 'text-red-600'
+                              : a.frequency >= 2.5 ? 'text-orange-500'
+                                : 'text-gray-400'
+                          }>
+                            {a.frequency.toFixed(1)}
+                          </span>
+                        ) : <span className="text-gray-300">—</span>}
+                      </td>
                       <td className="px-3 py-3"><BudgetButton adset={a.adset} /></td>
                       <td className="px-3 py-3">
-                        <button
-                          onClick={() => navigate(`/batch-generate?adsetName=${encodeURIComponent(a.name)}&adsetId=${encodeURIComponent(a.fb_adset_id)}&campaignId=${encodeURIComponent(a.fb_campaign_id)}`)}
-                          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-indigo-600 border border-indigo-100 bg-indigo-50 hover:bg-indigo-100 transition-colors"
-                        >
-                          <Repeat2 size={11} /> Iterate
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          {(() => {
+                            const isCBO = a.adset.campaign_budget_optimization === 'CBO';
+                            const hasBudget = isCBO ? !!a.adset.campaign_daily_budget : !!a.adset.daily_budget;
+                            const scaleKey = isCBO ? `cbo-${a.fb_campaign_id}` : a.fb_adset_id;
+                            const isScaling = scalingAdset.has(scaleKey);
+                            return (
+                              <button
+                                onClick={() => scaleAdset(a)}
+                                disabled={isScaling || !hasBudget}
+                                title={hasBudget ? '+20% budget' : 'Set budget first'}
+                                className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-green-700 border border-green-200 bg-green-50 hover:bg-green-100 transition-colors disabled:opacity-40"
+                              >
+                                {isScaling ? <RefreshCw size={11} className="animate-spin" /> : '+20%'}
+                              </button>
+                            );
+                          })()}
+                          <button
+                            onClick={() => navigate(`/batch-generate?adsetName=${encodeURIComponent(a.name)}&adsetId=${encodeURIComponent(a.fb_adset_id)}&campaignId=${encodeURIComponent(a.fb_campaign_id)}`)}
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-indigo-600 border border-indigo-100 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                          >
+                            <Repeat2 size={11} /> Iterate
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -991,7 +1035,13 @@ export default function Dashboard() {
                           </Link>
                         </td>
                         <td className="px-3 py-3">
-                          <span className={`text-xs ${item.severity === 'red' ? 'text-red-600' : 'text-orange-500'}`}>{item.reason}</span>
+                          <div className="flex flex-col gap-0.5">
+                            {item.reasons.map((r, i) => (
+                              <span key={i} className={`text-xs ${r.severity === 'red' ? 'text-red-600' : 'text-orange-500'}`}>
+                                {r.text}
+                              </span>
+                            ))}
+                          </div>
                         </td>
                         <td className="px-3 py-3 text-right font-medium text-gray-800">{ins.spend != null ? `$${ins.spend.toFixed(0)}` : '—'}</td>
                         <td className="px-3 py-3 text-right text-red-600 font-semibold">{ins.cpl != null ? `$${ins.cpl.toFixed(2)}` : '—'}</td>
