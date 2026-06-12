@@ -356,7 +356,8 @@ export default function AdRemix() {
             // falling back to any previously entered URL from this session.
             website_url: savedForm.website_url || remixLinkUrl || '',
             lead_form_id: savedForm.lead_form_id || '',
-            image_url: '',
+            // Pre-fill with the base/template image so Joel can push copy-only without generating
+            image_url: wizardData.template?.image_url || '',
             status: savedForm.status || 'PAUSED',
         });
         setAdSets([]);
@@ -424,7 +425,6 @@ export default function AdRemix() {
             const overlayHasContent = nicheLabel || savedOfferLine || savedLogoUrl;
 
             const payload = {
-                customPrompt: pushModal.image_generation_prompt,
                 count: 1,
                 imageSizes: [{ width: 1080, height: 1080, name: 'Square' }],
                 niche: nicheLabel,
@@ -1192,13 +1192,18 @@ export default function AdRemix() {
                                                 onError={e => { e.target.style.display = 'none'; }}
                                             />
                                             <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-t border-gray-200">
-                                                <p className="text-xs text-gray-500 flex-1 truncate">{pushForm.image_url}</p>
+                                                <p className="text-xs flex-1 truncate">
+                                                    {pushForm.image_url === wizardData.template?.image_url
+                                                        ? <span className="text-green-600 font-medium">✓ Using your winning ad's image</span>
+                                                        : <span className="text-gray-500">{pushForm.image_url}</span>
+                                                    }
+                                                </p>
                                                 <button
                                                     type="button"
                                                     onClick={() => setPushForm(f => ({ ...f, image_url: '' }))}
                                                     className="text-xs text-red-500 hover:text-red-700 font-medium shrink-0"
                                                 >
-                                                    Remove
+                                                    Replace
                                                 </button>
                                             </div>
                                         </div>
