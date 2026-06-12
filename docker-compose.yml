@@ -36,6 +36,19 @@ services:
         condition: service_healthy
     volumes:
       - backend_uploads:/app/uploads
+    networks:
+      - default
+      - traefik-proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-proxy"
+      - "traefik.http.routers.adbuilder-api.rule=Host(`adbuilder-api.velocitymx.io`)"
+      - "traefik.http.routers.adbuilder-api.entrypoints=websecure"
+      - "traefik.http.routers.adbuilder-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.adbuilder-api.loadbalancer.server.port=8000"
+      - "traefik.http.routers.adbuilder-api-http.rule=Host(`adbuilder-api.velocitymx.io`)"
+      - "traefik.http.routers.adbuilder-api-http.entrypoints=web"
+      - "traefik.http.routers.adbuilder-api-http.middlewares=redirect-to-https@docker"
 
   frontend:
     build:
