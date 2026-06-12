@@ -48,7 +48,25 @@ services:
       - "5173:80"
     depends_on:
       - backend
+    networks:
+      - default
+      - traefik-proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-proxy"
+      - "traefik.http.routers.adbuilder.rule=Host(`adbuilder.velocitymx.io`)"
+      - "traefik.http.routers.adbuilder.entrypoints=websecure"
+      - "traefik.http.routers.adbuilder.tls.certresolver=letsencrypt"
+      - "traefik.http.services.adbuilder.loadbalancer.server.port=80"
+      - "traefik.http.routers.adbuilder-http.rule=Host(`adbuilder.velocitymx.io`)"
+      - "traefik.http.routers.adbuilder-http.entrypoints=web"
+      - "traefik.http.routers.adbuilder-http.middlewares=redirect-to-https@docker"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
 
 volumes:
   postgres_data:
   backend_uploads:
+
+networks:
+  traefik-proxy:
+    external: true
