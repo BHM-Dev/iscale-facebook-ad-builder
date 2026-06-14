@@ -235,13 +235,14 @@ export default function Dashboard() {
   const [activeRange, setActiveRange] = useState(() => ({ preset: localStorage.getItem('bhm_date_preset') || 'today', dateFrom: null, dateTo: null }));
 
   // Campaign Intelligence state
-  const [ciPreset, setCiPreset] = useState('weekends_mtd');
+  const [ciPreset, setCiPreset] = useState('last_7d');
   const [ciCustomFrom, setCiCustomFrom] = useState('');
   const [ciCustomTo, setCiCustomTo] = useState('');
   const [ciData, setCiData] = useState(null);
   const [ciLoading, setCiLoading] = useState(false);
   const [ciError, setCiError] = useState(null);
-  const [ciOpen, setCiOpen] = useState(true);
+  const [ciOpen, setCiOpen] = useState(false);
+  const ciLoadedPresetRef = useRef(null); // null = never loaded; otherwise = last loaded preset key
 
   const load = useCallback(async (range) => {
     const { preset: p, dateFrom: df, dateTo: dt } = range || { preset: 'today', dateFrom: null, dateTo: null };
@@ -492,7 +493,9 @@ export default function Dashboard() {
         const e = await res.json().catch(() => ({}));
         throw new Error(e.detail || `Error ${res.status}`);
       }
-      setCiData(await res.json());
+      const data = await res.json();
+      ciLoadedPresetRef.current = preset === 'custom' ? `custom:${customFrom}:${customTo}` : preset;
+      setCiData(data);
     } catch (e) {
       setCiError(e.message || 'Failed to load intelligence data');
     } finally {
@@ -500,7 +503,16 @@ export default function Dashboard() {
     }
   }, []);
 
-  useEffect(() => { loadIntelligence(ciPreset, ciCustomFrom, ciCustomTo); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Lazy-load: fires on first open OR when preset has changed since last load
+  const handleCiOpen = useCallback(() => {
+    setCiOpen(o => {
+      const opening = !o;
+      if (opening && ciLoadedPresetRef.current !== ciPreset) {
+        loadIntelligence(ciPreset, ciCustomFrom, ciCustomTo);
+      }
+      return opening;
+    });
+  }, [ciPreset, ciCustomFrom, ciCustomTo, loadIntelligence]);
 
   // ── Aggregate KPIs ──────────────────────────────────────────────────────────
   const rows = Object.values(bulkInsights);
@@ -1108,7 +1120,7 @@ export default function Dashboard() {
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div
           className="px-5 py-4 border-b border-gray-100 flex items-center justify-between cursor-pointer select-none"
-          onClick={() => setCiOpen(o => !o)}
+          onClick={handleCiOpen}
         >
           <h2 className="font-semibold text-gray-900 flex items-center gap-2 text-sm">
             <Sparkles size={15} className="text-violet-500" />
@@ -1145,7 +1157,9 @@ export default function Dashboard() {
                   key={p.value}
                   onClick={() => {
                     setCiPreset(p.value);
-                    if (p.value !== 'custom') loadIntelligence(p.value, '', '');
+                    if (p.value !== 'custom' && ciOpen) {
+                      loadIntelligence(p.value, '', '');
+                    }
                   }}
                   className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
                     ciPreset === p.value
@@ -1198,7 +1212,23 @@ export default function Dashboard() {
 
             {/* Error */}
             {!ciLoading && ciError && (
-              <div className="py-6 text-center text-sm text-red-500">{ciError}</div>
+              <div className="py-6 flex flex-col items-center gap-3">
+                <p className="text-sm text-red-500">{ciError}</p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => loadIntelligence(ciPreset, ciCustomFrom, ciCustomTo)}
+                    className="px-3 py-1.5 bg-violet-600 text-white text-xs font-medium rounded-lg hover:bg-violet-700 transition-colors"
+                  >
+                    Retry
+                  </button>
+                  <button
+                    onClick={() => setCiError(null)}
+                    className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs font-medium rounded-lg hover:bg-gray-200 transition-colors"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
             )}
 
             {/* Results */}
@@ -1207,14 +1237,16 @@ export default function Dashboard() {
                 {/* AI Summary */}
                 <div className="bg-violet-50 border border-violet-100 rounded-xl p-4 mb-4 flex gap-3">
                   <Sparkles size={16} className="text-violet-500 flex-shrink-0 mt-0.5" />
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-xs font-semibold text-violet-800 mb-1">
                       {ciData.preset_label}
                       {ciData.day_filter !== 'all' && (
                         <span className="ml-2 font-normal text-violet-500">· {ciData.day_filter} days · {ciData.date_from} to {ciData.date_to}</span>
                       )}
                     </p>
-                    <p className="text-sm text-violet-900 leading-relaxed">{ciData.summary}</p>
+                    <div className="text-sm text-violet-900 leading-relaxed">
+                      <MarkdownAnswer text={ciData.summary} />
+                    </div>
                   </div>
                 </div>
 
@@ -1233,6 +1265,7 @@ export default function Dashboard() {
                           <th className="px-4 py-3 text-right">ROI</th>
                           <th className="px-4 py-3 text-right">CPL</th>
                           <th className="px-4 py-3 text-center">Verdict</th>
+                          <th className="px-4 py-3 text-center">Join</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50">
@@ -1251,6 +1284,10 @@ export default function Dashboard() {
                             pause: 'bg-red-50 text-red-700',
                             insufficient_data: 'bg-gray-100 text-gray-500',
                             tracking_check: 'bg-yellow-50 text-yellow-700',
+                            directional_scale: 'bg-green-50 text-green-700 border border-green-200',
+                            directional_run: 'bg-gray-50 text-gray-600 border border-gray-200',
+                            directional_watch: 'bg-orange-50 text-orange-600 border border-orange-200',
+                            directional_pause: 'bg-red-50 text-red-600 border border-red-200',
                           };
                           const verdictLabels = {
                             scale: 'Scale',
@@ -1259,7 +1296,18 @@ export default function Dashboard() {
                             pause: 'Pause',
                             insufficient_data: 'Low data',
                             tracking_check: 'Check RT',
+                            directional_scale: '↑ Scale?',
+                            directional_run: '→ Run?',
+                            directional_watch: '~ Watch?',
+                            directional_pause: '↓ Pause?',
                           };
+                          const joinLabels = {
+                            matched: { label: 'Matched', cls: 'text-green-600' },
+                            matched_rt_approximate: { label: 'Approx RT', cls: 'text-blue-500' },
+                            partial_redtrack: { label: 'Partial RT', cls: 'text-orange-500' },
+                            missing_redtrack: { label: 'Missing RT', cls: 'text-red-500' },
+                          };
+                          const joinInfo = joinLabels[row.join_status] || { label: row.join_status, cls: 'text-gray-400' };
                           return (
                             <tr key={row.niche} className="hover:bg-gray-50 transition-colors">
                               <td className="px-4 py-3 font-medium text-gray-900">{row.niche}</td>
@@ -1280,6 +1328,9 @@ export default function Dashboard() {
                                 <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-medium ${verdictStyles[row.verdict] || 'bg-gray-100 text-gray-500'}`}>
                                   {verdictLabels[row.verdict] || row.verdict}
                                 </span>
+                              </td>
+                              <td className={`px-4 py-3 text-center text-xs font-medium ${joinInfo.cls}`}>
+                                {joinInfo.label}
                               </td>
                             </tr>
                           );

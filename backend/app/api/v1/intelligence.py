@@ -167,21 +167,22 @@ def _fetch_redtrack(date_from: str, date_to: str) -> dict:
         return {}
 
 
-def _assign_verdict(spend: float, revenue: float, join_status: str) -> str:
+def _assign_verdict(spend: float, revenue: float, join_status: str, day_filter: str = "all") -> str:
+    """Return verdict string. When day_filter != 'all', directional_ prefix is used
+    for action verdicts because RedTrack revenue is full-range, not day-filtered."""
     if join_status == "missing_redtrack":
         return "tracking_check"
-    if spend < 50:
-        return "insufficient_data"
-    if spend <= 0:
+    if spend < 50 or spend <= 0:
         return "insufficient_data"
     roi = (revenue - spend) / spend
+    directional = day_filter != "all"
     if roi >= 0.25:
-        return "scale"
+        return "directional_scale" if directional else "scale"
     if roi >= 0:
-        return "run"
+        return "directional_run" if directional else "run"
     if roi > -0.25:
-        return "watch"
-    return "pause"
+        return "directional_watch" if directional else "watch"
+    return "directional_pause" if directional else "pause"
 
 
 def _aggregate_by_niche(meta_data: dict, rt_data: dict, day_filter: str) -> list:
@@ -231,7 +232,7 @@ def _aggregate_by_niche(meta_data: dict, rt_data: dict, day_filter: str) -> list
         else:
             join_status = "matched_rt_approximate" if day_filter != "all" else "matched"
 
-        verdict = _assign_verdict(spend, revenue, join_status)
+        verdict = _assign_verdict(spend, revenue, join_status, day_filter)
         rows.append({
             'niche': niche,
             'spend': spend,
@@ -243,6 +244,7 @@ def _aggregate_by_niche(meta_data: dict, rt_data: dict, day_filter: str) -> list
             'redtrack_conversions': b['redtrack_conversions'],
             'adset_count': b['adset_count'],
             'verdict': verdict,
+            'is_directional': day_filter != "all",
             'join_status': join_status,
         })
 
@@ -288,7 +290,8 @@ def _generate_summary(rows: list, preset_label: str, date_from: str, date_to: st
         + ("\n".join(notes) + "\n\n" if notes else "")
         + "Write a 3–5 sentence plain-English executive summary. Lead with the biggest finding. "
         + "Name specific niches with dollar amounts. Flag tracking_check niches. "
-        + "End with one concrete next action. Direct and specific. No padding."
+        + "End with one concrete next action. Direct and specific. No padding. "
+        + "Output plain text only — no markdown, no bullet points, no headers, no bold."
     )
 
     try:
