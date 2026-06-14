@@ -1156,10 +1156,14 @@ export default function Dashboard() {
                 <button
                   key={p.value}
                   onClick={() => {
-                    setCiPreset(p.value);
-                    if (p.value !== 'custom' && ciOpen) {
-                      loadIntelligence(p.value, '', '');
+                    if (p.value === 'custom') {
+                      setCiPreset('custom');
+                      setCiData(null);
+                      setCiError(null);
+                      return;
                     }
+                    setCiPreset(p.value);
+                    if (ciOpen) loadIntelligence(p.value, '', '');
                   }}
                   className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
                     ciPreset === p.value
