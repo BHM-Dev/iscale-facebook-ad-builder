@@ -227,12 +227,22 @@ export default function Dashboard() {
   const [budgetInput, setBudgetInput] = useState('');
   const [savingBudget, setSavingBudget] = useState(null);
   const [scalingAdset, setScalingAdset] = useState(new Set());
+  const [collapsedSections, setCollapsedSections] = useState({});
+  const [expandedSections, setExpandedSections] = useState({});
 
   // Date filter state
   const [preset, setPreset] = useState(() => localStorage.getItem('bhm_date_preset') || 'today');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [activeRange, setActiveRange] = useState(() => ({ preset: localStorage.getItem('bhm_date_preset') || 'today', dateFrom: null, dateTo: null }));
+
+  const toggleSection = (section) => {
+    setCollapsedSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
+
+  const toggleExpandedSection = (section) => {
+    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
 
   const load = useCallback(async (range) => {
     const { preset: p, dateFrom: df, dateTo: dt } = range || { preset: 'today', dateFrom: null, dateTo: null };
@@ -728,6 +738,10 @@ export default function Dashboard() {
     );
   };
 
+  const visibleTopPerformers = expandedSections.topPerformers ? topPerformers : topPerformers.slice(0, 10);
+  const visibleAttentionList = expandedSections.needsAttention ? attentionList : attentionList.slice(0, 10);
+  const visibleNicheSummary = expandedSections.nicheSummary ? nicheSummary : nicheSummary.slice(0, 10);
+
   return (
     <div className="max-w-7xl mx-auto space-y-8">
       {/* Header */}
@@ -894,18 +908,23 @@ export default function Dashboard() {
 
       <div className="space-y-4">
         {/* Top Performers */}
-        <div className="bg-white border-b border-gray-200">
-          <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900 flex items-center gap-2 text-sm">
-              <TrendingUp size={15} className="text-green-500" />
-              Top Performers
-              <span className="text-xs text-gray-400 font-normal">by RT ROAS · has spend</span>
-            </h2>
-            <Link to={perfLink('top-performers')} className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
+        <div className="bg-white rounded-xl border border-green-100 border-l-4 border-l-green-500 shadow-sm overflow-hidden">
+          <div className="px-5 py-3 border-b border-green-100 bg-green-50/40 flex items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => toggleSection('topPerformers')}
+              className="min-w-0 font-semibold text-gray-900 flex items-center gap-2 text-sm text-left"
+            >
+              <ChevronDown size={15} className={`text-green-600 transition-transform ${collapsedSections.topPerformers ? '-rotate-90' : ''}`} />
+              <TrendingUp size={15} className="text-green-600" />
+              <span>Top Performers</span>
+              <span className="text-xs text-gray-500 font-normal">by RT ROAS · has spend</span>
+            </button>
+            <Link to={perfLink('top-performers')} className="text-xs text-green-700 hover:underline flex items-center gap-1 flex-shrink-0">
               View all in Performance <ArrowRight size={11} />
             </Link>
           </div>
-          {loading ? (
+          {!collapsedSections.topPerformers && (loading ? (
             <div className="px-5 py-6 text-center text-sm text-gray-400">Loading...</div>
           ) : topPerformers.length === 0 ? (
             <div className="px-5 py-6 text-center text-sm text-gray-400">
@@ -926,7 +945,7 @@ export default function Dashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {topPerformers.map(a => (
+                  {visibleTopPerformers.map(a => (
                     <tr key={a.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-5 py-3">
                         <Link to={perfLink('top-performers', a.fb_adset_id)} className="block">
@@ -983,22 +1002,38 @@ export default function Dashboard() {
                   ))}
                 </tbody>
               </table>
+              {topPerformers.length > 10 && (
+                <div className="px-5 py-3 border-t border-gray-100 bg-white">
+                  <button
+                    type="button"
+                    onClick={() => toggleExpandedSection('topPerformers')}
+                    className="text-xs font-semibold text-green-700 hover:text-green-800"
+                  >
+                    {expandedSections.topPerformers ? 'Show top 10' : `See all ${topPerformers.length}`}
+                  </button>
+                </div>
+              )}
             </div>
-          )}
+          ))}
         </div>
 
         {/* Needs Attention */}
-        <div className="bg-white border-b border-gray-200">
-          <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900 flex items-center gap-2 text-sm">
-              <AlertTriangle size={15} className="text-orange-500" />
-              Needs Attention
-            </h2>
-            <Link to={perfLink('attention')} className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
+        <div className="bg-white rounded-xl border border-orange-100 border-l-4 border-l-orange-500 shadow-sm overflow-hidden">
+          <div className="px-5 py-3 border-b border-orange-100 bg-orange-50/50 flex items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => toggleSection('needsAttention')}
+              className="min-w-0 font-semibold text-gray-900 flex items-center gap-2 text-sm text-left"
+            >
+              <ChevronDown size={15} className={`text-orange-600 transition-transform ${collapsedSections.needsAttention ? '-rotate-90' : ''}`} />
+              <AlertTriangle size={15} className="text-orange-600" />
+              <span>Needs Attention</span>
+            </button>
+            <Link to={perfLink('attention')} className="text-xs text-orange-700 hover:underline flex items-center gap-1 flex-shrink-0">
               View all in Performance <ArrowRight size={11} />
             </Link>
           </div>
-          {loading ? (
+          {!collapsedSections.needsAttention && (loading ? (
             <div className="px-5 py-6 text-center text-sm text-gray-400">Loading...</div>
           ) : attentionList.length === 0 ? (
             <div className="px-5 py-6 text-center text-sm text-gray-400">
@@ -1018,7 +1053,7 @@ export default function Dashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {attentionList.map(item => {
+                  {visibleAttentionList.map(item => {
                     const isPausing = item.fb_adset_id && pausingAdsets.has(item.fb_adset_id);
                     const ins = bulkInsights[item.fb_adset_id] || {};
                     return (
@@ -1063,13 +1098,24 @@ export default function Dashboard() {
                   })}
                 </tbody>
               </table>
+              {attentionList.length > 10 && (
+                <div className="px-5 py-3 border-t border-gray-100 bg-white">
+                  <button
+                    type="button"
+                    onClick={() => toggleExpandedSection('needsAttention')}
+                    className="text-xs font-semibold text-orange-700 hover:text-orange-800"
+                  >
+                    {expandedSections.needsAttention ? 'Show top 10' : `See all ${attentionList.length}`}
+                  </button>
+                </div>
+              )}
             </div>
-          )}
+          ))}
         </div>
       </div>
 
       {/* Campaign Intelligence CTA */}
-      <div className="bg-white rounded-xl border border-violet-100 shadow-sm px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div className="bg-white rounded-xl border border-violet-100 border-l-4 border-l-violet-500 shadow-sm px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div className="flex items-start gap-3 min-w-0">
           <div className="w-8 h-8 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center flex-shrink-0">
             <Sparkles size={16} />
@@ -1091,15 +1137,20 @@ export default function Dashboard() {
       </div>
 
       {/* Performance by Niche */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-          <h2 className="font-semibold text-gray-900 flex items-center gap-2 text-sm">
-            <TrendingUp size={15} className="text-indigo-500" />
-            Performance by Niche
-          </h2>
-          <span className="text-xs text-gray-400">{rangeLabel}</span>
+      <div className="bg-white rounded-xl border border-blue-100 border-l-4 border-l-blue-500 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-blue-100 bg-blue-50/40 flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => toggleSection('nicheSummary')}
+            className="min-w-0 font-semibold text-gray-900 flex items-center gap-2 text-sm text-left"
+          >
+            <ChevronDown size={15} className={`text-blue-600 transition-transform ${collapsedSections.nicheSummary ? '-rotate-90' : ''}`} />
+            <TrendingUp size={15} className="text-blue-600" />
+            <span>Performance by Niche</span>
+          </button>
+          <span className="text-xs text-gray-500 flex-shrink-0">{rangeLabel}</span>
         </div>
-        {loading ? (
+        {!collapsedSections.nicheSummary && (loading ? (
           <div className="p-5 space-y-3">
             {[0, 1, 2].map(row => (
               <div key={row} className="grid grid-cols-7 gap-4 items-center">
@@ -1131,7 +1182,7 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {nicheSummary.map(row => (
+                {visibleNicheSummary.map(row => (
                   <tr key={row.niche} className="hover:bg-gray-50 transition-colors">
                     <td className="px-5 py-3 font-medium text-gray-900">{row.niche}</td>
                     <td className="px-5 py-3 text-right text-gray-500">{row.adset_count}</td>
@@ -1157,8 +1208,19 @@ export default function Dashboard() {
                 ))}
               </tbody>
             </table>
+            {nicheSummary.length > 10 && (
+              <div className="px-5 py-3 border-t border-gray-100 bg-white">
+                <button
+                  type="button"
+                  onClick={() => toggleExpandedSection('nicheSummary')}
+                  className="text-xs font-semibold text-blue-700 hover:text-blue-800"
+                >
+                  {expandedSections.nicheSummary ? 'Show top 10' : `See all ${nicheSummary.length}`}
+                </button>
+              </div>
+            )}
           </div>
-        )}
+        ))}
       </div>
 
     </div>

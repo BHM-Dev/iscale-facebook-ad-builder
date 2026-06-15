@@ -125,9 +125,9 @@ function CampaignIntelligencePanel({ adAccountId, initialOpen = false, initialPr
   };
 
   return (
-    <div className="bg-white border-y border-gray-100">
+    <div className="bg-white border-y border-violet-100 border-l-4 border-l-violet-500">
       <div
-        className="px-6 py-4 flex items-center justify-between cursor-pointer select-none hover:bg-gray-50 transition-colors"
+        className="px-6 py-4 flex items-center justify-between cursor-pointer select-none bg-violet-50/40 hover:bg-violet-50/70 transition-colors"
         onClick={toggleOpen}
       >
         <div>
@@ -1604,12 +1604,12 @@ export default function CampaignPerformance() {
       />
 
       {/* Ad Set Performance Table */}
-      <div className="bg-white overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
+      <div className="bg-white overflow-hidden border-t border-indigo-100 border-l-4 border-l-indigo-500">
+        <div className="px-6 py-4 border-b border-indigo-100 bg-indigo-50/35 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <h2 className="font-semibold text-gray-900 flex items-center gap-2">
-              <Target size={16} className="text-gray-400" /> Performance
-              <span className="text-xs text-gray-400 font-normal">
+              <Target size={16} className="text-indigo-600" /> Performance
+              <span className="text-xs text-gray-500 font-normal">
                 {groupedCampaigns.length} campaign{groupedCampaigns.length !== 1 ? 's' : ''} · {visibleAdsets.length} ad set{visibleAdsets.length !== 1 ? 's' : ''}
               </span>
             </h2>
