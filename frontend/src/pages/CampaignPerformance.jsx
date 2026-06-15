@@ -1686,7 +1686,7 @@ export default function CampaignPerformance() {
                 <div key={group.key} className="border-b border-gray-100 last:border-b-0">
                   <div
                     onClick={() => toggleCampaign(group.key)}
-                    className="w-full grid grid-cols-[minmax(260px,1fr)_auto] gap-4 px-6 py-3 bg-slate-100/80 hover:bg-slate-100 transition-colors text-left border-b border-slate-200 border-l-4 border-l-slate-500"
+                    className="w-full grid grid-cols-[minmax(360px,1fr)_96px_84px_96px_96px_124px] px-6 py-3 bg-slate-100/80 hover:bg-slate-100 transition-colors text-left border-b border-slate-200 border-l-4 border-l-slate-500"
                     role="button"
                     tabIndex={0}
                     onKeyDown={e => {
@@ -1696,7 +1696,7 @@ export default function CampaignPerformance() {
                       }
                     }}
                   >
-                    <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0 pr-4">
                       {isCampaignOpen
                         ? <ChevronDown size={16} className="text-gray-500 flex-shrink-0" />
                         : <ChevronRight size={16} className="text-gray-500 flex-shrink-0" />
@@ -1715,23 +1715,21 @@ export default function CampaignPerformance() {
                         {activeCount > 0 ? `${activeCount} active` : `${group.adsets.length}`} ad set{group.adsets.length !== 1 ? 's' : ''}
                       </span>
                     </div>
-                    <div className="flex items-center gap-5 text-right">
-                      <div className="grid grid-cols-4 gap-5">
-                        {[
-                          ['Spend', bulkInsightsLoading ? '--' : formatMoneyCell(group.totalSpend)],
-                          ['Leads', bulkInsightsLoading ? '--' : formatNumberCell(group.totalLeads)],
-                          ['CPL', bulkInsightsLoading ? '--' : formatMoneyCell(group.cpl, 2)],
-                          ['ROAS', bulkInsightsLoading ? '--' : formatRoasCell(group.rtRoas)],
-                        ].map(([label, value]) => (
-                          <span key={label} className="min-w-[58px]">
-                            <span className="block text-[10px] uppercase tracking-wide text-gray-400">{label}</span>
-                            <span className="block text-sm font-semibold text-gray-800">{value}</span>
-                          </span>
-                        ))}
+                    {[
+                      ['Spend', bulkInsightsLoading ? '--' : formatMoneyCell(group.totalSpend)],
+                      ['Leads', bulkInsightsLoading ? '--' : formatNumberCell(group.totalLeads)],
+                      ['CPL', bulkInsightsLoading ? '--' : formatMoneyCell(group.cpl, 2)],
+                      ['ROAS', bulkInsightsLoading ? '--' : formatRoasCell(group.rtRoas)],
+                    ].map(([label, value]) => (
+                      <div key={label} className="border-l border-slate-200 px-3 text-right">
+                        <span className="block text-[10px] uppercase tracking-wide text-gray-400">{label}</span>
+                        <span className="block text-sm font-semibold text-gray-800">{value}</span>
                       </div>
+                    ))}
 
+                    <div className="border-l border-slate-200 pl-3 text-right" onClick={e => e.stopPropagation()}>
                       {group.fbCampaignId && (
-                        <div className="relative text-right" onClick={e => e.stopPropagation()}>
+                        <div className="relative">
                           <span className="block text-[10px] uppercase tracking-wide text-gray-400 mb-1">Budget</span>
                           <button
                             onClick={() => {
@@ -1747,7 +1745,7 @@ export default function CampaignPerformance() {
                                 );
                               }
                             }}
-                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 transition-colors text-gray-700 hover:text-indigo-700 text-xs font-medium shadow-sm"
+                            className="ml-auto flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 transition-colors text-gray-700 hover:text-indigo-700 text-xs font-medium shadow-sm"
                             title="Edit campaign budget settings"
                           >
                             <DollarSign size={12} />
