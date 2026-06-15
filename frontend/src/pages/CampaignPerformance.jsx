@@ -125,7 +125,7 @@ function CampaignIntelligencePanel({ adAccountId, initialOpen = false, initialPr
   };
 
   return (
-    <div className="bg-white border-y border-violet-100 border-l-4 border-l-violet-500">
+    <div className="bg-white rounded-xl border border-violet-200 border-l-4 border-l-violet-500 shadow-sm overflow-hidden">
       <div
         className="px-6 py-4 flex items-center justify-between cursor-pointer select-none bg-violet-50/40 hover:bg-violet-50/70 transition-colors"
         onClick={toggleOpen}
@@ -1597,6 +1597,7 @@ export default function CampaignPerformance() {
         </div>
       )}
 
+      <div className="px-5 pb-5 space-y-4 mt-1">
       <CampaignIntelligencePanel
         adAccountId={adAccountId}
         initialOpen={intelligencePanelOpen}
@@ -1604,7 +1605,7 @@ export default function CampaignPerformance() {
       />
 
       {/* Ad Set Performance Table */}
-      <div className="bg-white overflow-hidden border-t border-indigo-100 border-l-4 border-l-indigo-500">
+      <div className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-clip">
         <div className="px-6 py-4 border-b border-indigo-100 bg-indigo-50/35 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <h2 className="font-semibold text-gray-900 flex items-center gap-2">
@@ -1685,7 +1686,7 @@ export default function CampaignPerformance() {
                 <div key={group.key} className="border-b border-gray-100 last:border-b-0">
                   <div
                     onClick={() => toggleCampaign(group.key)}
-                    className="w-full grid grid-cols-[minmax(260px,1fr)_auto] gap-4 px-6 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-left border-b border-gray-100"
+                    className="w-full grid grid-cols-[minmax(260px,1fr)_auto] gap-4 px-6 py-3 bg-slate-100/80 hover:bg-slate-100 transition-colors text-left border-b border-slate-200 border-l-4 border-l-slate-500"
                     role="button"
                     tabIndex={0}
                     onKeyDown={e => {
@@ -2141,6 +2142,7 @@ export default function CampaignPerformance() {
         )}
       </div>
 
+      </div>{/* end space-y-4 card wrapper */}
     </div>
 
     {/* ── Floating Ask AI ─────────────────────────────────────────────────── */}
