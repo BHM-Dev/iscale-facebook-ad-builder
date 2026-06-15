@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Plus, X, Zap, CheckCircle, AlertCircle, Clock, Upload, Image, ArrowRight, RefreshCw, Repeat2, Rocket, Loader } from 'lucide-react';
+import { Plus, X, Zap, CheckCircle, AlertCircle, Clock, Upload, Image, ArrowRight, RefreshCw, Repeat2, Rocket, Loader, ChevronDown } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useToast } from '../context/ToastContext';
 import { authFetch } from '../lib/facebookApi';
@@ -198,6 +198,11 @@ export default function BatchGenerate() {
   });
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const logoFileInputRef = useRef(null);
+  const [openSections, setOpenSections] = useState({ reference: true, sizes: true, overlay: false, context: false });
+
+  const toggleSection = (key) => {
+    setOpenSections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const toggleSize = useCallback((sizeId) => {
     setSelectedSizes(prev => {
@@ -630,135 +635,170 @@ export default function BatchGenerate() {
 
           {/* Reference Image */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100">
-              <h2 className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => toggleSection('reference')}
+              className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-gray-800 hover:bg-gray-50 transition-colors"
+            >
+              <span className="flex items-center gap-1.5">
                 <Image size={14} className="text-gray-400" />
                 Reference Image
                 <span className="ml-1 text-xs font-normal text-gray-400">optional but recommended</span>
-              </h2>
-            </div>
+              </span>
+              <ChevronDown size={15} className={`text-gray-400 transition-transform ${openSections.reference ? '' : '-rotate-90'}`} />
+            </button>
 
-            <div className="p-4">
-              {refImagePreview ? (
-                <div className="relative group">
-                  <img
-                    src={refImagePreview}
-                    alt="Reference"
-                    className="w-full aspect-square object-cover rounded-lg border border-gray-200"
-                  />
-                  {uploadingRef && (
-                    <div className="absolute inset-0 bg-white/80 rounded-lg flex items-center justify-center">
-                      <RefreshCw size={20} className="animate-spin text-indigo-500" />
-                    </div>
-                  )}
-                  {!uploadingRef && (
-                    <button
-                      onClick={() => { setRefImagePreview(''); setRefImageUrl(''); }}
-                      className="absolute top-2 right-2 bg-white rounded-full p-1 shadow-md opacity-0 group-hover:opacity-100 transition-opacity text-gray-500 hover:text-red-500"
-                    >
-                      <X size={13} />
-                    </button>
-                  )}
-                  {refImageUrl && (
-                    <div className="mt-2 flex items-center gap-1.5 text-xs text-green-600">
-                      <CheckCircle size={12} /> Ready to use as reference
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div
-                  onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                  onDragLeave={() => setDragOver(false)}
-                  onDrop={handleFileDrop}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`w-full aspect-square rounded-lg border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-colors ${
-                    dragOver ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200 hover:border-indigo-300 hover:bg-gray-50'
-                  }`}
-                >
-                  <Upload size={24} className="text-gray-300 mb-2" />
-                  <span className="text-sm font-medium text-gray-500">Drop image here</span>
-                  <span className="text-xs text-gray-400 mt-0.5">or click to browse</span>
-                  <span className="text-xs text-gray-300 mt-3">JPG · PNG · WebP</span>
-                </div>
-              )}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                className="hidden"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadRefImage(f); }}
-              />
-            </div>
+            {openSections.reference && (
+              <div className="px-4 pb-4">
+                {refImagePreview ? (
+                  <div className="relative group">
+                    <img
+                      src={refImagePreview}
+                      alt="Reference"
+                      className="w-full aspect-square object-cover rounded-lg border border-gray-200"
+                    />
+                    {uploadingRef && (
+                      <div className="absolute inset-0 bg-white/80 rounded-lg flex items-center justify-center">
+                        <RefreshCw size={20} className="animate-spin text-indigo-500" />
+                      </div>
+                    )}
+                    {!uploadingRef && (
+                      <button
+                        onClick={() => { setRefImagePreview(''); setRefImageUrl(''); }}
+                        className="absolute top-2 right-2 bg-white rounded-full p-1 shadow-md opacity-0 group-hover:opacity-100 transition-opacity text-gray-500 hover:text-red-500"
+                      >
+                        <X size={13} />
+                      </button>
+                    )}
+                    {refImageUrl && (
+                      <div className="mt-2 flex items-center gap-1.5 text-xs text-green-600">
+                        <CheckCircle size={12} /> Ready to use as reference
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                    onDragLeave={() => setDragOver(false)}
+                    onDrop={handleFileDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                    className={`w-full aspect-square rounded-lg border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-colors ${
+                      dragOver ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200 hover:border-indigo-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    <Upload size={24} className="text-gray-300 mb-2" />
+                    <span className="text-sm font-medium text-gray-500">Drop image here</span>
+                    <span className="text-xs text-gray-400 mt-0.5">or click to browse</span>
+                    <span className="text-xs text-gray-300 mt-3">JPG · PNG · WebP</span>
+                  </div>
+                )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadRefImage(f); }}
+                />
+              </div>
+            )}
           </div>
 
           {/* Image Sizes — multi-select checkboxes */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100">
-              <h2 className="text-sm font-semibold text-gray-800">
+            <button
+              type="button"
+              onClick={() => toggleSection('sizes')}
+              className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-gray-800 hover:bg-gray-50 transition-colors"
+            >
+              <span>
                 Image Sizes
                 <span className="ml-1 text-xs font-normal text-gray-400">select all that apply</span>
-              </h2>
-            </div>
-            <div className="p-4 space-y-2">
-              {SIZE_OPTIONS.map(s => {
-                const checked = selectedSizes.includes(s.id);
-                return (
-                  <label
-                    key={s.id}
-                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                      checked
-                        ? 'border-indigo-300 bg-indigo-50'
-                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      value={s.id}
-                      checked={checked}
-                      onChange={() => toggleSize(s.id)}
-                      className="text-indigo-600 rounded"
-                    />
-                    <div>
-                      <div className="text-sm font-medium text-gray-800">{s.label}</div>
-                      <div className="text-xs text-gray-400">{s.sub}</div>
-                    </div>
-                  </label>
-                );
-              })}
-              {selectedSizes.length > 1 && (
-                <p className="text-xs text-indigo-600 pt-1">
-                  {selectedSizes.length} sizes selected — {filledVariants.length > 0 ? `${filledVariants.length * selectedSizes.length} images total` : 'fill in variants to see total'}
-                </p>
-              )}
-            </div>
+              </span>
+              <ChevronDown size={15} className={`text-gray-400 transition-transform ${openSections.sizes ? '' : '-rotate-90'}`} />
+            </button>
+            {openSections.sizes && (
+              <div className="px-4 pb-4 space-y-2">
+                {SIZE_OPTIONS.map(s => {
+                  const checked = selectedSizes.includes(s.id);
+                  return (
+                    <label
+                      key={s.id}
+                      className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                        checked
+                          ? 'border-indigo-300 bg-indigo-50'
+                          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        value={s.id}
+                        checked={checked}
+                        onChange={() => toggleSize(s.id)}
+                        className="text-indigo-600 rounded"
+                      />
+                      <div>
+                        <div className="text-sm font-medium text-gray-800">{s.label}</div>
+                        <div className="text-xs text-gray-400">{s.sub}</div>
+                      </div>
+                    </label>
+                  );
+                })}
+                {selectedSizes.length > 1 && (
+                  <p className="text-xs text-indigo-600 pt-1">
+                    {selectedSizes.length} sizes selected — {filledVariants.length > 0 ? `${filledVariants.length * selectedSizes.length} images total` : 'fill in variants to see total'}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Optional niche context */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100">
-              <h2 className="text-sm font-semibold text-gray-800">
+            <button
+              type="button"
+              onClick={() => toggleSection('context')}
+              className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-gray-800 hover:bg-gray-50 transition-colors"
+            >
+              <span>
                 Niche / Context
                 <span className="ml-1 text-xs font-normal text-gray-400">optional</span>
-              </h2>
-            </div>
-            <div className="p-4">
-              <input
-                type="text"
-                placeholder="e.g. Auto Insurance, Reverse Mortgage, Debt Relief"
-                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                value={niche}
-                onChange={e => setNiche(e.target.value)}
-              />
-              <p className="text-xs text-gray-400 mt-1.5">Gives the AI context for the image style and subject matter</p>
-            </div>
+              </span>
+              <ChevronDown size={15} className={`text-gray-400 transition-transform ${openSections.context ? '' : '-rotate-90'}`} />
+            </button>
+            {openSections.context && (
+              <div className="px-4 pb-4">
+                <input
+                  type="text"
+                  placeholder="e.g. Auto Insurance, Reverse Mortgage, Debt Relief"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  value={niche}
+                  onChange={e => setNiche(e.target.value)}
+                />
+                <p className="text-xs text-gray-400 mt-1.5">Gives the AI context for the image style and subject matter</p>
+              </div>
+            )}
           </div>
 
           {/* Text overlay */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-semibold text-gray-800">Text Overlay</h2>
+            <button
+              type="button"
+              onClick={() => toggleSection('overlay')}
+              className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-gray-800 hover:bg-gray-50 transition-colors"
+            >
+              <span className="text-left">
+                <span className="block text-sm font-semibold text-gray-800">Text Overlay</span>
                 <p className="text-xs text-gray-400 mt-0.5">Bakes niche label + offer line + logo into the image</p>
+              </span>
+              <span className="flex items-center gap-2">
+                <ChevronDown size={15} className={`text-gray-400 transition-transform ${openSections.overlay ? '' : '-rotate-90'}`} />
+              </span>
+            </button>
+            {openSections.overlay && (
+            <>
+            <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-semibold text-gray-600">Enable overlay</h3>
               </div>
               <button
                 type="button"
@@ -776,7 +816,7 @@ export default function BatchGenerate() {
               </button>
             </div>
             {overlayEnabled && (
-              <div className="p-4 space-y-3">
+              <div className="px-4 pb-4 space-y-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">
                     Niche Label
@@ -865,6 +905,8 @@ export default function BatchGenerate() {
                   </p>
                 </div>
               </div>
+            )}
+            </>
             )}
           </div>
         </div>

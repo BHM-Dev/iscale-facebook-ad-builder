@@ -238,21 +238,30 @@ function CampaignIntelligencePanel({ adAccountId, initialOpen = false, initialPr
               </div>
 
               {data.action_queue && (
-                <div className="mb-4 rounded-xl border border-gray-100 bg-gray-50 p-4">
+                <div className="mb-4">
                   <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Action Queue</div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 text-xs">
-                    {data.action_queue.scale?.length > 0 && (
-                      <div><span className="font-semibold text-green-700">Scale: </span><span className="text-gray-700">{data.action_queue.scale.join(', ')}</span></div>
-                    )}
-                    {data.action_queue.cut_or_pause?.length > 0 && (
-                      <div><span className="font-semibold text-red-700">Cut / Pause: </span><span className="text-gray-700">{data.action_queue.cut_or_pause.join(', ')}</span></div>
-                    )}
-                    {data.action_queue.watch?.length > 0 && (
-                      <div><span className="font-semibold text-orange-700">Watch: </span><span className="text-gray-700">{data.action_queue.watch.join(', ')}</span></div>
-                    )}
-                    {data.action_queue.tracking_check?.length > 0 && (
-                      <div><span className="font-semibold text-yellow-700">Tracking: </span><span className="text-gray-700">{data.action_queue.tracking_check.join(', ')}</span></div>
-                    )}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    {[
+                      { key: 'scale', label: 'Scale', hdrBg: 'bg-green-50', border: 'border-green-200', text: 'text-green-800' },
+                      { key: 'cut_or_pause', label: 'Cut / Pause', hdrBg: 'bg-red-50', border: 'border-red-200', text: 'text-red-800' },
+                      { key: 'watch', label: 'Watch', hdrBg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-800' },
+                      { key: 'tracking_check', label: 'Tracking', hdrBg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-800' },
+                    ].map(lane => {
+                      const items = data.action_queue[lane.key];
+                      if (!items?.length) return null;
+                      return (
+                        <div key={lane.key} className={`rounded-lg border ${lane.border} overflow-hidden bg-white`}>
+                          <div className={`${lane.hdrBg} px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide ${lane.text}`}>
+                            {lane.label}
+                          </div>
+                          <ul className="px-3 py-2 space-y-1">
+                            {items.map(item => (
+                              <li key={item} className="text-xs text-gray-700 truncate" title={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -1676,6 +1685,12 @@ export default function CampaignPerformance() {
           </div>
         ) : (
           <div>
+            <div className="grid grid-cols-[minmax(360px,1fr)_96px_84px_96px_96px_124px] px-6 py-1.5 border-b border-slate-200 bg-slate-50 text-[10px] font-semibold uppercase tracking-wide text-gray-400 sticky top-0 z-10">
+              <div />
+              {['Spend', 'Leads', 'CPL', 'ROAS', 'Budget'].map(col => (
+                <div key={col} className="border-l border-slate-200 px-3 text-right">{col}</div>
+              ))}
+            </div>
             {groupedCampaigns.map(group => {
               const isCampaignOpen = !collapsedCampaigns.has(group.key);
               const activeCount = group.adsets.filter(a =>
@@ -1722,15 +1737,13 @@ export default function CampaignPerformance() {
                       ['ROAS', bulkInsightsLoading ? '--' : formatRoasCell(group.rtRoas)],
                     ].map(([label, value]) => (
                       <div key={label} className="border-l border-slate-200 px-3 text-right">
-                        <span className="block text-[10px] uppercase tracking-wide text-gray-400">{label}</span>
-                        <span className="block text-sm font-semibold text-gray-800">{value}</span>
+                        <span className="text-sm font-semibold text-gray-800">{value}</span>
                       </div>
                     ))}
 
                     <div className="border-l border-slate-200 pl-3 text-right" onClick={e => e.stopPropagation()}>
                       {group.fbCampaignId && (
                         <div className="relative">
-                          <span className="block text-[10px] uppercase tracking-wide text-gray-400 mb-1">Budget</span>
                           <button
                             onClick={() => {
                               if (budgetPopover === group.fbCampaignId) {

@@ -537,6 +537,20 @@ export default function GeneratedAds() {
                                         </button>
                                     </div>
 
+                                    {/* Metadata strip */}
+                                    {!isBroken && (
+                                        <div className="px-3 py-1.5 bg-gray-50 border-t border-gray-100 flex items-center justify-between gap-2 text-[11px] text-gray-400 truncate">
+                                            <span className="truncate font-medium text-gray-600">
+                                                {mainAd.niche || mainAd.overlay_niche_line || 'General'}
+                                            </span>
+                                            <span className="flex-shrink-0">
+                                                {mainAd.created_at
+                                                    ? new Date(mainAd.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                                                    : ''}
+                                            </span>
+                                        </div>
+                                    )}
+
                                     {/* Dimension strip — below image on white background, always readable */}
                                     {!isBroken && (
                                         <div className="flex items-center justify-center gap-1.5 px-3 py-2 border-t border-gray-100 bg-white">

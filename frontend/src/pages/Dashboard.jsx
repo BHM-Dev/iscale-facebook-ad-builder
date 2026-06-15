@@ -219,6 +219,7 @@ export default function Dashboard() {
   const [aiAnswer, setAiAnswer] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiDatePreset, setAiDatePreset] = useState('last_7d');
+  const [showAiExamples, setShowAiExamples] = useState(false);
   const [budgetPopover, setBudgetPopover] = useState(null);
   const [campaignBudgetInput, setCampaignBudgetInput] = useState('');
   const [campaignBudgetType, setCampaignBudgetType] = useState('CBO');
@@ -839,21 +840,31 @@ export default function Dashboard() {
               </button>
             </div>
             {!aiAnswer && !aiLoading && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {[
-                  'What are my worst ad sets today?',
-                  'Which creatives have the highest CPL?',
-                  'Show me frequency issues across all campaigns',
-                  'Any pixel or tracking problems I should know about?',
-                ].map(q => (
-                  <button
-                    key={q}
-                    onClick={() => { setAiQuery(q); }}
-                    className="text-xs px-2.5 py-1 rounded-full border border-gray-200 text-gray-500 hover:border-violet-300 hover:text-violet-600 transition-colors"
-                  >
-                    {q}
-                  </button>
-                ))}
+              <div className="mt-2">
+                <button
+                  onClick={() => setShowAiExamples(v => !v)}
+                  className="text-xs text-gray-400 hover:text-violet-600 transition-colors flex items-center gap-1"
+                >
+                  Examples {showAiExamples ? '▴' : '▾'}
+                </button>
+                {showAiExamples && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {[
+                      'What are my worst ad sets today?',
+                      'Which creatives have the highest CPL?',
+                      'Show me frequency issues across all campaigns',
+                      'Any pixel or tracking problems I should know about?',
+                    ].map(q => (
+                      <button
+                        key={q}
+                        onClick={() => { setAiQuery(q); setShowAiExamples(false); }}
+                        className="text-xs px-2.5 py-1 rounded-full border border-gray-200 text-gray-500 hover:border-violet-300 hover:text-violet-600 transition-colors"
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             {aiAnswer && (
