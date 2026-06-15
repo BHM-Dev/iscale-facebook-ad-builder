@@ -19,6 +19,324 @@ const DATE_PRESETS  = [
   { value: 'custom',      label: 'Custom Range' },
 ];
 
+const INTELLIGENCE_PRESETS = [
+  { value: 'today', label: 'Today' },
+  { value: 'yesterday', label: 'Yesterday' },
+  { value: 'last_7d', label: 'Last 7d' },
+  { value: 'this_month', label: 'This Month' },
+  { value: 'last_30d', label: 'Last 30d' },
+  { value: 'weekdays_mtd', label: 'Weekdays MTD' },
+  { value: 'weekends_mtd', label: 'Weekends MTD' },
+  { value: 'custom', label: 'Custom' },
+];
+
+function renderMarkdownInline(text) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) => {
+    const bold = part.match(/^\*\*(.+)\*\*$/);
+    if (bold) return <strong key={i} className="font-semibold text-gray-900">{bold[1]}</strong>;
+    return part;
+  });
+}
+
+function MarkdownAnswer({ text }) {
+  if (!text) return null;
+  return (
+    <div className="space-y-1">
+      {text.split('\n').map((line, i) => (
+        line.trim()
+          ? <p key={i} className="text-sm leading-relaxed">{renderMarkdownInline(line)}</p>
+          : <div key={i} className="h-1" />
+      ))}
+    </div>
+  );
+}
+
+function formatMoney(value) {
+  return value != null
+    ? `$${Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : '—';
+}
+
+function CampaignIntelligencePanel({ adAccountId, initialOpen = false, initialPreset = 'last_7d' }) {
+  const [open, setOpen] = useState(initialOpen);
+  const [preset, setPreset] = useState(initialPreset || 'last_7d');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const loadedPresetRef = useRef(null);
+
+  const loadIntelligence = useCallback(async (nextPreset = preset, nextFrom = customFrom, nextTo = customTo) => {
+    setLoading(true);
+    setError(null);
+    setData(null);
+    try {
+      const params = new URLSearchParams({ preset: nextPreset });
+      if (adAccountId) params.set('ad_account_id', adAccountId);
+      if (nextPreset === 'custom' && nextFrom && nextTo) {
+        params.set('date_from', nextFrom);
+        params.set('date_to', nextTo);
+      }
+      const res = await authFetch(`${API_BASE}/intelligence/niche-profitability?${params}`);
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.detail || `Error ${res.status}`);
+      }
+      const result = await res.json();
+      loadedPresetRef.current = nextPreset === 'custom' ? `custom:${nextFrom}:${nextTo}` : nextPreset;
+      setData(result);
+    } catch (e) {
+      setError(e.message || 'Failed to load intelligence data');
+    } finally {
+      setLoading(false);
+    }
+  }, [adAccountId, preset, customFrom, customTo]);
+
+  const toggleOpen = useCallback(() => {
+    setOpen(current => {
+      const next = !current;
+      if (next && loadedPresetRef.current !== preset) {
+        loadIntelligence(preset, customFrom, customTo);
+      }
+      return next;
+    });
+  }, [preset, customFrom, customTo, loadIntelligence]);
+
+  useEffect(() => {
+    if (!initialOpen) return;
+    setOpen(true);
+    setPreset(initialPreset || 'last_7d');
+    if (loadedPresetRef.current !== (initialPreset || 'last_7d')) {
+      loadIntelligence(initialPreset || 'last_7d', customFrom, customTo);
+    }
+  }, [initialOpen, initialPreset, adAccountId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handlePreset = (nextPreset) => {
+    setPreset(nextPreset);
+    if (nextPreset === 'custom') {
+      setData(null);
+      setError(null);
+      return;
+    }
+    if (open) loadIntelligence(nextPreset, '', '');
+  };
+
+  return (
+    <div className="bg-white border-y border-gray-100">
+      <div
+        className="px-6 py-4 flex items-center justify-between cursor-pointer select-none hover:bg-gray-50 transition-colors"
+        onClick={toggleOpen}
+      >
+        <div>
+          <h2 className="font-semibold text-gray-900 flex items-center gap-2">
+            <Sparkles size={16} className="text-violet-500" />
+            Campaign Intelligence
+            <span className="text-xs font-normal text-gray-400">Action queue · tracking checks · niche decisions</span>
+          </h2>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={e => { e.stopPropagation(); loadIntelligence(preset, customFrom, customTo); }}
+            disabled={loading}
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-40"
+            title="Refresh intelligence"
+          >
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          </button>
+          <ChevronDown size={16} className={`text-gray-400 transition-transform ${open ? '' : '-rotate-90'}`} />
+        </div>
+      </div>
+
+      {open && (
+        <div className="px-6 pb-5">
+          <div className="flex flex-wrap gap-1.5 mb-4">
+            {INTELLIGENCE_PRESETS.map(p => (
+              <button
+                key={p.value}
+                onClick={() => handlePreset(p.value)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                  preset === p.value
+                    ? 'bg-violet-100 text-violet-700 border border-violet-200'
+                    : 'bg-gray-100 text-gray-600 border border-transparent hover:bg-gray-200'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {preset === 'custom' && (
+            <div className="flex items-center gap-2 mb-4">
+              <input
+                type="date"
+                value={customFrom}
+                onChange={e => setCustomFrom(e.target.value)}
+                className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-violet-400"
+              />
+              <span className="text-xs text-gray-400">to</span>
+              <input
+                type="date"
+                value={customTo}
+                onChange={e => setCustomTo(e.target.value)}
+                className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-violet-400"
+              />
+              <button
+                onClick={() => loadIntelligence('custom', customFrom, customTo)}
+                disabled={!customFrom || !customTo}
+                className="px-3 py-1.5 bg-violet-600 text-white text-xs font-medium rounded-lg hover:bg-violet-700 disabled:opacity-40 transition-colors"
+              >
+                Apply
+              </button>
+            </div>
+          )}
+
+          {loading && (
+            <div className="space-y-3">
+              <div className="h-20 rounded-xl bg-violet-50 animate-pulse" />
+              {[0, 1, 2].map(i => <div key={i} className="h-10 rounded bg-gray-100 animate-pulse" />)}
+            </div>
+          )}
+
+          {!loading && error && (
+            <div className="py-6 flex flex-col items-center gap-3">
+              <p className="text-sm text-red-500">{error}</p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => loadIntelligence(preset, customFrom, customTo)}
+                  className="px-3 py-1.5 bg-violet-600 text-white text-xs font-medium rounded-lg hover:bg-violet-700 transition-colors"
+                >
+                  Retry
+                </button>
+                <button
+                  onClick={() => setError(null)}
+                  className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs font-medium rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!loading && !error && data && (
+            <>
+              <div className="bg-violet-50 border border-violet-100 rounded-xl p-4 mb-4 flex gap-3">
+                <Sparkles size={16} className="text-violet-500 flex-shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-violet-800 mb-1">
+                    {data.preset_label}
+                    {data.day_filter !== 'all' && (
+                      <span className="ml-2 font-normal text-violet-500">· {data.day_filter} days · {data.date_from} to {data.date_to}</span>
+                    )}
+                  </p>
+                  <div className="text-violet-900">
+                    <MarkdownAnswer text={data.summary} />
+                  </div>
+                </div>
+              </div>
+
+              {data.action_queue && (
+                <div className="mb-4 rounded-xl border border-gray-100 bg-gray-50 p-4">
+                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Action Queue</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 text-xs">
+                    {data.action_queue.scale?.length > 0 && (
+                      <div><span className="font-semibold text-green-700">Scale: </span><span className="text-gray-700">{data.action_queue.scale.join(', ')}</span></div>
+                    )}
+                    {data.action_queue.cut_or_pause?.length > 0 && (
+                      <div><span className="font-semibold text-red-700">Cut / Pause: </span><span className="text-gray-700">{data.action_queue.cut_or_pause.join(', ')}</span></div>
+                    )}
+                    {data.action_queue.watch?.length > 0 && (
+                      <div><span className="font-semibold text-orange-700">Watch: </span><span className="text-gray-700">{data.action_queue.watch.join(', ')}</span></div>
+                    )}
+                    {data.action_queue.tracking_check?.length > 0 && (
+                      <div><span className="font-semibold text-yellow-700">Tracking: </span><span className="text-gray-700">{data.action_queue.tracking_check.join(', ')}</span></div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {data.tracking_warning?.has_warning && (
+                <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs text-yellow-800">
+                  {data.tracking_warning.message}
+                </div>
+              )}
+
+              {data.rows.length > 0 && (
+                <div className="overflow-x-auto rounded-xl border border-gray-100">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 border-b border-gray-100">
+                      <tr className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
+                        <th className="px-4 py-3">Niche</th>
+                        <th className="px-4 py-3 text-right">Spend</th>
+                        <th className="px-4 py-3 text-right">Revenue</th>
+                        <th className="px-4 py-3 text-right">Profit</th>
+                        <th className="px-4 py-3 text-right">ROI</th>
+                        <th className="px-4 py-3 text-right">CPL</th>
+                        <th className="px-4 py-3 text-center">Verdict</th>
+                        <th className="px-4 py-3 text-center">Confidence</th>
+                        <th className="px-4 py-3 text-center">Action</th>
+                        <th className="px-4 py-3 text-center">Join</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {data.rows.map(row => {
+                        const roiPct = row.roi != null ? Math.round(row.roi * 100) : null;
+                        const profitClass = row.profit > 0 ? 'text-green-600' : row.profit < 0 ? 'text-red-600' : 'text-gray-500';
+                        const roiClass = roiPct == null ? 'text-gray-400'
+                          : roiPct >= 25 ? 'text-green-600 font-semibold'
+                          : roiPct >= 0 ? 'text-gray-700'
+                          : roiPct > -25 ? 'text-orange-500 font-semibold'
+                          : 'text-red-600 font-semibold';
+                        const joinLabels = {
+                          matched: { label: 'Matched', cls: 'text-green-600' },
+                          matched_rt_approximate: { label: 'Approx RT', cls: 'text-blue-500' },
+                          partial_redtrack: { label: 'Partial RT', cls: 'text-orange-500' },
+                          missing_redtrack: { label: 'Missing RT', cls: 'text-red-500' },
+                        };
+                        const joinInfo = joinLabels[row.join_status] || { label: row.join_status, cls: 'text-gray-400' };
+                        return (
+                          <tr key={row.niche} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-4 py-3">
+                              <div className="font-medium text-gray-900">{row.niche}</div>
+                              <div className="text-xs text-gray-400 mt-0.5">
+                                {row.active_adset_count} active ad set{row.active_adset_count !== 1 ? 's' : ''}
+                                {row.current_daily_budget != null ? ` · $${Math.round(row.current_daily_budget)}/day` : ''}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-right text-gray-700">{formatMoney(row.spend)}</td>
+                            <td className="px-4 py-3 text-right text-gray-700">{row.revenue > 0 ? formatMoney(row.revenue) : '—'}</td>
+                            <td className={`px-4 py-3 text-right ${profitClass}`}>{row.profit > 0 ? '+' : ''}{formatMoney(row.profit)}</td>
+                            <td className={`px-4 py-3 text-right ${roiClass}`}>{roiPct != null ? `${roiPct > 0 ? '+' : ''}${roiPct}%` : '—'}</td>
+                            <td className="px-4 py-3 text-right text-gray-700">{row.cpl != null ? formatMoney(row.cpl) : '—'}</td>
+                            <td className="px-4 py-3 text-center text-xs text-gray-700">{row.verdict}</td>
+                            <td className="px-4 py-3 text-center text-xs text-gray-700">{row.confidence || '—'}</td>
+                            <td className="px-4 py-3 text-center text-xs text-gray-700">{row.suggested_action_label || '—'}</td>
+                            <td className={`px-4 py-3 text-center text-xs font-medium ${joinInfo.cls}`}>{joinInfo.label}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {data.day_filter !== 'all' && (
+                <p className="text-xs text-gray-400 mt-2">
+                  RedTrack revenue uses full date range (not day-filtered) — ROI is approximate.
+                </p>
+              )}
+            </>
+          )}
+
+          {!loading && !error && !data && (
+            <p className="text-sm text-gray-400 text-center py-4">Open or select a preset to load intelligence.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Creative breakdown table (ad-level) ──────────────────────────────────────
 // onRemix: ({ ad_id, ad_name, headline, body, cta_label, image_url, adsetName, campaign_id }) => void
 function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adsBulk, adsLoading, rtAdsBulk, onAdStatusChange, onRemix }) {
@@ -569,6 +887,8 @@ export default function CampaignPerformance() {
   });
   const dashboardView = searchParams.get('view'); // derived live from URL — never stale
   const targetAdsetId = searchParams.get('adsetId');
+  const intelligencePanelOpen = searchParams.get('panel') === 'intelligence';
+  const intelligenceInitialPreset = searchParams.get('ciPreset') || 'last_7d';
 
   // Bulk insights state — one API call replaces N per-row calls
   const [bulkInsights, setBulkInsights]       = useState(null);
@@ -1272,6 +1592,12 @@ export default function CampaignPerformance() {
           </button>
         </div>
       )}
+
+      <CampaignIntelligencePanel
+        adAccountId={adAccountId}
+        initialOpen={intelligencePanelOpen}
+        initialPreset={intelligenceInitialPreset}
+      />
 
       {/* Ad Set Performance Table */}
       <div className="bg-white overflow-hidden">

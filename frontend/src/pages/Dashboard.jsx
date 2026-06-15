@@ -234,16 +234,6 @@ export default function Dashboard() {
   const [dateTo, setDateTo] = useState('');
   const [activeRange, setActiveRange] = useState(() => ({ preset: localStorage.getItem('bhm_date_preset') || 'today', dateFrom: null, dateTo: null }));
 
-  // Campaign Intelligence state
-  const [ciPreset, setCiPreset] = useState('last_7d');
-  const [ciCustomFrom, setCiCustomFrom] = useState('');
-  const [ciCustomTo, setCiCustomTo] = useState('');
-  const [ciData, setCiData] = useState(null);
-  const [ciLoading, setCiLoading] = useState(false);
-  const [ciError, setCiError] = useState(null);
-  const [ciOpen, setCiOpen] = useState(false);
-  const ciLoadedPresetRef = useRef(null); // null = never loaded; otherwise = last loaded preset key
-
   const load = useCallback(async (range) => {
     const { preset: p, dateFrom: df, dateTo: dt } = range || { preset: 'today', dateFrom: null, dateTo: null };
     setLoading(true);
@@ -475,44 +465,6 @@ export default function Dashboard() {
     if (range.preset) localStorage.setItem('bhm_date_preset', range.preset);
     load(range);
   }
-
-  const loadIntelligence = useCallback(async (preset, customFrom, customTo) => {
-    setCiLoading(true);
-    setCiError(null);
-    setCiData(null);
-    try {
-      const adAccountId = localStorage.getItem('fb_ad_account_id') || '';
-      const params = new URLSearchParams({ preset });
-      if (adAccountId) params.set('ad_account_id', adAccountId);
-      if (preset === 'custom' && customFrom && customTo) {
-        params.set('date_from', customFrom);
-        params.set('date_to', customTo);
-      }
-      const res = await authFetch(`${API_URL}/intelligence/niche-profitability?${params}`);
-      if (!res.ok) {
-        const e = await res.json().catch(() => ({}));
-        throw new Error(e.detail || `Error ${res.status}`);
-      }
-      const data = await res.json();
-      ciLoadedPresetRef.current = preset === 'custom' ? `custom:${customFrom}:${customTo}` : preset;
-      setCiData(data);
-    } catch (e) {
-      setCiError(e.message || 'Failed to load intelligence data');
-    } finally {
-      setCiLoading(false);
-    }
-  }, []);
-
-  // Lazy-load: fires on first open OR when preset has changed since last load
-  const handleCiOpen = useCallback(() => {
-    setCiOpen(o => {
-      const opening = !o;
-      if (opening && ciLoadedPresetRef.current !== ciPreset) {
-        loadIntelligence(ciPreset, ciCustomFrom, ciCustomTo);
-      }
-      return opening;
-    });
-  }, [ciPreset, ciCustomFrom, ciCustomTo, loadIntelligence]);
 
   // ── Aggregate KPIs ──────────────────────────────────────────────────────────
   const rows = Object.values(bulkInsights);
@@ -1116,320 +1068,26 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Campaign Intelligence */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div
-          className="px-5 py-4 border-b border-gray-100 flex items-center justify-between cursor-pointer select-none"
-          onClick={handleCiOpen}
-        >
-          <h2 className="font-semibold text-gray-900 flex items-center gap-2 text-sm">
-            <Sparkles size={15} className="text-violet-500" />
-            Campaign Intelligence
-          </h2>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={e => { e.stopPropagation(); loadIntelligence(ciPreset, ciCustomFrom, ciCustomTo); }}
-              disabled={ciLoading}
-              className="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-40"
-              title="Refresh"
-            >
-              <RefreshCw size={13} className={ciLoading ? 'animate-spin' : ''} />
-            </button>
-            <ChevronDown size={14} className={`text-gray-400 transition-transform ${ciOpen ? '' : '-rotate-90'}`} />
+      {/* Campaign Intelligence CTA */}
+      <div className="bg-white rounded-xl border border-violet-100 shadow-sm px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex items-start gap-3 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center flex-shrink-0">
+            <Sparkles size={16} />
+          </div>
+          <div className="min-w-0">
+            <h2 className="font-semibold text-gray-900 text-sm">Campaign Intelligence</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Action queue, tracking checks, and niche-level scale/cut guidance now live in Performance.
+            </p>
           </div>
         </div>
-
-        {ciOpen && (
-          <div className="p-5">
-            {/* Preset tabs */}
-            <div className="flex flex-wrap gap-1.5 mb-4">
-              {[
-                { value: 'today', label: 'Today' },
-                { value: 'yesterday', label: 'Yesterday' },
-                { value: 'last_7d', label: 'Last 7d' },
-                { value: 'this_month', label: 'This Month' },
-                { value: 'last_30d', label: 'Last 30d' },
-                { value: 'weekdays_mtd', label: 'Weekdays MTD' },
-                { value: 'weekends_mtd', label: 'Weekends MTD' },
-                { value: 'custom', label: 'Custom' },
-              ].map(p => (
-                <button
-                  key={p.value}
-                  onClick={() => {
-                    if (p.value === 'custom') {
-                      setCiPreset('custom');
-                      setCiData(null);
-                      setCiError(null);
-                      return;
-                    }
-                    setCiPreset(p.value);
-                    if (ciOpen) loadIntelligence(p.value, '', '');
-                  }}
-                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                    ciPreset === p.value
-                      ? 'bg-violet-100 text-violet-700 border border-violet-200'
-                      : 'bg-gray-100 text-gray-600 border border-transparent hover:bg-gray-200'
-                  }`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Custom date inputs */}
-            {ciPreset === 'custom' && (
-              <div className="flex items-center gap-2 mb-4">
-                <input
-                  type="date"
-                  value={ciCustomFrom}
-                  onChange={e => setCiCustomFrom(e.target.value)}
-                  className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-violet-400"
-                />
-                <span className="text-xs text-gray-400">to</span>
-                <input
-                  type="date"
-                  value={ciCustomTo}
-                  onChange={e => setCiCustomTo(e.target.value)}
-                  className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-violet-400"
-                />
-                <button
-                  onClick={() => loadIntelligence('custom', ciCustomFrom, ciCustomTo)}
-                  disabled={!ciCustomFrom || !ciCustomTo}
-                  className="px-3 py-1.5 bg-violet-600 text-white text-xs font-medium rounded-lg hover:bg-violet-700 disabled:opacity-40 transition-colors"
-                >
-                  Apply
-                </button>
-              </div>
-            )}
-
-            {/* Loading skeleton */}
-            {ciLoading && (
-              <div className="space-y-3">
-                <div className="h-20 rounded-xl bg-violet-50 animate-pulse" />
-                <div className="space-y-2">
-                  {[0, 1, 2, 3].map(i => (
-                    <div key={i} className="h-10 rounded bg-gray-100 animate-pulse" />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Error */}
-            {!ciLoading && ciError && (
-              <div className="py-6 flex flex-col items-center gap-3">
-                <p className="text-sm text-red-500">{ciError}</p>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => loadIntelligence(ciPreset, ciCustomFrom, ciCustomTo)}
-                    className="px-3 py-1.5 bg-violet-600 text-white text-xs font-medium rounded-lg hover:bg-violet-700 transition-colors"
-                  >
-                    Retry
-                  </button>
-                  <button
-                    onClick={() => setCiError(null)}
-                    className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs font-medium rounded-lg hover:bg-gray-200 transition-colors"
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Results */}
-            {!ciLoading && !ciError && ciData && (
-              <>
-                {/* AI Summary */}
-                <div className="bg-violet-50 border border-violet-100 rounded-xl p-4 mb-4 flex gap-3">
-                  <Sparkles size={16} className="text-violet-500 flex-shrink-0 mt-0.5" />
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold text-violet-800 mb-1">
-                      {ciData.preset_label}
-                      {ciData.day_filter !== 'all' && (
-                        <span className="ml-2 font-normal text-violet-500">· {ciData.day_filter} days · {ciData.date_from} to {ciData.date_to}</span>
-                      )}
-                    </p>
-                    <div className="text-sm text-violet-900 leading-relaxed">
-                      <MarkdownAnswer text={ciData.summary} />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Action Queue */}
-                {ciData.action_queue && (
-                  <div className="mb-4 rounded-xl border border-gray-100 bg-gray-50 p-4">
-                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Action Queue</div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 text-xs">
-                      {ciData.action_queue.scale?.length > 0 && (
-                        <div><span className="font-semibold text-green-700">Scale: </span><span className="text-gray-700">{ciData.action_queue.scale.join(', ')}</span></div>
-                      )}
-                      {ciData.action_queue.cut_or_pause?.length > 0 && (
-                        <div><span className="font-semibold text-red-700">Cut / Pause: </span><span className="text-gray-700">{ciData.action_queue.cut_or_pause.join(', ')}</span></div>
-                      )}
-                      {ciData.action_queue.watch?.length > 0 && (
-                        <div><span className="font-semibold text-orange-700">Watch: </span><span className="text-gray-700">{ciData.action_queue.watch.join(', ')}</span></div>
-                      )}
-                      {ciData.action_queue.tracking_check?.length > 0 && (
-                        <div><span className="font-semibold text-yellow-700">Tracking: </span><span className="text-gray-700">{ciData.action_queue.tracking_check.join(', ')}</span></div>
-                      )}
-                      {!ciData.action_queue.scale?.length && !ciData.action_queue.cut_or_pause?.length &&
-                       !ciData.action_queue.watch?.length && !ciData.action_queue.tracking_check?.length && (
-                        <div className="text-gray-400 col-span-2">No actions queued.</div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Tracking Warning */}
-                {ciData.tracking_warning?.has_warning && (
-                  <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs text-yellow-800">
-                    {ciData.tracking_warning.message}
-                  </div>
-                )}
-
-                {/* Niche table */}
-                {ciData.rows.length === 0 ? (
-                  <p className="text-sm text-gray-400 text-center py-4">No data for this period.</p>
-                ) : (
-                  <div className="overflow-x-auto rounded-xl border border-gray-100">
-                    <table className="w-full text-sm">
-                      <thead className="bg-gray-50 border-b border-gray-100">
-                        <tr className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
-                          <th className="px-4 py-3">Niche</th>
-                          <th className="px-4 py-3 text-right">Spend</th>
-                          <th className="px-4 py-3 text-right">Revenue</th>
-                          <th className="px-4 py-3 text-right">Profit</th>
-                          <th className="px-4 py-3 text-right">ROI</th>
-                          <th className="px-4 py-3 text-right">CPL</th>
-                          <th className="px-4 py-3 text-center">Verdict</th>
-                          <th className="px-4 py-3 text-center">Confidence</th>
-                          <th className="px-4 py-3 text-center">Action</th>
-                          <th className="px-4 py-3 text-center">Join</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50">
-                        {ciData.rows.map(row => {
-                          const roiPct = row.roi != null ? Math.round(row.roi * 100) : null;
-                          const roiClass = roiPct == null ? 'text-gray-400'
-                            : roiPct >= 25 ? 'text-green-600 font-semibold'
-                            : roiPct >= 0 ? 'text-gray-700'
-                            : roiPct > -25 ? 'text-orange-500 font-semibold'
-                            : 'text-red-600 font-semibold';
-                          const profitClass = row.profit > 0 ? 'text-green-600' : row.profit < 0 ? 'text-red-600' : 'text-gray-500';
-                          const verdictStyles = {
-                            scale: 'bg-green-100 text-green-800',
-                            run: 'bg-green-50 text-green-700',
-                            watch: 'bg-orange-50 text-orange-700',
-                            pause: 'bg-red-50 text-red-700',
-                            insufficient_data: 'bg-gray-100 text-gray-500',
-                            tracking_check: 'bg-yellow-50 text-yellow-700',
-                            directional_scale: 'bg-green-50 text-green-700 border border-green-200',
-                            directional_run: 'bg-gray-50 text-gray-600 border border-gray-200',
-                            directional_watch: 'bg-orange-50 text-orange-600 border border-orange-200',
-                            directional_pause: 'bg-red-50 text-red-600 border border-red-200',
-                          };
-                          const verdictLabels = {
-                            scale: 'Scale',
-                            run: 'Run',
-                            watch: 'Watch',
-                            pause: 'Pause',
-                            insufficient_data: 'Low data',
-                            tracking_check: 'Check RT',
-                            directional_scale: '↑ Scale?',
-                            directional_run: '→ Run?',
-                            directional_watch: '~ Watch?',
-                            directional_pause: '↓ Pause?',
-                          };
-                          const joinLabels = {
-                            matched: { label: 'Matched', cls: 'text-green-600' },
-                            matched_rt_approximate: { label: 'Approx RT', cls: 'text-blue-500' },
-                            partial_redtrack: { label: 'Partial RT', cls: 'text-orange-500' },
-                            missing_redtrack: { label: 'Missing RT', cls: 'text-red-500' },
-                          };
-                          const joinInfo = joinLabels[row.join_status] || { label: row.join_status, cls: 'text-gray-400' };
-                          const confStyles = {
-                            high: 'bg-green-100 text-green-800',
-                            medium: 'bg-orange-100 text-orange-700',
-                            low: 'bg-gray-100 text-gray-500',
-                          };
-                          const actionStyles = {
-                            scale_20: 'text-green-700 font-semibold',
-                            scale_10: 'text-green-600 font-semibold',
-                            directional_scale: 'text-green-600',
-                            hold: 'text-gray-500',
-                            watch: 'text-orange-600',
-                            directional_hold: 'text-gray-500',
-                            directional_watch: 'text-orange-500',
-                            cut_25: 'text-orange-600 font-semibold',
-                            cut_50: 'text-orange-700 font-semibold',
-                            directional_cut: 'text-orange-600',
-                            pause: 'text-red-600 font-semibold',
-                            audit_tracking: 'text-yellow-700',
-                            collect_data: 'text-gray-400',
-                          };
-                          const budgetLine = [
-                            row.active_adset_count != null ? `${row.active_adset_count} active ad set${row.active_adset_count !== 1 ? 's' : ''}` : null,
-                            row.current_daily_budget != null ? `$${Math.round(row.current_daily_budget)}/day` : null,
-                          ].filter(Boolean).join(' · ');
-                          return (
-                            <tr key={row.niche} className="hover:bg-gray-50 transition-colors">
-                              <td className="px-4 py-3">
-                                <div className="font-medium text-gray-900">{row.niche}</div>
-                                {budgetLine && <div className="text-xs text-gray-400 mt-0.5">{budgetLine}</div>}
-                              </td>
-                              <td className="px-4 py-3 text-right text-gray-700">{formatMoney(row.spend)}</td>
-                              <td className="px-4 py-3 text-right text-gray-700">
-                                {row.revenue > 0 ? formatMoney(row.revenue) : '—'}
-                              </td>
-                              <td className={`px-4 py-3 text-right ${profitClass}`}>
-                                {row.profit > 0 ? '+' : ''}{formatMoney(row.profit)}
-                              </td>
-                              <td className={`px-4 py-3 text-right ${roiClass}`}>
-                                {roiPct != null ? `${roiPct > 0 ? '+' : ''}${roiPct}%` : '—'}
-                              </td>
-                              <td className="px-4 py-3 text-right text-gray-700">
-                                {row.cpl != null ? formatMoney(row.cpl) : '—'}
-                              </td>
-                              <td className="px-4 py-3 text-center">
-                                <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-medium ${verdictStyles[row.verdict] || 'bg-gray-100 text-gray-500'}`}>
-                                  {verdictLabels[row.verdict] || row.verdict}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-center">
-                                {row.confidence ? (
-                                  <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${confStyles[row.confidence] || 'bg-gray-100 text-gray-500'}`}
-                                        title={row.confidence_reason || ''}>
-                                    {row.confidence.charAt(0).toUpperCase() + row.confidence.slice(1)}
-                                  </span>
-                                ) : '—'}
-                              </td>
-                              <td className={`px-4 py-3 text-center text-xs ${actionStyles[row.suggested_action] || 'text-gray-500'}`}>
-                                {row.suggested_action_label || '—'}
-                              </td>
-                              <td className={`px-4 py-3 text-center text-xs font-medium ${joinInfo.cls}`}>
-                                {joinInfo.label}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                {ciData.day_filter !== 'all' && (
-                  <p className="text-xs text-gray-400 mt-2">
-                    RedTrack revenue uses full date range (not day-filtered) — ROI is approximate.
-                  </p>
-                )}
-              </>
-            )}
-
-            {/* Empty state before first load */}
-            {!ciLoading && !ciError && !ciData && (
-              <p className="text-sm text-gray-400 text-center py-4">Select a preset to load intelligence.</p>
-            )}
-          </div>
-        )}
+        <Link
+          to="/campaign-performance?panel=intelligence&ciPreset=last_7d"
+          className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-violet-700 bg-violet-50 border border-violet-100 hover:bg-violet-100 transition-colors flex-shrink-0"
+        >
+          Open in Performance
+          <ArrowRight size={13} />
+        </Link>
       </div>
 
       {/* Performance by Niche */}
