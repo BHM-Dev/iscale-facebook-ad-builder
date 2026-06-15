@@ -1114,28 +1114,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Campaign Intelligence CTA */}
-      <div className="bg-white rounded-xl border border-violet-100 border-l-4 border-l-violet-500 shadow-sm px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex items-start gap-3 min-w-0">
-          <div className="w-8 h-8 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center flex-shrink-0">
-            <Sparkles size={16} />
-          </div>
-          <div className="min-w-0">
-            <h2 className="font-semibold text-gray-900 text-sm">Campaign Intelligence</h2>
-            <p className="text-xs text-gray-500 mt-0.5">
-              Action queue, tracking checks, and niche-level scale/cut guidance now live in Performance.
-            </p>
-          </div>
-        </div>
-        <Link
-          to="/campaign-performance?panel=intelligence&ciPreset=last_7d"
-          className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-violet-700 bg-violet-50 border border-violet-100 hover:bg-violet-100 transition-colors flex-shrink-0"
-        >
-          Open in Performance
-          <ArrowRight size={13} />
-        </Link>
-      </div>
-
       {/* Performance by Niche */}
       <div className="bg-white rounded-xl border border-blue-100 border-l-4 border-l-blue-500 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-blue-100 bg-blue-50/40 flex items-center justify-between gap-3">
