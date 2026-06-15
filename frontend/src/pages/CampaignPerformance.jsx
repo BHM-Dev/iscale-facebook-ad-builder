@@ -30,6 +30,8 @@ const INTELLIGENCE_PRESETS = [
   { value: 'custom',       label: 'Custom' },
 ];
 
+const normalizeStatus = (status) => (status || '').toString().toUpperCase();
+
 function renderMarkdownInline(text) {
   return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) => {
     const bold = part.match(/^\*\*(.+)\*\*$/);
@@ -1044,7 +1046,7 @@ export default function CampaignPerformance() {
   }, [buildDateParams, timedFetch]);
 
   const toggleAdsetStatus = useCallback(async (adset) => {
-    const currentStatus = adsetStatusOverrides[adset.fb_adset_id] ?? adset.status;
+    const currentStatus = normalizeStatus(adsetStatusOverrides[adset.fb_adset_id] ?? adset.status);
     const newStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
     setPausingAdsets(prev => new Set(prev).add(adset.fb_adset_id));
     try {
@@ -1357,25 +1359,45 @@ export default function CampaignPerformance() {
     return false;
   }, [bulkInsights, rules, blendedCpl]);
 
+  const getAdsetStatus = useCallback((adset) => (
+    normalizeStatus(adsetStatusOverrides[adset.fb_adset_id] ?? adset.status)
+  ), [adsetStatusOverrides]);
+
+  const getCampaignStatus = useCallback((adset) => (
+    normalizeStatus(adset.campaign_status)
+  ), []);
+
+  const isActiveDelivery = useCallback((adset) => {
+    const adsetStatus = getAdsetStatus(adset);
+    const campaignStatus = getCampaignStatus(adset);
+    return adsetStatus === 'ACTIVE' && (!campaignStatus || campaignStatus === 'ACTIVE');
+  }, [getAdsetStatus, getCampaignStatus]);
+
+  const isPausedDelivery = useCallback((adset) => {
+    const adsetStatus = getAdsetStatus(adset);
+    const campaignStatus = getCampaignStatus(adset);
+    return adsetStatus === 'PAUSED' || campaignStatus === 'PAUSED';
+  }, [getAdsetStatus, getCampaignStatus]);
+
   const visibleAdsets = useMemo(() => {
     let list = adsets.filter(a => a.fb_adset_id);
 
-    // Status / spend / flagged filter — use override if present
-    const effectiveStatus = (a) => adsetStatusOverrides[a.fb_adset_id] ?? a.status;
+    // Status / spend / flagged filter.
+    // "Active only" means active delivery: ad set is active and its parent campaign is not paused.
     if (statusFilter === 'ACTIVE') {
-      list = list.filter(a => effectiveStatus(a) === 'ACTIVE');
+      list = list.filter(isActiveDelivery);
     } else if (statusFilter === 'PAUSED') {
-      list = list.filter(a => effectiveStatus(a) === 'PAUSED');
+      list = list.filter(isPausedDelivery);
     } else if (statusFilter === 'has_spend') {
       list = list.filter(a => (bulkInsights?.[a.fb_adset_id]?.spend ?? 0) > 0);
     } else if (statusFilter === 'flagged') {
-      list = list.filter(a => effectiveStatus(a) === 'ACTIVE' && isFlagged(a));
+      list = list.filter(a => isActiveDelivery(a) && isFlagged(a));
     }
 
     // Sort
     list = [...list].sort((a, b) => {
       if (sortBy === 'status') {
-        const sa = effectiveStatus(a), sb = effectiveStatus(b);
+        const sa = getAdsetStatus(a), sb = getAdsetStatus(b);
         if (sa === sb) return a.name.localeCompare(b.name);
         return sa === 'ACTIVE' ? -1 : 1;
       }
@@ -1399,7 +1421,7 @@ export default function CampaignPerformance() {
     });
 
     return list;
-  }, [adsets, statusFilter, sortBy, bulkInsights, isFlagged, adsetStatusOverrides]);
+  }, [adsets, statusFilter, sortBy, bulkInsights, isFlagged, getAdsetStatus, isActiveDelivery, isPausedDelivery]);
 
   useEffect(() => {
     if (!targetAdsetId || targetAdsetId === 'null') return;
@@ -1693,9 +1715,7 @@ export default function CampaignPerformance() {
             </div>
             {groupedCampaigns.map(group => {
               const isCampaignOpen = !collapsedCampaigns.has(group.key);
-              const activeCount = group.adsets.filter(a =>
-                (adsetStatusOverrides[a.fb_adset_id] ?? a.status) === 'ACTIVE'
-              ).length;
+              const activeCount = group.adsets.filter(isActiveDelivery).length;
 
               return (
                 <div key={group.key} className="border-b border-gray-100 last:border-b-0">
@@ -1881,7 +1901,7 @@ export default function CampaignPerformance() {
                         <tbody className="divide-y divide-gray-50">
                           {group.adsets.map(adset => {
                             const isExpanded = expandedAdsets.has(adset.fb_adset_id);
-                            const effectiveStatus = adsetStatusOverrides[adset.fb_adset_id] ?? adset.status;
+                            const effectiveStatus = getAdsetStatus(adset);
                             const isPausingAdset = pausingAdsets.has(adset.fb_adset_id);
                             const d = bulkInsights?.[adset.fb_adset_id];
                             const rt = d?.redtrack;
@@ -2048,7 +2068,7 @@ export default function CampaignPerformance() {
                                       {adset.fb_adset_id && (
                                         <button
                                           onClick={() => {
-                                            const currentStatus = adsetStatusOverrides[adset.fb_adset_id] ?? adset.status;
+                                            const currentStatus = normalizeStatus(adsetStatusOverrides[adset.fb_adset_id] ?? adset.status);
                                             if (currentStatus === 'ACTIVE' && !window.confirm(`Pause "${adset.name}"?\n\nThis will stop delivery immediately in Meta.`)) return;
                                             toggleAdsetStatus(adset);
                                           }}
