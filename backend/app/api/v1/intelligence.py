@@ -428,15 +428,17 @@ def _generate_summary(rows: list, preset_label: str, date_from: str, date_to: st
         + "\n".join(table_rows)
     )
 
-    def _queue_line(label: str, items: list) -> str:
-        return f"{label}: {', '.join(items)}" if items else f"{label}: None"
+    def _queue_section(label: str, items: list) -> str:
+        if not items:
+            return f"{label}:\n- None"
+        return f"{label}:\n" + "\n".join(f"- {item}" for item in items)
 
-    queue_block = "\n".join([
-        "DETERMINISTIC ACTION QUEUE (authoritative — do not contradict):",
-        _queue_line("Scale",          action_queue.get("scale", [])),
-        _queue_line("Cut/Pause",      action_queue.get("cut_or_pause", [])),
-        _queue_line("Watch",          action_queue.get("watch", [])),
-        _queue_line("Tracking check", action_queue.get("tracking_check", [])),
+    queue_block = "\n\n".join([
+        "DETERMINISTIC ACTION QUEUE (authoritative — do not contradict)",
+        _queue_section("AUTHORIZED SCALE ACTIONS", action_queue.get("scale", [])),
+        _queue_section("AUTHORIZED CUT/PAUSE ACTIONS", action_queue.get("cut_or_pause", [])),
+        _queue_section("AUTHORIZED WATCH ITEMS", action_queue.get("watch", [])),
+        _queue_section("AUTHORIZED TRACKING CHECKS", action_queue.get("tracking_check", [])),
     ])
 
     notes = []
@@ -461,11 +463,16 @@ def _generate_summary(rows: list, preset_label: str, date_from: str, date_to: st
         + "Write a 3–5 sentence plain-English executive summary. Lead with the biggest finding. "
         + "Name specific niches with dollar amounts. "
         + "You must not contradict the DETERMINISTIC ACTION QUEUE above. "
-        + "Only name tracking-check niches from DETERMINISTIC ACTION QUEUE > Tracking check. "
-        + "Do not infer tracking issues from ROI, CPL, spend, or join status unless the niche is listed in Tracking check. "
-        + "Do not recommend a harder action than the suggested_action_label for any niche. "
+        + "Only recommend scale actions for niches listed under AUTHORIZED SCALE ACTIONS. "
+        + "Only recommend cut or pause actions for niches listed under AUTHORIZED CUT/PAUSE ACTIONS. "
+        + "Only name watch items from AUTHORIZED WATCH ITEMS. "
+        + "Only name tracking-check niches from AUTHORIZED TRACKING CHECKS. "
+        + "If a niche appears in the table but not in an authorized action section, you may mention its metrics but must not recommend an action for it. "
+        + "Do not infer tracking issues from ROI, CPL, spend, or join status unless the niche is listed under AUTHORIZED TRACKING CHECKS. "
+        + "Do not recommend a harder action, different action, or larger percentage than the action label shown in the authorized queue. "
+        + "For Directional scale, Directional hold, Directional watch, or Directional cut, do not invent a percentage; use the word directional. "
         + "For directional rows, use cautious language and say directional. "
-        + "If the tracking warning applies, mention it but only name niches from Tracking check. "
+        + "If the tracking warning applies, mention it but only name niches from AUTHORIZED TRACKING CHECKS. "
         + "End with one concrete next action. Direct and specific. No padding. "
         + "Output plain text only — no markdown, no bullet points, no headers, no bold."
     )
