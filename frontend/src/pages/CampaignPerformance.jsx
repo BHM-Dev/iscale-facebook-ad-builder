@@ -20,14 +20,14 @@ const DATE_PRESETS  = [
 ];
 
 const INTELLIGENCE_PRESETS = [
-  { value: 'today', label: 'Today' },
-  { value: 'yesterday', label: 'Yesterday' },
-  { value: 'last_7d', label: 'Last 7d' },
-  { value: 'this_month', label: 'This Month' },
-  { value: 'last_30d', label: 'Last 30d' },
+  { value: 'yesterday',    label: 'Yesterday' },
+  { value: 'last_3d',      label: 'Last 3d' },
+  { value: 'last_7d',      label: 'Last 7d' },
+  { value: 'last_14d',     label: 'Last 14d' },
+  { value: 'last_30d',     label: 'Last 30d' },
   { value: 'weekdays_mtd', label: 'Weekdays MTD' },
   { value: 'weekends_mtd', label: 'Weekends MTD' },
-  { value: 'custom', label: 'Custom' },
+  { value: 'custom',       label: 'Custom' },
 ];
 
 function renderMarkdownInline(text) {

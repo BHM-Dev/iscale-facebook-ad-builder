@@ -6,8 +6,8 @@ GET /api/v1/intelligence/niche-profitability
   ?preset=custom&date_from=2026-06-01&date_to=2026-06-14
   ?ad_account_id=act_521142087204815
 
-Supported presets: today, yesterday, last_7d, this_month, last_30d,
-                   weekdays_mtd, weekends_mtd, custom
+Supported presets: today, yesterday, last_3d, last_7d, last_14d, last_30d,
+                   this_month, weekdays_mtd, weekends_mtd, custom
 """
 
 import logging
@@ -57,8 +57,12 @@ def _resolve_preset(preset: str, date_from: Optional[str], date_to: Optional[str
     if preset == "yesterday":
         d = today - timedelta(days=1)
         return str(d), str(d), "all", "Yesterday"
+    if preset == "last_3d":
+        return str(today - timedelta(days=2)), str(today), "all", "Last 3 days"
     if preset == "last_7d":
         return str(today - timedelta(days=6)), str(today), "all", "Last 7 days"
+    if preset == "last_14d":
+        return str(today - timedelta(days=13)), str(today), "all", "Last 14 days"
     if preset == "this_month":
         return str(month_start), str(today), "all", "This month"
     if preset == "last_30d":
@@ -201,7 +205,7 @@ def _assign_suggested_action(verdict: str, confidence: str, roi: Optional[float]
         "directional_scale": ("directional_scale", "Directional scale"),
         "directional_run":   ("directional_hold",  "Directional hold"),
         "directional_watch": ("directional_watch",  "Directional watch"),
-        "directional_pause": ("directional_cut",    "Directional cut"),
+        "directional_pause": ("investigate",        "Investigate"),
     }
     if verdict in directional_map:
         return directional_map[verdict]
@@ -213,12 +217,14 @@ def _assign_suggested_action(verdict: str, confidence: str, roi: Optional[float]
         return "hold", "Hold"
     if verdict == "watch":
         if roi is not None and roi < -0.10:
-            return "cut_25", "Cut 25%"
+            return "potential_cut", "Potential cut"
         return "watch", "Watch"
     if verdict == "pause":
-        if confidence in ("high", "medium"):
+        if confidence == "high":
             return "pause", "Pause"
-        return "cut_50", "Cut 50%"
+        if confidence == "medium":
+            return "review_pause", "Review pause"
+        return "potential_cut", "Potential cut"
     if verdict == "tracking_check":
         return "audit_tracking", "Audit tracking"
     return "collect_data", "Collect data"
@@ -226,12 +232,12 @@ def _assign_suggested_action(verdict: str, confidence: str, roi: Optional[float]
 
 def _build_action_queue(rows: list) -> dict:
     scale_actions = {"scale_20", "scale_10", "directional_scale"}
-    cut_actions   = {"pause", "cut_50", "cut_25", "directional_cut"}
+    cut_actions   = {"pause", "review_pause", "potential_cut", "investigate"}
     watch_actions = {"watch", "hold", "directional_watch", "directional_hold"}
 
     conf_rank = {"high": 0, "medium": 1, "low": 2}
-    # Pause severity order for cut_or_pause sorting
-    cut_rank = {"pause": 0, "cut_50": 1, "cut_25": 2, "directional_cut": 3}
+    # Severity order for cut/review actions
+    cut_rank = {"pause": 0, "review_pause": 1, "potential_cut": 2, "investigate": 3}
 
     scale_rows = [r for r in rows if r['suggested_action'] in scale_actions]
     cut_rows   = [r for r in rows if r['suggested_action'] in cut_actions]
@@ -464,14 +470,16 @@ def _generate_summary(rows: list, preset_label: str, date_from: str, date_to: st
         + "Name specific niches with dollar amounts. "
         + "You must not contradict the DETERMINISTIC ACTION QUEUE above. "
         + "Only recommend scale actions for niches listed under AUTHORIZED SCALE ACTIONS. "
-        + "Only recommend cut or pause actions for niches listed under AUTHORIZED CUT/PAUSE ACTIONS. "
+        + "Only recommend review/cut/pause actions for niches listed under AUTHORIZED CUT/PAUSE ACTIONS. "
         + "Only name watch items from AUTHORIZED WATCH ITEMS. "
         + "Only name tracking-check niches from AUTHORIZED TRACKING CHECKS. "
         + "If a niche appears in the table but not in an authorized action section, you may mention its metrics but must not recommend an action for it. "
         + "Use exact niche names exactly as shown in the table or authorized queue; do not rewrite punctuation, symbols, emojis, capitalization, or ampersands. "
         + "Do not infer tracking issues from ROI, CPL, spend, or join status unless the niche is listed under AUTHORIZED TRACKING CHECKS. "
-        + "Do not recommend a harder action, different action, or larger percentage than the action label shown in the authorized queue. "
-        + "For Directional scale, Directional hold, Directional watch, or Directional cut, do not invent a percentage; use the word directional. "
+        + "Do not recommend a harder action than the action label shown in the authorized queue. "
+        + "Use the action label as shown: Pause means buyer should pause; Review pause means buyer should investigate before pausing; Potential cut means flag for budget review; Investigate means check ad set and landing page layers. "
+        + "Never say 'pause to save money' or imply an automated action; frame all cut/pause actions as buyer decisions that depend on context. "
+        + "For Directional scale, Directional hold, Directional watch, or Investigate, do not invent a percentage; use the word directional or recommend investigating. "
         + "For directional rows, use cautious language and say directional. "
         + "If the tracking warning applies, mention it but only name niches from AUTHORIZED TRACKING CHECKS. "
         + "End with one concrete next action. Direct and specific. No padding. "
