@@ -468,6 +468,7 @@ def _generate_summary(rows: list, preset_label: str, date_from: str, date_to: st
         + "Only name watch items from AUTHORIZED WATCH ITEMS. "
         + "Only name tracking-check niches from AUTHORIZED TRACKING CHECKS. "
         + "If a niche appears in the table but not in an authorized action section, you may mention its metrics but must not recommend an action for it. "
+        + "Use exact niche names exactly as shown in the table or authorized queue; do not rewrite punctuation, symbols, emojis, capitalization, or ampersands. "
         + "Do not infer tracking issues from ROI, CPL, spend, or join status unless the niche is listed under AUTHORIZED TRACKING CHECKS. "
         + "Do not recommend a harder action, different action, or larger percentage than the action label shown in the authorized queue. "
         + "For Directional scale, Directional hold, Directional watch, or Directional cut, do not invent a percentage; use the word directional. "
