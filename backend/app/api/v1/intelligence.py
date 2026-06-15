@@ -229,32 +229,47 @@ def _build_action_queue(rows: list) -> dict:
     cut_actions   = {"pause", "cut_50", "cut_25", "directional_cut"}
     watch_actions = {"watch", "hold", "directional_watch", "directional_hold"}
 
-    scale = []
-    cut_or_pause = []
-    watch = []
-    tracking_check = []
+    conf_rank = {"high": 0, "medium": 1, "low": 2}
+    # Pause severity order for cut_or_pause sorting
+    cut_rank = {"pause": 0, "cut_50": 1, "cut_25": 2, "directional_cut": 3}
 
-    for r in rows:
-        name   = r['niche']
-        action = r['suggested_action']
-        label  = r['suggested_action_label']
+    scale_rows = [r for r in rows if r['suggested_action'] in scale_actions]
+    cut_rows   = [r for r in rows if r['suggested_action'] in cut_actions]
+    watch_rows = [r for r in rows if r['suggested_action'] in watch_actions]
+    track_rows = [r for r in rows if r['join_status'] in ("partial_redtrack", "missing_redtrack")
+                                      or r['verdict'] == "tracking_check"]
 
-        if action in scale_actions and len(scale) < 5:
-            scale.append(f"{name} ({label})")
-        elif action in cut_actions and len(cut_or_pause) < 5:
-            cut_or_pause.append(f"{name} ({label})")
-        elif action in watch_actions and len(watch) < 5:
-            watch.append(name)
+    # scale: highest profit first, then ROI, then confidence
+    scale_rows.sort(key=lambda r: (
+        -(r['profit'] or 0),
+        -(r['roi'] or 0),
+        conf_rank.get(r['confidence'], 9),
+    ))
 
-        if r['join_status'] in ("partial_redtrack", "missing_redtrack") or r['verdict'] == "tracking_check":
-            if len(tracking_check) < 5:
-                tracking_check.append(name)
+    # cut/pause: hard pauses first, then most negative profit, then most negative ROI
+    cut_rows.sort(key=lambda r: (
+        cut_rank.get(r['suggested_action'], 9),
+        (r['profit'] or 0),
+        (r['roi'] or 0),
+    ))
+
+    # tracking: missing RT first, then partial RT sorted by spend desc
+    track_rows.sort(key=lambda r: (
+        0 if r['join_status'] == "missing_redtrack" else 1,
+        -(r['spend'] or 0),
+    ))
+
+    # watch: most negative profit first, then spend desc
+    watch_rows.sort(key=lambda r: (
+        (r['profit'] or 0),
+        -(r['spend'] or 0),
+    ))
 
     return {
-        "scale":         scale,
-        "cut_or_pause":  cut_or_pause,
-        "watch":         watch,
-        "tracking_check": tracking_check,
+        "scale":          [f"{r['niche']} ({r['suggested_action_label']})" for r in scale_rows[:5]],
+        "cut_or_pause":   [f"{r['niche']} ({r['suggested_action_label']})" for r in cut_rows[:5]],
+        "watch":          [r['niche'] for r in watch_rows[:5]],
+        "tracking_check": [r['niche'] for r in track_rows[:5]],
     }
 
 
