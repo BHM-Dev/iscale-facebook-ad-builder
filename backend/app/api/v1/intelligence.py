@@ -479,7 +479,7 @@ def _generate_summary(rows: list, preset_label: str, date_from: str, date_to: st
 
     try:
         response = _client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model="claude-sonnet-4-6",
             max_tokens=512,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -500,9 +500,10 @@ def _sanitize_summary_actions(summary: str, day_filter: str) -> str:
     # percentages in the final prose.
     cleaned = summary
     action_percent_pattern = re.compile(
-        r'\b(increase|raise|boost|expand|scale|cut|reduce|decrease|lower)\b'
-        r'([^.\n]{0,120}?)\s+by\s+\d+\s*(?:%|percent)?'
-        r'(?:\s*[-–—]\s*\d+\s*(?:%|percent))?',
+        r'\b(increas(?:e|ing)?|rais(?:e|ing)?|boost(?:ing)?|expand(?:ing)?'
+        r'|scal(?:e|ing)?|cut(?:ting)?|reduc(?:e|ing)?|decreas(?:e|ing)?|lower(?:ing)?)\b'
+        r'([^.\n]{0,120}?)[ \t]+by[ \t]+'
+        r'\d+(?:[ \t]*(?:%|percent)|[ \t]*[-–—][ \t]*\d+[ \t]*(?:%|percent))',
         flags=re.IGNORECASE,
     )
 
