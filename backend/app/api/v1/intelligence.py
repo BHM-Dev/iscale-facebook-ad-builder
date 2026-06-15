@@ -483,10 +483,36 @@ def _generate_summary(rows: list, preset_label: str, date_from: str, date_to: st
             max_tokens=512,
             messages=[{"role": "user", "content": prompt}],
         )
-        return "\n".join(b.text for b in response.content if hasattr(b, "text")).strip()
+        summary = "\n".join(b.text for b in response.content if hasattr(b, "text")).strip()
+        return _sanitize_summary_actions(summary, day_filter)
     except Exception as e:
         logger.error("Intelligence summary failed: %s", e)
         return f"Summary unavailable: {e}"
+
+
+def _sanitize_summary_actions(summary: str, day_filter: str) -> str:
+    """Enforce deterministic action language after LLM generation."""
+    if day_filter == "all" or not summary:
+        return summary
+
+    # Day-filtered views use full-range RedTrack revenue, so UI actions are
+    # intentionally directional. Do not let the LLM turn them into hard budget
+    # percentages in the final prose.
+    cleaned = summary
+    action_percent_pattern = re.compile(
+        r'\b(increase|raise|boost|expand|scale|cut|reduce|decrease|lower)\b'
+        r'([^.\n]{0,120}?)\s+by\s+\d+\s*(?:%|percent)?'
+        r'(?:\s*[-–—]\s*\d+\s*(?:%|percent))?',
+        flags=re.IGNORECASE,
+    )
+
+    def _directional_replacement(match: re.Match) -> str:
+        verb = match.group(1).lower()
+        target = match.group(2).strip()
+        return f"directionally {verb}" + (f" {target}" if target else "")
+
+    cleaned = action_percent_pattern.sub(_directional_replacement, cleaned)
+    return cleaned
 
 
 @router.get("/niche-profitability")
