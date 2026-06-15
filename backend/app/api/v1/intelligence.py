@@ -14,13 +14,14 @@ import logging
 import os
 import re
 from datetime import date, timedelta, datetime
-from typing import Optional
+from typing import Optional, Dict
 
 import anthropic
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
 
-from app.core.deps import get_current_active_user
-from app.models import User
+from app.core.deps import get_current_active_user, get_db
+from app.models import User, FacebookAdSet
 from app.services.redtrack_service import RedTrackService
 
 logger = logging.getLogger(__name__)
@@ -172,7 +173,7 @@ def _assign_verdict(spend: float, revenue: float, join_status: str, day_filter: 
     for action verdicts because RedTrack revenue is full-range, not day-filtered."""
     if join_status == "missing_redtrack":
         return "tracking_check"
-    if spend < 50 or spend <= 0:
+    if spend < 50:
         return "insufficient_data"
     roi = (revenue - spend) / spend
     directional = day_filter != "all"
@@ -185,15 +186,107 @@ def _assign_verdict(spend: float, revenue: float, join_status: str, day_filter: 
     return "directional_pause" if directional else "pause"
 
 
-def _aggregate_by_niche(meta_data: dict, rt_data: dict, day_filter: str) -> list:
-    """Join Meta + RT by adset, aggregate by niche, assign verdicts."""
+def _assign_confidence(spend: float, leads: int):
+    """Return (confidence, reason) tuple."""
+    if spend >= 300 and leads >= 10:
+        return "high", "Spend ≥ $300 and leads ≥ 10"
+    if spend >= 100 or leads >= 5:
+        return "medium", "Spend ≥ $100 or leads ≥ 5"
+    return "low", "Limited spend or leads"
+
+
+def _assign_suggested_action(verdict: str, confidence: str, roi: Optional[float]):
+    """Return (suggested_action, label) tuple."""
+    directional_map = {
+        "directional_scale": ("directional_scale", "Directional scale"),
+        "directional_run":   ("directional_hold",  "Directional hold"),
+        "directional_watch": ("directional_watch",  "Directional watch"),
+        "directional_pause": ("directional_cut",    "Directional cut"),
+    }
+    if verdict in directional_map:
+        return directional_map[verdict]
+    if verdict == "scale":
+        if confidence == "high":   return "scale_20", "Scale +20%"
+        if confidence == "medium": return "scale_10", "Scale +10%"
+        return "watch", "Watch"
+    if verdict == "run":
+        return "hold", "Hold"
+    if verdict == "watch":
+        if roi is not None and roi < -0.10:
+            return "cut_25", "Cut 25%"
+        return "watch", "Watch"
+    if verdict == "pause":
+        if confidence in ("high", "medium"):
+            return "pause", "Pause"
+        return "cut_50", "Cut 50%"
+    if verdict == "tracking_check":
+        return "audit_tracking", "Audit tracking"
+    return "collect_data", "Collect data"
+
+
+def _build_action_queue(rows: list) -> dict:
+    scale_actions = {"scale_20", "scale_10", "directional_scale"}
+    cut_actions   = {"pause", "cut_50", "cut_25", "directional_cut"}
+    watch_actions = {"watch", "hold", "directional_watch", "directional_hold"}
+
+    scale = []
+    cut_or_pause = []
+    watch = []
+    tracking_check = []
+
+    for r in rows:
+        name   = r['niche']
+        action = r['suggested_action']
+        label  = r['suggested_action_label']
+
+        if action in scale_actions and len(scale) < 5:
+            scale.append(f"{name} ({label})")
+        elif action in cut_actions and len(cut_or_pause) < 5:
+            cut_or_pause.append(f"{name} ({label})")
+        elif action in watch_actions and len(watch) < 5:
+            watch.append(name)
+
+        if r['join_status'] in ("partial_redtrack", "missing_redtrack") or r['verdict'] == "tracking_check":
+            if len(tracking_check) < 5:
+                tracking_check.append(name)
+
+    return {
+        "scale":         scale,
+        "cut_or_pause":  cut_or_pause,
+        "watch":         watch,
+        "tracking_check": tracking_check,
+    }
+
+
+def _build_tracking_warning(rows: list) -> dict:
+    partial = sum(1 for r in rows if r['join_status'] == "partial_redtrack")
+    missing = sum(1 for r in rows if r['join_status'] == "missing_redtrack")
+    if partial == 0 and missing == 0:
+        return {"has_warning": False, "partial_count": 0, "missing_count": 0, "message": ""}
+
+    parts = []
+    if partial:
+        noun = "niches have" if partial > 1 else "niche has"
+        parts.append(f"{partial} {noun} partial RedTrack match")
+    if missing:
+        verb = "are" if missing > 1 else "is"
+        parts.append(f"{missing} {verb} missing RedTrack revenue")
+    message = " and ".join(parts) + ". Treat ROI as directional until verified."
+    return {"has_warning": True, "partial_count": partial, "missing_count": missing, "message": message}
+
+
+def _aggregate_by_niche(meta_data: dict, rt_data: dict, day_filter: str, budget_map: dict) -> list:
+    """Join Meta + RT by adset, aggregate by niche, assign verdicts, confidence, and actions."""
     niche_map: dict = {}
 
     for fb_id, m in meta_data.items():
         rt = rt_data.get(fb_id)
-        revenue = float(rt['revenue']) if rt else 0.0
+        revenue    = float(rt['revenue'])    if rt else 0.0
         conversions = int(rt['conversions']) if rt else 0
         adset_join = "matched" if rt is not None else "missing_redtrack"
+
+        adset_spend = m['spend']
+        adset_roi   = (revenue - adset_spend) / adset_spend if adset_spend > 0 else None
 
         niche = _extract_niche(m['adset_name'])
         if niche not in niche_map:
@@ -205,15 +298,28 @@ def _aggregate_by_niche(meta_data: dict, rt_data: dict, day_filter: str) -> list
                 'redtrack_conversions': 0,
                 'adset_count': 0,
                 'missing_rt': 0,
+                'daily_budget_cents': 0,
+                'adsets': [],
             }
         b = niche_map[niche]
-        b['spend'] = round(b['spend'] + m['spend'], 2)
+        b['spend']   = round(b['spend'] + adset_spend, 2)
         b['revenue'] = round(b['revenue'] + revenue, 2)
-        b['leads'] += m['leads']
+        b['leads']   += m['leads']
         b['redtrack_conversions'] += conversions
         b['adset_count'] += 1
         if adset_join == "missing_redtrack":
             b['missing_rt'] += 1
+
+        budget = budget_map.get(fb_id)
+        if budget:
+            b['daily_budget_cents'] += budget
+
+        b['adsets'].append({
+            'name':    m['adset_name'],
+            'spend':   adset_spend,
+            'revenue': revenue,
+            'roi':     adset_roi,
+        })
 
     rows = []
     for niche, b in niche_map.items():
@@ -221,9 +327,11 @@ def _aggregate_by_niche(meta_data: dict, rt_data: dict, day_filter: str) -> list
         if spend < 0.01:
             continue
         revenue = b['revenue']
-        profit = round(revenue - spend, 2)
-        roi = round(profit / spend, 4) if spend > 0 else None
-        cpl = round(spend / b['leads'], 2) if b['leads'] > 0 else None
+        profit  = round(revenue - spend, 2)
+        roi     = round(profit / spend, 4) if spend > 0 else None
+        cpl     = round(spend / b['leads'], 2) if b['leads'] > 0 else None
+        avg_spend_per_adset  = round(spend / b['adset_count'], 2) if b['adset_count'] > 0 else None
+        current_daily_budget = round(b['daily_budget_cents'] / 100, 2) if b['daily_budget_cents'] > 0 else None
 
         if b['missing_rt'] == b['adset_count']:
             join_status = "missing_redtrack"
@@ -232,30 +340,63 @@ def _aggregate_by_niche(meta_data: dict, rt_data: dict, day_filter: str) -> list
         else:
             join_status = "matched_rt_approximate" if day_filter != "all" else "matched"
 
-        verdict = _assign_verdict(spend, revenue, join_status, day_filter)
+        verdict    = _assign_verdict(spend, revenue, join_status, day_filter)
+        confidence, confidence_reason = _assign_confidence(spend, b['leads'])
+        suggested_action, suggested_action_label = _assign_suggested_action(verdict, confidence, roi)
+
+        # Top / worst ad set by ROI (only among adsets with spend > 0 and rt match)
+        scored = [a for a in b['adsets'] if a['roi'] is not None and a['spend'] > 0]
+        top_adset    = None
+        worst_adset  = None
+        if scored:
+            top   = max(scored, key=lambda a: a['roi'])
+            worst = min(scored, key=lambda a: a['roi'])
+            top_adset = {
+                'name':    top['name'],
+                'spend':   round(top['spend'],   2),
+                'revenue': round(top['revenue'], 2),
+                'roi':     round(top['roi'],     4),
+            }
+            if worst['name'] != top['name']:
+                worst_adset = {
+                    'name':    worst['name'],
+                    'spend':   round(worst['spend'],   2),
+                    'revenue': round(worst['revenue'], 2),
+                    'roi':     round(worst['roi'],     4),
+                }
+
         rows.append({
-            'niche': niche,
-            'spend': spend,
-            'revenue': revenue,
-            'profit': profit,
-            'roi': roi,
-            'leads': b['leads'],
-            'cpl': cpl,
-            'redtrack_conversions': b['redtrack_conversions'],
-            'adset_count': b['adset_count'],
-            'verdict': verdict,
-            'is_directional': day_filter != "all",
-            'join_status': join_status,
+            'niche':                  niche,
+            'spend':                  spend,
+            'revenue':                revenue,
+            'profit':                 profit,
+            'roi':                    roi,
+            'leads':                  b['leads'],
+            'cpl':                    cpl,
+            'redtrack_conversions':   b['redtrack_conversions'],
+            'adset_count':            b['adset_count'],
+            'verdict':                verdict,
+            'is_directional':         day_filter != "all",
+            'join_status':            join_status,
+            'confidence':             confidence,
+            'confidence_reason':      confidence_reason,
+            'suggested_action':       suggested_action,
+            'suggested_action_label': suggested_action_label,
+            'current_daily_budget':   current_daily_budget,
+            'active_adset_count':     b['adset_count'],
+            'avg_spend_per_adset':    avg_spend_per_adset,
+            'top_adset':              top_adset,
+            'worst_adset':            worst_adset,
         })
 
     return sorted(rows, key=lambda r: r['spend'], reverse=True)
 
 
-def _generate_summary(rows: list, preset_label: str, date_from: str, date_to: str, day_filter: str) -> str:
+def _generate_summary(rows: list, preset_label: str, date_from: str, date_to: str,
+                      day_filter: str, tracking_warning: dict) -> str:
     if not _client:
         return "AI summary unavailable — ANTHROPIC_API_KEY not configured."
 
-    has_missing_rt = any(r['join_status'] in ("missing_redtrack", "partial_redtrack") for r in rows)
     rt_approximate = day_filter != "all"
 
     table_rows = []
@@ -264,16 +405,17 @@ def _generate_summary(rows: list, preset_label: str, date_from: str, date_to: st
         cpl_str = f"${r['cpl']:.2f}" if r['cpl'] else "—"
         table_rows.append(
             f"{r['niche']} | ${r['spend']:.0f} | ${r['revenue']:.0f} | "
-            f"{'+'if r['profit']>=0 else ''}${r['profit']:.0f} | {roi_str} | {cpl_str} | {r['verdict']}"
+            f"{'+'if r['profit']>=0 else ''}${r['profit']:.0f} | {roi_str} | {cpl_str} | "
+            f"{r['verdict']} | {r['confidence']} | {r['suggested_action_label']}"
         )
-    table = "Niche | Spend | Revenue | Profit | ROI | CPL | Verdict\n" + "\n".join(table_rows)
+    table = (
+        "Niche | Spend | Revenue | Profit | ROI | CPL | Verdict | Confidence | Suggested Action\n"
+        + "\n".join(table_rows)
+    )
 
     notes = []
-    if has_missing_rt:
-        notes.append(
-            "Some niches show Meta spend but no matched RedTrack revenue. "
-            "Treat those as tracking/revenue checks before pausing on ROI alone."
-        )
+    if tracking_warning.get("has_warning"):
+        notes.append(tracking_warning["message"])
     if rt_approximate:
         notes.append(
             f"RedTrack revenue for this view ({preset_label}) covers the full date range, "
@@ -289,7 +431,10 @@ def _generate_summary(rows: list, preset_label: str, date_from: str, date_to: st
         + "insufficient_data=spend<$50 | tracking_check=no RT revenue match\n\n"
         + ("\n".join(notes) + "\n\n" if notes else "")
         + "Write a 3–5 sentence plain-English executive summary. Lead with the biggest finding. "
-        + "Name specific niches with dollar amounts. Flag tracking_check niches. "
+        + "Name specific niches with dollar amounts. "
+        + "Do not recommend a harder action than the suggested_action_label for any niche. "
+        + "For directional rows, use cautious language and say directional. "
+        + "Flag any tracking_check niches. "
         + "End with one concrete next action. Direct and specific. No padding. "
         + "Output plain text only — no markdown, no bullet points, no headers, no bold."
     )
@@ -313,6 +458,7 @@ def niche_profitability(
     date_to: Optional[str] = Query(None),
     ad_account_id: Optional[str] = Query(None),
     current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
 ):
     resolved_from, resolved_to, day_filter, preset_label = _resolve_preset(preset, date_from, date_to)
 
@@ -323,16 +469,33 @@ def niche_profitability(
 
     rt_data = _fetch_redtrack(resolved_from, resolved_to)
 
-    rows = _aggregate_by_niche(meta_data, rt_data, day_filter)
-    summary = _generate_summary(rows, preset_label, resolved_from, resolved_to, day_filter)
+    # Budget lookup from local DB — no extra Meta API call
+    adset_ids = list(meta_data.keys())
+    budget_map: Dict[str, int] = {}
+    if adset_ids:
+        adset_rows = db.query(FacebookAdSet).filter(
+            FacebookAdSet.fb_adset_id.in_(adset_ids)
+        ).all()
+        budget_map = {
+            row.fb_adset_id: row.daily_budget
+            for row in adset_rows
+            if row.daily_budget
+        }
+
+    rows = _aggregate_by_niche(meta_data, rt_data, day_filter, budget_map)
+    action_queue     = _build_action_queue(rows)
+    tracking_warning = _build_tracking_warning(rows)
+    summary = _generate_summary(rows, preset_label, resolved_from, resolved_to, day_filter, tracking_warning)
 
     return {
-        "question_set": "niche_profitability",
-        "preset": preset,
-        "date_from": resolved_from,
-        "date_to": resolved_to,
-        "day_filter": day_filter,
-        "preset_label": preset_label,
-        "summary": summary,
-        "rows": rows,
+        "question_set":      "niche_profitability",
+        "preset":            preset,
+        "date_from":         resolved_from,
+        "date_to":           resolved_to,
+        "day_filter":        day_filter,
+        "preset_label":      preset_label,
+        "action_queue":      action_queue,
+        "tracking_warning":  tracking_warning,
+        "summary":           summary,
+        "rows":              rows,
     }

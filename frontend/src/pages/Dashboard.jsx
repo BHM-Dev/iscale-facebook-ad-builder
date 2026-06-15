@@ -1254,6 +1254,38 @@ export default function Dashboard() {
                   </div>
                 </div>
 
+                {/* Action Queue */}
+                {ciData.action_queue && (
+                  <div className="mb-4 rounded-xl border border-gray-100 bg-gray-50 p-4">
+                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Action Queue</div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 text-xs">
+                      {ciData.action_queue.scale?.length > 0 && (
+                        <div><span className="font-semibold text-green-700">Scale: </span><span className="text-gray-700">{ciData.action_queue.scale.join(', ')}</span></div>
+                      )}
+                      {ciData.action_queue.cut_or_pause?.length > 0 && (
+                        <div><span className="font-semibold text-red-700">Cut / Pause: </span><span className="text-gray-700">{ciData.action_queue.cut_or_pause.join(', ')}</span></div>
+                      )}
+                      {ciData.action_queue.watch?.length > 0 && (
+                        <div><span className="font-semibold text-orange-700">Watch: </span><span className="text-gray-700">{ciData.action_queue.watch.join(', ')}</span></div>
+                      )}
+                      {ciData.action_queue.tracking_check?.length > 0 && (
+                        <div><span className="font-semibold text-yellow-700">Tracking: </span><span className="text-gray-700">{ciData.action_queue.tracking_check.join(', ')}</span></div>
+                      )}
+                      {!ciData.action_queue.scale?.length && !ciData.action_queue.cut_or_pause?.length &&
+                       !ciData.action_queue.watch?.length && !ciData.action_queue.tracking_check?.length && (
+                        <div className="text-gray-400 col-span-2">No actions queued.</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Tracking Warning */}
+                {ciData.tracking_warning?.has_warning && (
+                  <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs text-yellow-800">
+                    {ciData.tracking_warning.message}
+                  </div>
+                )}
+
                 {/* Niche table */}
                 {ciData.rows.length === 0 ? (
                   <p className="text-sm text-gray-400 text-center py-4">No data for this period.</p>
@@ -1269,6 +1301,8 @@ export default function Dashboard() {
                           <th className="px-4 py-3 text-right">ROI</th>
                           <th className="px-4 py-3 text-right">CPL</th>
                           <th className="px-4 py-3 text-center">Verdict</th>
+                          <th className="px-4 py-3 text-center">Confidence</th>
+                          <th className="px-4 py-3 text-center">Action</th>
                           <th className="px-4 py-3 text-center">Join</th>
                         </tr>
                       </thead>
@@ -1312,9 +1346,36 @@ export default function Dashboard() {
                             missing_redtrack: { label: 'Missing RT', cls: 'text-red-500' },
                           };
                           const joinInfo = joinLabels[row.join_status] || { label: row.join_status, cls: 'text-gray-400' };
+                          const confStyles = {
+                            high: 'bg-green-100 text-green-800',
+                            medium: 'bg-orange-100 text-orange-700',
+                            low: 'bg-gray-100 text-gray-500',
+                          };
+                          const actionStyles = {
+                            scale_20: 'text-green-700 font-semibold',
+                            scale_10: 'text-green-600 font-semibold',
+                            directional_scale: 'text-green-600',
+                            hold: 'text-gray-500',
+                            watch: 'text-orange-600',
+                            directional_hold: 'text-gray-500',
+                            directional_watch: 'text-orange-500',
+                            cut_25: 'text-orange-600 font-semibold',
+                            cut_50: 'text-orange-700 font-semibold',
+                            directional_cut: 'text-orange-600',
+                            pause: 'text-red-600 font-semibold',
+                            audit_tracking: 'text-yellow-700',
+                            collect_data: 'text-gray-400',
+                          };
+                          const budgetLine = [
+                            row.active_adset_count != null ? `${row.active_adset_count} active ad set${row.active_adset_count !== 1 ? 's' : ''}` : null,
+                            row.current_daily_budget != null ? `$${Math.round(row.current_daily_budget)}/day` : null,
+                          ].filter(Boolean).join(' · ');
                           return (
                             <tr key={row.niche} className="hover:bg-gray-50 transition-colors">
-                              <td className="px-4 py-3 font-medium text-gray-900">{row.niche}</td>
+                              <td className="px-4 py-3">
+                                <div className="font-medium text-gray-900">{row.niche}</div>
+                                {budgetLine && <div className="text-xs text-gray-400 mt-0.5">{budgetLine}</div>}
+                              </td>
                               <td className="px-4 py-3 text-right text-gray-700">{formatMoney(row.spend)}</td>
                               <td className="px-4 py-3 text-right text-gray-700">
                                 {row.revenue > 0 ? formatMoney(row.revenue) : '—'}
@@ -1332,6 +1393,17 @@ export default function Dashboard() {
                                 <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-medium ${verdictStyles[row.verdict] || 'bg-gray-100 text-gray-500'}`}>
                                   {verdictLabels[row.verdict] || row.verdict}
                                 </span>
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                {row.confidence ? (
+                                  <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${confStyles[row.confidence] || 'bg-gray-100 text-gray-500'}`}
+                                        title={row.confidence_reason || ''}>
+                                    {row.confidence.charAt(0).toUpperCase() + row.confidence.slice(1)}
+                                  </span>
+                                ) : '—'}
+                              </td>
+                              <td className={`px-4 py-3 text-center text-xs ${actionStyles[row.suggested_action] || 'text-gray-500'}`}>
+                                {row.suggested_action_label || '—'}
                               </td>
                               <td className={`px-4 py-3 text-center text-xs font-medium ${joinInfo.cls}`}>
                                 {joinInfo.label}
