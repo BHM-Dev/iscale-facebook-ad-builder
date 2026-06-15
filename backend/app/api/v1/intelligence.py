@@ -485,7 +485,8 @@ def _generate_summary(rows: list, preset_label: str, date_from: str, date_to: st
             messages=[{"role": "user", "content": prompt}],
         )
         summary = "\n".join(b.text for b in response.content if hasattr(b, "text")).strip()
-        return _sanitize_summary_actions(summary, day_filter)
+        summary = _sanitize_summary_actions(summary, day_filter)
+        return _sanitize_summary_niche_names(summary, rows)
     except Exception as e:
         logger.error("Intelligence summary failed: %s", e)
         return f"Summary unavailable: {e}"
@@ -514,6 +515,44 @@ def _sanitize_summary_actions(summary: str, day_filter: str) -> str:
         return f"directionally {verb}" + (f" {target}" if target else "")
 
     cleaned = action_percent_pattern.sub(_directional_replacement, cleaned)
+    return cleaned
+
+
+def _sanitize_summary_niche_names(summary: str, rows: list) -> str:
+    """Rewrite common LLM paraphrases back to exact table niche names."""
+    if not summary:
+        return summary
+
+    cleaned = summary
+    placeholders = {}
+    niche_names = sorted(
+        {str(r.get("niche") or "").strip() for r in rows if r.get("niche")},
+        key=len,
+        reverse=True,
+    )
+
+    for niche in niche_names:
+        placeholder = f"__NICHE_NAME_{len(placeholders)}__"
+        placeholders[placeholder] = niche
+        cleaned = cleaned.replace(niche, placeholder)
+        aliases = set()
+        without_leading_symbols = re.sub(r'^[^\w]+', '', niche).strip()
+        for candidate in {niche, without_leading_symbols}:
+            if not candidate:
+                continue
+            if '&' in candidate:
+                aliases.add(re.sub(r'\s*&\s*', ' and ', candidate).strip())
+            if candidate != niche:
+                aliases.add(candidate)
+
+        for alias in sorted(aliases, key=len, reverse=True):
+            if not alias or alias == niche:
+                continue
+            cleaned = re.sub(rf'\b{re.escape(alias)}\b', placeholder, cleaned, flags=re.IGNORECASE)
+
+    for placeholder, niche in placeholders.items():
+        cleaned = cleaned.replace(placeholder, niche)
+
     return cleaned
 
 
