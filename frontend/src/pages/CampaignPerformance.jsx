@@ -115,6 +115,8 @@ function CampaignIntelligencePanel({ adAccountId, initialOpen = false, initialPr
   const handlePreset = (nextPreset) => {
     setPreset(nextPreset);
     if (nextPreset === 'custom') {
+      setCustomFrom('');
+      setCustomTo('');
       setData(null);
       setError(null);
       return;
@@ -298,10 +300,12 @@ function CampaignIntelligencePanel({ adAccountId, initialOpen = false, initialPr
                           <tr key={row.niche} className="hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-3">
                               <div className="font-medium text-gray-900">{row.niche}</div>
-                              <div className="text-xs text-gray-400 mt-0.5">
-                                {row.active_adset_count} active ad set{row.active_adset_count !== 1 ? 's' : ''}
-                                {row.current_daily_budget != null ? ` · $${Math.round(row.current_daily_budget)}/day` : ''}
-                              </div>
+                              {(row.active_adset_count != null || row.current_daily_budget != null) && (
+                                <div className="text-xs text-gray-400 mt-0.5">
+                                  {row.active_adset_count != null && `${row.active_adset_count} active ad set${row.active_adset_count !== 1 ? 's' : ''}`}
+                                  {row.current_daily_budget != null ? ` · $${Math.round(row.current_daily_budget)}/day` : ''}
+                                </div>
+                              )}
                             </td>
                             <td className="px-4 py-3 text-right text-gray-700">{formatMoney(row.spend)}</td>
                             <td className="px-4 py-3 text-right text-gray-700">{row.revenue > 0 ? formatMoney(row.revenue) : '—'}</td>
