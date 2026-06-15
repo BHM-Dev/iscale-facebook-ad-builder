@@ -408,7 +408,7 @@ def _aggregate_by_niche(meta_data: dict, rt_data: dict, day_filter: str, budget_
 
 
 def _generate_summary(rows: list, preset_label: str, date_from: str, date_to: str,
-                      day_filter: str, tracking_warning: dict) -> str:
+                      day_filter: str, tracking_warning: dict, action_queue: dict) -> str:
     if not _client:
         return "AI summary unavailable — ANTHROPIC_API_KEY not configured."
 
@@ -428,14 +428,25 @@ def _generate_summary(rows: list, preset_label: str, date_from: str, date_to: st
         + "\n".join(table_rows)
     )
 
+    def _queue_line(label: str, items: list) -> str:
+        return f"{label}: {', '.join(items)}" if items else f"{label}: None"
+
+    queue_block = "\n".join([
+        "DETERMINISTIC ACTION QUEUE (authoritative — do not contradict):",
+        _queue_line("Scale",          action_queue.get("scale", [])),
+        _queue_line("Cut/Pause",      action_queue.get("cut_or_pause", [])),
+        _queue_line("Watch",          action_queue.get("watch", [])),
+        _queue_line("Tracking check", action_queue.get("tracking_check", [])),
+    ])
+
     notes = []
-    if tracking_warning.get("has_warning"):
-        notes.append(tracking_warning["message"])
     if rt_approximate:
         notes.append(
             f"RedTrack revenue for this view ({preset_label}) covers the full date range, "
             f"not filtered by {day_filter} only — ROI is approximate."
         )
+    if tracking_warning.get("has_warning"):
+        notes.append(tracking_warning["message"])
 
     prompt = (
         f"You are an expert Meta Ads analyst. Period: {preset_label} ({date_from} to {date_to}"
@@ -444,12 +455,17 @@ def _generate_summary(rows: list, preset_label: str, date_from: str, date_to: st
         + table
         + "\n\nVerdicts: scale=ROI≥25% & spend≥$50 | run=ROI≥0% | watch=0%>ROI>-25% | pause=ROI≤-25% | "
         + "insufficient_data=spend<$50 | tracking_check=no RT revenue match\n\n"
+        + queue_block
+        + "\n\n"
         + ("\n".join(notes) + "\n\n" if notes else "")
         + "Write a 3–5 sentence plain-English executive summary. Lead with the biggest finding. "
         + "Name specific niches with dollar amounts. "
+        + "You must not contradict the DETERMINISTIC ACTION QUEUE above. "
+        + "Only name tracking-check niches from DETERMINISTIC ACTION QUEUE > Tracking check. "
+        + "Do not infer tracking issues from ROI, CPL, spend, or join status unless the niche is listed in Tracking check. "
         + "Do not recommend a harder action than the suggested_action_label for any niche. "
         + "For directional rows, use cautious language and say directional. "
-        + "Flag any tracking_check niches. "
+        + "If the tracking warning applies, mention it but only name niches from Tracking check. "
         + "End with one concrete next action. Direct and specific. No padding. "
         + "Output plain text only — no markdown, no bullet points, no headers, no bold."
     )
@@ -500,7 +516,7 @@ def niche_profitability(
     rows = _aggregate_by_niche(meta_data, rt_data, day_filter, budget_map)
     action_queue     = _build_action_queue(rows)
     tracking_warning = _build_tracking_warning(rows)
-    summary = _generate_summary(rows, preset_label, resolved_from, resolved_to, day_filter, tracking_warning)
+    summary = _generate_summary(rows, preset_label, resolved_from, resolved_to, day_filter, tracking_warning, action_queue)
 
     return {
         "question_set":      "niche_profitability",
