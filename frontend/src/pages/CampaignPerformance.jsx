@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2, Sparkles, Tag, ChevronLeft, BarChart2, Database, ShieldAlert, MessageSquare, Send, DollarSign, Check } from 'lucide-react';
+import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2, Sparkles, Tag, ChevronLeft, BarChart2, ShieldAlert, MessageSquare, Send, DollarSign, Check } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
@@ -1196,20 +1196,35 @@ export default function CampaignPerformance() {
   }, [adsets, targetAdsetId]);
 
 
-  const syncFromMeta = async () => {
+  const syncAll = async () => {
     setSyncing(true);
-    showInfo('Importing campaigns and ad sets from Meta...');
+    setSyncingRT(true);
+    showInfo('Syncing Meta and RedTrack data...');
     try {
-      const params = adAccountId ? `?ad_account_id=${adAccountId}` : '';
-      const res = await authFetch(`${API_BASE}/facebook/sync${params}`, { method: 'POST' });
-      if (!res.ok) throw new Error('Sync failed');
-      const result = await res.json();
+      const metaParams = adAccountId ? `?ad_account_id=${adAccountId}` : '';
+      const rtParams = datePreset === 'custom' && dateFrom && dateTo
+        ? new URLSearchParams({ date_from: dateFrom, date_to: dateTo })
+        : new URLSearchParams({ date_preset: datePreset });
+
+      const [metaRes] = await Promise.all([
+        authFetch(`${API_BASE}/facebook/sync${metaParams}`, { method: 'POST' }),
+        authFetch(`${API_BASE}/redtrack/sync?${rtParams}`, { method: 'POST' }).catch(() => null),
+      ]);
+
+      if (!metaRes.ok) {
+        const e = await metaRes.json().catch(() => ({}));
+        throw new Error(e.detail || 'Meta sync failed');
+      }
+      const result = await metaRes.json();
       showSuccess(
         `Sync complete — ${result.campaigns.created} campaigns, ${result.adsets.created} ad sets imported. ${result.adsets.updated} ad sets updated.`
       );
       loadAdsets();
-    } catch (e) { showError(e.message); }
-    finally { setSyncing(false); }
+      const from = datePreset === 'custom' ? dateFrom : null;
+      const to   = datePreset === 'custom' ? dateTo   : null;
+      loadBulkInsights(adAccountId, datePreset, from, to);
+    } catch (e) { showError(e.message || 'Sync failed'); }
+    finally { setSyncing(false); setSyncingRT(false); }
   };
 
   const assignBrandToAdset = async (adsetId, brandId, brandName) => {
@@ -1228,28 +1243,6 @@ export default function CampaignPerformance() {
       showSuccess(brandId ? `Brand assigned to ad set` : 'Brand removed from ad set');
     } catch (e) { showError(e.message); }
     finally { setAssigningBrand(null); }
-  };
-
-  const syncRedTrack = async () => {
-    setSyncingRT(true);
-    showInfo('Syncing RedTrack data...');
-    try {
-      const params = datePreset === 'custom' && dateFrom && dateTo
-        ? new URLSearchParams({ date_from: dateFrom, date_to: dateTo })
-        : new URLSearchParams({ date_preset: datePreset });
-      const res = await authFetch(`${API_BASE}/redtrack/sync?${params}`, { method: 'POST' });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Sync failed'); }
-      const result = await res.json();
-      const from = datePreset === 'custom' ? dateFrom : null;
-      const to   = datePreset === 'custom' ? dateTo   : null;
-      if (result.synced > 0) {
-        showSuccess(`RedTrack synced — ${result.synced} ad sets updated. Refreshing stats...`);
-        loadBulkInsights(adAccountId, datePreset, from, to);
-      } else {
-        showInfo(result.message || 'No RedTrack data returned.');
-      }
-    } catch (e) { showError(e.message); }
-    finally { setSyncingRT(false); }
   };
 
   const saveBudget = async (fbAdsetId) => {
@@ -1467,7 +1460,7 @@ export default function CampaignPerformance() {
     return [...map.values()].map(group => ({
       ...group,
       fbCampaignId: group.adsets[0]?.fb_campaign_id ?? null,
-      campaignBudgetOptimization: group.adsets[0]?.campaign_budget_optimization ?? null,
+      campaignBudgetOptimization: group.adsets[0]?.campaign_budget_optimization || (group.adsets[0]?.campaign_daily_budget ? 'CBO' : null),
       campaignDailyBudget: group.adsets[0]?.campaign_daily_budget ?? null,
       cpl: group.totalSpend > 0 && group.totalLeads > 0 ? group.totalSpend / group.totalLeads : null,
       rtRoas: group.totalSpend > 0 && group.totalRevenue > 0 ? group.totalRevenue / group.totalSpend : null,
@@ -1534,22 +1527,13 @@ export default function CampaignPerformance() {
             + Add Rule
           </button>
           <button
-            onClick={syncFromMeta}
-            disabled={syncing}
+            onClick={syncAll}
+            disabled={syncing || syncingRT}
             className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
-            title="Import campaign + ad set structure from Meta Ads Manager"
+            title="Import campaign + ad set structure from Meta and refresh RedTrack conversion data"
           >
-            <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
-            {syncing ? 'Syncing...' : 'Sync Meta'}
-          </button>
-          <button
-            onClick={syncRedTrack}
-            disabled={syncingRT}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-blue-200 text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-50"
-            title="Pull latest RedTrack conversion + revenue data into cache"
-          >
-            <Database size={14} className={syncingRT ? 'animate-pulse' : ''} />
-            {syncingRT ? 'Syncing...' : 'Sync RedTrack'}
+            <RefreshCw size={14} className={(syncing || syncingRT) ? 'animate-spin' : ''} />
+            {(syncing || syncingRT) ? 'Syncing...' : 'Sync'}
           </button>
           <div className="flex flex-col items-end gap-1">
             <div className="flex items-center gap-2">
@@ -1782,9 +1766,12 @@ export default function CampaignPerformance() {
                             title="Edit campaign budget settings"
                           >
                             <DollarSign size={12} />
-                            {group.campaignBudgetOptimization === 'CBO' && group.campaignDailyBudget
-                              ? `$${(group.campaignDailyBudget / 100).toFixed(0)}/day`
-                              : group.campaignBudgetOptimization === 'CBO'
+                            {group.campaignBudgetOptimization === 'CBO' && group.campaignDailyBudget ? (
+                              <span className="flex flex-col items-end leading-tight">
+                                <span>${(group.campaignDailyBudget / 100).toFixed(0)}/day</span>
+                                <span className="text-[9px] text-gray-400 font-normal">campaign</span>
+                              </span>
+                            ) : group.campaignBudgetOptimization === 'CBO'
                                 ? 'CBO'
                                 : group.campaignBudgetOptimization === 'ABO'
                                   ? 'ABO'
