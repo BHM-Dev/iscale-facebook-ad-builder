@@ -403,7 +403,7 @@ export default function Dashboard() {
   };
 
   const scaleAdset = async (a) => {
-    const isCBO = a.adset.campaign_budget_optimization === 'CBO';
+    const isCBO = a.adset.campaign_budget_optimization === 'CBO' || !!a.adset.campaign_daily_budget;
     const currentCents = isCBO
       ? a.adset.campaign_daily_budget
       : a.adset.daily_budget;
@@ -619,7 +619,7 @@ export default function Dashboard() {
     .slice(0, 8);
 
   const BudgetButton = ({ adset }) => {
-    const isCBO = adset.campaign_budget_optimization === 'CBO';
+    const isCBO = adset.campaign_budget_optimization === 'CBO' || !!adset.campaign_daily_budget;
     const fbCampaignId = adset.fb_campaign_id;
 
     if (isCBO) {
@@ -638,7 +638,12 @@ export default function Dashboard() {
             className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-white border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 text-gray-600 hover:text-indigo-700 transition-colors shadow-sm font-medium"
           >
             <DollarSign size={11} />
-            {adset.campaign_daily_budget ? `$${(adset.campaign_daily_budget / 100).toFixed(0)}/day` : 'CBO'}
+            {adset.campaign_daily_budget ? (
+              <span className="flex flex-col items-end leading-tight">
+                <span>${(adset.campaign_daily_budget / 100).toFixed(0)}/day</span>
+                <span className="text-[9px] text-gray-400 font-normal">campaign</span>
+              </span>
+            ) : 'CBO'}
           </button>
 
           {budgetPopover === fbCampaignId && (
@@ -943,6 +948,11 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="overflow-x-auto">
+              {topPerformers.some(a => a.adset.campaign_budget_optimization === 'CBO' || !!a.adset.campaign_daily_budget) && (
+                <div className="px-5 py-2 bg-blue-50 border-b border-blue-100 text-[11px] text-blue-600">
+                  All budgets are campaign-level (CBO) &mdash; +20% scales the full campaign, not just this ad set.
+                </div>
+              )}
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100">
@@ -986,7 +996,7 @@ export default function Dashboard() {
                       <td className="px-3 py-3">
                         <div className="flex items-center gap-1.5">
                           {(() => {
-                            const isCBO = a.adset.campaign_budget_optimization === 'CBO';
+                            const isCBO = a.adset.campaign_budget_optimization === 'CBO' || !!a.adset.campaign_daily_budget;
                             const hasBudget = isCBO ? !!a.adset.campaign_daily_budget : !!a.adset.daily_budget;
                             const scaleKey = isCBO ? `cbo-${a.fb_campaign_id}` : a.fb_adset_id;
                             const isScaling = scalingAdset.has(scaleKey);
@@ -994,7 +1004,7 @@ export default function Dashboard() {
                               <button
                                 onClick={() => scaleAdset(a)}
                                 disabled={isScaling || !hasBudget}
-                                title={hasBudget ? '+20% budget' : 'Set budget first'}
+                                title={hasBudget ? (isCBO ? '+20% campaign budget - affects all ad sets in this campaign' : '+20% ad set budget') : 'Set budget first'}
                                 className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-green-700 border border-green-200 bg-green-50 hover:bg-green-100 transition-colors disabled:opacity-40"
                               >
                                 {isScaling ? <RefreshCw size={11} className="animate-spin" /> : '+20%'}

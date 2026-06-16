@@ -239,7 +239,9 @@ def read_saved_adsets(
             "fb_campaign_id": a.campaign.fb_campaign_id if a.campaign else None,
             "campaign_name": a.campaign.name if a.campaign else None,
             "campaign_status": a.campaign.status if a.campaign else None,
-            "campaign_budget_optimization": a.campaign.budget_type if a.campaign else None,
+            "campaign_budget_optimization": (
+                a.campaign.budget_type or ('CBO' if a.campaign.daily_budget else None)
+            ) if a.campaign else None,
             "campaign_daily_budget": a.campaign.daily_budget if a.campaign else None,
             "daily_budget": a.daily_budget,
             "brand_id": a.brand_id,
