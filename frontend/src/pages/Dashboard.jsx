@@ -309,32 +309,26 @@ export default function Dashboard() {
     }
   }, [showError]);
 
-  const syncRT = useCallback(async () => {
+
+  const syncAll = useCallback(async () => {
+    setSyncing(true);
     setSyncingRT(true);
     try {
       const { preset: p, dateFrom: df, dateTo: dt } = activeRange;
       const params = new URLSearchParams();
       if (df && dt) { params.set('date_from', df); params.set('date_to', dt); }
       else { params.set('date_preset', p || 'today'); }
-      const res = await authFetch(`${API_URL}/redtrack/sync?${params}`, { method: 'POST' });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Sync failed'); }
-      const result = await res.json();
-      if (result.synced > 0) {
-        load(activeRange); // re-fetch dashboard with fresh RT data
-      }
-    } catch { /* silently fail — RT sync is best-effort */ }
-    finally { setSyncingRT(false); }
-  }, [activeRange, load]);
 
-  const syncFromMeta = useCallback(async () => {
-    setSyncing(true);
-    try {
-      const res = await authFetch(`${API_URL}/facebook/sync`, { method: 'POST' });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Sync failed'); }
-      showSuccess('Meta sync complete');
+      const [metaRes] = await Promise.all([
+        authFetch(`${API_URL}/facebook/sync`, { method: 'POST' }),
+        authFetch(`${API_URL}/redtrack/sync?${params}`, { method: 'POST' }).catch(() => null),
+      ]);
+
+      if (!metaRes.ok) { const e = await metaRes.json(); throw new Error(e.detail || 'Meta sync failed'); }
+      showSuccess('Sync complete');
       load(activeRange);
-    } catch (e) { showError(e.message || 'Meta sync failed'); }
-    finally { setSyncing(false); }
+    } catch (e) { showError(e.message || 'Sync failed'); }
+    finally { setSyncing(false); setSyncingRT(false); }
   }, [activeRange, load, showSuccess, showError]);
 
   const pauseAdset = useCallback(async (fb_adset_id) => {
@@ -779,22 +773,13 @@ export default function Dashboard() {
             onApply={handleApply}
           />
           <button
-            onClick={syncFromMeta}
-            disabled={syncing || loading}
+            onClick={syncAll}
+            disabled={syncing || syncingRT || loading}
             className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 border border-gray-200 hover:bg-gray-50 transition-colors disabled:opacity-40"
-            title="Pull latest campaign and ad set data from Meta"
+            title="Pull latest campaign data from Meta and revenue data from RedTrack"
           >
-            <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
-            Sync Meta
-          </button>
-          <button
-            onClick={syncRT}
-            disabled={syncingRT || loading}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-blue-600 border border-blue-200 hover:bg-blue-50 transition-colors disabled:opacity-40"
-            title="Pull latest RedTrack revenue data for this date range"
-          >
-            <RefreshCw size={13} className={syncingRT ? 'animate-spin' : ''} />
-            Sync RedTrack
+            <RefreshCw size={13} className={(syncing || syncingRT) ? 'animate-spin' : ''} />
+            Sync
           </button>
           <button
             onClick={() => load(activeRange)}
