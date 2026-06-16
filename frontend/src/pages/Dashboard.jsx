@@ -205,6 +205,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { showSuccess, showError } = useToast();
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [syncingRT, setSyncingRT] = useState(false);
   const [pausingAdsets, setPausingAdsets] = useState(new Set());
   const [pausedOverrides, setPausedOverrides] = useState(new Set()); // fb_adset_ids paused this session
@@ -324,6 +325,17 @@ export default function Dashboard() {
     } catch { /* silently fail — RT sync is best-effort */ }
     finally { setSyncingRT(false); }
   }, [activeRange, load]);
+
+  const syncFromMeta = useCallback(async () => {
+    setSyncing(true);
+    try {
+      const res = await authFetch(`${API_URL}/facebook/sync`, { method: 'POST' });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Sync failed'); }
+      showSuccess('Meta sync complete');
+      load(activeRange);
+    } catch (e) { showError(e.message || 'Meta sync failed'); }
+    finally { setSyncing(false); }
+  }, [activeRange, load, showSuccess, showError]);
 
   const pauseAdset = useCallback(async (fb_adset_id) => {
     setPausingAdsets(prev => new Set(prev).add(fb_adset_id));
@@ -766,6 +778,15 @@ export default function Dashboard() {
             setDateTo={setDateTo}
             onApply={handleApply}
           />
+          <button
+            onClick={syncFromMeta}
+            disabled={syncing || loading}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 border border-gray-200 hover:bg-gray-50 transition-colors disabled:opacity-40"
+            title="Pull latest campaign and ad set data from Meta"
+          >
+            <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
+            Sync Meta
+          </button>
           <button
             onClick={syncRT}
             disabled={syncingRT || loading}
