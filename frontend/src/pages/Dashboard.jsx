@@ -641,7 +641,7 @@ export default function Dashboard() {
             {adset.campaign_daily_budget ? (
               <span className="flex flex-col items-end leading-tight">
                 <span>${(adset.campaign_daily_budget / 100).toFixed(0)}/day</span>
-                <span className="text-[9px] text-gray-400 font-normal">campaign</span>
+                <span className="text-[9px] font-semibold text-blue-500 bg-blue-50 px-1 rounded">campaign</span>
               </span>
             ) : 'CBO'}
           </button>
