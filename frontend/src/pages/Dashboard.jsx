@@ -1158,8 +1158,9 @@ export default function Dashboard() {
         {!collapsedSections.nicheSummary && (loading ? (
           <div className="p-5 space-y-3">
             {[0, 1, 2].map(row => (
-              <div key={row} className="grid grid-cols-7 gap-4 items-center">
+              <div key={row} className="grid grid-cols-8 gap-4 items-center">
                 <div className="col-span-2 h-4 rounded bg-gray-100 animate-pulse" />
+                <div className="h-4 rounded bg-gray-100 animate-pulse" />
                 <div className="h-4 rounded bg-gray-100 animate-pulse" />
                 <div className="h-4 rounded bg-gray-100 animate-pulse" />
                 <div className="h-4 rounded bg-gray-100 animate-pulse" />
@@ -1181,6 +1182,7 @@ export default function Dashboard() {
                   <th className="px-5 py-3 text-right">Ad Sets</th>
                   <th className="px-5 py-3 text-right">Spend</th>
                   <th className="px-5 py-3 text-right">Revenue</th>
+                  <th className="px-5 py-3 text-right">Profit</th>
                   <th className="px-5 py-3 text-right">ROAS</th>
                   <th className="px-5 py-3 text-right">CPL</th>
                   <th className="px-5 py-3 text-right">Leads</th>
@@ -1194,6 +1196,15 @@ export default function Dashboard() {
                     <td className="px-5 py-3 text-right text-gray-700">{formatMoney(row.total_spend)}</td>
                     <td className="px-5 py-3 text-right text-gray-700">
                       {row.total_revenue > 0 ? formatMoney(row.total_revenue) : '—'}
+                    </td>
+                    <td className={`px-5 py-3 text-right font-semibold ${
+                      row.total_revenue === 0 ? 'text-gray-400'
+                      : (row.total_revenue - row.total_spend) >= 0 ? 'text-green-600'
+                      : 'text-red-600'
+                    }`}>
+                      {row.total_revenue > 0
+                        ? formatMoney(row.total_revenue - row.total_spend)
+                        : '—'}
                     </td>
                     <td className={`px-5 py-3 text-right font-semibold ${
                       row.avg_roas == null ? 'text-gray-400'

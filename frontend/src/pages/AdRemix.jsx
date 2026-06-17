@@ -10,6 +10,13 @@ import ProfileSelectionStep from '../components/steps/ProfileSelectionStep';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
+const formatResearchAngle = (angle) => {
+    if (!angle) return '';
+    return angle
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, char => char.toUpperCase());
+};
+
 export default function AdRemix() {
     const { brands, customerProfiles } = useBrands();
     const { showError, showSuccess } = useToast();
@@ -151,6 +158,7 @@ export default function AdRemix() {
             const inspiration = JSON.parse(raw);
             localStorage.removeItem('pendingResearchInspiration');
             setResearchInspiration(inspiration);
+            setCurrentStep(2); // skip "Model a live ad" — Research already provides the source context
             // Research inspiration does NOT pre-fill offer/messaging — Joel writes original copy.
             // We only pass the competitor context so the AI can write in the right angle.
         } catch (e) {
@@ -199,6 +207,12 @@ export default function AdRemix() {
             setCurrentStep(5);
         }
     }, [currentStep, brandId, customerProfiles, brands]);
+
+    // Pre-fill the campaign hook from the Research angle once Joel reaches Campaign Details.
+    useEffect(() => {
+        if (currentStep !== 5 || !researchInspiration?.angle || wizardData.campaignDetails.offer) return;
+        updateCampaignDetails('offer', formatResearchAngle(researchInspiration.angle));
+    }, [currentStep, researchInspiration, wizardData.campaignDetails.offer]);
 
     const steps = [
         { id: 1, name: 'Template', icon: Image },
@@ -777,14 +791,25 @@ export default function AdRemix() {
 
                 {/* Step 2: Brand Selection */}
                 {currentStep === 2 && (
-                    <BrandSelectionStep
-                        brands={brands}
-                        selectedBrand={wizardData.brand}
-                        onSelect={(brand) => {
-                            updateData('brand', brand);
-                            setCurrentStep(3);
-                        }}
-                    />
+                    <div>
+                        {researchInspiration && (
+                            <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm">
+                                <div className="text-xs font-semibold text-blue-500 uppercase tracking-wide mb-1">Modeling competitor ad</div>
+                                <div className="font-medium text-gray-800 truncate">{researchInspiration.advertiser}</div>
+                                {researchInspiration.headline && (
+                                    <div className="text-gray-600 text-xs mt-0.5 line-clamp-2">"{researchInspiration.headline}"</div>
+                                )}
+                            </div>
+                        )}
+                        <BrandSelectionStep
+                            brands={brands}
+                            selectedBrand={wizardData.brand}
+                            onSelect={(brand) => {
+                                updateData('brand', brand);
+                                setCurrentStep(3);
+                            }}
+                        />
+                    </div>
                 )}
 
                 {/* Step 3: Product Selection */}
@@ -826,6 +851,14 @@ export default function AdRemix() {
                         {prefillSource && (
                             <div className="mb-5 p-3 bg-purple-50 border border-purple-200 rounded-lg text-xs text-purple-700">
                                 <span className="font-semibold">Source ad:</span> {prefillSource.ad_name} — edit the fields below to remix with a new angle, or leave them to generate copy variations on the same hook.
+                            </div>
+                        )}
+
+                        {researchInspiration && (researchInspiration.headline || researchInspiration.body) && (
+                            <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-500">
+                                <div className="font-semibold text-gray-700 mb-1">Competitor reference — {researchInspiration.advertiser}</div>
+                                {researchInspiration.headline && <div className="font-medium text-gray-600">"{researchInspiration.headline}"</div>}
+                                {researchInspiration.body && <div className="mt-1 line-clamp-3 text-gray-500">{researchInspiration.body}</div>}
                             </div>
                         )}
 

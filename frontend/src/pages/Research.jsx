@@ -179,7 +179,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
             className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors"
           >
             <Zap size={12} />
-            Use as Inspiration
+            Build from this ad
           </button>
           <SaveButton
             ad={ad}
@@ -241,7 +241,7 @@ function SavedCard({ ad, onUnsave, onUseAsInspiration }) {
         className="w-full inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors"
       >
         <Zap size={11} />
-        Use as Inspiration
+        Build from this ad
       </button>
     </div>
   );
