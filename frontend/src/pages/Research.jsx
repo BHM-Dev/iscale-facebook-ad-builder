@@ -279,6 +279,8 @@ export default function Research() {
   const [savedAdIds, setSavedAdIds] = useState(new Set());
   const [browseLoading, setBrowseLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [browseError, setBrowseError] = useState('');
+  const [refreshSummary, setRefreshSummary] = useState(null);
   const [showClearModal, setShowClearModal] = useState(false);
   const [clearing, setClearing] = useState(false);
 
@@ -294,6 +296,7 @@ export default function Research() {
 
   useEffect(() => {
     if (!verticalConfig) return;
+    setRefreshSummary(null);
     loadBrowseAds();
     loadSavedAds();
   }, [activeVertical, activeSubVertical, verticalConfig]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -322,6 +325,7 @@ export default function Research() {
 
   const loadBrowseAds = async () => {
     setBrowseLoading(true);
+    setBrowseError('');
     setBrowseAds([]);
     try {
       const params = new URLSearchParams();
@@ -335,7 +339,7 @@ export default function Research() {
       if (!res.ok) throw new Error('Failed to load ads');
       setBrowseAds(await res.json());
     } catch (e) {
-      // Non-fatal — empty state handles it
+      setBrowseError(e.message || 'Failed to load ads');
     } finally {
       setBrowseLoading(false);
     }
@@ -378,10 +382,16 @@ export default function Research() {
         throw new Error(err.detail || 'Refresh failed');
       }
       const result = await res.json();
+      setRefreshSummary(result);
       if (result.keywords_run === 0) {
         showError('Refresh failed — Facebook token may be missing. Ping Steve or Golden to check the API config.');
+      } else if (result.first_error) {
+        showInfo(`Refresh partially completed — ${result.keywords_run} keywords checked, ${result.total_new} new ads. First error: ${result.first_error}`);
+        loadBrowseAds();
+        loadSavedAds();
       } else if (result.total_new === 0) {
-        showSuccess(`Already up to date — ${result.keywords_run} keywords checked, no new ads`);
+        const duplicateText = result.total_duplicate > 0 ? `, ${result.total_duplicate} duplicates seen` : '';
+        showInfo(`No new ads — ${result.keywords_run} keywords checked${duplicateText}`);
         loadBrowseAds();
         loadSavedAds();
       } else {
@@ -459,6 +469,10 @@ export default function Research() {
       headline: ad.headline,
       body: ad.ad_copy,
       advertiser: ad.brand_name,
+      cta: ad.cta_text,
+      mediaUrl: ad.media_url,
+      adLink: ad.ad_link,
+      scrapedAdId: ad.id,
       vertical: currentVerticalLabel,
       angle: ad.angle_tag,
       source: 'research',
@@ -659,11 +673,26 @@ export default function Research() {
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
               {[1,2,3,4,5,6].map(i => <SkeletonCard key={i} />)}
             </div>
+          ) : browseError ? (
+            <div className="bg-white rounded-xl border border-red-100 px-6 py-16 text-center">
+              <p className="text-red-600 font-medium mb-1">Couldn’t load ads for {currentVerticalLabel}</p>
+              <p className="text-sm text-gray-400 mb-4">{browseError}</p>
+              <button
+                type="button"
+                onClick={loadBrowseAds}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 transition-colors"
+              >
+                <RefreshCw size={14} />
+                Try again
+              </button>
+            </div>
           ) : browseAds.length === 0 ? (
             <div className="bg-white rounded-xl border border-gray-200 px-6 py-16 text-center">
               <p className="text-gray-500 font-medium mb-1">No ads yet for {currentVerticalLabel}</p>
               <p className="text-sm text-gray-400 mb-4">
-                Click <strong>Refresh Vertical</strong> to pull competitor ads from the Facebook Ad Library.
+                {refreshSummary
+                  ? `${refreshSummary.keywords_run || 0} keywords checked. ${refreshSummary.total_duplicate || 0} duplicates seen, no new ads kept.`
+                  : <>Click <strong>Refresh Vertical</strong> to pull competitor ads from the Facebook Ad Library.</>}
               </p>
               <button
                 type="button"

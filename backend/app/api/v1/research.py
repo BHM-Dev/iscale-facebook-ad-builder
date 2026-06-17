@@ -536,6 +536,7 @@ def get_saved_ads(db: Session = Depends(get_db)):
             "ad_copy": ad.ad_copy,
             "cta_text": ad.cta_text,
             "media_type": ad.media_type,
+            "media_url": ad.media_url,
             "ad_link": ad.ad_link,
             "start_date": ad.start_date,
             "seen_count": ad.seen_count or 1,

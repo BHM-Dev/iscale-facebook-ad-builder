@@ -158,6 +158,17 @@ export default function AdRemix() {
             const inspiration = JSON.parse(raw);
             localStorage.removeItem('pendingResearchInspiration');
             setResearchInspiration(inspiration);
+            if (inspiration.vertical) setPendingNiche(inspiration.vertical);
+            setWizardData(prev => ({
+                ...prev,
+                template: {
+                    id: null,
+                    name: `${inspiration.advertiser || 'Research'} competitor ad`,
+                    image_url: inspiration.mediaUrl || null,
+                    fromMeta: true,
+                    fromResearch: true,
+                },
+            }));
             setCurrentStep(2); // skip "Model a live ad" — Research already provides the source context
             // Research inspiration does NOT pre-fill offer/messaging — Joel writes original copy.
             // We only pass the competitor context so the AI can write in the right angle.
@@ -551,14 +562,14 @@ export default function AdRemix() {
     const handleReconstruct = async () => {
         setLoading(true);
         try {
-            const isMetaSource = wizardData.template?.fromMeta;
+            const isMetaSource = wizardData.template?.fromMeta || researchInspiration;
             const endpoint = isMetaSource
                 ? `${API_URL}/ad-remix/reconstruct-from-url`
                 : `${API_URL}/ad-remix/reconstruct`;
 
             const payload = isMetaSource
                 ? {
-                    source_image_url: wizardData.template.image_url,
+                    source_image_url: wizardData.template?.image_url || null,
                     brand_id: wizardData.brand.id,
                     product_id: wizardData.product.id,
                     profile_id: wizardData.profile.id,
@@ -798,6 +809,11 @@ export default function AdRemix() {
                                 <div className="font-medium text-gray-800 truncate">{researchInspiration.advertiser}</div>
                                 {researchInspiration.headline && (
                                     <div className="text-gray-600 text-xs mt-0.5 line-clamp-2">"{researchInspiration.headline}"</div>
+                                )}
+                                {researchInspiration.mediaUrl ? (
+                                    <div className="mt-2 text-xs text-blue-600">Creative image will carry into the remix.</div>
+                                ) : (
+                                    <div className="mt-2 text-xs text-blue-600">No image was stored for this ad, so the remix will use a generic direct-response layout.</div>
                                 )}
                             </div>
                         )}
