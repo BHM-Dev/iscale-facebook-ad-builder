@@ -450,10 +450,10 @@ export default function AdRemix() {
         if (!pushModal?.image_generation_prompt) return;
         setImageGenerating(true);
         try {
-            // Use the winning ad's image as a reference (iterate mode) when available.
-            // kie.ai will preserve the scene and adjust lighting/mood only.
-            // Falls back to text-to-image if no reference image exists.
-            const referenceImageUrl = wizardData.template?.image_url || null;
+            // Use owned winning/template images as iterate references.
+            // Research images are competitor references only, so final Meta images
+            // must be generated from text instead of deriving from competitor creative.
+            const referenceImageUrl = wizardData.template?.fromResearch ? null : (wizardData.template?.image_url || null);
 
             // Carry overlay settings from BatchGenerate localStorage so Ad Remix
             // images are consistently branded (niche label, offer line, CTA, logo).
@@ -467,7 +467,7 @@ export default function AdRemix() {
                 count: 1,
                 imageSizes: [{ width: 1080, height: 1080, name: 'Square' }],
                 niche: nicheLabel,
-                imageMode: 'iterate',
+                imageMode: referenceImageUrl ? 'iterate' : 'generate',
                 ...(referenceImageUrl && {
                     useProductImage: true,
                     productShots: [referenceImageUrl],
