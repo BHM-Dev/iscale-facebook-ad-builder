@@ -51,6 +51,7 @@ NEW BRAND DATA:
 - Campaign Urgency: {campaign_urgency}
 - Key Messaging: {campaign_messaging}
 - Niche: {niche}
+{competitor_context}
 
 CRITICAL RULES:
 1. Keep the blueprint's LAYOUT FRAMEWORK exactly (if it's a 4-panel comic, make this a 4-panel comic)
@@ -58,6 +59,7 @@ CRITICAL RULES:
 3. Match the blueprint's TEXT HIERARCHY (if headline is a question, make yours a question)
 4. Incorporate the same PSYCHOLOGICAL TRIGGERS (if original used social proof, include testimonials/stats)
 5. Match the blueprint's VISUAL STYLE (if it's pop art, describe pop art visuals)
+6. If competitor context is provided, study its angle and vocabulary, but do NOT copy the competitor's wording or brand.
 
 Return ONLY valid JSON with this exact structure:
 
@@ -89,7 +91,8 @@ def build_reconstruction_prompt(
     campaign_offer: str,
     campaign_urgency: str,
     campaign_messaging: str,
-    niche: str = ""
+    niche: str = "",
+    competitor_context: str = "",
 ) -> str:
     """Build the complete prompt for ad reconstruction"""
     import json
@@ -109,4 +112,5 @@ def build_reconstruction_prompt(
         campaign_urgency=campaign_urgency or "",
         campaign_messaging=campaign_messaging,
         niche=niche or "same as original",
+        competitor_context=competitor_context or "",
     )

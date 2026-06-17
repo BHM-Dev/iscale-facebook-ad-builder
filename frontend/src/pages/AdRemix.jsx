@@ -88,6 +88,8 @@ export default function AdRemix() {
         try {
             const creative = JSON.parse(raw);
             localStorage.removeItem('pendingRemixCreative');
+            localStorage.removeItem('pendingWinningAdTemplate');
+            localStorage.removeItem('pendingResearchInspiration');
             setPrefillSource(creative);
             // Carry niche through from the ad set name (parsed upstream in RemixDrawer)
             if (creative.niche) setPendingNiche(creative.niche);
@@ -134,6 +136,7 @@ export default function AdRemix() {
         try {
             const tmpl = JSON.parse(raw);
             localStorage.removeItem('pendingWinningAdTemplate');
+            localStorage.removeItem('pendingResearchInspiration');
             setWinningAdTemplate(tmpl);
             setWizardData(prev => ({
                 ...prev,
@@ -152,6 +155,7 @@ export default function AdRemix() {
 
     // On mount: check for a competitor ad passed in from the Research section
     useEffect(() => {
+        if (localStorage.getItem('pendingRemixCreative') || localStorage.getItem('pendingWinningAdTemplate')) return;
         const raw = localStorage.getItem('pendingResearchInspiration');
         if (!raw) return;
         try {
@@ -254,6 +258,14 @@ export default function AdRemix() {
         setWizardData(prev => ({
             ...prev,
             campaignDetails: { ...prev.campaignDetails, [field]: value }
+        }));
+    };
+
+    const clearResearchContext = () => {
+        setResearchInspiration(null);
+        setWizardData(prev => ({
+            ...prev,
+            template: prev.template?.fromResearch ? null : prev.template,
         }));
     };
 
@@ -373,6 +385,7 @@ export default function AdRemix() {
             if (saved) savedForm = JSON.parse(saved);
         } catch (_) {}
         const lastPageId = localStorage.getItem('lastUsedPageId') || '';
+        const isResearchTemplate = Boolean(wizardData.template?.fromResearch);
         setPushForm({
             adset_id: savedForm.adset_id || '',
             // sessionStorage has same-session preference; fall back to localStorage for cross-session persistence
@@ -381,8 +394,9 @@ export default function AdRemix() {
             // falling back to any previously entered URL from this session.
             website_url: savedForm.website_url || remixLinkUrl || '',
             lead_form_id: savedForm.lead_form_id || '',
-            // Pre-fill with the base/template image so Joel can push copy-only without generating
-            image_url: wizardData.template?.image_url || '',
+            // Research images are competitor references, not owned final creative.
+            // Winning/template images can prefill; Research must generate or paste an owned image.
+            image_url: isResearchTemplate ? '' : (wizardData.template?.image_url || ''),
             status: savedForm.status || 'PAUSED',
         });
         setAdSets([]);
@@ -718,7 +732,7 @@ export default function AdRemix() {
                     </div>
                     <button
                         type="button"
-                        onClick={() => setResearchInspiration(null)}
+                        onClick={clearResearchContext}
                         className="flex-shrink-0 text-blue-400 hover:text-blue-600"
                         aria-label="Dismiss inspiration context"
                     >
@@ -811,7 +825,7 @@ export default function AdRemix() {
                                     <div className="text-gray-600 text-xs mt-0.5 line-clamp-2">"{researchInspiration.headline}"</div>
                                 )}
                                 {researchInspiration.mediaUrl ? (
-                                    <div className="mt-2 text-xs text-blue-600">Creative image will carry into the remix.</div>
+                                    <div className="mt-2 text-xs text-blue-600">Creative image will be used as remix reference when available.</div>
                                 ) : (
                                     <div className="mt-2 text-xs text-blue-600">No image was stored for this ad, so the remix will use a generic direct-response layout.</div>
                                 )}

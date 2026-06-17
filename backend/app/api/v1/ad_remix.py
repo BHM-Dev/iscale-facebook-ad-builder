@@ -23,6 +23,34 @@ from app.services.ad_remix_service import deconstruct_template, reconstruct_ad
 router = APIRouter()
 
 
+def _format_research_context(research_inspiration: dict | None) -> str:
+    """Format competitor context for the prompt without telling the model to copy it."""
+    if not research_inspiration:
+        return ""
+
+    advertiser = research_inspiration.get("advertiser") or "Unknown competitor"
+    angle = research_inspiration.get("angle") or ""
+    headline = research_inspiration.get("headline") or ""
+    body = research_inspiration.get("body") or ""
+    cta = research_inspiration.get("cta") or ""
+
+    lines = [
+        "",
+        "COMPETITOR AD CONTEXT FROM RESEARCH:",
+        f"- Advertiser: {advertiser}",
+    ]
+    if angle:
+        lines.append(f"- Angle tag: {angle}")
+    if headline:
+        lines.append(f"- Competitor headline to study, not copy: {headline}")
+    if body:
+        lines.append(f"- Competitor body to study, not copy: {body[:700]}")
+    if cta:
+        lines.append(f"- Competitor CTA: {cta}")
+    lines.append("- Instruction: create original copy for the selected brand using the same strategic angle, not the same words.")
+    return "\n".join(lines)
+
+
 @router.post("/deconstruct", response_model=AdBlueprint)
 async def deconstruct_ad_template(
     request: DeconstructRequest,
@@ -106,6 +134,7 @@ async def reconstruct_ad_from_blueprint(
         campaign_urgency=request.campaign_urgency,
         campaign_messaging=request.campaign_messaging,
         niche=request.niche or "",
+        competitor_context="",
     )
 
     # Reconstruct the blueprint
@@ -155,6 +184,7 @@ async def reconstruct_from_url(
         campaign_urgency=request.campaign_urgency,
         campaign_messaging=request.campaign_messaging,
         niche=request.niche or "",
+        competitor_context=_format_research_context(request.research_inspiration),
     )
 
     # Generic lead-gen blueprint used as fallback when no image is available

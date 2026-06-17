@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 
 
@@ -36,6 +36,7 @@ class BrandData(BaseModel):
     campaign_urgency: Optional[str] = None
     campaign_messaging: str
     niche: Optional[str] = ""
+    competitor_context: Optional[str] = None
 
 
 class AdConcept(BaseModel):
@@ -75,3 +76,4 @@ class ReconstructFromUrlRequest(BaseModel):
     campaign_urgency: Optional[str] = None
     campaign_messaging: str
     niche: Optional[str] = ""
+    research_inspiration: Optional[Dict[str, Any]] = None

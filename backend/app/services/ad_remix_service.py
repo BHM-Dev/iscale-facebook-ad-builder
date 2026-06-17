@@ -127,6 +127,7 @@ async def reconstruct_ad(
             campaign_urgency=brand_data.campaign_urgency or "",
             campaign_messaging=brand_data.campaign_messaging,
             niche=brand_data.niche or "",
+            competitor_context=brand_data.competitor_context or "",
         )
 
         response = await _anthropic_client.messages.create(

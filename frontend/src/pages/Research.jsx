@@ -464,7 +464,6 @@ export default function Research() {
   };
 
   const handleUseAsInspiration = (ad) => {
-    const currentVerticalLabel = verticalConfig?.verticals?.[activeVertical]?.label || activeVertical;
     localStorage.setItem('pendingResearchInspiration', JSON.stringify({
       headline: ad.headline,
       body: ad.ad_copy,
