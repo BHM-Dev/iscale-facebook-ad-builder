@@ -453,7 +453,12 @@ export default function ImageAds() {
                         setOverlayEnabled={setOverlayEnabled}
                         overlayOfferLine={overlayOfferLine}
                         setOverlayOfferLine={setOverlayOfferLine}
-                        overlayLogoUrl={overlayLogoUrl}
+                        setOverlayLogoUrl={setOverlayLogoUrl}
+                        overlayLogoPreview={overlayLogoPreview}
+                        setOverlayLogoPreview={setOverlayLogoPreview}
+                        uploadingLogo={uploadingLogo}
+                        logoFileInputRef={logoFileInputRef}
+                        uploadLogoImage={uploadLogoImage}
                         generating={generating}
                         onGenerate={() => handleImageGeneration({
                             headline: quickCopy.headline,
@@ -1681,7 +1686,9 @@ function QuickGeneratePanel({
     templateMode, setTemplateMode,
     overlayEnabled, setOverlayEnabled,
     overlayOfferLine, setOverlayOfferLine,
-    overlayLogoUrl,
+    setOverlayLogoUrl,
+    overlayLogoPreview, setOverlayLogoPreview,
+    uploadingLogo, logoFileInputRef, uploadLogoImage,
     generating, onGenerate,
 }) {
     const canGenerate = wizardData.brand && wizardData.template && quickCopy.headline.trim() && quickCopy.body.trim();
@@ -1758,6 +1765,9 @@ function QuickGeneratePanel({
                             placeholder="Short, punchy headline (under 40 chars)"
                             className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                         />
+                        <div className="text-xs text-gray-500 mt-1">
+                            {quickCopy.headline.length} / 40 characters
+                        </div>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1770,6 +1780,9 @@ function QuickGeneratePanel({
                             rows={3}
                             className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                         />
+                        <div className="text-xs text-gray-500 mt-1">
+                            {quickCopy.body.length} / 125 characters (recommended)
+                        </div>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1783,6 +1796,9 @@ function QuickGeneratePanel({
                             placeholder="GET MY QUOTE"
                             className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                         />
+                        <div className="text-xs text-gray-500 mt-1">
+                            {quickCopy.cta.length} / 20 characters
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1870,11 +1886,57 @@ function QuickGeneratePanel({
                             />
                             <p className="text-xs text-gray-400 mt-1">Appears below the headline. Leave blank to omit.</p>
                         </div>
-                        {overlayLogoUrl && (
-                            <p className="text-xs text-green-700 flex items-center gap-1">
-                                <Check size={12} /> Logo from previous session will be applied
-                            </p>
-                        )}
+                        <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Logo</label>
+                            <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                ref={logoFileInputRef}
+                                onChange={e => { const f = e.target.files?.[0]; if (f) uploadLogoImage(f); e.target.value = ''; }}
+                            />
+                            {overlayLogoPreview ? (
+                                <div className="flex items-center gap-3">
+                                    <img
+                                        src={overlayLogoPreview}
+                                        alt="Logo preview"
+                                        className="h-10 w-auto rounded border border-gray-200 bg-gray-50 object-contain p-1"
+                                    />
+                                    <div className="flex flex-col gap-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => logoFileInputRef.current?.click()}
+                                            disabled={uploadingLogo}
+                                            className="text-xs text-amber-600 hover:text-amber-800 disabled:opacity-40"
+                                        >
+                                            {uploadingLogo ? 'Uploading…' : 'Replace'}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setOverlayLogoUrl('');
+                                                setOverlayLogoPreview('');
+                                                try { localStorage.removeItem('overlayLogoUrl'); } catch (_) {}
+                                            }}
+                                            className="text-xs text-red-400 hover:text-red-600"
+                                        >
+                                            Remove
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => logoFileInputRef.current?.click()}
+                                    disabled={uploadingLogo}
+                                    className="flex items-center gap-2 text-sm border border-dashed border-gray-300 rounded-lg px-3 py-2 w-full text-gray-500 hover:border-amber-400 hover:text-amber-600 disabled:opacity-40 transition-colors"
+                                >
+                                    <Upload size={13} />
+                                    {uploadingLogo ? 'Uploading…' : 'Upload logo (PNG recommended)'}
+                                </button>
+                            )}
+                            <p className="text-xs text-gray-400 mt-1">Saved for future sessions.</p>
+                        </div>
                     </div>
                 )}
             </div>
