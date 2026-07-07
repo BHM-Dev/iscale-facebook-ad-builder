@@ -24,6 +24,8 @@ export default function ImageAds() {
     const [selectedCopy, setSelectedCopy] = useState(null);
     const [customImagePrompt, setCustomImagePrompt] = useState('');
     const [templateMode, setTemplateMode] = useState('style'); // 'style' or 'template'
+    const [mode, setMode] = useState('wizard'); // 'wizard' | 'quick'
+    const [quickCopy, setQuickCopy] = useState({ headline: '', body: '', cta: '' });
 
     // Load saved campaign details from localStorage on mount
     const [wizardData, setWizardData] = useState(() => {
@@ -348,8 +350,26 @@ export default function ImageAds() {
                 <p className="text-gray-600 mt-1">Generate AI-powered ads using winning templates</p>
             </div>
 
-            {/* Progress Steps */}
-            <div className="mb-8 bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            {/* Mode Toggle */}
+            <div className="mb-6 flex gap-2 bg-gray-100 p-1 rounded-lg w-fit">
+                <button
+                    onClick={() => { if (!generating) setMode('wizard'); }}
+                    disabled={generating}
+                    className={`px-5 py-2 rounded-md font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed ${mode === 'wizard' ? 'bg-white text-amber-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                >
+                    Guided Wizard
+                </button>
+                <button
+                    onClick={() => { if (!generating) setMode('quick'); }}
+                    disabled={generating}
+                    className={`px-5 py-2 rounded-md font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed ${mode === 'quick' ? 'bg-white text-amber-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                >
+                    Quick Generate
+                </button>
+            </div>
+
+            {/* Progress Steps — wizard only */}
+            {mode === 'wizard' && <div className="mb-8 bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <div className="flex items-center justify-between relative">
                     <div className="absolute left-0 top-1/2 transform -translate-y-1/2 w-full h-1 bg-gray-200 -z-10"></div>
                     {steps.map((step, index) => {
@@ -389,7 +409,7 @@ export default function ImageAds() {
                         );
                     })}
                 </div>
-            </div>
+            </div>}
 
             {/* Step Content */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 min-h-[500px] relative">
@@ -398,9 +418,9 @@ export default function ImageAds() {
                     <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center rounded-xl">
                         <div className="w-16 h-16 border-4 border-amber-200 border-t-amber-600 rounded-full animate-spin mb-4"></div>
                         <h3 className="text-xl font-bold text-gray-900">
-                            {currentStep === 9 ? 'Generating Images...' : 'Generating Ad Copy...'}
+                            {(mode === 'quick' || currentStep === 9) ? 'Generating Images...' : 'Generating Ad Copy...'}
                         </h3>
-                        {currentStep === 9 && generatingProgress.total > 1 ? (
+                        {(mode === 'quick' || currentStep === 9) && generatingProgress.total > 1 ? (
                             <div className="mt-3 text-center">
                                 <p className="text-amber-600 font-semibold text-lg">
                                     {generatingProgress.done} of {generatingProgress.total} variations complete
@@ -418,6 +438,33 @@ export default function ImageAds() {
                         )}
                     </div>
                 )}
+
+                {/* Quick Generate Panel */}
+                {mode === 'quick' && currentStep !== 10 && (
+                    <QuickGeneratePanel
+                        wizardData={wizardData}
+                        updateData={updateData}
+                        brands={brands}
+                        quickCopy={quickCopy}
+                        setQuickCopy={setQuickCopy}
+                        templateMode={templateMode}
+                        setTemplateMode={setTemplateMode}
+                        overlayEnabled={overlayEnabled}
+                        setOverlayEnabled={setOverlayEnabled}
+                        overlayOfferLine={overlayOfferLine}
+                        setOverlayOfferLine={setOverlayOfferLine}
+                        overlayLogoUrl={overlayLogoUrl}
+                        generating={generating}
+                        onGenerate={() => handleImageGeneration({
+                            headline: quickCopy.headline,
+                            body: quickCopy.body,
+                            cta: quickCopy.cta?.trim() || 'GET MY QUOTE',
+                        })}
+                    />
+                )}
+
+                {/* Wizard Steps 1–9 */}
+                {mode === 'wizard' && currentStep !== 10 && <>
 
                 {/* Step 1: Brand Selection */}
                 {currentStep === 1 && (
@@ -582,7 +629,9 @@ export default function ImageAds() {
                     />
                 )}
 
-                {/* Step 10: Image Generation Result */}
+                </>}
+
+                {/* Step 10: Image Generation Result — renders regardless of mode */}
                 {currentStep === 10 && (
                     generatedImages.length > 0 ? (
                         <ImageGenerationStep
@@ -590,8 +639,12 @@ export default function ImageAds() {
                             wizardData={wizardData}
                             selectedCopy={selectedCopy}
                             allCopies={generatedCopy?.variations || []}
-                            onBack={() => setCurrentStep(9)}
-                            onRestart={() => window.location.reload()}
+                            onBack={mode === 'quick'
+                                ? () => { setGeneratedImages([]); setSelectedCopy(null); setCurrentStep(1); }
+                                : () => setCurrentStep(9)}
+                            onRestart={mode === 'quick'
+                                ? () => { setGeneratedImages([]); setSelectedCopy(null); setCurrentStep(1); }
+                                : () => window.location.reload()}
                         />
                     ) : (
                         <div className="text-center py-12">
@@ -612,7 +665,7 @@ export default function ImageAds() {
             </div>
 
             {/* Footer Actions */}
-            {currentStep <= 8 && (
+            {mode === 'wizard' && currentStep <= 8 && (
                 <div className="mt-6 flex items-center justify-between">
                     <button
                         onClick={prevStep}
@@ -1617,6 +1670,225 @@ Style: ${designStyle}`);
                             : 'Generate Image'}
                     </button>
                 </div>
+            </div>
+        </div>
+    );
+}
+
+function QuickGeneratePanel({
+    wizardData, updateData, brands,
+    quickCopy, setQuickCopy,
+    templateMode, setTemplateMode,
+    overlayEnabled, setOverlayEnabled,
+    overlayOfferLine, setOverlayOfferLine,
+    overlayLogoUrl,
+    generating, onGenerate,
+}) {
+    const canGenerate = wizardData.brand && wizardData.template && quickCopy.headline.trim() && quickCopy.body.trim();
+
+    const sizes = [
+        { name: 'Square (Feed/Carousel)', width: 1080, height: 1080, aspectRatio: '1:1' },
+        { name: 'Vertical (Feed)', width: 1080, height: 1350, aspectRatio: '4:5' },
+        { name: 'Story', width: 1080, height: 1920, aspectRatio: '9:16' },
+    ];
+
+    return (
+        <div className="space-y-6">
+            <div>
+                <h3 className="text-xl font-bold text-gray-900 mb-1">Quick Generate</h3>
+                <p className="text-gray-500 text-sm">Pick a brand and template, paste your copy, and generate images immediately.</p>
+            </div>
+
+            {/* Brand */}
+            <div className="bg-gray-50 rounded-xl border border-gray-200 p-5">
+                <h4 className="font-semibold text-gray-800 mb-4">Brand <span className="text-red-500">*</span></h4>
+                <BrandSelectionStep
+                    brands={brands}
+                    selectedBrand={wizardData.brand}
+                    onSelect={(brand) => updateData('brand', brand)}
+                />
+            </div>
+
+            {/* Template / Style */}
+            <div className="bg-gray-50 rounded-xl border border-gray-200 p-5">
+                <h4 className="font-semibold text-gray-800 mb-3">Template / Style <span className="text-red-500">*</span></h4>
+                <div className="flex gap-2 mb-4 bg-gray-100 p-1 rounded-lg w-fit">
+                    <button
+                        onClick={() => setTemplateMode('style')}
+                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${templateMode === 'style' ? 'bg-white text-amber-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                    >
+                        <span className="flex items-center gap-1.5"><Sparkles size={14} /> Browse Styles</span>
+                    </button>
+                    <button
+                        onClick={() => setTemplateMode('template')}
+                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${templateMode === 'template' ? 'bg-white text-amber-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                    >
+                        <span className="flex items-center gap-1.5"><Image size={14} /> Browse Templates</span>
+                    </button>
+                </div>
+                {templateMode === 'style' ? (
+                    <StyleSelector onSelect={(style) => updateData('template', { type: 'style', ...style })} />
+                ) : (
+                    <ImageTemplateSelector
+                        onSelect={(template) => updateData('template', { type: 'template', ...template })}
+                        onClose={() => {}}
+                        embedded={true}
+                    />
+                )}
+                {wizardData.template && (
+                    <div className="mt-3 flex items-center gap-2 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                        <Check size={14} />
+                        <span>Selected: <strong>{wizardData.template.name || wizardData.template.template_category || 'Custom style'}</strong></span>
+                    </div>
+                )}
+            </div>
+
+            {/* Copy */}
+            <div className="bg-gray-50 rounded-xl border border-gray-200 p-5">
+                <h4 className="font-semibold text-gray-800 mb-4">Your Copy</h4>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Headline <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                            type="text"
+                            value={quickCopy.headline}
+                            onChange={e => setQuickCopy(prev => ({ ...prev, headline: e.target.value }))}
+                            placeholder="Short, punchy headline (under 40 chars)"
+                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Body Copy <span className="text-red-500">*</span>
+                        </label>
+                        <textarea
+                            value={quickCopy.body}
+                            onChange={e => setQuickCopy(prev => ({ ...prev, body: e.target.value }))}
+                            placeholder="Your ad body copy..."
+                            rows={3}
+                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            CTA
+                            <span className="ml-1 text-xs text-gray-400 font-normal">optional — defaults to GET MY QUOTE</span>
+                        </label>
+                        <input
+                            type="text"
+                            value={quickCopy.cta}
+                            onChange={e => setQuickCopy(prev => ({ ...prev, cta: e.target.value }))}
+                            placeholder="GET MY QUOTE"
+                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                        />
+                    </div>
+                </div>
+            </div>
+
+            {/* Variations + Size */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-gray-50 rounded-xl border border-gray-200 p-5">
+                    <h4 className="font-semibold text-gray-800 mb-3">Variations</h4>
+                    <div className="flex items-center gap-4">
+                        <input
+                            type="range"
+                            min="1"
+                            max="10"
+                            value={wizardData.variationCount}
+                            onChange={e => updateData('variationCount', parseInt(e.target.value))}
+                            className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+                        />
+                        <div className="w-12 h-12 rounded-full bg-amber-600 text-white flex items-center justify-center text-xl font-bold flex-shrink-0">
+                            {wizardData.variationCount}
+                        </div>
+                    </div>
+                </div>
+                <div className="bg-gray-50 rounded-xl border border-gray-200 p-5">
+                    <h4 className="font-semibold text-gray-800 mb-3">Sizes</h4>
+                    <div className="flex flex-col gap-2">
+                        {sizes.map(size => {
+                            const isSelected = wizardData.imageSizes.some(s => s.name === size.name);
+                            const isRequired = size.name.startsWith('Square');
+                            return (
+                                <label key={size.name} className={`flex items-center gap-2 ${isRequired ? 'cursor-default' : 'cursor-pointer'}`}>
+                                    <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        disabled={isRequired}
+                                        onChange={() => {
+                                            if (isRequired) return;
+                                            if (isSelected) {
+                                                updateData('imageSizes', wizardData.imageSizes.filter(s => s.name !== size.name));
+                                            } else {
+                                                updateData('imageSizes', [...wizardData.imageSizes, size]);
+                                            }
+                                        }}
+                                        className="accent-amber-600"
+                                    />
+                                    <span className="text-sm text-gray-700">
+                                        {size.name}
+                                        {isRequired && <span className="ml-1 text-xs text-amber-600">(required)</span>}
+                                    </span>
+                                </label>
+                            );
+                        })}
+                    </div>
+                </div>
+            </div>
+
+            {/* Overlay Controls */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+                    <div>
+                        <h4 className="text-sm font-semibold text-gray-800">Text Overlay</h4>
+                        <p className="text-xs text-gray-400 mt-0.5">Bakes niche label + offer line into the image</p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setOverlayEnabled(v => !v)}
+                        className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${overlayEnabled ? 'bg-amber-600' : 'bg-gray-200'}`}
+                        aria-pressed={overlayEnabled}
+                    >
+                        <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${overlayEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
+                    </button>
+                </div>
+                {overlayEnabled && (
+                    <div className="p-4 space-y-3">
+                        <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Offer Line</label>
+                            <input
+                                type="text"
+                                placeholder="From $24.95/Month"
+                                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                                value={overlayOfferLine}
+                                onChange={e => {
+                                    setOverlayOfferLine(e.target.value);
+                                    try { localStorage.setItem('overlayOfferLine', e.target.value); } catch (_) {}
+                                }}
+                            />
+                            <p className="text-xs text-gray-400 mt-1">Appears below the headline. Leave blank to omit.</p>
+                        </div>
+                        {overlayLogoUrl && (
+                            <p className="text-xs text-green-700 flex items-center gap-1">
+                                <Check size={12} /> Logo from previous session will be applied
+                            </p>
+                        )}
+                    </div>
+                )}
+            </div>
+
+            {/* Generate Button */}
+            <div className="flex justify-end pt-2">
+                <button
+                    onClick={onGenerate}
+                    disabled={!canGenerate || generating}
+                    className="flex items-center gap-2 px-8 py-4 bg-amber-600 text-white rounded-xl hover:bg-amber-700 font-bold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-lg"
+                >
+                    <Sparkles size={22} className={generating ? 'animate-spin' : ''} />
+                    {generating ? 'Generating...' : 'Generate Images'}
+                </button>
             </div>
         </div>
     );
