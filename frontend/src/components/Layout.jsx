@@ -255,28 +255,30 @@ export default function Layout() {
             {/* Main Content */}
             <main className="flex-1 overflow-y-auto bg-gray-50">
                 <div className="p-5">
-                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
-                        <div>
-                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Vertical filter</p>
-                            <p className="text-sm text-gray-600">Controls brand lists in creative workflows.</p>
+                    {['/image-ads', '/batch-generate', '/ad-remix', '/copy-library'].includes(location.pathname) && (
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                            <div>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Vertical filter</p>
+                                <p className="text-sm text-gray-600">Scopes the brand list for this workflow.</p>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                {VERTICAL_FILTERS.map(vertical => (
+                                    <button
+                                        key={vertical.id}
+                                        type="button"
+                                        onClick={() => setActiveVerticalFilter(vertical.id)}
+                                        className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                                            activeVerticalFilter === vertical.id
+                                                ? 'bg-indigo-600 text-white shadow-sm'
+                                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900'
+                                        }`}
+                                    >
+                                        {vertical.label}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                            {VERTICAL_FILTERS.map(vertical => (
-                                <button
-                                    key={vertical.id}
-                                    type="button"
-                                    onClick={() => setActiveVerticalFilter(vertical.id)}
-                                    className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-                                        activeVerticalFilter === vertical.id
-                                            ? 'bg-indigo-600 text-white shadow-sm'
-                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900'
-                                    }`}
-                                >
-                                    {vertical.label}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
+                    )}
                     <Outlet />
                 </div>
             </main>

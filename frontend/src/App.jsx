@@ -42,7 +42,7 @@ import UserManagement from './pages/UserManagement';
 function DefaultLanding() {
   const { user, hasRole } = useAuth();
   if (user?.is_superuser || hasRole('admin')) return <Dashboard />;
-  return <Navigate to="/image-ads" replace />;
+  return <Navigate to="/campaign-performance" replace />;
 }
 
 function App() {
