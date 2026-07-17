@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { BookOpen, ChevronDown, RefreshCw, Star, Trash2, X } from 'lucide-react';
+import { ArrowRight, BookOpen, ChevronDown, RefreshCw, Star, Trash2, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
 
@@ -14,6 +15,7 @@ function SkeletonRows() {
           <td className="px-5 py-4"><div className="h-5 w-16 bg-gray-100 rounded animate-pulse" /></td>
           <td className="px-5 py-4"><div className="h-4 w-44 bg-gray-100 rounded animate-pulse" /></td>
           <td className="px-5 py-4"><div className="h-4 w-full max-w-xl bg-gray-100 rounded animate-pulse" /></td>
+          <td className="px-5 py-4 text-center"><div className="h-8 w-20 mx-auto bg-gray-100 rounded-lg animate-pulse" /></td>
           <td className="px-5 py-4 text-center"><div className="h-8 w-8 mx-auto bg-gray-100 rounded-lg animate-pulse" /></td>
           <td className="px-5 py-4 text-center"><div className="h-8 w-8 mx-auto bg-gray-100 rounded-lg animate-pulse" /></td>
         </tr>
@@ -61,6 +63,7 @@ function SortHeader({ label, colKey, sortKey, sortDir, onSort }) {
 
 export default function CopyLibrary() {
   const { showSuccess, showError, showWarning } = useToast();
+  const navigate = useNavigate();
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -178,6 +181,15 @@ export default function CopyLibrary() {
     }
   };
 
+  const useInQuickGenerate = (entry) => {
+    localStorage.setItem('pendingQuickCopy', JSON.stringify({
+      headline: entry.headline || '',
+      body: entry.body || '',
+      cta: entry.cta || entry.cta_text || 'GET MY QUOTE',
+    }));
+    navigate('/image-ads');
+  };
+
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       <div className="flex items-center justify-between gap-4">
@@ -242,6 +254,7 @@ export default function CopyLibrary() {
                 <SortHeader label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <SortHeader label="Headline" colKey="headline" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-5 py-3">Body</th>
+                <th className="px-5 py-3 text-center">Use</th>
                 <th className="px-5 py-3 text-center">Pinned</th>
                 <th className="px-5 py-3 text-center">Delete</th>
               </tr>
@@ -251,7 +264,7 @@ export default function CopyLibrary() {
                 <SkeletonRows />
               ) : filteredEntries.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-5 py-12 text-center text-sm text-gray-400">
+                  <td colSpan={7} className="px-5 py-12 text-center text-sm text-gray-400">
                     No ads in library yet. Click 'Sync from Meta' to import your ads.
                   </td>
                 </tr>
@@ -272,6 +285,16 @@ export default function CopyLibrary() {
                     </td>
                     <td className="px-5 py-4 text-gray-800 min-w-48">{entry.headline}</td>
                     <td className="px-5 py-4 min-w-96 w-full"><BodyCell text={entry.body} /></td>
+                    <td className="px-5 py-4 text-center">
+                      <button
+                        type="button"
+                        onClick={() => useInQuickGenerate(entry)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-indigo-50 px-3 py-2 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
+                        title="Open this copy in Quick Generate"
+                      >
+                        Use <ArrowRight size={13} />
+                      </button>
+                    </td>
                     <td className="px-5 py-4 text-center">
                       <button
                         type="button"

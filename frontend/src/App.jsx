@@ -8,8 +8,8 @@
  */
 
 import React from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { AuthProvider } from './context/AuthContext';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { BrandProvider } from './context/BrandContext';
 import { CampaignProvider } from './context/CampaignContext';
 import { ToastProvider } from './context/ToastContext';
@@ -39,6 +39,12 @@ import Settings from './pages/Settings';
 import Login from './pages/Login';
 import UserManagement from './pages/UserManagement';
 
+function DefaultLanding() {
+  const { user, hasRole } = useAuth();
+  if (user?.is_superuser || hasRole('admin')) return <Dashboard />;
+  return <Navigate to="/image-ads" replace />;
+}
+
 function App() {
   return (
     <ToastProvider>
@@ -59,7 +65,7 @@ function App() {
                     </PrivateRoute>
                   }
                 >
-                  <Route index element={<Dashboard />} />
+                  <Route index element={<DefaultLanding />} />
                   <Route path="research" element={<Research />} />
                   <Route path="research/brand-scrapes" element={<BrandScrapes />} />
                   <Route path="research/settings" element={<ResearchSettings />} />

@@ -360,6 +360,7 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adsBulk,
   const [pausingAds, setPausingAds] = useState(new Set());
   const [adStatuses, setAdStatuses] = useState({}); // local optimistic status overrides
   const [remixingAd, setRemixingAd] = useState(null);
+  const [quickAd, setQuickAd] = useState(null);
 
   const handleRemix = async (ad) => {
     setRemixingAd(ad.ad_id);
@@ -384,6 +385,27 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adsBulk,
       showError(`Remix failed: ${e.message}`);
     } finally {
       setRemixingAd(null);
+    }
+  };
+
+  const handleQuickVariations = async (ad) => {
+    setQuickAd(ad.ad_id);
+    try {
+      const res = await authFetch(`${API_BASE}/facebook/ads/${ad.ad_id}/creative`);
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed to fetch creative'); }
+      const creative = await res.json();
+      localStorage.setItem('pendingQuickCopy', JSON.stringify({
+        headline: creative.headline || '',
+        body: creative.body || '',
+        cta: creative.cta_label || 'GET MY QUOTE',
+        source: 'campaign_performance',
+        ad_id: ad.ad_id,
+      }));
+      navigate('/image-ads');
+    } catch (e) {
+      showError(`Quick Variations failed: ${e.message}`);
+    } finally {
+      setQuickAd(null);
     }
   };
 
@@ -549,6 +571,20 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adsBulk,
                       }
                       Remix
                     </button>
+                    {isTop && (
+                      <button
+                        onClick={() => handleQuickVariations(ad)}
+                        disabled={quickAd === ad.ad_id}
+                        className="flex items-center gap-1 px-2 py-1 rounded text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors text-xs font-medium whitespace-nowrap disabled:opacity-50"
+                        title="Open this winner in Quick Generate"
+                      >
+                        {quickAd === ad.ad_id
+                          ? <RefreshCw size={11} className="animate-spin" />
+                          : <Zap size={11} />
+                        }
+                        Quick Variations
+                      </button>
+                    )}
                     {/* More Variants → Batch Generate pre-filled with this ad */}
                     <button
                       onClick={() => navigate(`/batch-generate?adId=${encodeURIComponent(ad.ad_id)}&adName=${encodeURIComponent(ad.ad_name || ad.ad_id)}&adsetName=${encodeURIComponent(adsetName || '')}&campaignId=${encodeURIComponent(fbCampaignId || '')}&adsetId=${encodeURIComponent(fbAdsetId || '')}`)}

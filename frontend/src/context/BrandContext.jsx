@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from './AuthContext';
+import { filterBrandsByVertical } from '../lib/verticals';
 
 const BrandContext = createContext();
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -17,8 +18,21 @@ export const BrandProvider = ({ children }) => {
     const [customerProfiles, setCustomerProfiles] = useState([]);
     const [activeBrand, setActiveBrand] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [activeVerticalFilter, setActiveVerticalFilterState] = useState(() => (
+        localStorage.getItem('adBuilder.activeVerticalFilter') || 'all'
+    ));
 
     const { authFetch, isAuthenticated, loading: authLoading } = useAuth();
+
+    const setActiveVerticalFilter = useCallback((verticalId) => {
+        setActiveVerticalFilterState(verticalId);
+        localStorage.setItem('adBuilder.activeVerticalFilter', verticalId);
+    }, []);
+
+    const filteredBrands = useMemo(
+        () => filterBrandsByVertical(brands, activeVerticalFilter),
+        [brands, activeVerticalFilter]
+    );
 
     // Load data from API
     const loadData = useCallback(async () => {
@@ -252,9 +266,12 @@ export const BrandProvider = ({ children }) => {
     return (
         <BrandContext.Provider value={{
             brands,
+            filteredBrands,
             customerProfiles,
             activeBrand,
             setActiveBrand,
+            activeVerticalFilter,
+            setActiveVerticalFilter,
             loading,
             loadData,
             addBrand,

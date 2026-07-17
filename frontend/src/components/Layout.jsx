@@ -3,6 +3,8 @@ import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Package, Users, Video, Wand2, Settings, LogOut, Image, ShoppingBag, Target, ChevronLeft, ChevronRight, FileImage, Search, ChevronDown, UserCog, TrendingDown, Zap, Shuffle, PauseCircle, Megaphone, BookOpen } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { useBrands } from '../context/BrandContext';
+import { VERTICAL_FILTERS } from '../lib/verticals';
 
 // BHM mark — gradient circle with horizon lines, sized for 40×40 container
 function BHMLogo({ size = 40 }) {
@@ -34,6 +36,7 @@ export default function Layout() {
     const navigate = useNavigate();
     const { user, logout, hasRole } = useAuth();
     const { showSuccess } = useToast();
+    const { activeVerticalFilter, setActiveVerticalFilter } = useBrands();
     const [expandedMenus, setExpandedMenus] = useState({ Brands: false, Research: false, Facebook: true, 'Build Creatives': true });
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [showUserMenu, setShowUserMenu] = useState(false);
@@ -252,6 +255,28 @@ export default function Layout() {
             {/* Main Content */}
             <main className="flex-1 overflow-y-auto bg-gray-50">
                 <div className="p-5">
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                        <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Vertical filter</p>
+                            <p className="text-sm text-gray-600">Controls brand lists in creative workflows.</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            {VERTICAL_FILTERS.map(vertical => (
+                                <button
+                                    key={vertical.id}
+                                    type="button"
+                                    onClick={() => setActiveVerticalFilter(vertical.id)}
+                                    className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                                        activeVerticalFilter === vertical.id
+                                            ? 'bg-indigo-600 text-white shadow-sm'
+                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900'
+                                    }`}
+                                >
+                                    {vertical.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
                     <Outlet />
                 </div>
             </main>

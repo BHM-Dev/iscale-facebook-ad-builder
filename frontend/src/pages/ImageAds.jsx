@@ -1,6 +1,6 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { ChevronRight, ChevronLeft, Check, Briefcase, Package, Users, Image, Hash, FileText, Sparkles, Download, ChevronDown, ChevronUp, Settings, CheckCircle2, ArrowRight, Rocket, Upload } from 'lucide-react';
 import { useBrands } from '../context/BrandContext';
 import ImageTemplateSelector from '../components/ImageTemplateSelector';
@@ -9,11 +9,79 @@ import ProductSelectionStep from '../components/steps/ProductSelectionStep';
 import ProfileSelectionStep from '../components/steps/ProfileSelectionStep';
 import StyleSelector from '../components/StyleSelector';
 import PushToMetaModal from '../components/PushToMetaModal';
+import { VERTICAL_FILTERS, inferBrandVertical } from '../lib/verticals';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
+const ANGLE_TEMPLATES = {
+    commercial_insurance: [
+        {
+            label: 'Structure Gap',
+            headline: 'Coverage Gaps Cost More',
+            body: "Most businesses don't lack coverage. They lack the right structure. Compare options built around your risk before renewal.",
+            cta: 'GET MY QUOTE'
+        },
+        {
+            label: 'Niche Expertise',
+            headline: 'Built For Your Business',
+            body: 'Generic policies miss industry-specific risks. Get matched with commercial insurance options for your exact business type.',
+            cta: 'GET MY QUOTE'
+        },
+        {
+            label: 'Renewal Check',
+            headline: 'Before You Renew',
+            body: 'Rates change fast. See if your current commercial policy still makes sense before another renewal locks in.',
+            cta: 'COMPARE OPTIONS'
+        }
+    ],
+    auto_insurance: [
+        {
+            label: 'Rate Shock',
+            headline: 'Rates Jumped Again?',
+            body: 'Drivers are checking fresh quotes before their next renewal. See what options may be available in your area.',
+            cta: 'GET MY QUOTE'
+        },
+        {
+            label: 'Simple Compare',
+            headline: 'Compare Auto Quotes',
+            body: 'One short form can help you compare auto insurance options from providers serving your state.',
+            cta: 'START QUOTE'
+        }
+    ],
+    home_services: [
+        {
+            label: 'Hidden Problem',
+            headline: 'Small Issues Get Expensive',
+            body: 'Home repairs are easier to price before damage spreads. Compare local pros and get the project moving.',
+            cta: 'FIND PROS'
+        },
+        {
+            label: 'Local Pros',
+            headline: 'Find Local Help Fast',
+            body: 'Tell us what you need done and get matched with home service pros near you.',
+            cta: 'GET MATCHED'
+        }
+    ],
+    personal_loans: [
+        {
+            label: 'Fast Options',
+            headline: 'Check Loan Options',
+            body: 'See personal loan options that may fit your budget without calling around lender by lender.',
+            cta: 'CHECK OPTIONS'
+        }
+    ],
+    debt_relief: [
+        {
+            label: 'Payment Pressure',
+            headline: 'Debt Feels Heavy?',
+            body: 'If monthly payments are stacking up, compare debt relief options and see what path may fit.',
+            cta: 'SEE OPTIONS'
+        }
+    ],
+};
+
 export default function ImageAds() {
-    const { brands, customerProfiles } = useBrands();
+    const { brands, filteredBrands, customerProfiles, activeVerticalFilter } = useBrands();
     const { showError, showSuccess } = useToast();
     const { authFetch } = useAuth();
     const [currentStep, setCurrentStep] = useState(1);
@@ -24,8 +92,9 @@ export default function ImageAds() {
     const [selectedCopy, setSelectedCopy] = useState(null);
     const [customImagePrompt, setCustomImagePrompt] = useState('');
     const [templateMode, setTemplateMode] = useState('style'); // 'style' or 'template'
-    const [mode, setMode] = useState('wizard'); // 'wizard' | 'quick'
+    const [mode, setMode] = useState('quick'); // 'wizard' | 'quick'
     const [quickCopy, setQuickCopy] = useState({ headline: '', body: '', cta: '' });
+    const quickBrands = filteredBrands?.length ? filteredBrands : brands;
 
     // Load saved campaign details from localStorage on mount
     const [wizardData, setWizardData] = useState(() => {
@@ -63,6 +132,25 @@ export default function ImageAds() {
             localStorage.setItem('imageAds_campaignDetails', JSON.stringify(wizardData.campaignDetails));
         }
     }, [wizardData.campaignDetails]);
+
+    useEffect(() => {
+        const rawQuickCopy = localStorage.getItem('pendingQuickCopy');
+        if (!rawQuickCopy) return;
+
+        try {
+            const pending = JSON.parse(rawQuickCopy);
+            setQuickCopy({
+                headline: pending.headline || '',
+                body: pending.body || '',
+                cta: pending.cta || pending.cta_label || 'GET MY QUOTE',
+            });
+            setMode('quick');
+        } catch (error) {
+            console.error('Failed to read pending quick copy:', error);
+        } finally {
+            localStorage.removeItem('pendingQuickCopy');
+        }
+    }, []);
 
     // Overlay state — shared localStorage keys with BatchGenerate and AdRemix
     const [overlayEnabled, setOverlayEnabled] = useState(true);
@@ -444,7 +532,8 @@ export default function ImageAds() {
                     <QuickGeneratePanel
                         wizardData={wizardData}
                         updateData={updateData}
-                        brands={brands}
+                        brands={quickBrands}
+                        activeVerticalFilter={activeVerticalFilter}
                         quickCopy={quickCopy}
                         setQuickCopy={setQuickCopy}
                         templateMode={templateMode}
@@ -1680,8 +1769,45 @@ Style: ${designStyle}`);
     );
 }
 
+function AnglePicker({ verticalId, onApply }) {
+    const templates = ANGLE_TEMPLATES[verticalId] || ANGLE_TEMPLATES.commercial_insurance;
+    const verticalLabel = VERTICAL_FILTERS.find(vertical => vertical.id === verticalId)?.label || 'Selected vertical';
+
+    return (
+        <div className="bg-white rounded-xl border border-amber-200 p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-4 mb-4">
+                <div>
+                    <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                        <Sparkles size={17} className="text-amber-600" />
+                        Angle Picker
+                    </h4>
+                    <p className="text-sm text-gray-500 mt-1">Seeded hooks for {verticalLabel}. Pick one, then edit the copy below.</p>
+                </div>
+                <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">
+                    Quick start
+                </span>
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+                {templates.map(template => (
+                    <button
+                        key={template.label}
+                        type="button"
+                        onClick={() => onApply(template)}
+                        className="text-left rounded-lg border border-gray-200 bg-gray-50 p-4 transition-colors hover:border-amber-300 hover:bg-amber-50"
+                    >
+                        <div className="text-sm font-semibold text-gray-900">{template.label}</div>
+                        <div className="mt-2 text-sm font-medium text-gray-700">{template.headline}</div>
+                        <div className="mt-1 text-xs leading-relaxed text-gray-500">{template.body}</div>
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 function QuickGeneratePanel({
     wizardData, updateData, brands,
+    activeVerticalFilter,
     quickCopy, setQuickCopy,
     templateMode, setTemplateMode,
     overlayEnabled, setOverlayEnabled,
@@ -1692,6 +1818,13 @@ function QuickGeneratePanel({
     generating, onGenerate,
 }) {
     const canGenerate = wizardData.brand && wizardData.template && quickCopy.headline.trim() && quickCopy.body.trim();
+    const angleVertical = useMemo(() => {
+        const inferred = inferBrandVertical(wizardData.brand);
+        if (inferred) return inferred;
+        return activeVerticalFilter && activeVerticalFilter !== 'all'
+            ? activeVerticalFilter
+            : 'commercial_insurance';
+    }, [wizardData.brand, activeVerticalFilter]);
 
     const sizes = [
         { name: 'Square (Feed/Carousel)', width: 1080, height: 1080, aspectRatio: '1:1' },
@@ -1715,6 +1848,17 @@ function QuickGeneratePanel({
                     onSelect={(brand) => updateData('brand', brand)}
                 />
             </div>
+
+            <AnglePicker
+                verticalId={angleVertical}
+                onApply={(template) => {
+                    setQuickCopy({
+                        headline: template.headline,
+                        body: template.body,
+                        cta: template.cta,
+                    });
+                }}
+            />
 
             {/* Template / Style */}
             <div className="bg-gray-50 rounded-xl border border-gray-200 p-5">
