@@ -239,3 +239,58 @@ class RedTrackService:
         if not meta_leads:
             return None
         return round(rt_conversions / meta_leads, 3)
+
+
+# ── Phase 3: ad-level performance sync onto GeneratedAd ────────────────────────
+
+def sync_generated_ad_performance(db, svc: "RedTrackService", date_preset: str = "last_7d") -> dict:
+    """Join RedTrack sub1 (= Meta ad id) onto generated_ads.fb_ad_id and write
+    ad-level revenue / profit / last_synced_at.
+
+    Primary attribution join is ad-grain (sub1), NOT adset-grain (sub2). Only
+    matched rows are updated — a GeneratedAd that falls outside the current
+    window keeps its prior values (we never null historical revenue). A pushed
+    ad with no sub1 match keeps revenue/profit null (surfaced via the counts).
+
+    Returns a summary dict: matched, pushed_ads_no_match, redtrack_ad_rows,
+    outliers (non-expanded/non-numeric sub1 keys), and the date window.
+    """
+    from app.models import GeneratedAd
+
+    if not svc.is_configured():
+        return {"configured": False, "matched": 0, "pushed_ads_no_match": 0,
+                "redtrack_ad_rows": 0, "outliers": 0}
+
+    date_from_str, date_to_str = svc.preset_to_dates(date_preset)
+    report = svc.get_report_by_sub(date_from_str, date_to_str, group_field="sub1")
+
+    # Outliers: sub1 keys that are not real Meta ad ids (e.g. unexpanded {{ad.id}}).
+    outlier_keys = [k for k in report.keys() if not str(k).isdigit()]
+
+    now = datetime.now(timezone.utc)
+    matched = 0
+    pushed_no_match = 0
+
+    ads = db.query(GeneratedAd).filter(GeneratedAd.fb_ad_id.isnot(None)).all()
+    for ga in ads:
+        metrics = report.get(str(ga.fb_ad_id))
+        if metrics:
+            ga.revenue = metrics.get("revenue")
+            ga.profit = metrics.get("profit")
+            ga.last_synced_at = now
+            matched += 1
+        else:
+            pushed_no_match += 1
+
+    db.commit()
+
+    return {
+        "configured": True,
+        "date_from": date_from_str,
+        "date_to": date_to_str,
+        "redtrack_ad_rows": len(report),
+        "matched": matched,
+        "pushed_ads_no_match": pushed_no_match,
+        "outliers": len(outlier_keys),
+        "outlier_sample": [str(k)[:24] for k in outlier_keys[:5]],
+    }

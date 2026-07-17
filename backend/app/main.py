@@ -158,6 +158,20 @@ async def startup_event():
                 finally:
                     db.close()
 
+            # Phase 3: ad-level performance sync — join sub1 (Meta ad id) onto
+            # generated_ads.fb_ad_id, writing revenue/profit/last_synced_at.
+            db = SessionLocal()
+            try:
+                from app.services.redtrack_service import sync_generated_ad_performance
+                summary = sync_generated_ad_performance(db, svc, "last_7d")
+                print(f"✅ RedTrack ad-perf sync: {summary.get('matched')} matched, "
+                      f"{summary.get('pushed_ads_no_match')} pushed-no-match, "
+                      f"{summary.get('outliers')} outliers")
+            except Exception as exc:
+                print(f"⚠️  RedTrack ad-perf sync error: {exc}")
+            finally:
+                db.close()
+
         def scheduled_meta_sync():
             """Sync all Meta campaigns and ad sets into the DB every 30 minutes."""
             from app.services.facebook_service import FacebookService

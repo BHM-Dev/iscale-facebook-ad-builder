@@ -167,6 +167,26 @@ def manual_sync(
     }
 
 
+@router.post("/sync-ad-performance")
+def sync_ad_performance(
+    date_preset: str = Query("last_7d"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Phase 3: join RedTrack sub1 (Meta ad id) onto generated_ads.fb_ad_id and
+    write ad-level revenue / profit / last_synced_at. Ad-grain attribution.
+
+    Same logic as the 30-min scheduler; call to refresh immediately. Returns
+    how many generated ads matched, how many pushed ads had no sub1 match, and
+    any non-expanded {{ad.id}} outliers in the RedTrack report.
+    """
+    from app.services.redtrack_service import sync_generated_ad_performance
+    svc = _svc()
+    if not svc.is_configured():
+        raise HTTPException(400, "REDTRACK_API_KEY not configured.")
+    return sync_generated_ad_performance(db, svc, date_preset)
+
+
 @router.get("/debug")
 def debug_redtrack(
     date_preset: str = Query("last_7d"),
