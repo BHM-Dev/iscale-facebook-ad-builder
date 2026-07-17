@@ -248,7 +248,7 @@ async def shutdown_event():
 
 
 # Include Routers
-from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence
+from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence, creative_angles
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
@@ -270,6 +270,7 @@ app.include_router(redtrack.router, prefix="/api/v1/redtrack", tags=["redtrack"]
 app.include_router(ai_insights.router, prefix="/api/v1/ai-insights", tags=["ai-insights"])
 app.include_router(ad_copy_library.router, prefix="/api/v1/ad-copy-library", tags=["ad-copy-library"])
 app.include_router(intelligence.router, prefix="/api/v1/intelligence", tags=["intelligence"])
+app.include_router(creative_angles.router, prefix="/api/v1/creative-angles", tags=["creative-angles"])
 
 # Mount static files for uploads (same path as generated_ads save location)
 uploads_dir = str(settings.upload_dir)

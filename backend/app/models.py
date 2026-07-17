@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, ForeignKey, DateTime, Text, JSON, Table, Boolean, Numeric, Date
+from sqlalchemy import Column, String, Integer, ForeignKey, DateTime, Text, JSON, Table, Boolean, Numeric, Date, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -107,6 +107,7 @@ class Brand(Base):
     secondary_color = Column(String, default='#10B981')
     highlight_color = Column(String, default='#F59E0B')
     voice = Column(Text, nullable=True)
+    vertical_id = Column(String, ForeignKey('verticals.id', ondelete='SET NULL'), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -323,6 +324,27 @@ class Vertical(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     saved_searches = relationship("SavedSearch", back_populates="vertical")
+
+
+class CreativeAngle(Base):
+    __tablename__ = "creative_angles"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    vertical_id = Column(String, ForeignKey('verticals.id', ondelete='CASCADE'), nullable=True)
+    name = Column(String, nullable=False)
+    hook = Column(String, nullable=True)
+    headline = Column(String, nullable=True)
+    body = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    sort_order = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    vertical = relationship("Vertical")
+
+    __table_args__ = (
+        UniqueConstraint('vertical_id', 'name', name='uq_creative_angles_vertical_name'),
+    )
 
 
 class FacebookPage(Base):
