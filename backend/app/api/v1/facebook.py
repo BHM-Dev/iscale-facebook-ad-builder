@@ -904,6 +904,7 @@ def push_to_meta(
     body: Dict[str, Any],
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
 ):
     """
     Push a remix concept directly to Meta as a new ad (status=PAUSED by default).
@@ -920,6 +921,12 @@ def push_to_meta(
     Optional:
       - ad_name        : Name for the ad in Meta (defaults to headline)
       - status         : PAUSED (default, safe) or ACTIVE
+
+    Optional attribution metadata — when provided, a GeneratedAd record is created
+    and linked to the pushed Meta ad so revenue can be attributed later
+    (generated_ads.fb_ad_id -> RedTrack sub1):
+      - brand_id, product_id, profile_id, niche, angle, source_ad_id
+      - campaign_id    : Meta campaign ID (for rollups)
     """
     adset_id      = body.get("adset_id")
     page_id       = body.get("page_id")
@@ -967,7 +974,8 @@ def push_to_meta(
         creative = service.create_creative(creative_payload)
         creative_id = creative.get_id_assured()
 
-        # Step 3: Create ad (PAUSED by default — Joel activates in Meta after review)
+        # Step 3: Create ad (PAUSED by default — Joel activates in Meta after review).
+        # RedTrack macros are already set on the creative's url_tags (Step 2).
         ad = service.create_ad({
             "adset_id": adset_id,
             "creative_id": creative_id,
@@ -977,12 +985,44 @@ def push_to_meta(
 
         ad_id = ad.get_id_assured()
         account_id_clean = service.ad_account_id.replace('act_', '') if service.ad_account_id else ''
+
+        # Persist + link a GeneratedAd so this remix creative can be attributed to revenue.
+        # fb_ad_id is the primary RedTrack sub1 join key. Never let a bookkeeping failure
+        # undo a successful Meta push — the ad already exists on Meta at this point.
+        generated_ad_id = None
+        try:
+            ga = GeneratedAd(
+                id=str(uuid.uuid4()),
+                brand_id=body.get("brand_id") or None,
+                product_id=body.get("product_id") or None,
+                profile_id=body.get("profile_id") or None,
+                image_url=image_url or None,
+                headline=headline or None,
+                body=body_copy or None,
+                cta=cta_label or None,
+                niche=body.get("niche") or None,
+                angle=body.get("angle") or None,
+                source_ad_id=body.get("source_ad_id") or None,
+                fb_ad_id=ad_id,
+                fb_adset_id=adset_id,
+                fb_campaign_id=body.get("campaign_id") or None,
+                fb_creative_id=creative_id,
+            )
+            db.add(ga)
+            db.commit()
+            generated_ad_id = ga.id
+        except Exception as link_err:
+            db.rollback()
+            logging.warning("push-to-meta: ad %s created on Meta but GeneratedAd link failed: %s", ad_id, link_err)
+
         return {
             "success": True,
             "ad_id": ad_id,
             "creative_id": creative_id,
             "image_hash": image_hash,
             "status": status,
+            "generated_ad_id": generated_ad_id,
+            "attribution_linked": generated_ad_id is not None,
             "meta_url": f"https://www.facebook.com/adsmanager/manage/ads?act={account_id_clean}&selected_ad_ids={ad_id}"
         }
 

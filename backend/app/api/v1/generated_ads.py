@@ -121,6 +121,14 @@ class GeneratedAdCreate(BaseModel):
     overlayOfferLine: Optional[str] = None
     overlayCta: Optional[str] = None
     overlayLogoUrl: Optional[str] = None
+    # Learning-loop attribution fields
+    angle: Optional[str] = None
+    sourceAdId: Optional[str] = None
+    profileId: Optional[str] = None
+    fbAdsetId: Optional[str] = None
+    fbCampaignId: Optional[str] = None
+    fbCreativeId: Optional[str] = None
+    fbAdId: Optional[str] = None
 
 class BatchSaveRequest(BaseModel):
     ads: List[GeneratedAdCreate]
@@ -982,6 +990,17 @@ def get_generated_ads(
         "overlay_offer_line": ad.overlay_offer_line,
         "overlay_cta": ad.overlay_cta,
         "overlay_logo_url": ad.overlay_logo_url,
+        # Learning-loop attribution + performance fields
+        "fb_ad_id": ad.fb_ad_id,
+        "fb_adset_id": ad.fb_adset_id,
+        "fb_campaign_id": ad.fb_campaign_id,
+        "fb_creative_id": ad.fb_creative_id,
+        "angle": ad.angle,
+        "source_ad_id": ad.source_ad_id,
+        "profile_id": ad.profile_id,
+        "revenue": float(ad.revenue) if ad.revenue is not None else None,
+        "profit": float(ad.profit) if ad.profit is not None else None,
+        "last_synced_at": ad.last_synced_at.isoformat() if ad.last_synced_at else None,
     } for ad in ads]
 
 @router.delete("/{ad_id}")
@@ -1091,6 +1110,14 @@ def batch_save_ads(
             overlay_offer_line=ad_data.overlayOfferLine,
             overlay_cta=ad_data.overlayCta,
             overlay_logo_url=ad_data.overlayLogoUrl,
+            # Learning-loop attribution fields
+            angle=ad_data.angle,
+            source_ad_id=ad_data.sourceAdId,
+            profile_id=ad_data.profileId,
+            fb_ad_id=ad_data.fbAdId,
+            fb_adset_id=ad_data.fbAdsetId,
+            fb_campaign_id=ad_data.fbCampaignId,
+            fb_creative_id=ad_data.fbCreativeId,
         )
         db.add(new_ad)
         saved_ads.append(new_ad)
@@ -1116,9 +1143,18 @@ def set_generated_ad_fb_id(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("ads:write"))
 ):
-    """Write back the Meta ad ID to a GeneratedAd record after a successful batch push.
-    This enables the Iterate flow to restore overlay fields (offer line, logo URL) from the local DB.
-    Body: { "fb_ad_id": "<meta_ad_id>" }
+    """Write back Meta IDs to a GeneratedAd record after a successful push.
+
+    fb_ad_id is the PRIMARY join key to RedTrack sub1 (= Meta ad id) and enables
+    the Iterate flow to restore overlay fields from the local DB. fb_adset_id /
+    fb_campaign_id / fb_creative_id are stored for rollups where available.
+
+    Body: {
+        "fb_ad_id": "<meta_ad_id>",          # required
+        "fb_adset_id": "<meta_adset_id>",    # optional
+        "fb_campaign_id": "<meta_campaign_id>", # optional
+        "fb_creative_id": "<meta_creative_id>"  # optional
+    }
     """
     fb_ad_id = (body.get("fb_ad_id") or "").strip()
     if not fb_ad_id:
@@ -1129,9 +1165,25 @@ def set_generated_ad_fb_id(
         raise HTTPException(status_code=404, detail="Generated ad not found")
 
     ad.fb_ad_id = fb_ad_id
+    # Optional rollup keys — only overwrite when a non-empty value is provided
+    fb_adset_id = (body.get("fb_adset_id") or "").strip()
+    fb_campaign_id = (body.get("fb_campaign_id") or "").strip()
+    fb_creative_id = (body.get("fb_creative_id") or "").strip()
+    if fb_adset_id:
+        ad.fb_adset_id = fb_adset_id
+    if fb_campaign_id:
+        ad.fb_campaign_id = fb_campaign_id
+    if fb_creative_id:
+        ad.fb_creative_id = fb_creative_id
     try:
         db.commit()
-        return {"id": ad_id, "fb_ad_id": fb_ad_id}
+        return {
+            "id": ad_id,
+            "fb_ad_id": fb_ad_id,
+            "fb_adset_id": ad.fb_adset_id,
+            "fb_campaign_id": ad.fb_campaign_id,
+            "fb_creative_id": ad.fb_creative_id,
+        }
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

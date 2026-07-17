@@ -257,14 +257,26 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                     adAccountId,
                     'ABO'
                 );
-                // Write back the Meta ad ID to the local GeneratedAd record so the Iterate flow
-                // can restore overlay fields (offer line, logo URL) from the local DB.
+                // Write back Meta IDs to the local GeneratedAd record. fb_ad_id is the
+                // primary RedTrack sub1 join key — a missing link means this creative can
+                // never be attributed, so surface (don't swallow) a failed write-back.
                 if (pushResult?.adId && item.generatedAdId) {
-                    authFetch(`${GEN_ADS_API_BASE}/${item.generatedAdId}/fb-ad-id`, {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ fb_ad_id: pushResult.adId }),
-                    }).catch(() => {}); // fire-and-forget — don't block the UI on failure
+                    try {
+                        const linkRes = await authFetch(`${GEN_ADS_API_BASE}/${item.generatedAdId}/fb-ad-id`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                fb_ad_id: pushResult.adId,
+                                fb_adset_id: targetAdsetId,
+                                fb_campaign_id: selectedCampaignId,
+                                fb_creative_id: pushResult.creativeId || null,
+                            }),
+                        });
+                        if (!linkRes.ok) throw new Error(`link write-back HTTP ${linkRes.status}`);
+                    } catch (linkErr) {
+                        // Ad pushed fine, but attribution link failed — warn without failing the push.
+                        showError(`Ad pushed but tracking link failed for "${copy.headline || item.headline || item.key}". Revenue attribution may be missing.`);
+                    }
                 }
                 setPushStatuses(prev => ({ ...prev, [item.key]: 'done' }));
             } catch (e) {

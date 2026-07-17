@@ -696,6 +696,10 @@ class FacebookService:
         if not lead_gen_form_id and (not website_url or not website_url.startswith('http')):
             raise ValueError('website_url must be a valid URL (e.g. https://example.com)')
 
+        # NOTE: RedTrack tracking macros ({{ad.id}} etc.) are NOT injected into the
+        # destination link — Meta only expands them in the creative's `url_tags` field
+        # (set below, after the params dict is built). The link stays clean.
+
         # Determine creative type: video, lead gen, or standard image/link
         if video_id:
             # Video creative — CTA value depends on whether this is lead gen or link-click
@@ -762,6 +766,21 @@ class FacebookService:
             AdCreative.Field.object_story_spec: object_story_spec,
         }
 
+        # RedTrack tracking macros go in the creative's url_tags field. Meta expands
+        # {{ad.id}}/{{adset.id}}/{{campaign.id}} there and appends them to the clicked
+        # URL at delivery time — they do NOT expand inside link_data.link. Skipped for
+        # lead-gen / URL-less flows (build_redtrack_url_tags returns "") and for keys
+        # already present in the destination URL (avoids duplicate params).
+        if not lead_gen_form_id and website_url:
+            try:
+                from app.core.redtrack_macros import build_redtrack_url_tags
+                url_tags = build_redtrack_url_tags(website_url)
+                if url_tags:
+                    params[AdCreative.Field.url_tags] = url_tags
+            except Exception as _e:
+                # Never let macro enforcement block a push — flag and continue without url_tags.
+                print(f"⚠️  RedTrack url_tags build skipped: {_e}")
+
         try:
             return account.create_ad_creative(params=params)
         except FacebookRequestError as e:
@@ -790,6 +809,8 @@ class FacebookService:
             Ad.Field.creative: {'creative_id': creative_id},
             Ad.Field.status: status,
         }
+        # NOTE: RedTrack macros are set on the AdCreative's url_tags field (see
+        # create_creative), not on the Ad — Ad has no url_tags field in this SDK.
 
         try:
             return account.create_ad(params=params)

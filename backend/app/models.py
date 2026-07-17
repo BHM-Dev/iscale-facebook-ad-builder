@@ -301,8 +301,20 @@ class GeneratedAd(Base):
     video_url = Column(String, nullable=True)
     video_id = Column(String, nullable=True)  # Facebook video ID
     thumbnail_url = Column(String, nullable=True)
-    # Meta ad ID — written back after batch push so Iterate can restore overlay fields from this record
+    # Meta ad ID — written back after push. PRIMARY join key to RedTrack sub1 (= Meta ad id).
     fb_ad_id = Column(String, nullable=True, index=True)
+    # Attribution rollup keys — written back at push time (not the primary revenue join)
+    fb_adset_id = Column(String, nullable=True, index=True)
+    fb_campaign_id = Column(String, nullable=True)
+    fb_creative_id = Column(String, nullable=True)
+    # Learning-loop metadata
+    angle = Column(String, nullable=True)          # creative angle used (e.g. "rate_shock")
+    source_ad_id = Column(String, nullable=True)   # Meta ad id this was remixed from (provenance)
+    profile_id = Column(String, nullable=True)     # audience profile (loose ref, mirrors niche)
+    # Performance snapshot — synced from RedTrack sub1 (ad grain) by the perf-sync job
+    revenue = Column(Numeric(precision=10, scale=2), nullable=True)
+    profit = Column(Numeric(precision=10, scale=2), nullable=True)
+    last_synced_at = Column(DateTime(timezone=True), nullable=True)
     # Text overlay fields — store what was baked into the image so Iterate/Remix can reconstruct settings
     niche = Column(String, nullable=True)
     overlay_enabled = Column(Boolean, default=False, nullable=True)

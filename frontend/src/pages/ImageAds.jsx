@@ -363,7 +363,13 @@ export default function ImageAds() {
 
             const allImages = results
                 .filter(r => r.status === 'fulfilled')
-                .flatMap(r => r.value);
+                .flatMap(r => r.value)
+                // Stable local DB id per image — reused as the GeneratedAd PK on save so the
+                // Push to Meta write-back can link fb_ad_id back to this exact record.
+                .map((img, i) => ({
+                    ...img,
+                    dbId: `ga_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 9)}`,
+                }));
 
             const failedCount = results.filter(r => r.status === 'rejected').length;
 
@@ -380,8 +386,8 @@ export default function ImageAds() {
             // Save all generated ads to database in one batch
             try {
                 const templateId = wizardData.template?.type === 'template' ? wizardData.template?.id : null;
-                const adsToSave = allImages.map((img, i) => ({
-                    id: `ga_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 9)}`,
+                const adsToSave = allImages.map((img) => ({
+                    id: img.dbId,
                     brandId: wizardData.brand?.id,
                     productId: wizardData.product?.id,
                     templateId,
@@ -392,7 +398,9 @@ export default function ImageAds() {
                     sizeName: img.size,
                     dimensions: img.dimensions,
                     prompt: img.prompt,
-                    adBundleId: img.adBundleId
+                    adBundleId: img.adBundleId,
+                    niche: wizardData.niche || null,
+                    profileId: wizardData.profile?.id || null,
                 }));
 
                 const saveResponse = await authFetch(`${API_URL}/generated-ads/batch`, {
@@ -2383,6 +2391,7 @@ function ImageGenerationStep({ generatedImages, wizardData, selectedCopy, allCop
                     initialHeadline={pushModal.copy?.headline || ''}
                     initialBody={pushModal.copy?.body || ''}
                     initialCta={pushModal.copy?.cta || 'LEARN_MORE'}
+                    generatedAdId={pushModal.image.dbId || null}
                     onClose={() => setPushModal({ show: false, image: null, copy: null })}
                 />
             )}

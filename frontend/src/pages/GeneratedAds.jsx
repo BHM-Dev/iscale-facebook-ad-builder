@@ -992,6 +992,7 @@ export default function GeneratedAds() {
                     initialWebsiteUrl={localStorage.getItem('lastUsedWebsiteUrl') || ''}
                     initialCampaignId={sessionStorage.getItem('lastUsedCampaignId') || ''}
                     niche={pushModal.ad.niche || pushModal.ad.overlay_niche_line || ''}
+                    generatedAdId={pushModal.ad.id || null}
                     onClose={() => setPushModal({ show: false, ad: null })}
                 />
             )}

@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Rocket, Loader, X, CheckCircle2, ExternalLink, PlusCircle, ListFilter } from 'lucide-react';
-import { getCampaigns, getAdSets, getPages, createCompleteAd, createFacebookAdSet } from '../lib/facebookApi';
+import { getCampaigns, getAdSets, getPages, createCompleteAd, createFacebookAdSet, authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 // Meta copy limits (characters before truncation)
 const HEADLINE_LIMIT = 40;
@@ -29,6 +31,7 @@ export default function PushToMetaModal({
     initialWebsiteUrl = '',
     initialCampaignId = '',
     niche = '',
+    generatedAdId = null,
     onClose,
     onSuccess,
 }) {
@@ -197,6 +200,27 @@ export default function PushToMetaModal({
                 pushForm.adAccountId,
                 'ABO'
             );
+
+            // Write back Meta IDs to the local GeneratedAd so this creative can be attributed.
+            // fb_ad_id is the primary RedTrack sub1 join key — if Meta returned an ad ID we must
+            // not leave the record unlinked. Surface (don't swallow) a failed write-back.
+            if (result?.adId && generatedAdId) {
+                try {
+                    const linkRes = await authFetch(`${API_URL}/generated-ads/${generatedAdId}/fb-ad-id`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            fb_ad_id: result.adId,
+                            fb_adset_id: targetAdsetId,
+                            fb_campaign_id: pushForm.campaignId,
+                            fb_creative_id: result.creativeId || null,
+                        }),
+                    });
+                    if (!linkRes.ok) throw new Error(`link write-back HTTP ${linkRes.status}`);
+                } catch (linkErr) {
+                    showError('Ad pushed, but the tracking link failed to save. Revenue attribution for this creative may be missing.');
+                }
+            }
 
             // Persist selections for next use
             if (pushForm.pageId) localStorage.setItem('lastUsedPageId', pushForm.pageId);

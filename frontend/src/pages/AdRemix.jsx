@@ -35,6 +35,7 @@ export default function AdRemix() {
     const [remixFbCampaignId, setRemixFbCampaignId] = useState(''); // Meta campaign ID from source ad — for push modal pre-selection
     const [remixFbAdsetId, setRemixFbAdsetId] = useState('');       // Meta adset ID from source ad
     const [remixLinkUrl, setRemixLinkUrl] = useState('');            // destination URL from source ad — pre-fills push modal
+    const [remixSourceAdId, setRemixSourceAdId] = useState('');      // Meta ad ID of the winner being remixed (provenance)
     const [copied, setCopied] = useState(false);
     const [uploadingRef, setUploadingRef] = useState(false);
     const [refPreview, setRefPreview] = useState('');
@@ -97,6 +98,8 @@ export default function AdRemix() {
             if (creative.fb_campaign_id) setRemixFbCampaignId(creative.fb_campaign_id);
             if (creative.fb_adset_id) setRemixFbAdsetId(creative.fb_adset_id);
             if (creative.link_url) setRemixLinkUrl(creative.link_url);
+            // Provenance — the Meta ad id of the winning ad this remix started from (best-effort)
+            if (creative.fb_ad_id || creative.ad_id) setRemixSourceAdId(creative.fb_ad_id || creative.ad_id);
             // Pre-populate wizard: use the winning ad image as the template source
             setWizardData(prev => ({
                 ...prev,
@@ -517,6 +520,14 @@ export default function AdRemix() {
                     body_copy: pushModal.body_copy,
                     cta_button: pushModal.cta_button,
                     status: pushForm.status,
+                    // Attribution metadata — links the pushed ad to a GeneratedAd record
+                    // (generated_ads.fb_ad_id -> RedTrack sub1) so revenue can be attributed.
+                    brand_id: wizardData.brand?.id || null,
+                    product_id: wizardData.product?.id || null,
+                    profile_id: wizardData.profile?.id || null,
+                    niche: pendingNiche || null,
+                    source_ad_id: remixSourceAdId || null,
+                    campaign_id: remixFbCampaignId || null,
                 }),
             });
             if (!res.ok) {

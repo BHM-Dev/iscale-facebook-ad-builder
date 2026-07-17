@@ -580,7 +580,8 @@ export async function createCompleteAd(campaignId, adsetData, creativeData, adDa
             videoData
         );
 
-        // 3. Create ad
+        // 3. Create ad. RedTrack macros are set on the creative's url_tags in step 2
+        // (the backend derives them from websiteUrl) — nothing extra needed here.
         const adId = await createFacebookAd(adData, adsetData.fbAdsetId, creativeId, adAccountId);
 
         return {
