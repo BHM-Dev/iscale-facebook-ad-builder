@@ -43,6 +43,8 @@ export default function PushToMetaModal({
     const [pushLoading, setPushLoading] = useState(false);
     const [pushSubmitting, setPushSubmitting] = useState(false);
     const [successResult, setSuccessResult] = useState(null);
+    // Persistent inline error ({message, hint, link}) — survives until the next attempt
+    const [pushError, setPushError] = useState(null);
 
     // Always default to 'new' — Joel always creates a fresh ad set when pushing
     const [adsetMode, setAdsetMode] = useState('new');
@@ -153,6 +155,7 @@ export default function PushToMetaModal({
         }
 
         setPushSubmitting(true);
+        setPushError(null);
         let createdAdsetId = null;
         let createdAdsetName = null;
         try {
@@ -237,16 +240,25 @@ export default function PushToMetaModal({
             });
             if (onSuccess) onSuccess();
         } catch (e) {
+            // Persistent inline error — toasts auto-dismiss and a failed push with no
+            // visible trace looks like a silent no-op. This banner stays until retry.
             if (createdAdsetId) {
-                // Ad set was created successfully but ad push failed — give a direct link
                 const adsManagerUrl = pushForm.adAccountId && pushForm.campaignId
                     ? `https://adsmanager.facebook.com/adsmanager/manage/adsets?act=${pushForm.adAccountId.replace('act_', '')}&selected_campaign_ids=${pushForm.campaignId}`
                     : 'https://adsmanager.facebook.com';
-                showError(
-                    `Ad set "${createdAdsetName}" was created, but the ad failed to push. Open Ads Manager to delete the empty ad set and try again: ${adsManagerUrl}`
-                );
+                setPushError({
+                    message: `Ad set "${createdAdsetName}" was created, but the ad failed to push: ${e.message}`,
+                    hint: 'Open Ads Manager to delete the empty ad set, then try again.',
+                    link: adsManagerUrl,
+                });
             } else {
-                showError(`Failed to push ad: ${e.message}`);
+                setPushError({
+                    message: e.message || 'Failed to push ad.',
+                    hint: /page/i.test(e.message || '')
+                        ? 'Tip: the Page ID must be the page\'s asset ID from Business Manager — the public profile ID from the page URL will be rejected by Meta.'
+                        : null,
+                    link: null,
+                });
             }
         } finally {
             setPushSubmitting(false);
@@ -329,7 +341,10 @@ export default function PushToMetaModal({
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-xl font-bold text-gray-900">Push Ad to Facebook Campaign</h3>
+                    <div>
+                        <h3 className="text-xl font-bold text-gray-900">Push Ad to Facebook Campaign</h3>
+                        <p className="text-xs text-gray-500 mt-0.5">Creates one standalone ad, PAUSED — activate it in Ads Manager after review.</p>
+                    </div>
                     <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
                         <X size={20} />
                     </button>
@@ -581,6 +596,19 @@ export default function PushToMetaModal({
                     </div>
                 </div>
 
+                {pushError && (
+                    <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm">
+                        <p className="font-semibold text-red-800">Push failed</p>
+                        <p className="mt-1 text-red-700">{pushError.message}</p>
+                        {pushError.hint && <p className="mt-1 text-red-600 text-xs">{pushError.hint}</p>}
+                        {pushError.link && (
+                            <a href={pushError.link} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs font-medium text-red-700 underline">
+                                Open Ads Manager
+                            </a>
+                        )}
+                    </div>
+                )}
+
                 <div className="flex gap-3 mt-6">
                     <button
                         onClick={onClose}
@@ -595,7 +623,7 @@ export default function PushToMetaModal({
                     >
                         {pushSubmitting
                             ? <><Loader className="animate-spin" size={18} /> {adsetMode === 'new' ? 'Creating & Pushing...' : 'Pushing...'}</>
-                            : <><Rocket size={18} /> {adsetMode === 'new' ? 'Create Ad Set & Push' : 'Push Live'}</>
+                            : <><Rocket size={18} /> {adsetMode === 'new' ? 'Create Ad Set & Push (Paused)' : 'Push to Meta (Paused)'}</>
                         }
                     </button>
                 </div>

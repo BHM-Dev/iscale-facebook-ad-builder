@@ -187,7 +187,39 @@ class FacebookService:
         ]
         
         pages = me.get_accounts(fields=fields)
-        return [dict(page) for page in pages]
+        result = [dict(page) for page in pages]
+        if result:
+            return result
+
+        # Fallback: personal tokens without pages_show_list return an empty
+        # me/accounts even though the token can still USE pages in creatives.
+        # Derive the pages actually in use from this ad account's recent ad
+        # creatives (single API call via field expansion), then resolve names.
+        # Without this the Push modal's page dropdown is empty and users type
+        # the page's public-profile ID, which Meta rejects (error 1443121).
+        try:
+            account = self._get_account(ad_account_id)
+            page_ids = []
+            scanned = 0
+            for ad in account.get_ads(fields=['creative{object_story_spec}'], params={'limit': 100}):
+                scanned += 1
+                oss = ((dict(ad).get('creative') or {}).get('object_story_spec') or {})
+                pid = str(oss.get('page_id') or '')
+                if pid and pid not in page_ids:
+                    page_ids.append(pid)
+                if scanned >= 200 or len(page_ids) >= 5:
+                    break
+            derived = []
+            for pid in page_ids:
+                try:
+                    pg = dict(Page(pid).api_get(fields=['id', 'name']))
+                    derived.append({'id': pg.get('id', pid), 'name': pg.get('name', f'Page {pid}'), 'category': None})
+                except Exception:
+                    derived.append({'id': pid, 'name': f'Page {pid}', 'category': None})
+            return derived
+        except Exception as e:
+            print(f"⚠️  get_pages fallback (derive from creatives) failed: {e}")
+            return []
 
     def get_adsets(self, ad_account_id=None, campaign_id=None):
         """Fetch all ad sets and enrich each with parent campaign objective + name.

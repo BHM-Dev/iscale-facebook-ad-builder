@@ -119,7 +119,9 @@ export default function ImageAds() {
             product: null,
             profile: null,
             template: null,
-            variationCount: 3,
+            // Default 1 variation — Joel's live-test flow is one image at a time;
+            // each variation costs kie.ai credits. Bump the count deliberately.
+            variationCount: 1,
             imageSizes: [{
                 name: 'Square (Feed/Carousel)',
                 width: 1080,
@@ -195,6 +197,10 @@ export default function ImageAds() {
     const [overlayOfferLine, setOverlayOfferLine] = useState(() => {
         try { return localStorage.getItem('overlayOfferLine') || ''; } catch (_) { return ''; }
     });
+    // Hero text baked onto the image (the overlay's "niche line"). Blank = use the
+    // ad headline. NEVER falls back to the style/template display name — a style
+    // label like `The "Local Hero" Split` must never render on a live creative.
+    const [overlayNicheLine, setOverlayNicheLine] = useState('');
     const [overlayLogoUrl, setOverlayLogoUrl] = useState(() => {
         try { return localStorage.getItem('overlayLogoUrl') || ''; } catch (_) { return ''; }
     });
@@ -347,7 +353,16 @@ export default function ImageAds() {
                 useProductImage: wizardData.useProductShots,
                 customPrompt: customImagePrompt,
                 overlay_enabled: overlayEnabled,
-                overlay_niche_line: overlayEnabled ? (wizardData.template?.niche || wizardData.template?.template_category || wizardData.template?.name || '') : null,
+                // Hero text priority: explicit user input → template's real niche →
+                // the ad headline. Template *display name* is intentionally excluded —
+                // style names (e.g. `The "Local Hero" Split`) are not ad copy.
+                overlay_niche_line: overlayEnabled
+                    ? (overlayNicheLine.trim()
+                        || wizardData.template?.niche
+                        || wizardData.template?.template_category
+                        || copy?.headline
+                        || '')
+                    : null,
                 overlay_offer_line: overlayEnabled ? (overlayOfferLine || null) : null,
                 overlay_cta: overlayEnabled ? (copy?.cta || 'GET MY QUOTE') : null,
                 overlay_logo_url: overlayEnabled ? (overlayLogoUrl || null) : null,
@@ -590,6 +605,8 @@ export default function ImageAds() {
                         setOverlayEnabled={setOverlayEnabled}
                         overlayOfferLine={overlayOfferLine}
                         setOverlayOfferLine={setOverlayOfferLine}
+                        overlayNicheLine={overlayNicheLine}
+                        setOverlayNicheLine={setOverlayNicheLine}
                         setOverlayLogoUrl={setOverlayLogoUrl}
                         overlayLogoPreview={overlayLogoPreview}
                         setOverlayLogoPreview={setOverlayLogoPreview}
@@ -1278,7 +1295,7 @@ function ReviewStep({ wizardData }) {
 
     // Build the default prompt
     const buildPrompt = () => {
-        const count = wizardData.variationCount || 3;
+        const count = wizardData.variationCount || 1;
         return `You are an expert ad copywriter. Generate ${count} variations of ad copy for a Facebook/Instagram ad campaign.
 
 BRAND VOICE: ${wizardData.brand?.voice || 'Professional and friendly'}
@@ -1879,6 +1896,7 @@ function QuickGeneratePanel({
     templateMode, setTemplateMode,
     overlayEnabled, setOverlayEnabled,
     overlayOfferLine, setOverlayOfferLine,
+    overlayNicheLine, setOverlayNicheLine,
     setOverlayLogoUrl,
     overlayLogoPreview, setOverlayLogoPreview,
     uploadingLogo, logoFileInputRef, uploadLogoImage,
@@ -2086,6 +2104,17 @@ function QuickGeneratePanel({
                 {overlayEnabled && (
                     <div className="p-4 space-y-3">
                         <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Main Text on Image</label>
+                            <input
+                                type="text"
+                                placeholder={quickCopy.headline.trim() ? `Defaults to: ${quickCopy.headline}` : 'Defaults to your headline'}
+                                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                                value={overlayNicheLine}
+                                onChange={e => setOverlayNicheLine(e.target.value)}
+                            />
+                            <p className="text-xs text-gray-400 mt-1">The big text baked onto the image. Leave blank to use your headline.</p>
+                        </div>
+                        <div>
                             <label className="block text-xs font-medium text-gray-600 mb-1">Offer Line</label>
                             <input
                                 type="text"
@@ -2097,7 +2126,7 @@ function QuickGeneratePanel({
                                     try { localStorage.setItem('overlayOfferLine', e.target.value); } catch (_) {}
                                 }}
                             />
-                            <p className="text-xs text-gray-400 mt-1">Appears below the headline. Leave blank to omit.</p>
+                            <p className="text-xs text-gray-400 mt-1">Appears below the hero text. Leave blank to omit.</p>
                         </div>
                         <div>
                             <label className="block text-xs font-medium text-gray-600 mb-1">Logo</label>
@@ -2248,27 +2277,44 @@ function ImageGenerationStep({ generatedImages, wizardData, selectedCopy, allCop
                             {bundle.images.map((img, index) => {
                                 const globalIndex = displayImages.indexOf(img);
                                 return (
-                                    <button
-                                        key={index}
-                                        onClick={() => setSelectedImageIndex(globalIndex)}
-                                        className="group relative aspect-square rounded-xl overflow-hidden border-2 border-gray-200 hover:border-amber-600 transition-all hover:shadow-xl hover:scale-105"
-                                    >
-                                        <img
-                                            src={img.url}
-                                            alt={`Ad ${globalIndex + 1}`}
-                                            className="w-full h-full object-cover"
-                                        />
-                                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-center justify-center">
-                                            <div className="opacity-0 group-hover:opacity-100 transition-opacity text-white text-center p-4">
-                                                <Image size={32} className="mx-auto mb-2" />
-                                                <p className="text-sm font-medium">{img.size}</p>
-                                                <p className="text-xs">{img.dimensions}</p>
+                                    <div key={index} className="flex flex-col gap-2">
+                                        <button
+                                            onClick={() => setSelectedImageIndex(globalIndex)}
+                                            className="group relative aspect-square rounded-xl overflow-hidden border-2 border-gray-200 hover:border-amber-600 transition-all hover:shadow-xl hover:scale-105"
+                                        >
+                                            <img
+                                                src={img.url}
+                                                alt={`Ad ${globalIndex + 1}`}
+                                                className="w-full h-full object-cover"
+                                            />
+                                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-center justify-center">
+                                                <div className="opacity-0 group-hover:opacity-100 transition-opacity text-white text-center p-4">
+                                                    <Image size={32} className="mx-auto mb-2" />
+                                                    <p className="text-sm font-medium">{img.size}</p>
+                                                    <p className="text-xs">{img.dimensions}</p>
+                                                </div>
                                             </div>
-                                        </div>
-                                        <div className="absolute bottom-2 left-2 right-2 bg-white/90 backdrop-blur-sm rounded-lg px-2 py-1 text-xs font-medium text-gray-900 text-center">
-                                            {img.size}
-                                        </div>
-                                    </button>
+                                            <div className="absolute bottom-2 left-2 right-2 bg-white/90 backdrop-blur-sm rounded-lg px-2 py-1 text-xs font-medium text-gray-900 text-center">
+                                                {img.size}
+                                            </div>
+                                        </button>
+                                        <button
+                                            onClick={() => setPushModal({
+                                                show: true,
+                                                image: img,
+                                                copy: {
+                                                    headline: img.copyHeadline || selectedCopy?.headline || '',
+                                                    body: img.copyBody || selectedCopy?.body || '',
+                                                    cta: img.copyCta || selectedCopy?.cta || 'LEARN_MORE',
+                                                },
+                                            })}
+                                            className="flex items-center justify-center gap-1.5 px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-xs font-semibold transition-colors"
+                                            title="Creates a separate paused ad in Meta — activate it in Ads Manager after review"
+                                        >
+                                            <Rocket size={13} />
+                                            Push to Meta
+                                        </button>
+                                    </div>
                                 );
                             })}
                         </div>
