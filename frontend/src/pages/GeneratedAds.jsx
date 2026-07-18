@@ -9,6 +9,65 @@ import BatchPushModal from '../components/BatchPushModal';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
+const SORT_OPTIONS = [
+    { value: 'newest', label: 'Newest' },
+    { value: 'profit_desc', label: 'Profit high to low' },
+    { value: 'revenue_desc', label: 'Revenue high to low' },
+    { value: 'untracked_first', label: 'Untracked first' },
+];
+
+function mainAdForBundle(bundle) {
+    return bundle.find(ad => ad.size_name?.includes('Square')) || bundle[0];
+}
+
+function metricValue(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+
+function formatMoney(value) {
+    const number = metricValue(value);
+    if (number === null) return '—';
+    return number.toLocaleString('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        maximumFractionDigits: 0,
+    });
+}
+
+function formatAngle(value) {
+    if (!value) return '—';
+    return String(value)
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function trackingState(ad) {
+    if (ad?.fb_ad_id && ad?.last_synced_at) {
+        return { label: 'Tracked', className: 'bg-green-50 text-green-700 border-green-200' };
+    }
+    if (ad?.fb_ad_id) {
+        return { label: 'Pushed', className: 'bg-amber-50 text-amber-700 border-amber-200' };
+    }
+    return { label: 'Untracked', className: 'bg-gray-50 text-gray-500 border-gray-200' };
+}
+
+function profitClass(value) {
+    const number = metricValue(value);
+    if (number === null) return 'text-gray-400';
+    return number >= 0 ? 'text-green-700' : 'text-red-600';
+}
+
+function TrackingBadge({ ad }) {
+    const state = trackingState(ad);
+    return (
+        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${state.className}`}>
+            {state.label}
+        </span>
+    );
+}
+
 export default function GeneratedAds() {
     // Force rebuild
     const { brands } = useBrands();
@@ -22,6 +81,7 @@ export default function GeneratedAds() {
     const [brokenBundles, setBrokenBundles] = useState(new Set());
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedBrand, setSelectedBrand] = useState('');
+    const [sortMode, setSortMode] = useState('newest');
     const [viewMode, setViewMode] = useState(() => {
         try {
             return localStorage.getItem('generatedAdsViewMode') || 'grid';
@@ -109,17 +169,12 @@ export default function GeneratedAds() {
             groups[bundleId].push(ad);
         });
 
-        // Convert to array and sort by created_at (newest first)
-        return Object.values(groups).sort((a, b) => {
-            const dateA = new Date(a[0].created_at);
-            const dateB = new Date(b[0].created_at);
-            return dateB - dateA;
-        });
+        return Object.values(groups);
     }, [ads]);
 
     // Filter bundles
     const filteredBundles = useMemo(() => {
-        return bundles.filter(bundle => {
+        const filtered = bundles.filter(bundle => {
             // Check if any ad in the bundle matches the search term
             const matchesSearch = bundle.some(ad =>
                 (ad.headline?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
@@ -128,7 +183,49 @@ export default function GeneratedAds() {
             );
             return searchTerm === '' || matchesSearch;
         });
-    }, [bundles, searchTerm]);
+
+        return [...filtered].sort((a, b) => {
+            const adA = mainAdForBundle(a);
+            const adB = mainAdForBundle(b);
+            if (sortMode === 'profit_desc') {
+                return (metricValue(adB.profit) ?? -Infinity) - (metricValue(adA.profit) ?? -Infinity);
+            }
+            if (sortMode === 'revenue_desc') {
+                return (metricValue(adB.revenue) ?? -Infinity) - (metricValue(adA.revenue) ?? -Infinity);
+            }
+            if (sortMode === 'untracked_first') {
+                const aTracked = adA?.fb_ad_id && adA?.last_synced_at ? 1 : 0;
+                const bTracked = adB?.fb_ad_id && adB?.last_synced_at ? 1 : 0;
+                if (aTracked !== bTracked) return aTracked - bTracked;
+            }
+            const dateA = new Date(adA?.created_at || 0);
+            const dateB = new Date(adB?.created_at || 0);
+            return dateB - dateA;
+        });
+    }, [bundles, searchTerm, sortMode]);
+
+    const topAngles = useMemo(() => {
+        const groups = {};
+        ads.forEach(ad => {
+            const revenue = metricValue(ad.revenue);
+            const profit = metricValue(ad.profit);
+            if (revenue === null && profit === null) return;
+
+            const key = ad.angle || 'Untagged';
+            if (!groups[key]) {
+                groups[key] = { angle: key, revenue: 0, profit: 0, pushed: 0, tracked: 0 };
+            }
+            groups[key].revenue += revenue || 0;
+            groups[key].profit += profit || 0;
+            if (ad.fb_ad_id) groups[key].pushed += 1;
+            if (ad.last_synced_at) groups[key].tracked += 1;
+        });
+
+        return Object.values(groups)
+            .filter(group => group.revenue !== 0 || group.profit !== 0)
+            .sort((a, b) => b.profit - a.profit)
+            .slice(0, 5);
+    }, [ads]);
 
     const toggleSelectBundle = (bundleId, e) => {
         e.stopPropagation();
@@ -379,6 +476,19 @@ export default function GeneratedAds() {
                             ))}
                         </select>
                     </div>
+
+                    {/* Sort */}
+                    <div className="relative">
+                        <select
+                            value={sortMode}
+                            onChange={(e) => setSortMode(e.target.value)}
+                            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-600 focus:border-transparent appearance-none bg-white text-sm text-gray-700"
+                        >
+                            {SORT_OPTIONS.map(option => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                        </select>
+                    </div>
                 </div>
 
                 {/* Broken image cleanup notice */}
@@ -451,6 +561,39 @@ export default function GeneratedAds() {
                 )}
             </div>
 
+            {/* Top Angles by Profit */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 mb-6">
+                <div className="flex items-center justify-between gap-3 mb-4">
+                    <div>
+                        <h2 className="text-base font-bold text-gray-900">Top Angles by Profit</h2>
+                        <p className="text-sm text-gray-500 mt-0.5">Updates as pushed ads match RedTrack ad-level revenue.</p>
+                    </div>
+                    <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                        {topAngles.length ? `${topAngles.length} tracked` : 'Waiting for data'}
+                    </span>
+                </div>
+                {topAngles.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-5 text-sm text-gray-500">
+                        No tracked creative performance yet.
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                        {topAngles.map(angle => (
+                            <div key={angle.angle} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                <div className="text-sm font-semibold text-gray-900 truncate">{formatAngle(angle.angle)}</div>
+                                <div className={`mt-2 text-lg font-bold ${profitClass(angle.profit)}`}>{formatMoney(angle.profit)}</div>
+                                <div className="mt-1 text-xs text-gray-500">
+                                    {formatMoney(angle.revenue)} revenue
+                                </div>
+                                <div className="mt-2 text-[11px] text-gray-400">
+                                    {angle.tracked} tracked · {angle.pushed} pushed
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
             {/* Ads Content */}
             {
                 loading ? (
@@ -466,7 +609,7 @@ export default function GeneratedAds() {
                     // GRID VIEW
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                         {filteredBundles.map(bundle => {
-                            const mainAd = bundle.find(ad => ad.size_name?.includes('Square')) || bundle[0];
+                            const mainAd = mainAdForBundle(bundle);
                             const bundleId = bundle[0].ad_bundle_id || `legacy_${bundle[0].id}`;
                             const isSelected = selectedBundles.has(bundleId);
                             const isBroken = brokenBundles.has(bundleId);
@@ -551,6 +694,30 @@ export default function GeneratedAds() {
                                         </div>
                                     )}
 
+                                    {/* Performance strip */}
+                                    {!isBroken && (
+                                        <div className="grid grid-cols-4 gap-1 px-3 py-2 border-t border-gray-100 bg-white text-[11px]">
+                                            <div>
+                                                <div className="text-gray-400">Tracked</div>
+                                                <TrackingBadge ad={mainAd} />
+                                            </div>
+                                            <div>
+                                                <div className="text-gray-400">Angle</div>
+                                                <div className="font-semibold text-gray-700 truncate" title={formatAngle(mainAd.angle)}>
+                                                    {formatAngle(mainAd.angle)}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div className="text-gray-400">Revenue</div>
+                                                <div className="font-semibold text-gray-700">{formatMoney(mainAd.revenue)}</div>
+                                            </div>
+                                            <div>
+                                                <div className="text-gray-400">Profit</div>
+                                                <div className={`font-semibold ${profitClass(mainAd.profit)}`}>{formatMoney(mainAd.profit)}</div>
+                                            </div>
+                                        </div>
+                                    )}
+
                                     {/* Dimension strip — below image on white background, always readable */}
                                     {!isBroken && (
                                         <div className="flex items-center justify-center gap-1.5 px-3 py-2 border-t border-gray-100 bg-white">
@@ -570,8 +737,8 @@ export default function GeneratedAds() {
                     </div>
                 ) : (
                     // LIST VIEW
-                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                        <table className="w-full text-left">
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
+                        <table className="w-full min-w-[1180px] text-left">
                             <thead className="bg-gray-50 border-b border-gray-200">
                                 <tr>
                                     <th className="px-6 py-3 w-12">
@@ -589,13 +756,17 @@ export default function GeneratedAds() {
                                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Ad Creative</th>
                                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Headline</th>
                                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Body</th>
+                                    <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Angle</th>
+                                    <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-right">Revenue</th>
+                                    <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-right">Profit</th>
+                                    <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Tracking</th>
                                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
                                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-right">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
                                 {filteredBundles.map(bundle => {
-                                    const mainAd = bundle.find(ad => ad.size_name?.includes('Square')) || bundle[0];
+                                    const mainAd = mainAdForBundle(bundle);
                                     const bundleId = bundle[0].ad_bundle_id || `legacy_${bundle[0].id}`;
                                     const isSelected = selectedBundles.has(bundleId);
                                     const isVideo = mainAd.media_type === 'video';
@@ -655,6 +826,18 @@ export default function GeneratedAds() {
                                             </td>
                                             <td className="px-6 py-4 max-w-xs">
                                                 <p className="text-sm text-gray-500 line-clamp-1">{mainAd.body}</p>
+                                            </td>
+                                            <td className="px-4 py-4 whitespace-nowrap">
+                                                <span className="text-sm font-medium text-gray-700">{formatAngle(mainAd.angle)}</span>
+                                            </td>
+                                            <td className="px-4 py-4 whitespace-nowrap text-right">
+                                                <span className="text-sm font-semibold text-gray-700">{formatMoney(mainAd.revenue)}</span>
+                                            </td>
+                                            <td className="px-4 py-4 whitespace-nowrap text-right">
+                                                <span className={`text-sm font-semibold ${profitClass(mainAd.profit)}`}>{formatMoney(mainAd.profit)}</span>
+                                            </td>
+                                            <td className="px-4 py-4 whitespace-nowrap">
+                                                <TrackingBadge ad={mainAd} />
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap">
                                                 <span className="text-sm text-gray-500">{new Date(mainAd.created_at).toLocaleDateString()}</span>

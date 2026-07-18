@@ -13,6 +13,14 @@ import { VERTICAL_FILTERS, inferBrandVertical } from '../lib/verticals';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
+function normalizeAngleKey(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+}
+
 const ANGLE_TEMPLATES = {
     commercial_insurance: [
         {
@@ -94,6 +102,7 @@ export default function ImageAds() {
     const [templateMode, setTemplateMode] = useState('style'); // 'style' or 'template'
     const [mode, setMode] = useState('quick'); // 'wizard' | 'quick'
     const [quickCopy, setQuickCopy] = useState({ headline: '', body: '', cta: '' });
+    const [anglePerformance, setAnglePerformance] = useState({});
     const quickBrands = filteredBrands?.length ? filteredBrands : brands;
 
     // Load saved campaign details from localStorage on mount
@@ -151,6 +160,35 @@ export default function ImageAds() {
             localStorage.removeItem('pendingQuickCopy');
         }
     }, []);
+
+    useEffect(() => {
+        const loadAnglePerformance = async () => {
+            try {
+                const response = await authFetch(`${API_URL}/generated-ads`);
+                if (!response.ok) return;
+                const data = await response.json();
+                const stats = {};
+                (Array.isArray(data) ? data : []).forEach(ad => {
+                    const key = normalizeAngleKey(ad.angle);
+                    if (!key) return;
+                    const profit = Number(ad.profit);
+                    const revenue = Number(ad.revenue);
+                    const hasProfit = Number.isFinite(profit);
+                    const hasRevenue = Number.isFinite(revenue);
+                    if (!hasProfit && !hasRevenue) return;
+                    if (!stats[key]) stats[key] = { profit: 0, revenue: 0, tracked: 0 };
+                    stats[key].profit += hasProfit ? profit : 0;
+                    stats[key].revenue += hasRevenue ? revenue : 0;
+                    stats[key].tracked += ad.last_synced_at ? 1 : 0;
+                });
+                setAnglePerformance(stats);
+            } catch (error) {
+                console.error('Failed to load angle performance:', error);
+            }
+        };
+
+        loadAnglePerformance();
+    }, [authFetch]);
 
     // Overlay state — shared localStorage keys with BatchGenerate and AdRemix
     const [overlayEnabled, setOverlayEnabled] = useState(true);
@@ -401,6 +439,7 @@ export default function ImageAds() {
                     adBundleId: img.adBundleId,
                     niche: wizardData.niche || null,
                     profileId: wizardData.profile?.id || null,
+                    angle: copies[0]?.angle || null,  // learning loop: which angle produced this creative
                 }));
 
                 const saveResponse = await authFetch(`${API_URL}/generated-ads/batch`, {
@@ -542,6 +581,7 @@ export default function ImageAds() {
                         updateData={updateData}
                         brands={quickBrands}
                         activeVerticalFilter={activeVerticalFilter}
+                        anglePerformance={anglePerformance}
                         quickCopy={quickCopy}
                         setQuickCopy={setQuickCopy}
                         templateMode={templateMode}
@@ -561,6 +601,7 @@ export default function ImageAds() {
                             headline: quickCopy.headline,
                             body: quickCopy.body,
                             cta: quickCopy.cta?.trim() || 'GET MY QUOTE',
+                            angle: quickCopy.angle || null,
                         })}
                     />
                 )}
@@ -1777,8 +1818,18 @@ Style: ${designStyle}`);
     );
 }
 
-function AnglePicker({ verticalId, onApply }) {
-    const templates = ANGLE_TEMPLATES[verticalId] || ANGLE_TEMPLATES.commercial_insurance;
+function AnglePicker({ verticalId, anglePerformance = {}, onApply }) {
+    const templates = useMemo(() => {
+        const base = ANGLE_TEMPLATES[verticalId] || ANGLE_TEMPLATES.commercial_insurance;
+        return [...base].sort((a, b) => {
+            const aPerf = anglePerformance[normalizeAngleKey(a.label)];
+            const bPerf = anglePerformance[normalizeAngleKey(b.label)];
+            const aProfit = aPerf?.profit ?? -Infinity;
+            const bProfit = bPerf?.profit ?? -Infinity;
+            if (aProfit !== bProfit) return bProfit - aProfit;
+            return (bPerf?.tracked || 0) - (aPerf?.tracked || 0);
+        });
+    }, [verticalId, anglePerformance]);
     const verticalLabel = VERTICAL_FILTERS.find(vertical => vertical.id === verticalId)?.label || 'Selected vertical';
 
     return (
@@ -1803,7 +1854,14 @@ function AnglePicker({ verticalId, onApply }) {
                         onClick={() => onApply(template)}
                         className="text-left rounded-lg border border-gray-200 bg-gray-50 p-4 transition-colors hover:border-amber-300 hover:bg-amber-50"
                     >
-                        <div className="text-sm font-semibold text-gray-900">{template.label}</div>
+                        <div className="flex items-center justify-between gap-2">
+                            <div className="text-sm font-semibold text-gray-900">{template.label}</div>
+                            {anglePerformance[normalizeAngleKey(template.label)]?.profit > 0 && (
+                                <span className="rounded-full bg-green-50 px-2 py-0.5 text-[10px] font-semibold text-green-700">
+                                    Recommended
+                                </span>
+                            )}
+                        </div>
                         <div className="mt-2 text-sm font-medium text-gray-700">{template.headline}</div>
                         <div className="mt-1 text-xs leading-relaxed text-gray-500">{template.body}</div>
                     </button>
@@ -1816,6 +1874,7 @@ function AnglePicker({ verticalId, onApply }) {
 function QuickGeneratePanel({
     wizardData, updateData, brands,
     activeVerticalFilter,
+    anglePerformance,
     quickCopy, setQuickCopy,
     templateMode, setTemplateMode,
     overlayEnabled, setOverlayEnabled,
@@ -1859,11 +1918,13 @@ function QuickGeneratePanel({
 
             <AnglePicker
                 verticalId={angleVertical}
+                anglePerformance={anglePerformance}
                 onApply={(template) => {
                     setQuickCopy({
                         headline: template.headline,
                         body: template.body,
                         cta: template.cta,
+                        angle: template.label,  // capture which angle was chosen for the learning loop
                     });
                 }}
             />
