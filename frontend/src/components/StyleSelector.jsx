@@ -18,7 +18,7 @@ const categoryColors = {
     [AD_CATEGORIES.DISRUPTION]: 'red'
 };
 
-export default function StyleSelector({ onSelect }) {
+export default function StyleSelector({ onSelect, selectedStyle = null }) {
     const [selectedCategory, setSelectedCategory] = useState('all');
     const [searchQuery, setSearchQuery] = useState('');
     const [hoveredStyle, setHoveredStyle] = useState(null);
@@ -87,11 +87,19 @@ export default function StyleSelector({ onSelect }) {
             </div>
 
             {/* Results Count */}
-            {searchQuery && (
-                <p className="text-sm text-gray-600">
-                    Found {filteredStyles.length} style{filteredStyles.length !== 1 ? 's' : ''}
-                </p>
-            )}
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                {searchQuery ? (
+                    <p className="text-sm text-gray-600">
+                        Found {filteredStyles.length} style{filteredStyles.length !== 1 ? 's' : ''}
+                    </p>
+                ) : <span />}
+                {selectedStyle && (
+                    <div className="inline-flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-1.5 text-sm text-green-700">
+                        <CheckCircle2 size={15} />
+                        <span>Selected: <strong>{selectedStyle.name || 'Custom style'}</strong></span>
+                    </div>
+                )}
+            </div>
 
             {/* Style Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -99,18 +107,26 @@ export default function StyleSelector({ onSelect }) {
                     const color = categoryColors[style.category];
                     const Icon = categoryIcons[style.category];
                     const isHovered = hoveredStyle === style.id;
+                    const isSelected = selectedStyle?.id === style.id;
 
                     return (
-                        <div
+                        <button
                             key={style.id}
+                            type="button"
                             onClick={() => onSelect(style)}
                             onMouseEnter={() => setHoveredStyle(style.id)}
                             onMouseLeave={() => setHoveredStyle(null)}
-                            className={`relative p-6 rounded-xl border-2 cursor-pointer transition-all ${isHovered
+                            aria-pressed={isSelected}
+                            className={`relative text-left p-6 rounded-xl border-2 cursor-pointer transition-all ${isSelected
+                                    ? `border-${color}-600 shadow-lg bg-white`
+                                    : isHovered
                                     ? `border-${color}-600 shadow-lg scale-105`
                                     : 'border-gray-200 hover:border-gray-300 hover:shadow-md'
                                 }`}
-                            style={isHovered ? {
+                            style={isSelected ? {
+                                borderColor: `var(--${color}-600)`,
+                                boxShadow: `0 0 0 3px var(--${color}-100)`
+                            } : isHovered ? {
                                 borderColor: `var(--${color}-600)`,
                                 transform: 'scale(1.02)'
                             } : {}}
@@ -166,12 +182,12 @@ export default function StyleSelector({ onSelect }) {
                             )}
 
                             {/* Select Indicator */}
-                            {isHovered && (
+                            {isSelected && (
                                 <div className="absolute top-4 right-4">
                                     <CheckCircle2 className={`text-${color}-600`} size={24} />
                                 </div>
                             )}
-                        </div>
+                        </button>
                     );
                 })}
             </div>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Rocket, Loader, X, CheckCircle2, ExternalLink, PlusCircle, ListFilter } from 'lucide-react';
-import { getCampaigns, getAdSets, getPages, createCompleteAd, createFacebookAdSet, authFetch } from '../lib/facebookApi';
+import { getAdAccounts, getCampaigns, getAdSets, getPages, createCompleteAd, createFacebookAdSet, authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -41,6 +41,9 @@ export default function PushToMetaModal({
     const [pushAdSets, setPushAdSets] = useState([]);
     const [pushPages, setPushPages] = useState([]);
     const [pushLoading, setPushLoading] = useState(false);
+    const [accounts, setAccounts] = useState([]);
+    const [accountsLoading, setAccountsLoading] = useState(false);
+    const [accountFetchFailed, setAccountFetchFailed] = useState(false);
     const [pushSubmitting, setPushSubmitting] = useState(false);
     const [successResult, setSuccessResult] = useState(null);
     // Persistent inline error ({message, hint, link}) — survives until the next attempt
@@ -68,12 +71,43 @@ export default function PushToMetaModal({
         cta: initialCta || 'LEARN_MORE',
     });
 
-    // Auto-load campaigns + pages if ad account ID is already populated on mount
+    const hydrateAccount = (adAccountId) => {
+        if (!adAccountId) return;
+        setPushForm(p => ({ ...p, adAccountId, campaignId: '', adsetId: '' }));
+        setPushCampaigns([]);
+        setPushAdSets([]);
+        loadPushCampaigns(adAccountId);
+        loadPushPages(adAccountId);
+    };
+
+    // Auto-load campaigns + pages if ad account ID is already populated.
+    // Cold-start users won't have localStorage yet, so fetch accounts and auto-fill
+    // the single connected account instead of asking them to know the act_ ID.
     useEffect(() => {
         if (pushForm.adAccountId) {
             loadPushCampaigns(pushForm.adAccountId);
             loadPushPages(pushForm.adAccountId);
+            return;
         }
+
+        const loadAccounts = async () => {
+            setAccountsLoading(true);
+            setAccountFetchFailed(false);
+            try {
+                const fetched = await getAdAccounts();
+                setAccounts(Array.isArray(fetched) ? fetched : []);
+                if (Array.isArray(fetched) && fetched.length === 1) {
+                    const onlyAccount = fetched[0]?.id || fetched[0]?.accountId || '';
+                    hydrateAccount(onlyAccount);
+                }
+            } catch {
+                setAccountFetchFailed(true);
+            } finally {
+                setAccountsLoading(false);
+            }
+        };
+
+        loadAccounts();
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Auto-select campaign once the list loads (from initialCampaignId or last used)
@@ -97,7 +131,7 @@ export default function PushToMetaModal({
         try {
             const campaigns = await getCampaigns(adAccountId);
             setPushCampaigns(Array.isArray(campaigns) ? campaigns : []);
-        } catch (e) {
+        } catch {
             showError('Failed to load campaigns');
         } finally {
             setPushLoading(false);
@@ -112,7 +146,7 @@ export default function PushToMetaModal({
         try {
             const adsets = await getAdSets(campaignId);
             setPushAdSets(Array.isArray(adsets) ? adsets : []);
-        } catch (e) {
+        } catch {
             showError('Failed to load ad sets');
         } finally {
             setPushLoading(false);
@@ -124,7 +158,7 @@ export default function PushToMetaModal({
         try {
             const pages = await getPages(adAccountId);
             setPushPages(Array.isArray(pages) ? pages : []);
-        } catch (e) { /* non-blocking */ }
+        } catch { /* non-blocking */ }
     };
 
     const handlePushToFacebook = async () => {
@@ -220,7 +254,7 @@ export default function PushToMetaModal({
                         }),
                     });
                     if (!linkRes.ok) throw new Error(`link write-back HTTP ${linkRes.status}`);
-                } catch (linkErr) {
+                } catch {
                     showError('Ad pushed, but the tracking link failed to save. Revenue attribution for this creative may be missing.');
                 }
             }
@@ -354,21 +388,46 @@ export default function PushToMetaModal({
                     {/* Ad Account ID */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Ad Account ID *</label>
-                        <input
-                            type="text"
-                            placeholder="act_123456789"
-                            value={pushForm.adAccountId}
-                            onChange={(e) => {
-                                setPushForm(p => ({ ...p, adAccountId: e.target.value, campaignId: '', adsetId: '' }));
-                                setPushCampaigns([]);
-                                setPushAdSets([]);
-                            }}
-                            onBlur={() => {
-                                loadPushCampaigns(pushForm.adAccountId);
-                                loadPushPages(pushForm.adAccountId);
-                            }}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
-                        />
+                        {accountsLoading && !pushForm.adAccountId ? (
+                            <div className="h-10 rounded-lg bg-gray-100 border border-gray-200 animate-pulse flex items-center px-3 text-sm text-gray-400">
+                                Loading ad account...
+                            </div>
+                        ) : accounts.length > 1 ? (
+                            <select
+                                value={pushForm.adAccountId}
+                                onChange={(e) => hydrateAccount(e.target.value)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
+                            >
+                                <option value="">Select ad account...</option>
+                                {accounts.map(account => {
+                                    const acctValue = account.id || account.accountId || '';
+                                    return (
+                                        <option key={acctValue} value={acctValue}>
+                                            {account.name ? `${account.name} (${acctValue})` : acctValue}
+                                        </option>
+                                    );
+                                })}
+                            </select>
+                        ) : (
+                            <input
+                                type="text"
+                                placeholder="act_123456789"
+                                value={pushForm.adAccountId}
+                                onChange={(e) => {
+                                    setPushForm(p => ({ ...p, adAccountId: e.target.value, campaignId: '', adsetId: '' }));
+                                    setPushCampaigns([]);
+                                    setPushAdSets([]);
+                                }}
+                                onBlur={() => {
+                                    loadPushCampaigns(pushForm.adAccountId);
+                                    loadPushPages(pushForm.adAccountId);
+                                }}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
+                            />
+                        )}
+                        {accountFetchFailed && !pushForm.adAccountId && (
+                            <p className="text-xs text-amber-600 mt-1">Could not auto-load accounts. Enter the ad account ID manually.</p>
+                        )}
                     </div>
 
                     {/* Campaign */}
@@ -390,7 +449,7 @@ export default function PushToMetaModal({
                             disabled={pushCampaigns.length === 0}
                         >
                             <option value="">
-                                {pushLoading ? 'Loading...' : pushCampaigns.length === 0 ? 'Enter Ad Account ID first' : 'Select a campaign...'}
+                                {pushLoading && pushForm.adAccountId ? 'Loading campaigns...' : pushCampaigns.length === 0 ? 'Ad account required first' : 'Select a campaign...'}
                             </option>
                             {pushCampaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>

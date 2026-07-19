@@ -102,6 +102,7 @@ export default function ImageAds() {
     const [templateMode, setTemplateMode] = useState('style'); // 'style' or 'template'
     const [mode, setMode] = useState('quick'); // 'wizard' | 'quick'
     const [quickCopy, setQuickCopy] = useState({ headline: '', body: '', cta: '' });
+    const [quickCopyImport, setQuickCopyImport] = useState(null);
     const [anglePerformance, setAnglePerformance] = useState({});
     const quickBrands = filteredBrands?.length ? filteredBrands : brands;
 
@@ -154,6 +155,12 @@ export default function ImageAds() {
                 headline: pending.headline || '',
                 body: pending.body || '',
                 cta: pending.cta || pending.cta_label || 'GET MY QUOTE',
+            });
+            setQuickCopyImport({
+                headline: pending.headline || 'Imported copy',
+                source: pending.source || 'copy_library',
+                dirty: false,
+                dismissed: false,
             });
             setMode('quick');
         } catch (error) {
@@ -599,6 +606,8 @@ export default function ImageAds() {
                         anglePerformance={anglePerformance}
                         quickCopy={quickCopy}
                         setQuickCopy={setQuickCopy}
+                        quickCopyImport={quickCopyImport}
+                        setQuickCopyImport={setQuickCopyImport}
                         templateMode={templateMode}
                         setTemplateMode={setTemplateMode}
                         overlayEnabled={overlayEnabled}
@@ -1176,7 +1185,7 @@ function CampaignDetailsStep({
                     <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
                         <div>
                             <h4 className="text-sm font-semibold text-gray-800">Text Overlay</h4>
-                            <p className="text-xs text-gray-400 mt-0.5">Bakes niche label + offer line + logo into the image</p>
+                            <p className="text-xs text-gray-400 mt-0.5">Bakes the main text, offer line + logo into the image.</p>
                         </div>
                         <button
                             type="button"
@@ -1835,7 +1844,7 @@ Style: ${designStyle}`);
     );
 }
 
-function AnglePicker({ verticalId, anglePerformance = {}, onApply }) {
+function AnglePicker({ verticalId, anglePerformance = {}, onApply, showFallbackNotice = false, pendingReplaceLabel = null, onConfirmReplace, onCancelReplace }) {
     const templates = useMemo(() => {
         const base = ANGLE_TEMPLATES[verticalId] || ANGLE_TEMPLATES.commercial_insurance;
         return [...base].sort((a, b) => {
@@ -1858,6 +1867,11 @@ function AnglePicker({ verticalId, anglePerformance = {}, onApply }) {
                         Angle Picker
                     </h4>
                     <p className="text-sm text-gray-500 mt-1">Seeded hooks for {verticalLabel}. Pick one, then edit the copy below.</p>
+                    {showFallbackNotice && (
+                        <p className="mt-1 text-xs text-amber-700">
+                            Showing Commercial Insurance angles — pick a vertical above or select a brand to switch.
+                        </p>
+                    )}
                 </div>
                 <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">
                     Quick start
@@ -1865,10 +1879,17 @@ function AnglePicker({ verticalId, anglePerformance = {}, onApply }) {
             </div>
             <div className="grid gap-3 md:grid-cols-3">
                 {templates.map(template => (
-                    <button
+                    <div
                         key={template.label}
-                        type="button"
+                        role="button"
+                        tabIndex={0}
                         onClick={() => onApply(template)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                onApply(template);
+                            }
+                        }}
                         className="text-left rounded-lg border border-gray-200 bg-gray-50 p-4 transition-colors hover:border-amber-300 hover:bg-amber-50"
                     >
                         <div className="flex items-center justify-between gap-2">
@@ -1881,7 +1902,34 @@ function AnglePicker({ verticalId, anglePerformance = {}, onApply }) {
                         </div>
                         <div className="mt-2 text-sm font-medium text-gray-700">{template.headline}</div>
                         <div className="mt-1 text-xs leading-relaxed text-gray-500">{template.body}</div>
-                    </button>
+                        {pendingReplaceLabel === template.label && (
+                            <div className="mt-3 rounded-md border border-amber-200 bg-white p-2">
+                                <p className="text-xs font-medium text-amber-800">Replace imported copy?</p>
+                                <div className="mt-2 flex gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onConfirmReplace(template);
+                                        }}
+                                        className="rounded bg-amber-600 px-2 py-1 text-[11px] font-semibold text-white"
+                                    >
+                                        Replace
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onCancelReplace();
+                                        }}
+                                        className="rounded bg-gray-100 px-2 py-1 text-[11px] font-semibold text-gray-600"
+                                    >
+                                        Keep imported
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 ))}
             </div>
         </div>
@@ -1893,6 +1941,7 @@ function QuickGeneratePanel({
     activeVerticalFilter,
     anglePerformance,
     quickCopy, setQuickCopy,
+    quickCopyImport, setQuickCopyImport,
     templateMode, setTemplateMode,
     overlayEnabled, setOverlayEnabled,
     overlayOfferLine, setOverlayOfferLine,
@@ -1903,6 +1952,7 @@ function QuickGeneratePanel({
     generating, onGenerate,
 }) {
     const canGenerate = wizardData.brand && wizardData.template && quickCopy.headline.trim() && quickCopy.body.trim();
+    const [pendingReplaceAngle, setPendingReplaceAngle] = useState(null);
     const angleVertical = useMemo(() => {
         const inferred = inferBrandVertical(wizardData.brand);
         if (inferred) return inferred;
@@ -1910,6 +1960,36 @@ function QuickGeneratePanel({
             ? activeVerticalFilter
             : 'commercial_insurance';
     }, [wizardData.brand, activeVerticalFilter]);
+    const usingFallbackAngles = !inferBrandVertical(wizardData.brand) && (!activeVerticalFilter || activeVerticalFilter === 'all');
+    const missingFields = [
+        !wizardData.brand ? 'brand' : null,
+        !wizardData.template ? 'style' : null,
+        !quickCopy.headline.trim() ? 'headline' : null,
+        !quickCopy.body.trim() ? 'body copy' : null,
+    ].filter(Boolean);
+    const importSourceLabel = quickCopyImport?.source === 'campaign_performance'
+        ? 'Campaign Performance'
+        : 'Copy Library';
+    const truncatedImportHeadline = quickCopyImport?.headline && quickCopyImport.headline.length > 52
+        ? `${quickCopyImport.headline.slice(0, 49)}...`
+        : quickCopyImport?.headline;
+
+    const applyAngleTemplate = (template) => {
+        setQuickCopy({
+            headline: template.headline,
+            body: template.body,
+            cta: template.cta,
+            angle: template.label,
+        });
+        setPendingReplaceAngle(null);
+        setQuickCopyImport(null);
+    };
+
+    const markImportedCopyEdited = () => {
+        if (quickCopyImport && !quickCopyImport.dirty) {
+            setQuickCopyImport(prev => prev ? { ...prev, dirty: true } : prev);
+        }
+    };
 
     const sizes = [
         { name: 'Square (Feed/Carousel)', width: 1080, height: 1080, aspectRatio: '1:1' },
@@ -1924,6 +2004,22 @@ function QuickGeneratePanel({
                 <p className="text-gray-500 text-sm">Pick a brand and template, paste your copy, and generate images immediately.</p>
             </div>
 
+            {quickCopyImport && !quickCopyImport.dismissed && (
+                <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                    <p className="text-sm text-amber-800">
+                        Copy imported from {importSourceLabel}: <strong>"{truncatedImportHeadline}"</strong> — pick a brand and style, then generate.
+                    </p>
+                    <button
+                        type="button"
+                        onClick={() => setQuickCopyImport(prev => prev ? { ...prev, dismissed: true } : prev)}
+                        className="shrink-0 text-lg leading-none text-amber-700 hover:text-amber-900"
+                        aria-label="Dismiss imported copy notice"
+                    >
+                        ×
+                    </button>
+                </div>
+            )}
+
             {/* Brand */}
             <div className="bg-gray-50 rounded-xl border border-gray-200 p-5">
                 <h4 className="font-semibold text-gray-800 mb-4">Brand <span className="text-red-500">*</span></h4>
@@ -1937,13 +2033,16 @@ function QuickGeneratePanel({
             <AnglePicker
                 verticalId={angleVertical}
                 anglePerformance={anglePerformance}
+                showFallbackNotice={usingFallbackAngles}
+                pendingReplaceLabel={pendingReplaceAngle}
+                onConfirmReplace={applyAngleTemplate}
+                onCancelReplace={() => setPendingReplaceAngle(null)}
                 onApply={(template) => {
-                    setQuickCopy({
-                        headline: template.headline,
-                        body: template.body,
-                        cta: template.cta,
-                        angle: template.label,  // capture which angle was chosen for the learning loop
-                    });
+                    if (quickCopyImport && !quickCopyImport.dirty) {
+                        setPendingReplaceAngle(template.label);
+                        return;
+                    }
+                    applyAngleTemplate(template);
                 }}
             />
 
@@ -1965,7 +2064,10 @@ function QuickGeneratePanel({
                     </button>
                 </div>
                 {templateMode === 'style' ? (
-                    <StyleSelector onSelect={(style) => updateData('template', { type: 'style', ...style })} />
+                    <StyleSelector
+                        selectedStyle={wizardData.template?.type === 'style' ? wizardData.template : null}
+                        onSelect={(style) => updateData('template', { type: 'style', ...style })}
+                    />
                 ) : (
                     <ImageTemplateSelector
                         onSelect={(template) => updateData('template', { type: 'template', ...template })}
@@ -1992,7 +2094,10 @@ function QuickGeneratePanel({
                         <input
                             type="text"
                             value={quickCopy.headline}
-                            onChange={e => setQuickCopy(prev => ({ ...prev, headline: e.target.value }))}
+                            onChange={e => {
+                                markImportedCopyEdited();
+                                setQuickCopy(prev => ({ ...prev, headline: e.target.value }));
+                            }}
                             placeholder="Short, punchy headline (under 40 chars)"
                             className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                         />
@@ -2006,7 +2111,10 @@ function QuickGeneratePanel({
                         </label>
                         <textarea
                             value={quickCopy.body}
-                            onChange={e => setQuickCopy(prev => ({ ...prev, body: e.target.value }))}
+                            onChange={e => {
+                                markImportedCopyEdited();
+                                setQuickCopy(prev => ({ ...prev, body: e.target.value }));
+                            }}
                             placeholder="Your ad body copy..."
                             rows={3}
                             className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
@@ -2023,7 +2131,10 @@ function QuickGeneratePanel({
                         <input
                             type="text"
                             value={quickCopy.cta}
-                            onChange={e => setQuickCopy(prev => ({ ...prev, cta: e.target.value }))}
+                            onChange={e => {
+                                markImportedCopyEdited();
+                                setQuickCopy(prev => ({ ...prev, cta: e.target.value }));
+                            }}
                             placeholder="GET MY QUOTE"
                             className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                         />
@@ -2090,7 +2201,7 @@ function QuickGeneratePanel({
                 <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
                     <div>
                         <h4 className="text-sm font-semibold text-gray-800">Text Overlay</h4>
-                        <p className="text-xs text-gray-400 mt-0.5">Bakes niche label + offer line into the image</p>
+                        <p className="text-xs text-gray-400 mt-0.5">Bakes the main text, offer line + logo into the image.</p>
                     </div>
                     <button
                         type="button"
@@ -2184,7 +2295,7 @@ function QuickGeneratePanel({
             </div>
 
             {/* Generate Button */}
-            <div className="flex justify-end pt-2">
+            <div className="flex flex-col items-end gap-2 pt-2">
                 <button
                     onClick={onGenerate}
                     disabled={!canGenerate || generating}
@@ -2193,6 +2304,11 @@ function QuickGeneratePanel({
                     <Sparkles size={22} className={generating ? 'animate-spin' : ''} />
                     {generating ? 'Generating...' : 'Generate Images'}
                 </button>
+                {!canGenerate && (
+                    <p className="text-sm text-gray-500">
+                        Missing: {missingFields.join(', ')}
+                    </p>
+                )}
             </div>
         </div>
     );
