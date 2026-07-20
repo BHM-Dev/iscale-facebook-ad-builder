@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 SLACK_API_URL = "https://slack.com/api/chat.postMessage"
 DEFAULT_CHANNEL = "C08G7PJJ6NB"
+# Steve's Slack user ID — DMing a user ID opens a bot DM. Token rotation is his ops call.
+STEVE_DM = "U6M6033G9"
 
 
 def _token() -> Optional[str]:
@@ -65,6 +67,47 @@ def send_auto_pause_alert(
             logger.warning("Slack alert failed: %s", data.get("error"))
     except Exception as e:
         logger.warning("Slack alert error: %s", e)
+
+
+def send_token_expiry_alert(days_left, expires_on: str, is_valid: bool) -> None:
+    """DM Steve when FACEBOOK_ACCESS_TOKEN is expiring soon or already invalid.
+
+    Target defaults to Steve's DM; override with SLACK_TOKEN_ALERT_CHANNEL.
+    Silently no-ops if SLACK_BOT_TOKEN is not configured.
+    """
+    token = _token()
+    if not token:
+        logger.debug("SLACK_BOT_TOKEN not set — skipping token expiry alert")
+        return
+
+    if not is_valid:
+        text = (
+            ":rotating_light: *Ad Builder Meta token is INVALID / expired.*\n"
+            ">Pushes, insights, and competitor research are all down until it's rotated.\n"
+            ">Fix: regenerate `FACEBOOK_ACCESS_TOKEN` (Graph API Explorer → 60-day exchange), "
+            "update the VPS `.env`, then force-recreate the backend."
+        )
+    else:
+        n = int(days_left) if days_left is not None else "?"
+        text = (
+            f":warning: *Ad Builder Meta token expires in {n} day(s)* (on {expires_on}).\n"
+            ">Rotate it before then or pushes, insights, and research go down together.\n"
+            ">Graph API Explorer → 60-day exchange → update VPS `.env` → force-recreate backend."
+        )
+
+    channel = os.getenv("SLACK_TOKEN_ALERT_CHANNEL", STEVE_DM)
+    try:
+        resp = httpx.post(
+            SLACK_API_URL,
+            headers={"Authorization": f"Bearer {token}"},
+            json={"channel": channel, "text": text, "unfurl_links": False},
+            timeout=5,
+        )
+        data = resp.json()
+        if not data.get("ok"):
+            logger.warning("Token expiry alert failed: %s", data.get("error"))
+    except Exception as e:
+        logger.warning("Token expiry alert error: %s", e)
 
 
 def send_check_summary(

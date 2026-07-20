@@ -238,16 +238,47 @@ async def startup_event():
             finally:
                 db.close()
 
+        def scheduled_token_check():
+            """Daily: warn before the personal FACEBOOK_ACCESS_TOKEN expires.
+
+            The token runs the entire Meta integration (push, insights, research)
+            and lapses every ~60 days. Alert at <=7 days out, or immediately if it
+            reads as invalid — so rotation is a calendar item, not an outage.
+            Warns daily inside the window; the countdown makes urgency obvious.
+            """
+            try:
+                from app.services.token_monitor import check_token_expiry
+                from app.services import slack_service
+                import time as _time
+                r = check_token_expiry()
+                if not r["checked"]:
+                    print(f"⚠️  Token expiry check skipped: {r.get('error')}")
+                    return
+                if r["never_expires"]:
+                    print("✅ Token check: never-expires token, nothing to warn")
+                    return
+                days = r["days_left"]
+                if (not r["is_valid"]) or (days is not None and days <= 7):
+                    expires_on = _time.strftime("%Y-%m-%d", _time.gmtime(r["expires_at"])) if r["expires_at"] else "unknown"
+                    slack_service.send_token_expiry_alert(days, expires_on, r["is_valid"])
+                    print(f"🔔 Token expiry alert sent (valid={r['is_valid']}, days_left={days})")
+                else:
+                    print(f"✅ Token check: valid, {days:.0f} days left — no alert")
+            except Exception as exc:
+                print(f"⚠️  Token expiry check error: {exc}")
+
         # Store sync functions on app state so auth endpoint can trigger them on login
         app.state.meta_sync_fn = scheduled_meta_sync
         app.state.rt_sync_fn = scheduled_redtrack_sync
+        app.state.token_check_fn = scheduled_token_check
 
         scheduler.add_job(scheduled_check, 'interval', minutes=30, id='auto_pause_check')
         scheduler.add_job(scheduled_redtrack_sync, 'interval', minutes=30, id='redtrack_sync')
+        scheduler.add_job(scheduled_token_check, 'cron', hour=13, minute=0, timezone='UTC', id='token_expiry_check')
         # Meta campaign sync runs on login (not on a timer — no value syncing while Joel sleeps)
         scheduler.start()
         app.state.scheduler = scheduler
-        print("✅ Scheduler started (auto-pause + RedTrack every 30 min | Meta sync on login)")
+        print("✅ Scheduler started (auto-pause + RedTrack every 30 min | token expiry daily 13:00 UTC | Meta sync on login)")
     except Exception as e:
         print(f"⚠️  Could not start auto-pause scheduler: {e}")
 
