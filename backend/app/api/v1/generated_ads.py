@@ -8,6 +8,7 @@ from app.core.deps import get_current_active_user, require_permission
 from fastapi.responses import StreamingResponse
 import io
 import csv
+import re
 import anthropic as _anthropic_sdk
 
 from pydantic import BaseModel, Field
@@ -22,7 +23,7 @@ class ImageGenerationRequest(BaseModel):
     imageSizes: List[Dict[str, Any]] = []
     resolution: str = "1K"
     productShots: List[str] = []
-    model: str = "flux-kontext-pro"
+    model: str = "nano-banana-pro"
     customPrompt: Optional[str] = None
     useProductImage: bool = False  # Use uploaded product image as base
     niche: Optional[str] = None   # e.g. "Religious organizations", "Flower shops" — passed to AI prompt builder
@@ -260,6 +261,73 @@ _NICHE_OVERRIDES: Dict[str, list] = {
         "Bartender in neat uniform pouring a cocktail behind a polished bar, warm lighting, "
         "bottles on shelves, professional setting. No text, no logos. Photorealistic.",
     ],
+    "auto insurance": [
+        "Car owner standing beside a clean late-model sedan in a suburban driveway, "
+        "garage and trimmed lawn in the background, natural morning light. "
+        "No text, no logos. Photorealistic.",
+        "Driver at the wheel of a clean sedan on an open road, hands visible, "
+        "sunny sky through the windshield, safe everyday driving scene. "
+        "No text, no logos. Photorealistic.",
+        "Family SUV parked in front of a well-kept suburban home, driveway and front porch visible, "
+        "bright natural daylight, practical household setting. No text, no logos. Photorealistic.",
+        "Close-up of a car owner holding keys beside a clean parked vehicle in a residential driveway, "
+        "soft afternoon light, calm responsible mood. No text, no logos. Photorealistic.",
+    ],
+    "auto": [
+        "Car owner standing beside a clean late-model sedan in a suburban driveway, "
+        "garage and trimmed lawn in the background, natural morning light. "
+        "No text, no logos. Photorealistic.",
+        "Driver at the wheel of a clean sedan on an open road, hands visible, "
+        "sunny sky through the windshield, safe everyday driving scene. "
+        "No text, no logos. Photorealistic.",
+        "Family SUV parked in front of a well-kept suburban home, driveway and front porch visible, "
+        "bright natural daylight, practical household setting. No text, no logos. Photorealistic.",
+    ],
+    "home service": [
+        "Uniformed home service technician carrying a tool bag toward a suburban front door, "
+        "clean work van parked in the driveway, natural daylight, professional service call. "
+        "No text, no logos. Photorealistic.",
+        "Uniformed technician repairing equipment beside a suburban home, tool bag open nearby, "
+        "neat yard, bright natural daylight, focused hands-on work. No text, no logos. Photorealistic.",
+        "Home service professional reviewing a clipboard with a homeowner outside a well-kept house, "
+        "tools and ladder nearby, clear daylight, trustworthy service visit. No text, no logos. Photorealistic.",
+    ],
+    "gutter": [
+        "Uniformed technician cleaning gutters from a stable ladder on a two-story suburban home, "
+        "work gloves and bucket visible, clear daylight, safe professional job site. "
+        "No text, no logos. Photorealistic.",
+        "Close-up of a worker's gloved hands clearing leaves from a residential gutter, "
+        "ladder and roofline visible, bright natural light. No text, no logos. Photorealistic.",
+        "Home exterior with a gutter service technician inspecting the roofline from a ladder, "
+        "suburban street and neat lawn in the background. No text, no logos. Photorealistic.",
+    ],
+    "roofing": [
+        "Roofer in safety gear installing shingles on a residential roof, "
+        "suburban home context, tool belt visible, bright clear daylight. "
+        "No text, no logos. Photorealistic.",
+        "Roofing crew member inspecting shingles on a clean residential roof, "
+        "ladder secured at the edge, blue sky, professional work setting. "
+        "No text, no logos. Photorealistic.",
+        "Close-up of a roofer's gloved hands placing new shingles with tools nearby, "
+        "residential roof texture visible, natural daylight. No text, no logos. Photorealistic.",
+    ],
+    "hvac": [
+        "Uniformed HVAC technician servicing an outdoor condenser unit beside a suburban home, "
+        "tool bag open, green lawn, bright natural daylight. No text, no logos. Photorealistic.",
+        "HVAC technician kneeling by a residential air conditioning unit with gauges attached, "
+        "focused repair work, clean suburban yard. No text, no logos. Photorealistic.",
+        "Technician inspecting a modern home thermostat and HVAC panel inside a clean hallway, "
+        "tools in hand, natural window light. No text, no logos. Photorealistic.",
+    ],
+    "plumbing": [
+        "Uniformed plumber repairing pipes under a clean residential sink, "
+        "tool bag and wrench visible, bright kitchen lighting, professional service call. "
+        "No text, no logos. Photorealistic.",
+        "Plumber kneeling beside a residential water heater with tools arranged neatly, "
+        "utility room setting, natural practical lighting. No text, no logos. Photorealistic.",
+        "Close-up of a plumber's gloved hands tightening a pipe fitting in a home utility area, "
+        "clean tools visible, focused craft detail. No text, no logos. Photorealistic.",
+    ],
     "brewery": [
         "Interior of a craft brewery with large stainless steel fermentation tanks, "
         "warm industrial lighting, brick walls. No people. No text, no logos. Photorealistic.",
@@ -301,7 +369,7 @@ def _get_niche_override(niche: str) -> str | None:
     import random
     niche_lower = niche.lower()
     for key, prompts in _NICHE_OVERRIDES.items():
-        if key in niche_lower:
+        if re.search(rf"\b{re.escape(key)}\b", niche_lower):
             chosen = random.choice(prompts)
             print(f"🏛️  Niche override for '{niche}': picked scene {prompts.index(chosen)+1}/{len(prompts)}")
             return chosen
