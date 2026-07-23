@@ -586,13 +586,13 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adsBulk,
                         Quick Variations
                       </button>
                     )}
-                    {/* More Variants → Batch Generate pre-filled with this ad */}
+                    {/* Quick Generate → Batch Generate pre-filled with this ad */}
                     <button
                       onClick={() => navigate(`/batch-generate?adId=${encodeURIComponent(ad.ad_id)}&adName=${encodeURIComponent(ad.ad_name || ad.ad_id)}&adsetName=${encodeURIComponent(adsetName || '')}&campaignId=${encodeURIComponent(fbCampaignId || '')}&adsetId=${encodeURIComponent(fbAdsetId || '')}`)}
                       className="flex items-center gap-1 px-2 py-1 rounded text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors text-xs font-medium whitespace-nowrap"
                       title="Generate more creative variants from this ad"
                     >
-                      <Repeat2 size={11} /> More Variants
+                      <Zap size={11} /> Quick Generate
                     </button>
                     {/* Pause / Resume */}
                     <button

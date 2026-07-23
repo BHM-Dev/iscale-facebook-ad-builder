@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown, PauseCircle, Repeat2, MessageSquare, Send, Sparkles, DollarSign } from 'lucide-react';
+import { AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown, PauseCircle, MessageSquare, Send, Sparkles, DollarSign, Zap } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
@@ -231,6 +231,7 @@ export default function Dashboard() {
   const [budgetInput, setBudgetInput] = useState('');
   const [savingBudget, setSavingBudget] = useState(null);
   const [scalingAdset, setScalingAdset] = useState(new Set());
+  const [quickGeneratingAdsets, setQuickGeneratingAdsets] = useState(new Set());
   const [collapsedSections, setCollapsedSections] = useState({});
   const [expandedSections, setExpandedSections] = useState({});
 
@@ -319,6 +320,58 @@ export default function Dashboard() {
     } catch (e) { showError(e.message || 'Sync failed'); }
     finally { setSyncing(false); setSyncingRT(false); }
   }, [activeAccountId, activeRange, load, showSuccess, showError]);
+
+  const buildPerformanceParams = useCallback(() => {
+    const { preset: p, dateFrom: df, dateTo: dt } = activeRange;
+    const params = new URLSearchParams();
+    if (activeAccountId) params.set('ad_account_id', activeAccountId);
+    if (df && dt) {
+      params.set('date_from', df);
+      params.set('date_to', dt);
+    } else {
+      params.set('date_preset', p || 'today');
+    }
+    return params;
+  }, [activeAccountId, activeRange]);
+
+  const buildBatchGenerateUrl = useCallback((adset, topAd = null) => {
+    const params = new URLSearchParams();
+    if (topAd?.ad_id) {
+      params.set('adId', topAd.ad_id);
+      params.set('adName', topAd.ad_name || '');
+    }
+    params.set('adsetName', adset.name || '');
+    params.set('adsetId', adset.fb_adset_id || '');
+    params.set('campaignId', adset.fb_campaign_id || '');
+    return `/batch-generate?${params.toString()}`;
+  }, []);
+
+  const handleQuickGenerate = useCallback(async (adset) => {
+    const rowKey = adset.fb_adset_id || adset.id;
+    setQuickGeneratingAdsets(prev => new Set(prev).add(rowKey));
+
+    try {
+      const params = buildPerformanceParams();
+      const res = await authFetch(`${API_URL}/auto-pause/ads-bulk?${params}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Unable to load winning ad');
+      }
+
+      const adsBulk = await res.json();
+      const topAd = adsBulk?.[adset.fb_adset_id]?.[0];
+      navigate(buildBatchGenerateUrl(adset, topAd?.ad_id ? topAd : null));
+    } catch (e) {
+      showError(`${e.message || 'Quick Generate lookup failed'} - opening ad set fallback`);
+      navigate(buildBatchGenerateUrl(adset));
+    } finally {
+      setQuickGeneratingAdsets(prev => {
+        const next = new Set(prev);
+        next.delete(rowKey);
+        return next;
+      });
+    }
+  }, [buildBatchGenerateUrl, buildPerformanceParams, navigate, showError]);
 
   const pauseAdset = useCallback(async (fb_adset_id) => {
     setPausingAdsets(prev => new Set(prev).add(fb_adset_id));
@@ -1005,10 +1058,15 @@ export default function Dashboard() {
                             );
                           })()}
                           <button
-                            onClick={() => navigate(`/batch-generate?adsetName=${encodeURIComponent(a.name)}&adsetId=${encodeURIComponent(a.fb_adset_id)}&campaignId=${encodeURIComponent(a.fb_campaign_id)}`)}
-                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-indigo-600 border border-indigo-100 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                            onClick={() => handleQuickGenerate(a)}
+                            disabled={quickGeneratingAdsets.has(a.fb_adset_id || a.id)}
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-indigo-600 border border-indigo-100 bg-indigo-50 hover:bg-indigo-100 transition-colors disabled:opacity-40"
                           >
-                            <Repeat2 size={11} /> Iterate
+                            {quickGeneratingAdsets.has(a.fb_adset_id || a.id)
+                              ? <RefreshCw size={11} className="animate-spin" />
+                              : <Zap size={11} />
+                            }
+                            Quick Generate
                           </button>
                         </div>
                       </td>
