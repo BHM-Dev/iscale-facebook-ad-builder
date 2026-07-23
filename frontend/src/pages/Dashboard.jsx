@@ -3,6 +3,7 @@ import { AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown
 import { Link, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
+import { useCampaign } from '../context/CampaignContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -204,6 +205,7 @@ function DateFilter({ preset, setPreset, dateFrom, setDateFrom, dateTo, setDateT
 export default function Dashboard() {
   const navigate = useNavigate();
   const { showSuccess, showError } = useToast();
+  const { activeAccountId, activeAccountLoading } = useCampaign();
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncingRT, setSyncingRT] = useState(false);
@@ -248,28 +250,14 @@ export default function Dashboard() {
 
   const load = useCallback(async (range) => {
     const { preset: p, dateFrom: df, dateTo: dt } = range || { preset: 'today', dateFrom: null, dateTo: null };
+    if (activeAccountLoading) return;
     setLoading(true);
     setInsightsError(null);
     setBulkInsights({}); // clear stale data so KPIs show — while loading
     setNicheSummary([]);
     try {
-      // Always use the backend-configured account ID as the source of truth.
-      // Fall back to localStorage only if the config endpoint is unavailable.
-      let adAccountId = localStorage.getItem('fb_ad_account_id') || '';
-      const controller = new AbortController();
-      const tid = setTimeout(() => controller.abort(), 4000);
-      try {
-        const cfgRes = await authFetch(`${API_URL}/facebook/config`, { signal: controller.signal });
-        clearTimeout(tid);
-        if (cfgRes.ok) {
-          const cfg = await cfgRes.json();
-          const id = cfg.ad_account_id || '';
-          if (id) { adAccountId = id; localStorage.setItem('fb_ad_account_id', id); }
-        }
-      } catch { clearTimeout(tid); /* use cached or empty */ }
-
       const insightsParams = new URLSearchParams();
-      if (adAccountId) insightsParams.set('ad_account_id', adAccountId);
+      if (activeAccountId) insightsParams.set('ad_account_id', activeAccountId);
       if (df && dt) {
         insightsParams.set('date_from', df);
         insightsParams.set('date_to', dt);
@@ -307,7 +295,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [showError]);
+  }, [activeAccountId, activeAccountLoading, showError]);
 
 
   const syncAll = useCallback(async () => {
@@ -316,11 +304,12 @@ export default function Dashboard() {
     try {
       const { preset: p, dateFrom: df, dateTo: dt } = activeRange;
       const params = new URLSearchParams();
+      if (activeAccountId) params.set('ad_account_id', activeAccountId);
       if (df && dt) { params.set('date_from', df); params.set('date_to', dt); }
       else { params.set('date_preset', p || 'today'); }
 
       const [metaRes] = await Promise.all([
-        authFetch(`${API_URL}/facebook/sync`, { method: 'POST' }),
+        authFetch(`${API_URL}/facebook/sync${activeAccountId ? `?ad_account_id=${encodeURIComponent(activeAccountId)}` : ''}`, { method: 'POST' }),
         authFetch(`${API_URL}/redtrack/sync?${params}`, { method: 'POST' }).catch(() => null),
       ]);
 
@@ -329,7 +318,7 @@ export default function Dashboard() {
       load(activeRange);
     } catch (e) { showError(e.message || 'Sync failed'); }
     finally { setSyncing(false); setSyncingRT(false); }
-  }, [activeRange, load, showSuccess, showError]);
+  }, [activeAccountId, activeRange, load, showSuccess, showError]);
 
   const pauseAdset = useCallback(async (fb_adset_id) => {
     setPausingAdsets(prev => new Set(prev).add(fb_adset_id));
@@ -458,11 +447,10 @@ export default function Dashboard() {
     setAiLoading(true);
     setAiAnswer('');
     try {
-      const adAccountId = localStorage.getItem('fb_ad_account_id') || '';
       const res = await authFetch(`${API_URL}/ai-insights/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: aiQuery.trim(), ad_account_id: adAccountId || undefined, date_preset: aiDatePreset }),
+        body: JSON.stringify({ query: aiQuery.trim(), ad_account_id: activeAccountId || undefined, date_preset: aiDatePreset }),
       });
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Query failed'); }
       const data = await res.json();
@@ -474,13 +462,12 @@ export default function Dashboard() {
     }
   };
 
-  // Initial load
-  useEffect(() => { load(activeRange); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Initial load + account switcher reload
+  useEffect(() => { load(activeRange); }, [load, activeRange]);
 
   function handleApply(range) {
     setActiveRange(range);
     if (range.preset) localStorage.setItem('bhm_date_preset', range.preset);
-    load(range);
   }
 
   // ── Aggregate KPIs ──────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ import { useToast } from '../context/ToastContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
 import { useBrands } from '../context/BrandContext';
+import { useCampaign } from '../context/CampaignContext';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -911,6 +912,8 @@ export default function CampaignPerformance() {
   const navigate = useNavigate();
   const { showSuccess, showError, showInfo } = useToast();
   const { brands } = useBrands();
+  const { activeAccountId, activeAccountLoading } = useCampaign();
+  const adAccountId = activeAccountId || '';
   const [adsets, setAdsets]     = useState([]);
   const [rules, setRules]       = useState([]); // still needed for isFlagged + rule badges
   // searchParams must be declared before the date useState initialisers that read it
@@ -922,7 +925,6 @@ export default function CampaignPerformance() {
   });
   const [dateFrom, setDateFrom] = useState(() => searchParams.get('date_from') || '');
   const [dateTo, setDateTo] = useState(() => searchParams.get('date_to') || '');
-  const [adAccountId, setAdAccountId] = useState('');
   const [loadingAdsets, setLoadingAdsets] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [statusFilter, setStatusFilter] = useState(() => {
@@ -1109,42 +1111,25 @@ export default function CampaignPerformance() {
     if (datePreset !== 'custom') localStorage.setItem('bhm_date_preset', datePreset);
   }, [datePreset]);
 
-  // Track whether the initial mount load has fired — prevents datePreset effect
-  // from double-firing on mount before the account ID is resolved
+  // Track whether the initial load has fired — prevents datePreset effect
+  // from double-firing before the active account is resolved.
   const initialLoadFired = useRef(false);
 
-  // On mount: resolve account ID (cached → live refresh), then fire initial data load
+  // Fire initial data load once the global active account has resolved; re-fire
+  // when the header account switcher changes.
   useEffect(() => {
-    const cached = localStorage.getItem('fb_ad_account_id') || '';
-    if (cached) setAdAccountId(cached);
-
-    const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 4000);
-
-    const fireLoads = (accountId) => {
-      initialLoadFired.current = true;
-      const initPreset = searchParams.get('preset') || 'today';
-      const initFrom   = searchParams.get('date_from') || null;
-      const initTo     = searchParams.get('date_to')   || null;
-      const resolvedPreset = (initFrom && initTo) ? 'custom' : initPreset;
-      loadBulkInsights(accountId, resolvedPreset, initFrom, initTo);
-      // loadAdsBulk fires after bulkInsights settles (see deferred effect below)
-      loadRtAdsBulk(resolvedPreset, initFrom, initTo);
-    };
-
-    authFetch(`${API_BASE}/facebook/config`, { signal: controller.signal })
-      .then(res => res.ok ? res.json() : null)
-      .then(cfg => {
-        clearTimeout(tid);
-        const id = cfg?.ad_account_id || '';
-        if (id) { localStorage.setItem('fb_ad_account_id', id); setAdAccountId(id); }
-        fireLoads(id || cached);
-      })
-      .catch(() => {
-        clearTimeout(tid);
-        fireLoads(cached);
-      });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (activeAccountLoading) return;
+    initialLoadFired.current = true;
+    const initPreset = searchParams.get('preset') || 'today';
+    const initFrom   = searchParams.get('date_from') || null;
+    const initTo     = searchParams.get('date_to')   || null;
+    const resolvedPreset = (initFrom && initTo) ? 'custom' : initPreset;
+    setBulkInsights(null);
+    setAdsBulk(null);
+    loadBulkInsights(adAccountId, resolvedPreset, initFrom, initTo);
+    // loadAdsBulk fires after bulkInsights settles (see deferred effect below)
+    loadRtAdsBulk(resolvedPreset, initFrom, initTo);
+  }, [activeAccountLoading, adAccountId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-fetch when user changes the date preset — skip the initial mount render
   // For custom range, wait until both dateFrom and dateTo are set
@@ -1170,7 +1155,11 @@ export default function CampaignPerformance() {
     prevBulkLoadingRef.current = bulkInsightsLoading;
   }, [bulkInsightsLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { loadAdsets(); loadRules(); }, [loadAdsets, loadRules]);
+  useEffect(() => {
+    if (activeAccountLoading) return;
+    loadAdsets();
+    loadRules();
+  }, [activeAccountLoading, adAccountId, loadAdsets, loadRules]);
 
   useEffect(() => {
     if (!budgetPopover) return;
@@ -1602,18 +1591,6 @@ export default function CampaignPerformance() {
               <span className="text-xs text-amber-600 font-medium">
                 Weekend — switch to Last 7 Days to see recent ads
               </span>
-            )}
-          </div>
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Ad Account ID"
-              className="border border-gray-200 rounded-lg pl-3 pr-8 py-2 text-sm w-48 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-              value={adAccountId}
-              onChange={e => setAdAccountId(e.target.value)}
-            />
-            {adAccountId && (
-              <span className="absolute right-2 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-green-400" title="Account connected" />
             )}
           </div>
         </div>

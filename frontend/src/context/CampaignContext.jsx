@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useCallback, useEffect, useContext, useState } from 'react';
+import { authFetch } from '../lib/facebookApi';
 
 const CampaignContext = createContext();
 
@@ -35,6 +36,10 @@ const defaultStartTime = () => {
 };
 
 export const CampaignProvider = ({ children }) => {
+    const [activeAccountId, setActiveAccountIdState] = useState(() => localStorage.getItem('fb_ad_account_id') || '');
+    const [adAccounts, setAdAccounts] = useState([]);
+    const [activeAccountLoading, setActiveAccountLoading] = useState(true);
+
     const [campaignData, setCampaignData] = useState({
         id: null,
         name: '',
@@ -105,6 +110,75 @@ export const CampaignProvider = ({ children }) => {
 
     const [selectedAdAccount, setSelectedAdAccount] = useState(null);
 
+    const normalizeAccountId = useCallback((rawId) => {
+        if (!rawId) return '';
+        const id = String(rawId);
+        return id.startsWith('act_') ? id : `act_${id}`;
+    }, []);
+
+    const setActiveAccountId = useCallback((accountId) => {
+        const normalized = normalizeAccountId(accountId);
+        setActiveAccountIdState(normalized);
+        if (normalized) {
+            localStorage.setItem('fb_ad_account_id', normalized);
+        } else {
+            localStorage.removeItem('fb_ad_account_id');
+        }
+    }, [normalizeAccountId]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const resolveActiveAccount = async () => {
+            setActiveAccountLoading(true);
+            const cached = normalizeAccountId(localStorage.getItem('fb_ad_account_id') || '');
+
+            try {
+                const accountsResponse = await authFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'}/facebook/accounts`);
+                if (accountsResponse.ok) {
+                    const accountsData = await accountsResponse.json();
+                    if (cancelled) return;
+
+                    setAdAccounts(accountsData);
+                    const accountIds = accountsData
+                        .map(account => normalizeAccountId(account.id || account.account_id || account.accountId))
+                        .filter(Boolean);
+
+                    if (cached && accountIds.includes(cached)) {
+                        setActiveAccountId(cached);
+                    } else if (accountIds.length > 0) {
+                        setActiveAccountId(accountIds[0]);
+                    } else {
+                        setActiveAccountId('');
+                    }
+                    return;
+                }
+            } catch (err) {
+                console.error('Failed to load Meta ad accounts:', err);
+            }
+
+            try {
+                const configResponse = await authFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'}/facebook/config`);
+                if (!cancelled && configResponse.ok) {
+                    const config = await configResponse.json();
+                    setActiveAccountId(config.ad_account_id || cached || '');
+                } else if (!cancelled) {
+                    setActiveAccountId(cached);
+                }
+            } catch (err) {
+                if (!cancelled) setActiveAccountId(cached);
+            } finally {
+                if (!cancelled) setActiveAccountLoading(false);
+            }
+        };
+
+        resolveActiveAccount().finally(() => {
+            if (!cancelled) setActiveAccountLoading(false);
+        });
+
+        return () => { cancelled = true; };
+    }, [normalizeAccountId, setActiveAccountId]);
+
     const resetWizard = () => {
         setCampaignData({
             id: null,
@@ -173,6 +247,10 @@ export const CampaignProvider = ({ children }) => {
         setAdsData,
         selectedAdAccount,
         setSelectedAdAccount,
+        activeAccountId,
+        setActiveAccountId,
+        adAccounts,
+        activeAccountLoading,
         resetWizard
     };
 
