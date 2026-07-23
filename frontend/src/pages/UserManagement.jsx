@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { Users, Shield, Trash2, Plus, X, Check, UserCheck, UserX, Pencil } from 'lucide-react';
+import { Users, Shield, Trash2, Plus, X, Check, UserCheck, UserX, Pencil, BriefcaseBusiness } from 'lucide-react';
 import ConfirmationModal from '../components/ConfirmationModal';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -19,6 +19,12 @@ const UserManagement = () => {
     const [showEditUserModal, setShowEditUserModal] = useState(false);
     const [editUserFormData, setEditUserFormData] = useState({ id: '', name: '', email: '', password: '' });
     const [updatingUser, setUpdatingUser] = useState(false);
+    const [accountModalUser, setAccountModalUser] = useState(null);
+    const [adAccounts, setAdAccounts] = useState([]);
+    const [selectedAccountIds, setSelectedAccountIds] = useState([]);
+    const [userAccountAccess, setUserAccountAccess] = useState({});
+    const [loadingAccounts, setLoadingAccounts] = useState(false);
+    const [savingAccounts, setSavingAccounts] = useState(false);
 
     const { authFetch, user: currentUser } = useAuth();
     const { showSuccess, showError } = useToast();
@@ -34,6 +40,7 @@ const UserManagement = () => {
             if (response.ok) {
                 const data = await response.json();
                 setUsers(data);
+                fetchUserAccountAccess(data);
             }
         } catch (err) {
             showError('Failed to fetch users');
@@ -52,6 +59,24 @@ const UserManagement = () => {
         } catch (err) {
             console.error('Failed to fetch roles:', err);
         }
+    };
+
+    const fetchUserAccountAccess = async (userList = users) => {
+        if (!userList.length) return;
+
+        const entries = await Promise.all(userList.map(async (user) => {
+            try {
+                const response = await authFetch(`${API_URL}/users/${user.id}/ad-accounts`);
+                if (!response.ok) return [user.id, { unrestricted: true, ad_account_ids: [] }];
+                const data = await response.json();
+                return [user.id, data];
+            } catch (err) {
+                console.error(`Failed to fetch ad accounts for ${user.email}:`, err);
+                return [user.id, { unrestricted: true, ad_account_ids: [] }];
+            }
+        }));
+
+        setUserAccountAccess(Object.fromEntries(entries));
     };
 
     const handleEditRoles = (user) => {
@@ -190,6 +215,110 @@ const UserManagement = () => {
         setShowEditUserModal(true);
     };
 
+    const formatAccountId = (account) => {
+        const rawId = account.id || account.account_id || account.accountId || '';
+        return rawId.startsWith('act_') ? rawId : `act_${rawId}`;
+    };
+
+    const getAccountAccessLabel = (user) => {
+        if (user.is_superuser) return 'All accounts';
+        const access = userAccountAccess[user.id];
+        if (!access) return 'Loading...';
+        if (access.unrestricted || access.ad_account_ids?.length === 0) return 'All accounts';
+        const count = access.ad_account_ids.length;
+        return `${count} account${count === 1 ? '' : 's'}`;
+    };
+
+    const handleEditAdAccounts = async (user) => {
+        setAccountModalUser(user);
+        setAdAccounts([]);
+        setSelectedAccountIds([]);
+        if (user.is_superuser) {
+            setLoadingAccounts(false);
+            return;
+        }
+
+        setLoadingAccounts(true);
+
+        try {
+            const [accountsResponse, assignmentResponse] = await Promise.all([
+                authFetch(`${API_URL}/facebook/accounts`),
+                authFetch(`${API_URL}/users/${user.id}/ad-accounts`),
+            ]);
+
+            if (!accountsResponse.ok) {
+                const data = await accountsResponse.json();
+                showError(data.detail || 'Failed to load ad accounts');
+                setAccountModalUser(null);
+                return;
+            }
+
+            if (!assignmentResponse.ok) {
+                const data = await assignmentResponse.json();
+                showError(data.detail || 'Failed to load user account assignments');
+                setAccountModalUser(null);
+                return;
+            }
+
+            const accountsData = await accountsResponse.json();
+            const assignmentData = await assignmentResponse.json();
+            setAdAccounts(accountsData);
+            // Normalize to act_ form so checkboxes (compared via formatAccountId) match
+            // even if the API ever returns bare ids.
+            setSelectedAccountIds((assignmentData.ad_account_ids || []).map(id =>
+                String(id).startsWith('act_') ? String(id) : `act_${id}`
+            ));
+            setUserAccountAccess(prev => ({
+                ...prev,
+                [user.id]: assignmentData,
+            }));
+        } catch (err) {
+            showError('Failed to load ad account assignments');
+            setAccountModalUser(null);
+        } finally {
+            setLoadingAccounts(false);
+        }
+    };
+
+    const toggleAdAccount = (accountId) => {
+        setSelectedAccountIds(prev =>
+            prev.includes(accountId)
+                ? prev.filter(id => id !== accountId)
+                : [...prev, accountId]
+        );
+    };
+
+    const handleSaveAdAccounts = async () => {
+        if (!accountModalUser) return;
+        setSavingAccounts(true);
+
+        try {
+            const response = await authFetch(`${API_URL}/users/${accountModalUser.id}/ad-accounts`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ad_account_ids: selectedAccountIds }),
+            });
+
+            if (!response.ok) {
+                const data = await response.json();
+                showError(data.detail || 'Failed to update ad account assignments');
+                return;
+            }
+
+            const data = await response.json();
+            setUserAccountAccess(prev => ({
+                ...prev,
+                [accountModalUser.id]: data,
+            }));
+            showSuccess('Ad account assignments updated');
+            setAccountModalUser(null);
+        } catch (err) {
+            showError('Failed to update ad account assignments');
+        } finally {
+            setSavingAccounts(false);
+        }
+    };
+
     const handleUpdateUser = async (e) => {
         e.preventDefault();
         setUpdatingUser(true);
@@ -269,6 +398,7 @@ const UserManagement = () => {
                             <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">User</th>
                             <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
                             <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Roles</th>
+                            <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Ad Accounts</th>
                             <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Created</th>
                             <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Actions</th>
                         </tr>
@@ -311,6 +441,12 @@ const UserManagement = () => {
                                         )}
                                     </div>
                                 </td>
+                                <td className="px-6 py-4">
+                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">
+                                        <BriefcaseBusiness size={12} />
+                                        {getAccountAccessLabel(user)}
+                                    </span>
+                                </td>
                                 <td className="px-6 py-4 text-sm text-gray-500">
                                     {new Date(user.created_at).toLocaleDateString()}
                                 </td>
@@ -329,6 +465,13 @@ const UserManagement = () => {
                                             title="Edit roles"
                                         >
                                             <Shield size={16} />
+                                        </button>
+                                        <button
+                                            onClick={() => handleEditAdAccounts(user)}
+                                            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                            title="Edit ad accounts"
+                                        >
+                                            <BriefcaseBusiness size={16} />
                                         </button>
                                         <button
                                             onClick={() => handleToggleActive(user)}
@@ -410,6 +553,108 @@ const UserManagement = () => {
                                 <Check size={16} />
                                 Save Changes
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Ad Accounts Modal */}
+            {accountModalUser && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setAccountModalUser(null)}>
+                    <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-between mb-6">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+                                    <BriefcaseBusiness className="text-blue-600" size={20} />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-bold text-gray-900">Ad Accounts</h3>
+                                    <p className="text-sm text-gray-500">{accountModalUser.email}</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setAccountModalUser(null)}
+                                className="text-gray-400 hover:text-gray-500"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        {accountModalUser.is_superuser ? (
+                            <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg text-sm text-purple-800 mb-6">
+                                Admins always see all accounts.
+                            </div>
+                        ) : loadingAccounts ? (
+                            <div className="flex items-center justify-center py-10">
+                                <svg className="animate-spin h-8 w-8 text-blue-600" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                </svg>
+                            </div>
+                        ) : (
+                            <>
+                                <p className="text-sm text-gray-500 mb-3">
+                                    No accounts selected = this user sees all accounts (unrestricted).
+                                </p>
+                                <div className="space-y-2 max-h-80 overflow-y-auto pr-1 mb-6">
+                                    {adAccounts.map((account) => {
+                                        const accountId = formatAccountId(account);
+                                        return (
+                                            <label
+                                                key={accountId}
+                                                className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors"
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedAccountIds.includes(accountId)}
+                                                    onChange={() => toggleAdAccount(accountId)}
+                                                    className="w-4 h-4 mt-1 text-blue-600 bg-white border-gray-300 rounded focus:ring-blue-500"
+                                                />
+                                                <div>
+                                                    <div className="font-medium text-gray-900">{account.name || 'Unnamed account'}</div>
+                                                    <div className="text-xs text-gray-500">{accountId}</div>
+                                                </div>
+                                            </label>
+                                        );
+                                    })}
+                                    {adAccounts.length === 0 && (
+                                        <div className="text-sm text-gray-500 text-center py-8 bg-gray-50 rounded-lg">
+                                            No ad accounts available.
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        )}
+
+                        <div className="flex justify-end gap-3">
+                            <button
+                                onClick={() => setAccountModalUser(null)}
+                                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors font-medium"
+                            >
+                                {accountModalUser.is_superuser ? 'Close' : 'Cancel'}
+                            </button>
+                            {!accountModalUser.is_superuser && (
+                                <button
+                                    onClick={handleSaveAdAccounts}
+                                    disabled={savingAccounts || loadingAccounts}
+                                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed text-white rounded-lg transition-colors font-medium shadow-sm flex items-center gap-2"
+                                >
+                                    {savingAccounts ? (
+                                        <>
+                                            <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                            </svg>
+                                            Saving...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Check size={16} />
+                                            Save Changes
+                                        </>
+                                    )}
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>
