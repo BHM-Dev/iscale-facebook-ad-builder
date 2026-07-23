@@ -153,11 +153,45 @@ def sync_copy_library(
             created += 1
 
     db.commit()
-    logger.info("Copy library sync: %d created, %d updated", created, updated)
+
+    # --- Performance data pass ------------------------------------------------
+    # Pull lifetime spend + CPL for every synced ad and write it back. Runs after
+    # the upsert commit so freshly-created rows are also populated. Non-fatal:
+    # if Meta insights fail, the library is still synced (spend/cpl stay null).
+    perf_updated = 0
+    try:
+        all_ad_ids = [ad["fb_ad_id"] for ad in ads if ad.get("fb_ad_id")]
+        insights_map = svc.get_ad_insights_map(all_ad_ids, ad_account_id=ad_account_id)
+        if all_ad_ids and not insights_map:
+            # Distinguish "insights call failed" from "ads genuinely have no spend"
+            # — otherwise a failed pass silently looks like a clean zero-spend sync.
+            logger.warning(
+                "Copy library sync: performance pass returned no data for %d ads "
+                "(Meta insights may have failed/timed out) — spend/CPL left unchanged",
+                len(all_ad_ids),
+            )
+        for fb_ad_id, metrics in insights_map.items():
+            row = db.query(AdCopyLibrary).filter(
+                AdCopyLibrary.fb_ad_id == fb_ad_id
+            ).first()
+            if row:
+                row.spend = metrics.get("spend")
+                row.cpl = metrics.get("cpl")
+                perf_updated += 1
+        db.commit()
+    except Exception as exc:
+        logger.warning("Copy library sync: performance pass failed (%s) — continuing", exc)
+        db.rollback()
+
+    logger.info(
+        "Copy library sync: %d created, %d updated, %d with performance data",
+        created, updated, perf_updated,
+    )
     return {
         "created": created,
         "updated": updated,
         "total": created + updated,
+        "with_performance": perf_updated,
         "message": (
             "Library synced. The AI will now use these examples to match "
             "your voice when generating copy."
@@ -201,6 +235,8 @@ def list_copy_library(
             "body": e.body,
             "cta_type": e.cta_type,
             "status": e.status,
+            "spend": float(e.spend) if e.spend is not None else None,
+            "cpl": float(e.cpl) if e.cpl is not None else None,
             "is_pinned": e.is_pinned,
             "imported_at": e.imported_at.isoformat() if e.imported_at else None,
         }

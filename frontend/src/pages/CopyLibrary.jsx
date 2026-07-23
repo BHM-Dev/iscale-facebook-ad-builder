@@ -85,7 +85,21 @@ export default function CopyLibrary() {
   }, [entries, selectedNiche]);
 
   const sortedEntries = useMemo(() => {
+    const numericCols = new Set(['spend', 'cpl']);
     return [...filteredEntries].sort((a, b) => {
+      if (numericCols.has(sortKey)) {
+        // Nulls always sort last regardless of direction, so proven ads
+        // (real spend/CPL) surface ahead of un-synced/zero-spend rows.
+        const av = a[sortKey];
+        const bv = b[sortKey];
+        const aNull = av === null || av === undefined;
+        const bNull = bv === null || bv === undefined;
+        if (aNull && bNull) return 0;
+        if (aNull) return 1;
+        if (bNull) return -1;
+        const cmp = av - bv;
+        return sortDir === 'asc' ? cmp : -cmp;
+      }
       const av = a[sortKey] ?? '';
       const bv = b[sortKey] ?? '';
       const cmp = String(av).localeCompare(String(bv), undefined, { numeric: true });
@@ -252,6 +266,8 @@ export default function CopyLibrary() {
               <tr className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
                 <SortHeader label="Niche" colKey="niche" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <SortHeader label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Spend" colKey="spend" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader label="CPL" colKey="cpl" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <SortHeader label="Headline" colKey="headline" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-5 py-3">Body</th>
                 <th className="px-5 py-3 text-center">Use</th>
@@ -264,7 +280,7 @@ export default function CopyLibrary() {
                 <SkeletonRows />
               ) : filteredEntries.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-5 py-12 text-center text-sm text-gray-400">
+                  <td colSpan={9} className="px-5 py-12 text-center text-sm text-gray-400">
                     No ads in library yet. Click 'Sync from Meta' to import your ads.
                   </td>
                 </tr>
@@ -282,6 +298,22 @@ export default function CopyLibrary() {
                           {entry.status}
                         </span>
                       )}
+                    </td>
+                    <td className="px-5 py-4 w-px whitespace-nowrap text-right text-gray-700 tabular-nums">
+                      {entry.spend != null
+                        ? `$${Number(entry.spend).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+                        : <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="px-5 py-4 w-px whitespace-nowrap text-right tabular-nums">
+                      {entry.cpl != null ? (
+                        <span className={
+                          entry.cpl < 30 ? 'text-green-700 font-medium'
+                          : entry.cpl > 60 ? 'text-red-500'
+                          : 'text-gray-700'
+                        }>
+                          {`$${Number(entry.cpl).toFixed(2)}`}
+                        </span>
+                      ) : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="px-5 py-4 text-gray-800 min-w-48">{entry.headline}</td>
                     <td className="px-5 py-4 min-w-96 w-full"><BodyCell text={entry.body} /></td>

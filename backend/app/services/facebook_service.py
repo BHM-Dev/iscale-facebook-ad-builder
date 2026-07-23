@@ -1392,6 +1392,91 @@ class FacebookService:
             logger.warning("get_adset_name_map failed (%s) — falling back to empty map", exc)
             return {}
 
+    def get_ad_insights_map(self, ad_ids, ad_account_id=None) -> dict:
+        """Batch-fetch lifetime spend + CPL for a list of ad IDs.
+
+        Returns { fb_ad_id: {"spend": float, "cpl": float | None} }.
+
+        Used by the copy library sync to weight curation + few-shot injection by
+        actual campaign outcome. Non-fatal: returns {} (or a partial map) on any
+        error so the sync always completes even without performance data. Missing
+        entries mean no insight data (zero-spend or brand-new ad).
+        """
+        import json as _json
+        import logging
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+        logger = logging.getLogger(__name__)
+
+        ids = [str(a) for a in (ad_ids or []) if a]
+        if not ids:
+            return {}
+
+        account = self._get_account(ad_account_id)
+        lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
+        fields = ['ad_id', 'spend', 'actions', 'cost_per_action_type']
+        out = {}
+
+        # Meta accepts up to ~200 IDs per IN filter — chunk defensively.
+        for start in range(0, len(ids), 200):
+            chunk = ids[start:start + 200]
+            params = {
+                'level': 'ad',
+                'date_preset': 'maximum',   # lifetime
+                'filtering': _json.dumps([{
+                    'field': 'ad.id',
+                    'operator': 'IN',
+                    'value': chunk,
+                }]),
+                'limit': 500,
+            }
+            try:
+                with ThreadPoolExecutor(max_workers=1) as ex:
+                    future = ex.submit(account.get_insights, fields, params)
+                    try:
+                        # date_preset='maximum' is the widest lookback and can be
+                        # slow on the synchronous insights edge — allow more headroom.
+                        cursor = future.result(timeout=60)  # hard cap on Meta API
+                    except FuturesTimeout:
+                        logger.warning("get_ad_insights_map: chunk timed out after 60s — skipping")
+                        continue
+                rows = []
+                while True:
+                    for row in cursor:
+                        rows.append(row)
+                    if not cursor.load_next_page():
+                        break
+            except FacebookRequestError as e:
+                body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+                err = body.get('error', {}) if isinstance(body, dict) else {}
+                msg = err.get('message') or str(e)
+                logger.warning("get_ad_insights_map: Meta error (%s) — skipping chunk", msg)
+                continue
+            except Exception as exc:
+                logger.warning("get_ad_insights_map: unexpected error (%s) — skipping chunk", exc)
+                continue
+
+            for row in rows:
+                fb_ad_id = str(row.get('ad_id') or '')
+                if not fb_ad_id:
+                    continue
+                spend = float(row.get('spend', 0) or 0)
+                cpl = None
+                for cpa in (row.get('cost_per_action_type') or []):
+                    if cpa.get('action_type') in lead_types:
+                        cpl = float(cpa.get('value', 0))
+                        break
+                if cpl is None:
+                    leads = 0
+                    for action in (row.get('actions') or []):
+                        if action.get('action_type') in lead_types:
+                            leads += int(float(action.get('value', 0)))
+                    if leads > 0 and spend > 0:
+                        cpl = round(spend / leads, 2)
+                out[fb_ad_id] = {"spend": spend, "cpl": cpl}
+
+        logger.info("get_ad_insights_map: resolved %d/%d ads", len(out), len(ids))
+        return out
+
     def get_account_ads_with_creative(self, ad_account_id=None):
         """Bulk-fetch all ACTIVE/PAUSED ads with their creative text for the copy library.
 
