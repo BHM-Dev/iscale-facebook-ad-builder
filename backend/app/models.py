@@ -7,6 +7,14 @@ import uuid
 def generate_uuid():
     return str(uuid.uuid4())
 
+def normalize_account_id(acct):
+    """Normalize a Meta ad account id to the act_-prefixed form for consistent
+    comparison (Meta returns 'act_123'; UI/DB may store either form)."""
+    if not acct:
+        return acct
+    acct = str(acct).strip()
+    return acct if acct.startswith("act_") else f"act_{acct}"
+
 # Many-to-Many relationship table for User <-> Role
 user_roles = Table(
     'user_roles',
@@ -48,6 +56,19 @@ class User(Base):
 
     roles = relationship("Role", secondary=user_roles, back_populates="users")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+    ad_accounts = relationship("UserAdAccount", back_populates="user", cascade="all, delete-orphan")
+
+    def allowed_account_ids(self):
+        """Meta ad accounts this user may see/act on.
+
+        Returns None = UNRESTRICTED (superuser, or a user with no explicit
+        assignments — the non-breaking default). Otherwise a list of the
+        normalized (act_-prefixed) account IDs the user is scoped to.
+        """
+        if self.is_superuser:
+            return None
+        ids = [normalize_account_id(a.ad_account_id) for a in self.ad_accounts]
+        return ids or None
 
     def has_permission(self, permission_name: str) -> bool:
         """Check if user has a specific permission through any of their roles"""
@@ -64,6 +85,24 @@ class User(Base):
         if self.is_superuser:
             return True
         return any(role.name == role_name for role in self.roles)
+
+class UserAdAccount(Base):
+    """Per-user Meta ad account allow-list (visibility + action scoping).
+
+    No rows for a user = unrestricted (see User.allowed_account_ids)."""
+    __tablename__ = "user_ad_accounts"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    ad_account_id = Column(String, nullable=False)  # Meta act_... id
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", back_populates="ad_accounts")
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'ad_account_id', name='uq_user_ad_account'),
+    )
+
 
 class Role(Base):
     __tablename__ = "roles"

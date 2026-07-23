@@ -12,12 +12,42 @@ except ImportError:
     FacebookBadObjectError = Exception  # fallback so catch still works
 
 logger = logging.getLogger(__name__)
-from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, User, Brand, GeneratedAd
+from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, User, Brand, GeneratedAd, normalize_account_id
 from app.database import get_db
 from app.core.deps import get_current_active_user, require_permission
 from sqlalchemy.orm import Session
 
 router = APIRouter()
+
+
+# Accounts hidden from the portal for everyone (unused/legacy). Filtered out of
+# the account list regardless of user scope. RHO 3 - Auto Insurance is not in use.
+HIDDEN_ACCOUNT_IDS = {"act_1675586233224658"}
+
+
+# ── Per-user ad account scoping ──────────────────────────────────────────────
+# allowed_account_ids() returns None = unrestricted (superuser or unassigned user).
+def _assert_account_allowed(current_user: User, ad_account_id):
+    """Raise 403 if this user is scoped and the requested account is outside
+    their allow-list. No-op for unrestricted users. When ad_account_id is None
+    the request falls back to the server default account, which is only reached
+    by unrestricted flows — scoped users always pass an explicit account."""
+    allowed = current_user.allowed_account_ids()
+    if allowed is None:
+        return
+    if ad_account_id is None:
+        # A scoped user must operate on an explicit, allowed account.
+        raise HTTPException(status_code=403, detail="Select one of your assigned ad accounts.")
+    if normalize_account_id(ad_account_id) not in allowed:
+        raise HTTPException(status_code=403, detail="You don't have access to this ad account.")
+
+
+def _filter_accounts_for_user(accounts, current_user: User):
+    """Filter a list of account dicts to the user's allow-list (no-op if unrestricted)."""
+    allowed = current_user.allowed_account_ids()
+    if allowed is None:
+        return accounts
+    return [a for a in accounts if normalize_account_id(a.get("id") or a.get("account_id")) in allowed]
 
 class BudgetUpdateRequest(BaseModel):
     daily_budget_cents: int = Field(..., ge=100)
@@ -41,7 +71,11 @@ def get_ad_accounts(
     current_user: User = Depends(get_current_active_user)
 ):
     try:
-        return service.get_ad_accounts()
+        accounts = [
+            a for a in service.get_ad_accounts()
+            if normalize_account_id(a.get("id") or a.get("account_id")) not in HIDDEN_ACCOUNT_IDS
+        ]
+        return _filter_accounts_for_user(accounts, current_user)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -51,6 +85,7 @@ def read_campaigns(
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(get_current_active_user)
 ):
+    _assert_account_allowed(current_user, ad_account_id)
     try:
         campaigns = service.get_campaigns(ad_account_id)
         # Convert FB objects to dicts
@@ -65,6 +100,7 @@ def create_campaign(
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(require_permission("campaigns:write"))
 ):
+    _assert_account_allowed(current_user, ad_account_id)
     try:
         result = service.create_campaign(campaign, ad_account_id)
         return dict(result)
@@ -104,7 +140,8 @@ def read_pages(
 ):
     try:
         pages = service.get_pages()
-        return pages
+        # Strip page access_token — sensitive credential, never send it to the browser.
+        return [{k: v for k, v in p.items() if k != 'access_token'} for p in pages]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -380,6 +417,7 @@ def read_adsets(
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(get_current_active_user)
 ):
+    _assert_account_allowed(current_user, ad_account_id)
     try:
         adsets = service.get_adsets(ad_account_id, campaign_id)
         return [dict(a) for a in adsets]
@@ -393,6 +431,7 @@ def create_adset(
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(require_permission("campaigns:write"))
 ):
+    _assert_account_allowed(current_user, ad_account_id)
     try:
         result = service.create_adset(adset, ad_account_id)
         return dict(result)
@@ -409,6 +448,7 @@ def create_creative(
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(require_permission("campaigns:write"))
 ):
+    _assert_account_allowed(current_user, ad_account_id)
     try:
         result = service.create_creative(creative, ad_account_id)
         return dict(result)
@@ -425,6 +465,7 @@ def create_ad(
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(require_permission("campaigns:write"))
 ):
+    _assert_account_allowed(current_user, ad_account_id)
     try:
         result = service.create_ad(ad, ad_account_id)
         return dict(result)
@@ -614,6 +655,7 @@ def upload_image(
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(require_permission("campaigns:write"))
 ):
+    _assert_account_allowed(current_user, ad_account_id)
     try:
         image_url = data.get("image_url")
         if not image_url:
@@ -630,6 +672,7 @@ def upload_video(
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(require_permission("campaigns:write"))
 ):
+    _assert_account_allowed(current_user, ad_account_id)
     """Upload a video to Facebook Ad Library.
 
     Request body:
@@ -842,20 +885,6 @@ def get_ad_creative(
         return creative
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/pages")
-def get_pages(
-    service: FacebookService = Depends(get_facebook_service),
-    current_user: User = Depends(get_current_active_user),
-):
-    """Fetch Facebook Pages available to the connected account."""
-    try:
-        pages = service.get_pages()
-        # Strip page access_token — sensitive credential, not needed by the browser
-        return [{k: v for k, v in p.items() if k != 'access_token'} for p in pages]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from app.database import get_db
-from app.models import User, Role, Permission
+from app.models import User, Role, Permission, UserAdAccount, normalize_account_id
 from app.core.security import get_password_hash
 from app.core.deps import get_current_superuser, require_role
 from app.schemas.auth import (
@@ -176,6 +176,55 @@ async def update_user_roles(
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.get("/{user_id}/ad-accounts")
+async def get_user_ad_accounts(
+    user_id: str,
+    current_user: User = Depends(get_current_superuser),
+    db: Session = Depends(get_db)
+):
+    """Get a user's assigned Meta ad account IDs (superuser only).
+
+    Empty list = unrestricted (the user sees all accounts). Superusers are
+    always unrestricted regardless of assignments.
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return {
+        "ad_account_ids": [normalize_account_id(a.ad_account_id) for a in user.ad_accounts],
+        "is_superuser": user.is_superuser,
+        "unrestricted": user.allowed_account_ids() is None,
+    }
+
+
+@router.put("/{user_id}/ad-accounts")
+async def set_user_ad_accounts(
+    user_id: str,
+    body: dict,
+    current_user: User = Depends(get_current_superuser),
+    db: Session = Depends(get_db)
+):
+    """Set a user's assigned Meta ad account allow-list (superuser only).
+
+    Body: { "ad_account_ids": ["act_123", ...] }. An empty list clears the
+    restriction (user sees all accounts). IDs are normalized to act_ form and
+    de-duplicated.
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    raw = body.get("ad_account_ids") or []
+    if not isinstance(raw, list):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ad_account_ids must be a list")
+    norm = sorted({normalize_account_id(x) for x in raw if x})
+
+    # Replace the full set (cascade delete-orphan clears the old rows)
+    user.ad_accounts = [UserAdAccount(user_id=user.id, ad_account_id=x) for x in norm]
+    db.commit()
+    return {"ad_account_ids": norm, "unrestricted": len(norm) == 0}
 
 
 # Role management endpoints
