@@ -23,13 +23,21 @@ _MODEL = "claude-sonnet-4-5-20250929"
 
 def _get_library_examples(db: Session, niche: str | None = None, limit: int = 5) -> str:
     """Return formatted few-shot examples from Joel's copy library.
-    Prefers pinned entries, then filters by niche if provided.
-    Returns empty string if library is empty."""
+
+    Ordering (best teacher first): pinned entries, then lowest CPL (proven
+    cheapest-converting ads), then most recently imported. Ads with no CPL data
+    sort last so the AI learns from real winners rather than un-synced/zero-spend
+    ads. Filters by niche if provided. Returns empty string if library is empty.
+    """
     q = db.query(AdCopyLibrary)
     if niche:
         q = q.filter(AdCopyLibrary.niche.ilike(f"%{niche}%"))
     entries = (
-        q.order_by(AdCopyLibrary.is_pinned.desc(), AdCopyLibrary.imported_at.desc())
+        q.order_by(
+            AdCopyLibrary.is_pinned.desc(),
+            AdCopyLibrary.cpl.asc().nulls_last(),
+            AdCopyLibrary.imported_at.desc(),
+        )
         .limit(limit)
         .all()
     )
