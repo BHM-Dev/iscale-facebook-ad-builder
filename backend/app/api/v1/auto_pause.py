@@ -22,6 +22,7 @@ from app.core.deps import get_db, get_current_user
 from app.models import AutoPauseRule, FacebookAdSet
 from app.services.facebook_service import FacebookService
 from app.services.slack_service import send_auto_pause_alert, send_check_summary
+from app.api.v1.facebook import _assert_adset_allowed, _assert_account_allowed
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -77,6 +78,13 @@ def list_rules(
     q = db.query(AutoPauseRule)
     if adset_id:
         q = q.filter(AutoPauseRule.adset_id == adset_id)
+    # Scoped users only see rules on ad sets within their assigned accounts —
+    # otherwise the list leaks other accounts' adset names / thresholds.
+    allowed = current_user.allowed_account_ids()
+    if allowed is not None:
+        q = q.join(FacebookAdSet, AutoPauseRule.adset_id == FacebookAdSet.id).filter(
+            FacebookAdSet.fb_account_id.in_(list(allowed))
+        )
     rules = q.order_by(AutoPauseRule.created_at.desc()).all()
     return [
         {
@@ -116,6 +124,8 @@ def create_rule(
     adset = db.query(FacebookAdSet).filter(FacebookAdSet.id == body.adset_id).first()
     if not adset:
         raise HTTPException(404, "Ad set not found")
+    if current_user.allowed_account_ids() is not None:
+        _assert_account_allowed(current_user, adset.fb_account_id)
 
     rule = AutoPauseRule(
         adset_id=body.adset_id,
@@ -141,6 +151,8 @@ def update_rule(
     rule = db.query(AutoPauseRule).filter(AutoPauseRule.id == rule_id).first()
     if not rule:
         raise HTTPException(404, "Rule not found")
+    if current_user.allowed_account_ids() is not None:
+        _assert_account_allowed(current_user, rule.adset.fb_account_id if rule.adset else None)
     if body.is_active is not None:
         rule.is_active = body.is_active
     if body.threshold is not None:
@@ -160,6 +172,8 @@ def delete_rule(
     rule = db.query(AutoPauseRule).filter(AutoPauseRule.id == rule_id).first()
     if not rule:
         raise HTTPException(404, "Rule not found")
+    if current_user.allowed_account_ids() is not None:
+        _assert_account_allowed(current_user, rule.adset.fb_account_id if rule.adset else None)
     db.delete(rule)
     db.commit()
 
@@ -174,6 +188,8 @@ def get_insights(
 ):
     """Fetch live Meta Insights + cached RedTrack data for one ad set."""
     svc = FacebookService()
+    svc.initialize()  # ensure svc.api is set so the resolver's Meta fallback works
+    _assert_adset_allowed(current_user, fb_adset_id, db, svc)
     try:
         meta = svc.get_adset_insights(fb_adset_id, date_preset=date_preset)
     except RuntimeError as e:
@@ -225,6 +241,8 @@ def get_insights_bulk(
     Accepts either date_preset OR explicit date_from/date_to (YYYY-MM-DD).
     Use this instead of calling /insights/{id} per row — dramatically faster.
     """
+    if current_user.allowed_account_ids() is not None:
+        _assert_account_allowed(current_user, ad_account_id)
     svc = FacebookService()
     try:
         bulk = svc.get_account_insights_bulk(
@@ -348,6 +366,8 @@ def get_ads_bulk(
     Returns a dict keyed by fb_adset_id → list of ads sorted by spend desc:
       { fb_adset_id: [ { ad_id, ad_name, spend, leads, cpl, impressions, clicks, ctr, roas } ] }
     """
+    if current_user.allowed_account_ids() is not None:
+        _assert_account_allowed(current_user, ad_account_id)
     svc = FacebookService()
     try:
         return svc.get_account_ads_insights_bulk(
@@ -364,6 +384,7 @@ def get_ads_bulk(
 def get_insights_raw(
     fb_adset_id: str,
     date_preset: str = Query("last_7d"),
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """Return the unprocessed Meta Insights API response for debugging.
@@ -374,6 +395,7 @@ def get_insights_raw(
 
     svc = FacebookService()
     svc.initialize()
+    _assert_adset_allowed(current_user, fb_adset_id, db, svc)
 
     adset = AdSet(fbid=fb_adset_id)
     fields = [
@@ -412,7 +434,15 @@ def check_and_enforce(
     current_user=Depends(get_current_user),
 ):
     """Evaluate all active rules. Pause ad sets that breach their threshold.
-    Returns a summary of actions taken."""
+    Returns a summary of actions taken.
+
+    The manual HTTP trigger is superuser-only: _run_check evaluates rules
+    system-wide (across all accounts), so a scoped user must not be able to
+    pause ad sets outside their accounts. The APScheduler path calls _run_check
+    directly and is unaffected.
+    """
+    if not getattr(current_user, "is_superuser", False):
+        raise HTTPException(status_code=403, detail="Only admins can run the enforcement check manually.")
     return _run_check(db, ad_account_id=ad_account_id)
 
 

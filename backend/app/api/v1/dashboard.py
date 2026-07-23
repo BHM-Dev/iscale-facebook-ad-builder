@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Brand, Product, GeneratedAd, WinningAd, FacebookCampaign
 from app.services.facebook_service import FacebookService
+from app.core.deps import get_current_active_user
+from app.api.v1.facebook import _assert_account_allowed
 
 router = APIRouter()
 
@@ -26,7 +28,10 @@ def extract_niche(adset_name: str) -> str:
     return "General"
 
 @router.get("/stats")
-def get_dashboard_stats(db: Session = Depends(get_db)):
+def get_dashboard_stats(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
     """
     Get aggregated statistics for the dashboard.
     """
@@ -51,11 +56,14 @@ def get_niche_summary(
     date_preset: str = Query("last_7d"),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    current_user=Depends(get_current_active_user),
 ):
     """
     Aggregate Meta ad set performance by niche for the Dashboard.
     Returns [] on Meta API failures so the Dashboard remains usable.
     """
+    if current_user.allowed_account_ids() is not None:
+        _assert_account_allowed(current_user, ad_account_id)
     try:
         svc = FacebookService()
         insights = svc.get_account_insights_bulk(

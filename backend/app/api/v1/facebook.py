@@ -49,6 +49,96 @@ def _filter_accounts_for_user(accounts, current_user: User):
         return accounts
     return [a for a in accounts if normalize_account_id(a.get("id") or a.get("account_id")) in allowed]
 
+
+# ── Object → account resolution (for endpoints keyed by adset/ad/campaign id) ─
+# Most write endpoints are keyed by a Meta object id with no account param. To
+# enforce per-user scoping we resolve the object's owning ad account: local DB
+# first (fb_account_id, populated by /sync for every account), Meta as fallback.
+def _resolve_account_for_adset(fb_adset_id, db, service=None):
+    row = (
+        db.query(FacebookAdSet.fb_account_id)
+        .filter(FacebookAdSet.fb_adset_id == str(fb_adset_id))
+        .first()
+    )
+    if row and row[0]:
+        return normalize_account_id(row[0])
+    if service is not None:
+        try:
+            data = AdSet(str(fb_adset_id), api=service.api).api_get(fields=['account_id'])
+            acc = data.get('account_id')
+            return normalize_account_id(acc) if acc else None
+        except Exception:
+            return None
+    return None
+
+
+def _resolve_account_for_campaign(fb_campaign_id, db, service=None):
+    row = (
+        db.query(FacebookCampaign.fb_account_id)
+        .filter(FacebookCampaign.fb_campaign_id == str(fb_campaign_id))
+        .first()
+    )
+    if row and row[0]:
+        return normalize_account_id(row[0])
+    if service is not None:
+        try:
+            data = Campaign(str(fb_campaign_id), api=service.api).api_get(fields=['account_id'])
+            acc = data.get('account_id')
+            return normalize_account_id(acc) if acc else None
+        except Exception:
+            return None
+    return None
+
+
+def _resolve_account_for_ad(fb_ad_id, db, service=None):
+    # Local: fb_ad_id -> FacebookAd.adset_id (local) -> FacebookAdSet.fb_account_id
+    row = (
+        db.query(FacebookAdSet.fb_account_id)
+        .join(FacebookAd, FacebookAd.adset_id == FacebookAdSet.id)
+        .filter(FacebookAd.fb_ad_id == str(fb_ad_id))
+        .first()
+    )
+    if row and row[0]:
+        return normalize_account_id(row[0])
+    if service is not None:
+        try:
+            from facebook_business.adobjects.ad import Ad as _Ad
+            data = _Ad(str(fb_ad_id), api=service.api).api_get(fields=['account_id'])
+            acc = data.get('account_id')
+            return normalize_account_id(acc) if acc else None
+        except Exception:
+            return None
+    return None
+
+
+def _assert_adset_allowed(current_user: User, fb_adset_id, db, service=None):
+    """403 if a scoped user's target ad set is outside their accounts. No-op for
+    unrestricted users. Fails closed (403) when the account can't be resolved."""
+    if current_user.allowed_account_ids() is None:
+        return
+    acc = _resolve_account_for_adset(fb_adset_id, db, service)
+    if acc is None:
+        raise HTTPException(status_code=403, detail="Can't verify this ad set's account — re-sync, then retry.")
+    _assert_account_allowed(current_user, acc)
+
+
+def _assert_campaign_allowed(current_user: User, fb_campaign_id, db, service=None):
+    if current_user.allowed_account_ids() is None:
+        return
+    acc = _resolve_account_for_campaign(fb_campaign_id, db, service)
+    if acc is None:
+        raise HTTPException(status_code=403, detail="Can't verify this campaign's account — re-sync, then retry.")
+    _assert_account_allowed(current_user, acc)
+
+
+def _assert_ad_allowed(current_user: User, fb_ad_id, db, service=None):
+    if current_user.allowed_account_ids() is None:
+        return
+    acc = _resolve_account_for_ad(fb_ad_id, db, service)
+    if acc is None:
+        raise HTTPException(status_code=403, detail="Can't verify this ad's account — re-sync, then retry.")
+    _assert_account_allowed(current_user, acc)
+
 class BudgetUpdateRequest(BaseModel):
     daily_budget_cents: int = Field(..., ge=100)
 
@@ -116,6 +206,8 @@ def read_pixels(
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(get_current_active_user)
 ):
+    if current_user.allowed_account_ids() is not None:
+        _assert_account_allowed(current_user, ad_account_id)
     try:
         pixels = service.get_pixels(ad_account_id)
         # Convert FB objects to dicts
@@ -159,6 +251,9 @@ def sync_from_meta(
     so existing records are updated rather than duplicated.
     Returns counts of created vs. updated records.
     """
+    # A scoped user may only sync (and thus persist) their own accounts.
+    if current_user.allowed_account_ids() is not None:
+        _assert_account_allowed(current_user, ad_account_id)
     synced_account = normalize_account_id(ad_account_id or getattr(service, "ad_account_id", None))
 
     try:
@@ -270,7 +365,18 @@ def read_saved_adsets(
     if campaign_id:
         q = q.filter(FacebookAdSet.campaign_id == campaign_id)
     norm_account = normalize_account_id(ad_account_id) if ad_account_id else None
-    if norm_account:
+    allowed = current_user.allowed_account_ids()
+    if allowed is not None:
+        # Scoped user: hard-restrict to their accounts — no NULL/unscoped leak.
+        if norm_account:
+            if norm_account not in allowed:
+                raise HTTPException(status_code=403, detail="You don't have access to this ad account.")
+            q = q.filter(FacebookAdSet.fb_account_id == norm_account)
+        else:
+            q = q.filter(FacebookAdSet.fb_account_id.in_(list(allowed)))
+    elif norm_account:
+        # Unrestricted admin: transitional declutter view — matching account plus
+        # not-yet-tagged (NULL) rows, which the scheduler backfills within a cycle.
         q = q.filter(
             (FacebookAdSet.fb_account_id == norm_account)
             | (FacebookAdSet.fb_account_id.is_(None))
@@ -317,6 +423,7 @@ def update_adset_budget(
     current_user: User = Depends(require_permission("campaigns:write")),
 ):
     """Update an ad set's daily budget directly in Meta and mirror it locally when present."""
+    _assert_adset_allowed(current_user, fb_adset_id, db, service)
     try:
         adset = AdSet(fbid=fb_adset_id, api=service.api)
         adset.api_update(fields=[], params={"daily_budget": int(body.daily_budget_cents)})
@@ -343,6 +450,7 @@ def update_campaign_budget(
     current_user: User = Depends(require_permission("campaigns:write")),
 ):
     """Update a campaign's budget mode directly in Meta and mirror it locally when present."""
+    _assert_campaign_allowed(current_user, fb_campaign_id, db, service)
     try:
         campaign = Campaign(fbid=fb_campaign_id, api=service.api)
         if body.budget_optimization == "CBO":
@@ -499,8 +607,10 @@ def create_ad(
 def read_ads(
     adset_id: str,
     service: FacebookService = Depends(get_facebook_service),
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
+    _assert_adset_allowed(current_user, adset_id, db, service)
     try:
         ads = service.get_ads(adset_id)
         return [dict(a) for a in ads]
@@ -788,6 +898,7 @@ def update_adset_status(
     status = body.get("status")
     if status not in ("ACTIVE", "PAUSED"):
         raise HTTPException(status_code=400, detail="status must be ACTIVE or PAUSED")
+    _assert_adset_allowed(current_user, fb_adset_id, db, service)
     try:
         service.update_adset_status(fb_adset_id, status)
         adset = db.query(FacebookAdSet).filter(FacebookAdSet.fb_adset_id == fb_adset_id).first()
@@ -813,6 +924,7 @@ def update_ad_status(
     status = body.get("status")
     if status not in ("ACTIVE", "PAUSED"):
         raise HTTPException(status_code=400, detail="status must be ACTIVE or PAUSED")
+    _assert_ad_allowed(current_user, fb_ad_id, db, service)
     try:
         service.update_ad_status(fb_ad_id, status)
         ad = db.query(FacebookAd).filter(FacebookAd.fb_ad_id == fb_ad_id).first()
@@ -840,6 +952,8 @@ def assign_campaign_brand(
     campaign = db.query(FacebookCampaign).filter(FacebookCampaign.id == campaign_id).first()
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
+    if current_user.allowed_account_ids() is not None:
+        _assert_account_allowed(current_user, campaign.fb_account_id)
     if brand_id:
         brand = db.query(Brand).filter(Brand.id == brand_id).first()
         if not brand:
@@ -871,6 +985,8 @@ def assign_brand_to_adset(
     adset = db.query(FacebookAdSet).filter(FacebookAdSet.id == adset_id).first()
     if not adset:
         raise HTTPException(status_code=404, detail="Ad set not found")
+    if current_user.allowed_account_ids() is not None:
+        _assert_account_allowed(current_user, adset.fb_account_id)
     if brand_id:
         brand = db.query(Brand).filter(Brand.id == brand_id).first()
         if not brand:
@@ -895,6 +1011,7 @@ def get_ad_creative(
     """Fetch headline, body, CTA, and image URL for a single ad — used to pre-populate Ad Remix and Iterate.
     Also enriches the response with overlay fields (offer line, logo URL) from the local DB if available.
     """
+    _assert_ad_allowed(current_user, fb_ad_id, db, service)
     try:
         creative = service.get_ad_creative(fb_ad_id)
         # Enrich with overlay fields from local GeneratedAd record if one exists for this fb_ad_id.
@@ -990,6 +1107,9 @@ def push_to_meta(
 
     if not adset_id:
         raise HTTPException(status_code=400, detail="adset_id is required")
+    # Highest-consequence endpoint (creates a live ad) — enforce that a scoped
+    # user can only push into an ad set within their assigned accounts.
+    _assert_adset_allowed(current_user, adset_id, db, service)
     if not page_id:
         raise HTTPException(status_code=400, detail="page_id is required")
     if not image_url:
