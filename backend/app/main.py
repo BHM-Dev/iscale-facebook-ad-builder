@@ -173,66 +173,98 @@ async def startup_event():
                 db.close()
 
         def scheduled_meta_sync():
-            """Sync all Meta campaigns and ad sets into the DB every 30 minutes."""
+            """Sync all Meta campaigns and ad sets into the DB every 30 minutes.
+
+            Iterates every ad account the token can see (not just the default),
+            tagging each campaign/adset with its true fb_account_id so the
+            account-scoped saved-adsets list stays authoritative for ALL accounts
+            on every cycle — no manual per-account backfill required.
+            """
             from app.services.facebook_service import FacebookService
-            from app.models import FacebookCampaign, FacebookAdSet
+            from app.models import FacebookCampaign, FacebookAdSet, normalize_account_id
             import uuid as _uuid
             db = SessionLocal()
             try:
                 svc = FacebookService()
                 svc.initialize()
-                campaigns_raw = svc.get_campaigns()
+
+                # Build the account list. Prefer all visible accounts; fall back to
+                # the default account id if the accounts lookup fails.
+                account_ids = []
+                try:
+                    for acc in (svc.get_ad_accounts() or []):
+                        aid = normalize_account_id(acc.get("id") or acc.get("account_id"))
+                        if aid:
+                            account_ids.append(aid)
+                except Exception as exc:
+                    print(f"⚠️  Meta sync: could not list ad accounts ({exc}); using default only")
+                if not account_ids:
+                    default_aid = normalize_account_id(getattr(svc, "ad_account_id", None))
+                    account_ids = [default_aid] if default_aid else [None]
+
                 created_c = updated_c = created_a = updated_a = 0
-                for c in campaigns_raw:
-                    fb_id = str(c.get("id") or "")
-                    if not fb_id:
-                        continue
-                    existing = db.query(FacebookCampaign).filter(FacebookCampaign.fb_campaign_id == fb_id).first()
-                    if existing:
-                        existing.name = c.get("name", existing.name)
-                        existing.status = c.get("status", existing.status)
-                        updated_c += 1
-                        campaign_db = existing
-                    else:
-                        campaign_db = FacebookCampaign(
-                            id=str(_uuid.uuid4()),
-                            name=c.get("name", "Imported Campaign"),
-                            objective=c.get("objective", "OUTCOME_LEADS"),
-                            budget_type="CBO" if c.get("daily_budget") or c.get("lifetime_budget") else "ABO",
-                            status=c.get("status", "PAUSED"),
-                            fb_campaign_id=fb_id,
-                            special_ad_categories=c.get("special_ad_categories", []),
-                        )
-                        db.add(campaign_db)
-                        created_c += 1
-                    db.flush()
+                for synced_account in account_ids:
                     try:
-                        adsets_raw = svc.get_adsets(campaign_id=fb_id)
-                    except Exception:
+                        campaigns_raw = svc.get_campaigns(ad_account_id=synced_account)
+                    except Exception as exc:
+                        print(f"⚠️  Meta sync: get_campaigns failed for {synced_account}: {exc}")
                         continue
-                    for a in adsets_raw:
-                        fb_as_id = str(a.get("id") or "")
-                        if not fb_as_id:
+                    for c in campaigns_raw:
+                        fb_id = str(c.get("id") or "")
+                        if not fb_id:
                             continue
-                        existing_as = db.query(FacebookAdSet).filter(FacebookAdSet.fb_adset_id == fb_as_id).first()
-                        if existing_as:
-                            existing_as.name = a.get("name", existing_as.name)
-                            existing_as.status = a.get("status", existing_as.status)
-                            updated_a += 1
+                        existing = db.query(FacebookCampaign).filter(FacebookCampaign.fb_campaign_id == fb_id).first()
+                        if existing:
+                            existing.name = c.get("name", existing.name)
+                            existing.status = c.get("status", existing.status)
+                            if synced_account:
+                                existing.fb_account_id = synced_account
+                            updated_c += 1
+                            campaign_db = existing
                         else:
-                            db.add(FacebookAdSet(
+                            campaign_db = FacebookCampaign(
                                 id=str(_uuid.uuid4()),
-                                campaign_id=campaign_db.id,
-                                name=a.get("name", "Imported Ad Set"),
-                                optimization_goal=a.get("optimization_goal", "LEAD_GENERATION"),
-                                status=a.get("status", "PAUSED"),
-                                fb_adset_id=fb_as_id,
-                                daily_budget=int(a["daily_budget"]) if a.get("daily_budget") else None,
-                                budget_schedule_type="DAILY" if a.get("daily_budget") else "LIFETIME",
-                            ))
-                            created_a += 1
+                                name=c.get("name", "Imported Campaign"),
+                                objective=c.get("objective", "OUTCOME_LEADS"),
+                                budget_type="CBO" if c.get("daily_budget") or c.get("lifetime_budget") else "ABO",
+                                status=c.get("status", "PAUSED"),
+                                fb_campaign_id=fb_id,
+                                fb_account_id=synced_account,
+                                special_ad_categories=c.get("special_ad_categories", []),
+                            )
+                            db.add(campaign_db)
+                            created_c += 1
+                        db.flush()
+                        try:
+                            adsets_raw = svc.get_adsets(ad_account_id=synced_account, campaign_id=fb_id)
+                        except Exception:
+                            continue
+                        for a in adsets_raw:
+                            fb_as_id = str(a.get("id") or "")
+                            if not fb_as_id:
+                                continue
+                            existing_as = db.query(FacebookAdSet).filter(FacebookAdSet.fb_adset_id == fb_as_id).first()
+                            if existing_as:
+                                existing_as.name = a.get("name", existing_as.name)
+                                existing_as.status = a.get("status", existing_as.status)
+                                if synced_account:
+                                    existing_as.fb_account_id = synced_account
+                                updated_a += 1
+                            else:
+                                db.add(FacebookAdSet(
+                                    id=str(_uuid.uuid4()),
+                                    campaign_id=campaign_db.id,
+                                    name=a.get("name", "Imported Ad Set"),
+                                    optimization_goal=a.get("optimization_goal", "LEAD_GENERATION"),
+                                    status=a.get("status", "PAUSED"),
+                                    fb_adset_id=fb_as_id,
+                                    fb_account_id=synced_account,
+                                    daily_budget=int(a["daily_budget"]) if a.get("daily_budget") else None,
+                                    budget_schedule_type="DAILY" if a.get("daily_budget") else "LIFETIME",
+                                ))
+                                created_a += 1
                 db.commit()
-                print(f"✅ Meta sync: {created_c} campaigns created, {updated_c} updated | {created_a} ad sets created, {updated_a} updated")
+                print(f"✅ Meta sync ({len(account_ids)} accounts): {created_c} campaigns created, {updated_c} updated | {created_a} ad sets created, {updated_a} updated")
             except Exception as exc:
                 print(f"⚠️  Meta sync error: {exc}")
             finally:

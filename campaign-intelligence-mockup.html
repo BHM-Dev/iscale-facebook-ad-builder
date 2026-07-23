@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Campaign Intelligence — Mockup</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f3; color: #1a1a18; padding: 32px 24px; }
+  .container { max-width: 820px; margin: 0 auto; }
+  .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #888; margin-bottom: 2px; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 500; padding: 3px 9px; border-radius: 20px; }
+  .badge-green { background: #EAF3DE; color: #3B6D11; }
+  .badge-red { background: #FCEBEB; color: #A32D2D; }
+  .badge-amber { background: #FAEEDA; color: #BA7517; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .tabs { display: flex; gap: 2px; background: #e8e8e6; border-radius: 9px; padding: 3px; }
+  .tab { font-size: 12px; padding: 5px 12px; border-radius: 7px; border: none; background: transparent; color: #666; cursor: pointer; font-weight: 400; }
+  .tab.active { background: #fff; color: #1a1a18; font-weight: 500; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+  .ai-card { background: #f0effe; border: 0.5px solid #d4cffa; border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; display: flex; gap: 12px; align-items: flex-start; }
+  .ai-icon { width: 30px; height: 30px; border-radius: 50%; background: #EEEDFE; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; }
+  .ai-icon i { font-size: 15px; color: #534AB7; }
+  .ai-title { font-size: 13px; font-weight: 600; color: #2D2463; margin-bottom: 5px; }
+  .ai-body { font-size: 13px; color: #4a4870; line-height: 1.65; }
+  .ai-body strong { color: #2D2463; }
+  .kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 14px; }
+  .kpi-card { background: #fff; border: 0.5px solid #e0e0dc; border-radius: 9px; padding: 12px 14px; }
+  .kpi-value { font-size: 20px; font-weight: 600; margin-top: 3px; }
+  .kpi-value.red { color: #A32D2D; }
+  .kpi-value.green { color: #3B6D11; }
+  .table-wrap { background: #fff; border: 0.5px solid #e0e0dc; border-radius: 12px; overflow: hidden; margin-bottom: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th { background: #f5f5f3; padding: 9px 12px; text-align: left; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #888; border-bottom: 0.5px solid #e0e0dc; }
+  thead th.right { text-align: right; }
+  thead th.center { text-align: center; }
+  tbody tr { border-bottom: 0.5px solid #f0f0ee; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody td { padding: 9px 12px; color: #444; }
+  tbody td.name { font-weight: 500; color: #1a1a18; }
+  tbody td.right { text-align: right; }
+  tbody td.center { text-align: center; }
+  tbody td.green { color: #3B6D11; font-weight: 600; }
+  tbody td.red { color: #A32D2D; font-weight: 600; }
+  tbody td.amber { color: #BA7517; font-weight: 600; }
+  .action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .action-card { border-radius: 12px; padding: 14px 16px; }
+  .action-card.green { background: #EAF3DE; }
+  .action-card.red { background: #FCEBEB; }
+  .action-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 5px; }
+  .action-title.green { color: #27500A; }
+  .action-title.red { color: #791F1F; }
+  .action-body { font-size: 13px; line-height: 1.65; }
+  .action-body.green { color: #3B6D11; }
+  .action-body.red { color: #A32D2D; }
+  .action-note { font-size: 11.5px; margin-top: 4px; }
+  .action-note.green { color: #639922; }
+  .action-note.red { color: #993535; }
+  .mockup-note { font-size: 12px; color: #aaa; text-align: center; margin-top: 20px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <div>
+      <p class="label">Commercial Insurance · RHO · act_521142087204815</p>
+      <h1 style="font-size: 20px; font-weight: 600; margin-top: 2px;">Campaign intelligence</h1>
+    </div>
+    <div class="tabs">
+      <button class="tab">Today</button>
+      <button class="tab">Yesterday</button>
+      <button class="tab active">This weekend</button>
+      <button class="tab">Last 7d</button>
+      <button class="tab">Last 30d</button>
+    </div>
+  </div>
+
+  <div class="ai-card">
+    <div class="ai-icon"><i class="ti ti-brain"></i></div>
+    <div>
+      <div class="ai-title">Saturday was your worst weekend yet — but it's fixable.</div>
+      <div class="ai-body">You spent $2,797 and lost $376 (−13% ROI). The problem isn't your CPL — it's basically the same $25.55 as weekdays. Weekend call centers are closed, so leads don't convert to billable calls. <strong>AutoBody and Religious Orgs made +$652 combined. The other 5 niches lost $1,028.</strong> Pausing those 5 niches Friday night would have flipped Saturday profitable.</div>
+    </div>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="label">Spend</div>
+      <div class="kpi-value">$2,797</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Revenue</div>
+      <div class="kpi-value">$2,421</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Profit</div>
+      <div class="kpi-value red">−$376</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">ROI</div>
+      <div class="kpi-value red">−13%</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Avg CPL</div>
+      <div class="kpi-value">$25.55</div>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Niche</th>
+          <th class="right">Spend</th>
+          <th class="right">Revenue</th>
+          <th class="right">Profit</th>
+          <th class="right">ROI</th>
+          <th class="right">CPL</th>
+          <th class="center">Verdict</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="name">AutoBody</td>
+          <td class="right">$312</td>
+          <td class="right">$462</td>
+          <td class="right green">+$150</td>
+          <td class="right green">+48%</td>
+          <td class="right">$21</td>
+          <td class="center"><span class="badge badge-green">Run weekends</span></td>
+        </tr>
+        <tr>
+          <td class="name">Religious Orgs</td>
+          <td class="right">$124</td>
+          <td class="right">$163</td>
+          <td class="right green">+$39</td>
+          <td class="right green">+31%</td>
+          <td class="right">$19</td>
+          <td class="center"><span class="badge badge-green">Run weekends</span></td>
+        </tr>
+        <tr>
+          <td class="name">Trucking</td>
+          <td class="right">$398</td>
+          <td class="right">$379</td>
+          <td class="right amber">−$19</td>
+          <td class="right amber">−5%</td>
+          <td class="right">$26</td>
+          <td class="center"><span class="badge badge-amber">Watch</span></td>
+        </tr>
+        <tr>
+          <td class="name">Plumbing</td>
+          <td class="right">$461</td>
+          <td class="right">$62</td>
+          <td class="right red">−$399</td>
+          <td class="right red">−87%</td>
+          <td class="right">$29</td>
+          <td class="center"><span class="badge badge-red">Pause weekends</span></td>
+        </tr>
+        <tr>
+          <td class="name">Barber</td>
+          <td class="right">$389</td>
+          <td class="right">$213</td>
+          <td class="right red">−$176</td>
+          <td class="right red">−45%</td>
+          <td class="right">$27</td>
+          <td class="center"><span class="badge badge-red">Pause weekends</span></td>
+        </tr>
+        <tr>
+          <td class="name">Laundromat</td>
+          <td class="right">$341</td>
+          <td class="right">$48</td>
+          <td class="right red">−$293</td>
+          <td class="right red">−86%</td>
+          <td class="right">$31</td>
+          <td class="center"><span class="badge badge-red">Pause weekends</span></td>
+        </tr>
+        <tr>
+          <td class="name">Water Tour / Ferry</td>
+          <td class="right">$772</td>
+          <td class="right">$63</td>
+          <td class="right red">−$709</td>
+          <td class="right red">−92%</td>
+          <td class="right">$34</td>
+          <td class="center"><span class="badge badge-red">Pause weekends</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="action-grid">
+    <div class="action-card green">
+      <div class="action-title green"><i class="ti ti-circle-check"></i> Run on weekends</div>
+      <div class="action-body green">AutoBody · Religious Orgs</div>
+      <div class="action-note green">Monitor: Trucking, Nursery (1 weekend only — confirm before scaling)</div>
+    </div>
+    <div class="action-card red">
+      <div class="action-title red"><i class="ti ti-circle-x"></i> Pause Friday night</div>
+      <div class="action-body red">Plumbing · Barber · Laundromat · Water Tour · Masonry</div>
+      <div class="action-note red">Pausing these would have saved $935 last Saturday</div>
+    </div>
+  </div>
+
+  <div class="mockup-note">Mockup only — data from 6/13 weekend analysis. Not connected to live Meta or RedTrack.</div>
+
+</div>
+</body>
+</html>

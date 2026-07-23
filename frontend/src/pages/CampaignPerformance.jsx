@@ -995,7 +995,8 @@ export default function CampaignPerformance() {
   const loadAdsets = useCallback(async () => {
     setLoadingAdsets(true);
     try {
-      const res = await authFetch(`${API_BASE}/facebook/adsets/saved`);
+      const qs = adAccountId ? `?ad_account_id=${encodeURIComponent(adAccountId)}` : '';
+      const res = await authFetch(`${API_BASE}/facebook/adsets/saved${qs}`);
       if (!res.ok) throw new Error('Failed to load ad sets');
       const data = await res.json();
       const adsetList = Array.isArray(data) ? data : data.adsets || [];
@@ -1010,7 +1011,7 @@ export default function CampaignPerformance() {
       setCampaignBrands(prev => ({ ...prev, ...brands }));
     } catch (e) { showError(e.message); }
     finally { setLoadingAdsets(false); }
-  }, [showError]);
+  }, [showError, adAccountId]);
 
   const loadRules = useCallback(async () => {
     try {

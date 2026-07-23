@@ -206,6 +206,7 @@ class FacebookCampaign(Base):
     special_ad_categories = Column(JSON, nullable=True, default=list)  # e.g. ["HOUSING"] or []
     status = Column(String, default='PAUSED')
     fb_campaign_id = Column(String, nullable=True)
+    fb_account_id = Column(String, nullable=True, index=True)  # Meta act_ id this campaign belongs to
     brand_id = Column(String, ForeignKey("brands.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -231,6 +232,7 @@ class FacebookAdSet(Base):
     conversion_event = Column(String, nullable=True)
     status = Column(String, default='PAUSED')
     fb_adset_id = Column(String, nullable=True)
+    fb_account_id = Column(String, nullable=True, index=True)  # Meta act_ id this adset belongs to
     brand_id = Column(String, ForeignKey("brands.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

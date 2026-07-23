@@ -1,13 +1,43 @@
-# Phase 4 Prep — Learning UI + RedTrack sub1 Check
+# Phase 4 — Learning UI (Codex)
 
-## Summary
+## STATUS (2026-07-17): Phases 0–3 are DONE and live. This is now GO for Codex.
 
-This is Codex-safe prep work for after Claude finishes learning-loop instrumentation. No backend work should start from this file until Phase 0 and Phases 1+2 from `BRIEF_learning_loop_instrumentation.md` are resolved.
+- **Phase 0** (RedTrack sub1 = live ad IDs): resolved.
+- **Phases 1+2** (schema + push instrumentation + `url_tags` macros): shipped & production-verified.
+- **Phase 3** (ad-level revenue/profit sync onto `generated_ads`): shipped & live (30-min job + `POST /redtrack/sync-ad-performance`).
+- The **RedTrack sub1 check below is already completed** — kept for reference only; you do NOT need to run it.
 
-Two findings matter:
+**This is frontend-only work. Do not touch backend, migrations, or the four trigger files.** Hand the final `git push` to Claude Code.
 
-1. Ad Builder does **not** inject RedTrack `sub1` or `sub2` macros into destination URLs. It passes Joel's destination URL into Meta unchanged.
-2. Generated Ads is ready for a learning UI pass once Claude exposes `angle`, `revenue`, `profit`, and tracking fields in the `/generated-ads` response.
+### Actual `/generated-ads` response fields you get (shipped — use these exact names)
+```json
+{
+  "id": "ga_...", "brand_id": "...", "image_url": "...", "headline": "...", "body": "...",
+  "niche": "...", "ad_bundle_id": "...", "size_name": "Square 1080x1080", "created_at": "...",
+  "fb_ad_id": "120...",        // present once pushed via instrumented path; else null
+  "fb_adset_id": "120...",     // rollups only
+  "fb_campaign_id": "120...",
+  "fb_creative_id": "120...",
+  "angle": "rate_shock",       // NOTE: field is `angle` (no `angle_tag` — use `ad.angle` and fall back to '—')
+  "source_ad_id": "...",       // remix provenance, may be null
+  "profile_id": "...",
+  "revenue": 210.00,           // null until Phase 3 sync matches this ad's fb_ad_id in RedTrack
+  "profit": 64.77,             // null until matched
+  "last_synced_at": "2026-07-17T..."  // null until matched
+}
+```
+
+### CRITICAL caveat — expect blank data at first
+As of 2026-07-17, **0 of 67 existing generated ads have `fb_ad_id`** (they predate instrumentation), so `revenue`/`profit`/`angle`/`last_synced_at` are **null across the board right now**. The columns populate only as Joel/Abel push *new* ads through the instrumented paths and the 30-min sync matches them. Build every new UI element to degrade gracefully to an empty/"—" state, and make the "Top Angles by Profit" module render its "No tracked creative performance yet." empty state cleanly. Do NOT assume any row has revenue.
+
+---
+
+## Appendix (reference only — already completed)
+
+Two findings that were resolved during Phases 1–3:
+
+1. Ad Builder now sets RedTrack macros on the creative's `url_tags` (`sub1={{ad.id}}` / `sub2={{adset.id}}` / `sub3={{campaign.id}}`) — verified expanding in production. (It does NOT mutate the destination link.)
+2. Generated Ads response now exposes `angle`, `revenue`, `profit`, and tracking fields (shape above).
 
 ## RedTrack sub1 Finding
 

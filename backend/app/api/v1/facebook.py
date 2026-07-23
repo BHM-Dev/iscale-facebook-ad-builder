@@ -159,6 +159,8 @@ def sync_from_meta(
     so existing records are updated rather than duplicated.
     Returns counts of created vs. updated records.
     """
+    synced_account = normalize_account_id(ad_account_id or getattr(service, "ad_account_id", None))
+
     try:
         campaigns_raw = service.get_campaigns(ad_account_id=ad_account_id)
     except Exception as e:
@@ -181,6 +183,8 @@ def sync_from_meta(
             existing.status = c.get("status", existing.status)
             existing.budget_type = budget_type
             existing.daily_budget = int(c["daily_budget"]) if c.get("daily_budget") else None
+            if synced_account:
+                existing.fb_account_id = synced_account
             updated_campaigns += 1
             campaign_db = existing
         else:
@@ -193,6 +197,7 @@ def sync_from_meta(
                 daily_budget=int(c["daily_budget"]) if c.get("daily_budget") else None,
                 status=c.get("status", "PAUSED"),
                 fb_campaign_id=fb_id,
+                fb_account_id=synced_account,
                 special_ad_categories=c.get("special_ad_categories", []),
             )
             db.add(campaign_db)
@@ -216,6 +221,8 @@ def sync_from_meta(
                 existing_as.name = a.get("name", existing_as.name)
                 existing_as.status = a.get("status", existing_as.status)
                 existing_as.fb_adset_id = fb_adset_id
+                if synced_account:
+                    existing_as.fb_account_id = synced_account
                 updated_adsets += 1
             else:
                 db.add(FacebookAdSet(
@@ -225,6 +232,7 @@ def sync_from_meta(
                     optimization_goal=a.get("optimization_goal", "LEAD_GENERATION"),
                     status=a.get("status", "PAUSED"),
                     fb_adset_id=fb_adset_id,
+                    fb_account_id=synced_account,
                     daily_budget=int(a["daily_budget"]) if a.get("daily_budget") else None,
                     budget_schedule_type="DAILY" if a.get("daily_budget") else "LIFETIME",
                 ))
@@ -241,12 +249,18 @@ def sync_from_meta(
 @router.get("/adsets/saved")
 def read_saved_adsets(
     campaign_id: Optional[str] = None,
+    ad_account_id: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Return ad sets stored in our DB (includes fb_adset_id for live insights lookup).
     Deduplicates by fb_adset_id — if the same fb_adset_id appears more than once,
     only the most recently created entry is returned.
+
+    When ad_account_id is passed, the list is scoped to that Meta account. Rows
+    with a NULL fb_account_id (not yet re-synced under the tagging build) are
+    treated as unscoped and still shown, so nothing disappears before a backfill
+    re-sync. Once every row is tagged the NULL branch becomes a no-op.
     """
     from sqlalchemy.orm import joinedload
     q = db.query(FacebookAdSet).options(
@@ -255,6 +269,12 @@ def read_saved_adsets(
     )
     if campaign_id:
         q = q.filter(FacebookAdSet.campaign_id == campaign_id)
+    norm_account = normalize_account_id(ad_account_id) if ad_account_id else None
+    if norm_account:
+        q = q.filter(
+            (FacebookAdSet.fb_account_id == norm_account)
+            | (FacebookAdSet.fb_account_id.is_(None))
+        )
     all_adsets = q.order_by(FacebookAdSet.created_at.desc()).all()
 
     # Deduplicate by fb_adset_id — keep the first (most recent) occurrence
