@@ -1,7 +1,15 @@
 # Spec — Hard Account Enforcement (follow-up to declutter scoping)
 
 **Owner:** Claude Code (touches `facebook_service.py` trigger file + auto_pause + push-to-meta + frontend → mandatory 2-agent review).
-**Status:** tracked follow-up. The shipped scoping (commit 45a8d56) is DECLUTTER + read-scoping only. This spec closes the gaps a Sonnet bypass review found so a scoped user (e.g. Abel) genuinely *cannot* view or act on accounts outside their allow-list.
+**Status:** ✅ SHIPPED `a739606` (2026-07-23). Every BLOCKING/HIGH/MEDIUM item below is guarded. Reviewed by Haiku (logic) + Sonnet (adversarial bypass) — no confirmed bypass. Admin (superuser) flows verified unaffected live. Resolution uses `fb_account_id` (local) + Meta fallback; unrestricted users short-circuit.
+
+**Residual / follow-ups:**
+- **Scoped-user 403 not yet verified live** — needs an Abel (or scoped test account) login to confirm a 403 end-to-end in the browser. Logic verified by review + admin-unaffected confirmed; the live scoped test is the last gap.
+- **Brand endpoints** (`assign_campaign_brand`/`assign_brand_to_adset`) check the loaded row's `fb_account_id` directly with **no Meta fallback** — a not-yet-tagged (NULL) row 403s a scoped user until the scheduler tags it (≤30 min). Acceptable/fail-closed.
+- **Bonus fixes found during build:** `/dashboard/stats` + `/dashboard/niche-summary` were fully **unauthenticated** — added auth + account scoping. `list_rules` was an unguarded enumeration leak — now scoped.
+
+---
+_Original spec below (all items now implemented)._
 
 ## The core problem
 `_assert_account_allowed(user, ad_account_id)` only guards endpoints that take an `ad_account_id`. Most write/read endpoints are keyed by `adset_id` / `ad_id` / `campaign_id` with **no server-side link back to an account**. So there's no account-ownership model to check against. Everything below flows from that.
