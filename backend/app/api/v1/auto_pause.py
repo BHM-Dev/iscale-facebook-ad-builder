@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_db, get_current_user
-from app.models import AutoPauseRule, FacebookAdSet
+from app.models import AutoPauseRule, FacebookAdSet, normalize_account_id
 from app.services.facebook_service import FacebookService
 from app.services.slack_service import send_auto_pause_alert, send_check_summary
 from app.api.v1.facebook import _assert_adset_allowed, _assert_account_allowed, _resolve_scoped_default_account
@@ -264,19 +264,39 @@ def get_insights_bulk(
     else:
         date_from_str, date_to_str = RedTrackService.preset_to_dates(date_preset)
 
-    rt_rows = (
+    base_rt_query = (
         db.query(RedTrackCache)
         .filter(
             RedTrackCache.date_from == date.fromisoformat(date_from_str),
             RedTrackCache.date_to   == date.fromisoformat(date_to_str),
         )
-        .all()
     )
+    cache_has_rows = base_rt_query.first() is not None
+    rt_query = base_rt_query
+
+    scoped_rt_adset_ids = None
+    norm_account = normalize_account_id(ad_account_id) if ad_account_id else None
+    if norm_account:
+        local_ids = {
+            row[0] for row in (
+                db.query(FacebookAdSet.fb_adset_id)
+                .filter(
+                    FacebookAdSet.fb_account_id == norm_account,
+                    FacebookAdSet.fb_adset_id.isnot(None),
+                )
+                .all()
+            )
+            if row[0]
+        }
+        scoped_rt_adset_ids = local_ids | set(bulk.keys())
+        rt_query = rt_query.filter(RedTrackCache.fb_adset_id.in_(scoped_rt_adset_ids or ["__none__"]))
+
+    rt_rows = rt_query.all()
 
     # Cache miss — fetch live from RedTrack and persist for future loads.
     # Wrapped in try/except: RT is supplementary — a RedTrack API error must
     # never crash the insights-bulk endpoint and wipe out Meta stats.
-    if not rt_rows:
+    if not cache_has_rows:
         try:
             rt_svc = RedTrackService()
             if rt_svc.is_configured():
@@ -302,14 +322,16 @@ def get_insights_bulk(
                         ))
                     db.commit()
                     # Re-query so rt_rows is populated for the merge below
-                    rt_rows = (
+                    rt_query = (
                         db.query(RedTrackCache)
                         .filter(
                             RedTrackCache.date_from == d_from,
                             RedTrackCache.date_to   == d_to,
                         )
-                        .all()
                     )
+                    if scoped_rt_adset_ids is not None:
+                        rt_query = rt_query.filter(RedTrackCache.fb_adset_id.in_(scoped_rt_adset_ids or ["__none__"]))
+                    rt_rows = rt_query.all()
         except Exception as _rt_exc:
             import logging as _log
             _log.getLogger(__name__).warning(

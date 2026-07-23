@@ -1073,8 +1073,10 @@ export default function CampaignPerformance() {
   }, [buildDateParams, timedFetch]);
 
   const loadRtAdsBulk = useCallback(async (preset, dateFrom = null, dateTo = null) => {
+    setRtAdsBulk(null);
     try {
       const params = buildDateParams(preset, dateFrom, dateTo);
+      if (adAccountId) params.set('ad_account_id', adAccountId);
       const res = await timedFetch(`${API_BASE}/redtrack/report/sub1?${params}`, {}, 15000);
       if (!res.ok) return;
       const data = await res.json();
@@ -1082,7 +1084,7 @@ export default function CampaignPerformance() {
     } catch {
       // silently fail — RT ad-level is supplementary
     }
-  }, [buildDateParams, timedFetch]);
+  }, [adAccountId, buildDateParams, timedFetch]);
 
   const toggleAdsetStatus = useCallback(async (adset) => {
     const currentStatus = normalizeStatus(adsetStatusOverrides[adset.fb_adset_id] ?? adset.status);
@@ -1125,8 +1127,10 @@ export default function CampaignPerformance() {
     const initFrom   = searchParams.get('date_from') || null;
     const initTo     = searchParams.get('date_to')   || null;
     const resolvedPreset = (initFrom && initTo) ? 'custom' : initPreset;
+    setAdsets([]);
     setBulkInsights(null);
     setAdsBulk(null);
+    setRtAdsBulk(null);
     loadBulkInsights(adAccountId, resolvedPreset, initFrom, initTo);
     // loadAdsBulk fires after bulkInsights settles (see deferred effect below)
     loadRtAdsBulk(resolvedPreset, initFrom, initTo);

@@ -13,6 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, get_db
+from app.models import FacebookAd, FacebookAdSet, normalize_account_id
+from app.api.v1.facebook import _assert_adset_allowed, _resolve_scoped_default_account
 from app.services.redtrack_service import RedTrackService
 
 logger = logging.getLogger(__name__)
@@ -21,6 +23,46 @@ router = APIRouter()
 
 def _svc() -> RedTrackService:
     return RedTrackService()
+
+
+def _allowed_adset_ids(db: Session, current_user, ad_account_id: Optional[str] = None) -> set[str] | None:
+    resolved_account = _resolve_scoped_default_account(current_user, ad_account_id)
+    norm_account = normalize_account_id(resolved_account) if resolved_account else None
+    allowed = current_user.allowed_account_ids()
+
+    q = db.query(FacebookAdSet.fb_adset_id).filter(FacebookAdSet.fb_adset_id.isnot(None))
+    if norm_account:
+        q = q.filter(FacebookAdSet.fb_account_id == norm_account)
+    elif allowed is not None:
+        q = q.filter(FacebookAdSet.fb_account_id.in_(list(allowed)))
+    else:
+        return None
+    return {row[0] for row in q.all() if row[0]}
+
+
+def _allowed_ad_ids(db: Session, current_user, ad_account_id: Optional[str] = None) -> set[str] | None:
+    resolved_account = _resolve_scoped_default_account(current_user, ad_account_id)
+    norm_account = normalize_account_id(resolved_account) if resolved_account else None
+    allowed = current_user.allowed_account_ids()
+
+    q = (
+        db.query(FacebookAd.fb_ad_id)
+        .join(FacebookAdSet, FacebookAd.adset_id == FacebookAdSet.id)
+        .filter(FacebookAd.fb_ad_id.isnot(None))
+    )
+    if norm_account:
+        q = q.filter(FacebookAdSet.fb_account_id == norm_account)
+    elif allowed is not None:
+        q = q.filter(FacebookAdSet.fb_account_id.in_(list(allowed)))
+    else:
+        return None
+    return {row[0] for row in q.all() if row[0]}
+
+
+def _filter_report(data: dict, allowed_ids: set[str] | None) -> dict:
+    if allowed_ids is None:
+        return data
+    return {key: value for key, value in data.items() if key in allowed_ids}
 
 
 @router.get("/status")
@@ -39,6 +81,8 @@ def get_report(
     date_preset: str = Query("last_7d"),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
+    ad_account_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """Full RedTrack report grouped by Meta ad set ID (sub2).
@@ -54,6 +98,7 @@ def get_report(
         data = svc.get_report_by_adset(date_from, date_to)
     else:
         data = svc.get_report_by_adset_preset(date_preset)
+    data = _filter_report(data, _allowed_adset_ids(db, current_user, ad_account_id))
 
     return {
         "configured": True,
@@ -70,6 +115,8 @@ def get_report_sub1(
     date_preset: str = Query("last_7d"),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
+    ad_account_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """RedTrack report grouped by sub1 (= Meta ad ID).
@@ -88,6 +135,7 @@ def get_report_sub1(
         df, dt = svc.preset_to_dates(date_preset)
 
     data = svc.get_report_by_sub(df, dt, group_field="sub1")
+    data = _filter_report(data, _allowed_ad_ids(db, current_user, ad_account_id))
     return {
         "configured": True,
         "date_preset": date_preset,
@@ -102,6 +150,7 @@ def get_report_sub1(
 def get_adset(
     fb_adset_id: str,
     date_preset: str = Query("last_7d"),
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """RedTrack data for a single Meta ad set ID."""
@@ -109,6 +158,7 @@ def get_adset(
     if not svc.is_configured():
         return {"configured": False, "data": None}
 
+    _assert_adset_allowed(current_user, fb_adset_id, db)
     data = svc.get_adset_data(fb_adset_id, date_preset)
     return {
         "configured": True,
@@ -121,6 +171,7 @@ def get_adset(
 @router.post("/sync")
 def manual_sync(
     date_preset: str = Query("last_7d"),
+    ad_account_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -137,6 +188,7 @@ def manual_sync(
 
     date_from_str, date_to_str = svc.preset_to_dates(date_preset)
     report = svc.get_report_by_adset(date_from_str, date_to_str)
+    response_report = _filter_report(report, _allowed_adset_ids(db, current_user, ad_account_id))
     if not report:
         return {"synced": 0, "message": "RedTrack returned no data for this date range. Check sub2={{adset.id}} is in tracking URLs."}
 
@@ -159,11 +211,11 @@ def manual_sync(
     db.commit()
 
     return {
-        "synced": len(report),
+        "synced": len(response_report),
         "date_from": date_from_str,
         "date_to": date_to_str,
-        "adset_ids": list(report.keys()),
-        "message": f"Cache updated with {len(report)} ad sets from RedTrack.",
+        "adset_ids": list(response_report.keys()),
+        "message": f"Cache updated with {len(response_report)} ad sets from RedTrack.",
     }
 
 

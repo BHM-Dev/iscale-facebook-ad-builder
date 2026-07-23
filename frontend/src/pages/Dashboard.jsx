@@ -274,7 +274,7 @@ export default function Dashboard() {
       };
 
       const [adsetsRes, insightsRes, nicheRes, rulesRes] = await Promise.all([
-        timedFetch(`${API_URL}/facebook/adsets/saved`, 10000),
+        timedFetch(`${API_URL}/facebook/adsets/saved?${insightsParams}`, 10000),
         timedFetch(`${API_URL}/auto-pause/insights-bulk?${insightsParams}`, 25000),
         timedFetch(`${API_URL}/dashboard/niche-summary?${insightsParams}`, 25000),
         timedFetch(`${API_URL}/auto-pause/rules`, 10000),
