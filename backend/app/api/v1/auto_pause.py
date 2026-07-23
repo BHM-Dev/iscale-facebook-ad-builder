@@ -22,7 +22,7 @@ from app.core.deps import get_db, get_current_user
 from app.models import AutoPauseRule, FacebookAdSet
 from app.services.facebook_service import FacebookService
 from app.services.slack_service import send_auto_pause_alert, send_check_summary
-from app.api.v1.facebook import _assert_adset_allowed, _assert_account_allowed
+from app.api.v1.facebook import _assert_adset_allowed, _assert_account_allowed, _resolve_scoped_default_account
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -241,8 +241,7 @@ def get_insights_bulk(
     Accepts either date_preset OR explicit date_from/date_to (YYYY-MM-DD).
     Use this instead of calling /insights/{id} per row — dramatically faster.
     """
-    if current_user.allowed_account_ids() is not None:
-        _assert_account_allowed(current_user, ad_account_id)
+    ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     svc = FacebookService()
     try:
         bulk = svc.get_account_insights_bulk(
@@ -366,8 +365,7 @@ def get_ads_bulk(
     Returns a dict keyed by fb_adset_id → list of ads sorted by spend desc:
       { fb_adset_id: [ { ad_id, ad_name, spend, leads, cpl, impressions, clicks, ctr, roas } ] }
     """
-    if current_user.allowed_account_ids() is not None:
-        _assert_account_allowed(current_user, ad_account_id)
+    ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     svc = FacebookService()
     try:
         return svc.get_account_ads_insights_bulk(

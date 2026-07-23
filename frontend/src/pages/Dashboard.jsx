@@ -205,7 +205,7 @@ function DateFilter({ preset, setPreset, dateFrom, setDateFrom, dateTo, setDateT
 export default function Dashboard() {
   const navigate = useNavigate();
   const { showSuccess, showError } = useToast();
-  const { activeAccountId, activeAccountLoading } = useCampaign();
+  const { activeAccountId, activeAccountLoading, adAccounts } = useCampaign();
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncingRT, setSyncingRT] = useState(false);
@@ -252,6 +252,7 @@ export default function Dashboard() {
   const load = useCallback(async (range) => {
     const { preset: p, dateFrom: df, dateTo: dt } = range || { preset: 'today', dateFrom: null, dateTo: null };
     if (activeAccountLoading) return;
+    if (!activeAccountId && adAccounts.length > 0) return;
     setLoading(true);
     setInsightsError(null);
     setBulkInsights({}); // clear stale data so KPIs show — while loading
@@ -296,10 +297,11 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [activeAccountId, activeAccountLoading, showError]);
+  }, [activeAccountId, activeAccountLoading, adAccounts.length, showError]);
 
 
   const syncAll = useCallback(async () => {
+    if (activeAccountLoading || (!activeAccountId && adAccounts.length > 0)) return;
     setSyncing(true);
     setSyncingRT(true);
     try {
@@ -319,7 +321,7 @@ export default function Dashboard() {
       load(activeRange);
     } catch (e) { showError(e.message || 'Sync failed'); }
     finally { setSyncing(false); setSyncingRT(false); }
-  }, [activeAccountId, activeRange, load, showSuccess, showError]);
+  }, [activeAccountId, activeAccountLoading, activeRange, adAccounts.length, load, showSuccess, showError]);
 
   const buildPerformanceParams = useCallback(() => {
     const { preset: p, dateFrom: df, dateTo: dt } = activeRange;

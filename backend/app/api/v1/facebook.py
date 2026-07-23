@@ -42,6 +42,24 @@ def _assert_account_allowed(current_user: User, ad_account_id):
         raise HTTPException(status_code=403, detail="You don't have access to this ad account.")
 
 
+def _resolve_scoped_default_account(current_user: User, ad_account_id):
+    """Resolve missing account params for scoped users to their first allowed account.
+
+    Scoped users have no legitimate all-accounts view. A blank account param is
+    therefore interpreted as their default allowed account, while an explicit
+    out-of-list account still fails closed.
+    """
+    allowed = current_user.allowed_account_ids()
+    if allowed is None:
+        return ad_account_id
+    if ad_account_id:
+        normalized = normalize_account_id(ad_account_id)
+        if normalized not in allowed:
+            raise HTTPException(status_code=403, detail="You don't have access to this ad account.")
+        return ad_account_id
+    return next(iter(allowed), None)
+
+
 def _filter_accounts_for_user(accounts, current_user: User):
     """Filter a list of account dicts to the user's allow-list (no-op if unrestricted)."""
     allowed = current_user.allowed_account_ids()
@@ -175,7 +193,7 @@ def read_campaigns(
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(get_current_active_user)
 ):
-    _assert_account_allowed(current_user, ad_account_id)
+    ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     try:
         campaigns = service.get_campaigns(ad_account_id)
         # Convert FB objects to dicts
@@ -206,8 +224,7 @@ def read_pixels(
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(get_current_active_user)
 ):
-    if current_user.allowed_account_ids() is not None:
-        _assert_account_allowed(current_user, ad_account_id)
+    ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     try:
         pixels = service.get_pixels(ad_account_id)
         # Convert FB objects to dicts
@@ -252,8 +269,7 @@ def sync_from_meta(
     Returns counts of created vs. updated records.
     """
     # A scoped user may only sync (and thus persist) their own accounts.
-    if current_user.allowed_account_ids() is not None:
-        _assert_account_allowed(current_user, ad_account_id)
+    ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     synced_account = normalize_account_id(ad_account_id or getattr(service, "ad_account_id", None))
 
     try:
@@ -545,7 +561,7 @@ def read_adsets(
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(get_current_active_user)
 ):
-    _assert_account_allowed(current_user, ad_account_id)
+    ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     try:
         adsets = service.get_adsets(ad_account_id, campaign_id)
         return [dict(a) for a in adsets]

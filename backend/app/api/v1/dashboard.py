@@ -4,7 +4,7 @@ from app.database import get_db
 from app.models import Brand, Product, GeneratedAd, WinningAd, FacebookCampaign
 from app.services.facebook_service import FacebookService
 from app.core.deps import get_current_active_user
-from app.api.v1.facebook import _assert_account_allowed
+from app.api.v1.facebook import _resolve_scoped_default_account
 
 router = APIRouter()
 
@@ -62,8 +62,7 @@ def get_niche_summary(
     Aggregate Meta ad set performance by niche for the Dashboard.
     Returns [] on Meta API failures so the Dashboard remains usable.
     """
-    if current_user.allowed_account_ids() is not None:
-        _assert_account_allowed(current_user, ad_account_id)
+    ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     try:
         svc = FacebookService()
         insights = svc.get_account_insights_bulk(
