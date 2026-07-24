@@ -1504,6 +1504,42 @@ export default function CampaignPerformance() {
     });
   }, [visibleAdsets, bulkInsights, searchParams]);
 
+  const visibleSummary = useMemo(() => {
+    const countedCboCampaigns = new Set();
+    const totals = visibleAdsets.reduce((acc, adset) => {
+      const insight = bulkInsights?.[adset.fb_adset_id];
+      acc.spend += insight?.spend ?? 0;
+      acc.leads += insight?.leads ?? 0;
+      acc.revenue += insight?.redtrack?.revenue ?? 0;
+      if (adset.campaign_budget_optimization === 'CBO' || adset.campaign_daily_budget) {
+        const campaignKey = adset.fb_campaign_id || adset.campaign_id || `adset-${adset.id}`;
+        if (!countedCboCampaigns.has(campaignKey)) {
+          countedCboCampaigns.add(campaignKey);
+          acc.dailyBudget += adset.campaign_daily_budget ?? 0;
+        }
+      } else {
+        acc.dailyBudget += adset.daily_budget ?? 0;
+      }
+      return acc;
+    }, {
+      spend: 0,
+      leads: 0,
+      revenue: 0,
+      dailyBudget: 0,
+    });
+
+    return {
+      campaignCount: groupedCampaigns.length,
+      adsetCount: visibleAdsets.length,
+      activeAdsetCount: visibleAdsets.filter(isActiveDelivery).length,
+      totalSpend: totals.spend,
+      totalLeads: totals.leads,
+      cpl: totals.spend > 0 && totals.leads > 0 ? totals.spend / totals.leads : null,
+      rtRoas: totals.spend > 0 && totals.revenue > 0 ? totals.revenue / totals.spend : null,
+      dailyBudget: totals.dailyBudget > 0 ? totals.dailyBudget / 100 : null,
+    };
+  }, [visibleAdsets, bulkInsights, groupedCampaigns.length, isActiveDelivery]);
+
   const formatMoneyCell = (value, decimals = 0) => (
     value != null ? `$${Number(value).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}` : '--'
   );
@@ -1714,6 +1750,30 @@ export default function CampaignPerformance() {
               {['Spend', 'Leads', 'CPL', 'ROAS', 'Budget'].map(col => (
                 <div key={col} className="border-l border-slate-200 px-3 text-right">{col}</div>
               ))}
+            </div>
+            <div className="grid grid-cols-[minmax(360px,1fr)_96px_84px_96px_96px_124px] px-6 py-3 border-b border-indigo-100 bg-indigo-50/60 text-left">
+              <div className="flex items-center gap-2 min-w-0 pr-4">
+                <span className="font-semibold text-gray-900 text-sm">Visible total</span>
+                <span className="text-xs text-gray-500">
+                  {visibleSummary.campaignCount} campaign{visibleSummary.campaignCount !== 1 ? 's' : ''} · {visibleSummary.adsetCount} ad set{visibleSummary.adsetCount !== 1 ? 's' : ''} · {visibleSummary.activeAdsetCount} active
+                </span>
+              </div>
+              {[
+                ['Spend', bulkInsightsLoading ? '--' : formatMoneyCell(visibleSummary.totalSpend)],
+                ['Leads', bulkInsightsLoading ? '--' : formatNumberCell(visibleSummary.totalLeads)],
+                ['CPL', bulkInsightsLoading ? '--' : formatMoneyCell(visibleSummary.cpl, 2)],
+                ['ROAS', bulkInsightsLoading ? '--' : formatRoasCell(visibleSummary.rtRoas)],
+              ].map(([label, value]) => (
+                <div key={label} className="border-l border-indigo-100 px-3 text-right">
+                  <span className="text-sm font-bold text-gray-900">{value}</span>
+                </div>
+              ))}
+              <div className="border-l border-indigo-100 px-3 text-right">
+                <span className="text-sm font-bold text-gray-900">
+                  {bulkInsightsLoading ? '--' : formatMoneyCell(visibleSummary.dailyBudget)}
+                </span>
+                <div className="text-[10px] text-gray-400 uppercase tracking-wide">Daily</div>
+              </div>
             </div>
             {groupedCampaigns.map(group => {
               const isCampaignOpen = !collapsedCampaigns.has(group.key);

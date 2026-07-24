@@ -7,6 +7,8 @@ import { useCampaign } from '../context/CampaignContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
+const normalizeStatus = (status) => (status || '').toString().toUpperCase();
+
 function MarkdownAnswer({ text }) {
   const lines = text.split('\n');
   const elements = [];
@@ -533,7 +535,12 @@ export default function Dashboard() {
   const rtRevenue    = rows.reduce((s, r) => s + (r.redtrack?.revenue || 0), 0);
   const rtConvs      = rows.reduce((s, r) => s + (r.redtrack?.conversions || 0), 0);
   const rtRoas       = totalSpend > 0 && rtRevenue > 0 ? rtRevenue / totalSpend : null;
-  const activeCount  = adsets.filter(a => a.status === 'ACTIVE').length;
+  const isActiveDelivery = (adset) => {
+    const adsetStatus = normalizeStatus(adset.status);
+    const campaignStatus = normalizeStatus(adset.campaign_status);
+    return adsetStatus === 'ACTIVE' && (!campaignStatus || campaignStatus === 'ACTIVE');
+  };
+  const activeCount  = adsets.filter(isActiveDelivery).length;
   const cplRanks = nicheSummary
     .filter(row => row.avg_cpl != null)
     .map(row => row.avg_cpl)
@@ -576,7 +583,7 @@ export default function Dashboard() {
   });
 
   adsets
-    .filter(a => a.status === 'ACTIVE' && a.fb_adset_id && !pausedOverrides.has(a.fb_adset_id))
+    .filter(a => isActiveDelivery(a) && a.fb_adset_id && !pausedOverrides.has(a.fb_adset_id))
     .forEach(a => {
       const ins = bulkInsights[a.fb_adset_id];
       if (!ins) return;
