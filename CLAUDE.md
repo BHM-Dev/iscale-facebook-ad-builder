@@ -214,8 +214,13 @@ If `alembic upgrade head` fails, backend never starts. ALL endpoints (including 
 
 **Chain must be linear — single head only.** `scripts/check_alembic_heads.py` blocks `git push` if multiple heads exist. Run it before every push.
 
-**Current chain (head: `m1i9j5k6l8h4`):**
-`1b02d74254e5` → `d8f2e1a7b4c9` → `e3a1f9b2c8d4` → `f4b2c8d9e1a7` → `a1b3c5d7e9f2` → `b2c4d6e8f0a1` → `g5c3d9e0f2b8` → `h6d4e0f1g3c9` → `i7e5f1g2h4d0` → `j8f6g2h3i5e1` → `k9g7h3i4j6f2` → `l0h8i4j5k7g3` → `m1i9j5k6l8h4`
+**Current head: `t8p6q2r3s5o1`** (20 revisions, linear back to base `1b02d74254e5`).
+
+Don't hand-maintain the chain list here — it goes stale fast. Get the real head with:
+
+```bash
+python3 scripts/check_alembic_heads.py
+```
 
 Every new migration's `down_revision` must point to the current single head. The branched chain was the root cause of the login outage on 2026-05-10.
 
@@ -582,6 +587,8 @@ Do not suggest `./venv/bin/python ...` or `source venv/bin/activate` for VPS wor
 ### Still pending
 - [x] **Copy Library performance data** — shipped `3432f20`. `get_ad_insights_map()` pulls lifetime spend + CPL from Meta during sync; Spend + CPL sortable columns (nulls-last, CPL color-coded); validated live (CPL asc surfaces cheapest winners).
 - [x] **Copy Library Phase 2 (CPL-weighted few-shot)** — shipped `4f4a03c`. `_get_library_examples()` orders by `is_pinned desc, cpl asc nulls_last, imported_at desc` so copy gen learns from cheapest-CPL proven ads. Validated live (remix-variations 200, variants populated).
+- [ ] **P&L Tracker by ad account** — brief at `CODEX_BRIEF_pnl_tracker.md`. Phase 1 done (model `PnlCostEntry`, migration `t8p6q2r3s5o1`, `pnl:read`/`pnl:write` permissions). Phase 2 = Codex: `backend/app/api/v1/pnl.py` (6 endpoints), `frontend/src/pages/Pnl.jsx`, nav entry, Dashboard MTD strip. Spend from Meta, revenue from **RedTrack** (not Meta `action_values`), costs from the new ledger. Abel = $ retainer across all accounts (`ad_account_id NULL`, `by_spend` split) + 5% `pct_of_profit` commission.
+- [ ] **Video ad template system** — `VideoAds.jsx` is a wizard shell with no generation backend. Spec of record: `CODEX_BRIEF_ugc_video_mvp.md`. Needs a `video_templates` concept (hook style + shot sequence + captions + CTA overlay, parameterized by niche) and a `video_service.py` provider abstraction. Sequence after P&L Phase 2 so video spend is tracked from day one via `source='auto_video'` on `pnl_cost_entries`.
 - [ ] OpenAI API swap (waiting on Golden to add keys): `gpt-5.1` for `/generate`, `gpt-4.1-mini` for `/remix-variations`
 - [x] **AdRemix.jsx h1/subhead copy mismatch** — shipped in `832ef1f`. Subhead now reads "Start from a winning ad and rebuild it with your brand voice."
 - [x] **README.md / BUILD_SUMMARY.md doc drift** — fixed user-facing "Deconstruct" / "remix engine" wording (README.md:69, BUILD_SUMMARY.md:29).

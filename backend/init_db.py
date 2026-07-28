@@ -30,6 +30,8 @@ def seed_roles_and_permissions():
             ("templates:delete", "Delete templates"),
             ("users:read", "View users"),
             ("users:write", "Manage users"),
+            ("pnl:read", "View the P&L tracker"),
+            ("pnl:write", "Add and edit P&L cost entries"),
         ]
 
         # Create permissions if they don't exist
@@ -59,6 +61,7 @@ def seed_roles_and_permissions():
                     "ads:read", "ads:write",
                     "campaigns:read", "campaigns:write",
                     "templates:read", "templates:write",
+                    "pnl:read", "pnl:write",
                 ]
             },
             "editor": {
@@ -94,7 +97,19 @@ def seed_roles_and_permissions():
                 db.add(role)
                 print(f"  Created role: {role_name}")
             else:
-                print(f"  Role exists: {role_name}")
+                # Backfill any permissions added to the definition after the role
+                # was first created — without this, new permissions never reach
+                # existing roles and the feature silently 403s in production.
+                current = {p.name for p in existing.permissions}
+                added = []
+                for perm_name in role_data["permissions"]:
+                    if perm_name not in current and perm_name in permissions:
+                        existing.permissions.append(permissions[perm_name])
+                        added.append(perm_name)
+                if added:
+                    print(f"  Role exists: {role_name} (granted: {', '.join(added)})")
+                else:
+                    print(f"  Role exists: {role_name}")
 
         db.commit()
         print("Roles and permissions seeded successfully!")

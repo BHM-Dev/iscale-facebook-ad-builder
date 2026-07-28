@@ -635,3 +635,39 @@ class RedTrackCache(Base):
     clicks = Column(Integer, nullable=True)
     quality_rate = Column(Numeric(precision=4, scale=3), nullable=True)  # rt_conversions / meta_leads
     synced_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class PnlCostEntry(Base):
+    """A non-media cost line on the P&L: retainers, commissions, tooling, creative credits.
+
+    Ad spend comes from Meta and revenue from RedTrack; everything else that eats
+    into net profit is a row in this table.
+
+    `ad_account_id` NULL means the cost spans every account (e.g. Abel's retainer,
+    which covers whatever accounts he's working on). Those are split across accounts
+    at read time using `allocation_method`.
+    """
+    __tablename__ = "pnl_cost_entries"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    # NULL = applies to all ad accounts, split per allocation_method
+    ad_account_id = Column(String, nullable=True, index=True)  # normalized act_...
+    label = Column(String, nullable=False)
+    category = Column(String, nullable=False, default="other")  # labor|tooling|creative|data|other
+    cost_type = Column(String, nullable=False, default="one_off")
+    # one_off | recurring_monthly | pct_of_spend | pct_of_revenue
+    # | pct_of_gross_profit (revenue - spend)
+    # | pct_of_profit (revenue - spend - all non-pct_of_profit costs)
+    amount = Column(Numeric(precision=12, scale=2), nullable=False)  # dollars, or percent for pct_*
+    allocation_method = Column(String, nullable=False, default="by_spend")  # by_spend|even
+    effective_from = Column(Date, nullable=False)  # first day of the first month it applies
+    effective_to = Column(Date, nullable=True)     # NULL = ongoing
+    notes = Column(Text, nullable=True)
+    # RESERVED for Phase 2/3 — auto-captured creative platform spend (kie.ai, video gen)
+    vendor = Column(String, nullable=True)
+    source = Column(String, nullable=False, default="manual")  # manual|auto_kie|auto_video
+    created_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # onupdate is SQLAlchemy-side: only ORM/Core writes bump this. A raw SQL
+    # UPDATE leaves it stale — don't treat it as a DB-level "last touched".
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
