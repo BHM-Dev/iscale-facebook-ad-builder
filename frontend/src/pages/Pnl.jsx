@@ -79,7 +79,10 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
     if (form.cost_type === 'pct_of_spend') return summary.spend || 0;
     if (form.cost_type === 'pct_of_revenue') return summary.revenue || 0;
     if (form.cost_type === 'pct_of_gross_profit') return Math.max((summary.revenue || 0) - (summary.spend || 0), 0);
-    if (form.cost_type === 'pct_of_profit') return Math.max((summary.revenue || 0) - (summary.spend || 0) - (summary.other_costs || 0), 0);
+    if (form.cost_type === 'pct_of_profit') {
+      const existingProfitCost = summary.costs?.find(cost => cost.cost_type === 'pct_of_profit' && cost.profit_base != null);
+      return Math.max(existingProfitCost?.profit_base ?? ((summary.revenue || 0) - (summary.spend || 0) - (summary.other_costs || 0)), 0);
+    }
     return 0;
   }, [form.cost_type, summary]);
   const previewAmount = isPercent ? previewBase * (Number(form.amount || 0) / 100) : Number(form.amount || 0);

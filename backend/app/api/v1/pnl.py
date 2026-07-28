@@ -13,7 +13,7 @@ from app.core.deps import require_permission
 from app.database import get_db
 from app.models import FacebookAdSet, PnlCostEntry, RedTrackCache, User, normalize_account_id
 from app.services.facebook_service import FacebookService
-from app.services.redtrack_service import BASE_URL as REDTRACK_BASE_URL, RedTrackService
+from app.services.redtrack_service import BASE_URL as REDTRACK_BASE_URL, RedTrackService, today_in_rt_tz
 
 router = APIRouter()
 
@@ -40,7 +40,7 @@ def _float(value) -> float:
 
 
 def _month_bounds(month: str | None = None) -> tuple[date, date]:
-    today = date.today()
+    today = today_in_rt_tz()
     if month:
         try:
             start = datetime.strptime(month, "%Y-%m").date().replace(day=1)
@@ -58,7 +58,7 @@ def _resolve_period(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> tuple[date, date, str]:
-    today = date.today()
+    today = today_in_rt_tz()
     if period == "custom":
         if not date_from or not date_to:
             raise HTTPException(status_code=400, detail="date_from and date_to are required for custom period")
@@ -476,7 +476,7 @@ def get_months(
     current_user: User = Depends(require_permission("pnl:read")),
 ):
     account_id = _require_account(current_user, ad_account_id)
-    today = date.today()
+    today = today_in_rt_tz()
     start = today.replace(day=1)
     rows = []
     for i in range(limit):

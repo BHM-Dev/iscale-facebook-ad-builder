@@ -33,9 +33,14 @@ except ZoneInfoNotFoundError:
     _RT_TZ = ZoneInfo("UTC")
 
 
-def _today_in_rt_tz() -> date:
+def today_in_rt_tz() -> date:
     """Return today's date in RedTrack's configured timezone (not the VPS's UTC clock)."""
     return datetime.now(tz=_RT_TZ).date()
+
+
+def _today_in_rt_tz() -> date:
+    """Backward-compatible private alias for existing callers."""
+    return today_in_rt_tz()
 
 
 class RedTrackService:
@@ -64,7 +69,7 @@ class RedTrackService:
         syncs at the edges of the day (early morning / late evening in Joel's
         timezone) pull the wrong day's data.
         """
-        today = _today_in_rt_tz()
+        today = today_in_rt_tz()
         if date_preset == "today":
             return str(today), str(today)
         if date_preset == "yesterday":
