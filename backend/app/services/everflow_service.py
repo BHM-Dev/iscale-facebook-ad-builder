@@ -18,6 +18,17 @@ DEFAULT_TIMEZONE_ID = 90  # Pacific, aligned with the Meta ad account billing da
 USD_CURRENCY_ID = "USD"
 CENT = Decimal("0.01")
 META_ID_RE = re.compile(r"^\d{10,}$")
+CONVERSION_DATE_FIELDS = (
+    "conversion_date",
+    "conversion_time",
+    "conversion_unix_timestamp",
+    "event_date",
+    "event_time",
+    "event_timestamp",
+    "date",
+    "created_at",
+    "unix_timestamp",
+)
 
 
 def _money(value: Any) -> Decimal:
@@ -48,6 +59,7 @@ class EverflowService:
         date_from: str | date,
         date_to: str | date,
         timezone_id: int = DEFAULT_TIMEZONE_ID,
+        offer_names: set[str] | None = None,
     ) -> dict:
         """Return billable revenue grouped by Meta ad set id from sub3.
 
@@ -60,12 +72,43 @@ class EverflowService:
         start = date_from.isoformat() if isinstance(date_from, date) else str(date_from)
         end = date_to.isoformat() if isinstance(date_to, date) else str(date_to)
         rows = self._fetch_conversion_rows(start, end, timezone_id)
+        report = self._aggregate_rows(rows, offer_names=offer_names)
+        report["timezone_id"] = timezone_id
+        return report
+
+    def get_revenue_by_adset_by_month(
+        self,
+        date_from: str | date,
+        date_to: str | date,
+        timezone_id: int = DEFAULT_TIMEZONE_ID,
+        offer_names: set[str] | None = None,
+    ) -> dict[str, dict]:
+        """Fetch once, then bucket billable revenue by conversion month."""
+        if not self.is_configured():
+            raise RuntimeError("SWITCHBOARD_EVERFLOW_API_KEY not configured")
+
+        start = date_from.isoformat() if isinstance(date_from, date) else str(date_from)
+        end = date_to.isoformat() if isinstance(date_to, date) else str(date_to)
+        rows = self._fetch_conversion_rows(start, end, timezone_id)
+        rows_by_month: dict[str, list[dict]] = {}
+        for row in rows:
+            month = self._conversion_month(row)
+            rows_by_month.setdefault(month, []).append(row)
+        return {
+            month: {**self._aggregate_rows(month_rows, offer_names=offer_names), "timezone_id": timezone_id}
+            for month, month_rows in rows_by_month.items()
+        }
+
+    def _aggregate_rows(self, rows: list[dict], offer_names: set[str] | None = None) -> dict:
+        allowed_offers = {name.casefold() for name in offer_names or set() if name}
 
         by_adset: dict[str, dict] = {}
         unattributed_revenue = Decimal("0")
         unattributed_events = 0
 
         for row in rows:
+            if allowed_offers and self._offer_name(row).casefold() not in allowed_offers:
+                continue
             revenue = _money(row.get("revenue"))
             events = 1
             adset_id = str(row.get("sub3") or "").strip()
@@ -80,6 +123,8 @@ class EverflowService:
                     "revenue": Decimal("0"),
                     "events": 0,
                     "clicks": 0,
+                    # Reserved for service-layer diagnostics. P&L deliberately
+                    # does not surface lead/paywall/call splits.
                     "event_breakdown": {},
                     "adset_name": str(row.get("sub8") or "").strip() or None,
                 },
@@ -110,8 +155,37 @@ class EverflowService:
             },
             "unattributed_revenue": unattributed_revenue.quantize(CENT, rounding=ROUND_HALF_UP),
             "unattributed_events": unattributed_events,
-            "timezone_id": timezone_id,
         }
+
+    @staticmethod
+    def _offer_name(row: dict) -> str:
+        for key in ("offer", "offer_name"):
+            if row.get(key):
+                value = row.get(key)
+                if isinstance(value, dict):
+                    return str(value.get("name") or value.get("offer_name") or "").strip()
+                return str(value).strip()
+        offer = row.get("relationship", {}).get("offer") if isinstance(row.get("relationship"), dict) else None
+        if isinstance(offer, dict):
+            return str(offer.get("name") or "").strip()
+        return ""
+
+    @staticmethod
+    def _conversion_month(row: dict) -> str:
+        for field in CONVERSION_DATE_FIELDS:
+            raw = row.get(field)
+            if not raw:
+                continue
+            value = str(raw)
+            if value.isdigit():
+                return datetime.fromtimestamp(int(value)).date().replace(day=1).isoformat()
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00")).date().replace(day=1).isoformat()
+            except ValueError:
+                match = re.match(r"^\d{4}-\d{2}-\d{2}", value)
+                if match:
+                    return datetime.strptime(match.group(0), "%Y-%m-%d").date().replace(day=1).isoformat()
+        raise RuntimeError("Everflow conversion row is missing a recognised conversion date field")
 
     # This endpoint cannot be paged. Verified against the live API 2026-07-28:
     # `page`/`page_size` in the body are ignored in both the flat and the nested

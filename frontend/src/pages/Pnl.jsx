@@ -26,7 +26,9 @@ function pct(value) {
 
 function revenueSourceLabel(source) {
   if (!source || source === 'none') return 'None';
+  if (source === 'everflow_unavailable') return 'Switchboard unavailable';
   if (source.startsWith('everflow')) return source === 'everflow_live' ? 'Switchboard' : `Switchboard · ${source.replace('everflow_', '').replaceAll('_', ' ')}`;
+  if (source === 'redtrack_unavailable') return 'RedTrack unavailable';
   if (source.startsWith('redtrack')) return source === 'redtrack_live' ? 'RedTrack' : `RedTrack · ${source.replace('redtrack_', '').replaceAll('_', ' ')}`;
   return source.replaceAll('_', ' ');
 }
@@ -377,6 +379,12 @@ export default function Pnl() {
         <KpiTile label="Net Profit" value={loading ? '--' : money(summary?.net_profit)} caption={summary?.has_costs ? 'Net' : 'Gross'} tone={netTone} badge={isIncomplete ? 'Incomplete' : isGross ? 'Gross' : null} />
         <KpiTile label="Margin" value={loading ? '--' : pct(summary?.margin)} caption="net ÷ revenue" tone={netTone} badge={isIncomplete ? 'Incomplete' : null} />
       </div>
+
+      {summary?.unattributed_revenue > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          {money(summary.unattributed_revenue)} in Switchboard revenue is not assigned to this Meta ad account and is excluded from Billable Revenue.
+        </div>
+      )}
 
       {summary?.unmapped_adsets > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">

@@ -10,7 +10,9 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 function pnlRevenueSourceLabel(source) {
   if (!source || source === 'none') return 'None';
+  if (source === 'everflow_unavailable') return 'Switchboard unavailable';
   if (source.startsWith('everflow')) return source === 'everflow_live' ? 'Switchboard' : `Switchboard · ${source.replace('everflow_', '').replaceAll('_', ' ')}`;
+  if (source === 'redtrack_unavailable') return 'RedTrack unavailable';
   if (source.startsWith('redtrack')) return source === 'redtrack_live' ? 'RedTrack' : `RedTrack · ${source.replace('redtrack_', '').replaceAll('_', ' ')}`;
   return source.replaceAll('_', ' ');
 }

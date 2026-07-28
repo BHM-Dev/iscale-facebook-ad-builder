@@ -152,6 +152,9 @@ Facebook ad builder used daily by Joel Welch (media buyer). Connects to Meta Ads
 - Restart command: `docker compose restart backend` (Golden runs this when env vars change or a manual restart is needed).
 - Code deploys auto-trigger on push to `develop`. Env var changes and ad-hoc scripts require Golden manual action.
 - `REDTRACK_API_KEY` — confirmed added 2026-04-27.
+- `SWITCHBOARD_EVERFLOW_API_KEY` — pending. Source of truth for P&L billable revenue on validated Switchboard accounts.
+- `SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS` — pending. Comma-separated Meta account allow-list for accounts that should use Switchboard revenue instead of RedTrack.
+- `SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS` — pending. JSON map of Meta account id to exact Switchboard offer names, e.g. `{"act_...":["Get Business Coverage"]}`. Required so commercial, auto, and eventually home-services revenue stay tied to the matching Meta spend account.
 - `SLACK_BOT_TOKEN` — confirm status with Golden.
 
 ---
@@ -492,6 +495,9 @@ Custom modal with backdrop blur, clear title, red button for destructive actions
 | `VITE_FACEBOOK_ACCESS_TOKEN` | Active |
 | `VITE_FACEBOOK_API_VERSION` | Active (`v24.0`) |
 | `REDTRACK_API_KEY` | Added 2026-04-27 |
+| `SWITCHBOARD_EVERFLOW_API_KEY` | Pending — Switchboard affiliate-realm revenue source for P&L |
+| `SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS` | Pending — comma-separated Meta accounts that use Switchboard revenue |
+| `SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS` | Pending — JSON account→offer map; e.g. Commercial Insurance → `Get Business Coverage`, Auto → `Fast Auto Quote.org` |
 | `SLACK_BOT_TOKEN` | Confirm with Golden |
 | `SLACK_SIGNING_SECRET` | Needed for Slack intelligence bot (Phase 2, not yet built) |
 

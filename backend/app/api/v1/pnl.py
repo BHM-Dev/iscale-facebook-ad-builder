@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
@@ -32,6 +33,7 @@ COST_TYPES = {
 ALLOCATIONS = {"by_spend", "even"}
 CENT = Decimal("0.01")
 EVERFLOW_ACCOUNT_IDS_ENV = "SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS"
+EVERFLOW_ACCOUNT_OFFERS_ENV = "SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS"
 
 
 def _money(value) -> Decimal:
@@ -107,6 +109,31 @@ def _everflow_account_ids() -> set[str]:
 
 def _revenue_provider_for_account(account_id: str) -> str:
     return "everflow" if normalize_account_id(account_id) in _everflow_account_ids() else "redtrack"
+
+
+def _everflow_offer_names_for_account(account_id: str) -> set[str]:
+    """Return the Switchboard offer names allowed for this Meta account.
+
+    Format:
+      SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS='{"act_123":["Get Business Coverage"]}'
+
+    Everflow keys are not account-scoped. If an Everflow-enabled account has no
+    offer mapping, fail closed so auto/commercial/home-services revenue cannot
+    be blended into the wrong P&L.
+    """
+    raw = os.getenv(EVERFLOW_ACCOUNT_OFFERS_ENV, "")
+    if not raw.strip():
+        return set()
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return set()
+    values = parsed.get(normalize_account_id(account_id)) if isinstance(parsed, dict) else None
+    if isinstance(values, str):
+        values = [values]
+    if not isinstance(values, list):
+        return set()
+    return {str(value).strip() for value in values if str(value).strip()}
 
 
 def _spend_for_account(account_id: str, start: date, end: date) -> Decimal:
@@ -229,7 +256,11 @@ def _redtrack_revenue(db: Session, account_id: str, start: date, end: date) -> t
     return revenue, conversions, len(adset_ids - mapped), source, True
 
 
-def _everflow_revenue(db: Session, account_id: str, start: date, end: date) -> tuple[Decimal, int, int, str, bool, Decimal]:
+def _everflow_revenue_from_report(
+    db: Session,
+    account_id: str,
+    report: dict,
+) -> tuple[Decimal, int, int, str, bool, Decimal]:
     adset_ids = {
         row[0]
         for row in db.query(FacebookAdSet.fb_adset_id)
@@ -241,7 +272,6 @@ def _everflow_revenue(db: Session, account_id: str, start: date, end: date) -> t
         if row[0]
     }
 
-    report = EverflowService().get_revenue_by_adset(start, end)
     by_adset = report.get("adsets") or {}
 
     # Scope to THIS account's ad sets. The Everflow key is not account-scoped — it
@@ -261,6 +291,14 @@ def _everflow_revenue(db: Session, account_id: str, start: date, end: date) -> t
     return revenue, events, len(adset_ids - set(filtered)), "everflow_live", False, unattributed
 
 
+def _everflow_revenue(db: Session, account_id: str, start: date, end: date) -> tuple[Decimal, int, int, str, bool, Decimal]:
+    offer_names = _everflow_offer_names_for_account(account_id)
+    if not offer_names:
+        raise RuntimeError(f"{EVERFLOW_ACCOUNT_OFFERS_ENV} missing offer mapping for {account_id}")
+    report = EverflowService().get_revenue_by_adset(start, end, offer_names=offer_names)
+    return _everflow_revenue_from_report(db, account_id, report)
+
+
 def _revenue_for_account(db: Session, account_id: str, start: date, end: date) -> tuple[Decimal, int, int, str, bool, Decimal]:
     if _revenue_provider_for_account(account_id) == "everflow":
         try:
@@ -271,6 +309,22 @@ def _revenue_for_account(db: Session, account_id: str, start: date, end: date) -
     revenue, conversions, unmapped, source, incomplete = _redtrack_revenue(db, account_id, start, end)
     redtrack_source = f"redtrack_{source}" if source != "none" else "none"
     return revenue, conversions, unmapped, redtrack_source, incomplete, Decimal("0")
+
+
+def _everflow_monthly_revenue_cache(
+    db: Session,
+    account_id: str,
+    start: date,
+    end: date,
+) -> dict[str, tuple[Decimal, int, int, str, bool, Decimal]]:
+    offer_names = _everflow_offer_names_for_account(account_id)
+    if not offer_names:
+        raise RuntimeError(f"{EVERFLOW_ACCOUNT_OFFERS_ENV} missing offer mapping for {account_id}")
+    reports = EverflowService().get_revenue_by_adset_by_month(start, end, offer_names=offer_names)
+    return {
+        month_start: _everflow_revenue_from_report(db, account_id, report)
+        for month_start, report in reports.items()
+    }
 
 
 def _cost_query(db: Session, account_id: str, start: date, end: date):
@@ -395,6 +449,7 @@ def _summary(
     label: str,
     spend_cache: dict[str, Decimal] | None = None,
     spend_cache_incomplete: bool = False,
+    revenue_cache: dict[str, tuple[Decimal, int, int, str, bool, Decimal]] | None = None,
 ) -> dict:
     data_incomplete = False
     errors = []
@@ -405,7 +460,13 @@ def _summary(
         data_incomplete = True
         errors.append("meta_spend_unavailable")
 
-    revenue, conversions, unmapped, revenue_source, revenue_incomplete, unattributed_revenue = _revenue_for_account(db, account_id, start, end)
+    if revenue_cache is not None:
+        revenue, conversions, unmapped, revenue_source, revenue_incomplete, unattributed_revenue = revenue_cache.get(
+            start.isoformat(),
+            (Decimal("0"), 0, 0, "everflow_live", False, Decimal("0")),
+        )
+    else:
+        revenue, conversions, unmapped, revenue_source, revenue_incomplete, unattributed_revenue = _revenue_for_account(db, account_id, start, end)
     if revenue_incomplete:
         data_incomplete = True
         errors.append("everflow_live_unavailable" if revenue_source == "everflow_unavailable" else "redtrack_live_unavailable")
@@ -535,6 +596,7 @@ def get_months(
     account_id = _require_account(current_user, ad_account_id)
     today = today_in_rt_tz()
     start = today.replace(day=1)
+    periods = []
     rows = []
     for i in range(limit):
         month_start = (start.replace(day=1) - timedelta(days=1)).replace(day=1) if i else start
@@ -542,11 +604,26 @@ def get_months(
             month_start = (month_start - timedelta(days=1)).replace(day=1)
         period = "mtd" if i == 0 else "month"
         s, e, label = _resolve_period(period, month_start.strftime("%Y-%m"))
+        periods.append((s, e, label))
+
+    revenue_cache = None
+    if _revenue_provider_for_account(account_id) == "everflow" and periods:
+        try:
+            earliest = min(s for s, _, _ in periods)
+            latest = max(e for _, e, _ in periods)
+            revenue_cache = _everflow_monthly_revenue_cache(db, account_id, earliest, latest)
+        except Exception:
+            revenue_cache = {
+                s.isoformat(): (Decimal("0"), 0, 0, "everflow_unavailable", True, Decimal("0"))
+                for s, _, _ in periods
+            }
+
+    for s, e, label in periods:
         # Don't pre-build a cross-account spend map here. _summary only needs one
         # when the period actually has an all-account cost to allocate; building it
         # unconditionally costs one Meta call per account per month (24+ calls for
         # a 6-month history on 4 accounts) even when nothing needs allocating.
-        rows.append(_summary(db, account_id, s, e, label))
+        rows.append(_summary(db, account_id, s, e, label, revenue_cache=revenue_cache))
     return rows
 
 
