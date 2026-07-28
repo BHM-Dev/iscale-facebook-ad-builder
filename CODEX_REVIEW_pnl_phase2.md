@@ -155,9 +155,17 @@ Three fixes applied on top of Codex's, all in `f736a22` or later:
 
 ### Open, non-blocking
 
-- **Timezone drift.** `_month_bounds` / `_resolve_period` use `date.today()` (VPS clock, UTC) while RedTrack reports in `REDTRACK_TIMEZONE`. `redtrack_service` has `_today_in_rt_tz()` precisely because UTC "pulls the wrong day's data." At month edges the P&L compares a UTC-bounded month of spend against a differently-bounded month of revenue. Fix: use the RedTrack timezone for period bounds.
+- ~~**Timezone drift.**~~ **FIXED in `d3ef9de`** — period bounds now use `today_in_rt_tz()`. `_today_in_rt_tz` kept as a delegating alias so `preset_to_dates` still works; grep confirms no other callers. Date suite re-run after the change: 8/8.
+
+  **Residual, deliberately not fixed — three-timezone alignment.** Meta interprets a `YYYY-MM-DD` range in the *ad account's* timezone; RedTrack interprets the same string in `REDTRACK_TIMEZONE`. Aligning our clock to RedTrack does not make the two APIs agree on what "July" means. This is **pre-existing** — it was equally true when the clock was UTC — and the fix strictly improves alignment with the revenue source rather than introducing anything.
+
+  Scope is smaller than it first sounds: explicit month selections and custom ranges are parsed from strings and never touch the clock, so a *closed* month P&L ("did July make money") is unaffected by the clock entirely. The clock only sets the default month and the MTD end date. The residual skew is bounded by the offset difference between the two timezones and only affects activity in the boundary hours of the first and last day — and for a closed month the two edges partially offset each other. It is not a full day of spend, and the "±$5-10k" figure a review agent produced for it was invented.
+
+  Worth knowing, not worth blocking on. Two things to check when someone next touches this:
+  1. **What is `REDTRACK_TIMEZONE` actually set to on the VPS?** If it is still the `"UTC"` default, `d3ef9de` is a no-op on a UTC-clock VPS — correct, but inert. Confirm with Golden.
+  2. If exact cross-source alignment is ever needed, the canonical clock should be the **Meta ad account's** timezone, applied to both calls — not RedTrack's.
 - **`_overlap_months` counts calendar months touched.** A custom Jul 15 – Aug 14 window charges a monthly retainer 2×, though it spans ~1 month of elapsed time. Defensible (the brief says charge full months, never prorate) but it is a business decision, not an obvious bug.
-- **`pct_of_profit` preview base in the cost modal** uses `summary.other_costs`, which includes existing `pct_of_profit` costs, while the backend's `profit_base` excludes them. Exact for the first profit-based entry; slightly understated for a second one. The backend already returns `profit_base` per entry and could be used instead.
+- ~~**`pct_of_profit` preview base in the cost modal.**~~ **FIXED in `d3ef9de`** — reads the backend's `profit_base` from an existing profit-based cost when present, falling back to the local computation otherwise. `??` is correct here: `.find()` already filters `profit_base != null`, and a legitimate `profit_base` of `0` is not nullish so it is preserved rather than falling through.
 - **Runtime confirmation still outstanding** — see below.
 
 ### Needs runtime confirmation (cannot be checked from source)
