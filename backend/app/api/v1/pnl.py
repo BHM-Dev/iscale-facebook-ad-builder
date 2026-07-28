@@ -243,10 +243,21 @@ def _everflow_revenue(db: Session, account_id: str, start: date, end: date) -> t
 
     report = EverflowService().get_revenue_by_adset(start, end)
     by_adset = report.get("adsets") or {}
-    filtered = by_adset
-    unattributed = _money(report.get("unattributed_revenue"))
-    revenue = sum((_money(metrics.get("revenue")) for metrics in filtered.values()), Decimal("0")) + unattributed
-    events = sum((int(metrics.get("events") or 0) for metrics in filtered.values()), 0) + int(report.get("unattributed_events") or 0)
+
+    # Scope to THIS account's ad sets. The Everflow key is not account-scoped — it
+    # returns every Meta-shaped sub3 it can see — so summing it unfiltered reports
+    # the same total for every account in the allow-list. Mirrors _redtrack_revenue.
+    filtered = {aid: metrics for aid, metrics in by_adset.items() if aid in adset_ids}
+
+    # Revenue on Meta-shaped ad sets that aren't in this account's local ad-set
+    # list. Real money, but not attributable here — surfaced separately rather
+    # than silently added to this account or silently dropped.
+    foreign = {aid: metrics for aid, metrics in by_adset.items() if aid not in adset_ids}
+    foreign_revenue = sum((_money(m.get("revenue")) for m in foreign.values()), Decimal("0"))
+
+    unattributed = _money(report.get("unattributed_revenue")) + foreign_revenue
+    revenue = sum((_money(metrics.get("revenue")) for metrics in filtered.values()), Decimal("0"))
+    events = sum((int(metrics.get("events") or 0) for metrics in filtered.values()), 0)
     return revenue, events, len(adset_ids - set(filtered)), "everflow_live", False, unattributed
 
 

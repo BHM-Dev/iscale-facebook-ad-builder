@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
@@ -113,68 +113,99 @@ class EverflowService:
             "timezone_id": timezone_id,
         }
 
-    def _fetch_conversion_rows(self, date_from: str, date_to: str, timezone_id: int) -> list[dict]:
-        rows: list[dict] = []
-        page = 1
-        page_size = 1000
+    # This endpoint cannot be paged. Verified against the live API 2026-07-28:
+    # `page`/`page_size` in the body are ignored in both the flat and the nested
+    # form — every request returns page 1 — while the response hard-caps at 2000
+    # rows and reports the true size in `paging.total_count`. A paging loop
+    # therefore re-fetches identical rows: with page_size=1000 against
+    # total_count=2334 the old loop ran three times and accumulated 6000 rows for
+    # 2334 real conversions, overstating revenue ~2.5x with no error raised.
+    #
+    # So: request narrow date windows, split any window that still overflows the
+    # cap, and dedupe on conversion_id as a backstop.
+    MAX_ROWS_PER_RESPONSE = 2000
+    INITIAL_WINDOW_DAYS = 7
 
-        while True:
-            payload = {
-                "from": date_from,
-                "to": date_to,
+    def _fetch_conversion_rows(self, date_from: str, date_to: str, timezone_id: int) -> list[dict]:
+        start = datetime.strptime(date_from, "%Y-%m-%d").date()
+        end = datetime.strptime(date_to, "%Y-%m-%d").date()
+        if end < start:
+            raise RuntimeError(f"Everflow window end {end} precedes start {start}")
+
+        pending: list[tuple[date, date]] = []
+        cursor = start
+        while cursor <= end:
+            window_end = min(cursor + timedelta(days=self.INITIAL_WINDOW_DAYS - 1), end)
+            pending.append((cursor, window_end))
+            cursor = window_end + timedelta(days=1)
+
+        by_id: dict[str, dict] = {}
+        unkeyed: list[dict] = []
+
+        while pending:
+            window_start, window_end = pending.pop(0)
+            rows, total_count = self._fetch_window(window_start, window_end, timezone_id)
+
+            if total_count is not None and total_count > len(rows):
+                if window_start == window_end:
+                    # A single day exceeds the cap and there is no way to page it.
+                    # Raise so the P&L reports data_incomplete instead of a number
+                    # that is quietly short.
+                    raise RuntimeError(
+                        f"Everflow returned {len(rows)} of {total_count} conversions for "
+                        f"{window_start} and the endpoint cannot be paged further"
+                    )
+                midpoint = window_start + (window_end - window_start) // 2
+                pending.insert(0, (midpoint + timedelta(days=1), window_end))
+                pending.insert(0, (window_start, midpoint))
+                continue
+
+            for row in rows:
+                conversion_id = str(row.get("conversion_id") or "").strip()
+                if conversion_id:
+                    by_id[conversion_id] = row
+                else:
+                    unkeyed.append(row)
+
+        rows = list(by_id.values()) + unkeyed
+        logger.info(
+            "Switchboard Everflow: %d unique conversions (%s -> %s), %d without conversion_id",
+            len(rows), date_from, date_to, len(unkeyed),
+        )
+        return rows
+
+    def _fetch_window(self, window_start: date, window_end: date, timezone_id: int) -> tuple[list[dict], int | None]:
+        resp = httpx.post(
+            f"{BASE_URL}/v1/affiliates/reporting/conversions",
+            headers=self._headers(),
+            json={
+                "from": window_start.isoformat(),
+                "to": window_end.isoformat(),
                 "timezone_id": timezone_id,
                 "currency_id": USD_CURRENCY_ID,
                 "show_events": True,
                 "query": {"filters": []},
-                "page": page,
-                "page_size": page_size,
-            }
-            resp = httpx.post(
-                f"{BASE_URL}/v1/affiliates/reporting/conversions",
-                headers=self._headers(),
-                json=payload,
-                timeout=30,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            page_rows = self._rows_from_response(data)
-            rows.extend(page_rows)
-
-            paging = data.get("paging") if isinstance(data, dict) else None
-            if not self._has_next_page(paging, page, page_size, len(page_rows)):
-                break
-            page += 1
-
-        logger.info("Switchboard Everflow: fetched %d conversion rows (%s -> %s)", len(rows), date_from, date_to)
-        return rows
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        rows = self._rows_from_response(data)
+        paging = data.get("paging") if isinstance(data, dict) else None
+        total_count = None
+        if isinstance(paging, dict) and paging.get("total_count") is not None:
+            total_count = int(paging["total_count"])
+        return rows, total_count
 
     @staticmethod
     def _rows_from_response(data: Any) -> list[dict]:
         if isinstance(data, list):
             return data
-        if not isinstance(data, dict):
-            return []
-        for key in ("conversions", "data", "table"):
-            value = data.get(key)
-            if isinstance(value, list):
-                return value
-        return []
-
-    @staticmethod
-    def _has_next_page(paging: Any, page: int, page_size: int, row_count: int) -> bool:
-        if not isinstance(paging, dict):
-            return row_count >= page_size
-
-        for key in ("next", "next_page"):
-            if paging.get(key):
-                return True
-
-        total_pages = paging.get("total_pages") or paging.get("pages")
-        if total_pages is not None:
-            return page < int(total_pages)
-
-        total = paging.get("total") or paging.get("total_count")
-        if total is not None:
-            return page * page_size < int(total)
-
-        return row_count >= page_size
+        if isinstance(data, dict):
+            for key in ("conversions", "data", "table"):
+                value = data.get(key)
+                if isinstance(value, list):
+                    return value
+        # Never fall back to [] — an unrecognised envelope is indistinguishable
+        # from "no conversions" and would report $0 revenue as fact.
+        raise RuntimeError(f"Unrecognised Everflow conversions response shape: {type(data).__name__}")
