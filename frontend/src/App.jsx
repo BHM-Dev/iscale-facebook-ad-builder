@@ -35,6 +35,7 @@ import BrandScrapes from './pages/BrandScrapes';
 import AdRemix from './pages/AdRemix';
 import BatchGenerate from './pages/BatchGenerate';
 import CopyLibrary from './pages/CopyLibrary';
+import Pnl from './pages/Pnl';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
 import UserManagement from './pages/UserManagement';
@@ -67,6 +68,7 @@ function App() {
                 >
                   <Route index element={<DefaultLanding />} />
                   <Route path="research" element={<Research />} />
+                  <Route path="pnl" element={<Pnl />} />
                   <Route path="research/brand-scrapes" element={<BrandScrapes />} />
                   <Route path="research/settings" element={<ResearchSettings />} />
                   <Route path="build-creatives" element={<CreateAds />} />

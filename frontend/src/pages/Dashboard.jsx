@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
 import { useCampaign } from '../context/CampaignContext';
+import { useAuth } from '../context/AuthContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -207,6 +208,7 @@ function DateFilter({ preset, setPreset, dateFrom, setDateFrom, dateTo, setDateT
 export default function Dashboard() {
   const navigate = useNavigate();
   const { showSuccess, showError } = useToast();
+  const { hasPermission } = useAuth();
   const { activeAccountId, activeAccountLoading, adAccounts } = useCampaign();
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -236,6 +238,8 @@ export default function Dashboard() {
   const [quickGeneratingAdsets, setQuickGeneratingAdsets] = useState(new Set());
   const [collapsedSections, setCollapsedSections] = useState({});
   const [expandedSections, setExpandedSections] = useState({});
+  const [pnlSummary, setPnlSummary] = useState(null);
+  const [pnlLoading, setPnlLoading] = useState(false);
 
   // Date filter state
   const [preset, setPreset] = useState(() => localStorage.getItem('bhm_date_preset') || 'today');
@@ -522,6 +526,34 @@ export default function Dashboard() {
   // Initial load + account switcher reload
   useEffect(() => { load(activeRange); }, [load, activeRange]);
 
+  useEffect(() => {
+    if (!hasPermission('pnl:read')) {
+      setPnlSummary(null);
+      return;
+    }
+    if (activeAccountLoading || !activeAccountId) return;
+    let cancelled = false;
+    const loadPnl = async () => {
+      setPnlLoading(true);
+      try {
+        const params = new URLSearchParams({
+          ad_account_id: activeAccountId,
+          period: 'mtd',
+        });
+        const res = await authFetch(`${API_URL}/pnl/summary?${params}`);
+        if (!res.ok) throw new Error('P&L unavailable');
+        const data = await res.json();
+        if (!cancelled) setPnlSummary(data);
+      } catch {
+        if (!cancelled) setPnlSummary(null);
+      } finally {
+        if (!cancelled) setPnlLoading(false);
+      }
+    };
+    loadPnl();
+    return () => { cancelled = true; };
+  }, [activeAccountId, activeAccountLoading, hasPermission]);
+
   function handleApply(range) {
     setActiveRange(range);
     if (range.preset) localStorage.setItem('bhm_date_preset', range.preset);
@@ -550,6 +582,10 @@ export default function Dashboard() {
     return value != null
       ? `$${Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       : '—';
+  }
+
+  function formatPercent(value) {
+    return value != null ? `${(Number(value) * 100).toFixed(1)}%` : '—';
   }
 
   function cplClass(avgCpl) {
@@ -840,6 +876,51 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
+
+      {hasPermission('pnl:read') && (pnlSummary || pnlLoading) && (
+        <Link
+          to="/pnl"
+          className="block rounded-xl border border-green-100 bg-white p-4 shadow-sm transition-colors hover:border-green-200 hover:bg-green-50/30"
+        >
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+                <DollarSign size={15} className="text-green-600" />
+                Running P&L
+              </div>
+              <div className="mt-0.5 text-xs text-gray-400">
+                {pnlSummary ? `MTD · ${pnlSummary.date_from} – ${pnlSummary.date_to}` : 'Loading month-to-date profit view'}
+              </div>
+            </div>
+            <div className="flex items-center gap-1 text-xs font-medium text-green-700">
+              View full P&L <ArrowRight size={12} />
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {[
+              ['Ad Spend', pnlLoading ? '—' : formatMoney(pnlSummary?.spend), 'Meta'],
+              ['Revenue', pnlLoading ? '—' : formatMoney(pnlSummary?.revenue), pnlSummary?.revenue_source === 'cached' ? 'RedTrack · cached' : 'RedTrack'],
+              ['Other Costs', pnlLoading ? '—' : formatMoney(pnlSummary?.other_costs), pnlSummary?.has_costs ? `${pnlSummary.costs?.length || 0} entries` : 'Gross'],
+              ['Net Profit', pnlLoading ? '—' : formatMoney(pnlSummary?.net_profit), pnlSummary?.data_incomplete ? 'Incomplete' : pnlSummary?.has_costs ? 'Net' : 'Gross'],
+              ['Margin', pnlLoading ? '—' : formatPercent(pnlSummary?.margin), 'net ÷ revenue'],
+            ].map(([label, value, caption]) => {
+              const isNet = label === 'Net Profit';
+              const tone = isNet && !pnlSummary?.data_incomplete && pnlSummary?.has_costs && pnlSummary?.net_profit > 0
+                ? 'text-green-600'
+                : isNet && !pnlSummary?.data_incomplete && pnlSummary?.has_costs && pnlSummary?.net_profit < 0
+                  ? 'text-red-600'
+                  : 'text-gray-900';
+              return (
+                <div key={label} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">{label}</div>
+                  <div className={`mt-1 text-lg font-bold ${tone}`}>{value}</div>
+                  <div className="mt-0.5 text-[11px] text-gray-400">{caption}</div>
+                </div>
+              );
+            })}
+          </div>
+        </Link>
+      )}
 
       {/* Insights error banner */}
       {insightsError && !loading && (

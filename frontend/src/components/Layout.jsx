@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Package, Users, Video, Wand2, Settings, LogOut, Image, ShoppingBag, Target, ChevronLeft, ChevronRight, FileImage, Search, ChevronDown, UserCog, TrendingDown, Zap, Shuffle, PauseCircle, Megaphone, BookOpen, BriefcaseBusiness } from 'lucide-react';
+import { LayoutDashboard, Package, Users, Video, Wand2, Settings, LogOut, Image, ShoppingBag, Target, ChevronLeft, ChevronRight, FileImage, Search, ChevronDown, UserCog, TrendingDown, Zap, Shuffle, PauseCircle, Megaphone, BookOpen, BriefcaseBusiness, DollarSign } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useBrands } from '../context/BrandContext';
@@ -35,13 +35,12 @@ function BHMLogo({ size = 40 }) {
 export default function Layout() {
     const location = useLocation();
     const navigate = useNavigate();
-    const { user, logout, hasRole } = useAuth();
+    const { user, logout, hasRole, hasPermission } = useAuth();
     const { showSuccess } = useToast();
     const { activeVerticalFilter, setActiveVerticalFilter } = useBrands();
     const { activeAccountId, setActiveAccountId, adAccounts, activeAccountLoading } = useCampaign();
     const [expandedMenus, setExpandedMenus] = useState({ Brands: false, Research: false, Facebook: true, 'Build Creatives': true });
     const [isCollapsed, setIsCollapsed] = useState(false);
-    const [showUserMenu, setShowUserMenu] = useState(false);
 
     const handleLogout = async () => {
         await logout();
@@ -51,6 +50,7 @@ export default function Layout() {
 
     const menuItems = [
         { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
+        ...(hasPermission('pnl:read') ? [{ icon: DollarSign, label: 'P&L', path: '/pnl' }] : []),
         {
             icon: Search,
             label: 'Research',
