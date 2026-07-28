@@ -1,3 +1,4 @@
+import os
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
@@ -12,6 +13,7 @@ from app.api.v1.facebook import _resolve_scoped_default_account
 from app.core.deps import require_permission
 from app.database import get_db
 from app.models import FacebookAdSet, PnlCostEntry, RedTrackCache, User, normalize_account_id
+from app.services.everflow_service import EverflowService
 from app.services.facebook_service import FacebookService
 from app.services.redtrack_service import BASE_URL as REDTRACK_BASE_URL, RedTrackService, today_in_rt_tz
 
@@ -29,6 +31,7 @@ COST_TYPES = {
 }
 ALLOCATIONS = {"by_spend", "even"}
 CENT = Decimal("0.01")
+EVERFLOW_ACCOUNT_IDS_ENV = "SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS"
 
 
 def _money(value) -> Decimal:
@@ -95,6 +98,15 @@ def _require_account(current_user: User, ad_account_id: str | None) -> str:
     if not resolved:
         raise HTTPException(status_code=400, detail="ad_account_id is required for P&L.")
     return normalize_account_id(resolved)
+
+
+def _everflow_account_ids() -> set[str]:
+    raw = os.getenv(EVERFLOW_ACCOUNT_IDS_ENV, "")
+    return {normalize_account_id(account.strip()) for account in raw.split(",") if account.strip()}
+
+
+def _revenue_provider_for_account(account_id: str) -> str:
+    return "everflow" if normalize_account_id(account_id) in _everflow_account_ids() else "redtrack"
 
 
 def _spend_for_account(account_id: str, start: date, end: date) -> Decimal:
@@ -215,6 +227,39 @@ def _redtrack_revenue(db: Session, account_id: str, start: date, end: date) -> t
     conversions = sum((row.conversions or 0) for row in rows)
     source = "cache_exact" if exact_rows else ("cache_fallback" if rows else "none")
     return revenue, conversions, len(adset_ids - mapped), source, True
+
+
+def _everflow_revenue(db: Session, account_id: str, start: date, end: date) -> tuple[Decimal, int, int, str, bool, Decimal]:
+    adset_ids = {
+        row[0]
+        for row in db.query(FacebookAdSet.fb_adset_id)
+        .filter(
+            FacebookAdSet.fb_account_id == account_id,
+            FacebookAdSet.fb_adset_id.isnot(None),
+        )
+        .all()
+        if row[0]
+    }
+
+    report = EverflowService().get_revenue_by_adset(start, end)
+    by_adset = report.get("adsets") or {}
+    filtered = by_adset
+    unattributed = _money(report.get("unattributed_revenue"))
+    revenue = sum((_money(metrics.get("revenue")) for metrics in filtered.values()), Decimal("0")) + unattributed
+    events = sum((int(metrics.get("events") or 0) for metrics in filtered.values()), 0) + int(report.get("unattributed_events") or 0)
+    return revenue, events, len(adset_ids - set(filtered)), "everflow_live", False, unattributed
+
+
+def _revenue_for_account(db: Session, account_id: str, start: date, end: date) -> tuple[Decimal, int, int, str, bool, Decimal]:
+    if _revenue_provider_for_account(account_id) == "everflow":
+        try:
+            return _everflow_revenue(db, account_id, start, end)
+        except Exception:
+            return Decimal("0"), 0, 0, "everflow_unavailable", True, Decimal("0")
+
+    revenue, conversions, unmapped, source, incomplete = _redtrack_revenue(db, account_id, start, end)
+    redtrack_source = f"redtrack_{source}" if source != "none" else "none"
+    return revenue, conversions, unmapped, redtrack_source, incomplete, Decimal("0")
 
 
 def _cost_query(db: Session, account_id: str, start: date, end: date):
@@ -349,10 +394,10 @@ def _summary(
         data_incomplete = True
         errors.append("meta_spend_unavailable")
 
-    revenue, conversions, unmapped, revenue_source, revenue_incomplete = _redtrack_revenue(db, account_id, start, end)
+    revenue, conversions, unmapped, revenue_source, revenue_incomplete, unattributed_revenue = _revenue_for_account(db, account_id, start, end)
     if revenue_incomplete:
         data_incomplete = True
-        errors.append("redtrack_live_unavailable")
+        errors.append("everflow_live_unavailable" if revenue_source == "everflow_unavailable" else "redtrack_live_unavailable")
 
     costs = []
     total_costs = None
@@ -389,6 +434,7 @@ def _summary(
         "margin": float(margin) if margin is not None else None,
         "roas": float(roas) if roas is not None else None,
         "revenue_source": revenue_source,
+        "unattributed_revenue": _float(unattributed_revenue),
         "unmapped_adsets": unmapped,
         "data_incomplete": data_incomplete,
         "errors": errors,
@@ -509,7 +555,7 @@ def list_costs(
         spend = _spend_for_account(account_id, start, end)
     except Exception:
         spend = Decimal("0")
-    revenue, _, _, _, _ = _redtrack_revenue(db, account_id, start, end)
+    revenue, _, _, _, _, _ = _revenue_for_account(db, account_id, start, end)
     costs, _ = _resolve_costs(db, account_id, start, end, spend, revenue)
     return costs
 

@@ -24,6 +24,17 @@ function pct(value) {
   return value != null ? `${(Number(value) * 100).toFixed(1)}%` : '--';
 }
 
+function revenueSourceLabel(source) {
+  if (!source || source === 'none') return 'None';
+  if (source.startsWith('everflow')) return source === 'everflow_live' ? 'Switchboard' : `Switchboard · ${source.replace('everflow_', '').replaceAll('_', ' ')}`;
+  if (source.startsWith('redtrack')) return source === 'redtrack_live' ? 'RedTrack' : `RedTrack · ${source.replace('redtrack_', '').replaceAll('_', ' ')}`;
+  return source.replaceAll('_', ' ');
+}
+
+function isRevenueFallback(source) {
+  return source && !['everflow_live', 'redtrack_live'].includes(source);
+}
+
 function monthValue(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
@@ -266,7 +277,7 @@ export default function Pnl() {
 
   const exportCsv = () => {
     const rowsToExport = period === 'custom' && summary ? [summary] : months;
-    const header = ['Period', 'Date From', 'Date To', 'Spend', 'Revenue', 'Costs', 'Net Profit', 'Margin', 'ROAS', 'Data Incomplete'];
+    const header = ['Period', 'Date From', 'Date To', 'Spend', 'Billable Revenue', 'Costs', 'Net Profit', 'Margin', 'ROAS', 'Data Incomplete'];
     const rows = rowsToExport.map(row => [
       row.period_label,
       row.date_from,
@@ -344,7 +355,7 @@ export default function Pnl() {
 
       <div className="grid gap-3 md:grid-cols-5">
         <KpiTile label="Ad Spend" value={loading ? '--' : money(summary?.spend)} caption="Meta" badge={summary?.spend == null && !loading ? 'Unavailable' : null} />
-        <KpiTile label="Revenue" value={loading ? '--' : money(summary?.revenue)} caption={`RedTrack · ${summary?.revenue_source || 'none'}`} badge={summary?.revenue_source && summary.revenue_source !== 'live' ? 'Fallback' : null} />
+        <KpiTile label="Billable Revenue" value={loading ? '--' : money(summary?.revenue)} caption={revenueSourceLabel(summary?.revenue_source)} badge={isRevenueFallback(summary?.revenue_source) ? 'Fallback' : null} />
         <KpiTile label="Other Costs" value={loading ? '--' : money(summary?.other_costs)} caption={summary?.has_costs ? `${summary.costs.length} entries` : 'Gross until costs logged'} badge={isGross ? 'Gross' : null} />
         <KpiTile label="Net Profit" value={loading ? '--' : money(summary?.net_profit)} caption={summary?.has_costs ? 'Net' : 'Gross'} tone={netTone} badge={isIncomplete ? 'Incomplete' : isGross ? 'Gross' : null} />
         <KpiTile label="Margin" value={loading ? '--' : pct(summary?.margin)} caption="net ÷ revenue" tone={netTone} badge={isIncomplete ? 'Incomplete' : null} />
@@ -352,7 +363,7 @@ export default function Pnl() {
 
       {summary?.unmapped_adsets > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          {summary.unmapped_adsets} ad set{summary.unmapped_adsets !== 1 ? 's' : ''} have no RedTrack rows for this period. Revenue may be incomplete.
+          {summary.unmapped_adsets} ad set{summary.unmapped_adsets !== 1 ? 's' : ''} have no revenue rows for this period. Revenue may be incomplete.
         </div>
       )}
 
@@ -423,7 +434,7 @@ export default function Pnl() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
               <tr>
-                {['Month', 'Spend', 'Revenue', 'Costs', 'Net', 'Margin', 'ROAS'].map((col, idx) => (
+                {['Month', 'Spend', 'Billable Revenue', 'Costs', 'Net', 'Margin', 'ROAS'].map((col, idx) => (
                   <th key={col} className={`px-5 py-3 ${idx === 0 ? 'text-left' : 'text-right'}`}>{col}</th>
                 ))}
               </tr>
@@ -466,8 +477,8 @@ export default function Pnl() {
             <h2 className="text-lg font-semibold text-gray-900">Delete cost?</h2>
             <p className="mt-2 text-sm text-gray-500">
               {deleteEntry.ad_account_id == null
-                ? `This removes "${deleteEntry.label}" from every account's P&L ledger. The underlying Meta and RedTrack data will not be affected.`
-                : `This removes "${deleteEntry.label}" from this account's P&L ledger. The underlying Meta and RedTrack data will not be affected.`
+                ? `This removes "${deleteEntry.label}" from every account's P&L ledger. The underlying Meta and revenue data will not be affected.`
+                : `This removes "${deleteEntry.label}" from this account's P&L ledger. The underlying Meta and revenue data will not be affected.`
               }
             </p>
             <div className="mt-5 flex justify-end gap-2">

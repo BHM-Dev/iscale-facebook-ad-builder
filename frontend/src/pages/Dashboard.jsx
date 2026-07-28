@@ -8,6 +8,13 @@ import { useAuth } from '../context/AuthContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
+function pnlRevenueSourceLabel(source) {
+  if (!source || source === 'none') return 'None';
+  if (source.startsWith('everflow')) return source === 'everflow_live' ? 'Switchboard' : `Switchboard · ${source.replace('everflow_', '').replaceAll('_', ' ')}`;
+  if (source.startsWith('redtrack')) return source === 'redtrack_live' ? 'RedTrack' : `RedTrack · ${source.replace('redtrack_', '').replaceAll('_', ' ')}`;
+  return source.replaceAll('_', ' ');
+}
+
 const normalizeStatus = (status) => (status || '').toString().toUpperCase();
 
 function MarkdownAnswer({ text }) {
@@ -899,9 +906,7 @@ export default function Dashboard() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             {[
               ['Ad Spend', pnlLoading ? '—' : formatMoney(pnlSummary?.spend), 'Meta'],
-              // revenue_source is live | cache_exact | cache_fallback | none — anything
-              // other than live is a fallback and must not read as fresh data.
-              ['Revenue', pnlLoading ? '—' : formatMoney(pnlSummary?.revenue), !pnlSummary?.revenue_source || pnlSummary.revenue_source === 'live' ? 'RedTrack' : `RedTrack · ${pnlSummary.revenue_source.replace('_', ' ')}`],
+              ['Billable Revenue', pnlLoading ? '—' : formatMoney(pnlSummary?.revenue), pnlRevenueSourceLabel(pnlSummary?.revenue_source)],
               ['Other Costs', pnlLoading ? '—' : formatMoney(pnlSummary?.other_costs), pnlSummary?.has_costs ? `${pnlSummary.costs?.length || 0} entries` : 'Gross'],
               ['Net Profit', pnlLoading ? '—' : formatMoney(pnlSummary?.net_profit), pnlSummary?.data_incomplete ? 'Incomplete' : pnlSummary?.has_costs ? 'Net' : 'Gross'],
               ['Margin', pnlLoading ? '—' : formatPercent(pnlSummary?.margin), 'net ÷ revenue'],
