@@ -1,12 +1,14 @@
-# Phase 2 Review — P&L Tracker. NOT PUSHED.
+# Phase 2 Review — P&L Tracker. ALL BLOCKING ITEMS RESOLVED.
 
-Two review agents (backend correctness + media-buyer perspective) plus a manual read. Findings below are confirmed against the code, not speculative. **Do not push until the BLOCKING items are fixed.**
+> **STATUS as of 2026-07-28: every BLOCKING and HIGH item below has been fixed and re-verified against the code. This is a historical record, not an open defect list. There is nothing here blocking a push.** Resolution notes are inline under each finding. See "Re-verification" at the bottom for what was checked and how.
+
+Two review agents (backend correctness + media-buyer perspective) plus a manual read produced the findings below. They were confirmed against the code at the time of review, then fixed.
 
 The through-line: the page renders authoritative-looking money numbers that are systematically wrong, and it looks *most* confident exactly when the data is broken. For a P&L, that is worse than an error page.
 
 ---
 
-## BLOCKING — fix before push
+## BLOCKING — ALL FIXED (historical)
 
 ### B1. Revenue is cache-only, and the cache query can never match a month
 
@@ -124,6 +126,46 @@ Rows carry an "All accounts" badge, but the delete modal always shows the same g
 - No trigger files, `models.py`, migration, or `init_db.py` touched. Scope was respected.
 
 ---
+
+## Re-verification (2026-07-28)
+
+Every item above was re-checked against the fixed code. Resolutions confirmed:
+
+| Item | Resolution | Verified how |
+|---|---|---|
+| B1 revenue cache-only | `_live_redtrack_report()` calls RedTrack for the exact period; cache is fallback on exception only; fallback now uses an overlap test | read the code path |
+| B2 Meta failure → $0 | `_spend_for_account` raises; `_summary` returns `spend: null`, `data_incomplete: true`, `errors[]`; UI renders Unavailable + amber banner | read both sides |
+| B3 months fan-out | `_spend_map` built only when the period has an all-account cost | read the code path |
+| B4 recurring_monthly | `_overlap_months()` multiplier | **unit-tested, 8/8 cases** |
+| B5 superuser no account | `_require_account()` returns 400 | read the code path |
+| B6 stale numbers on failure | `load()` clears `summary`/`months` and sets `loadError`; red banner states figures were cleared | read the code path |
+| B7 gross styled as net | `netTone` forced neutral when gross or incomplete; explicit amber banner + `Gross`/`Incomplete` badges; Dashboard tone mirrors it | read both surfaces |
+| H1 all-account auth | `_assert_cost_entry_mutable()` + `_normalize_optional_account()` require an unrestricted user | read the code path |
+| H2 percent unbounded | backend rejects >100 on POST and PATCH; input has `max=100` | read both sides |
+| H3 outage vs zero revenue | `revenue_source` derived (`live`/`cache_exact`/`cache_fallback`/`none`) + `data_incomplete` | read the code path |
+| H4 delete modal warning | conditional copy: "every account's P&L ledger" for all-account entries | read the code path |
+| H5 CSV vs period | custom range exports the custom row; MTD/Month export the 6-month history | read the code path |
+| M1–M4, L1 | resolved (`revenue_source` derived, custom-range prompt, wording aligned, tables gated on `loading`, `max=100`) | read the code path |
+
+Three fixes applied on top of Codex's, all in `f736a22` or later:
+
+1. **`/pnl/costs` would 500 whenever Meta was down.** B2 removed the catch-and-zero from `_spend_for_account`, but `list_costs` calls it directly. Wrapped — only `pct_of_spend` rows degrade.
+2. **`/pnl/months` pre-built a cross-account spend map unconditionally**, which is worse than the original B3 behavior (24+ Meta calls on 4 accounts even with zero all-account costs). Removed; `_summary` builds it conditionally.
+3. **Dashboard strip checked `revenue_source === 'cached'`**, a value the backend never returns after the enum was renamed to `live`/`cache_exact`/`cache_fallback`/`none`. A cache fallback was labelled plain "RedTrack" and read as live data — the exact false-confidence problem H3 was about, reintroduced by the rename. Now anything other than `live` is labelled as a fallback.
+
+### Open, non-blocking
+
+- **Timezone drift.** `_month_bounds` / `_resolve_period` use `date.today()` (VPS clock, UTC) while RedTrack reports in `REDTRACK_TIMEZONE`. `redtrack_service` has `_today_in_rt_tz()` precisely because UTC "pulls the wrong day's data." At month edges the P&L compares a UTC-bounded month of spend against a differently-bounded month of revenue. Fix: use the RedTrack timezone for period bounds.
+- **`_overlap_months` counts calendar months touched.** A custom Jul 15 – Aug 14 window charges a monthly retainer 2×, though it spans ~1 month of elapsed time. Defensible (the brief says charge full months, never prorate) but it is a business decision, not an obvious bug.
+- **`pct_of_profit` preview base in the cost modal** uses `summary.other_costs`, which includes existing `pct_of_profit` costs, while the backend's `profit_base` excludes them. Exact for the first profit-based entry; slightly understated for a second one. The backend already returns `profit_base` per entry and could be used instead.
+- **Runtime confirmation still outstanding** — see below.
+
+### Needs runtime confirmation (cannot be checked from source)
+
+1. **Live RedTrack response shape.** `_live_redtrack_report` parses `sub2`, `total_revenue`, `total_conversions` and duplicates the contract from `RedTrackService.get_report_by_adset`. It has never executed against the live API on a monthly window. Confirm a real call returns rows and that revenue is non-zero and plausible for a known month.
+2. **`unmapped_adsets` on real data.** If Commercial Insurance ad sets aren't sub2-tagged, they show as spend with no revenue and the account reads as a loss. Confirm the count is 0, or understand why not.
+3. **Joel's access.** He must hold `admin` or `manager` for `pnl:read`. A superuser (Steve) bypasses the check and cannot reproduce a 403. Joel has to load `/pnl` himself.
+4. **`/pnl/months` latency** with the real account count — 6 sequential Meta calls minimum, more if an all-account cost exists.
 
 ## Note on scope
 

@@ -899,7 +899,9 @@ export default function Dashboard() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             {[
               ['Ad Spend', pnlLoading ? '—' : formatMoney(pnlSummary?.spend), 'Meta'],
-              ['Revenue', pnlLoading ? '—' : formatMoney(pnlSummary?.revenue), pnlSummary?.revenue_source === 'cached' ? 'RedTrack · cached' : 'RedTrack'],
+              // revenue_source is live | cache_exact | cache_fallback | none — anything
+              // other than live is a fallback and must not read as fresh data.
+              ['Revenue', pnlLoading ? '—' : formatMoney(pnlSummary?.revenue), !pnlSummary?.revenue_source || pnlSummary.revenue_source === 'live' ? 'RedTrack' : `RedTrack · ${pnlSummary.revenue_source.replace('_', ' ')}`],
               ['Other Costs', pnlLoading ? '—' : formatMoney(pnlSummary?.other_costs), pnlSummary?.has_costs ? `${pnlSummary.costs?.length || 0} entries` : 'Gross'],
               ['Net Profit', pnlLoading ? '—' : formatMoney(pnlSummary?.net_profit), pnlSummary?.data_incomplete ? 'Incomplete' : pnlSummary?.has_costs ? 'Net' : 'Gross'],
               ['Margin', pnlLoading ? '—' : formatPercent(pnlSummary?.margin), 'net ÷ revenue'],
