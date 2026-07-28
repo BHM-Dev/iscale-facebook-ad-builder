@@ -31,6 +31,15 @@ function revenueSourceLabel(source) {
   return source.replaceAll('_', ' ');
 }
 
+// Provider name only, without the live/fallback qualifier — for the page subhead,
+// where the qualifier already appears on the Billable Revenue tile.
+function revenueSourceName(source) {
+  if (!source || source === 'none') return 'RedTrack';
+  if (source.startsWith('everflow')) return 'Switchboard';
+  if (source.startsWith('redtrack')) return 'RedTrack';
+  return source.replaceAll('_', ' ');
+}
+
 function isRevenueFallback(source) {
   return source && !['everflow_live', 'redtrack_live'].includes(source);
 }
@@ -306,13 +315,21 @@ export default function Pnl() {
   return (
     <div className="mx-auto max-w-7xl space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <h1 className="flex items-center gap-2 text-2xl font-bold text-gray-900">
             <DollarSign size={26} className="text-green-600" />
             Profit & Loss
           </h1>
-          <p className="mt-1 text-sm text-gray-500">Meta spend and RedTrack revenue, net of your real costs.</p>
-          <AccountLabel account={activeAccount} />
+          {/* One meta line instead of a stacked subhead + account label — three
+              stacked lines against the period controls read as clutter. Source
+              names are derived so they stay right when the provider changes. */}
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-gray-500">
+            <AccountLabel account={activeAccount} />
+            {activeAccount && <span className="text-gray-300">|</span>}
+            <span>
+              Spend from Meta · Revenue from {revenueSourceName(summary?.revenue_source)} · Net of your costs
+            </span>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {period !== 'custom' ? (

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="frontend/public/breadwinner_logo.png" alt="Facebook Ad Builder" width="120" />
+  <img src="frontend/public/bhm-logo.png" alt="Ad Builder" width="120" />
 </p>
 
 <h1 align="center">Facebook Ad Builder</h1>
