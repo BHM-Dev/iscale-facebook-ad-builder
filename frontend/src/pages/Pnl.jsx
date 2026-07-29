@@ -88,7 +88,7 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
     category: entry?.category ?? 'other',
     cost_type: entry?.cost_type ?? 'one_off',
     amount: entry?.amount ?? '',
-    allocation_method: entry?.allocation_method ?? 'by_spend',
+    allocation_method: entry?.allocation_method ?? 'full',
     effective_from: entry?.effective_from ?? firstOfMonth(monthValue()),
     effective_to: entry?.effective_to ?? '',
     notes: entry?.notes ?? '',
@@ -180,9 +180,15 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
             <label>
               <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Allocation</span>
               <select value={form.allocation_method} onChange={e => setForm({ ...form, allocation_method: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
-                <option value="by_spend">By spend</option>
-                <option value="even">Even</option>
+                <option value="full">Full amount (don&apos;t split)</option>
+                <option value="by_spend">Split by spend share</option>
+                <option value="even">Split evenly</option>
               </select>
+              <span className="mt-1 block text-[11px] text-gray-400">
+                {form.allocation_method === 'full'
+                  ? 'The whole cost is charged to the month.'
+                  : 'The cost is divided across accounts, so this account carries only part of it.'}
+              </span>
             </label>
           )}
           <label>
@@ -489,7 +495,11 @@ export default function Pnl() {
                 <tr key={entry.id} className="hover:bg-gray-50">
                   <td className="px-5 py-3">
                     <div className="font-medium text-gray-900">{entry.label}</div>
-                    {entry.ad_account_id == null && <div className="mt-1 inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-600">All accounts</div>}
+                    {entry.ad_account_id == null && (
+                      <div className="mt-1 inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-600">
+                        {entry.allocation_basis === 'full' ? 'All accounts · full' : `All accounts · split ${(Number(entry.allocation_share || 0) * 100).toFixed(0)}%`}
+                      </div>
+                    )}
                   </td>
                   <td className="px-3 py-3 text-gray-600">{entry.category}</td>
                   <td className="px-3 py-3 text-gray-600">{entry.cost_type.replaceAll('_', ' ')}</td>

@@ -34,7 +34,7 @@ COST_TYPES = {
     "pct_of_gross_profit",
     "pct_of_profit",
 }
-ALLOCATIONS = {"by_spend", "even"}
+ALLOCATIONS = {"full", "by_spend", "even"}
 CENT = Decimal("0.01")
 EVERFLOW_ACCOUNT_IDS_ENV = "SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS"
 EVERFLOW_ACCOUNT_OFFERS_ENV = "SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS"
@@ -446,6 +446,14 @@ def _allocation_share(
     if entry.ad_account_id:
         return Decimal("1"), "account"
 
+    # "full" charges the whole amount to the month rather than dividing it across
+    # accounts. Steve's call 2026-07-29: seeing a third of a $350 bill reads as
+    # wrong even when the arithmetic is right, and he works from one account. The
+    # trade-off is that summing several accounts would count a full cost more than
+    # once — fine while the P&L is read one account at a time.
+    if entry.allocation_method == "full":
+        return Decimal("1"), "full"
+
     active_spenders = {acct: amt for acct, amt in all_spend.items() if amt > 0}
     if entry.allocation_method == "even":
         accounts = list(active_spenders) or list(all_spend) or [account_id]
@@ -598,7 +606,15 @@ def _summary(
     net_profit = None
     margin = None
     roas = None
-    has_all_account_cost = _cost_query(db, account_id, start, end).filter(PnlCostEntry.ad_account_id.is_(None)).first() is not None
+    # Only an all-account cost that is actually SPLIT needs cross-account spend.
+    # A "full" one doesn't, which keeps the six Meta calls per account out of the
+    # request entirely — the usual case now that full is the default.
+    has_all_account_cost = (
+        _cost_query(db, account_id, start, end)
+        .filter(PnlCostEntry.ad_account_id.is_(None))
+        .filter(PnlCostEntry.allocation_method != "full")
+        .first() is not None
+    )
     if has_all_account_cost and spend_cache_incomplete:
         data_incomplete = True
         errors.append("all_account_spend_allocation_incomplete")
