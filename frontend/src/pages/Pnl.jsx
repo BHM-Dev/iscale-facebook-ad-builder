@@ -421,8 +421,8 @@ export default function Pnl() {
       </div>
 
       {summary?.unattributed_revenue > 0 && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          {money(summary.unattributed_revenue)} in Switchboard revenue is not assigned to this Meta ad account and is excluded from Billable Revenue.
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+          Billable Revenue above <span className="font-medium">includes</span> {money(summary.unattributed_revenue, 2)} that Switchboard could not tie to a specific ad set. It counts toward this account, so the total matches the Switchboard portal — it just can&apos;t be traced to a single ad set.
         </div>
       )}
 

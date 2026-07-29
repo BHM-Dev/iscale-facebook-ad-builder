@@ -42,6 +42,17 @@ def _money(value: Any) -> Decimal:
     return Decimal(str(value or 0)).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
+def _raw(value: Any) -> Decimal:
+    """Unrounded Decimal, for accumulation.
+
+    Rounding every one of thousands of conversion rows to cents before summing
+    drifts from the true total — it came out $0.16 light against Switchboard's
+    own June figure over 4,478 rows. Accumulate at full precision and quantize
+    once, at the point of output.
+    """
+    return Decimal(str(value or 0))
+
+
 class EverflowService:
     """Pull billable revenue from Switchboard's affiliate Everflow realm.
 
@@ -116,7 +127,7 @@ class EverflowService:
         for row in rows:
             if allowed_offers and self._offer_name(row).casefold() not in allowed_offers:
                 continue
-            revenue = _money(row.get("revenue"))
+            revenue = _raw(row.get("revenue"))
             events = 1
             adset_id = str(row.get("sub3") or "").strip()
             if not META_ID_RE.fullmatch(adset_id):
@@ -145,7 +156,14 @@ class EverflowService:
             if row.get("sub8") and not metrics.get("adset_name"):
                 metrics["adset_name"] = str(row.get("sub8")).strip()
 
+        # Rounded ONCE from full precision, so it reconciles with Switchboard's own
+        # total. Callers must use this rather than re-summing the per-ad-set values,
+        # which are each individually rounded.
+        attributable_raw = sum((m["revenue"] for m in by_adset.values()), Decimal("0"))
+
         return {
+            "total_revenue": (attributable_raw + unattributed_revenue).quantize(CENT, rounding=ROUND_HALF_UP),
+            "attributable_revenue": attributable_raw.quantize(CENT, rounding=ROUND_HALF_UP),
             "adsets": {
                 adset_id: {
                     **metrics,

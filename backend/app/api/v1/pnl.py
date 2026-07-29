@@ -274,21 +274,27 @@ def _everflow_revenue_from_report(
 
     by_adset = report.get("adsets") or {}
 
-    # Scope to THIS account's ad sets. The Everflow key is not account-scoped — it
-    # returns every Meta-shaped sub3 it can see — so summing it unfiltered reports
-    # the same total for every account in the allow-list. Mirrors _redtrack_revenue.
-    filtered = {aid: metrics for aid, metrics in by_adset.items() if aid in adset_ids}
+    # Revenue is EVERYTHING the offer filter admits, per Steve 2026-07-29: the P&L
+    # has to reconcile with the Switchboard portal he checks. Verified against
+    # June 2026 (Pacific): ad-set-attributable $53,981.76 + $1,939.89 with no
+    # usable sub3 = $55,921.65, which is the portal's Get Business Coverage total.
+    # Reporting only the attributable part read ~3.5% light every month.
+    #
+    # SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS is what scopes revenue to an account
+    # now, not the ad-set list. That holds only while each Everflow account maps
+    # to its own offers — if two accounts ever share an offer, both would claim
+    # the whole thing and this has to go back to ad-set scoping with the
+    # remainder on its own line.
+    # total_revenue is rounded once from full precision by the service. Re-summing
+    # the per-ad-set values here would reintroduce the drift it exists to avoid.
+    unattributed = _money(report.get("unattributed_revenue"))
+    revenue = _money(report.get("total_revenue"))
+    events = sum((int(m.get("events") or 0) for m in by_adset.values()), 0)
+    events += int(report.get("unattributed_events") or 0)
 
-    # Revenue on Meta-shaped ad sets that aren't in this account's local ad-set
-    # list. Real money, but not attributable here — surfaced separately rather
-    # than silently added to this account or silently dropped.
-    foreign = {aid: metrics for aid, metrics in by_adset.items() if aid not in adset_ids}
-    foreign_revenue = sum((_money(m.get("revenue")) for m in foreign.values()), Decimal("0"))
-
-    unattributed = _money(report.get("unattributed_revenue")) + foreign_revenue
-    revenue = sum((_money(metrics.get("revenue")) for metrics in filtered.values()), Decimal("0"))
-    events = sum((int(metrics.get("events") or 0) for metrics in filtered.values()), 0)
-    return revenue, events, len(adset_ids - set(filtered)), "everflow_live", False, unattributed
+    # Still reported so the split stays visible: how much of the above could not
+    # be tied to an ad set, and how many of this account's ad sets saw nothing.
+    return revenue, events, len(adset_ids - set(by_adset)), "everflow_live", False, unattributed
 
 
 def _everflow_revenue(db: Session, account_id: str, start: date, end: date) -> tuple[Decimal, int, int, str, bool, Decimal]:
