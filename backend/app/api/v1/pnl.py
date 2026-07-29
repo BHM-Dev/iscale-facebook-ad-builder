@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
@@ -197,8 +198,8 @@ def _live_redtrack_report(start: date, end: date) -> dict:
     return result
 
 
-def _redtrack_revenue(db: Session, account_id: str, start: date, end: date) -> tuple[Decimal, int, int, str, bool]:
-    adset_ids = {
+def _redtrack_adset_ids(db: Session, account_id: str) -> set[str]:
+    return {
         row[0]
         for row in db.query(FacebookAdSet.fb_adset_id)
         .filter(
@@ -208,22 +209,25 @@ def _redtrack_revenue(db: Session, account_id: str, start: date, end: date) -> t
         .all()
         if row[0]
     }
-    if not adset_ids:
-        return Decimal("0"), 0, 0, "none", False
 
-    try:
-        report = _live_redtrack_report(start, end)
-        filtered = {
-            fb_adset_id: metrics
-            for fb_adset_id, metrics in (report or {}).items()
-            if fb_adset_id in adset_ids
-        }
-        revenue = sum((_money(metrics.get("revenue")) for metrics in filtered.values()), Decimal("0"))
-        conversions = sum((int(metrics.get("conversions") or 0) for metrics in filtered.values()), 0)
-        return revenue, conversions, len(adset_ids - set(filtered)), "live", False
-    except Exception:
-        pass
 
+def _redtrack_revenue_from_report(report: dict, adset_ids: set[str]) -> tuple[Decimal, int, int, str, bool]:
+    filtered = {
+        fb_adset_id: metrics
+        for fb_adset_id, metrics in (report or {}).items()
+        if fb_adset_id in adset_ids
+    }
+    revenue = sum((_money(metrics.get("revenue")) for metrics in filtered.values()), Decimal("0"))
+    conversions = sum((int(metrics.get("conversions") or 0) for metrics in filtered.values()), 0)
+    return revenue, conversions, len(adset_ids - set(filtered)), "live", False
+
+
+def _redtrack_revenue_from_cache(
+    db: Session,
+    adset_ids: set[str],
+    start: date,
+    end: date,
+) -> tuple[Decimal, int, int, str, bool]:
     exact_rows = (
         db.query(RedTrackCache)
         .filter(
@@ -257,6 +261,79 @@ def _redtrack_revenue(db: Session, account_id: str, start: date, end: date) -> t
     conversions = sum((row.conversions or 0) for row in rows)
     source = "cache_exact" if exact_rows else ("cache_fallback" if rows else "none")
     return revenue, conversions, len(adset_ids - mapped), source, True
+
+
+def _redtrack_revenue(db: Session, account_id: str, start: date, end: date) -> tuple[Decimal, int, int, str, bool]:
+    adset_ids = _redtrack_adset_ids(db, account_id)
+    if not adset_ids:
+        return Decimal("0"), 0, 0, "none", False
+
+    try:
+        return _redtrack_revenue_from_report(_live_redtrack_report(start, end), adset_ids)
+    except Exception:
+        pass
+
+    return _redtrack_revenue_from_cache(db, adset_ids, start, end)
+
+
+def _redtrack_monthly_revenue_cache(
+    db: Session,
+    account_id: str,
+    periods: list[tuple[date, date, str]],
+) -> dict[str, tuple[Decimal, int, int, str, bool, Decimal, dict]]:
+    adset_ids = {
+        adset_id
+        for adset_id in _redtrack_adset_ids(db, account_id)
+    }
+    empty = (Decimal("0"), 0, 0, "none", False, Decimal("0"), {})
+    if not periods:
+        # ThreadPoolExecutor(max_workers=0) raises. get_months always passes at
+        # least one period (limit has ge=1), but this is a general helper.
+        return {}
+    if not adset_ids:
+        return {s.isoformat(): empty for s, _, _ in periods}
+
+    results: dict[str, tuple[Decimal, int, int, str, bool, Decimal, dict]] = {}
+    live_reports: dict[str, dict] = {}
+    failed_periods: set[str] = set()
+    max_workers = min(6, len(periods))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_live_redtrack_report, s, e): (s, e, label)
+            for s, e, label in periods
+        }
+        for future in as_completed(futures):
+            s, e, label = futures[future]
+            key = s.isoformat()
+            try:
+                live_reports[key] = future.result()
+            except Exception:
+                failed_periods.add(key)
+                logger.exception(
+                    "pnl.months redtrack_live period failed account=%s label=%s range=%s..%s",
+                    account_id,
+                    label,
+                    s.isoformat(),
+                    e.isoformat(),
+                )
+
+    for s, e, _ in periods:
+        key = s.isoformat()
+        if key in live_reports:
+            revenue, conversions, unmapped, source, incomplete = _redtrack_revenue_from_report(live_reports[key], adset_ids)
+        else:
+            revenue, conversions, unmapped, source, incomplete = _redtrack_revenue_from_cache(db, adset_ids, s, e)
+        redtrack_source = f"redtrack_{source}" if source != "none" else "none"
+        results[key] = (revenue, conversions, unmapped, redtrack_source, incomplete, Decimal("0"), {})
+
+    logger.info(
+        "pnl.months redtrack_cache account=%s months=%d live_ok=%d live_failed=%d",
+        account_id,
+        len(periods),
+        len(live_reports),
+        len(failed_periods),
+    )
+    return results
 
 
 def _everflow_revenue_from_report(
@@ -477,9 +554,9 @@ def _summary(
 
     revenue_start = time.perf_counter()
     if revenue_cache is not None:
-        revenue, conversions, unmapped, revenue_source, revenue_incomplete, unattributed_revenue = revenue_cache.get(
+        revenue, conversions, unmapped, revenue_source, revenue_incomplete, unattributed_revenue, event_breakdown = revenue_cache.get(
             start.isoformat(),
-            (Decimal("0"), 0, 0, "everflow_live", False, Decimal("0")),
+            (Decimal("0"), 0, 0, "everflow_live", False, Decimal("0"), {}),
         )
     else:
         revenue, conversions, unmapped, revenue_source, revenue_incomplete, unattributed_revenue, event_breakdown = _revenue_for_account(db, account_id, start, end)
@@ -633,7 +710,8 @@ def get_months(
         periods.append((s, e, label))
 
     revenue_cache = None
-    if _revenue_provider_for_account(account_id) == "everflow" and periods:
+    revenue_provider = _revenue_provider_for_account(account_id)
+    if revenue_provider == "everflow" and periods:
         cache_start = time.perf_counter()
         try:
             earliest = min(s for s, _, _ in periods)
@@ -649,7 +727,7 @@ def get_months(
             )
         except Exception:
             revenue_cache = {
-                s.isoformat(): (Decimal("0"), 0, 0, "everflow_unavailable", True, Decimal("0"))
+                s.isoformat(): (Decimal("0"), 0, 0, "everflow_unavailable", True, Decimal("0"), {})
                 for s, _, _ in periods
             }
             logger.exception(
@@ -658,6 +736,15 @@ def get_months(
                 len(periods),
                 (time.perf_counter() - cache_start) * 1000,
             )
+    elif revenue_provider == "redtrack" and periods:
+        cache_start = time.perf_counter()
+        revenue_cache = _redtrack_monthly_revenue_cache(db, account_id, periods)
+        logger.info(
+            "pnl.months redtrack_cache account=%s months=%d duration_ms=%.1f status=ok",
+            account_id,
+            len(periods),
+            (time.perf_counter() - cache_start) * 1000,
+        )
 
     for s, e, label in periods:
         # Don't pre-build a cross-account spend map here. _summary only needs one
@@ -687,7 +774,7 @@ def get_months(
         account_id,
         len(periods),
         (time.perf_counter() - request_start) * 1000,
-        _revenue_provider_for_account(account_id),
+        revenue_provider,
         len(rows),
     )
     return rows
