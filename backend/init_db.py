@@ -1,8 +1,6 @@
 from app.database import engine, Base, SessionLocal
 from app.models import *
 from app.core.security import get_password_hash
-from datetime import date
-from decimal import Decimal
 
 def init_db():
     print("Creating database tables...")
@@ -123,50 +121,6 @@ def seed_roles_and_permissions():
     finally:
         db.close()
 
-def seed_default_pnl_costs():
-    """Seed standing P&L costs that should exist on every environment."""
-    db = SessionLocal()
-    try:
-        existing_redtrack = (
-            db.query(PnlCostEntry)
-            .filter(PnlCostEntry.ad_account_id.is_(None))
-            .filter(PnlCostEntry.label == "RedTrack subscription")
-            .filter(PnlCostEntry.amount == Decimal("350.00"))
-            .filter(PnlCostEntry.cost_type == "recurring_monthly")
-            .filter(PnlCostEntry.allocation_method == "by_spend")
-            .filter(PnlCostEntry.effective_from == date(2026, 7, 1))
-            .filter(PnlCostEntry.effective_to.is_(None))
-            .first()
-        )
-        if existing_redtrack:
-            if not existing_redtrack.vendor:
-                existing_redtrack.vendor = "RedTrack"
-                db.commit()
-            print("  P&L default cost exists: RedTrack subscription")
-            return
-
-        db.add(PnlCostEntry(
-            ad_account_id=None,
-            label="RedTrack subscription",
-            category="tooling",
-            cost_type="recurring_monthly",
-            amount=Decimal("350.00"),
-            allocation_method="by_spend",
-            effective_from=date(2026, 7, 1),
-            effective_to=None,
-            notes="Seeded default monthly RedTrack platform cost.",
-            vendor="RedTrack",
-            source="manual",
-        ))
-        db.commit()
-        print("  Created P&L default cost: RedTrack subscription ($350/mo)")
-    except Exception as e:
-        db.rollback()
-        print(f"Error seeding default P&L costs: {e}")
-        raise
-    finally:
-        db.close()
-
 def create_superuser(email: str, password: str, name: str = "Admin"):
     """Create a superuser if one doesn't exist"""
     db = SessionLocal()
@@ -205,8 +159,6 @@ if __name__ == "__main__":
     init_db()
     print("\nSeeding roles and permissions...")
     seed_roles_and_permissions()
-    print("\nSeeding default P&L costs...")
-    seed_default_pnl_costs()
 
     # Optionally create a default superuser (requires env vars)
     import os
