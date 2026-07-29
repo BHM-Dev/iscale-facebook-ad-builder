@@ -718,6 +718,17 @@ def get_summary(
     return _summary(db, account_id, start, end, label)
 
 
+def _snapshot_provider(revenue_source: str | None) -> str | None:
+    """Which provider produced a stored month's revenue."""
+    if not revenue_source:
+        return None
+    if revenue_source.startswith("everflow"):
+        return "everflow"
+    if revenue_source.startswith("redtrack"):
+        return "redtrack"
+    return None
+
+
 def _snapshot_eligible(row: dict) -> bool:
     """Whether a closed month's figures are solid enough to freeze.
 
@@ -798,15 +809,28 @@ def get_months(
     # fetched live on every load. Costs are always recomputed from the ledger, so
     # adding a retainer still moves historic net profit.
     current_month = periods[0][0] if periods else None
-    snapshots = {
-        row.month: row
-        for row in db.query(PnlMonthSnapshot)
-        .filter(
-            PnlMonthSnapshot.ad_account_id == account_id,
-            PnlMonthSnapshot.month.in_([s for s, _, _ in periods]),
+    stored_rows = db.query(PnlMonthSnapshot).filter(
+        PnlMonthSnapshot.ad_account_id == account_id,
+        PnlMonthSnapshot.month.in_([s for s, _, _ in periods]),
+    ).all() if periods else []
+    # Drop any snapshot written by a different revenue provider than this account
+    # now uses. Switching an account from RedTrack to Switchboard would otherwise
+    # leave every closed month serving the old source's figures while the current
+    # month showed the new one — the same page disagreeing with itself.
+    active_provider = _revenue_provider_for_account(account_id)
+    snapshots = {}
+    stale_provider_months = []
+    for row in stored_rows:
+        if _snapshot_provider(row.revenue_source) == active_provider:
+            snapshots[row.month] = row
+        else:
+            stale_provider_months.append(row.month)
+    if stale_provider_months:
+        logger.info(
+            "pnl.months discarding %d snapshot(s) from a previous provider account=%s now=%s months=%s",
+            len(stale_provider_months), account_id, active_provider,
+            ",".join(m.isoformat() for m in stale_provider_months),
         )
-        .all()
-    } if periods else {}
     # Only months we still have to fetch need the external calls below.
     periods_to_fetch = [
         (s, e, label) for s, e, label in periods
@@ -814,7 +838,7 @@ def get_months(
     ]
 
     revenue_cache = None
-    revenue_provider = _revenue_provider_for_account(account_id)
+    revenue_provider = active_provider
     if revenue_provider == "everflow" and periods_to_fetch:
         cache_start = time.perf_counter()
         try:
