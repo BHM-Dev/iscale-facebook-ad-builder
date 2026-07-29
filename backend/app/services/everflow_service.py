@@ -8,6 +8,7 @@ import re
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -18,6 +19,12 @@ DEFAULT_TIMEZONE_ID = 90  # Pacific, aligned with the Meta ad account billing da
 USD_CURRENCY_ID = "USD"
 CENT = Decimal("0.01")
 META_ID_RE = re.compile(r"^\d{10,}$")
+# Everflow timezone_id -> IANA zone, for bucketing conversions into the same
+# month boundaries the API was asked to report on. 90 = Pacific, 80 = Eastern.
+EVERFLOW_TZ_BY_ID = {
+    90: ZoneInfo("America/Los_Angeles"),
+    80: ZoneInfo("America/New_York"),
+}
 CONVERSION_DATE_FIELDS = (
     "conversion_date",
     "conversion_time",
@@ -92,7 +99,7 @@ class EverflowService:
         rows = self._fetch_conversion_rows(start, end, timezone_id)
         rows_by_month: dict[str, list[dict]] = {}
         for row in rows:
-            month = self._conversion_month(row)
+            month = self._conversion_month(row, timezone_id)
             rows_by_month.setdefault(month, []).append(row)
         return {
             month: {**self._aggregate_rows(month_rows, offer_names=offer_names), "timezone_id": timezone_id}
@@ -171,20 +178,37 @@ class EverflowService:
         return ""
 
     @staticmethod
-    def _conversion_month(row: dict) -> str:
+    def _conversion_month(row: dict, timezone_id: int = DEFAULT_TIMEZONE_ID) -> str:
+        """Bucket a conversion into its month IN THE REPORTING TIMEZONE.
+
+        Must not use a naive datetime. The VPS clock is UTC while we report in
+        Pacific (timezone_id 90), so a conversion at 2026-07-01 03:00 UTC is
+        2026-06-30 20:00 Pacific and belongs to June. Bucketing naively puts it
+        in July, which makes /pnl/months disagree with /pnl/summary for the same
+        month — summary asks Everflow for a Pacific-bounded range, so the two
+        would never reconcile.
+        """
+        tz = EVERFLOW_TZ_BY_ID.get(timezone_id, EVERFLOW_TZ_BY_ID[DEFAULT_TIMEZONE_ID])
         for field in CONVERSION_DATE_FIELDS:
             raw = row.get(field)
             if not raw:
                 continue
             value = str(raw)
             if value.isdigit():
-                return datetime.fromtimestamp(int(value)).date().replace(day=1).isoformat()
+                return datetime.fromtimestamp(int(value), tz=tz).date().replace(day=1).isoformat()
             try:
-                return datetime.fromisoformat(value.replace("Z", "+00:00")).date().replace(day=1).isoformat()
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
             except ValueError:
                 match = re.match(r"^\d{4}-\d{2}-\d{2}", value)
                 if match:
+                    # Date-only string: already expressed in the report's timezone.
                     return datetime.strptime(match.group(0), "%Y-%m-%d").date().replace(day=1).isoformat()
+                continue
+            # A tz-naive timestamp string from Everflow is already in the
+            # requested reporting timezone; an aware one gets converted.
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(tz)
+            return parsed.date().replace(day=1).isoformat()
         raise RuntimeError("Everflow conversion row is missing a recognised conversion date field")
 
     # This endpoint cannot be paged. Verified against the live API 2026-07-28:
