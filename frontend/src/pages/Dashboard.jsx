@@ -540,13 +540,13 @@ export default function Dashboard() {
       setPnlSummary(null);
       return;
     }
-    if (activeAccountLoading || !activeAccountId) return;
+    if (activeAccountLoading) return;
     let cancelled = false;
     const loadPnl = async () => {
       setPnlLoading(true);
       try {
         const params = new URLSearchParams({
-          ad_account_id: activeAccountId,
+          ad_account_id: 'all',
           period: 'mtd',
         });
         const res = await authFetch(`${API_URL}/pnl/summary?${params}`);
@@ -561,7 +561,7 @@ export default function Dashboard() {
     };
     loadPnl();
     return () => { cancelled = true; };
-  }, [activeAccountId, activeAccountLoading, hasPermission]);
+  }, [activeAccountLoading, hasPermission]);
 
   function handleApply(range) {
     setActiveRange(range);
@@ -909,9 +909,9 @@ export default function Dashboard() {
             {[
               ['Ad Spend', pnlLoading ? '—' : formatMoney(pnlSummary?.spend), 'Meta'],
               ['Billable Revenue', pnlLoading ? '—' : formatMoney(pnlSummary?.revenue), pnlRevenueSourceLabel(pnlSummary?.revenue_source)],
-              ['Other Costs', pnlLoading ? '—' : formatMoney(pnlSummary?.other_costs), pnlSummary?.has_costs ? `${pnlSummary.costs?.length || 0} entries` : 'Gross'],
-              ['Net Profit', pnlLoading ? '—' : formatMoney(pnlSummary?.net_profit), pnlSummary?.data_incomplete ? 'Incomplete' : pnlSummary?.has_costs ? 'Net' : 'Gross'],
-              ['Margin', pnlLoading ? '—' : formatPercent(pnlSummary?.margin), 'net ÷ revenue'],
+              ['Gross Profit', pnlLoading ? '—' : formatMoney(pnlSummary?.gross_profit), 'revenue - spend'],
+              ['Monthly Costs', pnlLoading ? '—' : formatMoney(pnlSummary?.other_costs), pnlSummary?.has_costs ? `${pnlSummary.costs?.length || 0} entries` : 'No costs'],
+              ['Net Profit', pnlLoading ? '—' : formatMoney(pnlSummary?.net_profit), pnlSummary?.data_incomplete ? 'Incomplete' : 'Net'],
             ].map(([label, value, caption]) => {
               const isNet = label === 'Net Profit';
               const tone = isNet && !pnlSummary?.data_incomplete && pnlSummary?.has_costs && pnlSummary?.net_profit > 0

@@ -83,7 +83,7 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
   const { showError, showSuccess } = useToast();
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(() => ({
-    ad_account_id: entry ? (entry.ad_account_id || '') : activeAccountId,
+    ad_account_id: entry ? (entry.ad_account_id || '') : '',
     label: entry?.label ?? '',
     category: entry?.category ?? 'other',
     cost_type: entry?.cost_type ?? 'one_off',
@@ -172,8 +172,8 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
           <label>
             <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Applies to</span>
             <select value={form.ad_account_id || ''} onChange={e => setForm({ ...form, ad_account_id: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
-              <option value={activeAccountId}>This account only</option>
               <option value="">All ad accounts</option>
+              {activeAccountId && <option value={activeAccountId}>Active account only</option>}
             </select>
           </label>
           {isAllAccounts && (
@@ -228,6 +228,7 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
 export default function Pnl() {
   const { showError, showSuccess } = useToast();
   const { activeAccountId, adAccounts, activeAccountLoading } = useCampaign();
+  const [scope, setScope] = useState('all');
   const [month, setMonth] = useState(monthValue());
   const [period, setPeriod] = useState('mtd');
   const [customFrom, setCustomFrom] = useState('');
@@ -252,13 +253,15 @@ export default function Pnl() {
     const raw = account.id || account.account_id || '';
     return (raw.startsWith('act_') ? raw : `act_${raw}`) === activeAccountId;
   });
+  const isAllScope = scope === 'all';
+  const requestAccountId = isAllScope ? 'all' : activeAccountId;
 
   // The two fetches are deliberately NOT awaited together. /pnl/months walks six
   // months of Meta + revenue calls and took 12-24s in production; sharing one
   // loading flag with the summary meant the whole page sat blank behind it. They
   // now render independently, each with its own loading and error state.
   const load = useCallback(() => {
-    if (activeAccountLoading || !activeAccountId) {
+    if (activeAccountLoading || (!isAllScope && !activeAccountId)) {
       // Without this the flags stay true forever when there is no account to
       // load — e.g. account resolution failed — and the page reads as loading.
       setLoading(false);
@@ -269,7 +272,7 @@ export default function Pnl() {
     const current = () => loadToken.current === token;
     setLoadError('');
 
-    const params = new URLSearchParams({ ad_account_id: activeAccountId, period });
+    const params = new URLSearchParams({ ad_account_id: requestAccountId, period });
     if (period === 'custom') {
       if (!customFrom || !customTo) {
         setSummary(null);
@@ -304,7 +307,7 @@ export default function Pnl() {
     setMonthsLoading(true);
     setMonths([]);
     setMonthsError('');
-    authFetch(`${API_URL}/pnl/months?ad_account_id=${encodeURIComponent(activeAccountId)}&limit=6`)
+    authFetch(`${API_URL}/pnl/months?ad_account_id=${encodeURIComponent(requestAccountId)}&limit=6`)
       .then(res => {
         if (!res.ok) throw new Error('Profit/Loss month history unavailable');
         return res.json();
@@ -316,7 +319,7 @@ export default function Pnl() {
         setMonthsError('Month history unavailable. The figures above are unaffected.');
       })
       .finally(() => { if (current()) setMonthsLoading(false); });
-  }, [activeAccountId, activeAccountLoading, customFrom, customTo, month, period, showError]);
+  }, [activeAccountId, activeAccountLoading, customFrom, customTo, isAllScope, month, period, requestAccountId, showError]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -340,7 +343,7 @@ export default function Pnl() {
     setResyncing(monthKey);
     try {
       const res = await authFetch(
-        `${API_URL}/pnl/months/${monthKey}/resync?ad_account_id=${encodeURIComponent(activeAccountId)}`,
+        `${API_URL}/pnl/months/${monthKey}/resync?ad_account_id=${encodeURIComponent(requestAccountId)}`,
         { method: 'POST' },
       );
       if (!res.ok) {
@@ -358,15 +361,17 @@ export default function Pnl() {
 
   const exportCsv = () => {
     const rowsToExport = period === 'custom' && summary ? [summary] : months;
-    const header = ['Period', 'Date From', 'Date To', 'Spend', 'Billable Revenue', 'Costs', 'Net Profit', 'Margin', 'ROAS', 'Data Incomplete'];
+    const header = isAllScope
+      ? ['Period', 'Date From', 'Date To', 'Spend', 'Billable Revenue', 'Gross Profit', 'Costs', 'Net Profit', 'Net Margin', 'ROAS', 'Data Incomplete']
+      : ['Period', 'Date From', 'Date To', 'Spend', 'Billable Revenue', 'Gross Profit', 'Gross Margin', 'ROAS', 'Data Incomplete'];
     const rows = rowsToExport.map(row => [
       row.period_label,
       row.date_from,
       row.date_to,
       row.spend,
       row.revenue,
-      row.other_costs,
-      row.net_profit,
+      row.gross_profit,
+      ...(isAllScope ? [row.other_costs, row.net_profit] : []),
       row.margin ?? '',
       row.roas ?? '',
       row.data_incomplete ? 'yes' : 'no',
@@ -375,14 +380,14 @@ export default function Pnl() {
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `pnl-${activeAccountId}-${month}.csv`;
+    a.download = `pnl-${requestAccountId}-${month}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
-  const isGross = summary && !summary.has_costs;
   const isIncomplete = summary?.data_incomplete;
-  const netTone = isGross || isIncomplete ? 'neutral' : summary?.net_profit > 0 ? 'good' : summary?.net_profit < 0 ? 'bad' : 'neutral';
+  const grossTone = isIncomplete ? 'neutral' : summary?.gross_profit > 0 ? 'good' : summary?.gross_profit < 0 ? 'bad' : 'neutral';
+  const netTone = isIncomplete ? 'neutral' : summary?.net_profit > 0 ? 'good' : summary?.net_profit < 0 ? 'bad' : 'neutral';
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
@@ -396,14 +401,35 @@ export default function Pnl() {
               stacked lines against the period controls read as clutter. Source
               names are derived so they stay right when the provider changes. */}
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-gray-500">
-            <AccountLabel account={activeAccount} />
-            {activeAccount && <span className="text-gray-300">|</span>}
+            {isAllScope ? (
+              <span>All accounts</span>
+            ) : (
+              <AccountLabel account={activeAccount} />
+            )}
+            {(isAllScope || activeAccount) && <span className="text-gray-300">|</span>}
             <span>
-              Spend from Meta · Revenue from {revenueSourceName(summary?.revenue_source)} · Net of your costs
+              {isAllScope
+                ? `Spend from Meta · Revenue from ${revenueSourceName(summary?.revenue_source)} · Net of business costs`
+                : `Spend from Meta · Revenue from ${revenueSourceName(summary?.revenue_source)} · Gross account performance`}
             </span>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-lg border border-gray-200 bg-white p-1 text-sm">
+            <button
+              onClick={() => setScope('all')}
+              className={`rounded-md px-3 py-1.5 font-medium ${isAllScope ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+            >
+              All accounts
+            </button>
+            <button
+              onClick={() => setScope('account')}
+              disabled={!activeAccountId}
+              className={`rounded-md px-3 py-1.5 font-medium ${!isAllScope ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-50'} disabled:opacity-40`}
+            >
+              Active account
+            </button>
+          </div>
           {period !== 'custom' ? (
             <input type="month" value={month} onChange={e => setMonth(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" />
           ) : (
@@ -436,9 +462,9 @@ export default function Pnl() {
         </div>
       )}
 
-      {isGross && !isIncomplete && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
-          Gross view only: no cost ledger entries are applied yet, so profit excludes retainers, commissions, tooling, and creative costs.
+      {!isAllScope && !isIncomplete && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
+          Monthly costs and net profit are on the All accounts view — they&apos;re business-wide, not per account.
         </div>
       )}
 
@@ -448,9 +474,15 @@ export default function Pnl() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <KpiTile label="Ad Spend" value={loading ? '--' : money(summary?.spend)} caption="Meta" badge={summary?.spend == null && !loading ? 'Unavailable' : null} />
         <KpiTile label="Billable Revenue" value={loading ? '--' : money(summary?.revenue)} caption={revenueSourceLabel(summary?.revenue_source)} badge={isRevenueFallback(summary?.revenue_source) ? 'Fallback' : null} />
-        <KpiTile label="Other Costs" value={loading ? '--' : money(summary?.other_costs)} caption={summary?.has_costs ? `${summary.costs.length} entries` : 'Gross until costs logged'} badge={isGross ? 'Gross' : null} />
-        <KpiTile label="Net Profit" value={loading ? '--' : money(summary?.net_profit)} caption={summary?.has_costs ? 'Net' : 'Gross'} tone={netTone} badge={isIncomplete ? 'Incomplete' : isGross ? 'Gross' : null} />
-        <KpiTile label="Margin" value={loading ? '--' : pct(summary?.margin)} caption="net ÷ revenue" tone={netTone} badge={isIncomplete ? 'Incomplete' : null} />
+        <KpiTile label="Gross Profit" value={loading ? '--' : money(summary?.gross_profit)} caption="revenue - spend" tone={grossTone} badge={isIncomplete ? 'Incomplete' : null} />
+        {isAllScope ? (
+          <>
+            <KpiTile label="Monthly Costs" value={loading ? '--' : money(summary?.other_costs)} caption={summary?.has_costs ? `${summary.costs.length} entries` : 'No costs logged'} />
+            <KpiTile label="Net Profit" value={loading ? '--' : money(summary?.net_profit)} caption="gross - costs" tone={netTone} badge={isIncomplete ? 'Incomplete' : null} />
+          </>
+        ) : (
+          <KpiTile label="Gross Margin" value={loading ? '--' : pct(summary?.margin)} caption="gross ÷ revenue" tone={grossTone} badge={isIncomplete ? 'Incomplete' : null} />
+        )}
       </div>
 
       {summary?.unattributed_revenue > 0 && (
@@ -465,6 +497,7 @@ export default function Pnl() {
         </div>
       )}
 
+      {isAllScope ? (
       <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
           <div>
@@ -497,7 +530,7 @@ export default function Pnl() {
                     <div className="font-medium text-gray-900">{entry.label}</div>
                     {entry.ad_account_id == null && (
                       <div className="mt-1 inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-600">
-                        {entry.allocation_basis === 'full' ? 'All accounts · full' : `All accounts · split ${(Number(entry.allocation_share || 0) * 100).toFixed(0)}%`}
+                        All accounts · full
                       </div>
                     )}
                   </td>
@@ -523,6 +556,11 @@ export default function Pnl() {
           </table>
         </div>
       </div>
+      ) : (
+        <div className="rounded-xl border border-gray-200 bg-white px-5 py-8 text-center text-sm text-gray-500 shadow-sm">
+          Monthly costs and net profit are on the All accounts view — they&apos;re business-wide, not per account.
+        </div>
+      )}
 
       {/* Collapsed by default and hidden entirely when there's nothing to show, so
           the main view is untouched unless Joel goes looking. Approved by Joel
@@ -579,7 +617,9 @@ export default function Pnl() {
           <div>
             <h2 className="font-semibold text-gray-900">Month Over Month</h2>
             <p className="text-xs text-gray-400">
-              Closed months store their spend and revenue once. Costs stay live, so adding or backdating a cost entry still moves past months&apos; Net.
+              {isAllScope
+                ? 'Closed months store spend and revenue once. Costs stay live, so adding or backdating a cost entry still moves past months\' Net.'
+                : 'Closed months store spend and revenue once. Account rows show gross performance only.'}
             </p>
           </div>
           <button onClick={exportCsv} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50">
@@ -591,20 +631,24 @@ export default function Pnl() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
               <tr>
-                {['Month', 'Spend', 'Billable Revenue', 'Costs', 'Net', 'Margin', 'ROAS'].map((col, idx) => (
+                {(isAllScope
+                  ? ['Month', 'Spend', 'Billable Revenue', 'Gross', 'Costs', 'Net', 'Net Margin', 'ROAS']
+                  : ['Month', 'Spend', 'Billable Revenue', 'Gross', 'Gross Margin', 'ROAS']
+                ).map((col, idx) => (
                   <th key={col} className={`px-5 py-3 ${idx === 0 ? 'text-left' : 'text-right'}`}>{col}</th>
                 ))}
+                <th className="px-5 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {monthsLoading ? (
-                <tr><td colSpan={8} className="px-5 py-8 text-center text-sm text-gray-400">Loading month history — this walks six months of Meta and revenue data and can take a while.</td></tr>
+                <tr><td colSpan={isAllScope ? 9 : 7} className="px-5 py-8 text-center text-sm text-gray-400">Loading month history — this walks six months of Meta and revenue data and can take a while.</td></tr>
               ) : monthsError ? (
-                <tr><td colSpan={8} className="px-5 py-8 text-center text-sm text-amber-700">{monthsError}</td></tr>
+                <tr><td colSpan={isAllScope ? 9 : 7} className="px-5 py-8 text-center text-sm text-amber-700">{monthsError}</td></tr>
               ) : !months.length ? (
-                <tr><td colSpan={8} className="px-5 py-8 text-center text-sm text-gray-400">No month history available.</td></tr>
+                <tr><td colSpan={isAllScope ? 9 : 7} className="px-5 py-8 text-center text-sm text-gray-400">No month history available.</td></tr>
               ) : months.map(row => {
-                const positive = row.net_profit > 0;
+                const positive = isAllScope ? row.net_profit > 0 : row.gross_profit > 0;
                 return (
                   <tr key={`${row.date_from}-${row.date_to}`} className="hover:bg-gray-50">
                     <td className="px-5 py-3 font-medium text-gray-900">
@@ -619,8 +663,13 @@ export default function Pnl() {
                     </td>
                     <td className="px-5 py-3 text-right">{money(row.spend)}</td>
                     <td className="px-5 py-3 text-right">{money(row.revenue)}</td>
-                    <td className="px-5 py-3 text-right">{money(row.other_costs)}</td>
-                    <td className={`px-5 py-3 text-right font-semibold ${positive ? 'text-green-600' : 'text-red-600'}`}>{money(row.net_profit)}</td>
+                    <td className={`px-5 py-3 text-right font-semibold ${positive ? 'text-green-600' : 'text-red-600'}`}>{money(row.gross_profit)}</td>
+                    {isAllScope && (
+                      <>
+                        <td className="px-5 py-3 text-right">{money(row.other_costs)}</td>
+                        <td className={`px-5 py-3 text-right font-semibold ${positive ? 'text-green-600' : 'text-red-600'}`}>{money(row.net_profit)}</td>
+                      </>
+                    )}
                     <td className="px-5 py-3 text-right">{pct(row.margin)}</td>
                     <td className="px-5 py-3 text-right">{row.roas != null ? `${Number(row.roas).toFixed(2)}x` : '--'}</td>
                     <td className="px-5 py-3 text-right">

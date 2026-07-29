@@ -100,10 +100,20 @@ def _active_account_ids(db: Session) -> list[str]:
 
 
 def _require_account(current_user: User, ad_account_id: str | None) -> str:
+    if ad_account_id == "all":
+        return "all"
     resolved = _resolve_scoped_default_account(current_user, ad_account_id)
     if not resolved:
         raise HTTPException(status_code=400, detail="ad_account_id is required for P&L.")
     return normalize_account_id(resolved)
+
+
+def _permitted_active_account_ids(db: Session, current_user: User) -> list[str]:
+    active = set(_active_account_ids(db))
+    allowed = current_user.allowed_account_ids()
+    if allowed is not None:
+        active &= {normalize_account_id(account_id) for account_id in allowed}
+    return sorted(active)
 
 
 def _everflow_account_ids() -> set[str]:
@@ -437,6 +447,16 @@ def _cost_query(db: Session, account_id: str, start: date, end: date):
     )
 
 
+def _aggregate_cost_query(db: Session, account_ids: list[str], start: date, end: date):
+    return (
+        db.query(PnlCostEntry)
+        .filter(or_(PnlCostEntry.ad_account_id.in_(account_ids), PnlCostEntry.ad_account_id.is_(None)))
+        .filter(PnlCostEntry.effective_from <= end)
+        .filter(or_(PnlCostEntry.effective_to.is_(None), PnlCostEntry.effective_to >= start))
+        .order_by(PnlCostEntry.created_at.desc())
+    )
+
+
 def _allocation_share(
     entry: PnlCostEntry,
     account_id: str,
@@ -526,6 +546,52 @@ def _resolve_costs(
     return resolved, total
 
 
+def _resolve_aggregate_costs(
+    db: Session,
+    account_ids: list[str],
+    start: date,
+    end: date,
+    spend: Decimal,
+    revenue: Decimal,
+) -> tuple[list[dict], Decimal]:
+    entries = _aggregate_cost_query(db, account_ids, start, end).all()
+
+    gross_profit = revenue - spend
+    resolved = []
+    non_profit_costs = Decimal("0")
+    profit_entries = []
+
+    for entry in entries:
+        amount = _money(entry.amount)
+        share = Decimal("1")
+        allocation_basis = "account" if entry.ad_account_id else "all_accounts_full"
+        if entry.cost_type == "pct_of_profit":
+            profit_entries.append((entry, allocation_basis))
+            continue
+        if entry.cost_type == "pct_of_spend":
+            resolved_amount = spend * amount / Decimal("100")
+        elif entry.cost_type == "pct_of_revenue":
+            resolved_amount = revenue * amount / Decimal("100")
+        elif entry.cost_type == "pct_of_gross_profit":
+            resolved_amount = max(gross_profit, Decimal("0")) * amount / Decimal("100")
+        elif entry.cost_type == "recurring_monthly":
+            resolved_amount = amount * Decimal(_overlap_months(entry, start, end))
+        else:
+            resolved_amount = amount
+        resolved_amount = resolved_amount.quantize(CENT, rounding=ROUND_HALF_UP)
+        non_profit_costs += resolved_amount
+        resolved.append(_serialize_cost(entry, resolved_amount, share, allocation_basis))
+
+    profit_base = revenue - spend - non_profit_costs
+    for entry, allocation_basis in profit_entries:
+        amount = _money(entry.amount)
+        resolved_amount = (max(profit_base, Decimal("0")) * amount / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
+        resolved.append(_serialize_cost(entry, resolved_amount, Decimal("1"), allocation_basis, profit_base=profit_base))
+
+    total = sum((_money(item["resolved_amount"]) for item in resolved), Decimal("0"))
+    return resolved, total
+
+
 def _serialize_cost(entry: PnlCostEntry, resolved_amount: Decimal, share: Decimal, allocation_basis: str, profit_base: Decimal | None = None) -> dict:
     return {
         "id": entry.id,
@@ -560,6 +626,7 @@ def _summary(
     revenue_cache: dict[str, tuple[Decimal, int, int, str, bool, Decimal, dict]] | None = None,
     timings: dict[str, float] | None = None,
     snapshot: PnlMonthSnapshot | None = None,
+    include_costs: bool = False,
 ) -> dict:
     data_incomplete = False
     errors = []
@@ -606,29 +673,15 @@ def _summary(
     net_profit = None
     margin = None
     roas = None
-    # Only an all-account cost that is actually SPLIT needs cross-account spend.
-    # A "full" one doesn't, which keeps the six Meta calls per account out of the
-    # request entirely — the usual case now that full is the default.
-    has_all_account_cost = (
-        _cost_query(db, account_id, start, end)
-        .filter(PnlCostEntry.ad_account_id.is_(None))
-        .filter(PnlCostEntry.allocation_method != "full")
-        .first() is not None
-    )
-    if has_all_account_cost and spend_cache_incomplete:
-        data_incomplete = True
-        errors.append("all_account_spend_allocation_incomplete")
+    gross_profit = revenue - spend if spend is not None and revenue is not None else None
 
     if spend is not None and revenue is not None:
-        all_spend = spend_cache
-        if all_spend is None and has_all_account_cost:
-            all_spend, allocation_incomplete = _spend_map(db, start, end, {account_id: spend})
-            if allocation_incomplete:
-                data_incomplete = True
-                errors.append("all_account_spend_allocation_incomplete")
-        costs, total_costs = _resolve_costs(db, account_id, start, end, spend, revenue, all_spend)
-        net_profit = revenue - spend - total_costs
-        margin = net_profit / revenue if revenue > 0 else None
+        if include_costs:
+            costs, total_costs = _resolve_costs(db, account_id, start, end, spend, revenue, spend_cache)
+            net_profit = revenue - spend - total_costs
+            margin = net_profit / revenue if revenue > 0 else None
+        else:
+            margin = gross_profit / revenue if revenue > 0 else None
         roas = revenue / spend if spend > 0 and revenue > 0 else None
     if timings is not None:
         timings["cost_resolution_ms"] = (time.perf_counter() - cost_start) * 1000
@@ -640,10 +693,13 @@ def _summary(
         "period_label": label,
         "spend": _float(spend) if spend is not None else None,
         "revenue": _float(revenue) if revenue is not None else None,
+        "gross_profit": _float(gross_profit) if gross_profit is not None else None,
         "conversions": conversions,
         "other_costs": _float(total_costs) if total_costs is not None else None,
         "net_profit": _float(net_profit) if net_profit is not None else None,
         "margin": float(margin) if margin is not None else None,
+        "margin_type": "net" if include_costs else "gross",
+        "scope": "account",
         "roas": float(roas) if roas is not None else None,
         "revenue_source": revenue_source,
         "unattributed_revenue": _float(unattributed_revenue),
@@ -661,6 +717,97 @@ def _summary(
         "has_costs": len(costs) > 0,
         "costs": costs,
     }
+
+
+def _combine_event_breakdowns(rows: list[dict]) -> list[dict]:
+    combined: dict[str, dict] = {}
+    for row in rows:
+        for event in row.get("event_breakdown") or []:
+            name = str(event.get("event") or "unknown").strip() or "unknown"
+            slot = combined.setdefault(name, {"event": name, "events": 0, "revenue": Decimal("0")})
+            slot["events"] += int(event.get("events") or 0)
+            slot["revenue"] += _money(event.get("revenue"))
+    return [
+        {"event": name, "events": slot["events"], "revenue": _float(slot["revenue"])}
+        for name, slot in sorted(combined.items(), key=lambda item: item[1]["revenue"], reverse=True)
+    ]
+
+
+def _aggregate_revenue_source(rows: list[dict]) -> str:
+    sources = {row.get("revenue_source") or "none" for row in rows}
+    if len(sources) == 1:
+        return next(iter(sources))
+    providers = {_snapshot_provider(source) or source for source in sources}
+    if len(providers) == 1:
+        return f"{next(iter(providers))}_mixed"
+    return "mixed"
+
+
+def _all_summary_from_account_rows(
+    db: Session,
+    account_ids: list[str],
+    start: date,
+    end: date,
+    label: str,
+    account_rows: list[dict],
+) -> dict:
+    spend = sum((_money(row.get("spend")) for row in account_rows if row.get("spend") is not None), Decimal("0"))
+    revenue = sum((_money(row.get("revenue")) for row in account_rows if row.get("revenue") is not None), Decimal("0"))
+    gross_profit = revenue - spend
+    costs, total_costs = _resolve_aggregate_costs(db, account_ids, start, end, spend, revenue)
+    net_profit = gross_profit - total_costs
+    data_incomplete = any(row.get("data_incomplete") or row.get("spend") is None or row.get("revenue") is None for row in account_rows)
+    errors = []
+    for row in account_rows:
+        account = row.get("ad_account_id")
+        if row.get("spend") is None:
+            errors.append(f"{account}:meta_spend_unavailable")
+        if row.get("revenue") is None:
+            errors.append(f"{account}:revenue_unavailable")
+        for err in row.get("errors") or []:
+            errors.append(f"{account}:{err}")
+
+    return {
+        "ad_account_id": "all",
+        "account_ids": account_ids,
+        "scope": "all",
+        "date_from": start.isoformat(),
+        "date_to": end.isoformat(),
+        "period_label": label,
+        "spend": _float(spend),
+        "revenue": _float(revenue),
+        "gross_profit": _float(gross_profit),
+        "conversions": sum((int(row.get("conversions") or 0) for row in account_rows), 0),
+        "other_costs": _float(total_costs),
+        "net_profit": _float(net_profit),
+        "margin": float(net_profit / revenue) if revenue > 0 else None,
+        "margin_type": "net",
+        "roas": float(revenue / spend) if spend > 0 and revenue > 0 else None,
+        "revenue_source": _aggregate_revenue_source(account_rows),
+        "unattributed_revenue": _float(sum((_money(row.get("unattributed_revenue")) for row in account_rows), Decimal("0"))),
+        "from_snapshot": bool(account_rows) and all(row.get("from_snapshot") for row in account_rows),
+        "synced_at": None,
+        "event_breakdown": _combine_event_breakdowns(account_rows),
+        "unmapped_adsets": sum((int(row.get("unmapped_adsets") or 0) for row in account_rows), 0),
+        "data_incomplete": data_incomplete,
+        "errors": errors,
+        "has_costs": len(costs) > 0,
+        "costs": costs,
+    }
+
+
+def _summary_all(
+    db: Session,
+    current_user: User,
+    start: date,
+    end: date,
+    label: str,
+) -> dict:
+    account_ids = _permitted_active_account_ids(db, current_user)
+    if not account_ids:
+        raise HTTPException(status_code=400, detail="No active ad accounts are available for P&L.")
+    account_rows = [_summary(db, account_id, start, end, label, include_costs=False) for account_id in account_ids]
+    return _all_summary_from_account_rows(db, account_ids, start, end, label, account_rows)
 
 
 class CostEntryBody(BaseModel):
@@ -731,6 +878,8 @@ def get_summary(
 ):
     account_id = _require_account(current_user, ad_account_id)
     start, end, label = _resolve_period(period, month, date_from, date_to)
+    if account_id == "all":
+        return _summary_all(db, current_user, start, end, label)
     return _summary(db, account_id, start, end, label)
 
 
@@ -799,6 +948,44 @@ def _write_month_snapshot(db: Session, account_id: str, start: date, end: date, 
         logger.exception("pnl.months snapshot write failed account=%s month=%s", account_id, start.isoformat())
 
 
+def _snapshot_for_account_month(db: Session, account_id: str, start: date) -> PnlMonthSnapshot | None:
+    stored = (
+        db.query(PnlMonthSnapshot)
+        .filter(PnlMonthSnapshot.ad_account_id == account_id, PnlMonthSnapshot.month == start)
+        .first()
+    )
+    if stored and _snapshot_provider(stored.revenue_source) == _revenue_provider_for_account(account_id):
+        return stored
+    return None
+
+
+def _get_months_all(
+    db: Session,
+    current_user: User,
+    periods: list[tuple[date, date, str]],
+) -> list[dict]:
+    account_ids = _permitted_active_account_ids(db, current_user)
+    if not account_ids:
+        raise HTTPException(status_code=400, detail="No active ad accounts are available for P&L.")
+    current_month = periods[0][0] if periods else today_in_rt_tz().replace(day=1)
+    rows = []
+    for start, end, label in periods:
+        snapshots = {
+            account_id: _snapshot_for_account_month(db, account_id, start)
+            for account_id in account_ids
+        } if start != current_month else {}
+        use_snapshots = bool(snapshots) and all(snapshot is not None for snapshot in snapshots.values())
+        account_rows = []
+        for account_id in account_ids:
+            snapshot = snapshots.get(account_id) if use_snapshots else None
+            row = _summary(db, account_id, start, end, label, snapshot=snapshot, include_costs=False)
+            if snapshot is None and start != current_month and _snapshot_eligible(row):
+                _write_month_snapshot(db, account_id, start, end, row, current_user)
+            account_rows.append(row)
+        rows.append(_all_summary_from_account_rows(db, account_ids, start, end, label, account_rows))
+    return rows
+
+
 @router.get("/months")
 def get_months(
     ad_account_id: Optional[str] = Query(None),
@@ -819,6 +1006,16 @@ def get_months(
         period = "mtd" if i == 0 else "month"
         s, e, label = _resolve_period(period, month_start.strftime("%Y-%m"))
         periods.append((s, e, label))
+
+    if account_id == "all":
+        rows = _get_months_all(db, current_user, periods)
+        logger.info(
+            "pnl.months total account=all months=%d duration_ms=%.1f rows=%d",
+            len(periods),
+            (time.perf_counter() - request_start) * 1000,
+            len(rows),
+        )
+        return rows
 
     # Closed months never change, so they are fetched once and frozen in
     # pnl_month_snapshots. Only the current month (periods[0], the MTD row) is
@@ -959,6 +1156,27 @@ def resync_month(
         )
 
     label = start.strftime("%B %Y")
+    if account_id == "all":
+        account_ids = _permitted_active_account_ids(db, current_user)
+        if not account_ids:
+            raise HTTPException(status_code=400, detail="No active ad accounts are available for P&L.")
+        account_rows = []
+        for scoped_account_id in account_ids:
+            row = _summary(db, scoped_account_id, start, end, label, include_costs=False)
+            if row.get("data_incomplete"):
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"{scoped_account_id} re-fetch came back incomplete ("
+                        + (", ".join(row.get("errors") or []) or "unknown")
+                        + "), so the stored figures were left alone. Try again shortly."
+                    ),
+                )
+            _write_month_snapshot(db, scoped_account_id, start, end, row, current_user)
+            row["from_snapshot"] = True
+            account_rows.append(row)
+        return _all_summary_from_account_rows(db, account_ids, start, end, label, account_rows)
+
     row = _summary(db, account_id, start, end, label)
     if row.get("data_incomplete"):
         raise HTTPException(
@@ -982,6 +1200,9 @@ def list_costs(
 ):
     account_id = _require_account(current_user, ad_account_id)
     start, end = _month_bounds(month)
+    if account_id == "all":
+        summary = _summary_all(db, current_user, start, end, start.strftime("%B %Y"))
+        return summary.get("costs") or []
     # _spend_for_account raises on Meta failure by design (so /summary can report
     # data_incomplete instead of a fake $0). The ledger is still worth rendering
     # without it — only the pct_of_spend rows degrade.
