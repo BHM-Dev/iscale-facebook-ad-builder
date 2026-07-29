@@ -50,7 +50,7 @@ export default function Layout() {
 
     const menuItems = [
         { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
-        ...(hasPermission('pnl:read') ? [{ icon: DollarSign, label: 'P&L', path: '/pnl' }] : []),
+        ...(hasPermission('pnl:read') ? [{ icon: DollarSign, label: 'Profit/Loss', path: '/pnl' }] : []),
         {
             icon: Search,
             label: 'Research',

@@ -268,7 +268,7 @@ export default function Pnl() {
         setMonths([]);
         setLoading(false);
         setMonthsLoading(false);
-        setLoadError('Choose a start and end date to load a custom P&L range');
+        setLoadError('Choose a start and end date to load a custom Profit/Loss range');
         return;
       }
       params.set('date_from', customFrom);
@@ -281,15 +281,15 @@ export default function Pnl() {
     setSummary(null);
     authFetch(`${API_URL}/pnl/summary?${params}`)
       .then(res => {
-        if (!res.ok) throw new Error('P&L summary unavailable');
+        if (!res.ok) throw new Error('Profit/Loss summary unavailable');
         return res.json();
       })
       .then(data => { if (current()) setSummary(data); })
       .catch(err => {
         if (!current()) return;
         setSummary(null);
-        setLoadError(err.message || 'Failed to load P&L');
-        showError(err.message || 'Failed to load P&L');
+        setLoadError(err.message || 'Failed to load Profit/Loss');
+        showError(err.message || 'Failed to load Profit/Loss');
       })
       .finally(() => { if (current()) setLoading(false); });
 
@@ -298,7 +298,7 @@ export default function Pnl() {
     setMonthsError('');
     authFetch(`${API_URL}/pnl/months?ad_account_id=${encodeURIComponent(activeAccountId)}&limit=6`)
       .then(res => {
-        if (!res.ok) throw new Error('P&L month history unavailable');
+        if (!res.ok) throw new Error('Profit/Loss month history unavailable');
         return res.json();
       })
       .then(data => { if (current()) setMonths(data); })
@@ -357,7 +357,7 @@ export default function Pnl() {
         <div className="min-w-0">
           <h1 className="flex items-center gap-2 text-2xl font-bold text-gray-900">
             <DollarSign size={26} className="text-green-600" />
-            Profit & Loss
+            Profit/Loss
           </h1>
           {/* One meta line instead of a stacked subhead + account label — three
               stacked lines against the period controls read as clutter. Source
@@ -393,7 +393,7 @@ export default function Pnl() {
 
       {loadError && !loading && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {loadError}. The previous P&L figures were cleared so stale account data is not shown.
+          {loadError}. The previous Profit/Loss figures were cleared so stale account data is not shown.
         </div>
       )}
 
@@ -546,8 +546,8 @@ export default function Pnl() {
             <h2 className="text-lg font-semibold text-gray-900">Delete cost?</h2>
             <p className="mt-2 text-sm text-gray-500">
               {deleteEntry.ad_account_id == null
-                ? `This removes "${deleteEntry.label}" from every account's P&L ledger. The underlying Meta and revenue data will not be affected.`
-                : `This removes "${deleteEntry.label}" from this account's P&L ledger. The underlying Meta and revenue data will not be affected.`
+                ? `This removes "${deleteEntry.label}" from every account's Profit/Loss ledger. The underlying Meta and revenue data will not be affected.`
+                : `This removes "${deleteEntry.label}" from this account's Profit/Loss ledger. The underlying Meta and revenue data will not be affected.`
               }
             </p>
             <div className="mt-5 flex justify-end gap-2">

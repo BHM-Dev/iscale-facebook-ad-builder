@@ -550,7 +550,7 @@ export default function Dashboard() {
           period: 'mtd',
         });
         const res = await authFetch(`${API_URL}/pnl/summary?${params}`);
-        if (!res.ok) throw new Error('P&L unavailable');
+        if (!res.ok) throw new Error('Profit/Loss unavailable');
         const data = await res.json();
         if (!cancelled) setPnlSummary(data);
       } catch {
@@ -895,14 +895,14 @@ export default function Dashboard() {
             <div>
               <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
                 <DollarSign size={15} className="text-green-600" />
-                Running P&L
+                Running Profit/Loss
               </div>
               <div className="mt-0.5 text-xs text-gray-400">
                 {pnlSummary ? `MTD · ${pnlSummary.date_from} – ${pnlSummary.date_to}` : 'Loading month-to-date profit view'}
               </div>
             </div>
             <div className="flex items-center gap-1 text-xs font-medium text-green-700">
-              View full P&L <ArrowRight size={12} />
+              View full Profit/Loss <ArrowRight size={12} />
             </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
