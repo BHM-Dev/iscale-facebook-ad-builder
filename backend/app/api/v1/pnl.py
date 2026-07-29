@@ -263,7 +263,7 @@ def _everflow_revenue_from_report(
     db: Session,
     account_id: str,
     report: dict,
-) -> tuple[Decimal, int, int, str, bool, Decimal]:
+) -> tuple[Decimal, int, int, str, bool, Decimal, dict]:
     adset_ids = {
         row[0]
         for row in db.query(FacebookAdSet.fb_adset_id)
@@ -297,10 +297,11 @@ def _everflow_revenue_from_report(
 
     # Still reported so the split stays visible: how much of the above could not
     # be tied to an ad set, and how many of this account's ad sets saw nothing.
-    return revenue, events, len(adset_ids - set(by_adset)), "everflow_live", False, unattributed
+    return (revenue, events, len(adset_ids - set(by_adset)), "everflow_live", False,
+            unattributed, report.get("event_breakdown") or {})
 
 
-def _everflow_revenue(db: Session, account_id: str, start: date, end: date) -> tuple[Decimal, int, int, str, bool, Decimal]:
+def _everflow_revenue(db: Session, account_id: str, start: date, end: date) -> tuple[Decimal, int, int, str, bool, Decimal, dict]:
     offer_names = _everflow_offer_names_for_account(account_id)
     if not offer_names:
         raise RuntimeError(f"{EVERFLOW_ACCOUNT_OFFERS_ENV} missing offer mapping for {account_id}")
@@ -308,16 +309,17 @@ def _everflow_revenue(db: Session, account_id: str, start: date, end: date) -> t
     return _everflow_revenue_from_report(db, account_id, report)
 
 
-def _revenue_for_account(db: Session, account_id: str, start: date, end: date) -> tuple[Decimal, int, int, str, bool, Decimal]:
+def _revenue_for_account(db: Session, account_id: str, start: date, end: date) -> tuple[Decimal, int, int, str, bool, Decimal, dict]:
     if _revenue_provider_for_account(account_id) == "everflow":
         try:
             return _everflow_revenue(db, account_id, start, end)
         except Exception:
-            return Decimal("0"), 0, 0, "everflow_unavailable", True, Decimal("0")
+            return Decimal("0"), 0, 0, "everflow_unavailable", True, Decimal("0"), {}
 
     revenue, conversions, unmapped, source, incomplete = _redtrack_revenue(db, account_id, start, end)
     redtrack_source = f"redtrack_{source}" if source != "none" else "none"
-    return revenue, conversions, unmapped, redtrack_source, incomplete, Decimal("0")
+    # RedTrack has no payable-event split — it reports conversions, not event types.
+    return revenue, conversions, unmapped, redtrack_source, incomplete, Decimal("0"), {}
 
 
 def _everflow_monthly_revenue_cache(
@@ -325,7 +327,7 @@ def _everflow_monthly_revenue_cache(
     account_id: str,
     start: date,
     end: date,
-) -> dict[str, tuple[Decimal, int, int, str, bool, Decimal]]:
+) -> dict[str, tuple[Decimal, int, int, str, bool, Decimal, dict]]:
     offer_names = _everflow_offer_names_for_account(account_id)
     if not offer_names:
         raise RuntimeError(f"{EVERFLOW_ACCOUNT_OFFERS_ENV} missing offer mapping for {account_id}")
@@ -458,7 +460,7 @@ def _summary(
     label: str,
     spend_cache: dict[str, Decimal] | None = None,
     spend_cache_incomplete: bool = False,
-    revenue_cache: dict[str, tuple[Decimal, int, int, str, bool, Decimal]] | None = None,
+    revenue_cache: dict[str, tuple[Decimal, int, int, str, bool, Decimal, dict]] | None = None,
     timings: dict[str, float] | None = None,
 ) -> dict:
     data_incomplete = False
@@ -480,7 +482,7 @@ def _summary(
             (Decimal("0"), 0, 0, "everflow_live", False, Decimal("0")),
         )
     else:
-        revenue, conversions, unmapped, revenue_source, revenue_incomplete, unattributed_revenue = _revenue_for_account(db, account_id, start, end)
+        revenue, conversions, unmapped, revenue_source, revenue_incomplete, unattributed_revenue, event_breakdown = _revenue_for_account(db, account_id, start, end)
     if timings is not None:
         timings["revenue_ms"] = (time.perf_counter() - revenue_start) * 1000
     if revenue_incomplete:
@@ -526,6 +528,10 @@ def _summary(
         "roas": float(roas) if roas is not None else None,
         "revenue_source": revenue_source,
         "unattributed_revenue": _float(unattributed_revenue),
+        "event_breakdown": [
+            {"event": name, "events": int(v.get("events") or 0), "revenue": _float(v.get("revenue"))}
+            for name, v in (event_breakdown or {}).items()
+        ],
         "unmapped_adsets": unmapped,
         "data_incomplete": data_incomplete,
         "errors": errors,
@@ -703,7 +709,7 @@ def list_costs(
         spend = _spend_for_account(account_id, start, end)
     except Exception:
         spend = Decimal("0")
-    revenue, _, _, _, _, _ = _revenue_for_account(db, account_id, start, end)
+    revenue, _, _, _, _, _, _ = _revenue_for_account(db, account_id, start, end)
     costs, _ = _resolve_costs(db, account_id, start, end, spend, revenue)
     return costs
 

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { DollarSign, Download, Edit2, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, DollarSign, Download, Edit2, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { authFetch } from '../lib/facebookApi';
 import { useCampaign } from '../context/CampaignContext';
 import { useToast } from '../context/ToastContext';
@@ -231,6 +231,8 @@ export default function Pnl() {
   const [loading, setLoading] = useState(true);
   const [monthsLoading, setMonthsLoading] = useState(true);
   const [monthsError, setMonthsError] = useState('');
+  // Remembers whether the event breakdown was left open, per Joel's request.
+  const [showEvents, setShowEvents] = useState(() => localStorage.getItem('pnlShowEvents') === '1');
   // Bumped on every load. Each chain checks it still owns the latest request
   // before writing state, so switching account or period mid-flight can't have
   // the slower, older response land last and overwrite the newer numbers.
@@ -486,6 +488,56 @@ export default function Pnl() {
           </table>
         </div>
       </div>
+
+      {/* Collapsed by default and hidden entirely when there's nothing to show, so
+          the main view is untouched unless Joel goes looking. Approved by Joel
+          2026-07-29 on the condition it doesn't clutter. RedTrack accounts return
+          no split, so this only appears for Switchboard-backed accounts. */}
+      {summary?.event_breakdown?.length > 0 && (
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+          <button
+            onClick={() => setShowEvents(v => { localStorage.setItem('pnlShowEvents', v ? '0' : '1'); return !v; })}
+            className="flex w-full items-center justify-between px-5 py-4 text-left hover:bg-gray-50"
+          >
+            <div>
+              <h2 className="flex items-center gap-1.5 font-semibold text-gray-900">
+                {showEvents ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
+                Revenue by event type
+              </h2>
+              <p className="ml-[22px] text-xs text-gray-400">
+                How the billable revenue above splits across the payable events Switchboard reports.
+              </p>
+            </div>
+            <span className="text-xs text-gray-400">{summary.event_breakdown.length} types</span>
+          </button>
+          {showEvents && (
+            <div className="overflow-x-auto border-t border-gray-100">
+              <table className="w-full text-sm">
+                <thead className="border-b border-gray-100 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  <tr>
+                    <th className="px-5 py-3 text-left">Event</th>
+                    <th className="px-5 py-3 text-right">Count</th>
+                    <th className="px-5 py-3 text-right">Revenue</th>
+                    <th className="px-5 py-3 text-right">Share</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {summary.event_breakdown.map(row => (
+                    <tr key={row.event} className="hover:bg-gray-50">
+                      <td className="px-5 py-3 font-medium text-gray-900">{row.event}</td>
+                      <td className="px-5 py-3 text-right text-gray-600">{row.events.toLocaleString('en-US')}</td>
+                      <td className="px-5 py-3 text-right font-semibold text-gray-900">{money(row.revenue, 2)}</td>
+                      <td className="px-5 py-3 text-right text-gray-500">
+                        {summary.revenue > 0 ? `${((row.revenue / summary.revenue) * 100).toFixed(1)}%` : '--'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">

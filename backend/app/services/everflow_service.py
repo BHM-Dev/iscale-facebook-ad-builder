@@ -124,11 +124,21 @@ class EverflowService:
         unattributed_revenue = Decimal("0")
         unattributed_events = 0
 
+        # Period-level split by payable event type — Switchboard bills this offer as
+        # separate Lead Rev / Click (paywall) / Call events. Accumulated for EVERY
+        # admitted row, including ones with no usable sub3, so it totals to the same
+        # revenue figure the P&L reports rather than just the ad-set-attributable part.
+        period_events: dict[str, dict] = {}
+
         for row in rows:
             if allowed_offers and self._offer_name(row).casefold() not in allowed_offers:
                 continue
             revenue = _raw(row.get("revenue"))
             events = 1
+            name = str(row.get("event") or "unknown").strip() or "unknown"
+            slot = period_events.setdefault(name, {"events": 0, "revenue": Decimal("0")})
+            slot["events"] += events
+            slot["revenue"] += revenue
             adset_id = str(row.get("sub3") or "").strip()
             if not META_ID_RE.fullmatch(adset_id):
                 unattributed_revenue += revenue
@@ -180,6 +190,13 @@ class EverflowService:
             },
             "unattributed_revenue": unattributed_revenue.quantize(CENT, rounding=ROUND_HALF_UP),
             "unattributed_events": unattributed_events,
+            "event_breakdown": {
+                name: {
+                    "events": slot["events"],
+                    "revenue": slot["revenue"].quantize(CENT, rounding=ROUND_HALF_UP),
+                }
+                for name, slot in sorted(period_events.items(), key=lambda kv: -kv[1]["revenue"])
+            },
         }
 
     @staticmethod
