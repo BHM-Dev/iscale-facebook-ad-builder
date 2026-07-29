@@ -325,6 +325,31 @@ export default function Pnl() {
     }
   };
 
+  const [resyncing, setResyncing] = useState(null);
+
+  const resyncMonth = async (row) => {
+    // Closed months are frozen after the first clean fetch; this re-pulls one.
+    const monthKey = (row.date_from || '').slice(0, 7);
+    if (!monthKey) return;
+    setResyncing(monthKey);
+    try {
+      const res = await authFetch(
+        `${API_URL}/pnl/months/${monthKey}/resync?ad_account_id=${encodeURIComponent(activeAccountId)}`,
+        { method: 'POST' },
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || 'Re-sync failed');
+      }
+      showSuccess(`${row.period_label} re-synced`);
+      load();
+    } catch (err) {
+      showError(err.message || 'Re-sync failed');
+    } finally {
+      setResyncing(null);
+    }
+  };
+
   const exportCsv = () => {
     const rowsToExport = period === 'custom' && summary ? [summary] : months;
     const header = ['Period', 'Date From', 'Date To', 'Spend', 'Billable Revenue', 'Costs', 'Net Profit', 'Margin', 'ROAS', 'Data Incomplete'];
@@ -541,7 +566,12 @@ export default function Pnl() {
 
       <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
-          <h2 className="font-semibold text-gray-900">Month Over Month</h2>
+          <div>
+            <h2 className="font-semibold text-gray-900">Month Over Month</h2>
+            <p className="text-xs text-gray-400">
+              Closed months store their spend and revenue once. Costs stay live, so adding or backdating a cost entry still moves past months&apos; Net.
+            </p>
+          </div>
           <button onClick={exportCsv} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50">
             <Download size={14} />
             Export CSV
@@ -558,22 +588,44 @@ export default function Pnl() {
             </thead>
             <tbody className="divide-y divide-gray-50">
               {monthsLoading ? (
-                <tr><td colSpan={7} className="px-5 py-8 text-center text-sm text-gray-400">Loading month history — this walks six months of Meta and revenue data and can take a while.</td></tr>
+                <tr><td colSpan={8} className="px-5 py-8 text-center text-sm text-gray-400">Loading month history — this walks six months of Meta and revenue data and can take a while.</td></tr>
               ) : monthsError ? (
-                <tr><td colSpan={7} className="px-5 py-8 text-center text-sm text-amber-700">{monthsError}</td></tr>
+                <tr><td colSpan={8} className="px-5 py-8 text-center text-sm text-amber-700">{monthsError}</td></tr>
               ) : !months.length ? (
-                <tr><td colSpan={7} className="px-5 py-8 text-center text-sm text-gray-400">No month history available.</td></tr>
+                <tr><td colSpan={8} className="px-5 py-8 text-center text-sm text-gray-400">No month history available.</td></tr>
               ) : months.map(row => {
                 const positive = row.net_profit > 0;
                 return (
                   <tr key={`${row.date_from}-${row.date_to}`} className="hover:bg-gray-50">
-                    <td className="px-5 py-3 font-medium text-gray-900">{row.period_label}</td>
+                    <td className="px-5 py-3 font-medium text-gray-900">
+                      {row.period_label}
+                      {row.from_snapshot ? (
+                        <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">
+                          stored{row.synced_at ? ` ${new Date(row.synced_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
+                        </span>
+                      ) : (
+                        <span className="ml-2 rounded-full bg-green-50 px-2 py-0.5 text-[10px] font-medium text-green-700">live</span>
+                      )}
+                    </td>
                     <td className="px-5 py-3 text-right">{money(row.spend)}</td>
                     <td className="px-5 py-3 text-right">{money(row.revenue)}</td>
                     <td className="px-5 py-3 text-right">{money(row.other_costs)}</td>
                     <td className={`px-5 py-3 text-right font-semibold ${positive ? 'text-green-600' : 'text-red-600'}`}>{money(row.net_profit)}</td>
                     <td className="px-5 py-3 text-right">{pct(row.margin)}</td>
                     <td className="px-5 py-3 text-right">{row.roas != null ? `${Number(row.roas).toFixed(2)}x` : '--'}</td>
+                    <td className="px-5 py-3 text-right">
+                      {row.from_snapshot && (
+                        <button
+                          onClick={() => resyncMonth(row)}
+                          disabled={resyncing === (row.date_from || '').slice(0, 7)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-500 hover:bg-gray-50 hover:text-gray-700 disabled:opacity-40"
+                          title={`Re-fetch ${row.period_label} from Meta and the revenue source. Only this month.`}
+                        >
+                          <RefreshCw size={12} className={resyncing === (row.date_from || '').slice(0, 7) ? 'animate-spin' : ''} />
+                          Re-fetch
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}

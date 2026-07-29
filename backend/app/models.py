@@ -671,3 +671,41 @@ class PnlCostEntry(Base):
     # onupdate is SQLAlchemy-side: only ORM/Core writes bump this. A raw SQL
     # UPDATE leaves it stale — don't treat it as a DB-level "last touched".
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class PnlMonthSnapshot(Base):
+    """Frozen external figures for a CLOSED month, per ad account.
+
+    /pnl/months walked six months of Meta and revenue API calls on every load —
+    23s in production. A closed month's ad spend and billable revenue never
+    change, so they are fetched once and stored here.
+
+    Deliberately stores ONLY the external data. Costs are not snapshotted: they
+    come from pnl_cost_entries, which the user edits, so adding a retainer today
+    has to change every past month's net profit. Costs are recomputed from the
+    ledger on every read — a local query, effectively free.
+
+    The current month is never snapshotted, and a month whose fetch came back
+    incomplete is never snapshotted either — freezing a bad number is worse than
+    re-fetching a good one.
+    """
+    __tablename__ = "pnl_month_snapshots"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    ad_account_id = Column(String, nullable=False, index=True)  # normalized act_...
+    month = Column(Date, nullable=False)  # first day of the month, in the reporting tz
+    date_from = Column(Date, nullable=False)
+    date_to = Column(Date, nullable=False)
+    spend = Column(Numeric(precision=14, scale=2), nullable=True)
+    revenue = Column(Numeric(precision=14, scale=2), nullable=True)
+    unattributed_revenue = Column(Numeric(precision=14, scale=2), nullable=True)
+    conversions = Column(Integer, nullable=True)
+    revenue_source = Column(String, nullable=True)
+    unmapped_adsets = Column(Integer, nullable=True)
+    event_breakdown = Column(JSON, nullable=True)
+    synced_at = Column(DateTime(timezone=True), server_default=func.now())
+    synced_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint('ad_account_id', 'month', name='uq_pnl_month_snapshot'),
+    )

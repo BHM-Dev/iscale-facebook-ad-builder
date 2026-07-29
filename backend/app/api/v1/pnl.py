@@ -3,7 +3,7 @@ import json
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.facebook import _resolve_scoped_default_account
 from app.core.deps import require_permission
 from app.database import get_db
-from app.models import FacebookAdSet, PnlCostEntry, RedTrackCache, User, normalize_account_id
+from app.models import FacebookAdSet, PnlCostEntry, PnlMonthSnapshot, RedTrackCache, User, normalize_account_id
 from app.services.everflow_service import EverflowService
 from app.services.facebook_service import FacebookService
 from app.services.redtrack_service import BASE_URL as REDTRACK_BASE_URL, RedTrackService, today_in_rt_tz
@@ -551,21 +551,35 @@ def _summary(
     spend_cache_incomplete: bool = False,
     revenue_cache: dict[str, tuple[Decimal, int, int, str, bool, Decimal, dict]] | None = None,
     timings: dict[str, float] | None = None,
+    snapshot: PnlMonthSnapshot | None = None,
 ) -> dict:
     data_incomplete = False
     errors = []
     spend_start = time.perf_counter()
-    try:
-        spend = spend_cache[account_id] if spend_cache and account_id in spend_cache else _spend_for_account(account_id, start, end)
-    except Exception:
-        spend = None
-        data_incomplete = True
-        errors.append("meta_spend_unavailable")
+    if snapshot is not None:
+        # Closed month, already fetched once. Costs are still computed below from
+        # the live ledger — only the external figures are frozen.
+        spend = _money(snapshot.spend) if snapshot.spend is not None else None
+    else:
+        try:
+            spend = spend_cache[account_id] if spend_cache and account_id in spend_cache else _spend_for_account(account_id, start, end)
+        except Exception:
+            spend = None
+            data_incomplete = True
+            errors.append("meta_spend_unavailable")
     if timings is not None:
         timings["meta_spend_ms"] = (time.perf_counter() - spend_start) * 1000
 
     revenue_start = time.perf_counter()
-    if revenue_cache is not None:
+    if snapshot is not None:
+        revenue = _money(snapshot.revenue) if snapshot.revenue is not None else None
+        conversions = int(snapshot.conversions or 0)
+        unmapped = int(snapshot.unmapped_adsets or 0)
+        revenue_source = snapshot.revenue_source or "none"
+        revenue_incomplete = False
+        unattributed_revenue = _money(snapshot.unattributed_revenue)
+        event_breakdown = snapshot.event_breakdown or []
+    elif revenue_cache is not None:
         revenue, conversions, unmapped, revenue_source, revenue_incomplete, unattributed_revenue, event_breakdown = revenue_cache.get(
             start.isoformat(),
             (Decimal("0"), 0, 0, "everflow_live", False, Decimal("0"), {}),
@@ -617,7 +631,11 @@ def _summary(
         "roas": float(roas) if roas is not None else None,
         "revenue_source": revenue_source,
         "unattributed_revenue": _float(unattributed_revenue),
-        "event_breakdown": [
+        "from_snapshot": snapshot is not None,
+        "synced_at": snapshot.synced_at.isoformat() if snapshot is not None and snapshot.synced_at else None,
+        # A snapshot stores this already-serialised as a list; a live pull gives a
+        # dict keyed by event name. Normalise both to the list shape.
+        "event_breakdown": event_breakdown if isinstance(event_breakdown, list) else [
             {"event": name, "events": int(v.get("events") or 0), "revenue": _float(v.get("revenue"))}
             for name, v in (event_breakdown or {}).items()
         ],
@@ -700,6 +718,60 @@ def get_summary(
     return _summary(db, account_id, start, end, label)
 
 
+def _snapshot_eligible(row: dict) -> bool:
+    """Whether a closed month's figures are solid enough to freeze.
+
+    A frozen wrong number is worse than re-fetching a right one, so:
+
+    - `revenue_source == "none"` is never frozen. It means no revenue rows were
+      found at all, which is indistinguishable from the local ad-set table not
+      having synced yet — freezing it would lock the month at $0 revenue.
+    - a `cache_exact` hit IS frozen even though it carries data_incomplete. It is
+      an exact-period match, i.e. real data. Excluding it meant any month whose
+      live pull ever failed could never be frozen and got re-fetched on every
+      load forever, which defeats the point for RedTrack accounts.
+    - anything else incomplete (live source down, cache_fallback, missing spend)
+      is left to re-fetch.
+    """
+    source = row.get("revenue_source") or "none"
+    if source == "none" or row.get("spend") is None or row.get("revenue") is None:
+        return False
+    if source.endswith("cache_exact"):
+        return True
+    return not row.get("data_incomplete")
+
+
+def _write_month_snapshot(db: Session, account_id: str, start: date, end: date, row: dict, current_user: User) -> None:
+    """Freeze a closed month's external figures. Upserts on (account, month)."""
+    existing = (
+        db.query(PnlMonthSnapshot)
+        .filter(PnlMonthSnapshot.ad_account_id == account_id, PnlMonthSnapshot.month == start)
+        .first()
+    )
+    target = existing or PnlMonthSnapshot(ad_account_id=account_id, month=start)
+    target.date_from = start
+    target.date_to = end
+    target.spend = row.get("spend")
+    target.revenue = row.get("revenue")
+    target.unattributed_revenue = row.get("unattributed_revenue")
+    target.conversions = row.get("conversions")
+    target.revenue_source = row.get("revenue_source")
+    target.unmapped_adsets = row.get("unmapped_adsets")
+    # Stored as the list shape the API already returns, so reads need no translation.
+    target.event_breakdown = row.get("event_breakdown")
+    target.synced_by = current_user.id
+    target.synced_at = datetime.now(timezone.utc)
+    if existing is None:
+        db.add(target)
+    try:
+        db.commit()
+    except Exception:
+        # A snapshot is an optimisation, never a reason to fail the request — a
+        # concurrent writer winning the unique constraint is fine.
+        db.rollback()
+        logger.exception("pnl.months snapshot write failed account=%s month=%s", account_id, start.isoformat())
+
+
 @router.get("/months")
 def get_months(
     ad_account_id: Optional[str] = Query(None),
@@ -721,13 +793,33 @@ def get_months(
         s, e, label = _resolve_period(period, month_start.strftime("%Y-%m"))
         periods.append((s, e, label))
 
+    # Closed months never change, so they are fetched once and frozen in
+    # pnl_month_snapshots. Only the current month (periods[0], the MTD row) is
+    # fetched live on every load. Costs are always recomputed from the ledger, so
+    # adding a retainer still moves historic net profit.
+    current_month = periods[0][0] if periods else None
+    snapshots = {
+        row.month: row
+        for row in db.query(PnlMonthSnapshot)
+        .filter(
+            PnlMonthSnapshot.ad_account_id == account_id,
+            PnlMonthSnapshot.month.in_([s for s, _, _ in periods]),
+        )
+        .all()
+    } if periods else {}
+    # Only months we still have to fetch need the external calls below.
+    periods_to_fetch = [
+        (s, e, label) for s, e, label in periods
+        if s == current_month or s not in snapshots
+    ]
+
     revenue_cache = None
     revenue_provider = _revenue_provider_for_account(account_id)
-    if revenue_provider == "everflow" and periods:
+    if revenue_provider == "everflow" and periods_to_fetch:
         cache_start = time.perf_counter()
         try:
-            earliest = min(s for s, _, _ in periods)
-            latest = max(e for _, e, _ in periods)
+            earliest = min(s for s, _, _ in periods_to_fetch)
+            latest = max(e for _, e, _ in periods_to_fetch)
             revenue_cache = _everflow_monthly_revenue_cache(db, account_id, earliest, latest)
             logger.info(
                 "pnl.months everflow_cache account=%s months=%d range=%s..%s duration_ms=%.1f status=ok",
@@ -740,7 +832,7 @@ def get_months(
         except Exception:
             revenue_cache = {
                 s.isoformat(): (Decimal("0"), 0, 0, "everflow_unavailable", True, Decimal("0"), {})
-                for s, _, _ in periods
+                for s, _, _ in periods_to_fetch
             }
             logger.exception(
                 "pnl.months everflow_cache account=%s months=%d duration_ms=%.1f status=error",
@@ -748,9 +840,9 @@ def get_months(
                 len(periods),
                 (time.perf_counter() - cache_start) * 1000,
             )
-    elif revenue_provider == "redtrack" and periods:
+    elif revenue_provider == "redtrack" and periods_to_fetch:
         cache_start = time.perf_counter()
-        revenue_cache = _redtrack_monthly_revenue_cache(db, account_id, periods)
+        revenue_cache = _redtrack_monthly_revenue_cache(db, account_id, periods_to_fetch)
         logger.info(
             "pnl.months redtrack_cache account=%s months=%d duration_ms=%.1f status=ok",
             account_id,
@@ -765,7 +857,16 @@ def get_months(
         # a 6-month history on 4 accounts) even when nothing needs allocating.
         month_start = time.perf_counter()
         timings: dict[str, float] = {}
-        row = _summary(db, account_id, s, e, label, revenue_cache=revenue_cache, timings=timings)
+        snapshot = snapshots.get(s) if s != current_month else None
+        row = _summary(
+            db, account_id, s, e, label,
+            revenue_cache=revenue_cache, timings=timings, snapshot=snapshot,
+        )
+        # Freeze a closed month the first time it is fetched cleanly. Never the
+        # current month, and never an incomplete result — a frozen bad number is
+        # worse than re-fetching a good one.
+        if snapshot is None and s != current_month and _snapshot_eligible(row):
+            _write_month_snapshot(db, account_id, s, e, row, current_user)
         rows.append(row)
         logger.info(
             "pnl.months month account=%s label=%s range=%s..%s total_ms=%.1f meta_ms=%.1f revenue_ms=%.1f cost_ms=%.1f revenue_source=%s incomplete=%s errors=%s",
@@ -790,6 +891,46 @@ def get_months(
         len(rows),
     )
     return rows
+
+
+@router.post("/months/{month}/resync")
+def resync_month(
+    month: str,
+    ad_account_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("pnl:write")),
+):
+    """Re-fetch one closed month and overwrite its frozen figures.
+
+    Closed months are cached because they don't change. When they do — a
+    correction upstream, a clawback, an account that wasn't tracked properly at
+    the time — this is the escape hatch.
+    """
+    account_id = _require_account(current_user, ad_account_id)
+    start, end = _month_bounds(month)
+    current_month = today_in_rt_tz().replace(day=1)
+    if start >= current_month:
+        # `>=`, not `==`. A future month would sail past an equality check, return
+        # empty from every source without erroring, and get frozen at $0 — then
+        # served as fact once it rolled into the trailing window months later.
+        raise HTTPException(
+            status_code=400,
+            detail="Only closed months can be resynced. The current month is always live.",
+        )
+
+    label = start.strftime("%B %Y")
+    row = _summary(db, account_id, start, end, label)
+    if row.get("data_incomplete"):
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Re-fetch came back incomplete ("
+                + (", ".join(row.get("errors") or []) or "unknown")
+                + "), so the stored figures were left alone. Try again shortly."
+            ),
+        )
+    _write_month_snapshot(db, account_id, start, end, row, current_user)
+    return row
 
 
 @router.get("/costs")
