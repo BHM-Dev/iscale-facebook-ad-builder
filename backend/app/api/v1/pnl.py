@@ -1,5 +1,7 @@
 import os
 import json
+import logging
+import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
@@ -19,6 +21,7 @@ from app.services.facebook_service import FacebookService
 from app.services.redtrack_service import BASE_URL as REDTRACK_BASE_URL, RedTrackService, today_in_rt_tz
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 CATEGORIES = {"labor", "tooling", "creative", "data", "other"}
@@ -456,16 +459,21 @@ def _summary(
     spend_cache: dict[str, Decimal] | None = None,
     spend_cache_incomplete: bool = False,
     revenue_cache: dict[str, tuple[Decimal, int, int, str, bool, Decimal]] | None = None,
+    timings: dict[str, float] | None = None,
 ) -> dict:
     data_incomplete = False
     errors = []
+    spend_start = time.perf_counter()
     try:
         spend = spend_cache[account_id] if spend_cache and account_id in spend_cache else _spend_for_account(account_id, start, end)
     except Exception:
         spend = None
         data_incomplete = True
         errors.append("meta_spend_unavailable")
+    if timings is not None:
+        timings["meta_spend_ms"] = (time.perf_counter() - spend_start) * 1000
 
+    revenue_start = time.perf_counter()
     if revenue_cache is not None:
         revenue, conversions, unmapped, revenue_source, revenue_incomplete, unattributed_revenue = revenue_cache.get(
             start.isoformat(),
@@ -473,10 +481,13 @@ def _summary(
         )
     else:
         revenue, conversions, unmapped, revenue_source, revenue_incomplete, unattributed_revenue = _revenue_for_account(db, account_id, start, end)
+    if timings is not None:
+        timings["revenue_ms"] = (time.perf_counter() - revenue_start) * 1000
     if revenue_incomplete:
         data_incomplete = True
         errors.append("everflow_live_unavailable" if revenue_source == "everflow_unavailable" else "redtrack_live_unavailable")
 
+    cost_start = time.perf_counter()
     costs = []
     total_costs = None
     net_profit = None
@@ -498,6 +509,8 @@ def _summary(
         net_profit = revenue - spend - total_costs
         margin = net_profit / revenue if revenue > 0 else None
         roas = revenue / spend if spend > 0 and revenue > 0 else None
+    if timings is not None:
+        timings["cost_resolution_ms"] = (time.perf_counter() - cost_start) * 1000
 
     return {
         "ad_account_id": account_id,
@@ -599,6 +612,7 @@ def get_months(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("pnl:read")),
 ):
+    request_start = time.perf_counter()
     account_id = _require_account(current_user, ad_account_id)
     today = today_in_rt_tz()
     start = today.replace(day=1)
@@ -614,22 +628,62 @@ def get_months(
 
     revenue_cache = None
     if _revenue_provider_for_account(account_id) == "everflow" and periods:
+        cache_start = time.perf_counter()
         try:
             earliest = min(s for s, _, _ in periods)
             latest = max(e for _, e, _ in periods)
             revenue_cache = _everflow_monthly_revenue_cache(db, account_id, earliest, latest)
+            logger.info(
+                "pnl.months everflow_cache account=%s months=%d range=%s..%s duration_ms=%.1f status=ok",
+                account_id,
+                len(periods),
+                earliest.isoformat(),
+                latest.isoformat(),
+                (time.perf_counter() - cache_start) * 1000,
+            )
         except Exception:
             revenue_cache = {
                 s.isoformat(): (Decimal("0"), 0, 0, "everflow_unavailable", True, Decimal("0"))
                 for s, _, _ in periods
             }
+            logger.exception(
+                "pnl.months everflow_cache account=%s months=%d duration_ms=%.1f status=error",
+                account_id,
+                len(periods),
+                (time.perf_counter() - cache_start) * 1000,
+            )
 
     for s, e, label in periods:
         # Don't pre-build a cross-account spend map here. _summary only needs one
         # when the period actually has an all-account cost to allocate; building it
         # unconditionally costs one Meta call per account per month (24+ calls for
         # a 6-month history on 4 accounts) even when nothing needs allocating.
-        rows.append(_summary(db, account_id, s, e, label, revenue_cache=revenue_cache))
+        month_start = time.perf_counter()
+        timings: dict[str, float] = {}
+        row = _summary(db, account_id, s, e, label, revenue_cache=revenue_cache, timings=timings)
+        rows.append(row)
+        logger.info(
+            "pnl.months month account=%s label=%s range=%s..%s total_ms=%.1f meta_ms=%.1f revenue_ms=%.1f cost_ms=%.1f revenue_source=%s incomplete=%s errors=%s",
+            account_id,
+            label,
+            s.isoformat(),
+            e.isoformat(),
+            (time.perf_counter() - month_start) * 1000,
+            timings.get("meta_spend_ms", 0),
+            timings.get("revenue_ms", 0),
+            timings.get("cost_resolution_ms", 0),
+            row.get("revenue_source"),
+            row.get("data_incomplete"),
+            ",".join(row.get("errors") or []) or "none",
+        )
+    logger.info(
+        "pnl.months total account=%s months=%d duration_ms=%.1f provider=%s rows=%d",
+        account_id,
+        len(periods),
+        (time.perf_counter() - request_start) * 1000,
+        _revenue_provider_for_account(account_id),
+        len(rows),
+    )
     return rows
 
 

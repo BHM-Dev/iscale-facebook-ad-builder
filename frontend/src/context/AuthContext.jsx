@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 
 const AuthContext = createContext();
 
@@ -16,6 +16,8 @@ export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
     const [accessToken, setAccessToken] = useState(localStorage.getItem('accessToken'));
     const [refreshToken, setRefreshToken] = useState(localStorage.getItem('refreshToken'));
+    // Shared across concurrent callers so only one refresh is ever in flight.
+    const refreshInFlightRef = useRef(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
@@ -184,8 +186,31 @@ export const AuthProvider = ({ children }) => {
         localStorage.removeItem('refreshToken');
     }, [accessToken, refreshToken]);
 
+    // Same single-flight guard as lib/facebookApi.js, and it matters more here:
+    // authFetch below calls logout() when a refresh fails with 401/403. Two
+    // concurrent 401s both send the same refresh token, the backend rotates it
+    // on the first, and the second comes back 401 — which would sign the user
+    // out mid-session even though their session is perfectly valid.
     const refreshAccessToken = async () => {
-        if (!refreshToken) {
+        if (refreshInFlightRef.current) return refreshInFlightRef.current;
+        refreshInFlightRef.current = doRefreshAccessToken();
+        try {
+            return await refreshInFlightRef.current;
+        } finally {
+            refreshInFlightRef.current = null;
+        }
+    };
+
+    const doRefreshAccessToken = async () => {
+        // Read localStorage first, not the state variable. setRefreshToken is async,
+        // so after one rotation the closed-over state is stale until the next render.
+        // Two refreshes back to back (e.g. the 6-day interval firing while a request
+        // triggers one) would then POST the already-invalidated token, get a 401, and
+        // authFetch's catch would log the user out of a perfectly valid session. The
+        // single-flight guard above only covers CONCURRENT callers, not sequential
+        // ones. fetchUser already reads localStorage for the same reason.
+        const currentRefreshToken = localStorage.getItem('refreshToken') || refreshToken;
+        if (!currentRefreshToken) {
             throw new Error('No refresh token');
         }
 
@@ -196,7 +221,7 @@ export const AuthProvider = ({ children }) => {
             response = await fetch(`${API_URL}/auth/refresh`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ refresh_token: refreshToken }),
+                body: JSON.stringify({ refresh_token: currentRefreshToken }),
                 signal: controller.signal,
             });
         } catch (err) {

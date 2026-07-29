@@ -10,26 +10,51 @@ const getAuthHeaders = () => {
 };
 
 // Attempt a silent token refresh using the stored refresh token
-const tryRefreshToken = async () => {
-    const refreshToken = localStorage.getItem('refreshToken');
-    if (!refreshToken) return null;
+// Single-flight guard. The backend rotates the refresh token on every use, so
+// two concurrent 401s racing to refresh both send the SAME refresh token: the
+// first wins and invalidates it, the second gets a 401 back, returns null, and
+// authFetch then hands its caller the original 401 without retrying.
+//
+// That is why a page firing two requests at once after the token expired had one
+// panel load and the other report itself unavailable. Any page with concurrent
+// calls hits this — it was just least visible before the P&L page gave its
+// month-history fetch a failure message of its own.
+//
+// Concurrent callers now await one shared refresh and all get the same new token.
+let refreshInFlight = null;
 
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+const tryRefreshToken = async () => {
+    if (refreshInFlight) return refreshInFlight;
+
+    refreshInFlight = (async () => {
+        const refreshToken = localStorage.getItem('refreshToken');
+        if (!refreshToken) return null;
+
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+        try {
+            const res = await fetch(`${apiUrl}/auth/refresh`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ refresh_token: refreshToken }),
+            });
+            if (!res.ok) return null;
+            const data = await res.json();
+            if (data.access_token) {
+                localStorage.setItem('accessToken', data.access_token);
+                if (data.refresh_token) localStorage.setItem('refreshToken', data.refresh_token);
+                return data.access_token;
+            }
+        } catch (_) { /* network error — fall through */ }
+        return null;
+    })();
+
     try {
-        const res = await fetch(`${apiUrl}/auth/refresh`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refresh_token: refreshToken }),
-        });
-        if (!res.ok) return null;
-        const data = await res.json();
-        if (data.access_token) {
-            localStorage.setItem('accessToken', data.access_token);
-            if (data.refresh_token) localStorage.setItem('refreshToken', data.refresh_token);
-            return data.access_token;
-        }
-    } catch (_) { /* network error — fall through */ }
-    return null;
+        return await refreshInFlight;
+    } finally {
+        // Cleared so a later expiry starts a fresh refresh rather than reusing
+        // this settled promise.
+        refreshInFlight = null;
+    }
 };
 
 // Authenticated fetch wrapper — retries once after a silent token refresh on 401
