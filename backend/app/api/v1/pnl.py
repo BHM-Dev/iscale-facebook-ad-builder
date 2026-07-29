@@ -296,10 +296,22 @@ def _redtrack_monthly_revenue_cache(
     results: dict[str, tuple[Decimal, int, int, str, bool, Decimal, dict]] = {}
     live_reports: dict[str, dict] = {}
     failed_periods: set[str] = set()
-    max_workers = min(6, len(periods))
+
+    # Measured 2026-07-29: six concurrent pulls made ~20% difference to wall time
+    # (23.3s -> ~19s; Meta's six sequential calls dominate) but pushed months onto
+    # cache_fallback and none that had previously come back live — RedTrack does not
+    # like a six-way burst. Accuracy matters more than the 4s here, so: fewer
+    # workers, and one retry before giving up on a period and falling back to cache.
+    max_workers = min(3, len(periods))
+
+    def _pull(start: date, end: date) -> dict:
+        try:
+            return _live_redtrack_report(start, end)
+        except Exception:
+            return _live_redtrack_report(start, end)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(_live_redtrack_report, s, e): (s, e, label)
+            executor.submit(_pull, s, e): (s, e, label)
             for s, e, label in periods
         }
         for future in as_completed(futures):
