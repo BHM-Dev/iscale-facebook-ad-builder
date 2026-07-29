@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DollarSign, Download, Edit2, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { authFetch } from '../lib/facebookApi';
 import { useCampaign } from '../context/CampaignContext';
@@ -198,9 +198,13 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
             <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={3} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
           </label>
           <div className="sm:col-span-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-800">
-            {isPercent
-              ? `${Number(form.amount || 0)}% of ${money(previewBase, 2)} = ${money(previewAmount, 2)}`
-              : `Resolved cost preview: ${money(previewAmount, 2)}`
+            {/* Never show "5% of $0.00" while the period data is still loading —
+                a confident $0 preview is worse than admitting we don't know yet. */}
+            {isPercent && !summary
+              ? 'Waiting for this period\'s figures before previewing the resolved cost…'
+              : isPercent
+                ? `${Number(form.amount || 0)}% of ${money(previewBase, 2)} = ${money(previewAmount, 2)}`
+                : `Resolved cost preview: ${money(previewAmount, 2)}`
             }
           </div>
         </div>
@@ -225,6 +229,12 @@ export default function Pnl() {
   const [summary, setSummary] = useState(null);
   const [months, setMonths] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [monthsLoading, setMonthsLoading] = useState(true);
+  const [monthsError, setMonthsError] = useState('');
+  // Bumped on every load. Each chain checks it still owns the latest request
+  // before writing state, so switching account or period mid-flight can't have
+  // the slower, older response land last and overwrite the newer numbers.
+  const loadToken = useRef(0);
   const [loadError, setLoadError] = useState('');
   const [modalEntry, setModalEntry] = useState(null);
   const [showModal, setShowModal] = useState(false);
@@ -235,42 +245,69 @@ export default function Pnl() {
     return (raw.startsWith('act_') ? raw : `act_${raw}`) === activeAccountId;
   });
 
-  const load = useCallback(async () => {
-    if (activeAccountLoading || !activeAccountId) return;
-    setLoading(true);
-    setLoadError('');
-    setSummary(null);
-    setMonths([]);
-    try {
-      const params = new URLSearchParams({ ad_account_id: activeAccountId, period });
-      if (period === 'custom') {
-        if (!customFrom || !customTo) {
-          setSummary(null);
-          setLoading(false);
-          setLoadError('Choose a start and end date to load a custom P&L range');
-          return;
-        }
-        params.set('date_from', customFrom);
-        params.set('date_to', customTo);
-      } else {
-        params.set('month', month);
-      }
-      const [summaryRes, monthsRes] = await Promise.all([
-        authFetch(`${API_URL}/pnl/summary?${params}`),
-        authFetch(`${API_URL}/pnl/months?ad_account_id=${encodeURIComponent(activeAccountId)}&limit=6`),
-      ]);
-      if (!summaryRes.ok) throw new Error('P&L summary unavailable');
-      if (!monthsRes.ok) throw new Error('P&L month history unavailable');
-      setSummary(await summaryRes.json());
-      setMonths(await monthsRes.json());
-    } catch (err) {
-      setSummary(null);
-      setMonths([]);
-      setLoadError(err.message || 'Failed to load P&L');
-      showError(err.message || 'Failed to load P&L');
-    } finally {
+  // The two fetches are deliberately NOT awaited together. /pnl/months walks six
+  // months of Meta + revenue calls and took 12-24s in production; sharing one
+  // loading flag with the summary meant the whole page sat blank behind it. They
+  // now render independently, each with its own loading and error state.
+  const load = useCallback(() => {
+    if (activeAccountLoading || !activeAccountId) {
+      // Without this the flags stay true forever when there is no account to
+      // load — e.g. account resolution failed — and the page reads as loading.
       setLoading(false);
+      setMonthsLoading(false);
+      return;
     }
+    const token = ++loadToken.current;
+    const current = () => loadToken.current === token;
+    setLoadError('');
+
+    const params = new URLSearchParams({ ad_account_id: activeAccountId, period });
+    if (period === 'custom') {
+      if (!customFrom || !customTo) {
+        setSummary(null);
+        setMonths([]);
+        setLoading(false);
+        setMonthsLoading(false);
+        setLoadError('Choose a start and end date to load a custom P&L range');
+        return;
+      }
+      params.set('date_from', customFrom);
+      params.set('date_to', customTo);
+    } else {
+      params.set('month', month);
+    }
+
+    setLoading(true);
+    setSummary(null);
+    authFetch(`${API_URL}/pnl/summary?${params}`)
+      .then(res => {
+        if (!res.ok) throw new Error('P&L summary unavailable');
+        return res.json();
+      })
+      .then(data => { if (current()) setSummary(data); })
+      .catch(err => {
+        if (!current()) return;
+        setSummary(null);
+        setLoadError(err.message || 'Failed to load P&L');
+        showError(err.message || 'Failed to load P&L');
+      })
+      .finally(() => { if (current()) setLoading(false); });
+
+    setMonthsLoading(true);
+    setMonths([]);
+    setMonthsError('');
+    authFetch(`${API_URL}/pnl/months?ad_account_id=${encodeURIComponent(activeAccountId)}&limit=6`)
+      .then(res => {
+        if (!res.ok) throw new Error('P&L month history unavailable');
+        return res.json();
+      })
+      .then(data => { if (current()) setMonths(data); })
+      .catch(() => {
+        if (!current()) return;
+        setMonths([]);
+        setMonthsError('Month history unavailable. The figures above are unaffected.');
+      })
+      .finally(() => { if (current()) setMonthsLoading(false); });
   }, [activeAccountId, activeAccountLoading, customFrom, customTo, month, period, showError]);
 
   useEffect(() => { load(); }, [load]);
@@ -372,7 +409,10 @@ export default function Pnl() {
         </div>
       )}
 
-      <div className="grid gap-3 md:grid-cols-5">
+      {/* Stepped breakpoints: the old md:grid-cols-5 jumped straight from one
+          column to five, which squeezed the tiles unreadably once the fixed
+          sidebar took its 16rem. */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <KpiTile label="Ad Spend" value={loading ? '--' : money(summary?.spend)} caption="Meta" badge={summary?.spend == null && !loading ? 'Unavailable' : null} />
         <KpiTile label="Billable Revenue" value={loading ? '--' : money(summary?.revenue)} caption={revenueSourceLabel(summary?.revenue_source)} badge={isRevenueFallback(summary?.revenue_source) ? 'Fallback' : null} />
         <KpiTile label="Other Costs" value={loading ? '--' : money(summary?.other_costs)} caption={summary?.has_costs ? `${summary.costs.length} entries` : 'Gross until costs logged'} badge={isGross ? 'Gross' : null} />
@@ -465,8 +505,12 @@ export default function Pnl() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {loading ? (
-                <tr><td colSpan={7} className="px-5 py-8 text-center text-sm text-gray-400">Loading month history...</td></tr>
+              {monthsLoading ? (
+                <tr><td colSpan={7} className="px-5 py-8 text-center text-sm text-gray-400">Loading month history — this walks six months of Meta and revenue data and can take a while.</td></tr>
+              ) : monthsError ? (
+                <tr><td colSpan={7} className="px-5 py-8 text-center text-sm text-amber-700">{monthsError}</td></tr>
+              ) : !months.length ? (
+                <tr><td colSpan={7} className="px-5 py-8 text-center text-sm text-gray-400">No month history available.</td></tr>
               ) : months.map(row => {
                 const positive = row.net_profit > 0;
                 return (
