@@ -29,6 +29,7 @@ export default function AdRemix() {
     const [adConcepts, setAdConcepts] = useState([]);        // 3 parallel variations
     const [prefillSource, setPrefillSource] = useState(null); // winning ad data from performance page
     const [researchInspiration, setResearchInspiration] = useState(null); // competitor ad from Research section
+    const [uploadedInspiration, setUploadedInspiration] = useState(null); // ad screenshot/image uploaded directly by Joel
     const [winningAdTemplate, setWinningAdTemplate] = useState(null); // template from Browse Templates page
     const [pendingBrandId, setPendingBrandId] = useState(null); // brand_id from drawer — resolved once brands load
     const [pendingNiche, setPendingNiche] = useState('');       // niche from ad set name, passed through to Batch Generate
@@ -91,6 +92,7 @@ export default function AdRemix() {
             localStorage.removeItem('pendingRemixCreative');
             localStorage.removeItem('pendingWinningAdTemplate');
             localStorage.removeItem('pendingResearchInspiration');
+            localStorage.removeItem('pendingUploadedInspiration');
             setPrefillSource(creative);
             // Carry niche through from the ad set name (parsed upstream in RemixDrawer)
             if (creative.niche) setPendingNiche(creative.niche);
@@ -140,6 +142,7 @@ export default function AdRemix() {
             const tmpl = JSON.parse(raw);
             localStorage.removeItem('pendingWinningAdTemplate');
             localStorage.removeItem('pendingResearchInspiration');
+            localStorage.removeItem('pendingUploadedInspiration');
             setWinningAdTemplate(tmpl);
             setWizardData(prev => ({
                 ...prev,
@@ -164,6 +167,7 @@ export default function AdRemix() {
         try {
             const inspiration = JSON.parse(raw);
             localStorage.removeItem('pendingResearchInspiration');
+            localStorage.removeItem('pendingUploadedInspiration');
             setResearchInspiration(inspiration);
             if (inspiration.vertical) setPendingNiche(inspiration.vertical);
             setWizardData(prev => ({
@@ -179,6 +183,35 @@ export default function AdRemix() {
             setCurrentStep(2); // skip "Model a live ad" — Research already provides the source context
             // Research inspiration does NOT pre-fill offer/messaging — Joel writes original copy.
             // We only pass the competitor context so the AI can write in the right angle.
+        } catch (e) {
+            // malformed localStorage — ignore
+        }
+    }, []);
+
+    // On mount: check for an ad screenshot/image uploaded directly by Joel.
+    useEffect(() => {
+        if (
+            localStorage.getItem('pendingRemixCreative')
+            || localStorage.getItem('pendingWinningAdTemplate')
+            || localStorage.getItem('pendingResearchInspiration')
+        ) return;
+        const raw = localStorage.getItem('pendingUploadedInspiration');
+        if (!raw) return;
+        try {
+            const inspiration = JSON.parse(raw);
+            localStorage.removeItem('pendingUploadedInspiration');
+            setUploadedInspiration(inspiration);
+            setWizardData(prev => ({
+                ...prev,
+                template: {
+                    id: null,
+                    name: inspiration.fileName || 'Uploaded ad',
+                    image_url: inspiration.imageUrl || null,
+                    fromMeta: false,
+                    fromUploaded: true,
+                },
+            }));
+            setCurrentStep(2);
         } catch (e) {
             // malformed localStorage — ignore
         }
@@ -272,6 +305,16 @@ export default function AdRemix() {
         }));
     };
 
+    const clearUploadedContext = () => {
+        setUploadedInspiration(null);
+        setRefPreview('');
+        localStorage.removeItem('pendingUploadedInspiration');
+        setWizardData(prev => ({
+            ...prev,
+            template: prev.template?.fromUploaded ? null : prev.template,
+        }));
+    };
+
     // Reset all state cleanly (instead of window.location.reload())
     const handleReset = () => {
         resetPushModal();
@@ -281,8 +324,11 @@ export default function AdRemix() {
         setAdConcepts([]);
         setPrefillSource(null);
         setResearchInspiration(null);
+        setUploadedInspiration(null);
+        setRefPreview('');
         setCopied(false);
         localStorage.removeItem('remixResult');
+        localStorage.removeItem('pendingUploadedInspiration');
         setWizardData({
             template: null,
             brand: null,
@@ -326,12 +372,23 @@ export default function AdRemix() {
             const data = await res.json();
             const url = data.url || data.file_url || data.path;
             const absUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
+            const inspiration = {
+                fileName: file.name,
+                imageUrl: absUrl,
+                uploadedAt: new Date().toISOString(),
+            };
+            localStorage.setItem('pendingUploadedInspiration', JSON.stringify(inspiration));
+            localStorage.removeItem('pendingResearchInspiration');
+            setUploadedInspiration(inspiration);
+            setResearchInspiration(null);
             updateData('template', {
                 id: null,
                 name: file.name,
                 image_url: absUrl,
-                fromMeta: true,
+                fromMeta: false,
+                fromUploaded: true,
             });
+            showSuccess('Uploaded ad saved as inspiration');
             setCurrentStep(2);
         } catch (e) {
             showError(`Upload failed: ${e.message}`);
@@ -388,7 +445,7 @@ export default function AdRemix() {
             if (saved) savedForm = JSON.parse(saved);
         } catch (_) {}
         const lastPageId = localStorage.getItem('lastUsedPageId') || '';
-        const isResearchTemplate = Boolean(wizardData.template?.fromResearch);
+        const isReferenceTemplate = Boolean(wizardData.template?.fromResearch || wizardData.template?.fromUploaded);
         setPushForm({
             adset_id: savedForm.adset_id || '',
             // sessionStorage has same-session preference; fall back to localStorage for cross-session persistence
@@ -397,9 +454,9 @@ export default function AdRemix() {
             // falling back to any previously entered URL from this session.
             website_url: savedForm.website_url || remixLinkUrl || '',
             lead_form_id: savedForm.lead_form_id || '',
-            // Research images are competitor references, not owned final creative.
-            // Winning/template images can prefill; Research must generate or paste an owned image.
-            image_url: isResearchTemplate ? '' : (wizardData.template?.image_url || ''),
+            // Research/uploaded images are external references, not owned final creative.
+            // Winning/template images can prefill; reference images must generate or paste an owned image.
+            image_url: isReferenceTemplate ? '' : (wizardData.template?.image_url || ''),
             status: savedForm.status || 'PAUSED',
         });
         setAdSets([]);
@@ -456,7 +513,9 @@ export default function AdRemix() {
             // Use owned winning/template images as iterate references.
             // Research images are competitor references only, so final Meta images
             // must be generated from text instead of deriving from competitor creative.
-            const referenceImageUrl = wizardData.template?.fromResearch ? null : (wizardData.template?.image_url || null);
+            const referenceImageUrl = (wizardData.template?.fromResearch || wizardData.template?.fromUploaded)
+                ? null
+                : (wizardData.template?.image_url || null);
 
             // Carry overlay settings from BatchGenerate localStorage so Ad Remix
             // images are consistently branded (niche label, offer line, CTA, logo).
@@ -587,7 +646,7 @@ export default function AdRemix() {
     const handleReconstruct = async () => {
         setLoading(true);
         try {
-            const isMetaSource = wizardData.template?.fromMeta || researchInspiration;
+            const isMetaSource = wizardData.template?.fromMeta || researchInspiration || uploadedInspiration;
             const endpoint = isMetaSource
                 ? `${API_URL}/ad-remix/reconstruct-from-url`
                 : `${API_URL}/ad-remix/reconstruct`;
@@ -752,6 +811,27 @@ export default function AdRemix() {
                 </div>
             )}
 
+            {/* Uploaded inspiration banner — shown when Joel uploads an outside ad */}
+            {uploadedInspiration && (
+                <div className="mb-4 flex items-center justify-between gap-3 bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3 text-sm">
+                    <div className="flex items-start gap-2">
+                        <Upload size={15} className="text-emerald-600 mt-0.5 flex-shrink-0" />
+                        <span className="text-emerald-800">
+                            Starting from uploaded ad: <strong>{uploadedInspiration.fileName || 'Uploaded image'}</strong>.
+                            The image will drive the reconstruction structure after you pick the brand and audience.
+                        </span>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={clearUploadedContext}
+                        className="flex-shrink-0 text-emerald-500 hover:text-emerald-700"
+                        aria-label="Dismiss uploaded inspiration context"
+                    >
+                        <X size={14} />
+                    </button>
+                </div>
+            )}
+
             {/* Step Content */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 min-h-[500px]">
                 {loading && (
@@ -772,6 +852,12 @@ export default function AdRemix() {
                             <div className="mb-6 px-4 py-3 bg-blue-50 border border-blue-100 rounded-lg text-sm text-blue-700">
                                 The <strong>{researchInspiration.advertiser}</strong> ad is saved as angle context.
                                 Now pick your image source below — the AI will write original copy in your voice with that angle in mind.
+                            </div>
+                        )}
+                        {uploadedInspiration && (
+                            <div className="mb-6 px-4 py-3 bg-emerald-50 border border-emerald-100 rounded-lg text-sm text-emerald-800">
+                                Uploaded ad <strong>{uploadedInspiration.fileName || 'image'}</strong> is saved as inspiration.
+                                Pick your brand below to rebuild the structure with original BHM copy.
                             </div>
                         )}
 
@@ -840,6 +926,13 @@ export default function AdRemix() {
                                 ) : (
                                     <div className="mt-2 text-xs text-blue-600">No image was stored for this ad, so the remix will use a generic direct-response layout.</div>
                                 )}
+                            </div>
+                        )}
+                        {uploadedInspiration && (
+                            <div className="mb-4 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm">
+                                <div className="text-xs font-semibold text-emerald-600 uppercase tracking-wide mb-1">Modeling uploaded ad</div>
+                                <div className="font-medium text-gray-800 truncate">{uploadedInspiration.fileName || 'Uploaded image'}</div>
+                                <div className="mt-2 text-xs text-emerald-700">Creative image will be used as remix reference.</div>
                             </div>
                         )}
                         <BrandSelectionStep

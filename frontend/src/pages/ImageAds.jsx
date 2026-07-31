@@ -1844,8 +1844,9 @@ Style: ${designStyle}`);
     );
 }
 
-function AnglePicker({ verticalId, anglePerformance = {}, onApply, showFallbackNotice = false, pendingReplaceLabel = null, onConfirmReplace, onCancelReplace }) {
+function AnglePicker({ verticalId, anglePerformance = {}, onApply, showFallbackNotice = false, onWriteOwn, pendingReplaceLabel = null, onConfirmReplace, onCancelReplace }) {
     const templates = useMemo(() => {
+        if (showFallbackNotice) return [];
         const base = ANGLE_TEMPLATES[verticalId] || ANGLE_TEMPLATES.commercial_insurance;
         return [...base].sort((a, b) => {
             const aPerf = anglePerformance[normalizeAngleKey(a.label)];
@@ -1855,7 +1856,7 @@ function AnglePicker({ verticalId, anglePerformance = {}, onApply, showFallbackN
             if (aProfit !== bProfit) return bProfit - aProfit;
             return (bPerf?.tracked || 0) - (aPerf?.tracked || 0);
         });
-    }, [verticalId, anglePerformance]);
+    }, [verticalId, anglePerformance, showFallbackNotice]);
     const verticalLabel = VERTICAL_FILTERS.find(vertical => vertical.id === verticalId)?.label || 'Selected vertical';
 
     return (
@@ -1866,10 +1867,14 @@ function AnglePicker({ verticalId, anglePerformance = {}, onApply, showFallbackN
                         <Sparkles size={17} className="text-amber-600" />
                         Angle Picker
                     </h4>
-                    <p className="text-sm text-gray-500 mt-1">Seeded hooks for {verticalLabel}. Pick one, then edit the copy below.</p>
+                    <p className="text-sm text-gray-500 mt-1">
+                        {showFallbackNotice
+                            ? 'No seeded hooks for this brand yet. Start with blank copy below.'
+                            : `Seeded hooks for ${verticalLabel}. Pick one, then edit the copy below.`}
+                    </p>
                     {showFallbackNotice && (
                         <p className="mt-1 text-xs text-amber-700">
-                            Showing Commercial Insurance angles — pick a vertical above or select a brand to switch.
+                            New niche — no seeded angles yet. Write original copy below instead of starting from the wrong vertical.
                         </p>
                     )}
                 </div>
@@ -1877,6 +1882,19 @@ function AnglePicker({ verticalId, anglePerformance = {}, onApply, showFallbackN
                     Quick start
                 </span>
             </div>
+            {showFallbackNotice && (
+                <button
+                    type="button"
+                    onClick={onWriteOwn}
+                    className="mb-4 flex w-full items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-left transition-colors hover:bg-amber-100"
+                >
+                    <span>
+                        <span className="block text-sm font-semibold text-amber-900">Write my own — skip suggested angles</span>
+                        <span className="block text-xs text-amber-700">Clears seeded copy so Joel can enter a niche-specific hook, body, and CTA.</span>
+                    </span>
+                    <ArrowRight size={16} className="shrink-0 text-amber-700" />
+                </button>
+            )}
             <div className="grid gap-3 md:grid-cols-3">
                 {templates.map(template => (
                     <div
@@ -2034,6 +2052,11 @@ function QuickGeneratePanel({
                 verticalId={angleVertical}
                 anglePerformance={anglePerformance}
                 showFallbackNotice={usingFallbackAngles}
+                onWriteOwn={() => {
+                    setQuickCopy({ headline: '', body: '', cta: '', angle: '' });
+                    setPendingReplaceAngle(null);
+                    setQuickCopyImport(null);
+                }}
                 pendingReplaceLabel={pendingReplaceAngle}
                 onConfirmReplace={applyAngleTemplate}
                 onCancelReplace={() => setPendingReplaceAngle(null)}
