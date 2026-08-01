@@ -599,7 +599,7 @@ Do not suggest `./venv/bin/python ...` or `source venv/bin/activate` for VPS wor
 - [x] **AdRemix.jsx h1/subhead copy mismatch** — shipped in `832ef1f`. Subhead now reads "Start from a winning ad and rebuild it with your brand voice."
 - [x] **README.md / BUILD_SUMMARY.md doc drift** — fixed user-facing "Deconstruct" / "remix engine" wording (README.md:69, BUILD_SUMMARY.md:29).
 - [ ] ImageAds "Quick Generate" mode — skip wizard, go straight to niche+copy+generate for media buyers with existing copy
-- [ ] Template-first Quick Generate — Joel's real workflow starts from a proven winning ad, not from scratch. Tool needs a "start from my winning ad" entry point on the Dashboard or Campaign Performance page.
+- [x] Template-first Quick Generate — shipped. "Quick Generate" (`Zap` icon) on Campaign Performance ad rows and Dashboard Top Performers, both resolving a real winning `ad_id` and landing in BatchGenerate fully pre-filled + auto-generating. CLAUDE.md was stale; code confirmed live 2026-07-31.
 - [ ] Slack Campaign Intelligence Bot — spec at `SLACK_INTELLIGENCE_SPEC.md`
 - [ ] Auto-pause scaling rules (increase budget when CPL drops below threshold)
 - [ ] Ad-level pausing (pause individual ads, not just ad sets)

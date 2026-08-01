@@ -331,6 +331,9 @@ class FacebookService:
         # Detect HEC special ad categories on the parent campaign
         special_categories = set(adset_data.get('specialAdCategories') or adset_data.get('special_ad_categories') or [])
         is_hec = bool(special_categories & self.HEC_CATEGORIES)
+        # Surfaced to the frontend so Joel sees what Meta's HEC rules silently dropped,
+        # instead of a targeting mismatch only showing up days later in performance.
+        hec_stripped_fields = []
 
         # Transform targeting from camelCase to snake_case
         targeting = adset_data.get('targeting', {})
@@ -342,10 +345,14 @@ class FacebookService:
                 transformed_targeting['age_min'] = targeting['ageMin']
             if 'ageMax' in targeting:
                 transformed_targeting['age_max'] = targeting['ageMax']
+        elif 'ageMin' in targeting or 'ageMax' in targeting:
+            hec_stripped_fields.append('age range (Meta forces default 18–65+ for Housing/Employment/Credit)')
 
         # Handle genders — HEC: must not filter by gender (omit or pass empty array)
         if 'genders' in targeting and not is_hec:
             transformed_targeting['genders'] = targeting['genders']
+        elif 'genders' in targeting and is_hec:
+            hec_stripped_fields.append('gender targeting')
 
         # Handle geo_locations - clean up empty arrays
         if 'geo_locations' in targeting:
@@ -355,14 +362,19 @@ class FacebookService:
             # Keys blocked under HEC: cities, geo_markets, and ALL excluded_* keys
             hec_blocked_keys = {'cities', 'geo_markets', 'excluded_countries', 'excluded_regions',
                                  'excluded_cities', 'excluded_geo_markets'}
+            stripped_geo_keys = []
 
             for key, value in geo_locs.items():
                 if is_hec and key in hec_blocked_keys:
+                    stripped_geo_keys.append(key)
                     continue  # Strip — Meta will hard-error if these are present
                 if isinstance(value, list) and len(value) > 0:
                     cleaned_geo_locs[key] = value
                 elif not isinstance(value, list):
                     cleaned_geo_locs[key] = value
+
+            if stripped_geo_keys:
+                hec_stripped_fields.append(f"geo targeting: {', '.join(sorted(stripped_geo_keys))}")
 
             if cleaned_geo_locs:
                 transformed_targeting['geo_locations'] = cleaned_geo_locs
@@ -489,7 +501,11 @@ class FacebookService:
         logger.info("create_adset params being sent to Meta: %s", params)
 
         try:
-            return account.create_ad_set(params=params)
+            created = account.create_ad_set(params=params)
+            result = dict(created)
+            if hec_stripped_fields:
+                result['_hec_stripped_fields'] = hec_stripped_fields
+            return result
         except FacebookRequestError as e:
             err = {}
             try:

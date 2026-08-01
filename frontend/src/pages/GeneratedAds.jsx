@@ -81,6 +81,8 @@ export default function GeneratedAds() {
     const [brokenBundles, setBrokenBundles] = useState(new Set());
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedBrand, setSelectedBrand] = useState('');
+    const [selectedNiche, setSelectedNiche] = useState('');
+    const [selectedAngle, setSelectedAngle] = useState('');
     const [sortMode, setSortMode] = useState('newest');
     const [viewMode, setViewMode] = useState(() => {
         try {
@@ -94,7 +96,7 @@ export default function GeneratedAds() {
     const [selectedBundleId, setSelectedBundleId] = useState(null);
     const [viewedImage, setViewedImage] = useState(null);
     const [imgError, setImgError] = useState(false);
-    const [deleteConfirmation, setDeleteConfirmation] = useState({ show: false, bundleId: null, bundleAds: [], isBatch: false });
+    const [deleteConfirmation, setDeleteConfirmation] = useState({ show: false, bundleId: null, bundleAds: [], isBatch: false, isBroken: false, brokenBundleIds: [] });
 
     // Push to Campaign modal state (single ad)
     const [pushModal, setPushModal] = useState({ show: false, ad: null });
@@ -172,6 +174,22 @@ export default function GeneratedAds() {
         return Object.values(groups);
     }, [ads]);
 
+    // Unique niche/angle values present in the current ad set, for filter dropdowns
+    const availableNiches = useMemo(() => {
+        const values = new Set();
+        ads.forEach(ad => {
+            const niche = ad.niche || ad.overlay_niche_line;
+            if (niche) values.add(niche);
+        });
+        return [...values].sort((a, b) => a.localeCompare(b));
+    }, [ads]);
+
+    const availableAngles = useMemo(() => {
+        const values = new Set();
+        ads.forEach(ad => { if (ad.angle) values.add(ad.angle); });
+        return [...values].sort((a, b) => a.localeCompare(b));
+    }, [ads]);
+
     // Filter bundles
     const filteredBundles = useMemo(() => {
         const filtered = bundles.filter(bundle => {
@@ -181,7 +199,9 @@ export default function GeneratedAds() {
                 (ad.body?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
                 (ad.cta?.toLowerCase() || '').includes(searchTerm.toLowerCase())
             );
-            return searchTerm === '' || matchesSearch;
+            const matchesNiche = selectedNiche === '' || bundle.some(ad => (ad.niche || ad.overlay_niche_line) === selectedNiche);
+            const matchesAngle = selectedAngle === '' || bundle.some(ad => ad.angle === selectedAngle);
+            return (searchTerm === '' || matchesSearch) && matchesNiche && matchesAngle;
         });
 
         return [...filtered].sort((a, b) => {
@@ -202,7 +222,7 @@ export default function GeneratedAds() {
             const dateB = new Date(adB?.created_at || 0);
             return dateB - dateA;
         });
-    }, [bundles, searchTerm, sortMode]);
+    }, [bundles, searchTerm, selectedNiche, selectedAngle, sortMode]);
 
     const topAngles = useMemo(() => {
         const groups = {};
@@ -260,10 +280,29 @@ export default function GeneratedAds() {
     };
 
     const confirmDelete = async () => {
-        const { bundleId, bundleAds, isBatch } = deleteConfirmation;
+        const { bundleId, bundleAds, isBatch, isBroken, brokenBundleIds } = deleteConfirmation;
 
         // Close modal immediately
-        setDeleteConfirmation({ show: false, bundleId: null, bundleAds: [], isBatch: false });
+        setDeleteConfirmation({ show: false, bundleId: null, bundleAds: [], isBatch: false, isBroken: false, brokenBundleIds: [] });
+
+        if (isBroken) {
+            let removedCount = 0;
+            for (const id of brokenBundleIds) {
+                const bundleForId = ads.filter(ad => (ad.ad_bundle_id || `legacy_${ad.id}`) === id);
+                try {
+                    await Promise.all(bundleForId.map(ad =>
+                        authFetch(`${API_URL}/generated-ads/${ad.id}`, { method: 'DELETE' })
+                    ));
+                    setAds(prev => prev.filter(ad => !bundleForId.find(d => d.id === ad.id)));
+                    removedCount += 1;
+                } catch (e) {
+                    console.error('Failed to delete broken bundle', id, e);
+                }
+            }
+            setBrokenBundles(new Set());
+            showSuccess(`Removed ${removedCount} broken ad${removedCount !== 1 ? 's' : ''}`);
+            return;
+        }
 
         try {
             const deletePromises = bundleAds.map(ad =>
@@ -289,7 +328,7 @@ export default function GeneratedAds() {
     };
 
     const cancelDelete = () => {
-        setDeleteConfirmation({ show: false, bundleId: null, bundleAds: [], isBatch: false });
+        setDeleteConfirmation({ show: false, bundleId: null, bundleAds: [], isBatch: false, isBroken: false, brokenBundleIds: [] });
     };
 
     const handleExportCSV = async () => {
@@ -338,23 +377,10 @@ export default function GeneratedAds() {
     };
 
     // Delete all bundles whose thumbnails failed to load
-    const handleClearBroken = async () => {
+    const handleClearBroken = () => {
         const toDelete = [...brokenBundles];
         if (toDelete.length === 0) return;
-        if (!window.confirm(`Remove ${toDelete.length} broken bundle${toDelete.length !== 1 ? 's' : ''}?\n\nNote: a broken thumbnail may be a temporary load failure. This permanently deletes the records.`)) return;
-        for (const bundleId of toDelete) {
-            const bundleAds = ads.filter(ad => (ad.ad_bundle_id || `legacy_${ad.id}`) === bundleId);
-            try {
-                await Promise.all(bundleAds.map(ad =>
-                    authFetch(`${API_URL}/generated-ads/${ad.id}`, { method: 'DELETE' })
-                ));
-                setAds(prev => prev.filter(ad => !bundleAds.find(d => d.id === ad.id)));
-            } catch (e) {
-                console.error('Failed to delete broken bundle', bundleId, e);
-            }
-        }
-        setBrokenBundles(new Set());
-        showSuccess(`Removed ${toDelete.length} broken ad${toDelete.length !== 1 ? 's' : ''}`);
+        setDeleteConfirmation({ show: true, bundleId: null, bundleAds: [], isBatch: false, isBroken: true, brokenBundleIds: toDelete });
     };
 
     // Store selected images in localStorage and navigate to campaign builder
@@ -473,6 +499,34 @@ export default function GeneratedAds() {
                             <option value="">All Brands</option>
                             {brands.map(brand => (
                                 <option key={brand.id} value={brand.id}>{brand.name}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Niche Filter */}
+                    <div className="relative">
+                        <select
+                            value={selectedNiche}
+                            onChange={(e) => setSelectedNiche(e.target.value)}
+                            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-600 focus:border-transparent appearance-none bg-white text-sm text-gray-700"
+                        >
+                            <option value="">All Niches</option>
+                            {availableNiches.map(niche => (
+                                <option key={niche} value={niche}>{niche}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Angle Filter */}
+                    <div className="relative">
+                        <select
+                            value={selectedAngle}
+                            onChange={(e) => setSelectedAngle(e.target.value)}
+                            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-600 focus:border-transparent appearance-none bg-white text-sm text-gray-700"
+                        >
+                            <option value="">All Angles</option>
+                            {availableAngles.map(angle => (
+                                <option key={angle} value={angle}>{formatAngle(angle)}</option>
                             ))}
                         </select>
                     </div>
@@ -1130,7 +1184,9 @@ export default function GeneratedAds() {
                                 </div>
                                 <div>
                                     <h3 className="text-xl font-bold text-gray-900">
-                                        {deleteConfirmation.isBatch
+                                        {deleteConfirmation.isBroken
+                                            ? `Remove ${deleteConfirmation.brokenBundleIds.length} Broken Bundle${deleteConfirmation.brokenBundleIds.length !== 1 ? 's' : ''}?`
+                                            : deleteConfirmation.isBatch
                                             ? `Delete ${deleteConfirmation.isBatch && selectedBundles.size} Bundle${selectedBundles.size !== 1 ? 's' : ''}?`
                                             : 'Delete Ad Bundle?'}
                                     </h3>
@@ -1139,7 +1195,9 @@ export default function GeneratedAds() {
                             </div>
 
                             <p className="text-gray-700 mb-6">
-                                {deleteConfirmation.isBatch
+                                {deleteConfirmation.isBroken
+                                    ? <>A broken thumbnail may be a temporary load failure. This permanently deletes <strong>{deleteConfirmation.brokenBundleIds.length} record{deleteConfirmation.brokenBundleIds.length !== 1 ? 's' : ''}</strong> from the library.</>
+                                    : deleteConfirmation.isBatch
                                     ? <>Are you sure you want to delete <strong>{selectedBundles.size} bundle{selectedBundles.size !== 1 ? 's' : ''}</strong> ({deleteConfirmation.bundleAds.length} ad{deleteConfirmation.bundleAds.length !== 1 ? 's' : ''} total)? All creatives will be permanently removed.</>
                                     : <>Are you sure you want to delete this bundle with <strong>{deleteConfirmation.bundleAds.length} ad{deleteConfirmation.bundleAds.length > 1 ? 's' : ''}</strong>? All ad creatives will be permanently removed.</>
                                 }

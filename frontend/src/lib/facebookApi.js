@@ -422,7 +422,7 @@ export async function createFacebookCampaign(campaignData, adAccountId) {
 /**
  * Create Facebook Ad Set
  */
-export async function createFacebookAdSet(adsetData, campaignId, adAccountId, budgetType) {
+export async function createFacebookAdSet(adsetData, campaignId, adAccountId, budgetType, opts = {}) {
     try {
         // Prepare payload for backend
         const payload = {
@@ -453,6 +453,11 @@ export async function createFacebookAdSet(adsetData, campaignId, adAccountId, bu
         }
 
         const data = await response.json();
+        // Existing callers (BulkAdCreation, BatchPushModal) expect a bare id string —
+        // only opt in to the richer shape where the caller checks for HEC stripping.
+        if (opts.returnMeta) {
+            return { id: data.id, hecStripped: data._hec_stripped_fields || null };
+        }
         return data.id;
     } catch (error) {
         console.error('Error creating ad set:', error);

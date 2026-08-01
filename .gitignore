@@ -51,6 +51,7 @@ backend/uploads/*.png
 backend/uploads/*.jpg
 backend/uploads/*.webp
 backend/scripts/bakeoff_output/
+backend/scripts/finetuning_output/
 
 # Font cache — auto-downloaded at runtime by text_overlay_service.py
 backend/fonts/
