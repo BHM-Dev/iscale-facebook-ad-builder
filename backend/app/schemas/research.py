@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -26,6 +26,15 @@ class ScrapedAdBase(BaseModel):
     start_date: Optional[str] = None  # When ad started running
     media_type: Optional[str] = None  # 'image', 'video', or 'carousel'
     media_url: Optional[str] = None  # Primary image or video thumbnail URL from Facebook Ad Library (may expire)
+    destination_domain: Optional[str] = None
+    source_query: Optional[str] = None
+    rank_position: Optional[int] = None
+    sort_mode: Optional[str] = None
+    is_multiple_versions: Optional[bool] = None
+    video_urls: Optional[List[str]] = None
+    thumbnail_url: Optional[str] = None
+    creative_intel: Optional[Dict[str, Any]] = None
+    volume_score: Optional[int] = None
 
 class ScrapedAdCreate(ScrapedAdBase):
     pass
@@ -125,3 +134,31 @@ class BrandScrapeListResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class AdLibraryImportAd(BaseModel):
+    library_id: str = Field(max_length=200)
+    brand_name: Optional[str] = Field(default=None, max_length=300)
+    headline: Optional[str] = Field(default=None, max_length=5000)
+    ad_copy: Optional[str] = Field(default=None, max_length=5000)
+    cta_text: Optional[str] = Field(default=None, max_length=500)
+    ad_link: Optional[str] = Field(default=None, max_length=2000)
+    platforms: Optional[List[str]] = Field(default=None, max_length=10)
+    start_date: Optional[str] = Field(default=None, max_length=100)
+    media_type: Optional[str] = Field(default=None, max_length=50)
+    media_url: Optional[str] = Field(default=None, max_length=2000)
+    destination_domain: Optional[str] = Field(default=None, max_length=500)
+    rank_position: Optional[int] = None
+    is_multiple_versions: Optional[bool] = None
+    video_urls: Optional[List[str]] = Field(default=None, max_length=10)
+    thumbnail_url: Optional[str] = Field(default=None, max_length=2000)
+    creative_intel: Optional[Dict[str, Any]] = None
+
+
+class AdLibraryImportRequest(BaseModel):
+    query: str = Field(default="cheap auto insurance", max_length=500)
+    country: str = Field(default="US", max_length=10)
+    vertical: str = Field(default="Auto Insurance", max_length=200)
+    sort_mode: str = Field(default="total_impressions_desc", max_length=100)
+    source_url: Optional[str] = Field(default=None, max_length=2000)
+    ads: List[AdLibraryImportAd] = Field(max_length=200)

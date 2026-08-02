@@ -513,6 +513,15 @@ class ScrapedAd(Base):
     start_date = Column(String, nullable=True)  # When ad started running
     media_type = Column(String, nullable=True)  # 'image', 'video', or 'carousel'
     media_url = Column(String, nullable=True)  # Primary image/video thumbnail URL — may expire (Facebook CDN)
+    destination_domain = Column(String, nullable=True)  # Landing domain shown in rendered Ad Library card
+    source_query = Column(String, nullable=True)  # Chrome/API query that surfaced this ad
+    rank_position = Column(Integer, nullable=True)  # Rank in the rendered, sorted capture
+    sort_mode = Column(String, nullable=True)  # e.g. total_impressions_desc
+    is_multiple_versions = Column(Boolean, default=False, nullable=True)
+    video_urls = Column(JSON, nullable=True)  # Observed FB CDN video URLs; may expire
+    thumbnail_url = Column(String, nullable=True)
+    creative_intel = Column(JSON, nullable=True)  # Capture notes, volume signals, source metadata
+    volume_score = Column(Integer, nullable=True)  # Directional score, not spend/impression truth
     first_seen = Column(DateTime(timezone=True), server_default=func.now())  # First time ad was scraped
     last_seen = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())  # Last time ad was seen
     seen_count = Column(Integer, default=1)  # Number of times this ad has been encountered in scrapes

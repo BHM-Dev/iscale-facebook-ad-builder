@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Ban, FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, Zap, X } from 'lucide-react';
+import { Ban, FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, Zap, X, Upload, BookOpen, Video, BarChart3 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -20,6 +20,68 @@ const ANGLE_COLORS = {
 const ANGLE_LABELS = {
   fear: 'Fear', social_proof: 'Social Proof', urgency: 'Urgency',
   savings: 'Savings', authority: 'Authority', story: 'Story', curiosity: 'Curiosity',
+};
+
+const normalizeAdLibraryDate = (value) => {
+  if (!value) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toISOString().slice(0, 10);
+};
+
+const normalizeAdLibraryImport = (raw, activeVerticalLabel) => {
+  const sourceAds = raw.ads || raw.visible_ads || [];
+  const videos = raw.videos || [];
+  const sourceUrl = raw.source_url || raw.page_url || '';
+  const queryFromUrl = (() => {
+    try {
+      const url = new URL(sourceUrl);
+      return url.searchParams.get('q') || '';
+    } catch (_) {
+      return '';
+    }
+  })();
+
+  return {
+    query: raw.query || queryFromUrl || 'cheap auto insurance',
+    country: raw.country || 'US',
+    vertical: activeVerticalLabel || 'Auto Insurance',
+    sort_mode: raw.sort_mode || raw.sort || 'total_impressions_desc',
+    source_url: sourceUrl,
+    ads: sourceAds
+      .filter(ad => ad.library_id || ad.external_id)
+      .map((ad, index) => {
+        const adVideos = videos
+          .filter(video => video.ad_library_id && video.ad_library_id === ad.library_id)
+          .slice(0, 3)
+          .map(video => video.url)
+          .filter(Boolean);
+        const preview = ad.body_preview || ad.ad_copy || ad.body || '';
+        return {
+          library_id: ad.library_id || ad.external_id,
+          brand_name: ad.page || ad.brand_name || ad.advertiser || '',
+          headline: ad.headline || '',
+          ad_copy: ad.ad_copy || preview,
+          cta_text: ad.cta || ad.cta_text || '',
+          ad_link: ad.ad_link || `https://www.facebook.com/ads/library/?id=${ad.library_id || ad.external_id}`,
+          platforms: ad.platforms || ['facebook'],
+          start_date: normalizeAdLibraryDate(ad.started_running || ad.start_date || ''),
+          media_type: ad.media_type || (adVideos.length ? 'video' : 'image'),
+          media_url: ad.media_url || ad.thumbnail_url || '',
+          destination_domain: ad.domain || ad.destination_domain || '',
+          rank_position: ad.rank_position ?? index + 1,
+          is_multiple_versions: Boolean(ad.multiple_versions ?? ad.is_multiple_versions),
+          video_urls: ad.video_urls || adVideos,
+          thumbnail_url: ad.thumbnail_url || ad.media_url || '',
+          creative_intel: {
+            visible_copy_preview: preview,
+            imported_from_chrome: true,
+            unmapped_video_inventory_count: videos.length,
+          },
+        };
+      }),
+  };
 };
 
 function AngleBadge({ tag }) {
@@ -139,6 +201,12 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
           <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${ad.is_active ? 'bg-green-500' : 'bg-gray-300'}`} />
           {ad.is_active ? 'ACTIVE' : 'STOPPED'}
         </span>
+        {ad.media_type === 'video' && (
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-purple-600">
+            <Video size={11} />
+            VIDEO
+          </span>
+        )}
         <a
           href={`https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&q=${encodeURIComponent(ad.brand_name || '')}`}
           target="_blank"
@@ -161,8 +229,23 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
       {/* Tags + duration */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <AngleBadge tag={ad.angle_tag} />
+        {ad.volume_score != null && (
+          <span className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded px-2 py-0.5">
+            <BarChart3 size={11} />
+            Vol {ad.volume_score}
+          </span>
+        )}
+        {ad.rank_position != null && (
+          <span className="text-xs text-gray-400">Rank #{ad.rank_position}</span>
+        )}
+        {ad.is_multiple_versions && (
+          <span className="text-xs text-gray-400">Multiple versions</span>
+        )}
         {ad.running_days != null && (
           <span className="text-xs text-gray-400">Running {ad.running_days}d</span>
+        )}
+        {ad.destination_domain && (
+          <span className="text-xs text-gray-400 truncate max-w-[160px]">{ad.destination_domain}</span>
         )}
         {ad.seen_count > 1 && (
           <span className="text-xs text-gray-400">Seen {ad.seen_count}×</span>
@@ -234,7 +317,21 @@ function SavedCard({ ad, onUnsave, onUseAsInspiration }) {
           <X size={14} />
         </button>
       </div>
-      {ad.angle_tag && <AngleBadge tag={ad.angle_tag} />}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {ad.angle_tag && <AngleBadge tag={ad.angle_tag} />}
+        {ad.media_type === 'video' && (
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold bg-purple-50 text-purple-600">
+            <Video size={10} />
+            Video
+          </span>
+        )}
+        {ad.volume_score != null && (
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold bg-indigo-50 text-indigo-600">
+            <BarChart3 size={10} />
+            {ad.volume_score}
+          </span>
+        )}
+      </div>
       <button
         type="button"
         onClick={() => onUseAsInspiration(ad)}
@@ -262,6 +359,75 @@ function SkeletonCard() {
   );
 }
 
+function AdLibraryImportModal({ open, onClose, onImport, importing, defaultQuery }) {
+  const [payloadText, setPayloadText] = useState('');
+
+  useEffect(() => {
+    if (!open) setPayloadText('');
+  }, [open]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6">
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">Import Ad Library Intel</h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Paste the Chrome capture JSON from a US, active, most-impressions Ad Library search.
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3 mb-4 text-sm text-indigo-900">
+          <div className="font-semibold mb-1">Joel/Saule flow</div>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>Open Facebook Ad Library in Chrome.</li>
+            <li>Search <strong>{defaultQuery || 'cheap auto insurance'}</strong> or <strong>auto insurance</strong>.</li>
+            <li>Use United States, active ads, sorted by most impressions.</li>
+            <li>Run <strong>backend/scripts/ad_library_capture_snippet.js</strong> in Chrome DevTools, paste the downloaded JSON here, then review/save the best examples.</li>
+          </ol>
+        </div>
+
+        <textarea
+          value={payloadText}
+          onChange={e => setPayloadText(e.target.value)}
+          placeholder='{"query":"cheap auto insurance","visible_ads":[...],"videos":[...]}'
+          className="w-full h-56 border border-gray-200 rounded-lg p-3 text-xs font-mono focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
+        />
+
+        <div className="flex items-center justify-between gap-3 mt-4">
+          <p className="text-xs text-gray-400">
+            Competitor media is stored as inspiration only. Use BHM-owned/generated video for launch.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => onImport(payloadText)}
+              disabled={importing || !payloadText.trim()}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Upload size={15} />
+              {importing ? 'Importing...' : 'Import Intel'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ────────────────────────────────────────────────────
 export default function Research() {
   const { authFetch } = useAuth();
@@ -282,6 +448,8 @@ export default function Research() {
   const [browseError, setBrowseError] = useState('');
   const [refreshSummary, setRefreshSummary] = useState(null);
   const [showClearModal, setShowClearModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importingIntel, setImportingIntel] = useState(false);
   const [clearing, setClearing] = useState(false);
 
   // Filters
@@ -463,6 +631,45 @@ export default function Research() {
     }
   };
 
+  const handleImportIntel = async (payloadText) => {
+    setImportingIntel(true);
+    try {
+      const raw = JSON.parse(payloadText);
+      const payload = normalizeAdLibraryImport(raw, currentVerticalLabel);
+      if (!payload.ads.length) {
+        throw new Error('No ads found in pasted JSON');
+      }
+      const res = await authFetch(`${API_URL}/research/ad-library-import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(result.detail || 'Import failed');
+      const quality = result.quality || {};
+      const qualityBits = [
+        `${quality.with_media ?? 0} with media`,
+        `${quality.with_video ?? 0} with mapped video`,
+        `${quality.multiple_versions ?? 0} multi-version`,
+      ];
+      if (quality.unmapped_video_inventory) {
+        qualityBits.push(`${quality.unmapped_video_inventory} unmapped videos observed`);
+      }
+      if ((quality.with_media ?? 0) === 0 || (quality.with_video ?? 0) === 0) {
+        showInfo(`Import saved as text intel: ${qualityBits.join(', ')}`);
+      } else {
+        showSuccess(`${result.message || `Imported ${payload.ads.length} ads`} — ${qualityBits.join(', ')}`);
+      }
+      setShowImportModal(false);
+      loadBrowseAds();
+      loadSavedAds();
+    } catch (e) {
+      showError(e.message || 'Import failed');
+    } finally {
+      setImportingIntel(false);
+    }
+  };
+
   const handleUseAsInspiration = (ad) => {
     localStorage.setItem('pendingResearchInspiration', JSON.stringify({
       headline: ad.headline,
@@ -470,6 +677,14 @@ export default function Research() {
       advertiser: ad.brand_name,
       cta: ad.cta_text,
       mediaUrl: ad.media_url,
+      mediaType: ad.media_type,
+      videoUrls: ad.video_urls || [],
+      thumbnailUrl: ad.thumbnail_url,
+      destinationDomain: ad.destination_domain,
+      volumeScore: ad.volume_score,
+      rankPosition: ad.rank_position,
+      isMultipleVersions: ad.is_multiple_versions,
+      creativeIntel: ad.creative_intel,
       adLink: ad.ad_link,
       scrapedAdId: ad.id,
       vertical: currentVerticalLabel,
@@ -530,6 +745,16 @@ export default function Research() {
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={() => setShowImportModal(true)}
+              disabled={refreshing || clearing}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              title="Import Chrome-captured Ad Library examples"
+            >
+              <Upload size={14} />
+              Import Intel
+            </button>
+            <button
+              type="button"
               onClick={() => setShowClearModal(true)}
               disabled={clearing || refreshing}
               className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -551,6 +776,39 @@ export default function Research() {
           {refreshing && (
             <p className="text-xs text-gray-400">Pulling ads from Facebook — may take up to 60s</p>
           )}
+        </div>
+      </div>
+
+      {/* Chrome import tutorial */}
+      <div className="bg-white border border-indigo-100 rounded-xl p-4">
+        <div className="flex items-start gap-3">
+          <div className="w-9 h-9 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
+            <BookOpen size={18} className="text-indigo-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-sm font-semibold text-gray-900">Ad Library Intel workflow</h2>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-100">Prototype</span>
+            </div>
+            <p className="text-sm text-gray-600 mt-1">
+              For auto insurance, use Chrome instead of the weak API path: search <strong>cheap auto insurance</strong> or <strong>auto insurance</strong>,
+              set United States, active ads, and sort by most impressions. Import the capture, then save the best examples for the video agent.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+              <div className="flex items-center gap-2 text-xs text-gray-600">
+                <BarChart3 size={14} className="text-indigo-500" />
+                Volume score is directional, not spend truth
+              </div>
+              <div className="flex items-center gap-2 text-xs text-gray-600">
+                <Video size={14} className="text-indigo-500" />
+                Video URLs are inspiration-only and may expire
+              </div>
+              <div className="flex items-center gap-2 text-xs text-gray-600">
+                <Zap size={14} className="text-indigo-500" />
+                Build from this ad sends the angle to Ad Remix
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -788,6 +1046,14 @@ export default function Research() {
           </div>
         </div>
       )}
+
+      <AdLibraryImportModal
+        open={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        onImport={handleImportIntel}
+        importing={importingIntel}
+        defaultQuery={activeVertical === 'auto_insurance' ? 'cheap auto insurance' : currentVerticalLabel}
+      />
     </div>
   );
 }

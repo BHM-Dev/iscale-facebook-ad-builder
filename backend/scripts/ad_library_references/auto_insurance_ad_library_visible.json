@@ -1,0 +1,747 @@
+{
+  "captured_at": "2026-08-01T22:58:59.610Z",
+  "page_url": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&is_targeted_country=false&media_type=all&q=auto%20insurance%20cheap&search_type=keyword_unordered&sort_data[direction]=desc&sort_data[mode]=total_impressions",
+  "sort": "total_impressions desc from visible URL",
+  "summary": {
+    "byKind": {
+      "font": 3,
+      "image": 134,
+      "other": 18,
+      "script": 17,
+      "stylesheet": 1,
+      "video": 34
+    },
+    "inlineSvgCount": 70,
+    "totalCount": 207
+  },
+  "videos": [
+    {
+      "index": 1,
+      "id": "9debc271002705ad",
+      "name": "AQNMiJru-qje4dfiSHsJ1AjvU2WJNmLtdPJf3lrYhhf8L1aATrcENweNY1yGQqqBv2qcICx-TCEemGYbCjQfyxh3.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m86/AQNMiJru-qje4dfiSHsJ1AjvU2WJNmLtdPJf3lrYhhf8L1aATrcENweNY1yGQqqBv2qcICx-TCEemGYbCjQfyxh3.mp4?_nc_cat=103&_nc_oc=AdprBQ9GH6Av5Pc3SxOcvnBwZopBgiusX3UFRrmmPxVkbxKmssvLxxYuoD52jGNJphMLGNoVs8PmwqTRwyennnAh&_nc_sid=b66105&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=38vIuM0bO9MQ7kNvwFPBEKv&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLmRhc2hfYmFzZWxpbmVfM192MSIsInhwdl9hc3NldF9pZCI6NjQyMjI5NjcyMjgwMzM4LCJhc3NldF9hZ2VfZGF5cyI6MjAwLCJ2aV91c2VjYXNlX2lkIjoxMDA5OSwiZHVyYXRpb25fcyI6MzksInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&vs=8012ef546a8995eb&_nc_vs=HBksFQIYR2lnX3hwdl9yZWVsc19wZXJtYW5lbnRfc3JfcHJvZC8xMzgwNjUyNDQzMTExNDkzXzI1NTQwNjU4MTY0NjE2MjQxNDUubXA0FQACyAESABUCGEdpZ194cHZfcmVlbHNfcGVybWFuZW50X3NyX3Byb2QvMTM4MDY2MzM5MDUxODMyMl81NzU0MjQ4NzI3MTE0MzQ1Mzk5Lm1wNBUCAsgBEgAoABgAGwKIB3VzZV9vaWwBMRJwcm9ncmVzc2l2ZV9yZWNpcGUBMRUAACakhNj314akAhUCKAJDMywXQEOVP3ztkWgYEmRhc2hfYmFzZWxpbmVfM192MREAdQBl5p0BAA&_nc_gid=uv3yfh6kndBIEH_yhKYRRA&_nc_ss=7b289&_nc_zt=28&oh=00_AQEKAieaUa6TZL_LpXxzAyNllXCwtX21CRryA5dWS4EeHw&oe=6A704733",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 410,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "id": "77532eb8e4b19faf",
+      "name": "AQN34v8u5BWrqX3R9e1qA7PU1USmh3a3mt2-l8kZSXZn7ys5c6L-sUpV-a9FP386DuX1boTctdCAjg3V_nd2Vuu5pW1PP2icS9pti5_wMw.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQN34v8u5BWrqX3R9e1qA7PU1USmh3a3mt2-l8kZSXZn7ys5c6L-sUpV-a9FP386DuX1boTctdCAjg3V_nd2Vuu5pW1PP2icS9pti5_wMw.mp4?_nc_cat=103&_nc_oc=AdqNGYKoBV9t7kSXQax4MAhBiCuqAm9Na5p-3U1DLG1vcNZysME36F6FeSQ0EeW6-7MjfFJ1H8s6tD4MyUtm5EvK&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=1lIqFWUTHL8Q7kNvwF8nDgi&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MTAwNzIwODE4ODI5OTI5MywiYXNzZXRfYWdlX2RheXMiOjgyLCJ2aV91c2VjYXNlX2lkIjoxMDc5OSwiZHVyYXRpb25fcyI6NDQsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&_nc_gid=uv3yfh6kndBIEH_yhKYRRA&_nc_ss=7b289&_nc_zt=28&oh=00_AQF_jtQ7JtjaRFjoBM5V6v2nGYvmC2VBaU2x1wI2UxbJsA&oe=6A745E6F",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 425,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "id": "deb0e4ebf85acfe6",
+      "name": "AQOkls1aWWgTkL-C0W2egjgFFbxuE7sRbVzAeGkS9qBMfp4Wo5-miICM0Y5Kyqkerw6ouTiJfT0KkNvaalrLSkJBB2VMvptxZxOML-iXzA.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQOkls1aWWgTkL-C0W2egjgFFbxuE7sRbVzAeGkS9qBMfp4Wo5-miICM0Y5Kyqkerw6ouTiJfT0KkNvaalrLSkJBB2VMvptxZxOML-iXzA.mp4?_nc_cat=109&_nc_oc=Ado9AovWBGPh6RtzhclUdfixbhwgjPahYG0-iJXbG7nTzgx8RKTQ-hHoYqgK0jOtRNaFeHLPRAQS6UKerd0dWS4y&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=RmhrZ-YBhKIQ7kNvwH4xcJj&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6NDI2MDA2NzAyNDMwNDkzOSwiYXNzZXRfYWdlX2RheXMiOjEwMywidmlfdXNlY2FzZV9pZCI6MTAxMzksImR1cmF0aW9uX3MiOjMzLCJ1cmxnZW5fc291cmNlIjoid3d3In0%3D&ccb=17-1&_nc_gid=uv3yfh6kndBIEH_yhKYRRA&_nc_ss=7b289&_nc_zt=28&oh=00_AQH6vhG34VWXirzZNDvLv6RI3SBpECwSGMXR3Ez3xdMZug&oe=6A7465A5",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 444,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "id": "7f451c935efacea4",
+      "name": "AQMYcyjm5ZeZs_vs4qd9LqR2bw62mWb5DoA4SBkn7euxTeD0xSYU3j3D3INrUz6fkVuzkdrJ644Axuncrlgn0BYGsnLsOZMpL5ANTYh6oQ.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQMYcyjm5ZeZs_vs4qd9LqR2bw62mWb5DoA4SBkn7euxTeD0xSYU3j3D3INrUz6fkVuzkdrJ644Axuncrlgn0BYGsnLsOZMpL5ANTYh6oQ.mp4?_nc_cat=111&_nc_oc=AdqTbYqaK2OtjXCd2AeLDezSD5b8reb5JPr-7h3ovqZPdlKrS8Pyx4IE56LRH5Vs3t619iNHc1Dneups4dWqea_A&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=EUp2F1BocikQ7kNvwEpCAfO&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6OTk4NTE2MjU2NTIzODU4LCJhc3NldF9hZ2VfZGF5cyI6NTIsInZpX3VzZWNhc2VfaWQiOjEwNzk5LCJkdXJhdGlvbl9zIjozMSwidXJsZ2VuX3NvdXJjZSI6Ind3dyJ9&ccb=17-1&_nc_gid=uv3yfh6kndBIEH_yhKYRRA&_nc_ss=7b289&_nc_zt=28&oh=00_AQHq3XyzkMq63JetDeN6boIKYelkkTuQDcxQCtLQIYPqqg&oe=6A74411B",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 472,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "id": "56648230a4718538",
+      "name": "AQOrPxWI2XOiGJW5Wz9hvUmYStGsmc65rpJBghjhwJlGHj55a6IOgy7sxQlanku33q_Op0XZQvGPjCYNbKPdsWYrrC1Ak7OpX_OTsm83Pg.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQOrPxWI2XOiGJW5Wz9hvUmYStGsmc65rpJBghjhwJlGHj55a6IOgy7sxQlanku33q_Op0XZQvGPjCYNbKPdsWYrrC1Ak7OpX_OTsm83Pg.mp4?_nc_cat=104&_nc_oc=AdqKGqHuBItDtk2bbLyKc3vCRB-4aDOkWW7PpXvT_7pWOeIdE0bpPoEt_Z-XFGZ8M7q8UCh4E2QQsfG36TTFUyHh&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=6VkrNZ63PRQQ7kNvwH7A19n&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MTE3NjYyNjY4MTE0NzcyNywiYXNzZXRfYWdlX2RheXMiOjEwMywidmlfdXNlY2FzZV9pZCI6MTAxMzksImR1cmF0aW9uX3MiOjMzLCJ1cmxnZW5fc291cmNlIjoid3d3In0%3D&ccb=17-1&_nc_gid=uv3yfh6kndBIEH_yhKYRRA&_nc_ss=7b289&_nc_zt=28&oh=00_AQFAO4k8n-3FY70oxg_BLYsBkV-QEoTv4w2tkxmUJbFT-A&oe=6A7433AE",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 484,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "id": "dec337267bec14c2",
+      "name": "AQPu4g5Yqn48wSn81HYXQcERuRXjFqIXSDD2NhFCl0JMil9xjnke5NuFZuIgnRJP7ekVmHANT1Ti572WA9HPfSLUpxPI4ejiLbxEwzn6SA.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQPu4g5Yqn48wSn81HYXQcERuRXjFqIXSDD2NhFCl0JMil9xjnke5NuFZuIgnRJP7ekVmHANT1Ti572WA9HPfSLUpxPI4ejiLbxEwzn6SA.mp4?_nc_cat=102&_nc_oc=AdrXS_X-RZJnKkyBZgSqWi2G_fUkI3v879Y2QCLDSjvQMy3jiAnNnXZsc4A83Q7luUYduaj0dBYeLrjlHblTaAJv&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=TAwbKRr86mkQ7kNvwFbOLw_&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MTMwMzk1OTcyMTk0MzQ0MCwiYXNzZXRfYWdlX2RheXMiOjY3LCJ2aV91c2VjYXNlX2lkIjoxMDEzOSwiZHVyYXRpb25fcyI6MTAsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&_nc_gid=uv3yfh6kndBIEH_yhKYRRA&_nc_ss=7b289&_nc_zt=28&oh=00_AQHGmUeQmEhE-YIr2HnjL1xoNeFsU0z012yShLatFwyimA&oe=6A746060",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 515,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 7,
+      "id": "e2436fab107b9d20",
+      "name": "AQMpN1HV4zUQBYxoEoOK_8ql1h5_sCLS4nzPCdr8UZXRtDDf8_vO79iPtwotlNmbRQiXgyLjU4SD6-0tG8c_ak7_Xm5IhESiuJnFIfWymA.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQMpN1HV4zUQBYxoEoOK_8ql1h5_sCLS4nzPCdr8UZXRtDDf8_vO79iPtwotlNmbRQiXgyLjU4SD6-0tG8c_ak7_Xm5IhESiuJnFIfWymA.mp4?_nc_cat=106&_nc_oc=Adrj0SRhN_0Q_GlcdjQp-dMU4jDuXCRHM414WiAqeXkzOJIhbXbaepGXn7g9IeI_b2nGIPzrE2fSdMkMDiMm_vKd&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=PYP2njAsWIEQ7kNvwGWG9NV&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MjIwNzEyNTUwMDExNzQ0OSwiYXNzZXRfYWdlX2RheXMiOjEzMSwidmlfdXNlY2FzZV9pZCI6MTA3OTksImR1cmF0aW9uX3MiOjM5LCJ1cmxnZW5fc291cmNlIjoid3d3In0%3D&ccb=17-1&_nc_gid=uv3yfh6kndBIEH_yhKYRRA&_nc_ss=7b289&_nc_zt=28&oh=00_AQGqIhC1nBVk8-HUyuPvmSKQrgZGD2u-L6tczrwu_ca14A&oe=6A745AFC",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 537,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 8,
+      "id": "9306297256f60367",
+      "name": "AQOm6RBJQ67aYfNYOY1sDZg9IAaU_D2dfu1vlHDz8UEGRm0vYEJn9OiBp9meKEWcQB23RttuicB_gorzz9OKabzY3Fgwr2oI0R72fOc.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m86/AQOm6RBJQ67aYfNYOY1sDZg9IAaU_D2dfu1vlHDz8UEGRm0vYEJn9OiBp9meKEWcQB23RttuicB_gorzz9OKabzY3Fgwr2oI0R72fOc.mp4?_nc_cat=110&_nc_oc=AdqU8FVGZpqbSgn9PKsC3mZnUIuin7Yg5f8LNvPb30XfD8h06f4p1GcCg-T0JFMg2DrGWbytKZXu_YAZZEZfDHAu&_nc_sid=b66105&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=Pl0mnz_-7mQQ7kNvwFc5_Ej&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLmRhc2hfYmFzZWxpbmVfM192MSIsInhwdl9hc3NldF9pZCI6OTI1MzgwNTg2NDU0MzE5LCJhc3NldF9hZ2VfZGF5cyI6MzY0LCJ2aV91c2VjYXNlX2lkIjoxMDA5OSwiZHVyYXRpb25fcyI6MzcsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&vs=3922fc3028d8c411&_nc_vs=HBksFQIYUmlnX3hwdl9yZWVsc19wZXJtYW5lbnRfc3JfcHJvZC85MjQwMUMxQzdBRTc5MERGODdERjE4OTdBQ0Q3QzVCOV92aWRlb19kYXNoaW5pdC5tcDQVAALIARIAFQIYR2lnX3hwdl9yZWVsc19wZXJtYW5lbnRfc3JfcHJvZC8xNjkwMjIxNDE0OTk2MjUxXzE1OTI5OTkxMzQyOTQ4NTU4NjcubXA0FQICyAESACgAGAAbAogHdXNlX29pbAExEnByb2dyZXNzaXZlX3JlY2lwZQExFQAAJt70mdKe6KQDFQIoAkMzLBdAQtXCj1wo9hgSZGFzaF9iYXNlbGluZV8zX3YxEQB1AGXmnQEA&_nc_gid=uv3yfh6kndBIEH_yhKYRRA&_nc_ss=7b289&_nc_zt=28&oh=00_AQFnMxdHzTwlSammeBjIqnnGkOCOOYDTJbCuHF23hpdf1Q&oe=6A70670B",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 553,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 9,
+      "id": "6a69f483c0bed85f",
+      "name": "AQMlsXm6FrZlquvVz2nK6Ft_KhbvILfjO9ZcSZKWNUnLhvm6UbiGdyU69FQw09Q64cIqShCA4pJwxNS_p5UqaI_7L8PIRqHySZSs4y6GQA.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQMlsXm6FrZlquvVz2nK6Ft_KhbvILfjO9ZcSZKWNUnLhvm6UbiGdyU69FQw09Q64cIqShCA4pJwxNS_p5UqaI_7L8PIRqHySZSs4y6GQA.mp4?_nc_cat=109&_nc_oc=AdpOOSv9iwYYns9OGkDbIgtN5RFtoseuEk3vqRXY4cSUZnScw3qatpLicqERFh_C93fHamy3D1aplLQ5EbRzsBJr&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=A_DKydW2Yi0Q7kNvwHdQa35&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6ODI0MTUxNDgwMjE1NjU3LCJhc3NldF9hZ2VfZGF5cyI6MTAzLCJ2aV91c2VjYXNlX2lkIjoxMDEzOSwiZHVyYXRpb25fcyI6MzYsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&_nc_gid=uv3yfh6kndBIEH_yhKYRRA&_nc_ss=7b289&_nc_zt=28&oh=00_AQFW3GpmmWIHsZp3RFs6hs6CqisBTONUrn7GzXalfcS6rA&oe=6A74437D",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 564,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 10,
+      "id": "9c0e91902a8442bb",
+      "name": "AQMi6krpOJhkyy5hMqUVgHmGYeRRBeOm3am34491qhqxEAMZxp8eC3UpGdNqIge2-iQyscVYR4on42DD8-fRzAfoOwZbFHbkMvaTDwQhNg.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQMi6krpOJhkyy5hMqUVgHmGYeRRBeOm3am34491qhqxEAMZxp8eC3UpGdNqIge2-iQyscVYR4on42DD8-fRzAfoOwZbFHbkMvaTDwQhNg.mp4?_nc_cat=110&_nc_oc=AdouuhLtA6eizCv15qO4ItoLBBVeNbVkGjP6NddL7cbU4GInzhz5KscgD7TVHYvw-q-JOG1_fAETXvAg5vf8Vj_e&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=n2N_UTrzHbsQ7kNvwEoXxLB&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6ODk0MjU0MjU2NDMyOTEwLCJhc3NldF9hZ2VfZGF5cyI6MTkxLCJ2aV91c2VjYXNlX2lkIjoxMDc5OSwiZHVyYXRpb25fcyI6MjMsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&_nc_gid=uv3yfh6kndBIEH_yhKYRRA&_nc_ss=7b289&_nc_zt=28&oh=00_AQHAJfuFdyaJZXxuSaJyQED3LD8Kz72vOHxvJemqiO3NwQ&oe=6A746788",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 578,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 11,
+      "id": "689c7ad0b998342e",
+      "name": "AQNg4VIYHpjcbQUWu_t2bb5B-LlwIJcHbNFVGSucFw1N-QeckGl-50Za0jOV7yVexZZnirrNvEa7VzIUn1M_ILG6on8VS0X4FTXUfmNFRA.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQNg4VIYHpjcbQUWu_t2bb5B-LlwIJcHbNFVGSucFw1N-QeckGl-50Za0jOV7yVexZZnirrNvEa7VzIUn1M_ILG6on8VS0X4FTXUfmNFRA.mp4?_nc_cat=104&_nc_oc=AdpbrhKBXvQey5JIZEeV_EbG5MkeDO97wnPbMC6JoeKZrf9uyrh0bFpZlmhn6mA0SEzvlULhlwGZ6nnMZZztj3Ah&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=DuxEd0NqcQMQ7kNvwGFjlvH&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MTM1MTA5MTYwNjk2NDE1MiwiYXNzZXRfYWdlX2RheXMiOjM4LCJ2aV91c2VjYXNlX2lkIjoxMDc5OSwiZHVyYXRpb25fcyI6MzAsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&_nc_gid=uv3yfh6kndBIEH_yhKYRRA&_nc_ss=7b289&_nc_zt=28&oh=00_AQEgzCC4Xa8yTWRyob1j8T13uqUoSK--ref-MvXhLl3CPg&oe=6A743656",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 590,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 12,
+      "id": "741a45059987e56b",
+      "name": "AQNjAAvGeKpdKXDjFiz7HLRwIDYzPWm-R8dYDFfT0jsinTGKhATcTwfCUyCsHG8VcxB9igslVeZLlOHhprXf7yKwrF4mlgGhcPNtdbxVMg.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQNjAAvGeKpdKXDjFiz7HLRwIDYzPWm-R8dYDFfT0jsinTGKhATcTwfCUyCsHG8VcxB9igslVeZLlOHhprXf7yKwrF4mlgGhcPNtdbxVMg.mp4?_nc_cat=111&_nc_oc=AdpVbxeEDJsYibXm6nHwRRkqaftGgr-X438iUwhKrlVmqGPeFSl2opmUIPBh-9BSL-wElRQ9PoTULhrCqe6n_F__&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=xFH5nTu6VIwQ7kNvwGpKi2D&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6NzM4Mjk5NDIyMTYwODE0LCJhc3NldF9hZ2VfZGF5cyI6MzUzLCJ2aV91c2VjYXNlX2lkIjoxMDc5OSwiZHVyYXRpb25fcyI6NTQsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&_nc_gid=uv3yfh6kndBIEH_yhKYRRA&_nc_ss=7b289&_nc_zt=28&oh=00_AQFHo0kJwQbUGqcAs-CFY1YHaSp8zzR-P5vhQYO_3hIKOQ&oe=6A745F93",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 698,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 13,
+      "id": "1e40ab0b385788e6",
+      "name": "AQNw8hV9aIqZapOoHaU6P9DlP2MPYVeTDi4R9qLNYNZQ9VnAoUIeUHpeMWgNvetZCl4-jWBub09wHZiQiyL3n35DxRk3q5HT3QF9IOJB_Q.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m367/AQNw8hV9aIqZapOoHaU6P9DlP2MPYVeTDi4R9qLNYNZQ9VnAoUIeUHpeMWgNvetZCl4-jWBub09wHZiQiyL3n35DxRk3q5HT3QF9IOJB_Q.mp4?_nc_cat=102&_nc_oc=AdrM0ZZy7Rl1_qWXUVGhUktoHE8thbDRt2WoO5t2UnedH0sIV1fs8pGL3x3vK4hSRgmXTI0Ryb7Eb1wf3pgEEQeu&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=OR6CBfZCnU0Q7kNvwHnu5D_&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnByb2dyZXNzaXZlX2gyNjQtYmFzaWMtZ2VuMl8zNjBwIiwieHB2X2Fzc2V0X2lkIjoyMTc0MzQ2MTQ5NzcyMDMyLCJhc3NldF9hZ2VfZGF5cyI6NjEsInZpX3VzZWNhc2VfaWQiOjEwMDk5LCJkdXJhdGlvbl9zIjozOSwidXJsZ2VuX3NvdXJjZSI6Ind3dyJ9&ccb=17-1&_nc_gid=uv3yfh6kndBIEH_yhKYRRA&_nc_ss=7b289&_nc_zt=28&oh=00_AQG1Ld64Ugbqxkm2YHZmf_rmuJwQOhw_STxKvNQeOYp_KQ&oe=6A7435DC",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 699,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 14,
+      "id": "16c411ab37c061c3",
+      "name": "AQP_TDX-KlngGgmPEZWatJDIF6SRpJXUI3BVqpupAHUozoglVnBZb7W-7slb66BRAVobTsOA4debXma3lkowhDQ4ufOoRW28f6IJOb0CEA.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQP_TDX-KlngGgmPEZWatJDIF6SRpJXUI3BVqpupAHUozoglVnBZb7W-7slb66BRAVobTsOA4debXma3lkowhDQ4ufOoRW28f6IJOb0CEA.mp4?_nc_cat=105&_nc_oc=Adogw5kwEw8J0PuEzEI7RnuinFWO5eQiKhTD3h_e-Dmj6LAtuHRpzk7UUgrMbgsBlupEGW725q3JSEtn6vEpZ8TH&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=4rb_ynzJroMQ7kNvwEquKOv&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MjAyNTk1MTc3MTMzNjE2MywiYXNzZXRfYWdlX2RheXMiOjQ0LCJ2aV91c2VjYXNlX2lkIjoxMDc5OSwiZHVyYXRpb25fcyI6MzQsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&_nc_gid=uv3yfh6kndBIEH_yhKYRRA&_nc_ss=7b289&_nc_zt=28&oh=00_AQHVimIjJcp7Nk_FoJr1rd5JlVGj-k8ZPu_ZD2DjySFgIA&oe=6A746639",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 700,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 15,
+      "id": "24ee52ef34e2920b",
+      "name": "AQNvh1HlvhpSZ9BOhc4f0PQzqLpEnBJB8lLwzCGphnV-g5U-L91yILHCxYtzElLhxsoNzX_y16fLwK57TbWwVQ6Gfw1VDhJB2feK3be-TQ.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQNvh1HlvhpSZ9BOhc4f0PQzqLpEnBJB8lLwzCGphnV-g5U-L91yILHCxYtzElLhxsoNzX_y16fLwK57TbWwVQ6Gfw1VDhJB2feK3be-TQ.mp4?_nc_cat=101&_nc_oc=Adre27uG4wm4fEwoENSb6bdVE9qvvMTREkMKTegyHl7AhnPpWnjTSja7TKnenmIpgZ5USgKlybXsOtHuKdpZcNcG&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=c6b_Q0rwP08Q7kNvwEnwXkk&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MTc2NTEyOTYzMTE1NjU5MywiYXNzZXRfYWdlX2RheXMiOjQsInZpX3VzZWNhc2VfaWQiOjEyMzczLCJkdXJhdGlvbl9zIjo2MCwidXJsZ2VuX3NvdXJjZSI6Ind3dyJ9&ccb=17-1&_nc_gid=gfwE4VgAdMCKuaj4e2p8Cg&_nc_ss=7b289&_nc_zt=28&oh=00_AQEdxm4C2UPKkBgT8fJFnfsAZp4u_NF22Hu3d6yyLPwpJw&oe=6A743EB1",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2576,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 16,
+      "id": "9b7197030f87fd53",
+      "name": "AQM7hVisuXmTJ0uaiKDOCHqjtIqQY1Df3S5oDw4CW4q624A2kJOCsUgPIMJm5KqnLhk0X9G42ASWimbYeljc2jhtQpIStjMohxlLnyc29Q.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQM7hVisuXmTJ0uaiKDOCHqjtIqQY1Df3S5oDw4CW4q624A2kJOCsUgPIMJm5KqnLhk0X9G42ASWimbYeljc2jhtQpIStjMohxlLnyc29Q.mp4?_nc_cat=111&_nc_oc=AdpAc8QGNJksLeOfJcXfEd7iSuCZqkOuUY1ipzsesZQsj2HUuDDTbjSKLECZGk_jdlHhUJ9rMPwrzl_AFJbRFox6&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=bE2dsTUeqwEQ7kNvwFGyYFq&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MjcxNDUyODU0MzUwOTU1NTUsImFzc2V0X2FnZV9kYXlzIjo4NywidmlfdXNlY2FzZV9pZCI6MTA3OTksImR1cmF0aW9uX3MiOjI3LCJ1cmxnZW5fc291cmNlIjoid3d3In0%3D&ccb=17-1&_nc_gid=gfwE4VgAdMCKuaj4e2p8Cg&_nc_ss=7b289&_nc_zt=28&oh=00_AQEOYcoPj4-HyF6zPe2pWja8OcQ5pkTSwlS4TOUIKOm7dA&oe=6A7467CF",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2575,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 17,
+      "id": "73a29f9f3239b2d0",
+      "name": "AQPA1BMeesYdU86NsTNNIUW5_m3E_YZnNfakgjklZ18F5B811bf_BREFOm8TybYAQP9BkXe_TzgAMB7vf2iFLyHgUkQB0l2ZPgH0Y0OaBA.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQPA1BMeesYdU86NsTNNIUW5_m3E_YZnNfakgjklZ18F5B811bf_BREFOm8TybYAQP9BkXe_TzgAMB7vf2iFLyHgUkQB0l2ZPgH0Y0OaBA.mp4?_nc_cat=105&_nc_oc=AdoggnXaD-ASDLWppa-fONsKNGcGUSMota86bvAmZpZBkIdsEB9oTGDtv1P5FlAWKHlps3xjne1lcJXWUCO5-6_L&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=Eo6HP654g8UQ7kNvwFyKCha&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6Mjc2NzI1MTgwMjkwMDAyMTUsImFzc2V0X2FnZV9kYXlzIjo2MiwidmlfdXNlY2FzZV9pZCI6MTA3OTksImR1cmF0aW9uX3MiOjEzLCJ1cmxnZW5fc291cmNlIjoid3d3In0%3D&ccb=17-1&_nc_gid=gfwE4VgAdMCKuaj4e2p8Cg&_nc_ss=7b289&_nc_zt=28&oh=00_AQEFcT0_TvbGeXxz-cPQcpPvL9FtrrW-5Upif0DXIZwxQQ&oe=6A7466D9",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2577,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 18,
+      "id": "a8d08ba57efe3458",
+      "name": "AQNCAzuea_xsyLWALK2YZvGXp40Fa3NWIfQHw-saAt76zoVMQBHncPZNAMdlQtX22ZH39ZM3jq6LcXZSYTy1fJa7YeJgLoMakoRn92r_IQ.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQNCAzuea_xsyLWALK2YZvGXp40Fa3NWIfQHw-saAt76zoVMQBHncPZNAMdlQtX22ZH39ZM3jq6LcXZSYTy1fJa7YeJgLoMakoRn92r_IQ.mp4?_nc_cat=110&_nc_oc=AdojsnwjxkFVdZzT5zizZ_PPFSqV9GL_GamV2Svby644mn6X3b-MJCZchjn_Ow4uorK_tryzj0MmkjZuLBs4jOF5&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=VMt6x2uOWloQ7kNvwHJdbYZ&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuNjQwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MzQxMTUzODA1OTAwNTYxNiwiYXNzZXRfYWdlX2RheXMiOjI2LCJ2aV91c2VjYXNlX2lkIjoxMDEzOSwiZHVyYXRpb25fcyI6MTIsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&_nc_gid=gfwE4VgAdMCKuaj4e2p8Cg&_nc_ss=7b289&_nc_zt=28&oh=00_AQG05fyzPpHR3dFG6N1jKlbghIFv_3C_b3G9FJrxkKEzKw&oe=6A743D94",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2579,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 19,
+      "id": "51420117d673c318",
+      "name": "AQNpAJ9A7q-omPTilhgbvTwrHhmhm4MLALeFIzQcjZZS6jhy2m58lmbnLV_f0irJA7pbs_1E80NFFKHmeUXJEBb4P1HEg8jswmyPImEHlA.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQNpAJ9A7q-omPTilhgbvTwrHhmhm4MLALeFIzQcjZZS6jhy2m58lmbnLV_f0irJA7pbs_1E80NFFKHmeUXJEBb4P1HEg8jswmyPImEHlA.mp4?_nc_cat=104&_nc_oc=Adr2ZKCZSVunmABMgXyi70zIDS9rYMPY4rDfpNyGssWDggUBFGYroCeJ9qvR59pQDxna-u2GV0EUlWXfQiRy-lyi&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=U5WTDnqxNLwQ7kNvwElcxGW&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MTcyNDE3OTg2MjA1MjUyMiwiYXNzZXRfYWdlX2RheXMiOjQzLCJ2aV91c2VjYXNlX2lkIjoxMDc5OSwiZHVyYXRpb25fcyI6MzcyLCJ1cmxnZW5fc291cmNlIjoid3d3In0%3D&ccb=17-1&_nc_gid=gfwE4VgAdMCKuaj4e2p8Cg&_nc_ss=7b289&_nc_zt=28&oh=00_AQHqngfLngrp0GVVzQjeou0Dh-etgRbBwkCb13QRYamT5g&oe=6A744B2A",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2578,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 20,
+      "id": "458261eb9740ac06",
+      "name": "AQOXVKmTPeCmPnO4T1_9CvJSRuZjQElP0RYYrYM6KrNO9vZHh2ebLR7BTJymIq6EJ70DJCi89i9gn_5z5CcIz4RkYgGtBl9To9wm8uTufw.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQOXVKmTPeCmPnO4T1_9CvJSRuZjQElP0RYYrYM6KrNO9vZHh2ebLR7BTJymIq6EJ70DJCi89i9gn_5z5CcIz4RkYgGtBl9To9wm8uTufw.mp4?_nc_cat=109&_nc_oc=AdpjNrkqIHaHnhqxMat7gunNi4Z2hC3TKx66SzvhEYyoaDh7AcJZEKaiQng1a3SNhJSigOgv7kpiwYNhz4Y1_cQQ&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=grNXUMiuwk8Q7kNvwGViyHq&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MTU3NzA2NDEwMDc2MzgzOCwiYXNzZXRfYWdlX2RheXMiOjI1LCJ2aV91c2VjYXNlX2lkIjoxMDEzOSwiZHVyYXRpb25fcyI6MTEzLCJ1cmxnZW5fc291cmNlIjoid3d3In0%3D&ccb=17-1&_nc_gid=gfwE4VgAdMCKuaj4e2p8Cg&_nc_ss=7b289&_nc_zt=28&oh=00_AQHAUHLMYHPmsrwKvAmkj7YrVdqM0xD3EcrBZPWZUenH8g&oe=6A744279",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2580,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 21,
+      "id": "203b47a4ec748565",
+      "name": "AQNwqwdqJDXVjt2lxaOeXl2Fm2rWaN47oUJo27oOvXaso2vXnSaK12AvF2X8Csf5TDlk4XuAU0PLSWW1dQ7dYjx83mGCkiQKRQWEbSrmig.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQNwqwdqJDXVjt2lxaOeXl2Fm2rWaN47oUJo27oOvXaso2vXnSaK12AvF2X8Csf5TDlk4XuAU0PLSWW1dQ7dYjx83mGCkiQKRQWEbSrmig.mp4?_nc_cat=104&_nc_oc=AdrlJHnbwQCxb9MjMxlWAB_TZqi2gjEXKnk23EqnUhY5Iq9YRd_MqbgkBT9fVVNaipxj5nYiPkordIhYtU97NBzB&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=SY2_xGMklqcQ7kNvwEkol3W&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MTg2Nzc2OTI3MzkxOTM2MSwiYXNzZXRfYWdlX2RheXMiOjM4LCJ2aV91c2VjYXNlX2lkIjoxMDc5OSwiZHVyYXRpb25fcyI6MzEsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&_nc_gid=gfwE4VgAdMCKuaj4e2p8Cg&_nc_ss=7b289&_nc_zt=28&oh=00_AQE-Zb4e5nK0AG0yGGH6nFmqya16x2M8GU5b6Fl__D9a1g&oe=6A74396E",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2581,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 22,
+      "id": "363ba00f48d617e2",
+      "name": "AQNqcR2M5N9OvWBc_AQqyQ4Xm0NZs_G-K9qUJ3fQYbWFyczLlj_40B8wVfex2XdQRmHoNcfotcLi9Of7zh6-2fGB18rZ9viBvoDHOWcrIA.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQNqcR2M5N9OvWBc_AQqyQ4Xm0NZs_G-K9qUJ3fQYbWFyczLlj_40B8wVfex2XdQRmHoNcfotcLi9Of7zh6-2fGB18rZ9viBvoDHOWcrIA.mp4?_nc_cat=109&_nc_oc=AdqvqrxD5m8vVGFKigAzc8xLSfdxZWa4e2i-35Fp8jL6BsqaD28XP_NcAZY2ocpRn-mbG9G9Ur5tQolwdm85P6hU&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=rzQ0RN7QJ2QQ7kNvwEEov8L&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6OTA4NTMyMzU1NjAyOTI5LCJhc3NldF9hZ2VfZGF5cyI6MjIsInZpX3VzZWNhc2VfaWQiOjEwNzk5LCJkdXJhdGlvbl9zIjo0MCwidXJsZ2VuX3NvdXJjZSI6Ind3dyJ9&ccb=17-1&_nc_gid=nqc0wCoZtve87sT6AosFdg&_nc_ss=7b289&_nc_zt=28&oh=00_AQGjyH32ivG1jRQtNau5gz3-KcHty7N0ji3Z98CDemvlDQ&oe=6A745671",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2617,
+          "property": "src"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2621,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 23,
+      "id": "f89946c04d4ab8ce",
+      "name": "AQNmbrVFfgJ8sl99szO5MPZqUp719C0ie_S-WWQ0IjEfYkfPxcLnGYqL4NEycScGPcoGrAxBaYoZmMQ-ZnYLKMZq9Mm0B1DFClGIgxUYbg.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQNmbrVFfgJ8sl99szO5MPZqUp719C0ie_S-WWQ0IjEfYkfPxcLnGYqL4NEycScGPcoGrAxBaYoZmMQ-ZnYLKMZq9Mm0B1DFClGIgxUYbg.mp4?_nc_cat=105&_nc_oc=AdqP9T1sNmzVeG037lhHr7_ioucfB6XC2vaYki9_orK0tnzd_cX-3KPJsIlE6A2aISBJOqEWJo2xI4a_B-QohLub&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=Fz_3h5ae0vkQ7kNvwFV5muG&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuNjQwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MTIyNDM0NzUxOTY4ODQ2MCwiYXNzZXRfYWdlX2RheXMiOjEyMCwidmlfdXNlY2FzZV9pZCI6MTA3OTksImR1cmF0aW9uX3MiOjE1LCJ1cmxnZW5fc291cmNlIjoid3d3In0%3D&ccb=17-1&_nc_gid=nqc0wCoZtve87sT6AosFdg&_nc_ss=7b289&_nc_zt=28&oh=00_AQGwh8asb4jQqlGlNhBcQwFF4ZdMBZPva_mg3Y2ZTVVEOw&oe=6A745221",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2618,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 24,
+      "id": "2a3cf8aa8b55a02b",
+      "name": "AQNhmzuUtLta5DKuLyXyrLD3quj0345stppXXz7fU4gkzMk8xu2bdwPEYtJ5u8MMpQTYvN31ERGJZC9HdT9MWDUGWG8KhHp4Mq6LBfFPWA.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQNhmzuUtLta5DKuLyXyrLD3quj0345stppXXz7fU4gkzMk8xu2bdwPEYtJ5u8MMpQTYvN31ERGJZC9HdT9MWDUGWG8KhHp4Mq6LBfFPWA.mp4?_nc_cat=102&_nc_oc=AdrX9qWJR6vP54I60u0eM36xBeVgaE79MNLx8I57HJRabZD7FXkEdfvXVn89bSmqp4Sux4Ol2iXROGGwUYqAyaxX&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=KWLg0ZjJx6wQ7kNvwEzTT1y&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6NTI2ODc5NjQ3MTE0MzU4LCJhc3NldF9hZ2VfZGF5cyI6MzgxLCJ2aV91c2VjYXNlX2lkIjoxMDc5OSwiZHVyYXRpb25fcyI6NjksInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&_nc_gid=nqc0wCoZtve87sT6AosFdg&_nc_ss=7b289&_nc_zt=28&oh=00_AQGU9LqZ7M1LCbQWTZQzrec8KN-xFWXIuUaZZkZnmiDapQ&oe=6A743708",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2619,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 25,
+      "id": "f1fa7867846e3f28",
+      "name": "AQPhCX-QmQK4aWW6y0v-UswESgRgFTOaCUpOC-QopnhDtAQJJIQO33vHsTIHpOg50g3U30FI14-PmpN8zkysKB3p6V9JNUc9RYCdNIArgA.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQPhCX-QmQK4aWW6y0v-UswESgRgFTOaCUpOC-QopnhDtAQJJIQO33vHsTIHpOg50g3U30FI14-PmpN8zkysKB3p6V9JNUc9RYCdNIArgA.mp4?_nc_cat=103&_nc_oc=AdqKCqkAUNX73zZm8vHp7P4aekd_WiVlMkJPfTXAZU2Q17e-iMdNsG6jGo022G259HLYOcyTJaHF9_aClK-AhnRV&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=v44n7S-lDMcQ7kNvwEY9RW8&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MTQ1ODYxMDUzNTkwMTc2OSwiYXNzZXRfYWdlX2RheXMiOjEwMywidmlfdXNlY2FzZV9pZCI6MTAxMzksImR1cmF0aW9uX3MiOjMwLCJ1cmxnZW5fc291cmNlIjoid3d3In0%3D&ccb=17-1&_nc_gid=nqc0wCoZtve87sT6AosFdg&_nc_ss=7b289&_nc_zt=28&oh=00_AQE0uAt5KtdYC5rW8HOmv8q9y6wAubhAb-71fC20ltrrSQ&oe=6A745327",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2620,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 26,
+      "id": "b5196f180473df9c",
+      "name": "AQPyvy5Az7zn_Da3-IXhaLHHTvaTSugg5k8YeuSuUHqKpTQEWl2n_e-TRhRc1X7It1-bBbTJzINhqh8X-cDU4jnnKU8Vr2TRwrtf_D8GeQ.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQPyvy5Az7zn_Da3-IXhaLHHTvaTSugg5k8YeuSuUHqKpTQEWl2n_e-TRhRc1X7It1-bBbTJzINhqh8X-cDU4jnnKU8Vr2TRwrtf_D8GeQ.mp4?_nc_cat=106&_nc_oc=AdqI37yMkoORozXuiDHjfX6_XhLvPVIWW7HtPSj6ChzqBSd2n8T2p7wge94C2C7iN9lutNboFeB_uknHrunlSMg3&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=5fytsnLmHCAQ7kNvwFHPRmP&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6NDIzMzA4MTYwMDMzNjI3MCwiYXNzZXRfYWdlX2RheXMiOjQ2LCJ2aV91c2VjYXNlX2lkIjoxMDc5OSwiZHVyYXRpb25fcyI6NDAsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&_nc_gid=nqc0wCoZtve87sT6AosFdg&_nc_ss=7b289&_nc_zt=28&oh=00_AQFAZ2_WgLAWL_1vP96axHO3RXCArW0zGgStv7hZzRTVrw&oe=6A743A7C",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2622,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 27,
+      "id": "7014b64caece99fc",
+      "name": "AQPNaAYqtiOsYBTyVRAB2doZIyHZjeSES11b1SD3mgZVdslPGZ7TeuDTxsd6TNVmkIECftk1t0264UmJOvI-mx6A0rExXIR_S7xycbYPzQ.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m367/AQPNaAYqtiOsYBTyVRAB2doZIyHZjeSES11b1SD3mgZVdslPGZ7TeuDTxsd6TNVmkIECftk1t0264UmJOvI-mx6A0rExXIR_S7xycbYPzQ.mp4?_nc_cat=101&_nc_oc=AdrveOR76iD-3y8sdXc4mgchgMhqDKnf46Kz5MzvPOFTMyFNbMk12SRbROWYYim9JCHJsdAf9M86pPzHX367aaBu&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=m7OxGLp2H_cQ7kNvwH9EUWa&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnByb2dyZXNzaXZlX2gyNjQtYmFzaWMtZ2VuMl8zNjBwIiwieHB2X2Fzc2V0X2lkIjoxMDYxMDYxMjAzMzExNzYwLCJhc3NldF9hZ2VfZGF5cyI6NTcsInZpX3VzZWNhc2VfaWQiOjEwMDk5LCJkdXJhdGlvbl9zIjozNywidXJsZ2VuX3NvdXJjZSI6Ind3dyJ9&ccb=17-1&_nc_gid=nqc0wCoZtve87sT6AosFdg&_nc_ss=7b289&_nc_zt=28&oh=00_AQGFRTEBZVsOEiJgqOKI8qqY5H8OcU5g8oCzkNqgG-LJQw&oe=6A744605",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2623,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 28,
+      "id": "ab6b2fdbd7d100de",
+      "name": "AQMrK_Ti7He55rsd8a9Cop6UTSFp4xsxTY1gsP84JCP7lOSe0oiY9SjMOx671IEQqTAIBC9cui7Gf11S38U9mTeyRuNlCRrLuS8VL_91WQ.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQMrK_Ti7He55rsd8a9Cop6UTSFp4xsxTY1gsP84JCP7lOSe0oiY9SjMOx671IEQqTAIBC9cui7Gf11S38U9mTeyRuNlCRrLuS8VL_91WQ.mp4?_nc_cat=110&_nc_oc=AdpqTb2OGpIeV8AhVuT5vy6zaYIMxSX-Ksi_06S6aPG0JdK0iXfRWZG0-XAGRFwcyKQ8vEfwIqfENortDck-ZTfc&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=-DukcbY6nCwQ7kNvwFLhqOu&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MTU2ODk3MjY3NDM2NTY5MSwiYXNzZXRfYWdlX2RheXMiOjE4LCJ2aV91c2VjYXNlX2lkIjoxMDc5OSwiZHVyYXRpb25fcyI6MzUsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&_nc_gid=nqc0wCoZtve87sT6AosFdg&_nc_ss=7b289&_nc_zt=28&oh=00_AQGwcrQ4KJgLHFfHs7GLZelWKwOUJ28c6A-DCJpF4zEbYw&oe=6A7462B0",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2624,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 29,
+      "id": "ed2cd55cea91dadc",
+      "name": "AQOqIPsqJZhcBDRX7N-xsYNVXZcU32Zz2nLXTeTt0NAF2WxpU9RZCWAmPTAO3r2GPQhD8m0qmQBOw_Vi4y4np7Z9MkIqQJLvRQ2jt2_PqQ.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQOqIPsqJZhcBDRX7N-xsYNVXZcU32Zz2nLXTeTt0NAF2WxpU9RZCWAmPTAO3r2GPQhD8m0qmQBOw_Vi4y4np7Z9MkIqQJLvRQ2jt2_PqQ.mp4?_nc_cat=105&_nc_oc=Adrx9iJ3j6Pr2jlc0QSIvBCkZMh-UXJXdRZCFGQWXu3PjG9Q1gfE5v-mzDvRFph3pILDWuUcBXRPBLgLsIfS2WIH&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=7qi_9Bb0eXQQ7kNvwHzhUj6&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6Mjc5NTgxNzcwNjcxMTI1ODksImFzc2V0X2FnZV9kYXlzIjozOCwidmlfdXNlY2FzZV9pZCI6MTA3OTksImR1cmF0aW9uX3MiOjI4LCJ1cmxnZW5fc291cmNlIjoid3d3In0%3D&ccb=17-1&_nc_gid=ZO56np1tp5ptha_RhabJVg&_nc_ss=7b289&_nc_zt=28&oh=00_AQFFu5JWGD6TqBXHJf26KYT0HWA4XcOoZizlZfBRE743MQ&oe=6A7466C1",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2657,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 30,
+      "id": "23da34bbad8ab714",
+      "name": "AQPJ-lk_0TqXTJH9A3rr64Ye3iOAxDMcynf9quzHYKl6P1-XdsRJ0p27sMsm5sz-rRbFqvfS-xYhuWwiB7xCBcflzbu9dWXG8gKHMSrZhw.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQPJ-lk_0TqXTJH9A3rr64Ye3iOAxDMcynf9quzHYKl6P1-XdsRJ0p27sMsm5sz-rRbFqvfS-xYhuWwiB7xCBcflzbu9dWXG8gKHMSrZhw.mp4?_nc_cat=110&_nc_oc=Adpw-_UqovBPqqP3E1BJlDeAh0ixAi3PClIjnJzrOYn6gKKLquttCN0JRy_6StNyo6L4i_Qr0GY24EnDjB7XW6Jj&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=3WCxGNajRfUQ7kNvwEi0GZ8&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MTA1MDk3NDM4NDEyMTIyNywiYXNzZXRfYWdlX2RheXMiOjksInZpX3VzZWNhc2VfaWQiOjEwNzk5LCJkdXJhdGlvbl9zIjoxMSwidXJsZ2VuX3NvdXJjZSI6Ind3dyJ9&ccb=17-1&_nc_gid=ZO56np1tp5ptha_RhabJVg&_nc_ss=7b289&_nc_zt=28&oh=00_AQFj8EU19040QML7hPMp--XQk16voojfN3Demph3_G2bfw&oe=6A745EFC",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2658,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 31,
+      "id": "f1654cdf8882990c",
+      "name": "AQN-dqba5KhN03_QcxJiRlDAQ7cocqqo64CiMVrRTK3ENd2YFh4H8MWMo5kMLddScZTWVsaJCJyewgv5GfvcG4rP5vZQTnNADTj8E3Oy6Q.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQN-dqba5KhN03_QcxJiRlDAQ7cocqqo64CiMVrRTK3ENd2YFh4H8MWMo5kMLddScZTWVsaJCJyewgv5GfvcG4rP5vZQTnNADTj8E3Oy6Q.mp4?_nc_cat=105&_nc_oc=AdoTx_YeB8t5QAvkoQjz97TDDxb5eMBBbKT0_6IDVM1MR1kf3UMI7864jqHzMduemzoWwGXl8MOU0dfzVul3vx_U&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=8rfW36xv4qQQ7kNvwGDw25k&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6OTg5NDkxNjcwNDIwOTIzLCJhc3NldF9hZ2VfZGF5cyI6MTAzLCJ2aV91c2VjYXNlX2lkIjoxMDEzOSwiZHVyYXRpb25fcyI6MjgsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&_nc_gid=ZO56np1tp5ptha_RhabJVg&_nc_ss=7b289&_nc_zt=28&oh=00_AQGVl3iOiEatLVkPtADHR0QsY2rMXcg0gn-Gz5rjKz-e2A&oe=6A746685",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2659,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 32,
+      "id": "8d129d4d4e966864",
+      "name": "AQPfUso53mI7WWDMbh2FvVwilZjbCLJI7VJRUUIBpEoLoOUNjVHLmGlmgH2bQMoghe-LJSQzHwqrdC1BS9L7CTtRfa0NFRi0b5uVzGistA.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQPfUso53mI7WWDMbh2FvVwilZjbCLJI7VJRUUIBpEoLoOUNjVHLmGlmgH2bQMoghe-LJSQzHwqrdC1BS9L7CTtRfa0NFRi0b5uVzGistA.mp4?_nc_cat=106&_nc_oc=AdpGeGlugpDbc_cbYmVl8TeqbnSX72kvf13zi8-5VKffHFLAreG7nqojxqObGxbdZvEu3ffw3FtFMNlAQHgS_qe9&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=R6cprLKe-kgQ7kNvwFuLIt0&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MjM1MzAxNzkzNTE2NDkyOCwiYXNzZXRfYWdlX2RheXMiOjIwOCwidmlfdXNlY2FzZV9pZCI6MTA3OTksImR1cmF0aW9uX3MiOjEzNCwidXJsZ2VuX3NvdXJjZSI6Ind3dyJ9&ccb=17-1&_nc_gid=ZO56np1tp5ptha_RhabJVg&_nc_ss=7b289&_nc_zt=28&oh=00_AQHyr1L8xKjSk2lZAibzQKk5C-FzI-InrRqzKQ3P5hd4BQ&oe=6A74331C",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2660,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 33,
+      "id": "6762f414d02fa206",
+      "name": "AQMIPeWjJ41sUOuePxD8Ds_86Q3PLXKh_3lTrutyxmVEuFiajN9UnnqbS0gxuczhMwJSQP058KnIrwx3gwNWjOU4stHQzUkflMeE4z57Ew.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQMIPeWjJ41sUOuePxD8Ds_86Q3PLXKh_3lTrutyxmVEuFiajN9UnnqbS0gxuczhMwJSQP058KnIrwx3gwNWjOU4stHQzUkflMeE4z57Ew.mp4?_nc_cat=108&_nc_oc=AdqALCYgCu1MPRmqSvTH4JFRGRA8SmViB4DkGh3CrVpLldgYXhbLmzDlesUqwiMk-l_F0aCwYsDfrbAKP2sn7oc7&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=2l63VQ3K3EoQ7kNvwG0ogjv&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MTM2MzQ1MjAyMjQ3MTAzNCwiYXNzZXRfYWdlX2RheXMiOjEzNiwidmlfdXNlY2FzZV9pZCI6MTAxMzksImR1cmF0aW9uX3MiOjIwLCJ1cmxnZW5fc291cmNlIjoid3d3In0%3D&ccb=17-1&_nc_gid=ZO56np1tp5ptha_RhabJVg&_nc_ss=7b289&_nc_zt=28&oh=00_AQFsMOSRALyefZQ8GthM7B9wX2lJLqPISIg3sSiLTiEdog&oe=6A7451BA",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2661,
+          "property": "src"
+        }
+      ]
+    },
+    {
+      "index": 34,
+      "id": "398137f07bb14354",
+      "name": "AQNU2wgyoWslOF5hcVxcU5wxA5oKWNJi4-hhRDJgBQIqh63oN3gacLENc9YEmZZeGcTd_Akm9aG03cowIoDLsbjT9CbUKDtVBjZ6lV4kQQ.mp4",
+      "url": "https://video.fsig5-1.fna.fbcdn.net/o1/v/t2/f2/m412/AQNU2wgyoWslOF5hcVxcU5wxA5oKWNJi4-hhRDJgBQIqh63oN3gacLENc9YEmZZeGcTd_Akm9aG03cowIoDLsbjT9CbUKDtVBjZ6lV4kQQ.mp4?_nc_cat=109&_nc_oc=AdoH67JmT03ldEB-meJ1ndmrb57JesgjRNUIIVTgngjlT8HtVVjOxGeSyytluQXulyLFrj-V4cg26MU2IwfS3n0m&_nc_sid=ef5aa3&_nc_ht=video.fsig5-1.fna.fbcdn.net&_nc_ohc=tocmn03BWY0Q7kNvwE6PcYZ&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MjEwMTg0MTYyMDc2MzQzNCwiYXNzZXRfYWdlX2RheXMiOjQ0LCJ2aV91c2VjYXNlX2lkIjoxMDc5OSwiZHVyYXRpb25fcyI6MzQsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&_nc_gid=ZO56np1tp5ptha_RhabJVg&_nc_ss=7b289&_nc_zt=28&oh=00_AQHORJ2V4f5bcg3aaqgpORRTf_gTciV5D8u0cd4egDXuBQ&oe=6A744A0D",
+      "sources": [
+        {
+          "kind": "resource",
+          "property": "video"
+        },
+        {
+          "kind": "attribute",
+          "nodeId": 2662,
+          "property": "src"
+        }
+      ]
+    }
+  ],
+  "visible_ads": [
+    {
+      "body_preview": "Something many 18 year olds have to deal with when they start driving is expensive car insurance. Insurance companies rarely ever give young drivers a good deal on their insurance but here’s how you can get the cheapest offer possible in just a few minutes. This free tool helps you get the best offers from trusted companies and anyone can use it to help reduce their insurance costs. Visit the link in my bio or comment “AUTO” to get started! - Milan Follow me @milansinghhh if you want to build your wealth 💸 Are you overpaying for auto insurance? Let me know in the comments!👇 #WealthWithMilan ",
+      "cta": "Get offer",
+      "domain": "FINANCEWYZE.COM",
+      "library_id": "3735997349884491",
+      "multiple_versions": false,
+      "page": "Milan Singh",
+      "started_running": "Jan 13, 2026"
+    },
+    {
+      "body_preview": "0:00 / 0:45 OTTOINSURANCE.COM What If Home Insurance Was Actually This Cheap? See how much your coverage should really cost by completing this 2-minute quiz. Get Quote ​",
+      "cta": "Get Quote",
+      "domain": "OTTOINSURANCE.COM",
+      "library_id": "930434656711292",
+      "multiple_versions": true,
+      "page": "OTTO Insurance",
+      "started_running": "Jun 1, 2026"
+    },
+    {
+      "body_preview": "FREEWAY.COM/DISCOUNTS Check Auto insurance rates English and Spanish Speaking Agents Get Quote ​",
+      "cta": "Get Quote",
+      "domain": "FREEWAY.COM/DISCOUNTS",
+      "library_id": "2845261389206212",
+      "multiple_versions": true,
+      "page": "Freeway Insurance",
+      "started_running": "Jul 16, 2026"
+    },
+    {
+      "body_preview": "0:00 / 0:33 CHEAP-AUTOQUOTES.COM 🔥 Rates as low as $30/month – start saving today! Get Quote ​",
+      "cta": "Get Quote",
+      "domain": "CHEAP-AUTOQUOTES.COM",
+      "library_id": "1004879722266181",
+      "multiple_versions": true,
+      "page": "Cheap Auto Quotes",
+      "started_running": "Jun 16, 2026"
+    },
+    {
+      "body_preview": "It was what my insurance company said two weeks later. I was driving with my wife and kids in the car, doing 29 in a 30, when this woman came flying up behind us like we were personally ruining her day. She got so close I couldn’t even see her headlights anymore. My wife looked in the side mirror and said, “What is she doing?” I said, “Trying to climb into the trunk, apparently.” I put my turn signal on early because we were turning in about half a block. That somehow made her angrier. She came even closer, threw her hands up, and nearly followed us through the turn like she was going to push ",
+      "cta": "",
+      "domain": "CIVILCARCOVERAGE.COM",
+      "library_id": "1672370367445265",
+      "multiple_versions": false,
+      "page": "Brian Newman",
+      "started_running": "Apr 21, 2026"
+    },
+    {
+      "body_preview": "FREEWAY.COM/DISCOUNTS Check Auto insurance rates English and Spanish Speaking Agents Get Quote ​",
+      "cta": "Get Quote",
+      "domain": "FREEWAY.COM/DISCOUNTS",
+      "library_id": "1364317962320333",
+      "multiple_versions": true,
+      "page": "Freeway Insurance",
+      "started_running": "Jul 16, 2026"
+    },
+    {
+      "body_preview": "0:00 / 0:32 What If Home Insurance Was Actually This Cheap? See how much your coverage should really cost with a quick phone call. Call Now ​",
+      "cta": "",
+      "domain": "",
+      "library_id": "1431641545395982",
+      "multiple_versions": true,
+      "page": "OTTO Insurance",
+      "started_running": "Jun 11, 2026"
+    },
+    {
+      "body_preview": "0:00 / 0:34 CHEAP-AUTOQUOTES.COM 🔥 Rates as low as $30/month – start saving today! Get Quote ​",
+      "cta": "Get Quote",
+      "domain": "CHEAP-AUTOQUOTES.COM",
+      "library_id": "1479393353830032",
+      "multiple_versions": true,
+      "page": "Cheap Auto Quotes",
+      "started_running": "May 10, 2026"
+    },
+    {
+      "body_preview": "FREEWAY.COM/DISCOUNTS Check Auto insurance rates English and Spanish Speaking Agents Get quote ​",
+      "cta": "",
+      "domain": "FREEWAY.COM/DISCOUNTS",
+      "library_id": "970012578981782",
+      "multiple_versions": false,
+      "page": "Freeway Insurance",
+      "started_running": "May 11, 2026"
+    },
+    {
+      "body_preview": "1. Term Life Insurance If someone depends on your income, you need life insurance. A 15- to 20-year term policy for 10 to 12 times your income protects your family if something happens to you. 2. Auto Insurance Even one accident can cost thousands. Make sure you’ve got solid liability coverage that protects your wallet as well as your car. 3. Homeowners or Renters Insurance Your home and your stuff need protection. Fires, storms, and break-ins happen more often than you think. 4. Health Insurance A single hospital visit can leave you drowning in bills. Health insurance isn’t optional. It’s pro",
+      "cta": "",
+      "domain": "",
+      "library_id": "755435867034924",
+      "multiple_versions": false,
+      "page": "Dave Ramsey",
+      "started_running": "Jul 21, 2025"
+    },
+    {
+      "body_preview": "0:00 / 0:10 CHEAPAUTOINSURANCE.US.COM Compare Today! Get Quote ​",
+      "cta": "Get Quote",
+      "domain": "CHEAPAUTOINSURANCE.US.COM",
+      "library_id": "979620381320473",
+      "multiple_versions": true,
+      "page": "Cheap Auto Insurance",
+      "started_running": "May 26, 2026"
+    },
+    {
+      "body_preview": "It was what my insurance company said two weeks later. I was driving with my wife and kids in the car, doing 29 in a 30, when this woman came flying up behind us like we were personally ruining her day. She got so close I couldn’t even see her headlights anymore. My wife looked in the side mirror and said, “What is she doing?” I said, “Trying to climb into the trunk, apparently.” I put my turn signal on early because we were turning in about half a block. That somehow made her angrier. She came even closer, threw her hands up, and nearly followed us through the turn like she was going to push ",
+      "cta": "",
+      "domain": "CIVILCARCOVERAGE.COM",
+      "library_id": "1259404859641550",
+      "multiple_versions": false,
+      "page": "Brian Newman",
+      "started_running": "Apr 21, 2026"
+    },
+    {
+      "body_preview": "🚗 Auto | 🏡 Home | ☂️ Umbrella | 🏢 Business | ❤️ Life 0:00 / 0:39 ​",
+      "cta": "",
+      "domain": "",
+      "library_id": "1486145433140710",
+      "multiple_versions": false,
+      "page": "Allstate Insurance Agent: Linh Huynh",
+      "started_running": "Mar 23, 2026"
+    },
+    {
+      "body_preview": "✅ Won MULTIPLE $100,000+ Settlements ✅ Recovered Over $500 Million ✅ Trusted for 30+ years by over 25,000 satisfied clients ‼️Important Qualifications: your accident must have occurred within the past 3 years. PORTNERANDSHURE.COM Get The Settlement You Deserve Join 25,000+ Satisfied Clients Contact Us",
+      "cta": "",
+      "domain": "PORTNERANDSHURE.COM",
+      "library_id": "1411698817679109",
+      "multiple_versions": true,
+      "page": "Portner & Shure, P.A.",
+      "started_running": "Jun 5, 2026"
+    },
+    {
+      "body_preview": "For over 38 years, we’ve been the shop people turn to when they want the job done right — not just done cheap. ✅ Independent & On Your Side We don’t answer to insurance companies. We fight for proper repairs — using OEM parts and manufacturer procedures every time. ✅ Certified & Precise We’re certified by 10+ major manufacturers, and we scan every single car before and after repairs to ensure nothing gets missed. ✅ Detail-Oriented & Safety-Focused We treat every car like it’s our own. Your family's safety rides on our work — and we take that seriously. Need an estimate? Visit our site.",
+      "cta": "",
+      "domain": "INSTAGRAM.COM",
+      "library_id": "2021609188771528",
+      "multiple_versions": false,
+      "page": "Orlando Autobody",
+      "started_running": "Mar 15, 2026"
+    }
+  ]
+}

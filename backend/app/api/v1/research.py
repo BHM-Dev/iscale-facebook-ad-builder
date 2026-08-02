@@ -1,15 +1,96 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Tuple
+from datetime import datetime
+import hashlib
 from app.database import get_db
+from app.core.deps import get_current_active_user
+from app.models import User
 from app.schemas.research import (
     AdSearchRequest, ScrapedAdResponse, ScrapedAdCreate, ScrapedAdSearchResult, SavedSearchResponse,
-    BrandScrapeCreate, BrandScrapeResponse, BrandScrapeListResponse
+    BrandScrapeCreate, BrandScrapeResponse, BrandScrapeListResponse, AdLibraryImportRequest
 )
 from app.services.research_service import ResearchService
 from app.services.rate_limiter import rate_limiter
 
 router = APIRouter()
+
+MAX_AD_LIBRARY_IMPORT_ADS = 100
+MAX_AD_LIBRARY_VIDEO_URLS = 3
+MAX_AD_LIBRARY_TEXT_CHARS = 5000
+MAX_AD_LIBRARY_CREATIVE_INTEL_CHARS = 12000
+
+
+def _truncate_text(value: str | None, max_chars: int = MAX_AD_LIBRARY_TEXT_CHARS) -> str | None:
+    if value is None:
+        return None
+    return value[:max_chars]
+
+
+def _bounded_json(value):
+    if value is None:
+        return None
+    import json
+
+    serialized = json.dumps(value)
+    if len(serialized) <= MAX_AD_LIBRARY_CREATIVE_INTEL_CHARS:
+        return value
+    return {
+        "truncated": True,
+        "summary": "Creative intel exceeded import size limit and was truncated.",
+        "original_keys": sorted(value.keys()) if isinstance(value, dict) else None,
+    }
+
+
+def _ad_library_content_hash(
+    external_id: str,
+    brand_name: str | None,
+    headline: str | None,
+    ad_copy: str | None,
+    cta_text: str | None,
+    destination_domain: str | None,
+) -> str:
+    raw = "|".join(
+        [
+            f"ad_library:{external_id}",
+            (brand_name or "").strip().lower(),
+            (headline or "").strip().lower(),
+            (ad_copy or "").strip().lower(),
+            (cta_text or "").strip().lower(),
+            (destination_domain or "").strip().lower(),
+        ]
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _directional_volume_score(rank_position: int | None, is_multiple_versions: bool | None, start_date: str | None, has_video: bool) -> int:
+    score = 0
+    if rank_position:
+        if rank_position <= 3:
+            score += 45
+        elif rank_position <= 10:
+            score += 35
+        elif rank_position <= 25:
+            score += 25
+        else:
+            score += 10
+    if is_multiple_versions:
+        score += 20
+    if has_video:
+        score += 10
+    if start_date:
+        try:
+            started = datetime.fromisoformat(start_date.replace("Z", "+00:00").replace("+00:00", ""))
+            running_days = max(0, (datetime.utcnow() - started).days)
+            if running_days >= 90:
+                score += 20
+            elif running_days >= 30:
+                score += 12
+            elif running_days >= 14:
+                score += 6
+        except Exception:
+            pass
+    return min(score, 100)
 
 @router.post("/search", response_model=List[ScrapedAdSearchResult])
 async def search_ads(request: AdSearchRequest, db: Session = Depends(get_db)):
@@ -537,6 +618,15 @@ def get_saved_ads(db: Session = Depends(get_db)):
             "cta_text": ad.cta_text,
             "media_type": ad.media_type,
             "media_url": ad.media_url,
+            "destination_domain": ad.destination_domain,
+            "source_query": ad.source_query,
+            "rank_position": ad.rank_position,
+            "sort_mode": ad.sort_mode,
+            "is_multiple_versions": ad.is_multiple_versions,
+            "video_urls": ad.video_urls,
+            "thumbnail_url": ad.thumbnail_url,
+            "creative_intel": ad.creative_intel,
+            "volume_score": ad.volume_score,
             "ad_link": ad.ad_link,
             "start_date": ad.start_date,
             "seen_count": ad.seen_count or 1,
@@ -562,6 +652,186 @@ def get_vertical_config():
     return {
         "verticals": VERTICAL_KEYWORD_SETS,
         "angle_tags": ANGLE_TAGS,
+    }
+
+
+@router.post("/ad-library-import")
+def import_ad_library_capture(
+    request: AdLibraryImportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Import Chrome-captured Ad Library intel into the Research library.
+
+    This is intentionally separate from the official Ad Library API path. It
+    stores rendered-card observations from a US, active, most-impressions
+    browser search so Joel/Saule can save competitor examples for creative
+    inspiration and video-agent training.
+    """
+    from app.models import ScrapedAd, SavedSearch, Vertical, FacebookPage
+
+    if not request.ads:
+        raise HTTPException(status_code=400, detail="No ads provided")
+    if len(request.ads) > MAX_AD_LIBRARY_IMPORT_ADS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Import is capped at {MAX_AD_LIBRARY_IMPORT_ADS} ads. Paste a smaller capture batch.",
+        )
+
+    vertical = db.query(Vertical).filter(Vertical.name == request.vertical).first()
+    if not vertical:
+        vertical = Vertical(name=request.vertical, description="Imported from Chrome-rendered Facebook Ad Library captures")
+        db.add(vertical)
+        db.flush()
+
+    saved_search = SavedSearch(
+        query=request.query,
+        country=request.country,
+        vertical_id=vertical.id,
+        search_type="chrome_ad_library_import",
+        schedule_config={
+            "source": "chrome",
+            "sort_mode": request.sort_mode,
+            "source_url": request.source_url,
+        },
+        is_active=False,
+        last_run=datetime.utcnow(),
+        ads_requested=len(request.ads),
+        ads_returned=len(request.ads),
+        ads_new=0,
+        ads_duplicate=0,
+    )
+    db.add(saved_search)
+    db.flush()
+
+    imported = 0
+    updated = 0
+    skipped = 0
+    page_counts: dict[str, int] = {}
+    with_media = 0
+    with_video = 0
+    multiple_versions = 0
+
+    for incoming in request.ads:
+        external_id = incoming.library_id.strip()
+        if not external_id:
+            skipped += 1
+            continue
+
+        video_urls = (incoming.video_urls or [])[:MAX_AD_LIBRARY_VIDEO_URLS]
+        media_type = incoming.media_type or ("video" if video_urls else "image")
+        has_media = bool(incoming.media_url or incoming.thumbnail_url or video_urls)
+        if has_media:
+            with_media += 1
+        if media_type == "video" or video_urls:
+            with_video += 1
+        if incoming.is_multiple_versions:
+            multiple_versions += 1
+        volume_score = _directional_volume_score(
+            incoming.rank_position,
+            incoming.is_multiple_versions,
+            incoming.start_date,
+            media_type == "video" or bool(video_urls),
+        )
+        creative_intel = dict(incoming.creative_intel or {})
+        creative_intel.update(
+            {
+                "capture_source": "chrome_ad_library",
+                "source_query": request.query,
+                "country": request.country,
+                "sort_mode": request.sort_mode,
+                "source_url": request.source_url,
+                "volume_score_method": "rank + multiple_versions + active_age + video_presence; directional only",
+                "imported_by_user_id": current_user.id,
+            }
+        )
+        creative_intel = _bounded_json(creative_intel)
+
+        fb_page = None
+        if incoming.brand_name:
+            fb_page = db.query(FacebookPage).filter(FacebookPage.page_name == incoming.brand_name).first()
+            if not fb_page:
+                fb_page = FacebookPage(page_name=incoming.brand_name, total_ads=0, vertical_id=vertical.id)
+                db.add(fb_page)
+                db.flush()
+            page_counts[incoming.brand_name] = page_counts.get(incoming.brand_name, 0) + 1
+
+        ad = db.query(ScrapedAd).filter(ScrapedAd.external_id == external_id).first()
+        if ad:
+            updated += 1
+            ad.last_seen = datetime.utcnow()
+            ad.seen_count = (ad.seen_count or 0) + 1
+        else:
+            imported += 1
+            ad = ScrapedAd(
+                external_id=external_id,
+                ad_link=incoming.ad_link or f"https://www.facebook.com/ads/library/?id={external_id}",
+                content_hash=_ad_library_content_hash(
+                    external_id,
+                    incoming.brand_name,
+                    _truncate_text(incoming.headline),
+                    _truncate_text(incoming.ad_copy),
+                    incoming.cta_text,
+                    incoming.destination_domain,
+                ),
+                search_id=saved_search.id,
+            )
+            db.add(ad)
+
+        ad.brand_name = incoming.brand_name
+        ad.headline = _truncate_text(incoming.headline)
+        ad.ad_copy = _truncate_text(incoming.ad_copy)
+        ad.cta_text = incoming.cta_text
+        ad.platform = "facebook"
+        ad.platforms = incoming.platforms or ["facebook"]
+        ad.start_date = incoming.start_date
+        ad.media_type = media_type
+        ad.media_url = incoming.media_url or incoming.thumbnail_url
+        ad.destination_domain = incoming.destination_domain
+        ad.source_query = request.query
+        ad.rank_position = incoming.rank_position
+        ad.sort_mode = request.sort_mode
+        ad.is_multiple_versions = bool(incoming.is_multiple_versions)
+        ad.video_urls = video_urls or None
+        ad.thumbnail_url = incoming.thumbnail_url or incoming.media_url
+        ad.creative_intel = creative_intel
+        ad.volume_score = volume_score
+        ad.search_id = saved_search.id
+        if fb_page:
+            ad.facebook_page_id = fb_page.id
+
+    saved_search.ads_new = imported
+    saved_search.ads_duplicate = updated
+
+    db.flush()
+    for page_name in page_counts:
+        page = db.query(FacebookPage).filter(FacebookPage.page_name == page_name).first()
+        if page:
+            page.total_ads = db.query(ScrapedAd).filter(ScrapedAd.facebook_page_id == page.id).count()
+            page.last_seen = datetime.utcnow()
+
+    db.commit()
+
+    return {
+        "search_id": saved_search.id,
+        "query": request.query,
+        "vertical": request.vertical,
+        "imported": imported,
+        "updated": updated,
+        "skipped": skipped,
+        "total": imported + updated,
+        "quality": {
+            "with_media": with_media,
+            "with_video": with_video,
+            "multiple_versions": multiple_versions,
+            "unmapped_video_inventory": max(
+                [
+                    (ad.creative_intel or {}).get("unmapped_video_inventory_count", 0)
+                    for ad in request.ads
+                ] or [0]
+            ),
+        },
+        "message": f"Imported {imported} new ads, updated {updated} existing ads",
     }
 
 
@@ -712,6 +982,16 @@ def get_vertical_browse_ads(
             "cta_text": ad.cta_text,
             "ad_link": ad.ad_link,
             "media_url": ad.media_url,
+            "media_type": ad.media_type,
+            "destination_domain": ad.destination_domain,
+            "source_query": ad.source_query,
+            "rank_position": ad.rank_position,
+            "sort_mode": ad.sort_mode,
+            "is_multiple_versions": ad.is_multiple_versions,
+            "video_urls": ad.video_urls,
+            "thumbnail_url": ad.thumbnail_url,
+            "creative_intel": ad.creative_intel,
+            "volume_score": ad.volume_score,
             "start_date": ad.start_date,
             "running_days": running_days,
             "is_active": is_active,
