@@ -67,7 +67,16 @@ def build_payload(raw: dict[str, Any], vertical: str) -> dict[str, Any]:
     source_ads = raw.get("ads") or raw.get("visible_ads") or []
     ads = [normalize_ad(ad, index) for index, ad in enumerate(source_ads)]
     ads = [ad for ad in ads if ad["library_id"]]
-    unmapped_videos = len(raw.get("videos") or [])
+    source_videos = raw.get("videos") or []
+    mapped_video_urls = {
+        video.get("url")
+        for raw_ad in source_ads
+        for video in source_videos
+        if video.get("ad_library_id")
+        and video.get("ad_library_id") == str(raw_ad.get("library_id") or raw_ad.get("external_id") or "").strip()
+        and video.get("url")
+    }
+    unmapped_videos = len([video for video in source_videos if video.get("url") and video.get("url") not in mapped_video_urls])
     for ad in ads:
         ad["creative_intel"]["unmapped_video_inventory_count"] = unmapped_videos
     return {

@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Tuple
 from datetime import datetime
 import hashlib
+import json
 from app.database import get_db
 from app.core.deps import get_current_active_user
 from app.models import User
@@ -30,7 +31,6 @@ def _truncate_text(value: str | None, max_chars: int = MAX_AD_LIBRARY_TEXT_CHARS
 def _bounded_json(value):
     if value is None:
         return None
-    import json
 
     serialized = json.dumps(value)
     if len(serialized) <= MAX_AD_LIBRARY_CREATIVE_INTEL_CHARS:
@@ -50,16 +50,16 @@ def _ad_library_content_hash(
     cta_text: str | None,
     destination_domain: str | None,
 ) -> str:
-    raw = "|".join(
-        [
-            f"ad_library:{external_id}",
-            (brand_name or "").strip().lower(),
-            (headline or "").strip().lower(),
-            (ad_copy or "").strip().lower(),
-            (cta_text or "").strip().lower(),
-            (destination_domain or "").strip().lower(),
-        ]
-    )
+    payload = {
+        "source": "ad_library",
+        "external_id": external_id,
+        "brand_name": (brand_name or "").strip().lower(),
+        "headline": (headline or "").strip().lower(),
+        "ad_copy": (ad_copy or "").strip().lower(),
+        "cta_text": (cta_text or "").strip().lower(),
+        "destination_domain": (destination_domain or "").strip().lower(),
+    }
+    raw = json.dumps(payload, sort_keys=True)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

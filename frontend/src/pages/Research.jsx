@@ -42,6 +42,15 @@ const normalizeAdLibraryImport = (raw, activeVerticalLabel) => {
       return '';
     }
   })();
+  const mappedVideoUrls = new Set(
+    sourceAds.flatMap(ad => (
+      videos
+        .filter(video => video.ad_library_id && video.ad_library_id === (ad.library_id || ad.external_id))
+        .map(video => video.url)
+        .filter(Boolean)
+    )),
+  );
+  const unmappedVideoCount = videos.filter(video => video.url && !mappedVideoUrls.has(video.url)).length;
 
   return {
     query: raw.query || queryFromUrl || 'cheap auto insurance',
@@ -77,7 +86,7 @@ const normalizeAdLibraryImport = (raw, activeVerticalLabel) => {
           creative_intel: {
             visible_copy_preview: preview,
             imported_from_chrome: true,
-            unmapped_video_inventory_count: videos.length,
+            unmapped_video_inventory_count: unmappedVideoCount,
           },
         };
       }),

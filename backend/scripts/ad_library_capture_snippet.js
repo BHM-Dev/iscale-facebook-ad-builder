@@ -9,46 +9,58 @@ Required page setup:
 - Query: "cheap auto insurance" or "auto insurance"
 */
 (() => {
-  const text = document.body.innerText || "";
-  const cardChunks = text
-    .split(/Library ID:\s*/g)
-    .slice(1)
-    .map(chunk => `Library ID: ${chunk}`);
+  const markers = Array.from(document.querySelectorAll("*")).filter(element => {
+    const text = element.textContent && element.textContent.trim();
+    return text && text.startsWith("Library ID:") && element.children.length < 3 && text.length < 60;
+  });
 
-  const getLineAfter = (lines, label) => {
-    const index = lines.findIndex(line => line.trim().toLowerCase() === label.toLowerCase());
-    return index >= 0 ? (lines[index + 1] || "").trim() : "";
-  };
+  const cardRoots = new Set();
+  for (const marker of markers) {
+    let node = marker;
+    for (let index = 0; index < 4 && node.parentElement; index += 1) {
+      node = node.parentElement;
+    }
+    cardRoots.add(node);
+  }
 
-  const getDomain = lines => (
-    lines.find(line => /^[A-Z0-9.-]+\.[A-Z]{2,}(\/[A-Z0-9._~:/?#\[\]@!$&'()*+,;=%-]*)?$/i.test(line.trim())) || ""
-  ).trim();
-
-  const ads = cardChunks.map((chunk, index) => {
-    const lines = chunk
+  const seen = new Set();
+  const ads = [];
+  for (const root of cardRoots) {
+    const lines = root.innerText
       .split("\n")
       .map(line => line.trim())
       .filter(Boolean);
-    const libraryId = (lines[0] || "").replace("Library ID:", "").trim().split(/\s+/)[0];
+    const idLine = lines.find(line => line.startsWith("Library ID:"));
+    if (!idLine) continue;
+    const libraryId = idLine.replace("Library ID:", "").trim().split(/\s+/)[0];
+    if (!libraryId || seen.has(libraryId)) continue;
+    seen.add(libraryId);
+
     const startedLine = lines.find(line => /^Started running on /i.test(line));
     const started = startedLine ? startedLine.replace(/^Started running on /i, "").trim() : "";
-    const multipleVersions = /This ad has multiple versions/i.test(chunk);
-    const cta = ["Get Quote", "Get quote", "Get offer", "Call Now", "Sign Up", "Contact Us", "Learn More"]
-      .find(label => lines.includes(label)) || "";
-    const domain = getDomain(lines);
-    const page = getLineAfter(lines, "Page ID") || lines.find(line => !/^Library ID:/.test(line) && !/^Started running/.test(line)) || "";
-    return {
+    const sponsoredIndex = lines.findIndex(line => line === "Sponsored");
+    const page = sponsoredIndex > 0 ? lines[sponsoredIndex - 1] : "";
+    const multipleVersions = lines.some(line => /this ad has multiple versions/i.test(line));
+    const ctaLabels = ["Get Quote", "Get quote", "Get offer", "Call Now", "Call now", "Sign Up", "Contact Us", "Learn More", "Shop Now", "Send Message"];
+    const ctaIndex = lines.findIndex(line => ctaLabels.includes(line));
+    const cta = ctaIndex >= 0 ? lines[ctaIndex] : "";
+    const bodyStart = sponsoredIndex >= 0 ? sponsoredIndex + 1 : 0;
+    const bodyEnd = ctaIndex >= 0 ? ctaIndex : lines.length;
+    const body = lines.slice(bodyStart, bodyEnd).join(" ").slice(0, 5000);
+    const domain = lines.find(line => /^[A-Z0-9.-]+\.[A-Z]{2,}(\/[A-Z0-9._~:/?#\[\]@!$&'()*+,;=%-]*)?$/i.test(line)) || "";
+
+    ads.push({
       library_id: libraryId,
       page,
-      body_preview: lines.slice(1, 40).join(" ").slice(0, 5000),
+      body_preview: body,
       cta,
       domain,
       started_running: started,
       multiple_versions: multipleVersions,
-      rank_position: index + 1,
-      media_type: /Video player|Play video/i.test(chunk) ? "video" : "image",
-    };
-  }).filter(ad => ad.library_id);
+      rank_position: ads.length + 1,
+      media_type: /Video player|Play video/i.test(root.innerText) ? "video" : "image",
+    });
+  }
 
   const videos = Array.from(document.querySelectorAll("video")).map((video, index) => ({
     index,
@@ -77,5 +89,5 @@ Required page setup:
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
-  console.log(`Captured ${ads.length} visible ads and ${videos.length} video elements. Paste the downloaded JSON into Ad Builder > Research > Import Intel.`);
+  console.log(`Captured ${ads.length} unique ad cards and ${videos.length} video elements. Paste the downloaded JSON into Ad Builder > Research > Import Intel.`);
 })();
