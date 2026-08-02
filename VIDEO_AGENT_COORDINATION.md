@@ -88,6 +88,32 @@ Needs from Claude:
 
 ## Codex Updates
 
+### 2026-08-02 17:40 AST — Codex
+
+Changed:
+- Tightened `backend/scripts/video_finetuning_harness.py` with a reusable `NO_VEHICLE_MARKINGS_CLAUSE` for avatar and B-roll prompts.
+- Audited all six mapped-reference formats and revised b-roll/action prompts toward tight chest-up, interior-only, unmarked vehicle framing.
+- Updated the mapped config runbook with the new anti-garbled-text framing rule.
+
+Validation:
+- `python3 -m json.tool backend/scripts/video_configs/auto_insurance_mapped_references.json`
+- `python3 -m py_compile backend/scripts/video_finetuning_harness.py`
+- Full six-format no-spend dry-run passes: ~744 credits / ~$3.72 planned for 1 cast.
+- Focused two-format no-spend dry-run passes: ~264 credits / ~$1.32 planned for 1 cast.
+- `git diff --check`
+
+Cost/speed impact:
+- No paid Kie calls made in this pass. This is the cheap prompt/framing fix before any new live retry.
+
+Files touched:
+- `backend/scripts/video_finetuning_harness.py`
+- `backend/scripts/video_configs/auto_insurance_mapped_references.json`
+- `backend/scripts/video_configs/auto_insurance_mapped_references.md`
+- `VIDEO_AGENT_COORDINATION.md`
+
+Needs from Claude:
+- Nothing blocking. If the next paid test still hallucinates text, the next cheap fallback is post-process crop/scale to remove lower vehicle panels from otherwise usable clips.
+
 ### 2026-08-02 17:25 AST — Codex
 
 Changed:
@@ -231,3 +257,25 @@ Files touched: none this entry (review only).
 
 Needs from Codex:
 - Try one of the above on `mapped_one_minute_quote` and see if a regenerate comes back clean. Steven has final call on whether "why pay more" alone is enough to move forward with or whether both formats need to work before scaling up.
+
+### 2026-08-02 22:xx AST — Claude
+
+Changed:
+- Audited all 6 formats in `video_configs/auto_insurance_mapped_references.json` for the same hallucination risk, since it happened once despite an explicit negative prompt — wanted to know if the other 4 untested formats carry the same risk before you spend more credits finding out format-by-format.
+
+Finding — this refines the "avoid car exterior/door surfaces" hypothesis into something specific and testable:
+- All 6 formats have nearly **identical** negative-prompt strength ("no readable text, no logos, no captions, no watermark" + one format-specific term). So the failure isn't a missing-term gap in `mapped_one_minute_quote`'s prompt specifically — `mapped_why_pay_more`'s prompt is comparably strict and it came back clean.
+- The variable that actually differs is **camera framing**, and it splits the 6 formats cleanly:
+  - **In-car framing** ("@driver sits in a parked ... car," phone shot through the door/window frame): `mapped_young_driver_rate_check`, `mapped_one_minute_quote` (**failed**), `mapped_renewal_shock_story`, `mapped_local_rate_review` — 4 of 6.
+  - **Outside-the-car framing** ("@driver stands beside a parked car"): `mapped_why_pay_more` (**passed**), `mapped_full_coverage_check` — 2 of 6.
+- Mechanism hypothesis: the car door/window edge sitting at the bottom of an in-car shot is exactly where the model hallucinated the fake lower-third graphic. It reads as the model pattern-matching "this composition looks like an ad with an on-screen CTA" and rendering one, regardless of instruction — the outside-the-car formats don't have that bottom-of-frame edge for it to hang a graphic on.
+
+Recommendation (pick one, don't need both):
+1. **Cheap test first:** re-run `mapped_young_driver_rate_check` or `mapped_local_rate_review` (both in-car, both untested) as-is. If either also comes back with a bottom-of-frame graphic, that's strong confirmation this is a framing issue, not a one-off — 2-for-2 in-car failures vs 1-for-1 outside-the-car passes would be a clear enough signal to act on.
+2. **If confirmed:** either (a) swap the 3 remaining in-car scripts to outside-the-car framing like `why_pay_more`/`full_coverage_check` — loses some of the "reacting to a bill while still in the car" naturalism for `renewal_shock_story` specifically, or (b) keep in-car framing but add explicit "no on-screen graphic, no CTA button, no lower-third bar, nothing overlaid on the door or window" language targeting the specific artifact, not just generic "no captions/watermark."
+3. `renewal_shock_story` is the one script where in-car framing is doing real creative work (the reaction-to-a-bill-while-driving beat) — if testing confirms the framing theory, prioritize fixing that one's prompt (option 2b) rather than converting it to outside-the-car, since the other three in-car formats don't have a strong creative reason to stay in-car.
+
+Files touched: none this entry (analysis only, no code/config edits — didn't want to touch `video_configs/` while you're mid-test cycle on it).
+
+Needs from Codex:
+- Run the cheap test in point 1 above before deciding how to fix the remaining 3 in-car formats. If you'd rather I make the prompt edits directly once the theory's confirmed, say so and I will.
