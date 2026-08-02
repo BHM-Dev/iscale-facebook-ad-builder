@@ -55,7 +55,13 @@ const normalizeAdLibraryImport = (raw, activeVerticalLabel) => {
   return {
     query: raw.query || queryFromUrl || 'cheap auto insurance',
     country: raw.country || 'US',
-    vertical: activeVerticalLabel || 'Auto Insurance',
+    // Chrome-captured JSON never sets `vertical` (the snippet doesn't know
+    // which tab you'll paste into), so the active tab is the right default.
+    // But a pre-built payload (e.g. from ad_library_prepare_import.py) can
+    // declare its own vertical — respect that explicit intent over whatever
+    // tab happens to be open, since silently overriding it caused a real
+    // mis-import (2026-08-02).
+    vertical: raw.vertical || activeVerticalLabel || 'Auto Insurance',
     sort_mode: raw.sort_mode || raw.sort || 'total_impressions_desc',
     source_url: sourceUrl,
     ads: sourceAds
@@ -440,7 +446,7 @@ function AdLibraryImportModal({ open, onClose, onImport, importing, defaultQuery
 // ── Main page ────────────────────────────────────────────────────
 export default function Research() {
   const { authFetch } = useAuth();
-  const { showSuccess, showError, showInfo } = useToast();
+  const { showSuccess, showError, showInfo, showWarning } = useToast();
   const navigate = useNavigate();
 
   const [verticalConfig, setVerticalConfig] = useState(null);
@@ -647,6 +653,9 @@ export default function Research() {
       const payload = normalizeAdLibraryImport(raw, currentVerticalLabel);
       if (!payload.ads.length) {
         throw new Error('No ads found in pasted JSON');
+      }
+      if (raw.vertical && raw.vertical.trim().toLowerCase() !== (currentVerticalLabel || '').trim().toLowerCase()) {
+        showWarning(`Pasted JSON specifies vertical "${raw.vertical}" — importing there, not into the "${currentVerticalLabel}" tab you have open.`);
       }
       const res = await authFetch(`${API_URL}/research/ad-library-import`, {
         method: 'POST',

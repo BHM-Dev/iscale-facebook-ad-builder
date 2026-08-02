@@ -25,6 +25,7 @@ Required page setup:
 
   const seen = new Set();
   const ads = [];
+  const cardEntries = []; // { root, libraryId } — reused below to map videos to their owning ad
   for (const root of cardRoots) {
     const lines = root.innerText
       .split("\n")
@@ -49,6 +50,13 @@ Required page setup:
     const body = lines.slice(bodyStart, bodyEnd).join(" ").slice(0, 5000);
     const domain = lines.find(line => /^[A-Z0-9.-]+\.[A-Z]{2,}(\/[A-Z0-9._~:/?#\[\]@!$&'()*+,;=%-]*)?$/i.test(line)) || "";
 
+    // Videos physically inside this card's own DOM subtree — a reliable per-ad
+    // mapping, unlike the old page-wide innerText regex, which missed real
+    // video ads whose card text didn't contain "Video player"/"Play video".
+    const cardVideoEls = Array.from(root.querySelectorAll("video"));
+    const cardVideoUrls = cardVideoEls.map(video => video.currentSrc || video.src || "").filter(Boolean);
+    const cardPoster = cardVideoEls.map(video => video.poster).find(Boolean) || "";
+
     ads.push({
       library_id: libraryId,
       page,
@@ -58,17 +66,27 @@ Required page setup:
       started_running: started,
       multiple_versions: multipleVersions,
       rank_position: ads.length + 1,
-      media_type: /Video player|Play video/i.test(root.innerText) ? "video" : "image",
+      media_type: cardVideoUrls.length ? "video" : "image",
+      video_urls: cardVideoUrls,
+      thumbnail_url: cardPoster,
     });
+    cardEntries.push({ root, libraryId });
   }
 
-  const videos = Array.from(document.querySelectorAll("video")).map((video, index) => ({
-    index,
-    url: video.currentSrc || video.src || "",
-    poster: video.poster || "",
-    width: video.videoWidth || null,
-    height: video.videoHeight || null,
-  })).filter(video => video.url || video.poster);
+  // Flat video inventory, each tagged with the library_id of its containing
+  // card (or null if it isn't inside any detected card) — kept for the
+  // capture-quality "unmapped video" stat downstream.
+  const videos = Array.from(document.querySelectorAll("video")).map((video, index) => {
+    const owner = cardEntries.find(entry => entry.root.contains(video));
+    return {
+      index,
+      url: video.currentSrc || video.src || "",
+      poster: video.poster || "",
+      width: video.videoWidth || null,
+      height: video.videoHeight || null,
+      ad_library_id: owner ? owner.libraryId : null,
+    };
+  }).filter(video => video.url || video.poster);
 
   const payload = {
     captured_at: new Date().toISOString(),
@@ -89,5 +107,6 @@ Required page setup:
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
-  console.log(`Captured ${ads.length} unique ad cards and ${videos.length} video elements. Paste the downloaded JSON into Ad Builder > Research > Import Intel.`);
+  const mappedVideoCount = videos.filter(video => video.ad_library_id).length;
+  console.log(`Captured ${ads.length} unique ad cards and ${videos.length} video elements (${mappedVideoCount} mapped to a specific ad). Paste the downloaded JSON into Ad Builder > Research > Import Intel.`);
 })();

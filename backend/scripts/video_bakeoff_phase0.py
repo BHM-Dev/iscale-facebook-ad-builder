@@ -38,6 +38,7 @@ COMMON_API_URL = "https://api.kie.ai/api/v1"
 
 POLL_INTERVAL_SECONDS = 5
 TASK_TIMEOUT_SECONDS = 300
+DEFAULT_MAX_PLANNED_CREDITS = 500
 
 REVIEW_QUESTIONS = [
     "Does the person look believable?",
@@ -432,6 +433,13 @@ def print_dry_run(plans: list[ClipPlan]) -> None:
     print("Confirmed account balance in brief: 4,698 credits as of 2026-07-30")
 
 
+def estimate_plans(plans: list[ClipPlan]) -> dict[str, float]:
+    return {
+        "clip_credits": sum(plan.estimated_credits for plan in plans),
+        "clip_cost_usd": sum(plan.estimated_cost_usd for plan in plans),
+    }
+
+
 def load_manifest() -> list[dict[str, Any]]:
     if not MANIFEST_PATH.exists():
         return []
@@ -512,8 +520,15 @@ def slugify(value: str) -> str:
 
 
 def run_batch(args: argparse.Namespace) -> None:
-    api_key = require_api_key()
     plans = build_clip_plans(include_extra=args.extra)
+    planned_costs = estimate_plans(plans)
+    if planned_costs["clip_credits"] > args.max_planned_credits and not args.override_cost_cap:
+        raise SystemExit(
+            f"Planned bakeoff is ~{planned_costs['clip_credits']:.0f} credits, above cap "
+            f"{args.max_planned_credits:.0f}. Use --max-planned-credits or --override-cost-cap intentionally."
+        )
+
+    api_key = require_api_key()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     start_credits = check_credit_balance(api_key)
@@ -590,8 +605,8 @@ def run_batch(args: argparse.Namespace) -> None:
         "start_credits": start_credits,
         "end_credits": end_credits,
         "credits_spent": None,
-        "estimated_clip_credits": sum(plan.estimated_credits for plan in plans),
-        "estimated_clip_cost_usd": sum(plan.estimated_cost_usd for plan in plans),
+        "estimated_clip_credits": planned_costs["clip_credits"],
+        "estimated_clip_cost_usd": planned_costs["clip_cost_usd"],
     }
     if start_credits is not None and end_credits is not None:
         spent = start_credits - end_credits
@@ -703,6 +718,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--extra", action="store_true", help="Add two extra talking-head variants for an 8-clip batch.")
     parser.add_argument("--presenter-image-url", help="Use an existing public presenter image URL instead of generating one.")
     parser.add_argument("--audio-url", help="Use an existing public audio URL for all talking-head clips instead of generating TTS.")
+    parser.add_argument("--max-planned-credits", type=float, default=DEFAULT_MAX_PLANNED_CREDITS, help="Fail before live generation if the planned bakeoff exceeds this credit estimate.")
+    parser.add_argument("--override-cost-cap", action="store_true", help="Allow live generation even when planned credits exceed --max-planned-credits.")
     return parser.parse_args()
 
 

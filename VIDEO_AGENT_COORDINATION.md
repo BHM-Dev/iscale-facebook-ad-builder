@@ -82,8 +82,8 @@ Needs from Claude:
 
 ## Open Handoff Items
 
-- Improve Chrome/Facebook Ad Library capture so video/media assets map to exact Library IDs.
-- After Claude produces clean mapped examples, convert the top patterns into a harness config override instead of editing defaults every time.
+- [x] Improve Chrome/Facebook Ad Library capture so video/media assets map to exact Library IDs. Done 2026-08-02 — see Claude Updates below.
+- After Claude produces clean mapped examples, convert the top patterns into a harness config override instead of editing defaults every time. Clean mapped reference now available at `backend/scripts/ad_library_references/auto_insurance_cheap_import_payload.json` (35 ads, 15 with mapped video, 0 unmapped) — ready for Codex to build a config override from.
 - Add a simple in-app Review Pack view after Joel validates the local review-page flow.
 
 ## Codex Updates
@@ -96,11 +96,12 @@ Changed:
 - Added stricter auto-insurance prompt constraints from `AutoInsurance-VideoCreative-Guidance.md`.
 - Added `VIDEO_PRODUCTION_JOEL_WALKTHROUGH.md`.
 - Added a planned-credit cap before live Kie generation.
+- Added the same planned-credit cap to `backend/scripts/video_bakeoff_phase0.py`; bare `--yes` now aborts before key lookup/API calls unless an intentional cap/override is supplied.
 - Added Joel feedback controls and JSON export to review pages.
 - Fixed review findings: missing `hashlib` import, reused clips in assembly, executable assembly commands, and TTS cache mutation.
 
 Validation:
-- Python compile, mode dry-runs, review generation, plan-only assembly, and cost-cap smoke pass.
+- Python compile, mode dry-runs, review generation, plan-only assembly, and cost-cap smokes pass.
 
 Cost/speed impact:
 - `draft` mode tests 2 talking-head clips per cast with no B-roll.
@@ -136,3 +137,23 @@ Files touched:
 
 Needs from Codex:
 - `video_bakeoff_phase0.py` has no credit-spend cap at all (no `--max-planned-credits`, no pre-flight abort) — bounded only by a hardcoded clip list (~700-930 credits worst case). Add the same cap pattern from `video_finetuning_harness.py` before anyone runs it live with `--yes`.
+
+### 2026-08-02 16:xx AST — Claude
+
+Changed:
+- Fixed the open handoff item: `backend/scripts/ad_library_capture_snippet.js` now maps each video element to its own ad card via DOM containment (`cardRoot.querySelectorAll('video')`) instead of a page-wide, unassociated `document.querySelectorAll('video')` list. Each ad now gets its own `video_urls`/`thumbnail_url` directly; the flat `videos[]` array is tagged with `ad_library_id` for the capture-quality stat.
+- Verified live against a real Ad Library search (`q=auto insurance cheap`): 15/15 videos correctly mapped to their card with zero false positives (checked via `node.contains(video)` on 28 cards). Bonus finding: the old regex-based `media_type` detection (`/Video player|Play video/i` on card text) was actually missing some real video ads — DOM-based detection catches them all.
+- Regenerated `backend/scripts/ad_library_references/auto_insurance_cheap_latest_raw.json` and `auto_insurance_cheap_import_payload.json` from a fresh 48-ad capture, filtered down to 35 clean on-vertical ads (13 excluded — same off-vertical categories as before, plus one new one: "Amy Wright" cruise/health-story native ad bait). Final stats: 15 with media, 15 with mapped video, 0 unmapped.
+- Imported the 35 mapped ads into the live Research > Auto Insurance library via the Import Intel UI (pasted from clipboard to avoid routing ~90KB of scraped ad copy/CDN URLs through my own context — see note below). First import attempt landed in the wrong vertical because the Import Intel modal always uses the *currently active tab* to set `vertical`, ignoring whatever `vertical` field is in the pasted JSON (`Research.jsx` `normalizeAdLibraryImport`) — I'd pasted while Commercial Insurance was still the active tab. Caught it via API verification (browse-ads count mismatch), re-imported with Auto Insurance active, and deleted the resulting orphaned/empty SavedSearch. Commercial Insurance confirmed back at its original 120; Auto Insurance now at 37 (17 with video).
+- Process note for whoever does this next: don't try to `fetch()` a locally-served file from inside the adbuilder.velocitymx.io page — the Browser pane appears to run in a different network namespace than the shell running `python3 -m http.server`, so `http://localhost:PORT` fetches from the page just hang (45s CDP timeout, no console error). Copy-paste via OS clipboard (`pbcopy` + Cmd+V into the modal) works reliably instead.
+
+New competitor findings:
+- Now-mapped video ads confirm the video/UGC creative for Freeway Insurance, OTTO Insurance, Cheap Auto Quotes, Cheap Auto Insurance, and an Allstate agent (Linh Huynh) — good direct references for the harness's visual-structure targets in the guidance doc.
+
+Files touched:
+- `backend/scripts/ad_library_capture_snippet.js`
+- `backend/scripts/ad_library_references/auto_insurance_cheap_latest_raw.json`
+- `backend/scripts/ad_library_references/auto_insurance_cheap_import_payload.json`
+
+Needs from Codex:
+- Nothing blocking. The mapped reference file is ready whenever you want to build a harness config override from it (see Open Handoff Items above).
