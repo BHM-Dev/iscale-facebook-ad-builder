@@ -1,0 +1,65 @@
+{
+  "metadata": {
+    "source": "backend/scripts/ad_library_references/auto_insurance_cheap_import_payload.json",
+    "captured_query": "auto insurance cheap",
+    "country": "US",
+    "sort_mode": "total_impressions_desc",
+    "ads_reviewed": 35,
+    "mapped_video_ads": 15,
+    "primary_cta": "Get Quote",
+    "created_for": "backend/scripts/video_finetuning_harness.py --config"
+  },
+  "niches": {
+    "auto_insurance": {
+      "label": "Auto Insurance - mapped competitor references",
+      "audience": "US drivers comparing auto insurance rates after renewal increases, young-driver pricing, or full-coverage quote shock",
+      "risk_framing": "renewal increases, zip-code rating pressure, young-driver pricing, full-coverage affordability, and quick quote comparison",
+      "cast_prompt": "realistic adult US driver age 28-48 in a clean parked United States left-hand-drive car, driver seated on the left side, casual solid-color shirt, friendly expression, natural daylight, phone visible but angled away with no screen text, auto insurance UGC ad presenter, no logos, no text, no writing, no patterns",
+      "cast_identity_description": "the same realistic adult US driver from the reference photos, casual solid-color outfit, credible auto insurance shopper"
+    }
+  },
+  "formats": {
+    "mapped_young_driver_rate_check": {
+      "label": "Mapped - Young Driver Rate Check",
+      "script": "If you are a new driver, or you have one on your policy, insurance can get expensive fast. Before you assume that is just the rate, compare a few options. Check your rate free.",
+      "tone": "direct-to-camera UGC, helpful older sibling energy, practical and trustworthy, no hype",
+      "broll_action": "@driver sits in a parked United States left-hand-drive car with a phone angled away, then gestures lightly as if explaining a simple rate check",
+      "broll_prompt": "Vertical 9:16 realistic UGC-style auto insurance B-roll inspired by mapped Ad Library young-driver rate-check ads. @driver sits in a parked United States left-hand-drive car with a phone angled away from camera. Natural daylight, handheld creator framing, no readable text, no logos, no captions, no watermark, no dashboard text."
+    },
+    "mapped_one_minute_quote": {
+      "label": "Mapped - One Minute Quote Check",
+      "script": "I thought checking insurance meant calls and paperwork. It was just a quick quote check. See what options show up near you in under a minute.",
+      "tone": "direct-to-camera UGC, lightly surprised, simple and credible, practical rate-shopping tone",
+      "broll_action": "@driver sits in a parked United States left-hand-drive car, taps a phone angled away from camera, then looks back with a small surprised reaction",
+      "broll_prompt": "Vertical 9:16 realistic UGC-style auto insurance B-roll inspired by mapped quick-quote competitor ads. @driver sits in a parked United States left-hand-drive car and checks a phone angled away from camera. Natural daylight, creator-shot framing, no readable phone text, no logos, no captions, no watermark, no dashboard text."
+    },
+    "mapped_why_pay_more": {
+      "label": "Mapped - Why Pay More",
+      "script": "Why pay more for the same kind of coverage? A quick comparison can show whether your current rate still makes sense. Compare free quotes.",
+      "tone": "fast UGC PSA, confident but compliant, direct response pacing, no fixed savings claim",
+      "broll_action": "@driver stands near a parked United States car with keys in hand, then points briefly toward a phone as if showing a comparison step",
+      "broll_prompt": "Vertical 9:16 realistic UGC-style auto insurance B-roll inspired by high-impression compare-and-save ads. @driver stands beside a parked United States car in a driveway or parking lot with keys and a phone. Handheld creator framing, natural daylight, no readable text, no logos, no captions, no watermark, no license plate text."
+    },
+    "mapped_renewal_shock_story": {
+      "label": "Mapped - Renewal Shock Story",
+      "script": "My renewal jumped and my record had not changed. That was the moment I stopped assuming loyalty meant the best rate. Check your options before the next bill.",
+      "tone": "short UGC confession, grounded and story-led, mildly frustrated but not dramatic",
+      "broll_action": "@driver sits in a parked United States left-hand-drive car holding a phone angled away, pauses as if reviewing a renewal notice, then looks back to camera",
+      "broll_prompt": "Vertical 9:16 realistic UGC-style auto insurance B-roll inspired by renewal-shock story ads. @driver sits in a parked United States left-hand-drive car with a phone angled away, showing a grounded reaction to a higher bill. Natural light, handheld creator framing, no readable phone text, no logos, no captions, no watermark, no dashboard text."
+    },
+    "mapped_full_coverage_check": {
+      "label": "Mapped - Full Coverage Check",
+      "script": "If you need full coverage, do not guess from one company's price. Compare options side by side before you decide. Start your quote.",
+      "tone": "clear and practical UGC explainer, useful shopper advice, measured and trustworthy",
+      "broll_action": "@driver stands next to a parked United States car, checks the car briefly, then looks at a phone angled away as if comparing coverage options",
+      "broll_prompt": "Vertical 9:16 realistic UGC-style auto insurance B-roll inspired by full-coverage competitor ads. @driver stands beside a parked United States car in natural daylight and checks a phone angled away from camera. Clean background, no readable text, no logos, no captions, no watermark, no license plate text."
+    },
+    "mapped_local_rate_review": {
+      "label": "Mapped - Local Rate Review",
+      "script": "Rates can change by area, even when your driving record stays clean. If your bill moved this year, compare what is available where you live. Check your rate.",
+      "tone": "local-feeling UGC PSA, credible neighbor tone, calm and specific without naming locations",
+      "broll_action": "@driver sits in the driver's left-side seat of a parked United States car in a neighborhood driveway, holding a phone angled away and speaking naturally",
+      "broll_prompt": "Vertical 9:16 realistic UGC-style auto insurance B-roll inspired by geo-localized rate-check ads. @driver sits in a parked United States left-hand-drive car in a residential driveway or local parking lot. Natural daylight, handheld creator framing, no readable text, no logos, no captions, no watermark, no dashboard text, no location signs."
+    }
+  }
+}

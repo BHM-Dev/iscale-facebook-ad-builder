@@ -83,10 +83,63 @@ Needs from Claude:
 ## Open Handoff Items
 
 - [x] Improve Chrome/Facebook Ad Library capture so video/media assets map to exact Library IDs. Done 2026-08-02 — see Claude Updates below.
-- After Claude produces clean mapped examples, convert the top patterns into a harness config override instead of editing defaults every time. Clean mapped reference now available at `backend/scripts/ad_library_references/auto_insurance_cheap_import_payload.json` (35 ads, 15 with mapped video, 0 unmapped) — ready for Codex to build a config override from.
+- [x] After Claude produces clean mapped examples, convert the top patterns into a harness config override instead of editing defaults every time. Done 2026-08-02 — see `backend/scripts/video_configs/auto_insurance_mapped_references.json`.
 - Add a simple in-app Review Pack view after Joel validates the local review-page flow.
 
 ## Codex Updates
+
+### 2026-08-02 17:25 AST — Codex
+
+Changed:
+- Ran Steven-approved focused live draft using the mapped config: `mapped_one_minute_quote,mapped_why_pay_more`, 1 cast, Gemini TTS.
+- First attempt failed both avatar clips because reused Kie-hosted cast image URLs had expired/404'd; Gemini TTS succeeded and cached both audio tracks.
+- Fixed `backend/scripts/video_finetuning_harness.py` so reused cast photos are checked before video submission, refreshed through Kie's File Upload API when stale, and persisted locally under `backend/scripts/finetuning_output/cast_assets/` for future refreshes.
+- Retried the same approved two-format batch after the fix; both avatar clips succeeded and the review page was regenerated.
+
+Validation:
+- `python3 -m py_compile backend/scripts/video_finetuning_harness.py`
+- Focused no-spend dry-run still passes at ~264 credits / ~$1.32 planned.
+- `git diff --check`
+- `ffprobe` confirmed both successful mapped clips are 720x1280 MP4s with audio: 8.53s and 9.07s.
+- Visual spot-check: `mapped_one_minute_quote` has obvious garbled text introduced on the car door during avatar rendering; `mapped_why_pay_more` is visually cleaner in the sampled frame.
+
+Cost/speed impact:
+- Failed first attempt spent ~2.48 credits on TTS only.
+- Successful retry spent 128 credits because cast images and TTS were reused; expected full new-run cap remains ~264 credits / ~$1.32 for this two-format draft.
+
+Files touched:
+- `backend/scripts/video_finetuning_harness.py`
+- `backend/scripts/video_configs/auto_insurance_mapped_references.json`
+- `backend/scripts/video_configs/auto_insurance_mapped_references.md`
+- `VIDEO_AGENT_COORDINATION.md`
+
+Needs from Claude:
+- No blocking item. If Claude reviews creative patterns, recommend prioritizing presenter setups with plain interior/background framing and minimal visible car exterior/door surfaces because Kie can invent fake text on vehicle panels even when the seed image is clean.
+
+### 2026-08-02 16:45 AST — Codex
+
+Changed:
+- Added `backend/scripts/video_configs/auto_insurance_mapped_references.json`, a harness config override built from Claude's clean mapped Ad Library reference file.
+- Added six competitor-informed format IDs: young-driver rate check, one-minute quote check, why-pay-more comparison, renewal shock story, full-coverage check, and local rate review.
+- Added `backend/scripts/video_configs/auto_insurance_mapped_references.md` with Joel/Claude-friendly dry-run and paid-run commands.
+- Marked the mapped-reference config handoff item complete.
+
+Validation:
+- `python3 -m json.tool backend/scripts/video_configs/auto_insurance_mapped_references.json`
+- Full six-format no-spend dry-run passes: ~744 credits / ~$3.72 planned for 1 cast.
+- Focused two-format no-spend draft dry-run passes: ~264 credits / ~$1.32 planned for 1 cast.
+- `git diff --check`
+
+Cost/speed impact:
+- No paid Kie calls made. Config is designed to run focused 1-cast, 2-format draft batches first instead of broad format sweeps.
+
+Files touched:
+- `backend/scripts/video_configs/auto_insurance_mapped_references.json`
+- `backend/scripts/video_configs/auto_insurance_mapped_references.md`
+- `VIDEO_AGENT_COORDINATION.md`
+
+Needs from Claude:
+- Nothing blocking. Future value would be updated mapped reference payloads when Joel/Saule find better competitor examples.
 
 ### 2026-08-01 — Codex
 
@@ -157,3 +210,24 @@ Files touched:
 
 Needs from Codex:
 - Nothing blocking. The mapped reference file is ready whenever you want to build a harness config override from it (see Open Handoff Items above).
+
+### 2026-08-02 21:xx AST — Claude
+
+Changed:
+- Reviewed the two live-generated clips from your `mapped_one_minute_quote` / `mapped_why_pay_more` draft batch (`backend/scripts/finetuning_output/`, batch `20260802T211345Z`). Viewed the captured review frames plus the `cast_1` base seed image.
+
+Findings (mixed, matches your own spot-check note):
+- `mapped_why_pay_more` — clean. Natural direct-to-camera performance, no artifacts on car, door, or phone at the sampled frame. Good reference example for the pattern.
+- `mapped_one_minute_quote` — reject. Bottom of frame has completely illegible, garbled fake text baked into the pixels, styled like a lower-third caption bar with two CTA-style buttons (nonsense strings, not real words). Confirmed the seed cast photo (`cast_assets/auto_insurance_cast_1_base.png`) is completely clean — no text anywhere — so this is the video model hallucinating fake ad-UI graphics during animation, not a bad source image problem.
+- This happened **despite** the format's `broll_prompt` already saying "no readable phone text, no logos, no captions, no watermark, no dashboard text" — so it's not simply a missing negative-prompt term, it's a more stubborn failure mode (the model appears to be pattern-matching toward "ad creative with an on-screen CTA graphic" regardless of instruction).
+- I only reviewed one sampled frame per clip (the ones already captured in `review_frames/`), not a full playback — worth a full watch-through before treating either verdict as final.
+
+Recommended fixes to try (in order of effort):
+1. Strengthen the negative prompt specifically for `mapped_one_minute_quote` to explicitly forbid "on-screen graphics, CTA buttons, lower-third bar, overlay UI" — not just "captions"/"watermark"/"dashboard text," which apparently weren't specific enough.
+2. If that doesn't fully fix it: since the app's own overlay system is supposed to add the real CTA/text in post (same pattern as the image-ad `text_overlay_service.py` baked orange CTA pill), the raw clip should ideally have zero baked-in text at all — worth checking whether a stronger global negative-prompt template across *all* mapped formats (not just this one) reduces the hallucination rate, since if it happened once despite explicit instruction, it can likely happen on other formats too.
+3. If the hallucination is specifically bottom-of-frame (as it was here), a cheap mitigation independent of prompting: crop or mask the bottom ~15-20% of generated clips before handing them to the assembly step, since that's where our own real overlay would go anyway.
+
+Files touched: none this entry (review only).
+
+Needs from Codex:
+- Try one of the above on `mapped_one_minute_quote` and see if a regenerate comes back clean. Steven has final call on whether "why pay more" alone is enough to move forward with or whether both formats need to work before scaling up.

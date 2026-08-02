@@ -32,6 +32,7 @@ OUTPUT_DIR = SCRIPT_DIR / "finetuning_output"
 MANIFEST_PATH = OUTPUT_DIR / "manifest.json"
 REVIEW_PATH = OUTPUT_DIR / "review.html"
 BATCH_SUMMARY_PATH = OUTPUT_DIR / "batch_summary.json"
+CAST_ASSET_DIR = OUTPUT_DIR / "cast_assets"
 
 JOBS_URL = "https://api.kie.ai/api/v1/jobs"
 UPLOAD_BASE64_URL = "https://kieai.redpandaai.co/api/file-base64-upload"
@@ -331,11 +332,9 @@ def check_credit_balance(api_key: str) -> float | None:
         return None
 
 
-def upload_generated_url(api_key: str, source_url: str, file_name: str) -> str:
-    response = requests.get(source_url, timeout=120)
-    response.raise_for_status()
-    mime_type = response.headers.get("content-type") or mimetypes.guess_type(file_name)[0] or "application/octet-stream"
-    data_url = f"data:{mime_type};base64,{base64.b64encode(response.content).decode('ascii')}"
+def upload_bytes(api_key: str, content: bytes, file_name: str, mime_type: str | None = None) -> str:
+    resolved_mime_type = mime_type or mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+    data_url = f"data:{resolved_mime_type};base64,{base64.b64encode(content).decode('ascii')}"
     payload = {"base64Data": data_url, "uploadPath": "adbuilder/video-finetuning", "fileName": file_name}
     upload = request_json("POST", UPLOAD_BASE64_URL, api_key, json=payload)
     uploaded = upload.get("data") or {}
@@ -343,6 +342,55 @@ def upload_generated_url(api_key: str, source_url: str, file_name: str) -> str:
     if not download_url:
         raise RuntimeError(f"File upload succeeded without downloadUrl: {upload}")
     return download_url
+
+
+def upload_generated_url(api_key: str, source_url: str, file_name: str, local_path: Path | None = None) -> str:
+    response = requests.get(source_url, timeout=120)
+    response.raise_for_status()
+    if local_path:
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        local_path.write_bytes(response.content)
+    return upload_bytes(api_key, response.content, file_name, response.headers.get("content-type"))
+
+
+def hosted_url_is_fetchable(url: str) -> bool:
+    try:
+        response = requests.head(url, allow_redirects=True, timeout=20)
+        if response.status_code == 405:
+            response = requests.get(url, stream=True, timeout=20)
+        return response.status_code < 400
+    except requests.RequestException:
+        return False
+
+
+def refresh_cast_photo_urls(api_key: str, cast: dict[str, Any], force: bool = False) -> bool:
+    refreshed = False
+    photo_rows = cast.get("photos") or []
+    for index, photo in enumerate(photo_rows):
+        current_url = photo.get("url") or ""
+        if current_url and not force and hosted_url_is_fetchable(current_url):
+            continue
+
+        kind = photo.get("kind") or f"photo_{index + 1}"
+        file_name = f"{cast['cast_id']}_{kind}.png"
+        local_file = photo.get("local_file") or f"cast_assets/{file_name}"
+        local_path = OUTPUT_DIR / local_file
+
+        if local_path.exists():
+            hosted_url = upload_bytes(api_key, local_path.read_bytes(), file_name, mimetypes.guess_type(file_name)[0])
+        elif photo.get("source_url"):
+            hosted_url = upload_generated_url(api_key, photo["source_url"], file_name, local_path)
+        else:
+            raise RuntimeError(f"Cast {cast['cast_id']} photo {kind} has no reusable local_file or source_url")
+
+        photo["url"] = hosted_url
+        photo["local_file"] = local_file
+        refreshed = True
+        print(f"Refreshed cast photo {cast['cast_id']} {kind}")
+
+    if photo_rows:
+        cast["photo_urls"] = [row["url"] for row in photo_rows if row.get("url")]
+    return refreshed
 
 
 def download_file(url: str, path: Path) -> None:
@@ -541,6 +589,8 @@ def ensure_cast_library(api_key: str, cast_plans: list[CastPlan], manifest: dict
         if existing and len(existing.get("photo_urls", [])) >= 2:
             existing.setdefault("voice_profile", cast.voice_profile)
             existing.setdefault("identity_description", cast.identity_description)
+            if refresh_cast_photo_urls(api_key, existing):
+                print(f"Refreshed hosted image URLs for reused cast {cast.cast_id}")
             save_manifest(manifest)
             print(f"Reusing cast {cast.cast_id} with {len(existing['photo_urls'])} photos")
             continue
@@ -548,8 +598,18 @@ def ensure_cast_library(api_key: str, cast_plans: list[CastPlan], manifest: dict
         print(f"Generating cast library for {cast.cast_id}")
         photo_rows = []
         base_url, base_task_id = submit_flux_text_to_image(api_key, cast.base_prompt, f"{cast.cast_id} base photo")
-        hosted_base_url = upload_generated_url(api_key, base_url, f"{cast.cast_id}_base.png")
-        photo_rows.append({"kind": "base", "url": hosted_base_url, "source_url": base_url, "task_id": base_task_id, "prompt": cast.base_prompt})
+        base_local_file = f"cast_assets/{cast.cast_id}_base.png"
+        hosted_base_url = upload_generated_url(api_key, base_url, f"{cast.cast_id}_base.png", OUTPUT_DIR / base_local_file)
+        photo_rows.append(
+            {
+                "kind": "base",
+                "url": hosted_base_url,
+                "source_url": base_url,
+                "local_file": base_local_file,
+                "task_id": base_task_id,
+                "prompt": cast.base_prompt,
+            }
+        )
 
         for variant_index, prompt in enumerate(cast.variant_prompts, 1):
             variant_url, variant_task_id = submit_flux_image_to_image(
@@ -558,12 +618,19 @@ def ensure_cast_library(api_key: str, cast_plans: list[CastPlan], manifest: dict
                 prompt,
                 f"{cast.cast_id} variant {variant_index}",
             )
-            hosted_variant_url = upload_generated_url(api_key, variant_url, f"{cast.cast_id}_variant_{variant_index}.png")
+            variant_local_file = f"cast_assets/{cast.cast_id}_variant_{variant_index}.png"
+            hosted_variant_url = upload_generated_url(
+                api_key,
+                variant_url,
+                f"{cast.cast_id}_variant_{variant_index}.png",
+                OUTPUT_DIR / variant_local_file,
+            )
             photo_rows.append(
                 {
                     "kind": f"variant_{variant_index}",
                     "url": hosted_variant_url,
                     "source_url": variant_url,
+                    "local_file": variant_local_file,
                     "task_id": variant_task_id,
                     "prompt": prompt,
                 }
