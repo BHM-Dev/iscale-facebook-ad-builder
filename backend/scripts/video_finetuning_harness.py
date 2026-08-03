@@ -12,7 +12,6 @@ import argparse
 import base64
 import hashlib
 import json
-import math
 import mimetypes
 import os
 import re
@@ -46,8 +45,9 @@ DOWNLOAD_TIMEOUT_SECONDS = 60
 MEDIA_DURATION_TOLERANCE_SECONDS = 0.5
 DEFAULT_MAX_PLANNED_CREDITS = 350
 SEEDANCE_FAST_MODEL = "bytedance/seedance-2-fast"
+OMNIHUMAN_LIP_SYNC_MODEL = "omnihuman-1-5"
 SEEDANCE_RESOLUTION = "480p"
-SEEDANCE_TALKING_HEAD_CREDITS_PER_SECOND = 15.5
+OMNIHUMAN_CREDITS_PER_SECOND = 27
 SEEDANCE_BROLL_CREDITS_PER_SECOND = 15.5
 MODE_FORMATS = {
     "draft": "quick_psa,loyalty_check",
@@ -225,7 +225,7 @@ class ClipPlan:
 
     @property
     def output_filename(self) -> str:
-        if is_seedance_model(self.model):
+        if is_seedance_model(self.model) or is_omnihuman_model(self.model):
             model_slug = slugify(self.model.split("/", 1)[-1])
             return f"{self.cast_id}_{self.niche_id}_{self.format_id}_{self.clip_type}_{model_slug}.mp4"
         return f"{self.cast_id}_{self.niche_id}_{self.format_id}_{self.clip_type}.mp4"
@@ -237,6 +237,10 @@ def slugify(value: str) -> str:
 
 def is_seedance_model(model: str) -> bool:
     return model.startswith("bytedance/seedance")
+
+
+def is_omnihuman_model(model: str) -> bool:
+    return model == OMNIHUMAN_LIP_SYNC_MODEL
 
 
 def log(message: str) -> None:
@@ -484,21 +488,6 @@ def media_summary(path: Path | str) -> dict[str, Any]:
     }
 
 
-def audio_duration_seconds(path_or_url: Path | str) -> float | None:
-    return media_summary(path_or_url)["audio_duration"]
-
-
-def seedance_duration_for_tts(tts: dict[str, Any], fallback_seconds: int) -> int:
-    duration = tts.get("duration_seconds")
-    if duration is None and tts.get("url"):
-        duration = audio_duration_seconds(tts["url"])
-        if duration is not None:
-            tts["duration_seconds"] = duration
-    if duration is None:
-        return fallback_seconds
-    return max(3, min(fallback_seconds, math.ceil(float(duration))))
-
-
 def media_has_audio(path: Path) -> bool:
     return media_summary(path)["has_audio"]
 
@@ -691,8 +680,8 @@ def build_clip_plans(
             broll_credits = 112
             broll_cost = 0.72
             if video_provider == "seedance":
-                talking_head_model = SEEDANCE_FAST_MODEL
-                talking_head_credits = talking_head_duration * SEEDANCE_TALKING_HEAD_CREDITS_PER_SECOND
+                talking_head_model = OMNIHUMAN_LIP_SYNC_MODEL
+                talking_head_credits = talking_head_duration * OMNIHUMAN_CREDITS_PER_SECOND
                 talking_head_cost = talking_head_credits * 0.005
                 broll_model = SEEDANCE_FAST_MODEL
                 broll_credits = broll_duration * SEEDANCE_BROLL_CREDITS_PER_SECOND
@@ -973,24 +962,17 @@ def run_talking_head(api_key: str, plan: ClipPlan, cast: dict[str, Any], provide
     if not tts.get("reused"):
         manifest.setdefault("tts_cache", {})[tts["cache_key"]] = tts
         save_manifest(manifest)
-    if is_seedance_model(plan.model):
-        seedance_duration = seedance_duration_for_tts(tts, plan.duration_seconds)
-        if tts.get("duration_seconds") is not None:
-            manifest.setdefault("tts_cache", {})[tts["cache_key"]] = tts
-            save_manifest(manifest)
+    if is_omnihuman_model(plan.model):
         payload = {
             "model": plan.model,
             "input": {
+                "image_url": cast["photo_urls"][0],
+                "audio_url": tts["url"],
                 "prompt": plan.prompt,
-                "reference_image_urls": [cast["photo_urls"][0]],
-                "reference_audio_urls": [tts["url"]],
-                "reference_video_urls": [],
-                "generate_audio": False,
-                "resolution": SEEDANCE_RESOLUTION,
-                "aspect_ratio": "9:16",
-                "duration": seedance_duration,
             },
         }
+    elif is_seedance_model(plan.model):
+        raise RuntimeError("Seedance is not a lip-sync model; use OmniHuman for talking-head clips")
     else:
         payload = {
             "model": plan.model,
@@ -1085,8 +1067,8 @@ def print_dry_run(cast_plans: list[CastPlan], clip_plans: list[ClipPlan], provid
     for index, plan in enumerate(clip_plans, 1):
         print(f"{index}. {plan.cast_id} | {plan.niche_id} | {plan.format_id} | {plan.clip_type}")
         print(f"   model={plan.model} duration={plan.duration_seconds}s")
-        if plan.clip_type == "talking_head" and is_seedance_model(plan.model):
-            print("   seedance_duration=measured from TTS at live submit time; dry-run duration/cost is the upper-bound fallback")
+        if plan.clip_type == "talking_head" and is_omnihuman_model(plan.model):
+            print("   lip_sync=OmniHuman derives timing from audio_url; duration/cost is a conservative planning estimate")
         if plan.script_text:
             print(f"   script={plan.script_text}")
         print(f"   prompt={plan.prompt}")
@@ -1094,7 +1076,11 @@ def print_dry_run(cast_plans: list[CastPlan], clip_plans: list[ClipPlan], provid
     print(f"Estimated cast images: {costs['cast_image_count']:.0f} images, ~{costs['cast_image_credits']:.0f} credits, ~${costs['cast_image_cost_usd']:.2f}")
     print(f"Estimated clips: ~{costs['clip_credits']:.0f} credits, ~${costs['clip_cost_usd']:.2f}")
     print(f"Estimated total: ~{costs['total_credits']:.0f} credits, ~${costs['total_cost_usd']:.2f}")
-    print("Pricing note: image estimates use Kie/Flux public pages checked 2026-07-31; Kling video estimates reuse confirmed Phase 0 planning costs; Seedance estimates use 480p no-reference-video pricing from the 2026-08-02 spike brief.")
+    print(
+        "Pricing note: image estimates use Kie/Flux public pages checked 2026-07-31; "
+        "Kling video estimates reuse confirmed Phase 0 planning costs; OmniHuman talking-head "
+        "estimates use 27 credits/s; Seedance B-roll estimates use 480p no-reference-video pricing."
+    )
 
 
 def find_reusable_clip(manifest: dict[str, Any], plan: ClipPlan) -> dict[str, Any] | None:
@@ -1468,7 +1454,7 @@ def parse_args() -> argparse.Namespace:
         "--video-provider",
         choices=("kling", "seedance"),
         default="kling",
-        help="Video model family to use for generated clips. Default keeps existing Kling behavior; seedance uses bytedance/seedance-2-fast at 480p.",
+        help="Video model family to use. Default keeps existing Kling behavior; seedance uses OmniHuman for lip-sync talking-heads and Seedance 2 Fast for B-roll.",
     )
     parser.add_argument(
         "--tts-provider",

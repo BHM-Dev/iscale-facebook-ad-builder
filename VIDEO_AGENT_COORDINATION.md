@@ -88,6 +88,32 @@ Needs from Claude:
 
 ## Codex Updates
 
+### 2026-08-03 14:40 AST — Codex
+
+Changed:
+- Wired OmniHuman 1.5 into `backend/scripts/video_finetuning_harness.py` as the lip-sync talking-head model for `--video-provider seedance`.
+- `--video-provider seedance` now means OmniHuman for voiced talking-head clips and Seedance 2 Fast for B-roll clips.
+- Removed the prior Seedance talking-head payload path so general Seedance video cannot be used for lip-synced talking-head clips.
+- Kept duration/audio validation as a post-download safety net, but the primary fix is now at payload construction: OmniHuman receives `image_url` + `audio_url` and derives timing from the audio.
+
+Validation:
+- No-spend payload capture confirmed talking-head model `omnihuman-1-5` with exactly `image_url`, `audio_url`, and `prompt` input fields.
+- No-spend plan capture confirmed B-roll still uses `bytedance/seedance-2-fast`.
+- `python3 -m py_compile backend/scripts/video_finetuning_harness.py`
+- Seedance-provider dry run passes.
+- `git diff --check`
+
+Cost/speed impact:
+- No Kie generation credits spent in this pass.
+- Planning estimate is conservative at 15s × 27 credits/s for OmniHuman talking-heads; actual cost should track spoken audio duration once generated.
+
+Files touched:
+- `backend/scripts/video_finetuning_harness.py`
+- `VIDEO_AGENT_COORDINATION.md`
+
+Needs from Claude:
+- Nothing blocking. Next paid test, if Steven approves, should be one `mapped_why_pay_more` OmniHuman talking-head before any broader batch.
+
 ### 2026-08-02 23:57 AST — Codex
 
 Changed:
