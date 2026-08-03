@@ -40,7 +40,13 @@ COMMON_API_URL = "https://api.kie.ai/api/v1"
 
 POLL_INTERVAL_SECONDS = 5
 TASK_TIMEOUT_SECONDS = 900
+REQUEST_TIMEOUT_SECONDS = 30
+DOWNLOAD_TIMEOUT_SECONDS = 60
 DEFAULT_MAX_PLANNED_CREDITS = 350
+SEEDANCE_FAST_MODEL = "bytedance/seedance-2-fast"
+SEEDANCE_RESOLUTION = "480p"
+SEEDANCE_TALKING_HEAD_CREDITS_PER_SECOND = 15.5
+SEEDANCE_BROLL_CREDITS_PER_SECOND = 15.5
 MODE_FORMATS = {
     "draft": "quick_psa,loyalty_check",
     "contender": "driving,phone_check,loyalty_check,quick_psa",
@@ -56,6 +62,12 @@ NO_TEXT_CLOTHING_CLAUSE = (
     "Plain solid-color outfit with absolutely no text, no writing, no letters, "
     "no logo, no graphic, no pattern printed on it. Do not generate any readable or garbled text "
     "on clothing, backgrounds, dashboard displays, phone screens, road signs, captions, or watermarks."
+)
+
+NO_VEHICLE_MARKINGS_CLAUSE = (
+    "Use tight chest-up or interior-only framing. Do not show exterior car doors, side panels, decals, "
+    "stickers, labels, badges, brand marks, license plates, signage, or any typography-like shapes. "
+    "All visible vehicle surfaces must be plain, cropped, and unmarked."
 )
 
 US_DRIVING_VISUAL_CLAUSE = (
@@ -211,11 +223,22 @@ class ClipPlan:
 
     @property
     def output_filename(self) -> str:
+        if is_seedance_model(self.model):
+            model_slug = slugify(self.model.split("/", 1)[-1])
+            return f"{self.cast_id}_{self.niche_id}_{self.format_id}_{self.clip_type}_{model_slug}.mp4"
         return f"{self.cast_id}_{self.niche_id}_{self.format_id}_{self.clip_type}.mp4"
 
 
 def slugify(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+
+
+def is_seedance_model(model: str) -> bool:
+    return model.startswith("bytedance/seedance")
+
+
+def log(message: str) -> None:
+    print(message, flush=True)
 
 
 def load_env_file(path: Path) -> None:
@@ -262,7 +285,8 @@ def headers(api_key: str) -> dict[str, str]:
 
 
 def request_json(method: str, url: str, api_key: str, **kwargs: Any) -> dict[str, Any]:
-    response = requests.request(method, url, headers=headers(api_key), timeout=60, **kwargs)
+    timeout = kwargs.pop("timeout", REQUEST_TIMEOUT_SECONDS)
+    response = requests.request(method, url, headers=headers(api_key), timeout=timeout, **kwargs)
     try:
         payload = response.json()
     except ValueError:
@@ -274,11 +298,14 @@ def request_json(method: str, url: str, api_key: str, **kwargs: Any) -> dict[str
 
 
 def create_task(api_key: str, payload: dict[str, Any]) -> str:
+    model = payload.get("model", "unknown")
+    log(f"Submitting kie.ai task: model={model}")
     task_data = request_json("POST", f"{JOBS_URL}/createTask", api_key, json=payload)
     data = task_data.get("data") or {}
     task_id = data.get("taskId")
     if not task_id:
         raise RuntimeError(f"kie.ai did not return a taskId: {task_data}")
+    log(f"Created kie.ai task: model={model} task={task_id}")
     return task_id
 
 
@@ -292,7 +319,7 @@ def poll_task(api_key: str, task_id: str, label: str) -> dict[str, Any]:
         data = status.get("data") or {}
         state = (data.get("state") or "").lower()
         success_flag = data.get("successFlag")
-        print(f"{label}: task={task_id} state={state or success_flag!r} attempt={attempt}")
+        log(f"{label}: task={task_id} state={state or success_flag!r} attempt={attempt}")
         if state == "success" or success_flag == 1:
             return data
         if state in {"fail", "failed", "error"} or success_flag in {2, 3}:
@@ -328,7 +355,7 @@ def check_credit_balance(api_key: str) -> float | None:
         data = payload.get("data")
         return float(data) if data is not None else None
     except Exception as exc:
-        print(f"Credit balance check skipped: {exc}")
+        log(f"Credit balance check skipped: {exc}")
         return None
 
 
@@ -336,6 +363,7 @@ def upload_bytes(api_key: str, content: bytes, file_name: str, mime_type: str | 
     resolved_mime_type = mime_type or mimetypes.guess_type(file_name)[0] or "application/octet-stream"
     data_url = f"data:{resolved_mime_type};base64,{base64.b64encode(content).decode('ascii')}"
     payload = {"base64Data": data_url, "uploadPath": "adbuilder/video-finetuning", "fileName": file_name}
+    log(f"Uploading file to kie.ai storage: {file_name} ({len(content)} bytes)")
     upload = request_json("POST", UPLOAD_BASE64_URL, api_key, json=payload)
     uploaded = upload.get("data") or {}
     download_url = uploaded.get("downloadUrl")
@@ -345,7 +373,8 @@ def upload_bytes(api_key: str, content: bytes, file_name: str, mime_type: str | 
 
 
 def upload_generated_url(api_key: str, source_url: str, file_name: str, local_path: Path | None = None) -> str:
-    response = requests.get(source_url, timeout=120)
+    log(f"Downloading generated asset for upload: {file_name}")
+    response = requests.get(source_url, timeout=DOWNLOAD_TIMEOUT_SECONDS)
     response.raise_for_status()
     if local_path:
         local_path.parent.mkdir(parents=True, exist_ok=True)
@@ -355,9 +384,9 @@ def upload_generated_url(api_key: str, source_url: str, file_name: str, local_pa
 
 def hosted_url_is_fetchable(url: str) -> bool:
     try:
-        response = requests.head(url, allow_redirects=True, timeout=20)
+        response = requests.head(url, allow_redirects=True, timeout=10)
         if response.status_code == 405:
-            response = requests.get(url, stream=True, timeout=20)
+            response = requests.get(url, stream=True, timeout=10)
         return response.status_code < 400
     except requests.RequestException:
         return False
@@ -394,7 +423,8 @@ def refresh_cast_photo_urls(api_key: str, cast: dict[str, Any], force: bool = Fa
 
 
 def download_file(url: str, path: Path) -> None:
-    with requests.get(url, stream=True, timeout=180) as response:
+    log(f"Downloading completed clip: {path.name}")
+    with requests.get(url, stream=True, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
         response.raise_for_status()
         with path.open("wb") as handle:
             for chunk in response.iter_content(chunk_size=1024 * 1024):
@@ -481,35 +511,57 @@ def avatar_prompt(format_data: dict[str, Any], niche_data: dict[str, Any]) -> st
         f"{format_data['tone']}. Realistic lip sync for a short UGC auto insurance ad. "
         f"Audience: {niche_data['audience']}. "
         f"Risk framing: {niche_data['risk_framing']}. "
-        f"{AUTO_INSURANCE_COMPLIANCE_CLAUSE} {NO_TEXT_CLOTHING_CLAUSE}"
+        f"{AUTO_INSURANCE_COMPLIANCE_CLAUSE} {NO_TEXT_CLOTHING_CLAUSE} {NO_VEHICLE_MARKINGS_CLAUSE}"
     )
 
 
-def build_clip_plans(config: dict[str, Any], niche_ids: list[str], format_ids: list[str], cast_plans: list[CastPlan]) -> list[ClipPlan]:
+def build_clip_plans(
+    config: dict[str, Any],
+    niche_ids: list[str],
+    format_ids: list[str],
+    cast_plans: list[CastPlan],
+    video_provider: str = "kling",
+) -> list[ClipPlan]:
     plans: list[ClipPlan] = []
     for cast in cast_plans:
         niche = config["niches"][cast.niche_id]
         for format_id in format_ids:
             format_data = config["formats"][format_id]
+            talking_head_duration = 15
+            talking_head_model = "kling/ai-avatar-standard"
+            talking_head_credits = 120
+            talking_head_cost = 0.60
+            broll_duration = 8
+            broll_model = "kling-3.0/video"
+            broll_credits = 112
+            broll_cost = 0.72
+            if video_provider == "seedance":
+                talking_head_model = SEEDANCE_FAST_MODEL
+                talking_head_credits = talking_head_duration * SEEDANCE_TALKING_HEAD_CREDITS_PER_SECOND
+                talking_head_cost = talking_head_credits * 0.005
+                broll_model = SEEDANCE_FAST_MODEL
+                broll_credits = broll_duration * SEEDANCE_BROLL_CREDITS_PER_SECOND
+                broll_cost = broll_credits * 0.005
             plans.append(
                 ClipPlan(
                     niche_id=cast.niche_id,
                     format_id=format_id,
                     cast_id=cast.cast_id,
                     clip_type="talking_head",
-                    model="kling/ai-avatar-standard",
+                    model=talking_head_model,
                     prompt=avatar_prompt(format_data, niche),
                     script_text=format_data["script"],
-                    duration_seconds=15,
-                    estimated_credits=120,
-                    estimated_cost_usd=0.60,
+                    duration_seconds=talking_head_duration,
+                    estimated_credits=talking_head_credits,
+                    estimated_cost_usd=talking_head_cost,
                 )
             )
             broll_prompt = (
                 f"{format_data['broll_prompt'].replace('@driver', f'@{cast.element_name}')} "
                 f"{format_data['broll_action'].replace('@driver', f'@{cast.element_name}')}. "
                 f"Context: {niche['risk_framing']}. Keep the same person as @{cast.element_name}. "
-                f"{US_DRIVING_VISUAL_CLAUSE} {PHONE_SCREEN_CLAUSE} {AUTO_INSURANCE_COMPLIANCE_CLAUSE} {NO_TEXT_CLOTHING_CLAUSE}"
+                f"{US_DRIVING_VISUAL_CLAUSE} {PHONE_SCREEN_CLAUSE} {AUTO_INSURANCE_COMPLIANCE_CLAUSE} "
+                f"{NO_TEXT_CLOTHING_CLAUSE} {NO_VEHICLE_MARKINGS_CLAUSE}"
             )
             plans.append(
                 ClipPlan(
@@ -517,12 +569,12 @@ def build_clip_plans(config: dict[str, Any], niche_ids: list[str], format_ids: l
                     format_id=format_id,
                     cast_id=cast.cast_id,
                     clip_type="broll",
-                    model="kling-3.0/video",
+                    model=broll_model,
                     prompt=broll_prompt,
                     script_text=None,
-                    duration_seconds=8,
-                    estimated_credits=112,
-                    estimated_cost_usd=0.72,
+                    duration_seconds=broll_duration,
+                    estimated_credits=broll_credits,
+                    estimated_cost_usd=broll_cost,
                 )
             )
     return plans
@@ -766,14 +818,29 @@ def run_talking_head(api_key: str, plan: ClipPlan, cast: dict[str, Any], provide
     if not tts.get("reused"):
         manifest.setdefault("tts_cache", {})[tts["cache_key"]] = tts
         save_manifest(manifest)
-    payload = {
-        "model": plan.model,
-        "input": {
-            "image_url": cast["photo_urls"][0],
-            "audio_url": tts["url"],
-            "prompt": plan.prompt,
-        },
-    }
+    if is_seedance_model(plan.model):
+        payload = {
+            "model": plan.model,
+            "input": {
+                "prompt": plan.prompt,
+                "reference_image_urls": [cast["photo_urls"][0]],
+                "reference_audio_urls": [tts["url"]],
+                "reference_video_urls": [],
+                "generate_audio": False,
+                "resolution": SEEDANCE_RESOLUTION,
+                "aspect_ratio": "9:16",
+                "duration": plan.duration_seconds,
+            },
+        }
+    else:
+        payload = {
+            "model": plan.model,
+            "input": {
+                "image_url": cast["photo_urls"][0],
+                "audio_url": tts["url"],
+                "prompt": plan.prompt,
+            },
+        }
     task_id = create_task(api_key, payload)
     data = poll_task(api_key, task_id, f"{plan.cast_id} {plan.format_id} talking head")
     urls = parse_result_urls(data)
@@ -783,24 +850,39 @@ def run_talking_head(api_key: str, plan: ClipPlan, cast: dict[str, Any], provide
 
 
 def run_broll(api_key: str, plan: ClipPlan, cast: dict[str, Any]) -> tuple[str, str]:
-    payload = {
-        "model": plan.model,
-        "input": {
-            "prompt": plan.prompt,
-            "aspect_ratio": "9:16",
-            "duration": str(plan.duration_seconds),
-            "mode": "std",
-            "multi_shots": False,
-            "sound": False,
-            "kling_elements": [
-                {
-                    "name": cast["element_name"],
-                    "description": cast["identity_description"],
-                    "element_input_urls": cast["photo_urls"][:3],
-                }
-            ],
-        },
-    }
+    if is_seedance_model(plan.model):
+        payload = {
+            "model": plan.model,
+            "input": {
+                "prompt": plan.prompt.replace(f"@{cast['element_name']}", "the referenced driver"),
+                "reference_image_urls": cast["photo_urls"][:3],
+                "reference_video_urls": [],
+                "reference_audio_urls": [],
+                "generate_audio": False,
+                "resolution": SEEDANCE_RESOLUTION,
+                "aspect_ratio": "9:16",
+                "duration": plan.duration_seconds,
+            },
+        }
+    else:
+        payload = {
+            "model": plan.model,
+            "input": {
+                "prompt": plan.prompt,
+                "aspect_ratio": "9:16",
+                "duration": str(plan.duration_seconds),
+                "mode": "std",
+                "multi_shots": False,
+                "sound": False,
+                "kling_elements": [
+                    {
+                        "name": cast["element_name"],
+                        "description": cast["identity_description"],
+                        "element_input_urls": cast["photo_urls"][:3],
+                    }
+                ],
+            },
+        }
     task_id = create_task(api_key, payload)
     data = poll_task(api_key, task_id, f"{plan.cast_id} {plan.format_id} broll")
     urls = parse_result_urls(data)
@@ -826,10 +908,11 @@ def estimate(cast_count: int, clip_plans: list[ClipPlan]) -> dict[str, float]:
     }
 
 
-def print_dry_run(cast_plans: list[CastPlan], clip_plans: list[ClipPlan], provider_mode: str) -> None:
+def print_dry_run(cast_plans: list[CastPlan], clip_plans: list[ClipPlan], provider_mode: str, video_provider: str) -> None:
     costs = estimate(len(cast_plans), clip_plans)
     print("Phase 0.5 video fine-tuning harness dry run")
     print(f"Output dir: {OUTPUT_DIR}")
+    print(f"Video provider: {video_provider}")
     print(f"TTS provider mode: {provider_mode}")
     print("")
     print(f"Cast identities: {len(cast_plans)}")
@@ -850,7 +933,7 @@ def print_dry_run(cast_plans: list[CastPlan], clip_plans: list[ClipPlan], provid
     print(f"Estimated cast images: {costs['cast_image_count']:.0f} images, ~{costs['cast_image_credits']:.0f} credits, ~${costs['cast_image_cost_usd']:.2f}")
     print(f"Estimated clips: ~{costs['clip_credits']:.0f} credits, ~${costs['clip_cost_usd']:.2f}")
     print(f"Estimated total: ~{costs['total_credits']:.0f} credits, ~${costs['total_cost_usd']:.2f}")
-    print("Pricing note: image estimates use Kie/Flux public pages checked 2026-07-31; video estimates reuse confirmed Phase 0 planning costs.")
+    print("Pricing note: image estimates use Kie/Flux public pages checked 2026-07-31; Kling video estimates reuse confirmed Phase 0 planning costs; Seedance estimates use 480p no-reference-video pricing from the 2026-08-02 spike brief.")
 
 
 def find_reusable_clip(manifest: dict[str, Any], plan: ClipPlan) -> dict[str, Any] | None:
@@ -858,6 +941,8 @@ def find_reusable_clip(manifest: dict[str, Any], plan: ClipPlan) -> dict[str, An
         if clip.get("status") not in {"success", "reused"}:
             continue
         if clip.get("cast_id") != plan.cast_id:
+            continue
+        if clip.get("model") != plan.model:
             continue
         if clip.get("format_id") != plan.format_id or clip.get("clip_type") != plan.clip_type:
             continue
@@ -875,7 +960,7 @@ def run_batch(args: argparse.Namespace) -> None:
     format_ids = selected_ids(args.formats or MODE_FORMATS[args.mode], config["formats"], "formats")
     cast_plans = build_cast_plans(config, niche_ids, args.cast_count)
     clip_plans = filter_clip_plans(
-        build_clip_plans(config, niche_ids, format_ids, cast_plans),
+        build_clip_plans(config, niche_ids, format_ids, cast_plans, args.video_provider),
         include_broll=args.include_broll,
     )
     planned_costs = estimate(len(cast_plans), clip_plans)
@@ -920,6 +1005,7 @@ def run_batch(args: argparse.Namespace) -> None:
             "voice_profile": cast.get("voice_profile") or {},
             "tts_failures": [],
             "estimated_credits": plan.estimated_credits,
+            "estimated_cost_usd": plan.estimated_cost_usd,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         print(f"\nRunning {plan.cast_id} | {plan.format_id} | {plan.clip_type}")
@@ -978,6 +1064,7 @@ def run_batch(args: argparse.Namespace) -> None:
         "niches": niche_ids,
         "formats": format_ids,
         "mode": args.mode,
+        "video_provider": args.video_provider,
         "include_broll": args.include_broll,
         "cast_count": args.cast_count,
         "clips_planned": len(clip_plans),
@@ -1215,6 +1302,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force-video", action="store_true", help="Ignore reusable local video clips and generate again.")
     parser.add_argument("--force-tts", action="store_true", help="Ignore cached TTS assets and generate audio again.")
     parser.add_argument(
+        "--video-provider",
+        choices=("kling", "seedance"),
+        default="kling",
+        help="Video model family to use for generated clips. Default keeps existing Kling behavior; seedance uses bytedance/seedance-2-fast at 480p.",
+    )
+    parser.add_argument(
         "--tts-provider",
         choices=("auto", "elevenlabs", "gemini"),
         default="auto",
@@ -1246,12 +1339,12 @@ def main() -> int:
     format_ids = selected_ids(args.formats or MODE_FORMATS[args.mode], config["formats"], "formats")
     cast_plans = build_cast_plans(config, niche_ids, args.cast_count)
     clip_plans = filter_clip_plans(
-        build_clip_plans(config, niche_ids, format_ids, cast_plans),
+        build_clip_plans(config, niche_ids, format_ids, cast_plans, args.video_provider),
         include_broll=args.include_broll,
     )
 
     if args.dry_run:
-        print_dry_run(cast_plans, clip_plans, args.tts_provider)
+        print_dry_run(cast_plans, clip_plans, args.tts_provider, args.video_provider)
         return 0
     if args.build_review:
         build_review_html()
