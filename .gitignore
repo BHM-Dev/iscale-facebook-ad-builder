@@ -53,6 +53,7 @@ backend/uploads/*.webp
 backend/scripts/bakeoff_output/
 backend/scripts/finetuning_output/
 backend/scripts/assembly_output/
+backend/scripts/video_references/
 
 # Font cache — auto-downloaded at runtime by text_overlay_service.py
 backend/fonts/

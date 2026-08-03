@@ -388,3 +388,30 @@ Files touched:
 
 Needs from Codex:
 - When you get to the still-open `video_configs/auto_insurance_mapped_references.json` rewrite (the one that forced all 6 formats into tight-interior framing for both talking-head and broll), split it: keep talking-head prompts tight/interior as they are now, but relax the broll prompts back toward the original wider "stands beside car" / walking / driving variety — the hallucination risk that motivated the rewrite applies most to the long voiced segment, not the short silent cutaway.
+
+### 2026-08-03 AST — Claude
+
+Changed: nothing yet (root-cause finding + recommendation only — wanted to confirm before touching code).
+
+Context: Steven watched the repaired `mapped_why_pay_more` Seedance clip with Joel. New, more serious problem than the duration mismatch we already fixed: **the voiceover doesn't say the same thing the actor appears to be saying at all** — not a sync-offset issue, a content mismatch. Steven's read: "my brain just rejects it."
+
+Root cause, confirmed by checking kie.ai's own model catalog:
+
+- **Seedance 2.0 is categorized as general Text-to-Video / Image-to-Video / Video-to-Video.** It is NOT in kie.ai's dedicated **Lip Sync** category. `reference_audio_urls` on Seedance's talking-head payload appears to be a loose reference (tone/rhythm at best), not a true phoneme-level lip-sync driver — Seedance likely generated its own independent talking performance from the prompt, and we just muxed unrelated TTS audio on top of it. That explains a *content* mismatch, not just a *length* mismatch.
+- **Kling's avatar model (`kling/ai-avatar-standard`) IS in kie.ai's Lip Sync category** (listed as "Kling AI Avatar 2.0" there) — which is exactly why it has never had this problem across any prior batch. We got lucky with Kling and unlucky with Seedance because we assumed both models treated an audio input the same way; they don't.
+- kie.ai's actual Lip Sync category has 6 models total. The relevant one for us: **OmniHuman 1.5** (ByteDance) — `model: "omnihuman-1-5"`, same `/api/v1/jobs/createTask` + `recordInfo` pattern as everything else in the harness, so this is a small additive change, not a rework. Marketing literally leads with "Accurate Lip Sync / Perfect Audio Alignment" — Seedance's own listing makes no such claim.
+  - Params (confirmed live on the kie.ai playground): `image_url` (required), `audio_url` (required, single — "duration must be <60s, recommended ≤15s, exceeding will cause degradation," which fits our clip lengths well), `mask_url` (optional, for isolating a subject when multiple people are in frame), `prompt` (optional).
+  - Pricing: 27 credits/s (~$0.135/s) — pricier than Seedance's talking-head tier, but it's actually built for the job. For our typical ~9s spoken clip, that's roughly 243 credits (~$1.22).
+
+Recommendation:
+- **Talking-head clips: switch the Seedance branch to OmniHuman 1.5** (`model: "omnihuman-1-5"`, payload: `image_url` = cast photo, `audio_url` = the same TTS URL already being generated, optionally `prompt`). This should be architecturally simpler than the current Seedance talking-head path — no `generate_audio`/`resolution`/`aspect_ratio`/`duration` guessing, since the model derives timing from the audio directly the way Kling does.
+- **B-roll stays on Seedance** — no lip-sync dependency there, so the general-video-model risk doesn't apply. This doesn't undo any of the B-roll flexibility work.
+- Once wired up, the existing `validate_clip_file` duration-match safety net still applies and should now rarely (if ever) trigger, since OmniHuman derives duration from the audio like Kling — but keep it as a safety net regardless.
+- This is a small, cheap, no-spend code change to validate first via `--dry-run` before any live OmniHuman test — same pattern as every other provider swap so far.
+
+Separately, unrelated build-vs-buy conversation is happening between Steven and Joel about whether to just run on Arcads (also built on Seedance 2.0, per Joel's own Loom walkthrough, but with a much more mature prompt/pipeline layer) instead of continuing the custom harness. This OmniHuman fix doesn't resolve that question either way — it just means the custom harness's audio problem has a known, cheap fix rather than being a dead end, in case Steven/Joel decide to keep going with it.
+
+Files touched: none yet.
+
+Needs from Codex:
+- Wire OmniHuman 1.5 into the talking-head path (new provider branch, same shape as the Seedance branch was added). Validate with `--dry-run` before any live spend. Hold off on B-roll changes from this entry — only talking-head is affected.
