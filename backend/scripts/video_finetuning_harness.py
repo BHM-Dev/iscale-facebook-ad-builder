@@ -12,6 +12,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import mimetypes
 import os
 import re
@@ -42,6 +43,7 @@ POLL_INTERVAL_SECONDS = 5
 TASK_TIMEOUT_SECONDS = 900
 REQUEST_TIMEOUT_SECONDS = 30
 DOWNLOAD_TIMEOUT_SECONDS = 60
+MEDIA_DURATION_TOLERANCE_SECONDS = 0.5
 DEFAULT_MAX_PLANNED_CREDITS = 350
 SEEDANCE_FAST_MODEL = "bytedance/seedance-2-fast"
 SEEDANCE_RESOLUTION = "480p"
@@ -432,14 +434,14 @@ def download_file(url: str, path: Path) -> None:
                     handle.write(chunk)
 
 
-def probe_media(path: Path) -> dict[str, Any]:
+def probe_media(path: Path | str) -> dict[str, Any]:
     result = subprocess.run(
         [
             "ffprobe",
             "-v",
             "error",
             "-show_entries",
-            "stream=index,codec_type,codec_name,width,height:format=duration",
+            "stream=index,codec_type,codec_name,duration,width,height:format=duration",
             "-of",
             "json",
             str(path),
@@ -451,14 +453,59 @@ def probe_media(path: Path) -> dict[str, Any]:
     return json.loads(result.stdout)
 
 
-def media_has_audio(path: Path) -> bool:
+def parse_duration(value: Any) -> float | None:
+    if value in (None, "N/A"):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def media_summary(path: Path | str) -> dict[str, Any]:
     data = probe_media(path)
-    return any(stream.get("codec_type") == "audio" for stream in data.get("streams", []))
+    streams = data.get("streams", [])
+    video_stream = next((stream for stream in streams if stream.get("codec_type") == "video"), None)
+    audio_stream = next((stream for stream in streams if stream.get("codec_type") == "audio"), None)
+    format_duration = parse_duration(data.get("format", {}).get("duration"))
+    video_duration = parse_duration((video_stream or {}).get("duration")) or format_duration
+    audio_duration = parse_duration((audio_stream or {}).get("duration"))
+    duration_delta = None
+    if video_duration is not None and audio_duration is not None:
+        duration_delta = abs(video_duration - audio_duration)
+    return {
+        "duration": format_duration,
+        "video_duration": video_duration,
+        "audio_duration": audio_duration,
+        "duration_delta": duration_delta,
+        "has_video": video_stream is not None,
+        "has_audio": audio_stream is not None,
+        "streams": streams,
+    }
+
+
+def audio_duration_seconds(path_or_url: Path | str) -> float | None:
+    return media_summary(path_or_url)["audio_duration"]
+
+
+def seedance_duration_for_tts(tts: dict[str, Any], fallback_seconds: int) -> int:
+    duration = tts.get("duration_seconds")
+    if duration is None and tts.get("url"):
+        duration = audio_duration_seconds(tts["url"])
+        if duration is not None:
+            tts["duration_seconds"] = duration
+    if duration is None:
+        return fallback_seconds
+    return max(3, min(fallback_seconds, math.ceil(float(duration))))
+
+
+def media_has_audio(path: Path) -> bool:
+    return media_summary(path)["has_audio"]
 
 
 def mux_audio(video_path: Path, audio_url: str) -> None:
     tmp_path = video_path.with_name(f"{video_path.stem}_with_audio_tmp{video_path.suffix}")
-    log(f"Muxing cached TTS audio onto clip: {video_path.name}")
+    log(f"Muxing cached TTS audio onto clip and trimming to spoken length: {video_path.name}")
     subprocess.run(
         [
             "ffmpeg",
@@ -471,6 +518,30 @@ def mux_audio(video_path: Path, audio_url: str) -> None:
             "copy",
             "-c:a",
             "aac",
+            "-shortest",
+            str(tmp_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    tmp_path.replace(video_path)
+
+
+def trim_to_audio(video_path: Path) -> None:
+    tmp_path = video_path.with_name(f"{video_path.stem}_trimmed_tmp{video_path.suffix}")
+    log(f"Trimming clip to shortest stream for audio/video duration match: {video_path.name}")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(video_path),
+            "-c:v",
+            "copy",
+            "-c:a",
+            "copy",
+            "-shortest",
             str(tmp_path),
         ],
         check=True,
@@ -484,21 +555,36 @@ def validate_clip_file(path: Path, plan: ClipPlan, tts: dict[str, Any] | None = 
     if not path.exists() or path.stat().st_size == 0:
         raise RuntimeError(f"Downloaded clip is missing or empty: {path}")
 
-    if plan.clip_type == "talking_head" and not media_has_audio(path):
-        audio_url = (tts or {}).get("url")
-        if audio_url:
-            mux_audio(path, audio_url)
-        if not media_has_audio(path):
-            raise RuntimeError(f"Talking-head clip is missing an audio stream after download: {path.name}")
+    summary = media_summary(path)
+    if not summary["has_video"]:
+        raise RuntimeError(f"Downloaded clip is missing a video stream: {path.name}")
 
-    data = probe_media(path)
-    streams = data.get("streams", [])
-    return {
-        "duration": data.get("format", {}).get("duration"),
-        "has_video": any(stream.get("codec_type") == "video" for stream in streams),
-        "has_audio": any(stream.get("codec_type") == "audio" for stream in streams),
-        "streams": streams,
-    }
+    if plan.clip_type == "talking_head":
+        audio_url = (tts or {}).get("url")
+        if not summary["has_audio"]:
+            if audio_url:
+                mux_audio(path, audio_url)
+                summary = media_summary(path)
+            if not summary["has_audio"]:
+                raise RuntimeError(f"Talking-head clip is missing an audio stream after download: {path.name}")
+
+        duration_delta = summary.get("duration_delta")
+        if duration_delta is None or duration_delta > MEDIA_DURATION_TOLERANCE_SECONDS:
+            if audio_url:
+                mux_audio(path, audio_url)
+            else:
+                trim_to_audio(path)
+            summary = media_summary(path)
+            duration_delta = summary.get("duration_delta")
+
+        if duration_delta is None or duration_delta > MEDIA_DURATION_TOLERANCE_SECONDS:
+            raise RuntimeError(
+                f"Talking-head audio/video duration mismatch for {path.name}: "
+                f"video={summary.get('video_duration')}s audio={summary.get('audio_duration')}s "
+                f"delta={duration_delta}s"
+            )
+
+    return summary
 
 
 def load_config(path: str | None) -> dict[str, Any]:
@@ -888,6 +974,10 @@ def run_talking_head(api_key: str, plan: ClipPlan, cast: dict[str, Any], provide
         manifest.setdefault("tts_cache", {})[tts["cache_key"]] = tts
         save_manifest(manifest)
     if is_seedance_model(plan.model):
+        seedance_duration = seedance_duration_for_tts(tts, plan.duration_seconds)
+        if tts.get("duration_seconds") is not None:
+            manifest.setdefault("tts_cache", {})[tts["cache_key"]] = tts
+            save_manifest(manifest)
         payload = {
             "model": plan.model,
             "input": {
@@ -898,7 +988,7 @@ def run_talking_head(api_key: str, plan: ClipPlan, cast: dict[str, Any], provide
                 "generate_audio": False,
                 "resolution": SEEDANCE_RESOLUTION,
                 "aspect_ratio": "9:16",
-                "duration": plan.duration_seconds,
+                "duration": seedance_duration,
             },
         }
     else:
@@ -995,6 +1085,8 @@ def print_dry_run(cast_plans: list[CastPlan], clip_plans: list[ClipPlan], provid
     for index, plan in enumerate(clip_plans, 1):
         print(f"{index}. {plan.cast_id} | {plan.niche_id} | {plan.format_id} | {plan.clip_type}")
         print(f"   model={plan.model} duration={plan.duration_seconds}s")
+        if plan.clip_type == "talking_head" and is_seedance_model(plan.model):
+            print("   seedance_duration=measured from TTS at live submit time; dry-run duration/cost is the upper-bound fallback")
         if plan.script_text:
             print(f"   script={plan.script_text}")
         print(f"   prompt={plan.prompt}")
@@ -1108,6 +1200,7 @@ def run_batch(args: argparse.Namespace) -> None:
                 row["voice_profile"] = tts["voice_profile"]
                 row["tts_failures"] = tts["failures"]
                 row["tts_reused"] = tts.get("reused", False)
+                row["tts_duration_seconds"] = tts.get("duration_seconds")
             else:
                 result_url, task_id = run_broll(api_key, plan, cast)
             row["task_id"] = task_id

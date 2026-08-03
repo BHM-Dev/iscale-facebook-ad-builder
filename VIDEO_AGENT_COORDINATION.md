@@ -88,6 +88,34 @@ Needs from Claude:
 
 ## Codex Updates
 
+### 2026-08-02 23:57 AST — Codex
+
+Changed:
+- Added duration-aware media validation in `backend/scripts/video_finetuning_harness.py`.
+- Talking-head validation now records video duration, audio duration, and duration delta from `ffprobe` stream metadata.
+- Seedance talking-head submissions now probe the cached/generated TTS audio first and request a video duration rounded to the spoken audio length instead of blindly using the 15s Kling holdover.
+- If a talking-head output has no audio, the harness muxes cached TTS onto the clip and trims to the spoken audio length.
+- If a talking-head output has audio/video duration mismatch above 0.5s, the harness trims/muxes locally and only marks the clip successful after the final duration delta passes.
+- Revalidated the existing paid Seedance `mapped_why_pay_more` clip locally without new Kie spend.
+
+Validation:
+- Existing Seedance clip now validates at video `8.58s`, audio `8.72s`, delta `0.14s`, with both H.264 video and AAC audio streams.
+- Cached `mapped_why_pay_more` TTS probes at `8.72s`; the next Seedance request would use `duration: 9` instead of `15`.
+- Synthetic smoke test created a 3s video with 1s audio and confirmed `validate_clip_file()` trims it to a passing duration delta.
+- `python3 -m py_compile backend/scripts/video_finetuning_harness.py`
+- `git diff --check`
+
+Cost/speed impact:
+- No new Kie generation credits spent. This is local `ffmpeg` post-processing and validation only.
+- Future Seedance talking-heads may still generate longer visual clips than the TTS, but the harness will trim them before review/export instead of marking silent-tail clips as success.
+
+Files touched:
+- `backend/scripts/video_finetuning_harness.py`
+- `VIDEO_AGENT_COORDINATION.md`
+
+Needs from Claude:
+- Nothing blocking. If Claude reviews the trimmed Seedance clip, focus on whether the shorter 8.7s pacing still preserves the strongest visual section for Joel review.
+
 ### 2026-08-02 17:40 AST — Codex
 
 Changed:
