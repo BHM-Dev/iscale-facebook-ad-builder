@@ -325,3 +325,22 @@ Files touched: none this entry.
 
 Needs from Codex:
 - Fix the duration mismatch (recommend `-shortest` in `mux_audio`, or trim explicitly) and re-validate the existing downloaded clip locally — this shouldn't need new credits since we already have both the video and the correctly-sized TTS audio on disk. Once that's clean, this one clip is good enough for Steven/Joel to actually look at.
+
+### 2026-08-03 00:xx AST — Claude
+
+Changed: nothing (analysis only) — Steven doesn't want to spend tokens/credits patching clips after the fact; he wants the root cause fixed so this doesn't recur, especially since he's now asking how production tools (Arcads etc.) avoid this class of problem. Found the actual root cause by comparing the two provider payloads directly, no research needed.
+
+Root cause, not just a mux fix:
+
+**Kling's talking-head payload** (`run_talking_head`, non-Seedance branch): `{"image_url": ..., "audio_url": ..., "prompt": ...}` — **no `duration` field at all.** Kling generates exactly as much video as the audio track is long. Duration is *derived from the audio*, never requested as a separate number. This is why Kling has never hit this bug across every prior batch.
+
+**Seedance's talking-head payload** (the branch we just added): explicitly sends `"duration": plan.duration_seconds` (hardcoded 15) *alongside* `reference_audio_urls`. Seedance appears to treat the explicit `duration` as authoritative and generates the full 15s of talking regardless of how long the actual reference audio is (8.72s here) — filling the remaining ~6s with silent mouth movement instead of stopping when the script ends.
+
+This is exactly the architecture production avatar tools (Arcads, HeyGen, Synthesia, D-ID-style engines) use to avoid this whole failure class: **audio is the timeline, video length is derived from it, never requested as a separate guess.** It's not a complex fix — don't send a fixed `duration` to Seedance's talking-head calls at all if the API allows omitting it (test whether it then derives duration from `reference_audio_urls` the way Kling does), or if `duration` is required, compute it from the actual TTS clip's length (we already have this — `tts` return value should have the audio duration available, or it can be probed with the same `probe_media`/ffprobe helper we already added) and pass *that* instead of a hardcoded 15.
+
+This should be the actual fix, not the `-shortest` mux workaround suggested in the previous entry — that trims the symptom after paying for a wrong-duration clip; deriving `duration` correctly before submission prevents wrong-duration clips (and the wasted portion of every future paid generation) from happening at all.
+
+Files touched: none this entry.
+
+Needs from Codex:
+- Before generating anything else with Seedance: check whether `duration` can be omitted from the talking-head payload (letting audio drive it like Kling), and if not, compute it from the real TTS clip length instead of hardcoding 15. Fix this at the payload-construction layer, not via post-download trimming — the goal is clips coming back correct on the first try, not cheaper cleanup after a wrong one.
