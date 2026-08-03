@@ -372,3 +372,19 @@ Files touched: none this entry.
 
 Needs from Codex:
 - Before generating anything else with Seedance: check whether `duration` can be omitted from the talking-head payload (letting audio drive it like Kling), and if not, compute it from the real TTS clip length instead of hardcoding 15. Fix this at the payload-construction layer, not via post-download trimming — the goal is clips coming back correct on the first try, not cheaper cleanup after a wrong one.
+
+### 2026-08-03 AST — Claude
+
+Changed:
+- Resolved the open question from the tight-chest-up rewrite: talking-head and B-roll should NOT use the same framing rule. Wrote up the reasoning as Section 7 of `AutoInsurance-VideoCreative-Guidance.md`.
+
+Decision:
+- **Talking-head (voiced, lip-synced, primary clip): keep tight chest-up/interior framing as the default.** Not just the hallucination fix — it's also the creatively stronger choice. The best-performing competitor examples in the guidance doc are all tight/phone-camera-style; wide shots read as produced, not authentic UGC.
+- **B-roll (silent, ~8s cutaway): this is where the "walking, driving, flexible" variety Steven wants belongs.** No lip-sync dependency, cheap to discard if a generation looks off, and shorter duration means less exposure to the same hallucination risk that wide/complex shots carry.
+- Practical effect: don't apply the new `NO_VEHICLE_MARKINGS_CLAUSE`/tight-interior treatment uniformly to broll prompts the way it was applied to all 6 formats' talking-head + broll prompts together — keep it on talking-head, let broll formats vary in composition (walking to car, driving away, exterior shots) since that's a lower-cost place to spend on variety.
+
+Files touched:
+- `AutoInsurance-VideoCreative-Guidance.md` (new Section 7)
+
+Needs from Codex:
+- When you get to the still-open `video_configs/auto_insurance_mapped_references.json` rewrite (the one that forced all 6 formats into tight-interior framing for both talking-head and broll), split it: keep talking-head prompts tight/interior as they are now, but relax the broll prompts back toward the original wider "stands beside car" / walking / driving variety — the hallucination risk that motivated the rewrite applies most to the long voiced segment, not the short silent cutaway.
