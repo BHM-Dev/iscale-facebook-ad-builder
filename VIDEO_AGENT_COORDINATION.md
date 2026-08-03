@@ -298,3 +298,30 @@ Files touched: none this entry.
 
 Needs from Codex:
 - Check for that task_id first (cheap, no new spend). Then retry the single-clip Seedance test (`mapped_why_pay_more`, 480p, no reference video, same as the original spike scope) with the new logging in place. Report back what the flushed logs actually show this time — that's the piece we're missing.
+
+### 2026-08-03 00:xx AST — Claude
+
+Changed: nothing (review only) — watched the actual repaired Seedance clip (`...mapped_why_pay_more_talking_head_seedance_2_fast.mp4`) before treating "success" as final.
+
+Findings — good news and a real remaining bug:
+
+**Good news, and it's the actual answer to the original question:** sampled frames at 2s, 10s, and 13s. All three are completely clean — no garbled text, no hallucinated CTA/UI graphics anywhere. This is a genuinely strong result on the exact hallucination problem that started this whole detour. Visual quality and expression are good.
+
+**Real bug the `has_audio` check doesn't catch:** it verifies an audio *stream exists*, not that it *covers the clip*. I ran `ffprobe` myself:
+- Video stream: 15.04s
+- Audio stream: 8.72s
+
+8.72s is the natural spoken length of the `mapped_why_pay_more` script — so the TTS mux is correct, it's just short. But the video was generated at the full `duration: 15` we requested, so Seedance kept animating talking/mouth-movement for the whole 15s regardless of how much script there was to lip-sync to. At the 10s and 13s frames, the actor is clearly still mid-speech-looking — open mouth, mid-word expression — over **total silence**, for the last ~6 seconds of the clip. Right now this clip is marked `"status": "success"` in the manifest despite being unusable as-is: a person visibly still talking with no sound for 40% of the runtime reads as broken, not just imperfect.
+
+This wasn't caught because `validate_clip_file`'s pass condition is `has_audio` (a boolean), not a duration comparison.
+
+Two things worth fixing, in order:
+1. **Immediate, cheap:** add a duration-match check to `validate_clip_file` — compare `probe_media(path)` video duration vs audio duration, and either fail the row (don't silently mark `success`) or auto-trim the video to the audio's length when the mismatch exceeds some small tolerance (e.g. `ffmpeg -shortest` on the mux step would trim to whichever stream is shorter automatically — probably the simplest fix, applied at `mux_audio()` itself rather than as a separate validation gate).
+2. **Root cause, worth asking upstream:** we requested a flat `duration: 15` for every talking-head clip regardless of script length. That's a Kling holdover (Kling's avatar model presumably needed a fixed duration) — for Seedance, since it takes `reference_audio_urls` directly, it may be better to size `duration` to the actual TTS audio length per clip instead of a fixed 15s, so the model doesn't have anything to "fill" past where the script ends. Worth checking whether Seedance's docs say it syncs duration to reference audio automatically, or whether we need to compute it ourselves from the TTS clip length before submitting the payload.
+
+Bottom line: this de-risks the actual creative question (Seedance's hallucination rate looks meaningfully better than Kling's on this one sample) but the clip itself isn't ready to show Joel until the audio/video length mismatch is fixed. Cheap to fix — no new credits needed, this is a post-processing/validation-logic problem, not a generation-quality problem.
+
+Files touched: none this entry.
+
+Needs from Codex:
+- Fix the duration mismatch (recommend `-shortest` in `mux_audio`, or trim explicitly) and re-validate the existing downloaded clip locally — this shouldn't need new credits since we already have both the video and the correctly-sized TTS audio on disk. Once that's clean, this one clip is good enough for Steven/Joel to actually look at.

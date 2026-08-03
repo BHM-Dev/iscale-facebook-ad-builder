@@ -432,6 +432,75 @@ def download_file(url: str, path: Path) -> None:
                     handle.write(chunk)
 
 
+def probe_media(path: Path) -> dict[str, Any]:
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=index,codec_type,codec_name,width,height:format=duration",
+            "-of",
+            "json",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def media_has_audio(path: Path) -> bool:
+    data = probe_media(path)
+    return any(stream.get("codec_type") == "audio" for stream in data.get("streams", []))
+
+
+def mux_audio(video_path: Path, audio_url: str) -> None:
+    tmp_path = video_path.with_name(f"{video_path.stem}_with_audio_tmp{video_path.suffix}")
+    log(f"Muxing cached TTS audio onto clip: {video_path.name}")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(video_path),
+            "-i",
+            audio_url,
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            str(tmp_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    tmp_path.replace(video_path)
+
+
+def validate_clip_file(path: Path, plan: ClipPlan, tts: dict[str, Any] | None = None) -> dict[str, Any]:
+    if not path.exists() or path.stat().st_size == 0:
+        raise RuntimeError(f"Downloaded clip is missing or empty: {path}")
+
+    if plan.clip_type == "talking_head" and not media_has_audio(path):
+        audio_url = (tts or {}).get("url")
+        if audio_url:
+            mux_audio(path, audio_url)
+        if not media_has_audio(path):
+            raise RuntimeError(f"Talking-head clip is missing an audio stream after download: {path.name}")
+
+    data = probe_media(path)
+    streams = data.get("streams", [])
+    return {
+        "duration": data.get("format", {}).get("duration"),
+        "has_video": any(stream.get("codec_type") == "video" for stream in streams),
+        "has_audio": any(stream.get("codec_type") == "audio" for stream in streams),
+        "streams": streams,
+    }
+
+
 def load_config(path: str | None) -> dict[str, Any]:
     if not path:
         return DEFAULT_CONFIG
@@ -1044,6 +1113,7 @@ def run_batch(args: argparse.Namespace) -> None:
             row["task_id"] = task_id
             row["result_url"] = result_url
             download_file(result_url, output_path)
+            row["media_validation"] = validate_clip_file(output_path, plan, tts if plan.clip_type == "talking_head" else None)
             row["status"] = "success"
             success_count += 1
         except Exception as exc:
