@@ -88,6 +88,34 @@ Needs from Claude:
 
 ## Codex Updates
 
+### 2026-08-03 14:52 AST — Codex
+
+Changed:
+- Ran Steven-approved one-clip OmniHuman talking-head test for `mapped_why_pay_more` using the existing `auto_insurance_cast_1` car-seat source image and cached Gemini TTS.
+- First OmniHuman attempt failed before task creation with `The text length cannot exceed the maximum limit`; Kie credits did not move.
+- Shortened the OmniHuman-only prompt to `Natural UGC delivery, realistic lip sync, no text, no logos, no watermarks.` while keeping the full ad prompt in the plan/manifest for review context.
+- Retried the same one-clip test successfully.
+
+Validation:
+- Accepted task: `d4108d7aae9321536cf9e8f6d1a9a8cd`.
+- Output file: `backend/scripts/finetuning_output/auto_insurance_cast_1_auto_insurance_mapped_why_pay_more_talking_head_omnihuman_1_5.mp4`.
+- `ffprobe`: 1088x1920 H.264 video, AAC audio, video `8.84s`, audio `8.72s`, delta `0.12s`.
+- Review frames sampled at roughly 0s/3s/6s: no visible garbled text, fake CTA UI, or readable phone text in sampled frames.
+- Review page regenerated at `backend/scripts/finetuning_output/review.html`.
+
+Cost/speed impact:
+- Failed long-prompt attempt spent `0.00` credits.
+- Successful OmniHuman run spent `216` credits; cached cast and cached TTS were reused.
+- No extra image credits were spent for a new pose. Current source image is close to Steven's requested in-car pose, but exact "one hand on steering wheel, other arm resting on door" would require generating a new source image before lip sync.
+
+Files touched:
+- `backend/scripts/video_finetuning_harness.py`
+- `backend/scripts/finetuning_output/manifest.json` and generated review/output files (gitignored)
+- `VIDEO_AGENT_COORDINATION.md`
+
+Needs from Claude:
+- Full playback review of lip-sync/content match is still needed; frame checks only verify visual cleanliness and stream/duration integrity.
+
 ### 2026-08-03 14:40 AST — Codex
 
 Changed:
@@ -441,3 +469,19 @@ Files touched: none yet.
 
 Needs from Codex:
 - Wire OmniHuman 1.5 into the talking-head path (new provider branch, same shape as the Seedance branch was added). Validate with `--dry-run` before any live spend. Hold off on B-roll changes from this entry — only talking-head is affected.
+
+### 2026-08-04 AST — Claude
+
+Changed: nothing (independent verification of Codex's first live OmniHuman test — task `d4108d7aae9321536cf9e8f6d1a9a8cd`, 216 credits, `mapped_why_pay_more`).
+
+Verified myself, not just taking the report at face value:
+- **Duration match**, via my own `ffprobe`: video 8.84s, audio 8.72s, delta 0.12s. Matches Codex's number.
+- **Frames clean**, sampled at 1s/4s/7s: natural mouth positions mid-speech, no fake CTA/lower-third text, no logo/watermark artifacts. Matches Codex's spot-check.
+- **Audio content — the actual thing that was broken with Seedance — confirmed correct, independently.** Installed Whisper locally (free, offline, no API needed since kie.ai has no Speech-to-Text model yet) and transcribed the extracted audio track. Result is an **exact word-for-word match** to `plan.script_text`: *"Why pay more for the same kind of coverage? A quick comparison can show whether your current rate still makes sense. Compare free quotes."* This is the real confirmation the OmniHuman fix works — the Seedance clip's problem wasn't sync timing, it was that the spoken content didn't match the script at all; this one's content is exactly right because OmniHuman actually uses `audio_url` as its driving input.
+
+Not verified (needs a human watch with sound, not just frames + transcript): frame-by-frame lip-sync precision — whether mouth *shapes* track the phonemes, not just whether the right words are present in the track. Sent the file to Steven for that final check.
+
+Files touched: none.
+
+Needs from Codex:
+- Nothing blocking. If Steven/Joel's watch-through confirms lip-sync is solid, this format is ready to use as the reference for testing the remaining formats through OmniHuman.
