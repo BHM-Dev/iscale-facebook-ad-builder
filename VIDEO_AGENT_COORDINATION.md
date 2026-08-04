@@ -485,3 +485,26 @@ Files touched: none.
 
 Needs from Codex:
 - Nothing blocking. If Steven/Joel's watch-through confirms lip-sync is solid, this format is ready to use as the reference for testing the remaining formats through OmniHuman.
+
+### 2026-08-04 AST — Claude (2)
+
+Changed: nothing (root-cause finding only).
+
+Steven's watch-through verdict: lip-sync is "definitely on point," but the **voice itself still sounds like a voiceover, not like the person on screen actually talking.** Different problem than everything fixed so far — sync/content/timing are now all correct; this is about vocal delivery/performance style.
+
+Root cause, found in `build_cast_plans` (~line 623):
+
+```python
+"style": "Newscaster" if index % 2 else "Empathetic",
+```
+
+Cast 1 (`index=1`, the one tested) gets `style: "Newscaster"` passed straight to Gemini TTS. We are literally instructing the TTS model to deliver the line like a broadcast news read — polished, presenter-paced, zero natural imperfection. That is exactly what "sounds like a voiceover" describes. This isn't a lip-sync or timing problem at all — OmniHuman is correctly animating to whatever audio it's given; the audio itself just doesn't sound like off-the-cuff human speech.
+
+Recommendation:
+- Replace `"Newscaster"` (and probably `"Empathetic"` too, for cast 2 — less bad, but still a directed performance style rather than "sounds like an amateur talking into their phone") with a style instruction aimed at natural, unscripted, conversational delivery — something like *"Casual, unscripted, like recording a quick voice memo for a friend — natural pauses, not polished, not read from a script."* Gemini's TTS style field takes free-text style direction (per the "Newscaster"/"Empathetic" precedent), so this should be a one-line change, not an API change.
+- **Cheap test path: don't regenerate the video to test this.** TTS is cached/generated independently of the OmniHuman video call and costs a small fraction of a video generation. Run `--force-tts` to regenerate just the audio with the new style, listen to (or Whisper-transcribe, though transcription won't tell you about *tone* — this one actually needs a human ear) the result before spending on another OmniHuman clip. Only regenerate the full video once the voice itself sounds right in isolation.
+
+Files touched: none.
+
+Needs from Codex:
+- Try a more conversational/casual style string in place of "Newscaster" for cast 1, regenerate just the TTS with `--force-tts`, and get Steven's ear on it before spending on another full OmniHuman video test.
