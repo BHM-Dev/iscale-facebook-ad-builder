@@ -51,7 +51,7 @@ Look at "Still pending" at the bottom of this file. Don't invent work — pick f
 - Pages: `pages/{Dashboard,CampaignPerformance,AdRemix,BatchGenerate,ImageAds,Brands,Products,CustomerProfiles,FacebookCampaigns,GeneratedAds,Research,WinningAds}.jsx`
 - Components: `components/{Layout,Toast,Wizard,BulkAdCreation,AdCreativeStep,...}.jsx`
 - Context: `context/{ToastContext,BrandContext,CampaignContext}.jsx`
-- API helper: `lib/facebookApi.js` — named export `authFetch`
+- API helper: `lib/authClient.js` — the single `authFetch` + token-refresh implementation. `lib/facebookApi.js` re-exports `authFetch` from it, and `useAuth().authFetch` is the same function. Never add a second refresh path.
 
 ### Patterns you MUST follow
 
@@ -461,7 +461,8 @@ frontend/src/
 │   ├── BrandContext.jsx
 │   └── CampaignContext.jsx
 └── lib/
-    └── facebookApi.js   # authFetch (named export — import as { authFetch })
+    ├── authClient.js    # THE authFetch + refresh (shared by facebookApi and AuthContext)
+    └── facebookApi.js   # re-exports authFetch (import as { authFetch })
 ```
 
 ---

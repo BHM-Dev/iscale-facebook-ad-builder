@@ -639,7 +639,11 @@ export default function Research() {
     setSavedAds(prev => prev.filter(a => a.id !== ad.id));
 
     try {
-      await authFetch(`${API_URL}/research/scraped-ads/${ad.id}/save`, { method: 'DELETE' });
+      // authFetch resolves with the Response instead of throwing on an auth
+      // failure, so the status has to be checked for the optimistic unsave above
+      // to get rolled back.
+      const res = await authFetch(`${API_URL}/research/scraped-ads/${ad.id}/save`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`Failed to unsave ad (${res.status})`);
     } catch (e) {
       // Reload to correct state
       loadSavedAds();

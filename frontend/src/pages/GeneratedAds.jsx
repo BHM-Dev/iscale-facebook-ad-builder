@@ -287,20 +287,31 @@ export default function GeneratedAds() {
 
         if (isBroken) {
             let removedCount = 0;
+            let failedCount = 0;
             for (const id of brokenBundleIds) {
                 const bundleForId = ads.filter(ad => (ad.ad_bundle_id || `legacy_${ad.id}`) === id);
                 try {
+                    // Check the status like the non-broken branch below does.
+                    // authFetch resolves with the Response on an auth failure
+                    // rather than throwing, so an unchecked Promise.all here
+                    // reported "Removed N broken ads" while deleting nothing.
                     await Promise.all(bundleForId.map(ad =>
                         authFetch(`${API_URL}/generated-ads/${ad.id}`, { method: 'DELETE' })
+                            .then(r => { if (!r.ok) throw new Error(`Failed to delete ad ${ad.id} (${r.status})`); })
                     ));
                     setAds(prev => prev.filter(ad => !bundleForId.find(d => d.id === ad.id)));
                     removedCount += 1;
                 } catch (e) {
                     console.error('Failed to delete broken bundle', id, e);
+                    failedCount += 1;
                 }
             }
             setBrokenBundles(new Set());
-            showSuccess(`Removed ${removedCount} broken ad${removedCount !== 1 ? 's' : ''}`);
+            if (failedCount > 0) {
+                showError(`Removed ${removedCount} broken ad${removedCount !== 1 ? 's' : ''}, ${failedCount} could not be removed`);
+            } else {
+                showSuccess(`Removed ${removedCount} broken ad${removedCount !== 1 ? 's' : ''}`);
+            }
             return;
         }
 

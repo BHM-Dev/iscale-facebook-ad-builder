@@ -117,8 +117,15 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     })
                 });
                 if (!saveCampRes.ok) {
-                    const err = await saveCampRes.json();
-                    throw new Error(`Failed to save campaign locally: ${err.detail || err.message}`);
+                    const err = await saveCampRes.json().catch(() => ({}));
+                    // The campaign already exists on Meta at this point — only the
+                    // local record failed. Naming the id keeps a retry from quietly
+                    // creating a second campaign nothing in the app is tracking.
+                    throw new Error(
+                        `Campaign ${fbCampaignId} was created on Meta but could not be saved locally: `
+                        + `${err.detail || err.message || saveCampRes.status}. `
+                        + `Do not re-launch — it already exists on the account.`
+                    );
                 }
             } catch (err) {
                 console.error('Error saving campaign locally:', err);
@@ -212,8 +219,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     body: JSON.stringify(adsetSaveBody)
                 });
                 if (!saveAdSetRes.ok) {
-                    const err = await saveAdSetRes.json();
-                    throw new Error(`Failed to save ad set locally: ${err.detail || err.message}`);
+                    const err = await saveAdSetRes.json().catch(() => ({}));
+                    // Same as the campaign save above: the ad set is live on Meta,
+                    // only the local row is missing.
+                    throw new Error(
+                        `Ad set ${fbFeedAdsetId} was created on Meta but could not be saved locally: `
+                        + `${err.detail || err.message || saveAdSetRes.status}. `
+                        + `Do not re-launch — it already exists on the account.`
+                    );
                 }
             } catch (err) {
                 console.error('Error saving ad set locally:', err);

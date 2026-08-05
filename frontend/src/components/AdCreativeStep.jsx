@@ -59,12 +59,17 @@ const AdCreativeStep = ({ onNext, onBack }) => {
         setLibraryLoading(true);
         try {
             const res = await authFetch(`${API_URL}/generated-ads`);
-            if (res.ok) {
-                const data = await res.json();
-                setLibraryAds(Array.isArray(data) ? data.filter(ad => ad.image_url) : []);
+            // authFetch resolves with the Response on an auth failure rather than
+            // throwing, so without this the modal would just open empty and say
+            // nothing about why.
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || `HTTP ${res.status}`);
             }
+            const data = await res.json();
+            setLibraryAds(Array.isArray(data) ? data.filter(ad => ad.image_url) : []);
         } catch (e) {
-            showError('Failed to load Generated Ads library');
+            showError(`Failed to load Generated Ads library: ${e.message}`);
         } finally {
             setLibraryLoading(false);
         }

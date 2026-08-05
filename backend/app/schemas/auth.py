@@ -56,14 +56,6 @@ class RoleCreate(RoleBase):
     pass
 
 
-class RoleResponse(RoleBase):
-    id: str
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
 class PermissionBase(BaseModel):
     name: str
     description: Optional[str] = None
@@ -76,6 +68,20 @@ class PermissionCreate(PermissionBase):
 class PermissionResponse(PermissionBase):
     id: str
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RoleResponse(RoleBase):
+    id: str
+    created_at: datetime
+    # Without this the frontend's hasPermission() is false for every user who
+    # isn't a superuser, because it reads user.roles[].permissions and the
+    # payload never carried them. That silently hid the Profit/Loss nav link
+    # from Joel — admin role, not superuser — even though the backend grants
+    # admin pnl:read and would have served him the data.
+    permissions: List[PermissionResponse] = []
 
     class Config:
         from_attributes = True

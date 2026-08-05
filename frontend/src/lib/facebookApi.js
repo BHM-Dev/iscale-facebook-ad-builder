@@ -1,92 +1,14 @@
 // Facebook Marketing API Integration Service
 // Now proxies through our backend with authentication
 
+// authFetch lives in lib/authClient.js — the single implementation shared with
+// AuthContext. Re-exported here so the modules that already import it from this
+// file keep working unchanged.
+import { authFetch } from './authClient';
+
+export { authFetch };
+
 const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1') + '/facebook';
-
-// Helper to get auth headers from localStorage
-const getAuthHeaders = () => {
-    const token = localStorage.getItem('accessToken');
-    return token ? { 'Authorization': `Bearer ${token}` } : {};
-};
-
-// Attempt a silent token refresh using the stored refresh token
-// Single-flight guard. The backend rotates the refresh token on every use, so
-// two concurrent 401s racing to refresh both send the SAME refresh token: the
-// first wins and invalidates it, the second gets a 401 back, returns null, and
-// authFetch then hands its caller the original 401 without retrying.
-//
-// That is why a page firing two requests at once after the token expired had one
-// panel load and the other report itself unavailable. Any page with concurrent
-// calls hits this — it was just least visible before the P&L page gave its
-// month-history fetch a failure message of its own.
-//
-// Concurrent callers now await one shared refresh and all get the same new token.
-let refreshInFlight = null;
-
-const tryRefreshToken = async () => {
-    if (refreshInFlight) return refreshInFlight;
-
-    refreshInFlight = (async () => {
-        const refreshToken = localStorage.getItem('refreshToken');
-        if (!refreshToken) return null;
-
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
-        try {
-            const res = await fetch(`${apiUrl}/auth/refresh`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ refresh_token: refreshToken }),
-            });
-            if (!res.ok) return null;
-            const data = await res.json();
-            if (data.access_token) {
-                localStorage.setItem('accessToken', data.access_token);
-                if (data.refresh_token) localStorage.setItem('refreshToken', data.refresh_token);
-                return data.access_token;
-            }
-        } catch (_) { /* network error — fall through */ }
-        return null;
-    })();
-
-    try {
-        return await refreshInFlight;
-    } finally {
-        // Cleared so a later expiry starts a fresh refresh rather than reusing
-        // this settled promise.
-        refreshInFlight = null;
-    }
-};
-
-// Authenticated fetch wrapper — retries once after a silent token refresh on 401
-export const authFetch = async (url, options = {}) => {
-    const makeReq = (token) => fetch(url, {
-        ...options,
-        headers: {
-            ...options.headers,
-            ...(token ? { 'Authorization': `Bearer ${token}` } : getAuthHeaders()),
-        },
-    });
-
-    let response = await makeReq(null);
-
-    if (response.status === 401) {
-        const newToken = await tryRefreshToken();
-        if (newToken) {
-            response = await makeReq(newToken);
-        }
-        // NOTE: a 401 that cannot be refreshed is still handed back to the caller.
-        // An earlier attempt here dispatched a 'session expired' event so the app
-        // could eject to the login screen. Two reviews killed it: AuthContext
-        // already has its own authFetch whose 401 path calls logout(), so this
-        // would have been a SECOND independent way to tear down a session with no
-        // coordination between them — a race could log someone out whose session
-        // was about to be fine. Joel also said being ejected mid-task is worse than
-        // a clear message in place. Unifying the two authFetch implementations is
-        // the real fix; see the note in CLAUDE.md.
-    }
-
-    return response;
-};
 
 /**
  * Get all ad accounts accessible by the access token

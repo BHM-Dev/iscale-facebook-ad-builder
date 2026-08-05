@@ -35,7 +35,7 @@ function BHMLogo({ size = 40 }) {
 export default function Layout() {
     const location = useLocation();
     const navigate = useNavigate();
-    const { user, logout, hasRole, hasPermission } = useAuth();
+    const { user, logout, hasRole, hasPermission, sessionExpired } = useAuth();
     const { showSuccess } = useToast();
     const { activeVerticalFilter, setActiveVerticalFilter } = useBrands();
     const { activeAccountId, setActiveAccountId, adAccounts, activeAccountLoading } = useCampaign();
@@ -264,6 +264,34 @@ export default function Layout() {
             {/* Main Content */}
             <main className="flex-1 overflow-y-auto bg-gray-50">
                 <div className="p-5">
+                    {/* A dead session is announced here rather than by redirecting to
+                        the login screen: Joel works with several tabs open and unsaved
+                        state, so signing back in is his call, not the app's.
+
+                        The button opens login in a NEW tab on purpose. Navigating this
+                        tab to /login unmounts CampaignProvider, and campaignData /
+                        adsetData / adsData are plain useState — an in-progress bulk
+                        build would be gone. Tokens live in localStorage, which is
+                        shared across tabs, so signing in over there revives this tab
+                        (authClient listens for the storage event and clears this
+                        banner). */}
+                    {sessionExpired && (
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                            <div>
+                                <p className="text-sm font-semibold text-amber-900">Your session has expired</p>
+                                <p className="text-sm text-amber-800">
+                                    Anything on screen may be out of date, and nothing will save until you sign in.
+                                    Sign in on the new tab and come back here — this page keeps whatever you were working on.
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => window.open('/login', '_blank', 'noopener')}
+                                className="shrink-0 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700"
+                            >
+                                Sign in (new tab)
+                            </button>
+                        </div>
+                    )}
                     {adAccounts.length > 0 && (
                         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-white px-4 py-3 shadow-sm">
                             <div className="flex items-center gap-3">

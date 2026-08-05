@@ -1,4 +1,11 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import {
+    authFetch as sharedAuthFetch,
+    refreshAccessToken as sharedRefreshAccessToken,
+    clearTokens,
+    setTokens,
+    onAuthEvent,
+} from '../lib/authClient';
 
 const AuthContext = createContext();
 
@@ -32,12 +39,36 @@ export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
     const [accessToken, setAccessToken] = useState(localStorage.getItem('accessToken'));
     const [refreshToken, setRefreshToken] = useState(localStorage.getItem('refreshToken'));
-    // Shared across concurrent callers so only one refresh is ever in flight.
-    const refreshInFlightRef = useRef(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    // Set when the shared auth client determines the session is definitively
+    // gone. We deliberately do NOT logout() here — Layout shows a banner with a
+    // sign-in button instead, so nobody loses an in-progress page.
+    const [sessionExpired, setSessionExpired] = useState(false);
 
-    // Check if user is authenticated on mount
+    // lib/authClient owns the tokens; mirror its writes into React state so
+    // anything reading `accessToken` off the context stays correct.
+    useEffect(() => onAuthEvent((event) => {
+        if (event.type === 'tokens') {
+            setAccessToken(event.accessToken);
+            setRefreshToken(event.refreshToken);
+            setSessionExpired(false);
+        } else if (event.type === 'session-expired') {
+            setSessionExpired(true);
+        } else if (event.type === 'session-restored') {
+            // A later request succeeded, so an earlier expiry verdict was wrong
+            // (or has been fixed in another tab). Take the banner down.
+            setSessionExpired(false);
+        }
+    }), []);
+
+    // Check if user is authenticated on mount.
+    //
+    // This path DOES logout() on a dead refresh token, unlike authFetch, which
+    // raises the banner instead. That difference is deliberate: at mount there is
+    // no in-progress work to protect, and the login form is the right destination.
+    // It is also what makes the banner's "sign in on a new tab" flow work — the
+    // new tab clears the stale tokens on load and shows the form.
     useEffect(() => {
         const initAuth = async () => {
             if (accessToken) {
@@ -125,10 +156,7 @@ export const AuthProvider = ({ children }) => {
             }
 
             const data = await response.json();
-            setAccessToken(data.access_token);
-            setRefreshToken(data.refresh_token);
-            localStorage.setItem('accessToken', data.access_token);
-            localStorage.setItem('refreshToken', data.refresh_token);
+            setTokens({ accessToken: data.access_token, refreshToken: data.refresh_token });
 
             // Fetch user data
             const userResponse = await fetch(`${API_URL}/auth/me`, {
@@ -194,119 +222,24 @@ export const AuthProvider = ({ children }) => {
         }
 
         setUser(null);
-        setAccessToken(null);
-        setRefreshToken(null);
-        localStorage.removeItem('accessToken');
-        localStorage.removeItem('refreshToken');
+        clearTokens();
     }, [accessToken, refreshToken]);
 
-    // Same single-flight guard as lib/facebookApi.js, and it matters more here:
-    // authFetch below calls logout() when a refresh fails with 401/403. Two
-    // concurrent 401s both send the same refresh token, the backend rotates it
-    // on the first, and the second comes back 401 — which would sign the user
-    // out mid-session even though their session is perfectly valid.
+    // Both the token refresh and the authenticated-fetch wrapper live in
+    // lib/authClient.js now. This context used to carry its own copy of each,
+    // with its own single-flight guard that knew nothing about the one in
+    // lib/facebookApi.js — see the header comment in authClient.js for what that
+    // race did to live sessions. Only the user-fetch on top is context-specific.
     const refreshAccessToken = async () => {
-        if (refreshInFlightRef.current) return refreshInFlightRef.current;
-        refreshInFlightRef.current = doRefreshAccessToken();
-        try {
-            return await refreshInFlightRef.current;
-        } finally {
-            refreshInFlightRef.current = null;
-        }
-    };
-
-    const doRefreshAccessToken = async () => {
-        // Read localStorage first, not the state variable. setRefreshToken is async,
-        // so after one rotation the closed-over state is stale until the next render.
-        // Two refreshes back to back (e.g. the 6-day interval firing while a request
-        // triggers one) would then POST the already-invalidated token, get a 401, and
-        // authFetch's catch would log the user out of a perfectly valid session. The
-        // single-flight guard above only covers CONCURRENT callers, not sequential
-        // ones. fetchUser already reads localStorage for the same reason.
-        const currentRefreshToken = localStorage.getItem('refreshToken') || refreshToken;
-        if (!currentRefreshToken) {
-            throw new Error('No refresh token');
-        }
-
-        let response;
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
-        try {
-            response = await fetch(`${API_URL}/auth/refresh`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ refresh_token: currentRefreshToken }),
-                signal: controller.signal,
-            });
-        } catch (err) {
-            // Network error or timeout - rethrow but don't attach status so we don't logout
-            throw err;
-        } finally {
-            clearTimeout(timeoutId);
-        }
-
-        if (!response.ok) {
-            const error = new Error('Failed to refresh token');
-            error.status = response.status;
-            throw error;
-        }
-
-        const data = await response.json();
-        setAccessToken(data.access_token);
-        localStorage.setItem('accessToken', data.access_token);
-
-        // Update refresh token if new one provided (rolling refresh)
-        if (data.refresh_token) {
-            setRefreshToken(data.refresh_token);
-            localStorage.setItem('refreshToken', data.refresh_token);
-        }
-
-        // Re-fetch user data with new token
+        const token = await sharedRefreshAccessToken();
         await fetchUser();
-
-        return data.access_token;
+        return token;
     };
 
-    // Helper to make authenticated API calls
-    const authFetch = useCallback(async (url, options = {}) => {
-        const currentToken = localStorage.getItem('accessToken');
-        const currentRefreshToken = localStorage.getItem('refreshToken');
-
-        if (!currentToken) {
-            throw new Error('No access token available');
-        }
-
-        const makeRequest = async (authToken) => {
-            const response = await fetch(url, {
-                ...options,
-                headers: {
-                    ...options.headers,
-                    'Authorization': `Bearer ${authToken}`,
-                },
-            });
-            return response;
-        };
-
-        let response = await makeRequest(currentToken);
-
-        // If unauthorized, try to refresh token
-        if (response.status === 401 && currentRefreshToken) {
-            try {
-                const newToken = await refreshAccessToken();
-                response = await makeRequest(newToken);
-            } catch (err) {
-                // Only logout if it's a definitive auth failure
-                if (err.status === 401 || err.status === 403) {
-                    logout();
-                    throw new Error('Session expired. Please login again.');
-                }
-                // For network errors, we throw but don't logout
-                throw err;
-            }
-        }
-
-        return response;
-    }, [refreshAccessToken, logout]);
+    // Same function object for the life of the app. The old useCallback churned
+    // whenever logout's deps changed, refiring the fetches of every component
+    // that lists authFetch in its useEffect deps.
+    const authFetch = sharedAuthFetch;
 
     // Check if user has a specific role
     const hasRole = useCallback((roleName) => {
@@ -329,6 +262,7 @@ export const AuthProvider = ({ children }) => {
         accessToken,
         loading,
         error,
+        sessionExpired,
         isAuthenticated: !!user,
         login,
         register,

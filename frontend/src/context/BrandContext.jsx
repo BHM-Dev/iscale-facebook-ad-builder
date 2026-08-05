@@ -188,11 +188,18 @@ export const BrandProvider = ({ children }) => {
                 id: crypto.randomUUID()
             };
 
-            await authFetch(`${API_URL}/profiles`, {
+            // authFetch resolves with the Response rather than throwing on an auth
+            // failure, so an unchecked call here would report success and then
+            // silently drop the profile.
+            const res = await authFetch(`${API_URL}/profiles`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newProfile)
             });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || `Failed to add profile (${res.status})`);
+            }
 
             await loadData();
             return newProfile;
@@ -204,11 +211,15 @@ export const BrandProvider = ({ children }) => {
 
     const updateProfile = async (id, updatedProfile) => {
         try {
-            await authFetch(`${API_URL}/profiles/${id}`, {
+            const res = await authFetch(`${API_URL}/profiles/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updatedProfile)
             });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || `Failed to update profile (${res.status})`);
+            }
 
             await loadData();
         } catch (error) {
@@ -219,9 +230,13 @@ export const BrandProvider = ({ children }) => {
 
     const deleteProfile = async (id) => {
         try {
-            await authFetch(`${API_URL}/profiles/${id}`, {
+            const res = await authFetch(`${API_URL}/profiles/${id}`, {
                 method: 'DELETE'
             });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || `Failed to delete profile (${res.status})`);
+            }
 
             await loadData();
         } catch (error) {
