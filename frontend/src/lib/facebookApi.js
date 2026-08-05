@@ -74,6 +74,15 @@ export const authFetch = async (url, options = {}) => {
         if (newToken) {
             response = await makeReq(newToken);
         }
+        // NOTE: a 401 that cannot be refreshed is still handed back to the caller.
+        // An earlier attempt here dispatched a 'session expired' event so the app
+        // could eject to the login screen. Two reviews killed it: AuthContext
+        // already has its own authFetch whose 401 path calls logout(), so this
+        // would have been a SECOND independent way to tear down a session with no
+        // coordination between them — a race could log someone out whose session
+        // was about to be fine. Joel also said being ejected mid-task is worse than
+        // a clear message in place. Unifying the two authFetch implementations is
+        // the real fix; see the note in CLAUDE.md.
     }
 
     return response;

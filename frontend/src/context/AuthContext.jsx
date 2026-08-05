@@ -12,6 +12,22 @@ export const useAuth = () => {
     return context;
 };
 
+// The API is not consistent about its error envelope: FastAPI's HTTPException uses
+// {detail}, while slowapi's rate limiter returns {error}. Reading only `detail`
+// turned a 429 into a bare "Login failed" with no hint that the user was simply
+// throttled — which reads as the app being broken.
+async function authErrorMessage(response, fallback) {
+    const data = await response.json().catch(() => ({}));
+    if (response.status === 429) {
+        const retryAfter = Number(response.headers.get('Retry-After'));
+        const wait = Number.isFinite(retryAfter) && retryAfter > 0
+            ? `about ${retryAfter} second${retryAfter === 1 ? '' : 's'}`
+            : 'a minute';
+        return `Too many attempts. Wait ${wait} and try again.`;
+    }
+    return data.detail || data.error || fallback;
+}
+
 export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
     const [accessToken, setAccessToken] = useState(localStorage.getItem('accessToken'));
@@ -105,8 +121,7 @@ export const AuthProvider = ({ children }) => {
             });
 
             if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.detail || 'Login failed');
+                throw new Error(await authErrorMessage(response, 'Login failed'));
             }
 
             const data = await response.json();
@@ -146,8 +161,7 @@ export const AuthProvider = ({ children }) => {
             });
 
             if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.detail || 'Registration failed');
+                throw new Error(await authErrorMessage(response, 'Registration failed'));
             }
 
             const userData = await response.json();
