@@ -92,6 +92,7 @@ class RedTrackService:
         self,
         date_from: str,
         date_to: str,
+        raise_on_error: bool = False,
     ) -> dict:
         """Pull conversions + revenue grouped by sub2 (= Meta fb_adset_id).
 
@@ -111,6 +112,8 @@ class RedTrackService:
         Returns empty dict if API key not configured or call fails.
         """
         if not self.is_configured():
+            if raise_on_error:
+                raise RuntimeError("REDTRACK_API_KEY is not configured on the server")
             logger.debug("REDTRACK_API_KEY not set — skipping report fetch")
             return {}
 
@@ -151,6 +154,13 @@ class RedTrackService:
 
         except httpx.HTTPStatusError as e:
             logger.error("RedTrack HTTP error: %s %s", e.response.status_code, e.response.text)
+            # Callers that report to a human need to tell "the call failed" apart
+            # from "the call worked and there was nothing there" — those have very
+            # different fixes and the empty dict conflates them.
+            if raise_on_error:
+                raise RuntimeError(
+                    f"RedTrack returned HTTP {e.response.status_code}: {e.response.text[:200]}"
+                ) from e
             return {}
         except Exception as e:
             logger.error("RedTrack fetch error: %s", e)

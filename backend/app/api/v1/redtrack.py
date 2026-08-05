@@ -187,10 +187,40 @@ def manual_sync(
     from app.models import RedTrackCache
 
     date_from_str, date_to_str = svc.preset_to_dates(date_preset)
-    report = svc.get_report_by_adset(date_from_str, date_to_str)
+    # raise_on_error so a failed API call is reported as a failed API call. It used
+    # to come back as an empty dict, which this endpoint then reported as "no data,
+    # check sub2 is in your tracking URLs" — sending media buyers to rewrite
+    # tracking URLs when the real problem was on RedTrack's side.
+    try:
+        report = svc.get_report_by_adset(date_from_str, date_to_str, raise_on_error=True)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Couldn't reach RedTrack for {date_from_str} to {date_to_str}: {exc}. "
+                "Nothing was changed. This is a RedTrack API problem, not a tracking-URL problem."
+            ),
+        ) from exc
+
     response_report = _filter_report(report, _allowed_adset_ids(db, current_user, ad_account_id))
     if not report:
-        return {"synced": 0, "message": "RedTrack returned no data for this date range. Check sub2={{adset.id}} is in tracking URLs."}
+        return {
+            "synced": 0,
+            "date_from": date_from_str,
+            "date_to": date_to_str,
+            "message": (
+                f"RedTrack answered for {date_from_str} to {date_to_str} but returned no ad sets. "
+                "That points at sub2={{adset.id}} missing from the tracking URLs, or no traffic in this range."
+            ),
+        }
+
+    # RedTrack can return rows with revenue but zero cost — it pulls cost from its
+    # own Meta integration, which does not pick up newly duplicated campaigns until
+    # they are mapped. Surface it rather than caching a silent zero.
+    zero_cost = [k for k, v in report.items() if not float(v.get("cost") or 0)]
+    with_revenue_no_cost = [
+        k for k in zero_cost if float(report[k].get("revenue") or 0) > 0
+    ]
 
     date_from = date.fromisoformat(date_from_str)
     date_to   = date.fromisoformat(date_to_str)
@@ -210,12 +240,22 @@ def manual_sync(
         ))
     db.commit()
 
+    message = f"Cache updated with {len(response_report)} ad sets from RedTrack."
+    if with_revenue_no_cost:
+        message += (
+            f" {len(with_revenue_no_cost)} ad set(s) have revenue but zero cost — RedTrack isn't"
+            " receiving Meta spend for them. Usually a newly duplicated campaign that isn't mapped"
+            " on the RedTrack side yet; the tracking URLs are fine, since revenue is arriving."
+        )
+
     return {
         "synced": len(response_report),
         "date_from": date_from_str,
         "date_to": date_to_str,
         "adset_ids": list(response_report.keys()),
-        "message": f"Cache updated with {len(response_report)} ad sets from RedTrack.",
+        "adsets_missing_cost": len(zero_cost),
+        "adsets_with_revenue_but_no_cost": with_revenue_no_cost,
+        "message": message,
     }
 
 
