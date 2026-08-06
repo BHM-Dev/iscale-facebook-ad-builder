@@ -1,14 +1,23 @@
-name: Build & Push Frontend
+# This workflow IS the deploy. There is no VPS-side auto-pull — if this does not
+# run, nothing reaches production, and the API keeps happily serving the previous
+# commit with a 200. On 2026-08-06 a GitHub Actions outage ("Failed to resolve
+# action download info") killed every job at Set up job, and the only symptom was
+# that a pushed change simply wasn't there. Hence the verify and notify jobs
+# below, and hence the honest name.
+name: Deploy to VPS
 
 on:
   push:
     branches:
       - develop
+  # So a failed deploy can be re-run without an empty commit.
+  workflow_dispatch:
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    
-    steps:      
+
+    steps:
       - name: Deploy to server
         uses: appleboy/ssh-action@v1.0.0
         with:
@@ -16,12 +25,95 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
+          envs: EXPECTED_SHA
           script: |
             set -e
             cd /home/ubuntu/iscale-facebook-ad-builder
 
             git pull origin develop
-            # Pull the latest backend image
+
+            # Prove the pull actually advanced to the commit that triggered this
+            # run. A pull that fails to fast-forward, or a stale checkout, would
+            # otherwise rebuild the OLD code and still report success.
+            #
+            # Every ambiguous case fails OPEN and deploys anyway. This gate exists
+            # to catch a stale tree, and a gate that blocks a good deploy would be
+            # worse than the problem it guards against — so it only runs when the
+            # history can actually answer the question: `--is-ancestor` errors out
+            # on a shallow clone, and the object has to be present to be compared.
+            if [ -n "$EXPECTED_SHA" ] \
+               && [ "$(git rev-parse --is-shallow-repository)" = "false" ] \
+               && git cat-file -e "${EXPECTED_SHA}^{commit}" 2>/dev/null; then
+              if ! git merge-base --is-ancestor "$EXPECTED_SHA" HEAD; then
+                echo "::error::Deployed tree does not contain $EXPECTED_SHA (HEAD is $(git rev-parse HEAD))"
+                exit 1
+              fi
+              echo "Tree contains $EXPECTED_SHA (HEAD $(git rev-parse --short HEAD))"
+            else
+              echo "Skipping SHA assertion (no SHA passed, shallow clone, or object absent)."
+            fi
+
             docker compose -f docker-compose.prod.yml up -d --build
-            
+
             echo "Deployment completed successfully"
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+
+  # Deliberately no `uses:` in this job. Actions have to be downloaded before a
+  # job's steps run, which is precisely what failed on 2026-08-06 — so any job
+  # that depends on one cannot be trusted to report that outage. Plain `run:`
+  # steps need no download.
+  verify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Backend answers after restart
+        run: |
+          URL="${{ vars.BACKEND_URL || 'https://adbuilder-api.velocitymx.io' }}"
+          for i in $(seq 1 20); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/api/v1/docs" || true)
+            if [ "$STATUS" = "200" ]; then
+              echo "Backend healthy (HTTP 200) after ${i} attempt(s)"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $STATUS — retrying in 10s"
+            sleep 10
+          done
+          echo "::error::Backend did not return 200 within ~200s after deploy"
+          exit 1
+
+  notify-failure:
+    needs: [deploy, verify]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Announce the failure
+        env:
+          WEBHOOK: ${{ secrets.SLACK_DEPLOY_WEBHOOK }}
+          # Name which job failed. "deploy failed" and "deploy worked but the API
+          # never came back" need different responses, and crying wolf about the
+          # deploy when the health poll merely timed out trains people to ignore it.
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ "$DEPLOY_RESULT" != "success" ]; then
+            TEXT="Ad Builder DEPLOY FAILED on develop — $SHA is NOT live. The API keeps serving the previous commit with a 200, so this is silent unless someone looks. $RUN_URL"
+          else
+            TEXT="Ad Builder deployed $SHA, but the post-deploy health check did not pass. The new code may be live and unhealthy, or just slow to restart — worth eyes on it. $RUN_URL"
+          fi
+          export TEXT
+          echo "::error::$TEXT"
+          if [ -z "$WEBHOOK" ]; then
+            # Never fail the notifier itself — a missing secret must not mask the
+            # deploy failure it is reporting.
+            echo "SLACK_DEPLOY_WEBHOOK is not set, so this failure reached the Actions log only."
+            exit 0
+          fi
+          # Payload built in python so the message needs no shell quoting
+          # gymnastics; a notifier that breaks on an apostrophe is worse than no
+          # notifier. Kept as a -c one-liner rather than a heredoc so there is no
+          # question about terminator indentation inside a YAML block scalar.
+          python3 -c 'import json, os, urllib.request; body = json.dumps({"text": os.environ["TEXT"]}).encode(); urllib.request.urlopen(urllib.request.Request(os.environ["WEBHOOK"], data=body, headers={"Content-type": "application/json"}), timeout=15); print("Slack notified.")' \
+            || echo "Slack notify failed; the Actions log above is the record."

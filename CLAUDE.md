@@ -133,7 +133,7 @@ Facebook ad builder used daily by Joel Welch (media buyer). Connects to Meta Ads
 **Tech stack:** React 19 + Vite + TailwindCSS (frontend) | FastAPI + PostgreSQL (backend) | Python 3.11+  
 **Hosting:** AWS Lightsail VPS (Golden's server). NOT Railway — do not reference Railway dashboard or Railway env vars.  
 **Repo:** `BHM-Dev/iscale-facebook-ad-builder`  
-**Deploy:** Push directly to `BHM-Dev:develop` (`git push origin develop`). VPS auto-deploys on every push. **Only message Golden if the push includes a DB migration.**  
+**Deploy:** Push directly to `BHM-Dev:develop` (`git push origin develop`). Deployment runs through the **`Deploy to VPS` GitHub Action** (`.github/workflows/deploy.yml`), which SSHes into the VPS, pulls `develop` and runs `docker compose up -d --build`. There is **no VPS-side auto-pull** — if that workflow does not run, nothing reaches production and the API keeps serving the previous commit with a 200. **Only message Golden if the push includes a DB migration.**  
 **Storage:** Cloudflare R2 (S3-compatible) for generated/uploaded images when `r2_enabled` is true.
 
 ---
@@ -546,7 +546,9 @@ Do not suggest `./venv/bin/python ...` or `source venv/bin/activate` for VPS wor
 ## Deployment Checklist
 
 1. Push directly to `BHM-Dev:develop` (`git push origin develop`) — there is no `sunbunzz627` fork; the dev workflow is push-direct, not PR-based.
-2. VPS auto-deploys on every push to `develop` — Golden's container picks up the new code automatically.
+2. The `Deploy to VPS` Action deploys it — it is the only path to production. **Confirm it went green** (`gh run list --limit 3`); do not assume a push equals a deploy.
+   - A red run means your commit is NOT live even though the API answers 200 on the old code. Re-run it with `gh run rerun <id>` (it also accepts `workflow_dispatch`).
+   - A GitHub Actions outage takes deploys down with it: on 2026-08-06 every job died in `Set up job` with "Failed to resolve action download info", ten minutes were lost waiting for a deploy that was never going to happen. The workflow now asserts the pushed SHA is actually in the deployed tree, polls the API afterwards, and posts to Slack on failure via a job with no `uses:` (so it still fires during exactly that kind of outage). That notifier needs `SLACK_DEPLOY_WEBHOOK` in the repo's Actions secrets; without it, failures reach the Actions log only.
 3. `alembic upgrade head` runs automatically as part of the Docker startup sequence — confirmed by Golden 2026-06-02. **Do NOT message Golden about migrations.**
 4. **Never message Golden after a push** — code and migrations are fully automated.
 5. Env var changes → DM Golden at `D075KSE1A1L`. He adds the var, runs `docker compose restart backend`. This is the ONLY reason to message Golden.
