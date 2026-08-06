@@ -31,6 +31,7 @@ jobs:
             cd /home/ubuntu/iscale-facebook-ad-builder
 
             git pull origin develop
+            export GIT_COMMIT="$(git rev-parse HEAD)"
 
             # Prove the pull actually advanced to the commit that triggered this
             # run. A pull that fails to fast-forward, or a stale checkout, would
@@ -70,16 +71,18 @@ jobs:
       - name: Backend answers after restart
         run: |
           URL="${{ vars.BACKEND_URL || 'https://adbuilder-api.velocitymx.io' }}"
+          EXPECTED_SHA="${{ github.sha }}"
           for i in $(seq 1 20); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/api/v1/docs" || true)
-            if [ "$STATUS" = "200" ]; then
-              echo "Backend healthy (HTTP 200) after ${i} attempt(s)"
+            BODY=$(curl -fsS "$URL/api/v1/version" || true)
+            COMMIT=$(BODY="$BODY" python3 -c 'import json, os; print(json.loads(os.environ["BODY"]).get("commit", ""))' 2>/dev/null || true)
+            if [ "$COMMIT" = "$EXPECTED_SHA" ]; then
+              echo "Backend running expected commit $COMMIT after ${i} attempt(s)"
               exit 0
             fi
-            echo "Attempt $i: HTTP $STATUS — retrying in 10s"
+            echo "Attempt $i: commit '${COMMIT:-unavailable}' (expected $EXPECTED_SHA) — retrying in 10s"
             sleep 10
           done
-          echo "::error::Backend did not return 200 within ~200s after deploy"
+          echo "::error::Backend did not report expected commit $EXPECTED_SHA within ~200s after deploy"
           exit 1
 
   notify-failure:

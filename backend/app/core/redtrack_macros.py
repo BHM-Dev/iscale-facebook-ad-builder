@@ -13,8 +13,9 @@ characters and never expand. So this module returns a ``url_tags`` query string
 to set on the Ad object; it must NOT be folded into the destination URL.
 
 Meta appends ``url_tags`` to the resolved landing URL at click time. It does not
-de-duplicate, so we only emit macros for keys NOT already present in the
-destination URL (to avoid ``sub1=X&sub1={{ad.id}}``).
+de-duplicate, so we avoid re-emitting correct existing macros. If a RedTrack sub
+key is already present with the wrong macro or any other value, emit the correct
+macro in ``url_tags`` so Meta's ad-level tracking wins.
 """
 from urllib.parse import urlsplit, parse_qsl
 
@@ -29,9 +30,9 @@ REDTRACK_MACROS = {
 def build_redtrack_url_tags(website_url: str) -> str:
     """Return an ``&``-joined url_tags string of RedTrack sub macros.
 
-    Only includes macros whose key is not already present in ``website_url``'s
-    query string. Returns "" when there is no valid http(s) destination URL
-    (e.g. lead-gen flows) or when all sub keys are already present.
+    Includes macros whose key is absent or present with an unexpected value.
+    Returns "" when there is no valid http(s) destination URL (e.g. lead-gen
+    flows) or when all sub keys are already present with the correct macro.
     """
     if not website_url or not isinstance(website_url, str):
         return ""
@@ -40,11 +41,13 @@ def build_redtrack_url_tags(website_url: str) -> str:
         return ""
 
     parts = urlsplit(stripped)
-    existing_keys = {k for k, _ in parse_qsl(parts.query, keep_blank_values=True)}
+    existing = {}
+    for key, value in parse_qsl(parts.query, keep_blank_values=True):
+        existing.setdefault(key, []).append(value)
 
     additions = [
         f"{key}={macro}"
         for key, macro in REDTRACK_MACROS.items()
-        if key not in existing_keys
+        if existing.get(key) != [macro]
     ]
     return "&".join(additions)

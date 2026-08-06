@@ -12,36 +12,32 @@ on:
           - production
           - staging
   push:
-    branches: [main]
+    branches: [develop]
 
 jobs:
-  wait-for-deploy:
+  backend-version:
     runs-on: ubuntu-latest
     steps:
-      - name: Wait for Railway deploy
-        run: sleep 120  # Wait 2 min for Railway to rebuild
-
-  backend-health:
-    needs: wait-for-deploy
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check backend health
+      - name: Check deployed backend version
         run: |
-          echo "Checking backend health..."
-          for i in {1..10}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ vars.BACKEND_URL }}/api/v1/docs)
-            if [ "$STATUS" = "200" ]; then
-              echo "Backend is healthy (HTTP 200)"
+          URL="${{ vars.BACKEND_URL || 'https://adbuilder-api.velocitymx.io' }}"
+          EXPECTED_SHA="${{ github.sha }}"
+          echo "Checking backend version at $URL..."
+          for i in $(seq 1 20); do
+            BODY=$(curl -fsS "$URL/api/v1/version" || true)
+            COMMIT=$(BODY="$BODY" python3 -c 'import json, os; print(json.loads(os.environ["BODY"]).get("commit", ""))' 2>/dev/null || true)
+            if [ "$COMMIT" = "$EXPECTED_SHA" ]; then
+              echo "Backend is running expected commit $COMMIT"
               exit 0
             fi
-            echo "Attempt $i: HTTP $STATUS - retrying in 10s..."
+            echo "Attempt $i: commit '${COMMIT:-unavailable}' (expected $EXPECTED_SHA) - retrying in 10s..."
             sleep 10
           done
-          echo "Backend health check failed"
+          echo "::error::Backend did not report expected commit $EXPECTED_SHA"
           exit 1
 
   e2e-smoke-tests:
-    needs: backend-health
+    needs: backend-version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,7 +62,7 @@ jobs:
           TEST_PASSWORD: ${{ secrets.TEST_PASSWORD }}
 
   notify-failure:
-    needs: [backend-health, e2e-smoke-tests]
+    needs: [backend-version, e2e-smoke-tests]
     if: failure()
     runs-on: ubuntu-latest
     steps:

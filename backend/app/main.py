@@ -9,6 +9,7 @@ Email: jason@jasonakatiff.com
 
 import os
 import re
+from datetime import datetime, timezone
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +19,8 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from app.core.config import settings
 from app.core.rate_limit import limiter
+
+PROCESS_STARTED_AT = datetime.now(timezone.utc).isoformat()
 
 app = FastAPI(
     title="Facebook Ad Automation API",
@@ -74,6 +77,13 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+@app.get("/api/v1/version")
+async def version():
+    return {
+        "commit": os.getenv("GIT_COMMIT", "unknown"),
+        "started_at": PROCESS_STARTED_AT,
+    }
 
 # Database Connection Validation
 @app.on_event("startup")

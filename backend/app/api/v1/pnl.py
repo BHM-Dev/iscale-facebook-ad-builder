@@ -68,6 +68,11 @@ def _resolve_period(
     date_to: str | None = None,
 ) -> tuple[date, date, str]:
     today = today_in_rt_tz()
+    if period != "custom" and (date_from or date_to):
+        raise HTTPException(
+            status_code=400,
+            detail="date_from/date_to require period=custom. Pass period=custom to use date_from/date_to.",
+        )
     if period == "custom":
         if not date_from or not date_to:
             raise HTTPException(status_code=400, detail="date_from and date_to are required for custom period")

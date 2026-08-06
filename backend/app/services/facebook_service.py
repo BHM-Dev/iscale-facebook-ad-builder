@@ -83,7 +83,8 @@ class FacebookService:
             # adaccount.py before adding it.
             my_accounts = me.get_ad_accounts(fields=[
                 'id', 'name', 'account_id', 'account_status', 'currency',
-                'balance', 'amount_spent', 'timezone_name', 'timezone_offset_hours_utc',
+                'balance', 'amount_spent', 'spend_cap',
+                'timezone_name', 'timezone_offset_hours_utc',
             ])
             print(f"Found {len(my_accounts)} accounts.")
             return [dict(acc) for acc in my_accounts]
@@ -837,8 +838,9 @@ class FacebookService:
         # RedTrack tracking macros go in the creative's url_tags field. Meta expands
         # {{ad.id}}/{{adset.id}}/{{campaign.id}} there and appends them to the clicked
         # URL at delivery time — they do NOT expand inside link_data.link. Skipped for
-        # lead-gen / URL-less flows (build_redtrack_url_tags returns "") and for keys
-        # already present in the destination URL (avoids duplicate params).
+        # lead-gen / URL-less flows (build_redtrack_url_tags returns ""). Correct
+        # existing macros are not duplicated; wrong existing sub values are
+        # overridden by url_tags so RedTrack spend attribution stays keyed to Meta.
         if not lead_gen_form_id and website_url:
             try:
                 from app.core.redtrack_macros import build_redtrack_url_tags
