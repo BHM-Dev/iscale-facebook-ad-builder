@@ -84,7 +84,17 @@ jobs:
 
   notify-failure:
     needs: [deploy, verify]
-    if: failure()
+    # NOT `if: failure()`. When GitHub cannot give the job a runner it reports
+    # "The job was not acquired by Runner of type hosted" and marks the job
+    # **cancelled**, not failed — and `failure()` is false for a cancelled
+    # dependency, so this job was skipped during the 2026-08-06 Actions outage,
+    # i.e. the exact event it was written for. Verified against run 31118215723,
+    # where deploy=cancelled, verify=skipped, notify-failure=skipped.
+    #
+    # `always()` runs this regardless of how the dependencies ended; the
+    # condition then reports anything that is not a clean success. A run someone
+    # cancelled by hand also pings, which is correct — the commit is not live.
+    if: ${{ always() && (needs.deploy.result != 'success' || needs.verify.result != 'success') }}
     runs-on: ubuntu-latest
     steps:
       - name: Announce the failure
@@ -98,10 +108,14 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SHA: ${{ github.sha }}
         run: |
-          if [ "$DEPLOY_RESULT" != "success" ]; then
-            TEXT="Ad Builder DEPLOY FAILED on develop — $SHA is NOT live. The API keeps serving the previous commit with a 200, so this is silent unless someone looks. $RUN_URL"
+          if [ "$DEPLOY_RESULT" = "cancelled" ]; then
+            # Almost always a runner shortage / Actions incident rather than
+            # anything about the code. Say so, so nobody hunts a phantom bug.
+            TEXT="Ad Builder deploy did NOT RUN on develop (job cancelled — usually no runner available; check githubstatus.com). $SHA is NOT live and the API keeps serving the previous commit with a 200. Re-run when Actions recovers. $RUN_URL"
+          elif [ "$DEPLOY_RESULT" != "success" ]; then
+            TEXT="Ad Builder DEPLOY FAILED on develop ($DEPLOY_RESULT) — $SHA is NOT live. The API keeps serving the previous commit with a 200, so this is silent unless someone looks. $RUN_URL"
           else
-            TEXT="Ad Builder deployed $SHA, but the post-deploy health check did not pass. The new code may be live and unhealthy, or just slow to restart — worth eyes on it. $RUN_URL"
+            TEXT="Ad Builder deployed $SHA, but the post-deploy health check did not pass ($VERIFY_RESULT). The new code may be live and unhealthy, or just slow to restart — worth eyes on it. $RUN_URL"
           fi
           export TEXT
           echo "::error::$TEXT"
