@@ -68,21 +68,42 @@ jobs:
     needs: deploy
     runs-on: ubuntu-latest
     steps:
-      - name: Backend answers after restart
+      - name: Backend is running this commit (or newer)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          API: ${{ github.api_url }}
         run: |
           URL="${{ vars.BACKEND_URL || 'https://adbuilder-api.velocitymx.io' }}"
           EXPECTED_SHA="${{ github.sha }}"
+
+          # Deliberately "equal or newer", not equal. The deploy script sets
+          # GIT_COMMIT from HEAD after `git pull`, so a push landing moments after
+          # this one leaves production on a NEWER commit than github.sha — which is
+          # a correct deploy. Demanding an exact match would red-flag it and page
+          # someone for nothing; that happened three times over on 2026-08-06.
+          contains_expected() {
+            [ "$1" = "$EXPECTED_SHA" ] && return 0
+            case "$1" in [0-9a-f][0-9a-f]*) ;; *) return 1 ;; esac
+            S=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
+                  -H "Accept: application/vnd.github+json" \
+                  "$API/repos/$REPO/compare/$EXPECTED_SHA...$1" 2>/dev/null \
+                | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>/dev/null || true)
+            # identical = same commit, ahead = deployed commit is a descendant.
+            [ "$S" = "identical" ] || [ "$S" = "ahead" ]
+          }
+
           for i in $(seq 1 20); do
             BODY=$(curl -fsS "$URL/api/v1/version" || true)
             COMMIT=$(BODY="$BODY" python3 -c 'import json, os; print(json.loads(os.environ["BODY"]).get("commit", ""))' 2>/dev/null || true)
-            if [ "$COMMIT" = "$EXPECTED_SHA" ]; then
-              echo "Backend running expected commit $COMMIT after ${i} attempt(s)"
+            if [ -n "$COMMIT" ] && [ "$COMMIT" != "unknown" ] && contains_expected "$COMMIT"; then
+              echo "Backend running $COMMIT, which contains $EXPECTED_SHA (attempt ${i})"
               exit 0
             fi
-            echo "Attempt $i: commit '${COMMIT:-unavailable}' (expected $EXPECTED_SHA) — retrying in 10s"
+            echo "Attempt $i: commit '${COMMIT:-unavailable}' does not yet contain $EXPECTED_SHA — retrying in 10s"
             sleep 10
           done
-          echo "::error::Backend did not report expected commit $EXPECTED_SHA within ~200s after deploy"
+          echo "::error::Backend never reported a commit containing $EXPECTED_SHA within ~200s after deploy"
           exit 1
 
   notify-failure:

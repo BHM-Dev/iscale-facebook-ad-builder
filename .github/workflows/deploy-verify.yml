@@ -1,3 +1,10 @@
+# MANUAL ONLY, on purpose. This used to also run on push, which raced the deploy
+# it was meant to verify: it started polling for the new commit immediately while
+# `Deploy to VPS` was still building, so it went red on almost every push. The
+# real post-deploy check lives in deploy.yml's `verify` job, which is correctly
+# ordered after the deploy and accepts an equal-or-newer commit. What is worth
+# keeping here is the e2e smoke suite, which is too slow and too secret-dependent
+# to run on every push — dispatch it when you want it.
 name: Post-Deploy Verification
 
 on:
@@ -11,9 +18,6 @@ on:
         options:
           - production
           - staging
-  push:
-    branches: [develop]
-
 jobs:
   backend-version:
     runs-on: ubuntu-latest

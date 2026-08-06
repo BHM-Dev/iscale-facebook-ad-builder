@@ -14,8 +14,23 @@ to set on the Ad object; it must NOT be folded into the destination URL.
 
 Meta appends ``url_tags`` to the resolved landing URL at click time. It does not
 de-duplicate, so we avoid re-emitting correct existing macros. If a RedTrack sub
-key is already present with the wrong macro or any other value, emit the correct
-macro in ``url_tags`` so Meta's ad-level tracking wins.
+key is already present with the wrong macro or any other value, we emit the
+correct macro in ``url_tags`` as well.
+
+UNVERIFIED, and it matters: when the destination URL already carries a WRONG
+value, the click arrives with the key twice (``sub2=<wrong>&sub2={{adset.id}}``)
+and **which one RedTrack honours has not been tested**. If RedTrack reads the
+first occurrence, appending the right macro does not actually fix a wrong one —
+the destination URL's query would have to be rewritten instead, which this
+function cannot do because it only returns ``url_tags`` and the caller sets the
+link separately. So treat this as "correct macros are always present", not as a
+guaranteed repair of a bad saved URL. Absent keys — the common case — are fixed
+outright either way.
+
+Worth resolving by pushing one test ad and reading which value lands in
+RedTrack. The bug this guards against is real: on 2026-08-06 three live
+campaigns ran with ``sub2={{campaign.id}}``, which cost RedTrack every dollar of
+spend attribution on them while revenue kept flowing.
 """
 from urllib.parse import urlsplit, parse_qsl
 
