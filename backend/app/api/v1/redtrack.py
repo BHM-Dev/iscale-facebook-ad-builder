@@ -7,6 +7,7 @@ GET /api/v1/redtrack/campaigns               — list RedTrack campaigns (valida
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -67,12 +68,38 @@ def _filter_report(data: dict, allowed_ids: set[str] | None) -> dict:
 
 @router.get("/status")
 def get_status(current_user=Depends(get_current_user)):
-    """Check whether REDTRACK_API_KEY is configured."""
+    """Check whether REDTRACK_API_KEY is configured, and which timezone we resolve dates in.
+
+    The timezone is reported because it silently decides what "today",
+    "yesterday" and every month boundary mean. REDTRACK_TIMEZONE defaults to UTC
+    when unset, and RedTrack's own account is Pacific — a 7-hour skew that shows
+    up as "the stats for yesterday look odd" rather than as an error. There was
+    no way to see the configured value from outside the VPS, so a mismatch could
+    sit there indefinitely. `timezone_configured: false` means it is defaulting.
+    """
+    from app.services.redtrack_service import (
+        _RT_TZ,
+        _RT_TZ_FROM_ENV,
+        _RT_TZ_NAME,
+        today_in_rt_tz,
+    )
+
     svc = _svc()
     configured = svc.is_configured()
     return {
         "configured": configured,
-        "message": "RedTrack API key is set" if configured else "REDTRACK_API_KEY env var not set — add it to Railway",
+        "message": "RedTrack API key is set" if configured else "REDTRACK_API_KEY env var not set",
+        # All three timezone values come from the same import-time snapshot, so
+        # they can never contradict each other. If REDTRACK_TIMEZONE is changed on
+        # the VPS, this keeps reporting the old value until the backend restarts —
+        # which is the honest answer, since that is what the app is still using.
+        "timezone_configured": _RT_TZ_FROM_ENV,
+        "timezone_requested": _RT_TZ_NAME,
+        "timezone_resolved": str(_RT_TZ),
+        # What the app currently believes "today" is. Compare against RedTrack's
+        # own dashboard: if they disagree, every preset window is off.
+        "today_in_rt_tz": today_in_rt_tz().isoformat(),
+        "utc_today": datetime.now(timezone.utc).date().isoformat(),
     }
 
 

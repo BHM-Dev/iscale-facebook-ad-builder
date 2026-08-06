@@ -26,6 +26,11 @@ BASE_URL = "https://api.redtrack.io"
 # Set REDTRACK_TIMEZONE on the VPS to match what's set in RedTrack → Settings → General.
 # Default is UTC; Joel's RedTrack account may be set to America/New_York or similar.
 _RT_TZ_NAME = os.getenv("REDTRACK_TIMEZONE", "UTC")
+# Whether the env var was actually set, captured in the SAME import-time snapshot
+# as the two names below. /redtrack/status reports all three together; reading the
+# env live there instead would let "configured: true" sit next to a resolved value
+# from before the var was added, which reads as a contradiction.
+_RT_TZ_FROM_ENV = bool(os.getenv("REDTRACK_TIMEZONE"))
 try:
     _RT_TZ = ZoneInfo(_RT_TZ_NAME)
 except ZoneInfoNotFoundError:

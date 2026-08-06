@@ -64,7 +64,27 @@ class FacebookService:
         print("Fetching ad accounts for user 'me'...")
         try:
             me = User(fbid='me', api=self.api)
-            my_accounts = me.get_ad_accounts(fields=['id', 'name', 'account_id', 'account_status', 'currency', 'balance', 'amount_spent'])
+            # timezone_name / timezone_offset_hours_utc matter for money, not display:
+            # Meta reports insights on the AD ACCOUNT's billing day, while
+            # Switchboard revenue is pulled on a timezone we choose. If the two
+            # drift apart, spend and revenue land in different day buckets and the
+            # P&L is quietly wrong. These were never requested before, so the app
+            # could not even see that an account had changed timezone — which is
+            # exactly what happened on 2026-08-06.
+            #
+            # Derive day boundaries from `timezone_name` (IANA) ONLY. Meta gives no
+            # DST contract for `timezone_offset_hours_utc` — it tracks the account's
+            # current local offset and can move across a DST transition, so
+            # arithmetic on it silently breaks twice a year. It is informational.
+            #
+            # Adding a field here is not free: Graph validates `fields` as a whole
+            # and 400s the ENTIRE call on one unknown name, which would take out
+            # every ad-account picker in the app. Verify a field exists in the SDK's
+            # adaccount.py before adding it.
+            my_accounts = me.get_ad_accounts(fields=[
+                'id', 'name', 'account_id', 'account_status', 'currency',
+                'balance', 'amount_spent', 'timezone_name', 'timezone_offset_hours_utc',
+            ])
             print(f"Found {len(my_accounts)} accounts.")
             return [dict(acc) for acc in my_accounts]
         except Exception as e:
