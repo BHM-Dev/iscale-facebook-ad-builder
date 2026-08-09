@@ -14,6 +14,11 @@ class FacebookAdBase(BaseModel):
     status: Optional[str] = 'PAUSED'
     fb_ad_id: Optional[str] = None
     fb_creative_id: Optional[str] = None
+    # Bulk Match Import fields — see models.FacebookAd for details. Not
+    # currently wired to any route (the /ads/save route takes a raw dict),
+    # kept here for schema parity if that route is ever tightened.
+    secondary_image_url: Optional[str] = None
+    ad_number: Optional[str] = None
 
 class FacebookAdCreate(FacebookAdBase):
     id: Optional[str] = None

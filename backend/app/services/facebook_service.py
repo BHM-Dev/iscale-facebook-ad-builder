@@ -17,6 +17,19 @@ import time
 env_path = Path(__file__).resolve().parent.parent.parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
+
+class FacebookAPIError(RuntimeError):
+    """Raised when Meta's Graph API rejects a call. Carries the numeric error
+    code/subcode through to the HTTP layer so callers (e.g. the Bulk Match
+    Import loop) can detect rate-limit/throttle responses (codes 17, 613,
+    80000-80014) instead of just getting a flattened string message."""
+
+    def __init__(self, message, code=None, subcode=None):
+        super().__init__(message)
+        self.code = code
+        self.subcode = subcode
+
+
 class FacebookService:
     def __init__(self):
         # Try standard names first, then VITE_ prefixed names (common in this project)
@@ -857,7 +870,9 @@ class FacebookService:
             body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
             err = body.get('error', {}) if isinstance(body, dict) else {}
             user_msg = err.get('error_user_msg') or err.get('message') or (e.api_error_message() if hasattr(e, 'api_error_message') and callable(e.api_error_message) else str(e))
-            raise RuntimeError(f"Facebook API: {user_msg}") from e
+            code = e.api_error_code() if hasattr(e, 'api_error_code') and callable(e.api_error_code) else err.get('code')
+            subcode = e.api_error_subcode() if hasattr(e, 'api_error_subcode') and callable(e.api_error_subcode) else err.get('error_subcode')
+            raise FacebookAPIError(f"Facebook API: {user_msg}", code=code, subcode=subcode) from e
 
     def create_ad(self, ad_data, ad_account_id=None):
         """Create an ad."""
@@ -888,7 +903,9 @@ class FacebookService:
             body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
             err = body.get('error', {}) if isinstance(body, dict) else {}
             user_msg = err.get('error_user_msg') or err.get('message') or (e.api_error_message() if hasattr(e, 'api_error_message') and callable(e.api_error_message) else str(e))
-            raise RuntimeError(f"Facebook API: {user_msg}") from e
+            code = e.api_error_code() if hasattr(e, 'api_error_code') and callable(e.api_error_code) else err.get('code')
+            subcode = e.api_error_subcode() if hasattr(e, 'api_error_subcode') and callable(e.api_error_subcode) else err.get('error_subcode')
+            raise FacebookAPIError(f"Facebook API: {user_msg}", code=code, subcode=subcode) from e
 
     def search_locations(self, query, location_type='city', limit=10, ad_account_id=None):
         """Search for targeting locations."""

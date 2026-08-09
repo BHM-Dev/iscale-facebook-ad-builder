@@ -11,6 +11,25 @@ export { authFetch };
 const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1') + '/facebook';
 
 /**
+ * Builds an Error from a FastAPI error response, unwrapping the structured
+ * `{message, code, subcode}` detail shape the backend sends for Meta
+ * FacebookAPIError failures (see facebook_service.py) and surfacing the
+ * numeric Meta error code/subcode as properties on the Error — instead of
+ * discarding them behind a flattened string — so callers (e.g. the Bulk
+ * Match Import loop) can detect a rate-limit/throttle response and abort.
+ */
+function buildFacebookApiError(errorBody, fallbackMessage) {
+    const detail = errorBody?.detail;
+    if (detail && typeof detail === 'object') {
+        const err = new Error(detail.message || fallbackMessage);
+        err.metaErrorCode = detail.code;
+        err.metaErrorSubcode = detail.subcode;
+        return err;
+    }
+    return new Error(detail || fallbackMessage);
+}
+
+/**
  * Get all ad accounts accessible by the access token
  */
 export async function getAdAccounts() {
@@ -433,8 +452,8 @@ export async function createFacebookCreative(creativeData, imageHash, pageId, ad
         });
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Failed to create creative');
+            const error = await response.json().catch(() => ({}));
+            throw buildFacebookApiError(error, 'Failed to create creative');
         }
 
         const data = await response.json();
@@ -465,8 +484,8 @@ export async function createFacebookAd(adData, adsetId, creativeId, adAccountId)
         });
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Failed to create ad');
+            const error = await response.json().catch(() => ({}));
+            throw buildFacebookApiError(error, 'Failed to create ad');
         }
 
         const data = await response.json();

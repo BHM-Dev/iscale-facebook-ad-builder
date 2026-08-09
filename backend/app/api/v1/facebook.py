@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
-from app.services.facebook_service import FacebookService
+from app.services.facebook_service import FacebookService, FacebookAPIError
 from facebook_business.adobjects.adset import AdSet
 from facebook_business.adobjects.campaign import Campaign
 try:
@@ -598,6 +598,9 @@ def create_creative(
         return dict(result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except FacebookAPIError as e:
+        logger.exception("Create creative failed: %s", e)
+        raise HTTPException(status_code=502, detail={"message": str(e), "code": e.code, "subcode": e.subcode})
     except Exception as e:
         logger.exception("Create creative failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
@@ -615,6 +618,9 @@ def create_ad(
         return dict(result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except FacebookAPIError as e:
+        logger.exception("Create ad failed: %s", e)
+        raise HTTPException(status_code=502, detail={"message": str(e), "code": e.code, "subcode": e.subcode})
     except Exception as e:
         logger.exception("Create ad failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
@@ -783,7 +789,11 @@ def save_ad_locally(
             website_url=ad_data.get('websiteUrl'),
             status=ad_data.get('status'),
             fb_ad_id=ad_data.get('fbAdId'),
-            fb_creative_id=ad_data.get('fbCreativeId')
+            fb_creative_id=ad_data.get('fbCreativeId'),
+            # Bulk Match Import fields — stored for traceability / a future
+            # placement-customization feature, not sent to Meta.
+            secondary_image_url=ad_data.get('secondaryImageUrl'),
+            ad_number=ad_data.get('adNumber')
         )
         db.add(new_ad)
         db.commit()

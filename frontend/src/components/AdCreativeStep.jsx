@@ -27,7 +27,7 @@ const charCountClass = (len, warn, limit) => {
 };
 
 // Facebook CTA types - confirmed working
-const CTA_OPTIONS = [
+export const CTA_OPTIONS = [
     'LEARN_MORE',
     'SHOP_NOW',
     'SIGN_UP',

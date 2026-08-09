@@ -6,6 +6,7 @@ import BrandOptionsStep from './BrandOptionsStep';
 import AnalyzeTemplatesStep from './AnalyzeTemplatesStep';
 import NanoBananaGenerationStep from './NanoBananaGenerationStep';
 import BulkAdCreation from './BulkAdCreation';
+import BulkMatchImport from './BulkMatchImport';
 import { useBrands } from '../context/BrandContext';
 import { useCampaign } from '../context/CampaignContext';
 import { useToast } from '../context/ToastContext';
@@ -17,6 +18,7 @@ const Wizard = () => {
     const { setCreativeData } = useCampaign();
     const [viewMode, setViewMode] = useState('list'); // 'list' or 'grid'
     const [expandedBrands, setExpandedBrands] = useState({}); // Track which brands are expanded
+    const [batchMode, setBatchMode] = useState('combinations'); // 'combinations' or 'match-import'
 
     // Wizard State
     const [selectedProduct, setSelectedProduct] = useState(null);
@@ -322,10 +324,38 @@ const Wizard = () => {
 
                 {/* Step 7: Create Batch */}
                 {step === 7 && (
-                    <BulkAdCreation
-                        onNext={() => showSuccess('Campaign Created Successfully!')}
-                        onBack={handleBack}
-                    />
+                    <div>
+                        <div className="flex justify-end mb-6">
+                            <div className="inline-flex bg-gray-100 p-1 rounded-lg">
+                                <button
+                                    onClick={() => setBatchMode('combinations')}
+                                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${batchMode === 'combinations' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'
+                                        }`}
+                                >
+                                    Generate All Combinations
+                                </button>
+                                <button
+                                    onClick={() => setBatchMode('match-import')}
+                                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${batchMode === 'match-import' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'
+                                        }`}
+                                >
+                                    Match by Naming Convention
+                                </button>
+                            </div>
+                        </div>
+
+                        {batchMode === 'combinations' ? (
+                            <BulkAdCreation
+                                onNext={() => showSuccess('Campaign Created Successfully!')}
+                                onBack={handleBack}
+                            />
+                        ) : (
+                            <BulkMatchImport
+                                onNext={() => showSuccess('Campaign Created Successfully!')}
+                                onBack={handleBack}
+                            />
+                        )}
+                    </div>
                 )}
             </div>
         </div>
