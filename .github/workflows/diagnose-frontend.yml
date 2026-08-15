@@ -1,0 +1,79 @@
+# Read-only diagnostic workflow — manually triggered only (workflow_dispatch),
+# never runs on push. Reuses the same SSH secrets deploy.yml already has to
+# inspect what's actually running on the VPS, without any new credentials.
+#
+# Every command below is read-only: no docker rm/stop/restart, no file edits,
+# no compose up/down. Safe to run any time. Added 2026-08-15 to diagnose why
+# the frontend at adbuilder.velocitymx.io has served byte-identical content
+# since 2026-08-09 across three separate "successful" deploys, while the
+# backend correctly redeploys every time.
+name: Diagnose Frontend Deploy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect VPS container/routing state (read-only)
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            echo "===== git state ====="
+            cd /home/ubuntu/iscale-facebook-ad-builder
+            git log --oneline -3
+            git status --short
+
+            echo ""
+            echo "===== all containers (running + stopped), sorted by creation ====="
+            docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.CreatedAt}}' | sort -k4
+
+            echo ""
+            echo "===== docker compose ps (this project) ====="
+            docker compose -f docker-compose.prod.yml ps -a
+
+            echo ""
+            echo "===== inspect: ad-builder-web ====="
+            docker inspect ad-builder-web --format 'Id: {{.Id}}
+            Created: {{.Created}}
+            Status: {{.State.Status}}
+            StartedAt: {{.State.StartedAt}}
+            Image: {{.Image}}
+            RestartCount: {{.RestartCount}}' 2>&1 || echo "ad-builder-web not found"
+
+            echo ""
+            echo "===== any OTHER container also named/labeled for adbuilder.velocitymx.io ====="
+            docker ps -a --filter "label=traefik.http.routers.frontend.rule" --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.CreatedAt}}'
+            docker ps -a --format '{{.ID}} {{.Names}}' | grep -iE 'front|web|nginx|adbuilder' || true
+
+            echo ""
+            echo "===== traefik container + its recent routing-relevant logs ====="
+            docker ps -a --filter "name=traefik" --format 'table {{.Names}}\t{{.Status}}\t{{.CreatedAt}}'
+            TRAEFIK_NAME=$(docker ps --filter "name=traefik" --format '{{.Names}}' | head -1)
+            if [ -n "$TRAEFIK_NAME" ]; then
+              echo "--- last 80 log lines mentioning frontend/adbuilder ---"
+              docker logs "$TRAEFIK_NAME" --tail 400 2>&1 | grep -iE 'frontend|adbuilder\.velocitymx' | tail -80 || echo "(no matching log lines)"
+            else
+              echo "No container with 'traefik' in the name found — routing may be handled differently than assumed."
+            fi
+
+            echo ""
+            echo "===== networks attached to ad-builder-web ====="
+            docker inspect ad-builder-web --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>&1 || true
+
+            echo ""
+            echo "===== docker images for this project (age/duplicates check) ====="
+            docker images --filter "reference=*facebook-ad-builder*" --format 'table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}'
+            docker images --filter "reference=*frontend*" --format 'table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}'
+
+            echo ""
+            echo "===== disk space ====="
+            docker system df
+
+            echo ""
+            echo "===== DONE — no state was changed by this workflow ====="
