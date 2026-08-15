@@ -52,6 +52,10 @@ services:
       dockerfile: frontend/Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:-/api/v1}
+        # Same GIT_COMMIT the deploy script exports for the backend service
+        # below — reused here purely to bust the frontend build cache on
+        # every deploy. See frontend/Dockerfile for why.
+        CACHE_BUST: ${GIT_COMMIT:-unknown}
     container_name: ad-builder-web
     depends_on:
       - backend

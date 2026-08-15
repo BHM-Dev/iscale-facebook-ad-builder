@@ -10,6 +10,16 @@ ENV VITE_API_URL=$VITE_API_URL
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 
+# Cache-buster: forces every layer below to invalidate on every deploy,
+# regardless of any content-hash caching quirk that let a stale build survive
+# a "successful" deploy on 2026-08-09 (frontend served identical bytes across
+# two separate deploys of different commits). Passed as a build arg from
+# docker-compose.prod.yml, which reads it from the GIT_COMMIT env var the
+# deploy script already exports. Value changing on every commit is the whole
+# point — a RUN step referencing it can never be served from a prior layer.
+ARG CACHE_BUST=unknown
+RUN echo "Building commit ${CACHE_BUST}"
+
 COPY frontend/ .
 RUN npm run build
 
