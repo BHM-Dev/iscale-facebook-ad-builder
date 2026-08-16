@@ -18,7 +18,6 @@ import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import CreateAds from './pages/CreateAds';
 import ImageAds from './pages/ImageAds';
-import Wizard from './components/Wizard';
 import VideoAds from './pages/VideoAds';
 import Reporting from './pages/Reporting';
 import Brands from './pages/Brands';

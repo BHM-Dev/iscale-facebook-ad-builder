@@ -6,9 +6,11 @@ import CampaignStep from '../components/CampaignStep';
 import AdSetStep from '../components/AdSetStep';
 import AdCreativeStep from '../components/AdCreativeStep';
 import BulkAdCreation from '../components/BulkAdCreation';
+import BulkMatchImport from '../components/BulkMatchImport';
 
 const FacebookCampaignWizard = () => {
     const [currentStep, setCurrentStep] = useState(1);
+    const [batchMode, setBatchMode] = useState('combinations'); // 'combinations' | 'match-import'
     const [formData, setFormData] = useState({
         adAccountId: null,
         campaignId: null,
@@ -139,10 +141,37 @@ const FacebookCampaignWizard = () => {
                             />
                         )}
                         {currentStep === 5 && (
-                            <BulkAdCreation
-                                onNext={handleNext}
-                                onBack={handleBack}
-                            />
+                            <div>
+                                <div className="flex justify-center mb-6">
+                                    <div className="inline-flex bg-gray-100 rounded-lg p-1">
+                                        <button
+                                            onClick={() => setBatchMode('combinations')}
+                                            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${batchMode === 'combinations' ? 'bg-white shadow-sm text-amber-600' : 'text-gray-500 hover:text-gray-700'
+                                                }`}
+                                        >
+                                            Generate All Combinations
+                                        </button>
+                                        <button
+                                            onClick={() => setBatchMode('match-import')}
+                                            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${batchMode === 'match-import' ? 'bg-white shadow-sm text-amber-600' : 'text-gray-500 hover:text-gray-700'
+                                                }`}
+                                        >
+                                            Match by Naming Convention
+                                        </button>
+                                    </div>
+                                </div>
+                                {batchMode === 'combinations' ? (
+                                    <BulkAdCreation
+                                        onNext={handleNext}
+                                        onBack={handleBack}
+                                    />
+                                ) : (
+                                    <BulkMatchImport
+                                        onNext={handleNext}
+                                        onBack={handleBack}
+                                    />
+                                )}
+                            </div>
                         )}
                         {currentStep === 6 && (
                             <div className="text-center py-12">
