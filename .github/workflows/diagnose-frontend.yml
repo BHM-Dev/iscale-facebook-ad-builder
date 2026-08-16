@@ -3,10 +3,11 @@
 # inspect what's actually running on the VPS, without any new credentials.
 #
 # Every command below is read-only: no docker rm/stop/restart, no file edits,
-# no compose up/down. Safe to run any time. Added 2026-08-15 to diagnose why
-# the frontend at adbuilder.velocitymx.io has served byte-identical content
-# since 2026-08-09 across three separate "successful" deploys, while the
-# backend correctly redeploys every time.
+# no compose up/down. Safe to run any time. Round 2 (2026-08-16): container is
+# confirmed fresh (created at the last deploy, no duplicates/orphans) yet still
+# serves byte-identical content to a build from 2026-08-09 — so this round
+# checks INSIDE the running container/image for a bind-mount override or a
+# build that silently didn't run.
 name: Diagnose Frontend Deploy
 
 on:
@@ -16,7 +17,7 @@ jobs:
   diagnose:
     runs-on: ubuntu-latest
     steps:
-      - name: Inspect VPS container/routing state (read-only)
+      - name: Inspect VPS container/image internals (read-only)
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -24,56 +25,38 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
           script: |
-            echo "===== git state ====="
+            echo "===== any bind mounts on ad-builder-web (would override built assets) ====="
+            docker inspect ad-builder-web --format '{{json .Mounts}}' | python3 -m json.tool
+
+            echo ""
+            echo "===== file actually served, seen FROM INSIDE the running container ====="
+            docker exec ad-builder-web ls -la /usr/share/nginx/html/assets/ | head -20
+            echo "--- md5 + first 200 bytes of the JS bundle inside the container ---"
+            docker exec ad-builder-web sh -c "md5sum /usr/share/nginx/html/assets/*.js; head -c 200 /usr/share/nginx/html/assets/index-*.js"
+
+            echo ""
+            echo "===== does the bundle inside the container contain the new code? ====="
+            docker exec ad-builder-web sh -c "grep -c 'papaparse\|Bulk Match\|ad_number' /usr/share/nginx/html/assets/*.js || echo 'ZERO MATCHES INSIDE CONTAINER'"
+
+            echo ""
+            echo "===== image build history (layer timestamps + sizes) ====="
+            docker history --no-trunc iscale-facebook-ad-builder-frontend 2>&1 | head -30
+
+            echo ""
+            echo "===== does the SOURCE FILE on disk (outside any container) contain the new code? ====="
             cd /home/ubuntu/iscale-facebook-ad-builder
-            git log --oneline -3
-            git status --short
+            grep -c "papaparse" frontend/package.json || echo "papaparse NOT in package.json on disk"
+            ls -la frontend/src/components/ | grep -i bulk || echo "BulkMatchImport.jsx NOT found on disk"
+            grep -c "CACHE_BUST" frontend/Dockerfile || echo "CACHE_BUST NOT in Dockerfile on disk"
 
             echo ""
-            echo "===== all containers (running + stopped), sorted by creation ====="
-            docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.CreatedAt}}' | sort -k4
+            echo "===== is there a second docker-compose file that might take precedence? ====="
+            ls -la /home/ubuntu/iscale-facebook-ad-builder/docker-compose*.yml
+            find /home/ubuntu -maxdepth 3 -iname "docker-compose*.yml" 2>/dev/null
 
             echo ""
-            echo "===== docker compose ps (this project) ====="
-            docker compose -f docker-compose.prod.yml ps -a
-
-            echo ""
-            echo "===== inspect: ad-builder-web ====="
-            docker inspect ad-builder-web --format 'Id: {{.Id}}
-            Created: {{.Created}}
-            Status: {{.State.Status}}
-            StartedAt: {{.State.StartedAt}}
-            Image: {{.Image}}
-            RestartCount: {{.RestartCount}}' 2>&1 || echo "ad-builder-web not found"
-
-            echo ""
-            echo "===== any OTHER container also named/labeled for adbuilder.velocitymx.io ====="
-            docker ps -a --filter "label=traefik.http.routers.frontend.rule" --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.CreatedAt}}'
-            docker ps -a --format '{{.ID}} {{.Names}}' | grep -iE 'front|web|nginx|adbuilder' || true
-
-            echo ""
-            echo "===== traefik container + its recent routing-relevant logs ====="
-            docker ps -a --filter "name=traefik" --format 'table {{.Names}}\t{{.Status}}\t{{.CreatedAt}}'
-            TRAEFIK_NAME=$(docker ps --filter "name=traefik" --format '{{.Names}}' | head -1)
-            if [ -n "$TRAEFIK_NAME" ]; then
-              echo "--- last 80 log lines mentioning frontend/adbuilder ---"
-              docker logs "$TRAEFIK_NAME" --tail 400 2>&1 | grep -iE 'frontend|adbuilder\.velocitymx' | tail -80 || echo "(no matching log lines)"
-            else
-              echo "No container with 'traefik' in the name found — routing may be handled differently than assumed."
-            fi
-
-            echo ""
-            echo "===== networks attached to ad-builder-web ====="
-            docker inspect ad-builder-web --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>&1 || true
-
-            echo ""
-            echo "===== docker images for this project (age/duplicates check) ====="
-            docker images --filter "reference=*facebook-ad-builder*" --format 'table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}'
-            docker images --filter "reference=*frontend*" --format 'table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}'
-
-            echo ""
-            echo "===== disk space ====="
-            docker system df
+            echo "===== is /home/ubuntu/iscale-facebook-ad-builder the only checkout, or are there others? ====="
+            find /home/ubuntu / -maxdepth 4 -iname "iscale-facebook-ad-builder" -type d 2>/dev/null
 
             echo ""
             echo "===== DONE — no state was changed by this workflow ====="
