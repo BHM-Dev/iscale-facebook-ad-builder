@@ -202,6 +202,52 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         }
     }, [adsetData?.name]);
 
+    // Clear uploaded Ad Media when this mount belongs to a genuinely different
+    // campaign than whatever `creatives` currently sit in shared CampaignContext
+    // state — same leak class as the text-field fix in the effect below, applied
+    // to images/videos.
+    //
+    // Why this can't use the "unconditionally clear-then-reload from cache"
+    // approach used for headlines/bodies/description/CTA/URL: those are cached to
+    // localStorage per ad-account+campaign, so reloading from that cache on every
+    // mount is both simple and correct. Creatives have no such cache — File/blob
+    // objects don't survive JSON serialization, and a re-usable "default image"
+    // per campaign isn't something we're building (images aren't a meaningful
+    // default the way a headline template is; see task brief). So there's nothing
+    // to reload FROM — the only question is whether to clear or leave alone.
+    //
+    // A plain ref-based "did it change" comparison would fail here for the same
+    // reason it failed for the text fields: AdCreativeStep fully unmounts on every
+    // step-4 exit, so a ref re-initializes on each mount and can never see the
+    // previous value. The difference for creatives is that we don't need a ref at
+    // all — `creativeData` itself lives in CampaignContext, which stays mounted
+    // for the whole session, so we can stash the scope (ad account + campaign) the
+    // current `creatives` belong to directly on that object. That value survives
+    // this component unmounting/remounting, so "still on the same campaign, just
+    // navigated to another step and back" is reliably distinguishable from
+    // "picked a genuinely different campaign" — unlike a local ref, it doesn't
+    // reset just because the component remounted.
+    useEffect(() => {
+        if (!selectedAdAccount) return;
+        const scopeId = `${selectedAdAccount.id}_${campaignCacheId}`;
+        if (creativeData.creativesScopeId === scopeId) return;
+
+        // Revoke any blob object URLs before dropping the references — same
+        // revoke-before-drop pattern BulkMatchImport.jsx uses for its image
+        // previews — so a campaign switch doesn't leak the discarded blobs.
+        (creativeData.creatives || []).forEach(c => {
+            if (c.previewUrl && c.previewUrl.startsWith('blob:')) {
+                URL.revokeObjectURL(c.previewUrl);
+            }
+        });
+
+        setCreativeData(prev => ({
+            ...prev,
+            creatives: [],
+            creativesScopeId: scopeId
+        }));
+    }, [selectedAdAccount, campaignCacheId]);
+
     // Auto-load images queued from the Generated Ads library ("Use in Campaign Builder" flow)
     useEffect(() => {
         try {

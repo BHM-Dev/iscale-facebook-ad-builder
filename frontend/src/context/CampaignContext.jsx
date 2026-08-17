@@ -106,6 +106,7 @@ export const CampaignProvider = ({ children }) => {
     const [creativeData, setCreativeData] = useState({
         creativeName: '',
         creatives: [], // Array of { id, file, previewUrl, name }
+        creativesScopeId: null, // ad-account + campaign key the current `creatives` belong to — see AdCreativeStep's clear-on-campaign-switch effect
         bodies: [''], // Start with 1 field
         headlines: [''], // Start with 1 field
         description: '',
@@ -234,6 +235,7 @@ export const CampaignProvider = ({ children }) => {
         setCreativeData({
             creativeName: '',
             creatives: [],
+            creativesScopeId: null,
             bodies: ['', '', ''],
             headlines: ['', '', ''],
             description: '',
