@@ -345,7 +345,15 @@ class FacebookService:
         return [dict(f) for f in forms]
 
     def get_ads(self, adset_id):
-        """Fetch all ads for a specific ad set."""
+        """Fetch all ads for a specific ad set.
+
+        Meta's default effective_status filter on this edge excludes PAUSED
+        objects (confirmed against this app's own pattern at get_adsets/
+        get_adset_name_map/get_account_insights_bulk, which already pass this
+        explicit filter for the same reason) -- and every ad this app creates
+        defaults to PAUSED. Without this, a freshly-created, genuinely
+        successful ad is invisible to this call until manually activated.
+        """
         adset = AdSet(adset_id, api=self.api)
         fields = [
             Ad.Field.id,
@@ -353,7 +361,7 @@ class FacebookService:
             Ad.Field.status,
             Ad.Field.creative,
         ]
-        return adset.get_ads(fields=fields)
+        return adset.get_ads(fields=fields, params={'effective_status': ['ACTIVE', 'PAUSED']})
 
     # HEC = Housing, Employment, Credit (Financial Products) — Meta enforces targeting restrictions
     HEC_CATEGORIES = {'HOUSING', 'EMPLOYMENT', 'FINANCIAL_PRODUCTS_SERVICES'}
