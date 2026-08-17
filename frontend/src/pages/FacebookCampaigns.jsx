@@ -70,11 +70,9 @@ const FacebookCampaignWizardInner = () => {
             case 2: return !!formData.campaignId;
             case 3: return !!formData.adSetId;
             case 4:
-                // Match-import only needs creative name, page, and destination link —
-                // media/copy/CTA come from the CSV + image folder at Step 5.
-                if (batchMode === 'match-import') {
-                    return !!(creativeData.creativeName && creativeData.pageId && creativeData.websiteUrl);
-                }
+                // Not mode-aware: the real step-4 gate lives in AdCreativeStep's own
+                // handleNext, which already branches on isMatchImport. This is a
+                // generic fallback only — see BulkMatchImport.jsx / AdCreativeStep.jsx.
                 return !!(
                     creativeData.creativeName &&
                     creativeData.pageId &&

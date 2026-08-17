@@ -2,10 +2,10 @@ import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import Papa from 'papaparse';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
-import { UploadCloud, Loader, FileText, Image as ImageIcon, CheckCircle2, AlertTriangle, XCircle } from 'lucide-react';
+import { UploadCloud, Loader, FileText, Image as ImageIcon, CheckCircle2, AlertTriangle, XCircle, Pencil } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { createCompleteAd, createFacebookCampaign, createFacebookAdSet } from '../lib/facebookApi';
-import { CTA_OPTIONS } from './AdCreativeStep';
+import { CTA_OPTIONS, HEADLINE_LIMIT, BODY_LIMIT } from './AdCreativeStep';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -169,6 +169,11 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                 }
 
                 setCsvRows(rows);
+                // A fresh CSV load starts with zero inline overrides — otherwise a
+                // stale edit either silently masks the new CSV's value for the same
+                // AD #, or resurrects as a ghost row (via the rowEdits union in
+                // matchedRows) for an AD # that isn't even in the new file.
+                setRowEdits({});
 
                 if (duplicateAdNumbers.size > 0) {
                     const list = Array.from(duplicateAdNumbers).sort((a, b) => Number(a) - Number(b));
@@ -248,6 +253,9 @@ const BulkMatchImport = ({ onNext, onBack }) => {
             const primaryText = edits.primaryText !== undefined ? edits.primaryText : (copy?.primaryText || '');
             const hasCopy = !!(headline && headline.trim() && primaryText && primaryText.trim());
             const hasImage = !!images.oneByOne;
+            // Same caps AdCreativeStep enforces before allowing Next — applies
+            // equally to CSV-sourced copy and inline edits made in this table.
+            const overLimit = headline.length > HEADLINE_LIMIT || primaryText.length > BODY_LIMIT;
 
             const ctaRaw = edits.cta !== undefined ? edits.cta : (copy?.cta ?? '');
             const normalizedCta = ctaRaw === '' ? 'LEARN_MORE' : normalizeCta(ctaRaw);
@@ -255,6 +263,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
 
             let status;
             if (!hasCopy) status = 'missing_copy'; // has image(s) but no/incomplete CSV row
+            else if (overLimit) status = 'over_limit';
             else if (!hasImage) status = 'missing_image';
             else if (!ctaValid) status = 'invalid_cta';
             else status = 'ready';
@@ -290,6 +299,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
     const missingImageRows = matchedRows.filter((r) => r.status === 'missing_image');
     const missingCopyRows = matchedRows.filter((r) => r.status === 'missing_copy');
     const invalidCtaRows = matchedRows.filter((r) => r.status === 'invalid_cta');
+    const overLimitRows = matchedRows.filter((r) => r.status === 'over_limit');
 
     const handleSubmit = async () => {
         if (readyRows.length === 0) {
@@ -534,6 +544,13 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                 </span>
             );
         }
+        if (status === 'over_limit') {
+            return (
+                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700">
+                    <XCircle size={12} /> Over character limit
+                </span>
+            );
+        }
         return (
             <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700">
                 <XCircle size={12} /> Missing copy
@@ -589,6 +606,10 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                     {/* Review table */}
                     {matchedRows.length > 0 && (
                         <>
+                            <p className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                                <Pencil size={12} className="text-gray-400" />
+                                Click any headline, primary text, or CTA below to fix it directly — no need to re-upload the CSV.
+                            </p>
                             <div className="overflow-x-auto border border-gray-200 rounded-lg mb-3">
                                 <table className="min-w-full text-sm">
                                     <thead className="bg-gray-50">
@@ -616,51 +637,64 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                                                     <td className="px-3 py-2 font-medium">{row.adNumber}</td>
                                                     <td className="px-3 py-2 text-gray-700 max-w-xs">
                                                         {isEditingHeadline ? (
-                                                            <input
-                                                                type="text"
-                                                                autoFocus
-                                                                value={draftValue}
-                                                                onChange={(e) => setDraftValue(e.target.value)}
-                                                                onBlur={commitEditingCell}
-                                                                onKeyDown={(e) => {
-                                                                    if (e.key === 'Enter') commitEditingCell();
-                                                                    if (e.key === 'Escape') cancelEditingCell();
-                                                                }}
-                                                                className="w-full px-2 py-1 border border-blue-400 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
-                                                            />
+                                                            <div>
+                                                                <input
+                                                                    type="text"
+                                                                    autoFocus
+                                                                    value={draftValue}
+                                                                    onChange={(e) => setDraftValue(e.target.value)}
+                                                                    onBlur={commitEditingCell}
+                                                                    onKeyDown={(e) => {
+                                                                        if (e.key === 'Enter') commitEditingCell();
+                                                                        if (e.key === 'Escape') cancelEditingCell();
+                                                                    }}
+                                                                    className="w-full px-2 py-1 border border-blue-400 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                                                />
+                                                                <span className={`text-xs ${draftValue.length > HEADLINE_LIMIT ? 'text-red-600 font-semibold' : 'text-gray-400'}`}>
+                                                                    {draftValue.length} / {HEADLINE_LIMIT}
+                                                                </span>
+                                                            </div>
                                                         ) : (
                                                             <button
                                                                 type="button"
                                                                 onClick={() => startEditingCell(row.adNumber, 'headline', row.headline)}
-                                                                className="w-full text-left truncate hover:bg-blue-50 rounded px-1 -mx-1"
+                                                                className="w-full flex items-center gap-1 text-left truncate hover:bg-blue-50 rounded px-1 -mx-1 border-b border-dotted border-gray-300"
                                                                 title="Click to edit headline"
                                                             >
-                                                                {row.headline || <span className="text-gray-400">—</span>}
+                                                                <span className="truncate">{row.headline || <span className="text-gray-400">—</span>}</span>
+                                                                <Pencil size={11} className="text-gray-400 shrink-0" />
                                                             </button>
                                                         )}
                                                     </td>
                                                     <td className="px-3 py-2 text-gray-700 max-w-sm">
                                                         {isEditingPrimaryText ? (
-                                                            <input
-                                                                type="text"
-                                                                autoFocus
-                                                                value={draftValue}
-                                                                onChange={(e) => setDraftValue(e.target.value)}
-                                                                onBlur={commitEditingCell}
-                                                                onKeyDown={(e) => {
-                                                                    if (e.key === 'Enter') commitEditingCell();
-                                                                    if (e.key === 'Escape') cancelEditingCell();
-                                                                }}
-                                                                className="w-full px-2 py-1 border border-blue-400 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
-                                                            />
+                                                            <div>
+                                                                <textarea
+                                                                    autoFocus
+                                                                    rows={3}
+                                                                    value={draftValue}
+                                                                    onChange={(e) => setDraftValue(e.target.value)}
+                                                                    onBlur={commitEditingCell}
+                                                                    onKeyDown={(e) => {
+                                                                        // Enter alone still adds a newline in a textarea — only commit on Cmd/Ctrl+Enter, mirroring the "Enter to commit" shortcut without blocking multi-line input.
+                                                                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) commitEditingCell();
+                                                                        if (e.key === 'Escape') cancelEditingCell();
+                                                                    }}
+                                                                    className="w-full px-2 py-1 border border-blue-400 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                                                />
+                                                                <span className={`text-xs ${draftValue.length > BODY_LIMIT ? 'text-red-600 font-semibold' : 'text-gray-400'}`}>
+                                                                    {draftValue.length} / {BODY_LIMIT}
+                                                                </span>
+                                                            </div>
                                                         ) : (
                                                             <button
                                                                 type="button"
                                                                 onClick={() => startEditingCell(row.adNumber, 'primaryText', row.primaryText)}
-                                                                className="w-full text-left truncate hover:bg-blue-50 rounded px-1 -mx-1"
+                                                                className="w-full flex items-center gap-1 text-left truncate hover:bg-blue-50 rounded px-1 -mx-1 border-b border-dotted border-gray-300"
                                                                 title={row.primaryText || 'Click to edit primary text'}
                                                             >
-                                                                {primaryTextPreview || <span className="text-gray-400">—</span>}
+                                                                <span className="truncate">{primaryTextPreview || <span className="text-gray-400">—</span>}</span>
+                                                                <Pencil size={11} className="text-gray-400 shrink-0" />
                                                             </button>
                                                         )}
                                                     </td>
@@ -681,10 +715,11 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                                                             <button
                                                                 type="button"
                                                                 onClick={() => setEditingCell({ adNumber: row.adNumber, field: 'cta' })}
-                                                                className="hover:bg-blue-50 rounded px-1 -mx-1"
+                                                                className="flex items-center gap-1 hover:bg-blue-50 rounded px-1 -mx-1 border-b border-dotted border-gray-300"
                                                                 title="Click to change CTA"
                                                             >
                                                                 {row.cta.replace(/_/g, ' ')}
+                                                                <Pencil size={11} className="text-gray-400 shrink-0" />
                                                             </button>
                                                         )}
                                                     </td>
@@ -715,6 +750,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                                 {missingImageRows.length > 0 && <> — {missingImageRows.length} missing image</>}
                                 {missingCopyRows.length > 0 && <> — {missingCopyRows.length} missing copy</>}
                                 {invalidCtaRows.length > 0 && <> — {invalidCtaRows.length} invalid CTA</>}
+                                {overLimitRows.length > 0 && <> — {overLimitRows.length} over character limit</>}
                             </p>
 
                             {readyRows.length > MAX_ADS_PER_ADSET && (

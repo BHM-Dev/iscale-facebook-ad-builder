@@ -15,9 +15,9 @@ const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 
 // Primary text: 2200 hard limit (truncated after ~125 chars in feed)
 // Description: 255 hard limit
 const HEADLINE_WARN = 40;
-const HEADLINE_LIMIT = 255;
+export const HEADLINE_LIMIT = 255;
 const BODY_WARN = 125;
-const BODY_LIMIT = 2200;
+export const BODY_LIMIT = 2200;
 const DESC_LIMIT = 255;
 
 const charCountClass = (len, warn, limit) => {
