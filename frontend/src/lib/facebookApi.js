@@ -422,8 +422,12 @@ export async function createFacebookAdSet(adsetData, campaignId, adAccountId, bu
  * @param {string} pageId - Facebook page ID
  * @param {string} adAccountId - Facebook ad account ID
  * @param {Object|null} videoData - Video data: { video_id, thumbnail_url } for video ads
+ * @param {string|null} secondaryImageHash - Meta image hash of the 9x16 vertical
+ *   asset (Bulk Match Import only). When provided alongside imageHash, the backend
+ *   builds a dual-placement creative (Feed square + Stories/Reels vertical, same
+ *   copy) instead of a single-image creative. Ignored for video ads.
  */
-export async function createFacebookCreative(creativeData, imageHash, pageId, adAccountId, videoData = null) {
+export async function createFacebookCreative(creativeData, imageHash, pageId, adAccountId, videoData = null, secondaryImageHash = null) {
     try {
         const payload = {
             ...creativeData,
@@ -441,6 +445,9 @@ export async function createFacebookCreative(creativeData, imageHash, pageId, ad
             }
         } else if (imageHash) {
             payload.image_hash = imageHash;
+            if (secondaryImageHash) {
+                payload.secondary_image_hash = secondaryImageHash;
+            }
         }
 
         const response = await authFetch(`${API_BASE_URL}/creatives?ad_account_id=${adAccountId}`, {
@@ -518,7 +525,9 @@ export async function searchLocations(query, type = 'city', adAccountId) {
  * Complete workflow: Upload media (image or video), create creative, and create ad
  * @param {string} campaignId - Campaign ID
  * @param {Object} adsetData - Ad set data with fbAdsetId
- * @param {Object} creativeData - Creative data with imageUrl or videoUrl
+ * @param {Object} creativeData - Creative data with imageUrl or videoUrl. An optional
+ *   `secondaryImageUrl` (Bulk Match Import's 9x16 asset) is uploaded to Meta too and
+ *   passed through as the Stories/Reels vertical image alongside the Feed square.
  * @param {Object} adData - Ad data
  * @param {string} pageId - Facebook page ID
  * @param {string} adAccountId - Facebook ad account ID
@@ -527,6 +536,7 @@ export async function searchLocations(query, type = 'city', adAccountId) {
 export async function createCompleteAd(campaignId, adsetData, creativeData, adData, pageId, adAccountId, budgetType) {
     try {
         let imageHash = null;
+        let secondaryImageHash = null;
         let videoData = null;
 
         // Determine if this is a video or image ad
@@ -547,8 +557,13 @@ export async function createCompleteAd(campaignId, adsetData, creativeData, adDa
                 thumbnail_url: creativeData.thumbnailUrl || (videoResult.thumbnails && videoResult.thumbnails[0])
             };
         } else {
-            // 1. Upload image
+            // 1. Upload image(s). The 9x16 vertical (if present) is required
+            // together with the 1x1 for the dual-placement path — both must
+            // land on Meta before the creative is built.
             imageHash = await uploadImageToFacebook(creativeData.imageUrl, adAccountId);
+            if (creativeData.secondaryImageUrl) {
+                secondaryImageHash = await uploadImageToFacebook(creativeData.secondaryImageUrl, adAccountId);
+            }
         }
 
         // 2. Create ad creative (supports both image and video)
@@ -557,7 +572,8 @@ export async function createCompleteAd(campaignId, adsetData, creativeData, adDa
             imageHash,
             pageId,
             adAccountId,
-            videoData
+            videoData,
+            secondaryImageHash
         );
 
         // 3. Create ad. RedTrack macros are set on the creative's url_tags in step 2
@@ -566,6 +582,7 @@ export async function createCompleteAd(campaignId, adsetData, creativeData, adDa
 
         return {
             imageHash,
+            secondaryImageHash,
             videoId: videoData?.video_id || null,
             thumbnailUrl: videoData?.thumbnail_url || null,
             creativeId,

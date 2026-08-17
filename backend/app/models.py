@@ -261,11 +261,11 @@ class FacebookAd(Base):
     status = Column(String, default='PAUSED')
     fb_ad_id = Column(String, nullable=True)
     fb_creative_id = Column(String, nullable=True)
-    # Bulk Match Import fields — reserved for a future placement-customization
-    # feature. secondary_image_url stores the matched 9x16 asset but is NOT
-    # used to build any Meta creative today (1x1 is the only image sent to
-    # Meta in this pass). ad_number traces the row back to the source batch's
-    # copy doc (e.g. "AD 12").
+    # Bulk Match Import fields. secondary_image_url stores the durable URL of
+    # the matched 9x16 asset — it IS sent to Meta (as the Stories/Reels
+    # placement image, alongside the 1x1 Feed image, via create_creative's
+    # asset_feed_spec path in facebook_service.py). ad_number traces the row
+    # back to the source batch's copy doc (e.g. "AD 12").
     secondary_image_url = Column(String, nullable=True)
     ad_number = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

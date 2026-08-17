@@ -252,7 +252,8 @@ const BulkMatchImport = ({ onNext, onBack }) => {
             const headline = edits.headline !== undefined ? edits.headline : (copy?.headline || '');
             const primaryText = edits.primaryText !== undefined ? edits.primaryText : (copy?.primaryText || '');
             const hasCopy = !!(headline && headline.trim() && primaryText && primaryText.trim());
-            const hasImage = !!images.oneByOne;
+            const hasOneByOne = !!images.oneByOne;
+            const hasNineBySixteen = !!images.nineBySixteen;
             // Same caps AdCreativeStep enforces before allowing Next — applies
             // equally to CSV-sourced copy and inline edits made in this table.
             const overLimit = headline.length > HEADLINE_LIMIT || primaryText.length > BODY_LIMIT;
@@ -261,10 +262,15 @@ const BulkMatchImport = ({ onNext, onBack }) => {
             const normalizedCta = ctaRaw === '' ? 'LEARN_MORE' : normalizeCta(ctaRaw);
             const ctaValid = CTA_OPTIONS.includes(normalizedCta);
 
+            // Both placements (Feed 1x1 + Stories/Reels 9x16) are required
+            // together — a row missing either is NOT ready. Distinguish which
+            // is missing so Abel/Joel know exactly what to add per row.
             let status;
             if (!hasCopy) status = 'missing_copy'; // has image(s) but no/incomplete CSV row
             else if (overLimit) status = 'over_limit';
-            else if (!hasImage) status = 'missing_image';
+            else if (!hasOneByOne && !hasNineBySixteen) status = 'missing_both_images';
+            else if (!hasOneByOne) status = 'missing_1x1';
+            else if (!hasNineBySixteen) status = 'missing_9x16';
             else if (!ctaValid) status = 'invalid_cta';
             else status = 'ready';
 
@@ -296,14 +302,16 @@ const BulkMatchImport = ({ onNext, onBack }) => {
     }, [matchedRows]);
 
     const readyRows = matchedRows.filter((r) => r.status === 'ready');
-    const missingImageRows = matchedRows.filter((r) => r.status === 'missing_image');
+    const missing1x1Rows = matchedRows.filter((r) => r.status === 'missing_1x1');
+    const missing9x16Rows = matchedRows.filter((r) => r.status === 'missing_9x16');
+    const missingBothImagesRows = matchedRows.filter((r) => r.status === 'missing_both_images');
     const missingCopyRows = matchedRows.filter((r) => r.status === 'missing_copy');
     const invalidCtaRows = matchedRows.filter((r) => r.status === 'invalid_cta');
     const overLimitRows = matchedRows.filter((r) => r.status === 'over_limit');
 
     const handleSubmit = async () => {
         if (readyRows.length === 0) {
-            showWarning('No rows are ready to create — match at least one CSV row to a 1x1 image');
+            showWarning('No rows are ready to create — match each CSV row to BOTH a 1x1 and a 9x16 image (both placements are required)');
             return;
         }
         if (readyRows.length > MAX_ADS_PER_ADSET) {
@@ -422,22 +430,20 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                     const rawImageUrl = await uploadFileToServer(row.oneByOne, authFetch);
                     const imageUrl = toAbsoluteUploadUrl(rawImageUrl);
 
-                    // Upload the 9x16 secondary asset (if present) to get a durable
-                    // URL to store — same upload path, used internally for blob URLs.
-                    // Not sent to Meta; reserved for a future placement feature.
-                    let secondaryImageUrl = null;
-                    if (row.nineBySixteen) {
-                        try {
-                            secondaryImageUrl = await uploadFileToServer(row.nineBySixteen, authFetch);
-                        } catch (uploadErr) {
-                            console.warn(`Could not upload 9x16 asset for AD ${row.adNumber} — continuing without it:`, uploadErr);
-                        }
-                    }
+                    // Upload the 9x16 secondary asset to get a durable, server-reachable
+                    // URL — same treatment as the 1x1 above. Required (readyRows only
+                    // contains rows with both images matched), and this same URL is
+                    // what createCompleteAd uploads to Meta for the Stories/Reels
+                    // placement, so the DB-persisted value below always matches what
+                    // Meta actually received.
+                    const rawSecondaryImageUrl = await uploadFileToServer(row.nineBySixteen, authFetch);
+                    const secondaryImageUrl = toAbsoluteUploadUrl(rawSecondaryImageUrl);
 
                     const rowCreativeData = {
                         ...creativeData,
                         mediaType: 'image',
                         imageUrl,
+                        secondaryImageUrl,
                         videoUrl: undefined,
                         headlines: [row.headline],
                         bodies: [row.primaryText],
@@ -530,10 +536,24 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                 </span>
             );
         }
-        if (status === 'missing_image') {
+        if (status === 'missing_1x1') {
             return (
                 <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">
-                    <AlertTriangle size={12} /> Missing image
+                    <AlertTriangle size={12} /> Missing 1x1
+                </span>
+            );
+        }
+        if (status === 'missing_9x16') {
+            return (
+                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">
+                    <AlertTriangle size={12} /> Missing 9x16
+                </span>
+            );
+        }
+        if (status === 'missing_both_images') {
+            return (
+                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">
+                    <AlertTriangle size={12} /> Missing 1x1 &amp; 9x16
                 </span>
             );
         }
@@ -563,7 +583,8 @@ const BulkMatchImport = ({ onNext, onBack }) => {
             <h2 className="text-2xl font-bold mb-2">Match by Naming Convention</h2>
             <p className="text-gray-600 mb-6">
                 Upload a copy CSV and an image folder. Rows are matched by ad number (<code className="bg-gray-100 px-1 rounded">AD 1</code> ↔{' '}
-                <code className="bg-gray-100 px-1 rounded">ad1-slug-1x1.png</code>). Only <strong>Ready</strong> rows are created.
+                <code className="bg-gray-100 px-1 rounded">ad1-slug-1x1.png</code>). Both a <strong>1x1</strong> (Feed) and a <strong>9x16</strong> (Stories/Reels)
+                image are required per ad — Meta publishes both placements together with the same copy. Only <strong>Ready</strong> rows are created.
             </p>
 
             {!loading ? (
@@ -586,7 +607,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                         <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors">
                             <ImageIcon className="mx-auto mb-2 text-gray-400" size={28} />
                             <p className="text-sm font-medium text-gray-700 mb-1">Image Folder</p>
-                            <p className="text-xs text-gray-500 mb-3">ad{'{N}'}-{'{slug}'}-1x1.png / 9x16.png</p>
+                            <p className="text-xs text-gray-500 mb-3">ad{'{N}'}-{'{slug}'}-1x1.png / 9x16.png — both required per ad</p>
                             <label className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer hover:bg-blue-700">
                                 <UploadCloud size={16} /> Choose Images
                                 <input type="file" accept="image/png,image/jpeg" multiple className="hidden" onChange={handleImageUpload} />
@@ -747,7 +768,9 @@ const BulkMatchImport = ({ onNext, onBack }) => {
 
                             <p className="text-sm text-gray-600 mb-2">
                                 <strong>{readyRows.length} of {matchedRows.length}</strong> rows ready
-                                {missingImageRows.length > 0 && <> — {missingImageRows.length} missing image</>}
+                                {missing1x1Rows.length > 0 && <> — {missing1x1Rows.length} missing 1x1</>}
+                                {missing9x16Rows.length > 0 && <> — {missing9x16Rows.length} missing 9x16</>}
+                                {missingBothImagesRows.length > 0 && <> — {missingBothImagesRows.length} missing both images</>}
                                 {missingCopyRows.length > 0 && <> — {missingCopyRows.length} missing copy</>}
                                 {invalidCtaRows.length > 0 && <> — {invalidCtaRows.length} invalid CTA</>}
                                 {overLimitRows.length > 0 && <> — {overLimitRows.length} over character limit</>}

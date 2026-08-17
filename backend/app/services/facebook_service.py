@@ -755,11 +755,30 @@ class FacebookService:
         return thumbnails
 
     def create_creative(self, creative_data, ad_account_id=None):
-        """Create an ad creative (supports both image and video)."""
+        """Create an ad creative (supports both image and video).
+
+        `secondary_image_hash` (optional): the Meta image hash of a 9x16
+        vertical asset, obtained via the same `upload_image()` call used for
+        the primary `image_hash`. When present alongside `image_hash` (and
+        only for the standard image/link path — never video, never lead-gen,
+        which this feature does not touch), the creative is built with an
+        `asset_feed_spec` instead of a plain `link_data` image so Feed shows
+        the square (`image_hash`) and Stories/Reels shows the vertical
+        (`secondary_image_hash`) — both placements live together with the
+        same copy, per Meta's asset-feed-spec + asset_customization_rules
+        docs (developers.facebook.com/docs/marketing-api/reference/ad-asset-feed-spec/
+        and .../ad-asset-feed-spec-asset-customization-rule/). This is
+        NOT a general dynamic-creative system — it always builds exactly
+        the two rules below (Feed+Stories/Reels), nothing else, and both
+        images are required together when this path is used. When
+        `secondary_image_hash` is absent, behavior is byte-identical to
+        before this feature — the plain `link_data` single-image path.
+        """
         account = self._get_account(ad_account_id)
 
         page_id = creative_data.get('page_id') or creative_data.get('pageId')
         image_hash = creative_data.get('image_hash')
+        secondary_image_hash = creative_data.get('secondary_image_hash') or creative_data.get('secondaryImageHash')
         video_id = creative_data.get('video_id')
         website_url = (creative_data.get('website_url') or creative_data.get('websiteUrl') or '').strip()
 
@@ -823,6 +842,41 @@ class FacebookService:
                     }
                 }
             }
+        elif secondary_image_hash:
+            # Dual-placement image creative: Feed (square) + Stories/Reels
+            # (vertical), same copy across both — Bulk Match Import only.
+            # object_story_spec carries just page_id here; the rest lives in
+            # asset_feed_spec, per Meta's asset-feed-spec contract.
+            object_story_spec = {'page_id': page_id}
+            asset_feed_spec = {
+                'ad_formats': ['SINGLE_IMAGE'],
+                'images': [
+                    {'hash': image_hash, 'adlabels': [{'name': 'feed_image'}]},
+                    {'hash': secondary_image_hash, 'adlabels': [{'name': 'story_image'}]},
+                ],
+                'bodies': [{'text': primary_text}],
+                'titles': [{'text': headline}],
+                'link_urls': [{'website_url': website_url}],
+                'call_to_action_types': [cta],
+                'asset_customization_rules': [
+                    {
+                        'customization_spec': {
+                            'publisher_platforms': ['facebook', 'instagram'],
+                            'facebook_positions': ['feed'],
+                            'instagram_positions': ['stream'],
+                        },
+                        'image_label': {'name': 'feed_image'},
+                    },
+                    {
+                        'customization_spec': {
+                            'publisher_platforms': ['facebook', 'instagram'],
+                            'facebook_positions': ['story', 'facebook_reels'],
+                            'instagram_positions': ['story', 'reels'],
+                        },
+                        'image_label': {'name': 'story_image'},
+                    },
+                ],
+            }
         else:
             # Standard image / link click creative
             object_story_spec = {
@@ -847,6 +901,8 @@ class FacebookService:
             AdCreative.Field.name: creative_name,
             AdCreative.Field.object_story_spec: object_story_spec,
         }
+        if secondary_image_hash and not video_id and not lead_gen_form_id:
+            params[AdCreative.Field.asset_feed_spec] = asset_feed_spec
 
         # RedTrack tracking macros go in the creative's url_tags field. Meta expands
         # {{ad.id}}/{{adset.id}}/{{campaign.id}} there and appends them to the clicked
@@ -860,6 +916,17 @@ class FacebookService:
                 url_tags = build_redtrack_url_tags(website_url)
                 if url_tags:
                     params[AdCreative.Field.url_tags] = url_tags
+                    # Belt-and-suspenders: a research report (possibly stale /
+                    # different SDK) suggested asset_feed_spec.link_urls +
+                    # top-level url_tags together don't reliably render the
+                    # destination link for dual-placement creatives. We set
+                    # url_tags in BOTH places for the dual-placement path
+                    # (top-level, above, and asset_feed_spec.link_urls[0]
+                    # below) until this is verified live against a real push.
+                    # Remove whichever one turns out unnecessary/wrong once
+                    # confirmed — do not remove either speculatively.
+                    if secondary_image_hash and not video_id and not lead_gen_form_id:
+                        asset_feed_spec['link_urls'][0]['url_tags'] = url_tags
             except Exception as _e:
                 # Never let macro enforcement block a push — flag and continue without url_tags.
                 print(f"⚠️  RedTrack url_tags build skipped: {_e}")
