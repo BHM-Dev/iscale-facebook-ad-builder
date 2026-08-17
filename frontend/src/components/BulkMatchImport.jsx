@@ -95,6 +95,43 @@ const BulkMatchImport = ({ onNext, onBack }) => {
     const [progress, setProgress] = useState({ current: 0, total: 0, status: '' });
     const [errors, setErrors] = useState([]);
 
+    // Inline edits made in the review table, keyed by adNumber. Kept separate
+    // from csvRows so a typo fix never requires re-uploading the CSV — these
+    // overrides are layered on top of the parsed row in matchedRows below.
+    const [rowEdits, setRowEdits] = useState({}); // { [adNumber]: { headline?, primaryText?, cta? } }
+    const [editingCell, setEditingCell] = useState(null); // { adNumber, field } | null
+    const [draftValue, setDraftValue] = useState('');
+
+    const startEditingCell = (adNumber, field, currentValue) => {
+        setEditingCell({ adNumber, field });
+        setDraftValue(currentValue || '');
+    };
+
+    const commitEditingCell = () => {
+        if (!editingCell) return;
+        const { adNumber, field } = editingCell;
+        setRowEdits((prev) => ({
+            ...prev,
+            [adNumber]: { ...prev[adNumber], [field]: draftValue }
+        }));
+        setEditingCell(null);
+        setDraftValue('');
+    };
+
+    const cancelEditingCell = () => {
+        setEditingCell(null);
+        setDraftValue('');
+    };
+
+    // CTA select commits immediately on change rather than waiting for blur.
+    const commitCtaEdit = (adNumber, value) => {
+        setRowEdits((prev) => ({
+            ...prev,
+            [adNumber]: { ...prev[adNumber], cta: value }
+        }));
+        setEditingCell(null);
+    };
+
     const handleCsvUpload = useCallback((e) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -200,14 +237,19 @@ const BulkMatchImport = ({ onNext, onBack }) => {
     // thumbnail object URLs here (once per recompute) instead of inline in JSX,
     // so they're memoized and revocable rather than re-created every render.
     const matchedRows = useMemo(() => {
-        const allNumbers = new Set([...Object.keys(csvByNumber), ...Object.keys(imageGroups)]);
+        const allNumbers = new Set([...Object.keys(csvByNumber), ...Object.keys(imageGroups), ...Object.keys(rowEdits)]);
         const rows = Array.from(allNumbers).map((adNumber) => {
             const copy = csvByNumber[adNumber] || null;
             const images = imageGroups[adNumber] || {};
-            const hasCopy = !!(copy && copy.headline && copy.primaryText);
+            const edits = rowEdits[adNumber] || {};
+
+            // Inline edits win over the parsed CSV value for that field.
+            const headline = edits.headline !== undefined ? edits.headline : (copy?.headline || '');
+            const primaryText = edits.primaryText !== undefined ? edits.primaryText : (copy?.primaryText || '');
+            const hasCopy = !!(headline && headline.trim() && primaryText && primaryText.trim());
             const hasImage = !!images.oneByOne;
 
-            const ctaRaw = copy?.cta ?? '';
+            const ctaRaw = edits.cta !== undefined ? edits.cta : (copy?.cta ?? '');
             const normalizedCta = ctaRaw === '' ? 'LEARN_MORE' : normalizeCta(ctaRaw);
             const ctaValid = CTA_OPTIONS.includes(normalizedCta);
 
@@ -219,8 +261,8 @@ const BulkMatchImport = ({ onNext, onBack }) => {
 
             return {
                 adNumber,
-                headline: copy?.headline || '',
-                primaryText: copy?.primaryText || '',
+                headline,
+                primaryText,
                 cta: normalizedCta,
                 oneByOne: images.oneByOne || null,
                 nineBySixteen: images.nineBySixteen || null,
@@ -231,7 +273,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
         });
         rows.sort((a, b) => Number(a.adNumber) - Number(b.adNumber));
         return rows;
-    }, [csvByNumber, imageGroups]);
+    }, [csvByNumber, imageGroups, rowEdits]);
 
     // Revoke the object URLs minted above whenever matchedRows is recomputed
     // (or the component unmounts) so review-table thumbnails don't leak blobs.
@@ -553,33 +595,117 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                                         <tr>
                                             <th className="text-left px-3 py-2 font-semibold text-gray-600">AD #</th>
                                             <th className="text-left px-3 py-2 font-semibold text-gray-600">Headline</th>
+                                            <th className="text-left px-3 py-2 font-semibold text-gray-600">Primary Text</th>
+                                            <th className="text-left px-3 py-2 font-semibold text-gray-600">CTA</th>
                                             <th className="text-left px-3 py-2 font-semibold text-gray-600">1x1</th>
                                             <th className="text-left px-3 py-2 font-semibold text-gray-600">9x16</th>
                                             <th className="text-left px-3 py-2 font-semibold text-gray-600">Status</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
-                                        {matchedRows.map((row) => (
-                                            <tr key={row.adNumber} className={row.status !== 'ready' ? 'bg-gray-50 opacity-75' : ''}>
-                                                <td className="px-3 py-2 font-medium">{row.adNumber}</td>
-                                                <td className="px-3 py-2 text-gray-700 max-w-xs truncate">{row.headline || <span className="text-gray-400">—</span>}</td>
-                                                <td className="px-3 py-2">
-                                                    {row.oneByOnePreviewUrl ? (
-                                                        <img src={row.oneByOnePreviewUrl} alt="1x1" className="w-10 h-10 rounded object-cover" />
-                                                    ) : (
-                                                        <span className="text-gray-400 text-xs">none</span>
-                                                    )}
-                                                </td>
-                                                <td className="px-3 py-2">
-                                                    {row.nineBySixteenPreviewUrl ? (
-                                                        <img src={row.nineBySixteenPreviewUrl} alt="9x16" className="w-8 h-14 rounded object-cover" />
-                                                    ) : (
-                                                        <span className="text-gray-400 text-xs">no vertical</span>
-                                                    )}
-                                                </td>
-                                                <td className="px-3 py-2">{statusBadge(row.status)}</td>
-                                            </tr>
-                                        ))}
+                                        {matchedRows.map((row) => {
+                                            const isEditingHeadline = editingCell?.adNumber === row.adNumber && editingCell.field === 'headline';
+                                            const isEditingPrimaryText = editingCell?.adNumber === row.adNumber && editingCell.field === 'primaryText';
+                                            const isEditingCta = editingCell?.adNumber === row.adNumber && editingCell.field === 'cta';
+                                            const primaryTextPreview = row.primaryText
+                                                ? (row.primaryText.length > 60 ? `${row.primaryText.slice(0, 60)}…` : row.primaryText)
+                                                : '';
+
+                                            return (
+                                                <tr key={row.adNumber} className={row.status !== 'ready' ? 'bg-gray-50 opacity-75' : ''}>
+                                                    <td className="px-3 py-2 font-medium">{row.adNumber}</td>
+                                                    <td className="px-3 py-2 text-gray-700 max-w-xs">
+                                                        {isEditingHeadline ? (
+                                                            <input
+                                                                type="text"
+                                                                autoFocus
+                                                                value={draftValue}
+                                                                onChange={(e) => setDraftValue(e.target.value)}
+                                                                onBlur={commitEditingCell}
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === 'Enter') commitEditingCell();
+                                                                    if (e.key === 'Escape') cancelEditingCell();
+                                                                }}
+                                                                className="w-full px-2 py-1 border border-blue-400 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                                            />
+                                                        ) : (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => startEditingCell(row.adNumber, 'headline', row.headline)}
+                                                                className="w-full text-left truncate hover:bg-blue-50 rounded px-1 -mx-1"
+                                                                title="Click to edit headline"
+                                                            >
+                                                                {row.headline || <span className="text-gray-400">—</span>}
+                                                            </button>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-3 py-2 text-gray-700 max-w-sm">
+                                                        {isEditingPrimaryText ? (
+                                                            <input
+                                                                type="text"
+                                                                autoFocus
+                                                                value={draftValue}
+                                                                onChange={(e) => setDraftValue(e.target.value)}
+                                                                onBlur={commitEditingCell}
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === 'Enter') commitEditingCell();
+                                                                    if (e.key === 'Escape') cancelEditingCell();
+                                                                }}
+                                                                className="w-full px-2 py-1 border border-blue-400 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                                            />
+                                                        ) : (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => startEditingCell(row.adNumber, 'primaryText', row.primaryText)}
+                                                                className="w-full text-left truncate hover:bg-blue-50 rounded px-1 -mx-1"
+                                                                title={row.primaryText || 'Click to edit primary text'}
+                                                            >
+                                                                {primaryTextPreview || <span className="text-gray-400">—</span>}
+                                                            </button>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-3 py-2">
+                                                        {isEditingCta ? (
+                                                            <select
+                                                                autoFocus
+                                                                value={row.cta}
+                                                                onChange={(e) => commitCtaEdit(row.adNumber, e.target.value)}
+                                                                onBlur={cancelEditingCell}
+                                                                className="px-2 py-1 border border-blue-400 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                                            >
+                                                                {CTA_OPTIONS.map((cta) => (
+                                                                    <option key={cta} value={cta}>{cta.replace(/_/g, ' ')}</option>
+                                                                ))}
+                                                            </select>
+                                                        ) : (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setEditingCell({ adNumber: row.adNumber, field: 'cta' })}
+                                                                className="hover:bg-blue-50 rounded px-1 -mx-1"
+                                                                title="Click to change CTA"
+                                                            >
+                                                                {row.cta.replace(/_/g, ' ')}
+                                                            </button>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-3 py-2">
+                                                        {row.oneByOnePreviewUrl ? (
+                                                            <img src={row.oneByOnePreviewUrl} alt="1x1" className="w-10 h-10 rounded object-cover" />
+                                                        ) : (
+                                                            <span className="text-gray-400 text-xs">none</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-3 py-2">
+                                                        {row.nineBySixteenPreviewUrl ? (
+                                                            <img src={row.nineBySixteenPreviewUrl} alt="9x16" className="w-8 h-14 rounded object-cover" />
+                                                        ) : (
+                                                            <span className="text-gray-400 text-xs">no vertical</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-3 py-2">{statusBadge(row.status)}</td>
+                                                </tr>
+                                            );
+                                        })}
                                     </tbody>
                                 </table>
                             </div>

@@ -39,7 +39,8 @@ export const CTA_OPTIONS = [
     'DONATE_NOW',
 ];
 
-const AdCreativeStep = ({ onNext, onBack }) => {
+const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
+    const isMatchImport = mode === 'match-import';
     const { showWarning, showError } = useToast();
     const { authFetch } = useAuth();
     const { creativeData, setCreativeData, selectedAdAccount, selectedProduct, adsetData } = useCampaign();
@@ -451,21 +452,27 @@ const AdCreativeStep = ({ onNext, onBack }) => {
             showWarning('Please enter a creative name');
             return;
         }
-        if (!creativeData.creatives || creativeData.creatives.length === 0) {
-            showWarning('Please upload at least one image or video');
-            return;
-        }
 
-        // Validate primary text
-        if (!creativeData.bodies[0] || !creativeData.bodies[0].trim()) {
-            showWarning('Please provide primary text');
-            return;
-        }
+        // Match-import mode gets its copy/media/CTA per-row from the CSV + image
+        // folder in the next step — none of that lives on shared creativeData,
+        // so skip straight to the fields this mode actually collects.
+        if (!isMatchImport) {
+            if (!creativeData.creatives || creativeData.creatives.length === 0) {
+                showWarning('Please upload at least one image or video');
+                return;
+            }
 
-        // Validate headline
-        if (!creativeData.headlines[0] || !creativeData.headlines[0].trim()) {
-            showWarning('Please provide a headline');
-            return;
+            // Validate primary text
+            if (!creativeData.bodies[0] || !creativeData.bodies[0].trim()) {
+                showWarning('Please provide primary text');
+                return;
+            }
+
+            // Validate headline
+            if (!creativeData.headlines[0] || !creativeData.headlines[0].trim()) {
+                showWarning('Please provide a headline');
+                return;
+            }
         }
 
         if (!creativeData.websiteUrl) {
@@ -490,20 +497,22 @@ const AdCreativeStep = ({ onNext, onBack }) => {
             return;
         }
 
-        // Validate Meta copy length hard limits
-        const overLimitHeadlines = creativeData.headlines.filter(h => h && h.length > HEADLINE_LIMIT);
-        if (overLimitHeadlines.length > 0) {
-            showWarning(`Headline exceeds Facebook's ${HEADLINE_LIMIT}-character limit. Please shorten it.`);
-            return;
-        }
-        const overLimitBodies = creativeData.bodies.filter(b => b && b.length > BODY_LIMIT);
-        if (overLimitBodies.length > 0) {
-            showWarning(`Primary text exceeds Facebook's ${BODY_LIMIT}-character limit. Please shorten it.`);
-            return;
-        }
-        if (creativeData.description && creativeData.description.length > DESC_LIMIT) {
-            showWarning(`Description exceeds Facebook's ${DESC_LIMIT}-character limit. Please shorten it.`);
-            return;
+        if (!isMatchImport) {
+            // Validate Meta copy length hard limits
+            const overLimitHeadlines = creativeData.headlines.filter(h => h && h.length > HEADLINE_LIMIT);
+            if (overLimitHeadlines.length > 0) {
+                showWarning(`Headline exceeds Facebook's ${HEADLINE_LIMIT}-character limit. Please shorten it.`);
+                return;
+            }
+            const overLimitBodies = creativeData.bodies.filter(b => b && b.length > BODY_LIMIT);
+            if (overLimitBodies.length > 0) {
+                showWarning(`Primary text exceeds Facebook's ${BODY_LIMIT}-character limit. Please shorten it.`);
+                return;
+            }
+            if (creativeData.description && creativeData.description.length > DESC_LIMIT) {
+                showWarning(`Description exceeds Facebook's ${DESC_LIMIT}-character limit. Please shorten it.`);
+                return;
+            }
         }
 
         // Save URL to local storage for this ad account
@@ -517,13 +526,24 @@ const AdCreativeStep = ({ onNext, onBack }) => {
     return (
         <>
         <div>
-            <h2 className="text-2xl font-bold mb-6">Ad Creative - Standard Ads</h2>
-            <p className="text-gray-600 mb-3">
-                This creates standard (non-Dynamic) ads. Each image you upload becomes one separate ad on Facebook.
-            </p>
-            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-6 text-sm text-amber-900">
-                <strong>Want to launch 5 ads?</strong> Upload 5 images below with 1 headline and 1 body — you'll get exactly 5 separate ads. Adding more headlines or body options multiplies the total (e.g. 5 images × 2 headlines = 10 ads).
-            </div>
+            {isMatchImport ? (
+                <>
+                    <h2 className="text-2xl font-bold mb-6">Ad Creative - Basic Info</h2>
+                    <p className="text-gray-600 mb-6">
+                        Match by Naming Convention only needs a creative name, Facebook Page, and destination link here — everything else comes from your CSV and image folder in the next step.
+                    </p>
+                </>
+            ) : (
+                <>
+                    <h2 className="text-2xl font-bold mb-6">Ad Creative - Standard Ads</h2>
+                    <p className="text-gray-600 mb-3">
+                        This creates standard (non-Dynamic) ads. Each image you upload becomes one separate ad on Facebook.
+                    </p>
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-6 text-sm text-amber-900">
+                        <strong>Want to launch 5 ads?</strong> Upload 5 images below with 1 headline and 1 body — you'll get exactly 5 separate ads. Adding more headlines or body options multiplies the total (e.g. 5 images × 2 headlines = 10 ads).
+                    </div>
+                </>
+            )}
 
             <div className="space-y-6">
                 {/* Creative Name */}
@@ -597,7 +617,8 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                     )}
                 </div>
 
-                {/* Media Upload (Images + Videos) */}
+                {/* Media Upload (Images + Videos) — Match Import gets these per-row from the CSV/image folder */}
+                {!isMatchImport && (
                 <div>
                     <div className="flex items-center justify-between mb-2">
                         <label className="block text-sm font-medium text-gray-700">
@@ -750,8 +771,10 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                         />
                     </div>
                 </div>
+                )}
 
                 {/* Body Text */}
+                {!isMatchImport && (
                 <div>
                     <div className="flex items-center justify-between mb-2">
                         <label className="block text-sm font-medium text-gray-700">
@@ -804,8 +827,10 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                         ))}
                     </div>
                 </div>
+                )}
 
                 {/* Headline */}
+                {!isMatchImport && (
                 <div>
                     <div className="flex items-center justify-between mb-2">
                         <label className="block text-sm font-medium text-gray-700">
@@ -858,8 +883,10 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                         ))}
                     </div>
                 </div>
+                )}
 
                 {/* Description */}
+                {!isMatchImport && (
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                         Description
@@ -877,9 +904,10 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                         </span>
                     </div>
                 </div>
+                )}
 
                 {/* Ad Permutation Counter */}
-                {creativeData.creatives && creativeData.creatives.length > 0 && (
+                {!isMatchImport && creativeData.creatives && creativeData.creatives.length > 0 && (
                     <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
                         <div className="flex items-center gap-2 text-amber-800">
                             <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -927,7 +955,8 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                     </div>
                 )}
 
-                {/* Call to Action */}
+                {/* Call to Action — Match Import gets CTA per-row from the CSV (defaults to LEARN_MORE) */}
+                {!isMatchImport && (
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                         Call to Action *
@@ -942,6 +971,7 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                         ))}
                     </select>
                 </div>
+                )}
 
                 {/* Website URL */}
                 <div>
@@ -956,6 +986,12 @@ const AdCreativeStep = ({ onNext, onBack }) => {
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                     />
                 </div>
+
+                {isMatchImport && (
+                    <p className="text-sm text-gray-500 -mt-2">
+                        Headlines, body copy, images, and CTA come from your CSV + image folder in the next step.
+                    </p>
+                )}
             </div>
 
             {/* Navigation */}
