@@ -42,9 +42,9 @@ export const CTA_OPTIONS = [
 
 const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const isMatchImport = mode === 'match-import';
-    const { showWarning, showError } = useToast();
+    const { showWarning, showError, showSuccess } = useToast();
     const { authFetch } = useAuth();
-    const { creativeData, setCreativeData, selectedAdAccount, selectedProduct, adsetData, campaignData } = useCampaign();
+    const { creativeData, setCreativeData, selectedAdAccount, adsetData, campaignData } = useCampaign();
     // Cache keys for creative defaults (URL/headlines/bodies/description/CTA) are scoped
     // by ad account AND campaign — the same ad account can run multiple niches, each with
     // its own destination URL/copy, so account-only scoping would leak the wrong niche's
