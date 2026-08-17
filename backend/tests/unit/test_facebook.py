@@ -271,7 +271,8 @@ class TestCreateCreativeDualPlacement:
         assert "link_data" in params[AdCreative.Field.object_story_spec]
 
     def test_create_creative_with_secondary_image_builds_dual_placement_spec(self):
-        """secondary_image_hash present → expected asset_feed_spec shape, no link_data."""
+        """secondary_image_hash + explicit instagram_actor_id → expected asset_feed_spec
+        shape, no link_data, both placements include Instagram positions."""
         from facebook_business.adobjects.adcreative import AdCreative
 
         service = self._make_service_with_mock_account()
@@ -279,12 +280,14 @@ class TestCreateCreativeDualPlacement:
             **self._base_creative_data(),
             "secondary_image_hash": "story_hash_xyz",
             "description": "Some description",
+            "instagram_actor_id": "ig_actor_789",
         }
         service.create_creative(creative_data)
 
         params = service.account.create_ad_creative.call_args.kwargs["params"]
         oss = params[AdCreative.Field.object_story_spec]
         assert "link_data" not in oss
+        assert oss["instagram_actor_id"] == "ig_actor_789"
 
         afs = params[AdCreative.Field.asset_feed_spec]
         image_labels = {
@@ -303,5 +306,39 @@ class TestCreateCreativeDualPlacement:
         }
         assert rule_by_label["feed_image"]["facebook_positions"] == ["feed"]
         assert rule_by_label["feed_image"]["instagram_positions"] == ["stream"]
+        assert rule_by_label["feed_image"]["publisher_platforms"] == ["facebook", "instagram"]
         assert rule_by_label["story_image"]["facebook_positions"] == ["story"]
         assert rule_by_label["story_image"]["instagram_positions"] == ["story"]
+        assert rule_by_label["story_image"]["publisher_platforms"] == ["facebook", "instagram"]
+
+    def test_create_creative_with_secondary_image_no_instagram_account_falls_back_to_facebook_only(self):
+        """secondary_image_hash present, no instagram_actor_id given and the page lookup
+        finds no linked IG account (mocked to return None) → asset_customization_rules
+        must drop instagram_positions and publisher_platforms entirely, not error or
+        silently send Meta an invalid instagram_positions with no actor. This is the
+        real production bug confirmed live 2026-08-17: Meta accepts the creative (200)
+        but rejects the subsequent ad-create call with "Select an Instagram account or
+        a Facebook Page to represent your business on Instagram." when
+        instagram_positions is declared without instagram_actor_id.
+        """
+        from facebook_business.adobjects.adcreative import AdCreative
+
+        service = self._make_service_with_mock_account()
+        service._get_page_instagram_actor_id = MagicMock(return_value=None)
+        creative_data = {
+            **self._base_creative_data(),
+            "secondary_image_hash": "story_hash_xyz",
+        }
+        service.create_creative(creative_data)
+
+        service._get_page_instagram_actor_id.assert_called_once_with("123456")
+
+        params = service.account.create_ad_creative.call_args.kwargs["params"]
+        oss = params[AdCreative.Field.object_story_spec]
+        assert "instagram_actor_id" not in oss
+
+        afs = params[AdCreative.Field.asset_feed_spec]
+        for rule in afs["asset_customization_rules"]:
+            spec = rule["customization_spec"]
+            assert "instagram_positions" not in spec
+            assert spec["publisher_platforms"] == ["facebook"]
