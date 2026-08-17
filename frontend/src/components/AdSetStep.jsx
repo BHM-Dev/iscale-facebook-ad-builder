@@ -1,8 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronRight, Plus, Check, Loader, X } from 'lucide-react';
-import { useCampaign } from '../context/CampaignContext';
+import { useCampaign, createDefaultAdsetData } from '../context/CampaignContext';
 import { useToast } from '../context/ToastContext';
 import { getAdSets, getPixels, searchGeoLocations } from '../lib/facebookApi';
+
+// localStorage can throw (Safari private browsing, full storage) — the new caches
+// added alongside campaign/ad-set selection should never take down an otherwise
+// successful selection handler over a quota error.
+const safeLocalStorageGet = (key) => {
+    try {
+        return localStorage.getItem(key);
+    } catch (e) {
+        console.error('localStorage read failed', e);
+        return null;
+    }
+};
+
+const safeLocalStorageSet = (key, value) => {
+    try {
+        localStorage.setItem(key, value);
+    } catch (e) {
+        console.error('localStorage write failed', e);
+    }
+};
 
 const OPTIMIZATION_GOALS = [
     { value: 'OFFSITE_CONVERSIONS', label: 'Sales/Purchases', description: 'Optimize for conversions on your website' },
@@ -73,6 +93,11 @@ const AdSetStep = ({ onNext, onBack }) => {
     const [mode, setMode] = useState(adsetData.isExisting ? 'existing' : 'new');
     const [existingAdsets, setExistingAdsets] = useState([]);
     const [selectedAdset, setSelectedAdset] = useState(null);
+    // True only when the current selectedAdset came from the auto-restore path
+    // (context match on remount, or the last-used-adset localStorage fallback) —
+    // never from the user actually clicking an ad set row. Cleared the moment the
+    // user clicks any row themselves (including re-clicking the same one).
+    const [isAutoSelected, setIsAutoSelected] = useState(false);
     const [loading, setLoading] = useState(false);
     const [loadingAdSets, setLoadingAdSets] = useState(false);
     const [pixels, setPixels] = useState([]);
@@ -126,17 +151,18 @@ const AdSetStep = ({ onNext, onBack }) => {
             const match = existingAdsets.find(a => a.id === adsetData.fbAdsetId);
             if (match) {
                 setSelectedAdset(match);
+                setIsAutoSelected(true);
                 return;
             }
         }
 
         const campaignIdToUse = campaignData.fbCampaignId || campaignData.id;
         if (campaignIdToUse) {
-            const lastId = localStorage.getItem('lastSelectedAdSetId_' + campaignIdToUse);
+            const lastId = safeLocalStorageGet('lastSelectedAdSetId_' + campaignIdToUse);
             if (lastId) {
                 const match = existingAdsets.find(a => a.id === lastId);
                 if (match) {
-                    handleSelectExisting(match);
+                    handleSelectExisting(match, true);
                 }
             }
         }
@@ -206,8 +232,9 @@ const AdSetStep = ({ onNext, onBack }) => {
         }
     };
 
-    const handleSelectExisting = (adset) => {
+    const handleSelectExisting = (adset, isAuto = false) => {
         setSelectedAdset(adset);
+        setIsAutoSelected(isAuto);
 
         // Extract pixel and event from promoted_object if available
         let pixelId = '';
@@ -234,7 +261,7 @@ const AdSetStep = ({ onNext, onBack }) => {
 
         const campaignIdToUse = campaignData.fbCampaignId || campaignData.id;
         if (campaignIdToUse) {
-            localStorage.setItem('lastSelectedAdSetId_' + campaignIdToUse, adset.id);
+            safeLocalStorageSet('lastSelectedAdSetId_' + campaignIdToUse, adset.id);
         }
     };
 
@@ -343,12 +370,24 @@ const AdSetStep = ({ onNext, onBack }) => {
             <div className="flex gap-4 mb-6">
                 <button
                     onClick={() => {
+                        // If an existing ad set was selected (or we're leaving "existing"
+                        // mode), fully reset to a blank new-ad-set form — otherwise the
+                        // name/budget/optimization fields stay secretly pre-filled with the
+                        // previously-selected existing ad set's values. Don't reset if the
+                        // user was already in "new" mode with their own in-progress fields.
+                        const hadExistingSelection = mode === 'existing' || adsetData.isExisting;
                         setMode('new');
-                        setAdsetData(prev => ({
-                            ...prev,
-                            isExisting: false,
-                            fbAdsetId: null
-                        }));
+                        setSelectedAdset(null);
+                        setIsAutoSelected(false);
+                        if (hadExistingSelection) {
+                            setAdsetData(createDefaultAdsetData());
+                        } else {
+                            setAdsetData(prev => ({
+                                ...prev,
+                                isExisting: false,
+                                fbAdsetId: null
+                            }));
+                        }
                     }}
                     className={`flex-1 p-4 rounded-xl border-2 transition-all ${mode === 'new'
                         ? 'border-amber-600 bg-amber-50'
@@ -401,6 +440,11 @@ const AdSetStep = ({ onNext, onBack }) => {
                                                 }`}>
                                                 {adset.status}
                                             </span>
+                                            {selectedAdset?.id === adset.id && isAutoSelected && (
+                                                <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">
+                                                    Auto-selected from last use
+                                                </span>
+                                            )}
                                         </div>
                                         <div className="text-sm text-gray-500 mt-1">
                                             {adset.optimizationGoal}

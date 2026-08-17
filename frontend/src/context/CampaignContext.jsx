@@ -35,64 +35,73 @@ const defaultStartTime = () => {
     return `${year}-${month}-${day}T${hours}:${minutes}`;
 };
 
+// Default shape for a brand-new campaign — exported so any "Create New Campaign"
+// handler (CampaignStep) can reset back to a genuinely blank form instead of
+// hand-listing fields, and so it can never drift out of sync with initial state.
+export const createDefaultCampaignData = () => ({
+    id: null,
+    name: '',
+    objective: 'OUTCOME_SALES',
+    budgetType: 'ABO',
+    budgetScheduleType: 'DAILY', // 'DAILY' or 'LIFETIME'
+    dailyBudget: 0,
+    lifetimeBudget: 0,
+    endTime: defaultEndTime(), // required when budgetScheduleType === 'LIFETIME'
+    bidStrategy: '',
+    bidAmount: 0,
+    specialAdCategories: [], // e.g. ['HOUSING'] — Facebook requires this at campaign level
+    status: 'PAUSED',
+    fbCampaignId: null,
+    isExisting: false
+});
+
+// Default shape for a brand-new ad set — see createDefaultCampaignData above.
+export const createDefaultAdsetData = () => ({
+    id: null,
+    name: '',
+    optimizationGoal: 'OFFSITE_CONVERSIONS',
+    budgetScheduleType: 'DAILY', // 'DAILY' or 'LIFETIME'
+    dailyBudget: 0,
+    lifetimeBudget: 0,
+    endTime: defaultEndTime(), // required when budgetScheduleType === 'LIFETIME'
+    bidStrategy: 'LOWEST_COST_WITHOUT_CAP',
+    bidAmount: 0,
+    targeting: {
+        genders: [], // [] = All, [1] = Male, [2] = Female
+        publisher_platforms: ['facebook', 'instagram'],
+        geo_locations: {
+            countries: ['US'],
+            excluded_countries: [],
+            regions: [],
+            excluded_regions: [],
+            cities: [],
+            excluded_cities: [],
+            geo_markets: [],
+            excluded_geo_markets: []
+        },
+        ageMin: 18,
+        ageMax: 65
+    },
+    advantageAudience: 0, // 0 = Off, 1 = On
+    startTime: defaultStartTime(),
+    pixelId: '',
+    conversionEvent: 'PURCHASE',
+    attributionSetting: '7d_click',
+    status: 'PAUSED',
+    fbAdsetId: null,
+    isExisting: false,
+    adScheduleEnabled: false,
+    adSchedule: [] // Array of { days: [0-6], startMinute: number, endMinute: number }
+});
+
 export const CampaignProvider = ({ children }) => {
     const [activeAccountId, setActiveAccountIdState] = useState(() => localStorage.getItem('fb_ad_account_id') || '');
     const [adAccounts, setAdAccounts] = useState([]);
     const [activeAccountLoading, setActiveAccountLoading] = useState(true);
 
-    const [campaignData, setCampaignData] = useState({
-        id: null,
-        name: '',
-        objective: 'OUTCOME_SALES',
-        budgetType: 'ABO',
-        budgetScheduleType: 'DAILY', // 'DAILY' or 'LIFETIME'
-        dailyBudget: 0,
-        lifetimeBudget: 0,
-        endTime: defaultEndTime(), // required when budgetScheduleType === 'LIFETIME'
-        bidStrategy: '',
-        specialAdCategories: [], // e.g. ['HOUSING'] — Facebook requires this at campaign level
-        status: 'PAUSED',
-        fbCampaignId: null,
-        isExisting: false
-    });
+    const [campaignData, setCampaignData] = useState(createDefaultCampaignData);
 
-    const [adsetData, setAdsetData] = useState({
-        id: null,
-        name: '',
-        optimizationGoal: 'OFFSITE_CONVERSIONS',
-        budgetScheduleType: 'DAILY', // 'DAILY' or 'LIFETIME'
-        dailyBudget: 0,
-        lifetimeBudget: 0,
-        endTime: defaultEndTime(), // required when budgetScheduleType === 'LIFETIME'
-        bidStrategy: 'LOWEST_COST_WITHOUT_CAP',
-        bidAmount: 0,
-        targeting: {
-            genders: [], // [] = All, [1] = Male, [2] = Female
-            publisher_platforms: ['facebook', 'instagram'],
-            geo_locations: {
-                countries: ['US'],
-                excluded_countries: [],
-                regions: [],
-                excluded_regions: [],
-                cities: [],
-                excluded_cities: [],
-                geo_markets: [],
-                excluded_geo_markets: []
-            },
-            ageMin: 18,
-            ageMax: 65
-        },
-        advantageAudience: 0, // 0 = Off, 1 = On
-        startTime: defaultStartTime(),
-        pixelId: '',
-        conversionEvent: 'PURCHASE',
-        attributionSetting: '7d_click',
-        status: 'PAUSED',
-        fbAdsetId: null,
-        isExisting: false,
-        adScheduleEnabled: false,
-        adSchedule: [] // Array of { days: [0-6], startMinute: number, endMinute: number }
-    });
+    const [adsetData, setAdsetData] = useState(createDefaultAdsetData);
 
     const [creativeData, setCreativeData] = useState({
         creativeName: '',

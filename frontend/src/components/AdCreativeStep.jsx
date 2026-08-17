@@ -1,9 +1,29 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image, BookOpen, Check, Layers } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
+
+// localStorage can throw (Safari private browsing, full storage) — the new caches
+// added alongside campaign-scoped creative defaults should never take down an
+// otherwise successful edit handler over a quota error.
+const safeLocalStorageGet = (key) => {
+    try {
+        return localStorage.getItem(key);
+    } catch (e) {
+        console.error('localStorage read failed', e);
+        return null;
+    }
+};
+
+const safeLocalStorageSet = (key, value) => {
+    try {
+        localStorage.setItem(key, value);
+    } catch (e) {
+        console.error('localStorage write failed', e);
+    }
+};
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -47,11 +67,19 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // Cache keys for creative defaults (URL/headlines/bodies/description/CTA) are scoped
     // by ad account AND campaign — the same ad account can run multiple niches, each with
     // its own destination URL/copy, so account-only scoping would leak the wrong niche's
-    // values into a new campaign. 'new' keeps the cache working within a single
-    // new-campaign creation flow (no fbCampaignId yet) without bleeding across existing
-    // campaigns once one is picked. The Facebook Page ID cache is intentionally NOT
-    // scoped this way — a brand's Page is stable across its niches on the same account.
-    const campaignCacheId = campaignData?.fbCampaignId || 'new';
+    // values into a new campaign. campaignData.id is the per-session id CampaignStep
+    // generates (`camp_${Date.now()}`) the moment a "Create New Campaign" flow advances
+    // past step 1 — it's stable for the life of that flow and unique per flow, so two
+    // separate new-campaign sessions on the same ad account never share a cache key the
+    // way the literal string 'new' used to. Falls back to 'new' only in the brief window
+    // before that id exists. The Facebook Page ID cache is intentionally NOT scoped this
+    // way — a brand's Page is stable across its niches on the same account.
+    const campaignCacheId = campaignData?.fbCampaignId || campaignData?.id || 'new';
+    // Tracks the previous campaignCacheId so we can tell "the campaign selection actually
+    // changed mid-session" apart from "this effect re-ran for an unrelated reason" — see
+    // the cache-load effect below, which is the root-cause fix for creative data leaking
+    // across campaigns when the user switches selection without a full page reload.
+    const prevCampaignCacheIdRef = useRef(campaignCacheId);
     const [pages, setPages] = useState([]);
     const [loadingPages, setLoadingPages] = useState(false);
 
@@ -217,22 +245,83 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // a single flat global key, which meant switching ad accounts (different
     // brands) could silently carry over a Page ID that belongs to a different
     // brand entirely. Same leak class as the campaign-scoped caches below.
+    // pageId/instagramId are deliberately NOT cleared when the campaign changes
+    // (see the campaign-scoped cache effect below) — a brand's Page is stable
+    // across its niches/campaigns on the same ad account.
     useEffect(() => {
         if (!selectedAdAccount) return;
-        const lastUsedPageId = localStorage.getItem(`lastUsedPageId_${selectedAdAccount.id}`);
+        const lastUsedPageId = safeLocalStorageGet(`lastUsedPageId_${selectedAdAccount.id}`);
         if (lastUsedPageId && !creativeData.pageId) {
             handleInputChange('pageId', lastUsedPageId);
         }
     }, [selectedAdAccount]);
 
-    // Load default URL from local storage for this ad account + campaign
+    // Load (or clear) campaign-scoped creative defaults — URL, headlines, bodies,
+    // description, CTA — whenever the ad account or the effective campaign changes.
+    //
+    // Root cause this fixes: creativeData lives in CampaignContext, which stays
+    // mounted for the whole session. Switching from existing Campaign A to existing
+    // Campaign B mid-session (back to step 2, pick a different campaign) used to
+    // leave A's headlines/body/description/CTA/URL sitting in creativeData — every
+    // "only load if empty" guard below saw non-empty fields and never touched them,
+    // so A's copy silently carried into B's ads.
+    //
+    // Fix: track the previous campaignCacheId in a ref. When it actually changes
+    // (not just re-running for an unrelated reason), clear the campaign-scoped
+    // fields to blank in the SAME setCreativeData call that then loads the new
+    // campaign's own cached values (or leaves them blank if it has none). Doing
+    // the clear and the load in one state update avoids a stale read on the render
+    // where the switch happens — splitting them into two effects meant the load
+    // effect would see the previous render's now-stale (but not yet cleared)
+    // creativeData and skip loading B's values entirely.
     useEffect(() => {
-        if (selectedAdAccount && !creativeData.websiteUrl) {
-            const savedUrl = localStorage.getItem(`defaultUrl_${selectedAdAccount.id}_${campaignCacheId}`);
-            if (savedUrl) {
-                handleInputChange('websiteUrl', savedUrl);
-            }
+        if (!selectedAdAccount) return;
+
+        const cacheChanged = prevCampaignCacheIdRef.current !== campaignCacheId;
+        prevCampaignCacheIdRef.current = campaignCacheId;
+
+        const savedUrl = safeLocalStorageGet(`defaultUrl_${selectedAdAccount.id}_${campaignCacheId}`);
+        const savedHeadlinesRaw = safeLocalStorageGet(`defaultHeadlines_${selectedAdAccount.id}_${campaignCacheId}`);
+        const savedBodiesRaw = safeLocalStorageGet(`defaultBodies_${selectedAdAccount.id}_${campaignCacheId}`);
+        const savedDescription = safeLocalStorageGet(`defaultDescription_${selectedAdAccount.id}_${campaignCacheId}`);
+        const savedCta = safeLocalStorageGet(`defaultCta_${selectedAdAccount.id}_${campaignCacheId}`);
+
+        let savedHeadlines = null;
+        if (savedHeadlinesRaw) {
+            try {
+                const parsed = JSON.parse(savedHeadlinesRaw);
+                if (Array.isArray(parsed) && parsed.length > 0) savedHeadlines = parsed;
+            } catch (e) { console.error('Error parsing saved headlines', e); }
         }
+
+        let savedBodies = null;
+        if (savedBodiesRaw) {
+            try {
+                const parsed = JSON.parse(savedBodiesRaw);
+                if (Array.isArray(parsed) && parsed.length > 0) savedBodies = parsed;
+            } catch (e) { console.error('Error parsing saved bodies', e); }
+        }
+
+        if (!cacheChanged && !savedUrl && !savedHeadlines && !savedBodies && !savedDescription && !savedCta) {
+            return;
+        }
+
+        setCreativeData(prev => {
+            // pageId/instagramId are intentionally excluded from the clear — they're
+            // account-scoped, not campaign-scoped.
+            const base = cacheChanged
+                ? { ...prev, headlines: [''], bodies: [''], description: '', cta: 'LEARN_MORE', websiteUrl: '' }
+                : prev;
+
+            return {
+                ...base,
+                websiteUrl: !base.websiteUrl && savedUrl ? savedUrl : base.websiteUrl,
+                headlines: !base.headlines[0] && savedHeadlines ? savedHeadlines : base.headlines,
+                bodies: !base.bodies[0] && savedBodies ? savedBodies : base.bodies,
+                description: !base.description && savedDescription ? savedDescription : base.description,
+                cta: !base.cta && savedCta ? savedCta : base.cta
+            };
+        });
     }, [selectedAdAccount, campaignCacheId]);
 
     // Fetch pages when ad account is selected
@@ -250,7 +339,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
 
             // If no page is selected and we have pages, select the first one (or the last used one if it exists in the list)
             if (fetchedPages.length > 0 && !creativeData.pageId) {
-                const lastUsedPageId = localStorage.getItem(`lastUsedPageId_${selectedAdAccount.id}`);
+                const lastUsedPageId = safeLocalStorageGet(`lastUsedPageId_${selectedAdAccount.id}`);
                 const pageToSelect = fetchedPages.find(p => p.id === lastUsedPageId) || fetchedPages[0];
                 handlePageSelection(pageToSelect.id, fetchedPages);
             } else if (fetchedPages.length === 0) {
@@ -274,45 +363,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             instagramId: selectedPage ? selectedPage.instagramId : null
         }));
         if (selectedAdAccount) {
-            localStorage.setItem(`lastUsedPageId_${selectedAdAccount.id}`, pageId);
+            safeLocalStorageSet(`lastUsedPageId_${selectedAdAccount.id}`, pageId);
         }
     };
-
-    // Load saved creative fields from local storage for this ad account + campaign
-    useEffect(() => {
-        if (selectedAdAccount) {
-            const savedHeadlines = localStorage.getItem(`defaultHeadlines_${selectedAdAccount.id}_${campaignCacheId}`);
-            const savedBodies = localStorage.getItem(`defaultBodies_${selectedAdAccount.id}_${campaignCacheId}`);
-            const savedDescription = localStorage.getItem(`defaultDescription_${selectedAdAccount.id}_${campaignCacheId}`);
-            const savedCta = localStorage.getItem(`defaultCta_${selectedAdAccount.id}_${campaignCacheId}`);
-
-            if (savedHeadlines && !creativeData.headlines[0]) {
-                try {
-                    const parsedHeadlines = JSON.parse(savedHeadlines);
-                    if (Array.isArray(parsedHeadlines) && parsedHeadlines.length > 0) {
-                        setCreativeData(prev => ({ ...prev, headlines: parsedHeadlines }));
-                    }
-                } catch (e) { console.error('Error parsing saved headlines', e); }
-            }
-
-            if (savedBodies && !creativeData.bodies[0]) {
-                try {
-                    const parsedBodies = JSON.parse(savedBodies);
-                    if (Array.isArray(parsedBodies) && parsedBodies.length > 0) {
-                        setCreativeData(prev => ({ ...prev, bodies: parsedBodies }));
-                    }
-                } catch (e) { console.error('Error parsing saved bodies', e); }
-            }
-
-            if (savedDescription && !creativeData.description) {
-                setCreativeData(prev => ({ ...prev, description: savedDescription }));
-            }
-
-            if (savedCta && !creativeData.cta) {
-                setCreativeData(prev => ({ ...prev, cta: savedCta }));
-            }
-        }
-    }, [selectedAdAccount, campaignCacheId]);
 
     const handleInputChange = (field, value) => {
         setCreativeData(prev => ({
@@ -324,17 +377,17 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
 
         // Persist page ID
         if (field === 'pageId' && selectedAdAccount) {
-            localStorage.setItem(`lastUsedPageId_${selectedAdAccount.id}`, value);
+            safeLocalStorageSet(`lastUsedPageId_${selectedAdAccount.id}`, value);
         }
 
         // Persist description
         if (field === 'description' && selectedAdAccount) {
-            localStorage.setItem(`defaultDescription_${selectedAdAccount.id}_${campaignCacheId}`, value);
+            safeLocalStorageSet(`defaultDescription_${selectedAdAccount.id}_${campaignCacheId}`, value);
         }
 
         // Persist CTA
         if (field === 'cta' && selectedAdAccount) {
-            localStorage.setItem(`defaultCta_${selectedAdAccount.id}_${campaignCacheId}`, value);
+            safeLocalStorageSet(`defaultCta_${selectedAdAccount.id}_${campaignCacheId}`, value);
         }
     };
 
@@ -347,7 +400,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         }));
 
         if (selectedAdAccount) {
-            localStorage.setItem(`defaultBodies_${selectedAdAccount.id}_${campaignCacheId}`, JSON.stringify(newBodies));
+            safeLocalStorageSet(`defaultBodies_${selectedAdAccount.id}_${campaignCacheId}`, JSON.stringify(newBodies));
         }
     };
 
@@ -360,7 +413,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         }));
 
         if (selectedAdAccount) {
-            localStorage.setItem(`defaultHeadlines_${selectedAdAccount.id}_${campaignCacheId}`, JSON.stringify(newHeadlines));
+            safeLocalStorageSet(`defaultHeadlines_${selectedAdAccount.id}_${campaignCacheId}`, JSON.stringify(newHeadlines));
         }
     };
 
@@ -531,7 +584,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
 
         // Save URL to local storage for this ad account + campaign
         if (selectedAdAccount && creativeData.websiteUrl) {
-            localStorage.setItem(`defaultUrl_${selectedAdAccount.id}_${campaignCacheId}`, creativeData.websiteUrl);
+            safeLocalStorageSet(`defaultUrl_${selectedAdAccount.id}_${campaignCacheId}`, creativeData.websiteUrl);
         }
 
         onNext();

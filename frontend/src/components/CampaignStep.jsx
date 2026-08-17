@@ -1,8 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronRight, ChevronLeft, Check, Loader, Plus } from 'lucide-react';
-import { useCampaign } from '../context/CampaignContext';
+import { useCampaign, createDefaultCampaignData } from '../context/CampaignContext';
 import { useToast } from '../context/ToastContext';
 import { getCampaigns, createFacebookCampaign } from '../lib/facebookApi';
+
+// localStorage can throw (Safari private browsing, full storage) — the new caches
+// added alongside campaign/ad-set selection should never take down an otherwise
+// successful selection handler over a quota error.
+const safeLocalStorageGet = (key) => {
+    try {
+        return localStorage.getItem(key);
+    } catch (e) {
+        console.error('localStorage read failed', e);
+        return null;
+    }
+};
+
+const safeLocalStorageSet = (key, value) => {
+    try {
+        localStorage.setItem(key, value);
+    } catch (e) {
+        console.error('localStorage write failed', e);
+    }
+};
 
 const CAMPAIGN_OBJECTIVES = [
     { value: 'OUTCOME_SALES', label: 'Sales - Drive purchases and conversions' },
@@ -28,6 +48,11 @@ const CampaignStep = ({ onNext, onBack }) => {
     const [mode, setMode] = useState(campaignData.isExisting ? 'existing' : 'new');
     const [existingCampaigns, setExistingCampaigns] = useState([]);
     const [selectedCampaign, setSelectedCampaign] = useState(null);
+    // True only when the current selectedCampaign came from the auto-restore path
+    // (context match on remount, or the last-used-campaign localStorage fallback) —
+    // never from the user actually clicking a campaign row. Cleared the moment the
+    // user clicks any row themselves (including re-clicking the same one).
+    const [isAutoSelected, setIsAutoSelected] = useState(false);
     const [loading, setLoading] = useState(false);
     const [loadingCampaigns, setLoadingCampaigns] = useState(false);
 
@@ -48,16 +73,17 @@ const CampaignStep = ({ onNext, onBack }) => {
             const match = existingCampaigns.find(c => c.id === campaignData.fbCampaignId);
             if (match) {
                 setSelectedCampaign(match);
+                setIsAutoSelected(true);
                 return;
             }
         }
 
         if (selectedAdAccount) {
-            const lastId = localStorage.getItem('lastSelectedCampaignId_' + selectedAdAccount.id);
+            const lastId = safeLocalStorageGet('lastSelectedCampaignId_' + selectedAdAccount.id);
             if (lastId) {
                 const match = existingCampaigns.find(c => c.id === lastId);
                 if (match) {
-                    handleSelectExisting(match);
+                    handleSelectExisting(match, true);
                 }
             }
         }
@@ -78,8 +104,9 @@ const CampaignStep = ({ onNext, onBack }) => {
         }
     };
 
-    const handleSelectExisting = (campaign) => {
+    const handleSelectExisting = (campaign, isAuto = false) => {
         setSelectedCampaign(campaign);
+        setIsAutoSelected(isAuto);
 
         const dailyBudget = campaign.dailyBudget ? parseInt(campaign.dailyBudget) / 100 : 0;
         const lifetimeBudget = campaign.lifetimeBudget ? parseInt(campaign.lifetimeBudget) / 100 : 0;
@@ -100,7 +127,7 @@ const CampaignStep = ({ onNext, onBack }) => {
         });
 
         if (selectedAdAccount) {
-            localStorage.setItem('lastSelectedCampaignId_' + selectedAdAccount.id, campaign.id);
+            safeLocalStorageSet('lastSelectedCampaignId_' + selectedAdAccount.id, campaign.id);
         }
     };
 
@@ -174,12 +201,24 @@ const CampaignStep = ({ onNext, onBack }) => {
             <div className="flex gap-4 mb-6">
                 <button
                     onClick={() => {
+                        // If an existing campaign was selected (or we're leaving "existing"
+                        // mode), fully reset to a blank new-campaign form — otherwise the
+                        // name/budget/objective fields stay secretly pre-filled with the
+                        // previously-selected existing campaign's values. Don't reset if the
+                        // user was already in "new" mode with their own in-progress fields.
+                        const hadExistingSelection = mode === 'existing' || campaignData.isExisting;
                         setMode('new');
-                        setCampaignData(prev => ({
-                            ...prev,
-                            isExisting: false,
-                            fbCampaignId: null
-                        }));
+                        setSelectedCampaign(null);
+                        setIsAutoSelected(false);
+                        if (hadExistingSelection) {
+                            setCampaignData(createDefaultCampaignData());
+                        } else {
+                            setCampaignData(prev => ({
+                                ...prev,
+                                isExisting: false,
+                                fbCampaignId: null
+                            }));
+                        }
                     }}
                     className={`flex-1 p-4 rounded-xl border-2 transition-all ${mode === 'new'
                         ? 'border-amber-600 bg-amber-50'
@@ -234,6 +273,11 @@ const CampaignStep = ({ onNext, onBack }) => {
                                                     }`}>
                                                     {campaign.status}
                                                 </span>
+                                                {selectedCampaign?.id === campaign.id && isAutoSelected && (
+                                                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">
+                                                        Auto-selected from last use
+                                                    </span>
+                                                )}
                                             </div>
                                             <div className="text-sm text-gray-500 mt-1">
                                                 <span className="font-medium text-gray-700">
