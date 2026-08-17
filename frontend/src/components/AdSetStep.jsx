@@ -67,7 +67,10 @@ const AdSetStep = ({ onNext, onBack }) => {
     const { campaignData, adsetData, setAdsetData, selectedAdAccount } = useCampaign();
     const { showError, showWarning } = useToast();
     const isHECRestricted = (campaignData.specialAdCategories || []).some(c => HEC_CATEGORIES.has(c));
-    const [mode, setMode] = useState('new');
+    // Initialize from context, not a hardcoded default — see CampaignStep.jsx for why:
+    // this component unmounts/remounts on step navigation and adsetData.isExisting is
+    // the durable record of a prior "Use Existing" selection.
+    const [mode, setMode] = useState(adsetData.isExisting ? 'existing' : 'new');
     const [existingAdsets, setExistingAdsets] = useState([]);
     const [selectedAdset, setSelectedAdset] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -112,6 +115,32 @@ const AdSetStep = ({ onNext, onBack }) => {
             fetchExistingAdsets();
         }
     }, [mode, campaignData.id]);
+
+    // Restore the prior selection once the list loads: prefer the ad set already
+    // recorded in context (revisiting this step after a real selection), falling back
+    // to the last ad set used on this campaign (convenience auto-select, not a lock).
+    useEffect(() => {
+        if (mode !== 'existing' || existingAdsets.length === 0 || selectedAdset) return;
+
+        if (adsetData.isExisting && adsetData.fbAdsetId) {
+            const match = existingAdsets.find(a => a.id === adsetData.fbAdsetId);
+            if (match) {
+                setSelectedAdset(match);
+                return;
+            }
+        }
+
+        const campaignIdToUse = campaignData.fbCampaignId || campaignData.id;
+        if (campaignIdToUse) {
+            const lastId = localStorage.getItem('lastSelectedAdSetId_' + campaignIdToUse);
+            if (lastId) {
+                const match = existingAdsets.find(a => a.id === lastId);
+                if (match) {
+                    handleSelectExisting(match);
+                }
+            }
+        }
+    }, [existingAdsets, mode, adsetData.isExisting, adsetData.fbAdsetId, campaignData.fbCampaignId, campaignData.id]);
 
     useEffect(() => {
         if (selectedAdAccount) {
@@ -202,6 +231,11 @@ const AdSetStep = ({ onNext, onBack }) => {
             // Ensure targeting is preserved (it's usually 'targeting' in both)
             targeting: adset.targeting || {}
         });
+
+        const campaignIdToUse = campaignData.fbCampaignId || campaignData.id;
+        if (campaignIdToUse) {
+            localStorage.setItem('lastSelectedAdSetId_' + campaignIdToUse, adset.id);
+        }
     };
 
     const handleInputChange = (field, value) => {

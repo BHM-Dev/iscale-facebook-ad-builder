@@ -22,7 +22,10 @@ const BID_STRATEGIES = [
 const CampaignStep = ({ onNext, onBack }) => {
     const { campaignData, setCampaignData, selectedAdAccount, setSelectedAdAccount } = useCampaign();
     const { showError, showWarning } = useToast();
-    const [mode, setMode] = useState('new'); // 'new' or 'existing'
+    // Initialize from context, not a hardcoded default — CampaignStep unmounts/remounts
+    // when the wizard navigates between steps, and campaignData.isExisting is the only
+    // durable record of a prior "Use Existing" selection (local `mode` state is not).
+    const [mode, setMode] = useState(campaignData.isExisting ? 'existing' : 'new');
     const [existingCampaigns, setExistingCampaigns] = useState([]);
     const [selectedCampaign, setSelectedCampaign] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -34,6 +37,31 @@ const CampaignStep = ({ onNext, onBack }) => {
             fetchExistingCampaigns();
         }
     }, [mode, selectedAdAccount]);
+
+    // Restore the prior selection once the list loads: prefer the campaign already
+    // recorded in context (revisiting this step after a real selection), falling back
+    // to the last campaign used on this ad account (convenience auto-select, not a lock).
+    useEffect(() => {
+        if (mode !== 'existing' || existingCampaigns.length === 0 || selectedCampaign) return;
+
+        if (campaignData.isExisting && campaignData.fbCampaignId) {
+            const match = existingCampaigns.find(c => c.id === campaignData.fbCampaignId);
+            if (match) {
+                setSelectedCampaign(match);
+                return;
+            }
+        }
+
+        if (selectedAdAccount) {
+            const lastId = localStorage.getItem('lastSelectedCampaignId_' + selectedAdAccount.id);
+            if (lastId) {
+                const match = existingCampaigns.find(c => c.id === lastId);
+                if (match) {
+                    handleSelectExisting(match);
+                }
+            }
+        }
+    }, [existingCampaigns, mode, campaignData.isExisting, campaignData.fbCampaignId, selectedAdAccount]);
 
     const fetchExistingCampaigns = async () => {
         if (!selectedAdAccount) return;
@@ -70,6 +98,10 @@ const CampaignStep = ({ onNext, onBack }) => {
             fbCampaignId: campaign.id,
             isExisting: true
         });
+
+        if (selectedAdAccount) {
+            localStorage.setItem('lastSelectedCampaignId_' + selectedAdAccount.id, campaign.id);
+        }
     };
 
     const handleInputChange = (field, value) => {
