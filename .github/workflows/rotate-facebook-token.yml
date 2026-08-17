@@ -19,19 +19,19 @@ jobs:
             set -e
             cd /home/ubuntu/iscale-facebook-ad-builder
 
-            if [ -z “$NEW_TOKEN” ]; then
-              echo “::error::NEW_TOKEN env var is empty — refusing to write an empty token.”
+            if [ -z "$NEW_TOKEN" ]; then
+              echo "::error::NEW_TOKEN env var is empty — refusing to write an empty token."
               exit 1
             fi
 
-            cp .env “.env.bak.$(date +%s)”
+            cp .env ".env.bak.$(date +%s)"
 
-            NEW_TOKEN=“$NEW_TOKEN” python3 -c '
+            NEW_TOKEN="$NEW_TOKEN" python3 -c '
 import os
 
-path = “.env”
-new_token = os.environ[“NEW_TOKEN”]
-targets = (“FACEBOOK_ACCESS_TOKEN=“, “VITE_FACEBOOK_ACCESS_TOKEN=“)
+path = ".env"
+new_token = os.environ["NEW_TOKEN"]
+targets = ("FACEBOOK_ACCESS_TOKEN=", "VITE_FACEBOOK_ACCESS_TOKEN=")
 
 with open(path) as f:
     lines = f.readlines()
@@ -41,23 +41,23 @@ out = []
 for line in lines:
     matched = next((t for t in targets if line.startswith(t)), None)
     if matched:
-        out.append(f”{matched}{new_token}\n”)
+        out.append(f"{matched}{new_token}\n")
         seen.add(matched)
     else:
         out.append(line)
 
 for t in targets:
     if t not in seen:
-        out.append(f”{t}{new_token}\n”)
+        out.append(f"{t}{new_token}\n")
 
-with open(path, “w”) as f:
+with open(path, "w") as f:
     f.writelines(out)
 
-print(“Updated:“, “, “.join(t.rstrip(“=”) for t in targets))
+print("Updated:", ", ".join(t.rstrip("=") for t in targets))
 '
 
             docker compose -f docker-compose.prod.yml up -d backend
 
-            echo “Backend recreated with new token. Verify via /api/v1/version and a live test.”
+            echo "Backend recreated with new token. Verify via /api/v1/version and a live test."
         env:
           NEW_TOKEN: ${{ secrets.NEW_FACEBOOK_ACCESS_TOKEN }}
