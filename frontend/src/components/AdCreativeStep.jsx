@@ -1,6 +1,6 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image, BookOpen, Check, Layers } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
@@ -75,11 +75,6 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // before that id exists. The Facebook Page ID cache is intentionally NOT scoped this
     // way — a brand's Page is stable across its niches on the same account.
     const campaignCacheId = campaignData?.fbCampaignId || campaignData?.id || 'new';
-    // Tracks the previous campaignCacheId so we can tell "the campaign selection actually
-    // changed mid-session" apart from "this effect re-ran for an unrelated reason" — see
-    // the cache-load effect below, which is the root-cause fix for creative data leaking
-    // across campaigns when the user switches selection without a full page reload.
-    const prevCampaignCacheIdRef = useRef(campaignCacheId);
     const [pages, setPages] = useState([]);
     const [loadingPages, setLoadingPages] = useState(false);
 
@@ -260,25 +255,26 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // description, CTA — whenever the ad account or the effective campaign changes.
     //
     // Root cause this fixes: creativeData lives in CampaignContext, which stays
-    // mounted for the whole session. Switching from existing Campaign A to existing
-    // Campaign B mid-session (back to step 2, pick a different campaign) used to
-    // leave A's headlines/body/description/CTA/URL sitting in creativeData — every
-    // "only load if empty" guard below saw non-empty fields and never touched them,
-    // so A's copy silently carried into B's ads.
+    // mounted for the whole session, while AdCreativeStep itself is conditionally
+    // rendered by FacebookCampaigns ({currentStep === 4 && <AdCreativeStep .../>})
+    // and therefore fully unmounts/remounts every time the user leaves and
+    // re-enters step 4. That means there is never a meaningful "previous render"
+    // to diff against inside this component — a ref seeded with useRef(campaignCacheId)
+    // just re-initializes to the current value on every fresh mount, so comparing
+    // against it always reads as "unchanged" even when the user picked a totally
+    // different campaign back on step 2. (A prior fix attempted exactly that ref
+    // comparison and it does not work for this reason — confirmed via live
+    // browser repro: switch to a different existing campaign on step 2, return to
+    // step 4, and the previous campaign's headline/body/URL were still showing.)
     //
-    // Fix: track the previous campaignCacheId in a ref. When it actually changes
-    // (not just re-running for an unrelated reason), clear the campaign-scoped
-    // fields to blank in the SAME setCreativeData call that then loads the new
-    // campaign's own cached values (or leaves them blank if it has none). Doing
-    // the clear and the load in one state update avoids a stale read on the render
-    // where the switch happens — splitting them into two effects meant the load
-    // effect would see the previous render's now-stale (but not yet cleared)
-    // creativeData and skip loading B's values entirely.
+    // Fix: don't try to detect "did it change" at all. Every mount is authoritative
+    // for whatever campaignCacheId is current at that moment — unconditionally
+    // clear the campaign-scoped fields to blank and load strictly from that
+    // campaign's own cache (or leave them blank if it has none), in the same
+    // setCreativeData call so there's no render in between where stale data from
+    // a different campaign could flash on screen.
     useEffect(() => {
         if (!selectedAdAccount) return;
-
-        const cacheChanged = prevCampaignCacheIdRef.current !== campaignCacheId;
-        prevCampaignCacheIdRef.current = campaignCacheId;
 
         const savedUrl = safeLocalStorageGet(`defaultUrl_${selectedAdAccount.id}_${campaignCacheId}`);
         const savedHeadlinesRaw = safeLocalStorageGet(`defaultHeadlines_${selectedAdAccount.id}_${campaignCacheId}`);
@@ -302,26 +298,16 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             } catch (e) { console.error('Error parsing saved bodies', e); }
         }
 
-        if (!cacheChanged && !savedUrl && !savedHeadlines && !savedBodies && !savedDescription && !savedCta) {
-            return;
-        }
-
-        setCreativeData(prev => {
-            // pageId/instagramId are intentionally excluded from the clear — they're
-            // account-scoped, not campaign-scoped.
-            const base = cacheChanged
-                ? { ...prev, headlines: [''], bodies: [''], description: '', cta: 'LEARN_MORE', websiteUrl: '' }
-                : prev;
-
-            return {
-                ...base,
-                websiteUrl: !base.websiteUrl && savedUrl ? savedUrl : base.websiteUrl,
-                headlines: !base.headlines[0] && savedHeadlines ? savedHeadlines : base.headlines,
-                bodies: !base.bodies[0] && savedBodies ? savedBodies : base.bodies,
-                description: !base.description && savedDescription ? savedDescription : base.description,
-                cta: !base.cta && savedCta ? savedCta : base.cta
-            };
-        });
+        // pageId/instagramId are intentionally excluded here — they're
+        // account-scoped, not campaign-scoped (see the page-load effect above).
+        setCreativeData(prev => ({
+            ...prev,
+            websiteUrl: savedUrl || '',
+            headlines: savedHeadlines || [''],
+            bodies: savedBodies || [''],
+            description: savedDescription || '',
+            cta: savedCta || 'LEARN_MORE'
+        }));
     }, [selectedAdAccount, campaignCacheId]);
 
     // Fetch pages when ad account is selected
