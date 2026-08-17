@@ -105,7 +105,6 @@ export const AuthProvider = ({ children }) => {
                 await refreshAccessToken();
             } catch (err) {
                 // Silently fail - will retry on next interval or next API call
-                console.log('Background token refresh failed, will retry');
             }
         }, 6 * 24 * 60 * 60 * 1000); // 6 days in ms
 

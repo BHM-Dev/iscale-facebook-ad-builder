@@ -4,26 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image, BookOpen, Check, Layers } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
-
-// localStorage can throw (Safari private browsing, full storage) — the new caches
-// added alongside campaign-scoped creative defaults should never take down an
-// otherwise successful edit handler over a quota error.
-const safeLocalStorageGet = (key) => {
-    try {
-        return localStorage.getItem(key);
-    } catch (e) {
-        console.error('localStorage read failed', e);
-        return null;
-    }
-};
-
-const safeLocalStorageSet = (key, value) => {
-    try {
-        localStorage.setItem(key, value);
-    } catch (e) {
-        console.error('localStorage write failed', e);
-    }
-};
+import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -204,29 +185,17 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
 
     // Clear uploaded Ad Media when this mount belongs to a genuinely different
     // campaign than whatever `creatives` currently sit in shared CampaignContext
-    // state — same leak class as the text-field fix in the effect below, applied
-    // to images/videos.
+    // state (same leak class as the text-field cache effect below, applied to
+    // images/videos). Creatives have no localStorage cache to reload from — File/
+    // blob objects don't survive JSON serialization — so the only question here is
+    // whether to clear or leave alone, not what to reload.
     //
-    // Why this can't use the "unconditionally clear-then-reload from cache"
-    // approach used for headlines/bodies/description/CTA/URL: those are cached to
-    // localStorage per ad-account+campaign, so reloading from that cache on every
-    // mount is both simple and correct. Creatives have no such cache — File/blob
-    // objects don't survive JSON serialization, and a re-usable "default image"
-    // per campaign isn't something we're building (images aren't a meaningful
-    // default the way a headline template is; see task brief). So there's nothing
-    // to reload FROM — the only question is whether to clear or leave alone.
-    //
-    // A plain ref-based "did it change" comparison would fail here for the same
-    // reason it failed for the text fields: AdCreativeStep fully unmounts on every
-    // step-4 exit, so a ref re-initializes on each mount and can never see the
-    // previous value. The difference for creatives is that we don't need a ref at
-    // all — `creativeData` itself lives in CampaignContext, which stays mounted
-    // for the whole session, so we can stash the scope (ad account + campaign) the
-    // current `creatives` belong to directly on that object. That value survives
-    // this component unmounting/remounting, so "still on the same campaign, just
-    // navigated to another step and back" is reliably distinguishable from
-    // "picked a genuinely different campaign" — unlike a local ref, it doesn't
-    // reset just because the component remounted.
+    // AdCreativeStep fully unmounts/remounts on every step-4 exit/re-entry, so a
+    // local ref can never hold a "previous" value to diff against. Instead we
+    // stash the owning scope (ad account + campaign) directly on `creativeData`,
+    // which lives in CampaignContext and stays mounted for the whole session —
+    // that lets us tell "same campaign, just navigated back" apart from "picked a
+    // different campaign" regardless of this component's own mount lifecycle.
     useEffect(() => {
         if (!selectedAdAccount) return;
         const scopeId = `${selectedAdAccount.id}_${campaignCacheId}`;
@@ -300,25 +269,19 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // Load (or clear) campaign-scoped creative defaults — URL, headlines, bodies,
     // description, CTA — whenever the ad account or the effective campaign changes.
     //
-    // Root cause this fixes: creativeData lives in CampaignContext, which stays
-    // mounted for the whole session, while AdCreativeStep itself is conditionally
-    // rendered by FacebookCampaigns ({currentStep === 4 && <AdCreativeStep .../>})
-    // and therefore fully unmounts/remounts every time the user leaves and
-    // re-enters step 4. That means there is never a meaningful "previous render"
-    // to diff against inside this component — a ref seeded with useRef(campaignCacheId)
-    // just re-initializes to the current value on every fresh mount, so comparing
-    // against it always reads as "unchanged" even when the user picked a totally
-    // different campaign back on step 2. (A prior fix attempted exactly that ref
-    // comparison and it does not work for this reason — confirmed via live
-    // browser repro: switch to a different existing campaign on step 2, return to
-    // step 4, and the previous campaign's headline/body/URL were still showing.)
+    // AdCreativeStep is conditionally rendered by FacebookCampaigns
+    // ({currentStep === 4 && <AdCreativeStep .../>}) and fully unmounts/remounts
+    // every time the user leaves and re-enters step 4, while creativeData lives in
+    // CampaignContext and persists across that. So there is never a meaningful
+    // "previous render" inside this component to diff campaignCacheId against —
+    // any ref-based change detection re-initializes fresh on every mount and can
+    // never see a switch that happened while the component was unmounted.
     //
-    // Fix: don't try to detect "did it change" at all. Every mount is authoritative
-    // for whatever campaignCacheId is current at that moment — unconditionally
-    // clear the campaign-scoped fields to blank and load strictly from that
-    // campaign's own cache (or leave them blank if it has none), in the same
-    // setCreativeData call so there's no render in between where stale data from
-    // a different campaign could flash on screen.
+    // Given that, every mount must resolve fresh from the CURRENT scope rather
+    // than trying to diff against history: unconditionally clear the
+    // campaign-scoped fields and load strictly from that campaign's own cache (or
+    // blank if it has none), in the same setCreativeData call so no stale data
+    // from a different campaign can flash on screen first.
     useEffect(() => {
         if (!selectedAdAccount) return;
 

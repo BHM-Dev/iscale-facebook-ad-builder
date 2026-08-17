@@ -1,28 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronRight, ChevronLeft, Check, Loader, Plus } from 'lucide-react';
+import { ChevronRight, Check, Loader, Plus } from 'lucide-react';
 import { useCampaign, createDefaultCampaignData } from '../context/CampaignContext';
 import { useToast } from '../context/ToastContext';
-import { getCampaigns, createFacebookCampaign } from '../lib/facebookApi';
-
-// localStorage can throw (Safari private browsing, full storage) — the new caches
-// added alongside campaign/ad-set selection should never take down an otherwise
-// successful selection handler over a quota error.
-const safeLocalStorageGet = (key) => {
-    try {
-        return localStorage.getItem(key);
-    } catch (e) {
-        console.error('localStorage read failed', e);
-        return null;
-    }
-};
-
-const safeLocalStorageSet = (key, value) => {
-    try {
-        localStorage.setItem(key, value);
-    } catch (e) {
-        console.error('localStorage write failed', e);
-    }
-};
+import { getCampaigns } from '../lib/facebookApi';
+import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 
 const CAMPAIGN_OBJECTIVES = [
     { value: 'OUTCOME_SALES', label: 'Sales - Drive purchases and conversions' },
@@ -40,7 +21,7 @@ const BID_STRATEGIES = [
 ];
 
 const CampaignStep = ({ onNext, onBack }) => {
-    const { campaignData, setCampaignData, selectedAdAccount, setSelectedAdAccount } = useCampaign();
+    const { campaignData, setCampaignData, selectedAdAccount } = useCampaign();
     const { showError, showWarning } = useToast();
     // Initialize from context, not a hardcoded default — CampaignStep unmounts/remounts
     // when the wizard navigates between steps, and campaignData.isExisting is the only
@@ -48,11 +29,18 @@ const CampaignStep = ({ onNext, onBack }) => {
     const [mode, setMode] = useState(campaignData.isExisting ? 'existing' : 'new');
     const [existingCampaigns, setExistingCampaigns] = useState([]);
     const [selectedCampaign, setSelectedCampaign] = useState(null);
-    // True only when the current selectedCampaign came from the auto-restore path
-    // (context match on remount, or the last-used-campaign localStorage fallback) —
-    // never from the user actually clicking a campaign row. Cleared the moment the
-    // user clicks any row themselves (including re-clicking the same one).
-    const [isAutoSelected, setIsAutoSelected] = useState(false);
+    // Tracks how the current selectedCampaign was chosen:
+    //   'context' — restored from context (the user picked this same campaign earlier
+    //     in THIS editing session, then navigated away and back). Not a surprise to the
+    //     user, so no badge.
+    //   'cache'   — pulled from the cross-session localStorage fallback (a prior browser
+    //     session, or much earlier). The "Auto-selected from last use" badge exists to
+    //     flag specifically this case, since the tool reached back into an old decision
+    //     the user might not have meant to reuse this time.
+    //   null      — the user actually clicked a campaign row themselves.
+    // Cleared to null the moment the user clicks any row themselves (including
+    // re-clicking the same one).
+    const [autoSelectMode, setAutoSelectMode] = useState(null);
     const [loading, setLoading] = useState(false);
     const [loadingCampaigns, setLoadingCampaigns] = useState(false);
 
@@ -73,7 +61,7 @@ const CampaignStep = ({ onNext, onBack }) => {
             const match = existingCampaigns.find(c => c.id === campaignData.fbCampaignId);
             if (match) {
                 setSelectedCampaign(match);
-                setIsAutoSelected(true);
+                setAutoSelectMode('context');
                 return;
             }
         }
@@ -83,7 +71,7 @@ const CampaignStep = ({ onNext, onBack }) => {
             if (lastId) {
                 const match = existingCampaigns.find(c => c.id === lastId);
                 if (match) {
-                    handleSelectExisting(match, true);
+                    handleSelectExisting(match, 'cache');
                 }
             }
         }
@@ -104,9 +92,9 @@ const CampaignStep = ({ onNext, onBack }) => {
         }
     };
 
-    const handleSelectExisting = (campaign, isAuto = false) => {
+    const handleSelectExisting = (campaign, mode = null) => {
         setSelectedCampaign(campaign);
-        setIsAutoSelected(isAuto);
+        setAutoSelectMode(mode);
 
         const dailyBudget = campaign.dailyBudget ? parseInt(campaign.dailyBudget) / 100 : 0;
         const lifetimeBudget = campaign.lifetimeBudget ? parseInt(campaign.lifetimeBudget) / 100 : 0;
@@ -209,7 +197,7 @@ const CampaignStep = ({ onNext, onBack }) => {
                         const hadExistingSelection = mode === 'existing' || campaignData.isExisting;
                         setMode('new');
                         setSelectedCampaign(null);
-                        setIsAutoSelected(false);
+                        setAutoSelectMode(null);
                         if (hadExistingSelection) {
                             setCampaignData(createDefaultCampaignData());
                         } else {
@@ -273,7 +261,7 @@ const CampaignStep = ({ onNext, onBack }) => {
                                                     }`}>
                                                     {campaign.status}
                                                 </span>
-                                                {selectedCampaign?.id === campaign.id && isAutoSelected && (
+                                                {selectedCampaign?.id === campaign.id && autoSelectMode === 'cache' && (
                                                     <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">
                                                         Auto-selected from last use
                                                     </span>

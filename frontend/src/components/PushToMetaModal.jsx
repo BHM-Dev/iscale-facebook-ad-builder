@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Rocket, Loader, X, CheckCircle2, ExternalLink, PlusCircle, ListFilter } from 'lucide-react';
 import { getAdAccounts, getCampaigns, getAdSets, getPages, createCompleteAd, createFacebookAdSet, authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
+import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -81,11 +82,11 @@ export default function PushToMetaModal({
     const [adminAutoCollapsed, setAdminAutoCollapsed] = useState(false);
 
     const [pushForm, setPushForm] = useState({
-        adAccountId: localStorage.getItem('fb_ad_account_id') || '',
+        adAccountId: safeLocalStorageGet('fb_ad_account_id') || '',
         campaignId: '',
         adsetId: '',
-        pageId: localStorage.getItem('lastUsedPageId') || '',
-        websiteUrl: initialWebsiteUrl || localStorage.getItem('lastUsedWebsiteUrl') || '',
+        pageId: safeLocalStorageGet('lastUsedPageId') || '',
+        websiteUrl: initialWebsiteUrl || safeLocalStorageGet('lastUsedWebsiteUrl') || '',
         headline: initialHeadline,
         body: initialBody,
         cta: initialCta || 'LEARN_MORE',
@@ -135,7 +136,7 @@ export default function PushToMetaModal({
 
     // Auto-select campaign once the list loads (from initialCampaignId or last used)
     useEffect(() => {
-        const targetId = initialCampaignId || localStorage.getItem('lastUsedCampaignId') || '';
+        const targetId = initialCampaignId || safeLocalStorageGet('lastUsedCampaignId') || '';
         if (targetId && pushCampaigns.length > 0 && !pushForm.campaignId) {
             const match = pushCampaigns.find(c => c.id === targetId);
             if (match) {
@@ -329,10 +330,10 @@ export default function PushToMetaModal({
             }
 
             // Persist selections for next use
-            if (pushForm.pageId) localStorage.setItem('lastUsedPageId', pushForm.pageId);
-            if (pushForm.adAccountId) localStorage.setItem('fb_ad_account_id', pushForm.adAccountId);
-            if (pushForm.websiteUrl) localStorage.setItem('lastUsedWebsiteUrl', pushForm.websiteUrl);
-            if (pushForm.campaignId) localStorage.setItem('lastUsedCampaignId', pushForm.campaignId);
+            if (pushForm.pageId) safeLocalStorageSet('lastUsedPageId', pushForm.pageId);
+            if (pushForm.adAccountId) safeLocalStorageSet('fb_ad_account_id', pushForm.adAccountId);
+            if (pushForm.websiteUrl) safeLocalStorageSet('lastUsedWebsiteUrl', pushForm.websiteUrl);
+            if (pushForm.campaignId) safeLocalStorageSet('lastUsedCampaignId', pushForm.campaignId);
 
             setSuccessResult({
                 adId: result?.adId,

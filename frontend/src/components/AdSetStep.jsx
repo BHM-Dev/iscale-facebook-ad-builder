@@ -3,26 +3,7 @@ import { ChevronRight, Plus, Check, Loader, X } from 'lucide-react';
 import { useCampaign, createDefaultAdsetData } from '../context/CampaignContext';
 import { useToast } from '../context/ToastContext';
 import { getAdSets, getPixels, searchGeoLocations } from '../lib/facebookApi';
-
-// localStorage can throw (Safari private browsing, full storage) — the new caches
-// added alongside campaign/ad-set selection should never take down an otherwise
-// successful selection handler over a quota error.
-const safeLocalStorageGet = (key) => {
-    try {
-        return localStorage.getItem(key);
-    } catch (e) {
-        console.error('localStorage read failed', e);
-        return null;
-    }
-};
-
-const safeLocalStorageSet = (key, value) => {
-    try {
-        localStorage.setItem(key, value);
-    } catch (e) {
-        console.error('localStorage write failed', e);
-    }
-};
+import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 
 const OPTIMIZATION_GOALS = [
     { value: 'OFFSITE_CONVERSIONS', label: 'Sales/Purchases', description: 'Optimize for conversions on your website' },
@@ -93,11 +74,18 @@ const AdSetStep = ({ onNext, onBack }) => {
     const [mode, setMode] = useState(adsetData.isExisting ? 'existing' : 'new');
     const [existingAdsets, setExistingAdsets] = useState([]);
     const [selectedAdset, setSelectedAdset] = useState(null);
-    // True only when the current selectedAdset came from the auto-restore path
-    // (context match on remount, or the last-used-adset localStorage fallback) —
-    // never from the user actually clicking an ad set row. Cleared the moment the
-    // user clicks any row themselves (including re-clicking the same one).
-    const [isAutoSelected, setIsAutoSelected] = useState(false);
+    // Tracks how the current selectedAdset was chosen:
+    //   'context' — restored from context (the user picked this same ad set earlier
+    //     in THIS editing session, then navigated away and back). Not a surprise to the
+    //     user, so no badge.
+    //   'cache'   — pulled from the cross-session localStorage fallback (a prior browser
+    //     session, or much earlier). The "Auto-selected from last use" badge exists to
+    //     flag specifically this case, since the tool reached back into an old decision
+    //     the user might not have meant to reuse this time.
+    //   null      — the user actually clicked an ad set row themselves.
+    // Cleared to null the moment the user clicks any row themselves (including
+    // re-clicking the same one).
+    const [autoSelectMode, setAutoSelectMode] = useState(null);
     const [loading, setLoading] = useState(false);
     const [loadingAdSets, setLoadingAdSets] = useState(false);
     const [pixels, setPixels] = useState([]);
@@ -151,7 +139,7 @@ const AdSetStep = ({ onNext, onBack }) => {
             const match = existingAdsets.find(a => a.id === adsetData.fbAdsetId);
             if (match) {
                 setSelectedAdset(match);
-                setIsAutoSelected(true);
+                setAutoSelectMode('context');
                 return;
             }
         }
@@ -162,7 +150,7 @@ const AdSetStep = ({ onNext, onBack }) => {
             if (lastId) {
                 const match = existingAdsets.find(a => a.id === lastId);
                 if (match) {
-                    handleSelectExisting(match, true);
+                    handleSelectExisting(match, 'cache');
                 }
             }
         }
@@ -232,9 +220,9 @@ const AdSetStep = ({ onNext, onBack }) => {
         }
     };
 
-    const handleSelectExisting = (adset, isAuto = false) => {
+    const handleSelectExisting = (adset, mode = null) => {
         setSelectedAdset(adset);
-        setIsAutoSelected(isAuto);
+        setAutoSelectMode(mode);
 
         // Extract pixel and event from promoted_object if available
         let pixelId = '';
@@ -378,7 +366,7 @@ const AdSetStep = ({ onNext, onBack }) => {
                         const hadExistingSelection = mode === 'existing' || adsetData.isExisting;
                         setMode('new');
                         setSelectedAdset(null);
-                        setIsAutoSelected(false);
+                        setAutoSelectMode(null);
                         if (hadExistingSelection) {
                             setAdsetData(createDefaultAdsetData());
                         } else {
@@ -440,7 +428,7 @@ const AdSetStep = ({ onNext, onBack }) => {
                                                 }`}>
                                                 {adset.status}
                                             </span>
-                                            {selectedAdset?.id === adset.id && isAutoSelected && (
+                                            {selectedAdset?.id === adset.id && autoSelectMode === 'cache' && (
                                                 <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">
                                                     Auto-selected from last use
                                                 </span>

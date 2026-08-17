@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useEffect, useContext, useState } from 'react';
 import { authFetch } from '../lib/facebookApi';
+import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 
 const CampaignContext = createContext();
 
@@ -95,7 +96,7 @@ export const createDefaultAdsetData = () => ({
 });
 
 export const CampaignProvider = ({ children }) => {
-    const [activeAccountId, setActiveAccountIdState] = useState(() => localStorage.getItem('fb_ad_account_id') || '');
+    const [activeAccountId, setActiveAccountIdState] = useState(() => safeLocalStorageGet('fb_ad_account_id') || '');
     const [adAccounts, setAdAccounts] = useState([]);
     const [activeAccountLoading, setActiveAccountLoading] = useState(true);
 
@@ -130,7 +131,7 @@ export const CampaignProvider = ({ children }) => {
         const normalized = normalizeAccountId(accountId);
         setActiveAccountIdState(normalized);
         if (normalized) {
-            localStorage.setItem('fb_ad_account_id', normalized);
+            safeLocalStorageSet('fb_ad_account_id', normalized);
         } else {
             localStorage.removeItem('fb_ad_account_id');
         }
@@ -141,7 +142,7 @@ export const CampaignProvider = ({ children }) => {
 
         const resolveActiveAccount = async () => {
             setActiveAccountLoading(true);
-            const cached = normalizeAccountId(localStorage.getItem('fb_ad_account_id') || '');
+            const cached = normalizeAccountId(safeLocalStorageGet('fb_ad_account_id') || '');
 
             try {
                 const accountsResponse = await authFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'}/facebook/accounts`);
@@ -189,64 +190,6 @@ export const CampaignProvider = ({ children }) => {
         return () => { cancelled = true; };
     }, [normalizeAccountId, setActiveAccountId]);
 
-    const resetWizard = () => {
-        setCampaignData({
-            id: null,
-            name: '',
-            objective: 'OUTCOME_SALES',
-            budgetType: 'ABO',
-            budgetScheduleType: 'DAILY',
-            dailyBudget: 0,
-            lifetimeBudget: 0,
-            endTime: defaultEndTime(),
-            bidStrategy: '',
-            specialAdCategories: [],
-            status: 'PAUSED',
-            fbCampaignId: null,
-            isExisting: false
-        });
-        setAdsetData({
-            id: null,
-            name: '',
-            optimizationGoal: 'OFFSITE_CONVERSIONS',
-            budgetScheduleType: 'DAILY',
-            dailyBudget: 0,
-            lifetimeBudget: 0,
-            endTime: defaultEndTime(),
-            bidStrategy: 'LOWEST_COST_WITHOUT_CAP',
-            bidAmount: 0,
-            targeting: {
-                genders: [],
-                publisher_platforms: ['facebook', 'instagram'],
-                countries: ['US'],
-                ageMin: 18,
-                ageMax: 65
-            },
-            advantageAudience: 0,
-            startTime: defaultStartTime(),
-            pixelId: '',
-            conversionEvent: 'PURCHASE',
-            status: 'PAUSED',
-            fbAdsetId: null,
-            isExisting: false,
-            adScheduleEnabled: false,
-            adSchedule: []
-        });
-        setCreativeData({
-            creativeName: '',
-            creatives: [],
-            creativesScopeId: null,
-            bodies: ['', '', ''],
-            headlines: ['', '', ''],
-            description: '',
-            cta: 'LEARN_MORE',
-            websiteUrl: '',
-            pageId: ''
-        });
-        setAdsData([]);
-        setSelectedAdAccount(null);
-    };
-
     const value = {
         campaignData,
         setCampaignData,
@@ -261,8 +204,7 @@ export const CampaignProvider = ({ children }) => {
         activeAccountId,
         setActiveAccountId,
         adAccounts,
-        activeAccountLoading,
-        resetWizard
+        activeAccountLoading
     };
 
     return (

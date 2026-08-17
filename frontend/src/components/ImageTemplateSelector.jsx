@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Filter, Grid, List, Sparkles, Trash2, AlertTriangle } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
+import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -12,11 +13,11 @@ export default function ImageTemplateSelector({ onSelect, onClose, embedded = fa
     const [filters, setFilters] = useState({ categories: [], styles: [] });
     const [selectedCategory, setSelectedCategory] = useState('');
     const [selectedStyle, setSelectedStyle] = useState('');
-    const [viewMode, setViewMode] = useState(localStorage.getItem('preferred_view_mode') || 'grid'); // 'grid' or 'list'
+    const [viewMode, setViewMode] = useState(safeLocalStorageGet('preferred_view_mode') || 'grid'); // 'grid' or 'list'
 
     // Persist view mode preference
     useEffect(() => {
-        localStorage.setItem('preferred_view_mode', viewMode);
+        safeLocalStorageSet('preferred_view_mode', viewMode);
     }, [viewMode]);
 
     const [sortBy, setSortBy] = useState('newest'); // 'newest', 'oldest', 'name'

@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { getCampaigns, getAdSets, getPages, createCompleteAd, createFacebookAdSet, authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
+import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 
 const FB_API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1') + '/facebook';
 const GEN_ADS_API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1') + '/generated-ads';
@@ -33,14 +34,14 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     const { showError } = useToast();
 
     // Shared form fields
-    const [adAccountId, setAdAccountId] = useState(localStorage.getItem('fb_ad_account_id') || '');
+    const [adAccountId, setAdAccountId] = useState(safeLocalStorageGet('fb_ad_account_id') || '');
     const [campaigns, setCampaigns] = useState([]);
     const [selectedCampaignId, setSelectedCampaignId] = useState('');
     const [selectedCampaign, setSelectedCampaign] = useState(null);
     const [adSets, setAdSets] = useState([]);
     const [pages, setPages] = useState([]);
-    const [pageId, setPageId] = useState(localStorage.getItem('lastUsedPageId') || '');
-    const [websiteUrl, setWebsiteUrl] = useState(preselectedWebsiteUrl || localStorage.getItem('lastUsedWebsiteUrl') || '');
+    const [pageId, setPageId] = useState(safeLocalStorageGet('lastUsedPageId') || '');
+    const [websiteUrl, setWebsiteUrl] = useState(preselectedWebsiteUrl || safeLocalStorageGet('lastUsedWebsiteUrl') || '');
     const [fieldErrors, setFieldErrors] = useState({});
     const [sharedCta, setSharedCta] = useState(() => {
         // Default to the most common CTA across items so the dropdown reflects what Joel already chose
@@ -90,7 +91,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                     if (cfg?.ad_account_id) {
                         acctId = cfg.ad_account_id;
                         setAdAccountId(acctId);
-                        localStorage.setItem('fb_ad_account_id', acctId);
+                        safeLocalStorageSet('fb_ad_account_id', acctId);
                     }
                 } catch (_) { /* fall through — user can type it */ }
             }
@@ -286,9 +287,9 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
         }
 
         // Persist for next time
-        if (pageId) localStorage.setItem('lastUsedPageId', pageId);
-        if (adAccountId) localStorage.setItem('fb_ad_account_id', adAccountId);
-        if (websiteUrl) localStorage.setItem('lastUsedWebsiteUrl', websiteUrl);
+        if (pageId) safeLocalStorageSet('lastUsedPageId', pageId);
+        if (adAccountId) safeLocalStorageSet('fb_ad_account_id', adAccountId);
+        if (websiteUrl) safeLocalStorageSet('lastUsedWebsiteUrl', websiteUrl);
         if (selectedCampaignId) sessionStorage.setItem('lastUsedCampaignId', selectedCampaignId);
 
         setPushing(false);

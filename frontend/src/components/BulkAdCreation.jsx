@@ -44,9 +44,6 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             });
 
             setAdsData(permutations);
-            const imageCount = creativeData.creatives.filter(c => c.mediaType !== 'video').length;
-            const videoCount = creativeData.creatives.filter(c => c.mediaType === 'video').length;
-            console.log(`Generated ${permutations.length} ad permutations (${imageCount} images + ${videoCount} videos × ${validHeadlines.length} headlines × ${validBodies.length} bodies)`);
         } else {
             // Fallback if no creatives (shouldn't happen due to validation)
             setAdsData([]);

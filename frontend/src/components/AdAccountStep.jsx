@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { ChevronRight, Loader, Building2, CreditCard, TrendingUp, Calendar, DollarSign, AlertCircle } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { getAdAccounts } from '../lib/facebookApi';
+import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 
 const AdAccountStep = ({ onNext }) => {
     const { showWarning } = useToast();
@@ -25,7 +26,7 @@ const AdAccountStep = ({ onNext }) => {
             setAdAccounts(accounts);
 
             // Try to restore last selected account from localStorage
-            const lastAccountId = localStorage.getItem('lastSelectedAdAccountId');
+            const lastAccountId = safeLocalStorageGet('lastSelectedAdAccountId');
             if (lastAccountId) {
                 const lastAccount = accounts.find(a => a.id === lastAccountId);
                 if (lastAccount) {
@@ -59,7 +60,7 @@ const AdAccountStep = ({ onNext }) => {
         setShowDropdown(false);
         // Save to localStorage for next time
         if (account) {
-            localStorage.setItem('lastSelectedAdAccountId', account.id);
+            safeLocalStorageSet('lastSelectedAdAccountId', account.id);
         }
     };
 

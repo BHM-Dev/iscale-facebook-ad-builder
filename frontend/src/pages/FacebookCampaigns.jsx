@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Check, Target, Users, Image as ImageIcon, Zap, CheckCircle, CreditCard, Megaphone, CheckCircle2, ArrowRight } from 'lucide-react';
-import { CampaignProvider, useCampaign } from '../context/CampaignContext';
+import { Check, Target, Users, Image as ImageIcon, CreditCard, Megaphone, CheckCircle2 } from 'lucide-react';
+import { CampaignProvider } from '../context/CampaignContext';
 import AdAccountStep from '../components/AdAccountStep';
 import CampaignStep from '../components/CampaignStep';
 import AdSetStep from '../components/AdSetStep';
@@ -32,7 +32,6 @@ const BatchModeToggle = ({ batchMode, setBatchMode }) => (
 );
 
 const FacebookCampaignWizardInner = () => {
-    const { creativeData } = useCampaign();
     const [currentStep, setCurrentStep] = useState(1);
     const [batchMode, setBatchMode] = useState('combinations'); // 'combinations' | 'match-import'
     const [formData, setFormData] = useState({
@@ -60,28 +59,6 @@ const FacebookCampaignWizardInner = () => {
     const handleBack = () => {
         if (currentStep > 1) {
             setCurrentStep(currentStep - 1);
-        }
-    };
-
-    // Placeholder for validation logic
-    const isStepValid = () => {
-        switch (currentStep) {
-            case 1: return !!formData.adAccountId;
-            case 2: return !!formData.campaignId;
-            case 3: return !!formData.adSetId;
-            case 4:
-                // Not mode-aware: the real step-4 gate lives in AdCreativeStep's own
-                // handleNext, which already branches on isMatchImport. This is a
-                // generic fallback only — see BulkMatchImport.jsx / AdCreativeStep.jsx.
-                return !!(
-                    creativeData.creativeName &&
-                    creativeData.pageId &&
-                    creativeData.websiteUrl &&
-                    creativeData.creatives && creativeData.creatives.length > 0 &&
-                    creativeData.headlines[0] && creativeData.headlines[0].trim() &&
-                    creativeData.bodies[0] && creativeData.bodies[0].trim()
-                );
-            default: return true;
         }
     };
 
