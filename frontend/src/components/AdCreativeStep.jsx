@@ -213,13 +213,17 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         }
     }, []);
 
-    // Load last used page ID on mount
+    // Load last used page ID on mount — scoped per ad account. This used to be
+    // a single flat global key, which meant switching ad accounts (different
+    // brands) could silently carry over a Page ID that belongs to a different
+    // brand entirely. Same leak class as the campaign-scoped caches below.
     useEffect(() => {
-        const lastUsedPageId = localStorage.getItem('lastUsedPageId');
+        if (!selectedAdAccount) return;
+        const lastUsedPageId = localStorage.getItem(`lastUsedPageId_${selectedAdAccount.id}`);
         if (lastUsedPageId && !creativeData.pageId) {
             handleInputChange('pageId', lastUsedPageId);
         }
-    }, []);
+    }, [selectedAdAccount]);
 
     // Load default URL from local storage for this ad account + campaign
     useEffect(() => {
@@ -246,7 +250,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
 
             // If no page is selected and we have pages, select the first one (or the last used one if it exists in the list)
             if (fetchedPages.length > 0 && !creativeData.pageId) {
-                const lastUsedPageId = localStorage.getItem('lastUsedPageId');
+                const lastUsedPageId = localStorage.getItem(`lastUsedPageId_${selectedAdAccount.id}`);
                 const pageToSelect = fetchedPages.find(p => p.id === lastUsedPageId) || fetchedPages[0];
                 handlePageSelection(pageToSelect.id, fetchedPages);
             } else if (fetchedPages.length === 0) {
@@ -269,7 +273,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             pageId,
             instagramId: selectedPage ? selectedPage.instagramId : null
         }));
-        localStorage.setItem('lastUsedPageId', pageId);
+        if (selectedAdAccount) {
+            localStorage.setItem(`lastUsedPageId_${selectedAdAccount.id}`, pageId);
+        }
     };
 
     // Load saved creative fields from local storage for this ad account + campaign
@@ -317,8 +323,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         }));
 
         // Persist page ID
-        if (field === 'pageId') {
-            localStorage.setItem('lastUsedPageId', value);
+        if (field === 'pageId' && selectedAdAccount) {
+            localStorage.setItem(`lastUsedPageId_${selectedAdAccount.id}`, value);
         }
 
         // Persist description
