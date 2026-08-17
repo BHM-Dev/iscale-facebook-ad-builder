@@ -763,13 +763,17 @@ class FacebookService:
         only for the standard image/link path — never video, never lead-gen,
         which this feature does not touch), the creative is built with an
         `asset_feed_spec` instead of a plain `link_data` image so Feed shows
-        the square (`image_hash`) and Stories/Reels shows the vertical
+        the square (`image_hash`) and Story shows the vertical
         (`secondary_image_hash`) — both placements live together with the
-        same copy, per Meta's asset-feed-spec + asset_customization_rules
-        docs (developers.facebook.com/docs/marketing-api/reference/ad-asset-feed-spec/
-        and .../ad-asset-feed-spec-asset-customization-rule/). This is
+        same copy. The two `customization_spec` position values used
+        (`facebook_positions`/`instagram_positions`: `feed`/`stream` and
+        `story`/`story`) are confirmed-documented values per Meta's
+        asset-feed-spec + asset_customization_rules docs
+        (developers.facebook.com/docs/marketing-api/reference/ad-asset-feed-spec/
+        and .../ad-asset-feed-spec-asset-customization-rule/) — Reels-specific
+        values are intentionally not included (see comment below). This is
         NOT a general dynamic-creative system — it always builds exactly
-        the two rules below (Feed+Stories/Reels), nothing else, and both
+        the two rules below (Feed+Story), nothing else, and both
         images are required together when this path is used. When
         `secondary_image_hash` is absent, behavior is byte-identical to
         before this feature — the plain `link_data` single-image path.
@@ -858,6 +862,7 @@ class FacebookService:
                 'titles': [{'text': headline}],
                 'link_urls': [{'website_url': website_url}],
                 'call_to_action_types': [cta],
+                **({'descriptions': [{'text': creative_data.get('description')}]} if creative_data.get('description') else {}),
                 'asset_customization_rules': [
                     {
                         'customization_spec': {
@@ -870,8 +875,17 @@ class FacebookService:
                     {
                         'customization_spec': {
                             'publisher_platforms': ['facebook', 'instagram'],
-                            'facebook_positions': ['story', 'facebook_reels'],
-                            'instagram_positions': ['story', 'reels'],
+                            # 'facebook_reels' / 'reels' deliberately left out: they are
+                            # not documented values for customization_spec on this field
+                            # (developers.facebook.com/docs/marketing-api/reference/
+                            # ad-asset-feed-spec-asset-customization-rule/) — that Reels
+                            # position family belongs to the ad-set-level `targeting`
+                            # field instead, which has different accepted values. Add
+                            # Reels-specific targeting here only once a documented value
+                            # for this field is confirmed; this is a deliberate omission,
+                            # not an oversight.
+                            'facebook_positions': ['story'],
+                            'instagram_positions': ['story'],
                         },
                         'image_label': {'name': 'story_image'},
                     },
@@ -1409,7 +1423,11 @@ class FacebookService:
                 'creative{title,body,call_to_action,image_url,thumbnail_url,'
                 'object_story_spec{link_data{picture,message,name,link},'
                 'video_data{image_url,message,title}},'
-                'asset_feed_spec}',
+                # images/link_urls requested explicitly — the new Bulk Match Import
+                # dual-placement creatives (asset_feed_spec, no link_data at all)
+                # need these to resolve an image/link at all; titles/bodies were
+                # already covered above.
+                'asset_feed_spec{images,link_urls,titles,bodies}}',
             ])
 
             creative = ad_data.get('creative', {})
@@ -1442,24 +1460,49 @@ class FacebookService:
             cta_obj = creative.get('call_to_action', {})
             cta_label = cta_obj.get('type') if isinstance(cta_obj, dict) else None
 
+            # asset_feed_spec fallback for the dual-placement (Bulk Match Import)
+            # creative shape, which has NO object_story_spec.link_data at all.
+            # Prefer the image labeled 'feed_image' (the square/Feed asset — the
+            # closest equivalent to what link_data.picture used to return);
+            # fall back to the first image in the list if no label matches.
+            # NOTE: Meta may only populate `hash` here, not `url`, unless `url`
+            # was explicitly requested/stored at creative-creation time — if so
+            # this resolves to None and we fall through to the 64×64 thumbnail
+            # below rather than crashing.
+            afs_images = afs.get('images', []) or []
+            afs_feed_image = next(
+                (img for img in afs_images if any(
+                    label.get('name') == 'feed_image' for label in (img.get('adlabels') or [])
+                )),
+                None
+            )
+            afs_image_url = (afs_feed_image or (afs_images[0] if afs_images else {})).get('url')
+
+            afs_link_urls = afs.get('link_urls', []) or []
+            afs_link_url = afs_link_urls[0].get('website_url') if afs_link_urls else None
+
             # Image URL resolution (largest available wins):
             # 1. object_story_spec.link_data.picture — full-size image (what we want for Remix/Iterate)
             # 2. object_story_spec.video_data.image_url — video thumbnail (reasonably sized)
-            # 3. creative.image_url — 64×64 thumbnail ONLY (avoid for kie.ai inputImage)
-            # 4. creative.thumbnail_url — video preview fallback
+            # 3. asset_feed_spec.images[].url — dual-placement creatives (see note above; may be absent)
+            # 4. creative.image_url — 64×64 thumbnail ONLY (avoid for kie.ai inputImage)
+            # 5. creative.thumbnail_url — video preview fallback
             image_url = (
                 oss.get('link_data', {}).get('picture') or
                 oss.get('video_data', {}).get('image_url') or
+                afs_image_url or
                 creative.get('image_url') or
                 creative.get('thumbnail_url')
             )
 
-            # Destination URL: link in link_data, or CTA value link
+            # Destination URL: link in link_data, CTA value link, or
+            # asset_feed_spec.link_urls[0].website_url (dual-placement creatives)
             cta_value = cta_obj.get('value', {}) if isinstance(cta_obj, dict) else {}
             link_url = (
                 oss.get('link_data', {}).get('link') or
                 cta_value.get('link') or
-                oss.get('video_data', {}).get('link_data', {}).get('link')
+                oss.get('video_data', {}).get('link_data', {}).get('link') or
+                afs_link_url
             )
 
             logger.info("Fetched creative for ad %s: headline=%s image=%s link=%s", fb_ad_id, headline, image_url, link_url)

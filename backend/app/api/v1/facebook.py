@@ -791,10 +791,12 @@ def save_ad_locally(
             fb_ad_id=ad_data.get('fbAdId'),
             fb_creative_id=ad_data.get('fbCreativeId'),
             # Bulk Match Import fields. secondary_image_url is the durable URL
-            # of the 9x16 asset the frontend already uploaded to Meta (see
-            # createCompleteAd/create_creative's asset_feed_spec path) for the
-            # Stories/Reels placement — stored here for traceability, matching
-            # what Meta actually received.
+            # of the 9x16 asset the frontend uploads to Meta via
+            # createCompleteAd/create_creative's asset_feed_spec path, for the
+            # Story placement — stored here for traceability. Not yet
+            # confirmed against a live Meta API response — pending live-test
+            # verification (see the url_tags comment in create_creative for
+            # the same caveat).
             secondary_image_url=ad_data.get('secondaryImageUrl'),
             ad_number=ad_data.get('adNumber')
         )

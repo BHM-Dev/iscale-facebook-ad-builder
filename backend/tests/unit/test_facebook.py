@@ -229,3 +229,79 @@ class TestFacebookServiceMocked:
         )
         # May or may not use the mock depending on implementation
         assert response.status_code != status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
+class TestCreateCreativeDualPlacement:
+    """Locks the backward-compatibility guarantee for create_creative's new
+    asset_feed_spec (dual-placement / Bulk Match Import) branch: no
+    secondary_image_hash must be byte-identical to pre-feature behavior, and
+    supplying one must produce the expected Feed+Story asset_feed_spec shape.
+    """
+
+    def _make_service_with_mock_account(self):
+        from app.services.facebook_service import FacebookService
+
+        service = FacebookService.__new__(FacebookService)  # skip __init__/env lookups
+        service.access_token = None
+        service.ad_account_id = None
+        service.api = None
+        service.account = MagicMock()
+        service.account.create_ad_creative.return_value = {"id": "creative_123"}
+        return service
+
+    def _base_creative_data(self):
+        return {
+            "page_id": "123456",
+            "image_hash": "feed_hash_abc",
+            "website_url": "https://example.com/offer",
+            "primary_text": "Body copy",
+            "headline": "Headline",
+            "cta": "LEARN_MORE",
+        }
+
+    def test_create_creative_without_secondary_image_no_asset_feed_spec(self):
+        """No secondary_image_hash → params must have no asset_feed_spec key at all."""
+        from facebook_business.adobjects.adcreative import AdCreative
+
+        service = self._make_service_with_mock_account()
+        service.create_creative(self._base_creative_data())
+
+        params = service.account.create_ad_creative.call_args.kwargs["params"]
+        assert AdCreative.Field.asset_feed_spec not in params
+        assert "link_data" in params[AdCreative.Field.object_story_spec]
+
+    def test_create_creative_with_secondary_image_builds_dual_placement_spec(self):
+        """secondary_image_hash present → expected asset_feed_spec shape, no link_data."""
+        from facebook_business.adobjects.adcreative import AdCreative
+
+        service = self._make_service_with_mock_account()
+        creative_data = {
+            **self._base_creative_data(),
+            "secondary_image_hash": "story_hash_xyz",
+            "description": "Some description",
+        }
+        service.create_creative(creative_data)
+
+        params = service.account.create_ad_creative.call_args.kwargs["params"]
+        oss = params[AdCreative.Field.object_story_spec]
+        assert "link_data" not in oss
+
+        afs = params[AdCreative.Field.asset_feed_spec]
+        image_labels = {
+            label["name"]
+            for img in afs["images"]
+            for label in img.get("adlabels", [])
+        }
+        assert image_labels == {"feed_image", "story_image"}
+        assert len(afs["images"]) == 2
+        assert len(afs["asset_customization_rules"]) == 2
+        assert afs["descriptions"] == [{"text": "Some description"}]
+
+        rule_by_label = {
+            rule["image_label"]["name"]: rule["customization_spec"]
+            for rule in afs["asset_customization_rules"]
+        }
+        assert rule_by_label["feed_image"]["facebook_positions"] == ["feed"]
+        assert rule_by_label["feed_image"]["instagram_positions"] == ["stream"]
+        assert rule_by_label["story_image"]["facebook_positions"] == ["story"]
+        assert rule_by_label["story_image"]["instagram_positions"] == ["story"]

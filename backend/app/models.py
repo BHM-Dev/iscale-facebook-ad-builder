@@ -262,10 +262,12 @@ class FacebookAd(Base):
     fb_ad_id = Column(String, nullable=True)
     fb_creative_id = Column(String, nullable=True)
     # Bulk Match Import fields. secondary_image_url stores the durable URL of
-    # the matched 9x16 asset — it IS sent to Meta (as the Stories/Reels
-    # placement image, alongside the 1x1 Feed image, via create_creative's
-    # asset_feed_spec path in facebook_service.py). ad_number traces the row
-    # back to the source batch's copy doc (e.g. "AD 12").
+    # the matched 9x16 asset — it is sent to Meta via create_creative's
+    # asset_feed_spec path (Story placement image, alongside the 1x1 Feed
+    # image) in facebook_service.py. Not yet confirmed against a live Meta
+    # API response — pending live-test verification (see the url_tags
+    # comment in create_creative for the same caveat). ad_number traces the
+    # row back to the source batch's copy doc (e.g. "AD 12").
     secondary_image_url = Column(String, nullable=True)
     ad_number = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

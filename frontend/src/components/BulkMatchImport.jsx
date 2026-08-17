@@ -365,7 +365,24 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                 throw err;
             }
 
-            // ── Step 2: Ad Set — single feed ad set (no placement customization) ──
+            // ── Step 2: Ad Set — single ad set, placement-locked to exactly the two
+            // placements every creative in this batch customizes (Feed + Story).
+            // Every ad here uses the dual-placement asset_feed_spec creative (see
+            // create_creative's asset_customization_rules), so leaving targeting at
+            // its default (broad publisher_platforms / Advantage+ placements) would
+            // let Meta serve these into placements the creative doesn't cover
+            // (Marketplace, Explore, Right Hand Column, etc.) — the exact "wrong
+            // image in wrong placement" failure this feature exists to prevent.
+            // Mirrors the feedTargeting/storiesTargeting overlay pattern in
+            // BulkAdCreation.jsx, collapsed to one ad set since both placements
+            // ship together on every ad here (not split feed-only/stories-only).
+            const dualPlacementTargeting = {
+                ...adsetData.targeting,
+                publisher_platforms: ['facebook', 'instagram'],
+                facebook_positions: ['feed', 'story'],
+                instagram_positions: ['stream', 'story']
+            };
+
             let fbAdsetId = adsetData.fbAdsetId;
             if (!adsetData.isExisting) {
                 setProgress((prev) => ({ ...prev, status: 'Creating ad set on Facebook...' }));
@@ -375,7 +392,8 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                         bidStrategy: campaignData.bidStrategy,
                         bidAmount: campaignData.bidAmount
                     }),
-                    specialAdCategories: campaignData.specialAdCategories || []
+                    specialAdCategories: campaignData.specialAdCategories || [],
+                    targeting: dualPlacementTargeting
                 };
                 fbAdsetId = await createFacebookAdSet(adsetPayload, fbCampaignId, selectedAdAccount.accountId, campaignData.budgetType);
             }
@@ -583,8 +601,12 @@ const BulkMatchImport = ({ onNext, onBack }) => {
             <h2 className="text-2xl font-bold mb-2">Match by Naming Convention</h2>
             <p className="text-gray-600 mb-6">
                 Upload a copy CSV and an image folder. Rows are matched by ad number (<code className="bg-gray-100 px-1 rounded">AD 1</code> ↔{' '}
-                <code className="bg-gray-100 px-1 rounded">ad1-slug-1x1.png</code>). Both a <strong>1x1</strong> (Feed) and a <strong>9x16</strong> (Stories/Reels)
+                <code className="bg-gray-100 px-1 rounded">ad1-slug-1x1.png</code>). Both a <strong>1x1</strong> (Feed) and a <strong>9x16</strong> (Story)
                 image are required per ad — Meta publishes both placements together with the same copy. Only <strong>Ready</strong> rows are created.
+            </p>
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-6">
+                <strong>9x16 is now required for every ad</strong> (previously optional) — both images must be present for a row to be Ready.
+                Re-running a batch that only had 1x1 images before will show new "Missing 9x16" rows; that's expected, not a bug.
             </p>
 
             {!loading ? (
