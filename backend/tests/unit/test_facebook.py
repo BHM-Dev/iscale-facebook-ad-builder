@@ -271,7 +271,7 @@ class TestCreateCreativeDualPlacement:
         assert "link_data" in params[AdCreative.Field.object_story_spec]
 
     def test_create_creative_with_secondary_image_builds_dual_placement_spec(self):
-        """secondary_image_hash + explicit instagram_actor_id → expected asset_feed_spec
+        """secondary_image_hash + explicit instagram_user_id → expected asset_feed_spec
         shape, no link_data, both placements include Instagram positions."""
         from facebook_business.adobjects.adcreative import AdCreative
 
@@ -280,14 +280,15 @@ class TestCreateCreativeDualPlacement:
             **self._base_creative_data(),
             "secondary_image_hash": "story_hash_xyz",
             "description": "Some description",
-            "instagram_actor_id": "ig_actor_789",
+            "instagram_user_id": "ig_user_789",
         }
         service.create_creative(creative_data)
 
         params = service.account.create_ad_creative.call_args.kwargs["params"]
         oss = params[AdCreative.Field.object_story_spec]
         assert "link_data" not in oss
-        assert oss["instagram_actor_id"] == "ig_actor_789"
+        assert oss["instagram_user_id"] == "ig_user_789"
+        assert "instagram_actor_id" not in oss
 
         afs = params[AdCreative.Field.asset_feed_spec]
         image_labels = {
@@ -312,33 +313,52 @@ class TestCreateCreativeDualPlacement:
         assert rule_by_label["story_image"]["publisher_platforms"] == ["facebook", "instagram"]
 
     def test_create_creative_with_secondary_image_no_instagram_account_falls_back_to_facebook_only(self):
-        """secondary_image_hash present, no instagram_actor_id given and the page lookup
+        """secondary_image_hash present, no instagram_user_id given and the page lookup
         finds no linked IG account (mocked to return None) → asset_customization_rules
         must drop instagram_positions and publisher_platforms entirely, not error or
         silently send Meta an invalid instagram_positions with no actor. This is the
         real production bug confirmed live 2026-08-17: Meta accepts the creative (200)
         but rejects the subsequent ad-create call with "Select an Instagram account or
         a Facebook Page to represent your business on Instagram." when
-        instagram_positions is declared without instagram_actor_id.
+        instagram_positions is declared without an Instagram user id.
         """
         from facebook_business.adobjects.adcreative import AdCreative
 
         service = self._make_service_with_mock_account()
-        service._get_page_instagram_actor_id = MagicMock(return_value=None)
+        service._get_page_instagram_user_id = MagicMock(return_value=None)
         creative_data = {
             **self._base_creative_data(),
             "secondary_image_hash": "story_hash_xyz",
         }
         service.create_creative(creative_data)
 
-        service._get_page_instagram_actor_id.assert_called_once_with("123456")
+        service._get_page_instagram_user_id.assert_called_once_with("123456")
 
         params = service.account.create_ad_creative.call_args.kwargs["params"]
         oss = params[AdCreative.Field.object_story_spec]
         assert "instagram_actor_id" not in oss
+        assert "instagram_user_id" not in oss
 
         afs = params[AdCreative.Field.asset_feed_spec]
         for rule in afs["asset_customization_rules"]:
             spec = rule["customization_spec"]
             assert "instagram_positions" not in spec
             assert spec["publisher_platforms"] == ["facebook"]
+
+    def test_create_creative_accepts_legacy_instagram_actor_id_as_input_alias_only(self):
+        """Old callers can still pass instagram_actor_id, but Meta receives only
+        object_story_spec.instagram_user_id."""
+        from facebook_business.adobjects.adcreative import AdCreative
+
+        service = self._make_service_with_mock_account()
+        creative_data = {
+            **self._base_creative_data(),
+            "secondary_image_hash": "story_hash_xyz",
+            "instagram_actor_id": "legacy_ig_id",
+        }
+        service.create_creative(creative_data)
+
+        params = service.account.create_ad_creative.call_args.kwargs["params"]
+        oss = params[AdCreative.Field.object_story_spec]
+        assert oss["instagram_user_id"] == "legacy_ig_id"
+        assert "instagram_actor_id" not in oss

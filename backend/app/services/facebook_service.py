@@ -762,18 +762,17 @@ class FacebookService:
 
         return thumbnails
 
-    def _get_page_instagram_actor_id(self, page_id):
+    def _get_page_instagram_user_id(self, page_id):
         """Look up the Instagram Business Account connected to a Facebook Page.
 
-        Meta requires `instagram_actor_id` on the creative whenever
-        `asset_customization_rules` declares any `instagram_positions` (dual-
-        placement / Bulk Match Import creatives) — without it, ad CREATION
-        (not creative creation, which succeeds) fails with "Select an
-        Instagram account or a Facebook Page to represent your business on
-        Instagram." Confirmed live 2026-08-17. Returns None (never raises) if
-        the page has no linked IG account or the lookup itself fails — the
-        caller falls back to a Facebook-only placement rather than blocking
-        ad creation entirely.
+        Meta's v22+ Marketing API replaces the legacy `instagram_actor_id`
+        creative field with `instagram_user_id`. The Page edge still returns
+        the connected Instagram Business Account object/id, and that same id is
+        the value Meta expects in `object_story_spec.instagram_user_id`.
+
+        Returns None (never raises) if the page has no linked IG account or the
+        lookup itself fails — the caller falls back to a Facebook-only placement
+        rather than blocking ad creation entirely.
         """
         try:
             from facebook_business.adobjects.page import Page
@@ -788,13 +787,13 @@ class FacebookService:
             # degrade every dual-placement ad to Facebook-only with no visibility,
             # indistinguishable from working-as-intended. Surface it loudly.
             code = e.api_error_code() if hasattr(e, 'api_error_code') and callable(e.api_error_code) else None
-            print(f"🚨 Instagram actor lookup for page {page_id} failed with a Facebook API "
+            print(f"🚨 Instagram user lookup for page {page_id} failed with a Facebook API "
                   f"error (code {code}), not a clean 'no IG account' result — falling back to "
                   f"Facebook-only placement, but this may be a token/permission problem, not a "
                   f"genuine missing IG account: {e}")
             return None
         except Exception as e:
-            print(f"⚠️  Instagram actor lookup failed for page {page_id}: {e}")
+            print(f"⚠️  Instagram user lookup failed for page {page_id}: {e}")
             return None
 
     def create_creative(self, creative_data, ad_account_id=None):
@@ -896,21 +895,20 @@ class FacebookService:
             # asset_feed_spec, per Meta's asset-feed-spec contract.
             object_story_spec = {'page_id': page_id}
 
-            # instagram_positions below requires instagram_actor_id on the
-            # creative, or Meta rejects AD creation (not creative creation —
-            # that succeeds either way) with "Select an Instagram account or
-            # a Facebook Page to represent your business on Instagram."
-            # Confirmed live 2026-08-17: creative POST returned 200, ad POST
-            # 502'd with exactly this error, on every dual-placement ad. Resolve
-            # the page's connected IG Business Account automatically since
-            # nothing upstream collects this from the user; if the page has no
-            # linked IG account, drop Instagram placement and keep Facebook
-            # Feed+Story only rather than failing the whole ad.
-            instagram_actor_id = creative_data.get('instagram_actor_id') or \
-                self._get_page_instagram_actor_id(page_id)
-            has_instagram = bool(instagram_actor_id)
+            # instagram_positions below requires an IG identity on the creative.
+            # Use Meta's v22+ field (`instagram_user_id`), while accepting the
+            # old input key as a compatibility alias only. Do not emit
+            # `instagram_actor_id`: current Graph versions reject it in
+            # object_story_spec.
+            instagram_user_id = (
+                creative_data.get('instagram_user_id')
+                or creative_data.get('instagramUserId')
+                or creative_data.get('instagram_actor_id')
+                or self._get_page_instagram_user_id(page_id)
+            )
+            has_instagram = bool(instagram_user_id)
             if has_instagram:
-                object_story_spec['instagram_actor_id'] = instagram_actor_id
+                object_story_spec['instagram_user_id'] = instagram_user_id
             else:
                 print(f"⚠️  Page {page_id} has no linked Instagram account — "
                       f"dual-placement creative will run Facebook-only (no Stories/Reels IG placement).")
@@ -971,8 +969,13 @@ class FacebookService:
                 }
             }
 
-        if creative_data.get('instagram_actor_id'):
-            object_story_spec['instagram_actor_id'] = creative_data['instagram_actor_id']
+        instagram_user_id = (
+            creative_data.get('instagram_user_id')
+            or creative_data.get('instagramUserId')
+            or creative_data.get('instagram_actor_id')
+        )
+        if instagram_user_id and 'instagram_user_id' not in object_story_spec:
+            object_story_spec['instagram_user_id'] = instagram_user_id
 
         params = {
             AdCreative.Field.name: creative_name,
