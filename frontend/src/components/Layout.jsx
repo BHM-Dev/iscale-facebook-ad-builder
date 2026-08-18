@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Package, Users, Video, Wand2, Settings, LogOut, Image, ShoppingBag, Target, ChevronLeft, ChevronRight, FileImage, Search, ChevronDown, UserCog, TrendingDown, Zap, Shuffle, PauseCircle, Megaphone, BookOpen, BriefcaseBusiness, DollarSign, FolderOpen } from 'lucide-react';
+import { LayoutDashboard, Package, Users, Video, Wand2, Settings, LogOut, Image, ShoppingBag, Target, ChevronLeft, ChevronRight, FileImage, Search, ChevronDown, UserCog, TrendingDown, Zap, Shuffle, PauseCircle, Megaphone, BookOpen, BriefcaseBusiness, DollarSign, FolderOpen, Library } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useBrands } from '../context/BrandContext';
@@ -39,7 +39,7 @@ export default function Layout() {
     const { showSuccess } = useToast();
     const { activeVerticalFilter, setActiveVerticalFilter } = useBrands();
     const { activeAccountId, setActiveAccountId, adAccounts, activeAccountLoading } = useCampaign();
-    const [expandedMenus, setExpandedMenus] = useState({ Brands: false, Research: false, Facebook: true, 'Build Creatives': true });
+    const [expandedMenus, setExpandedMenus] = useState({ Brands: false, Research: false, Facebook: true, 'Build Creatives': true, Libraries: true });
     const [isCollapsed, setIsCollapsed] = useState(false);
 
     const handleLogout = async () => {
@@ -79,8 +79,15 @@ export default function Layout() {
                 { label: 'Customer Profiles', path: '/profiles' }
             ]
         },
-        { icon: FileImage, label: 'Ad Library', path: '/generated-ads' },
-        { icon: FolderOpen, label: 'Creative Library', path: '/creative-library' },
+        {
+            icon: Library,
+            label: 'Libraries',
+            subItems: [
+                { label: 'Ad Library', path: '/generated-ads', icon: FileImage },
+                { label: 'Drive Imports', path: '/creative-library', icon: FolderOpen },
+                { label: 'Copy Library', path: '/copy-library', icon: BookOpen },
+            ]
+        },
         {
             icon: Target,
             label: 'Facebook',
@@ -90,7 +97,6 @@ export default function Layout() {
                 { label: 'Campaign Builder', path: '/facebook-campaigns',  icon: Megaphone },
             ]
         },
-        { icon: BookOpen, label: 'Copy Library', path: '/copy-library' },
     ];
 
     const toggleMenu = (label) => {

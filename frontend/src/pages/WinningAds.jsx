@@ -167,6 +167,8 @@ const WinningAds = () => {
                                             name: selectedTemplate.name,
                                             image_url: selectedTemplate.image_url,
                                             recreation_prompt: selectedTemplate.recreation_prompt || null,
+                                            copy_analysis: selectedTemplate.copy_analysis || null,
+                                            copy_patterns: selectedTemplate.copy_patterns || null,
                                         }));
                                         navigate('/ad-remix');
                                     }}

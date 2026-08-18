@@ -124,7 +124,7 @@ export default function CreativeLibrary() {
                   <FolderOpen size={20} />
                 </div>
                 <div>
-                  <h1 className="text-2xl font-semibold text-gray-900">Creative Library</h1>
+                  <h1 className="text-2xl font-semibold text-gray-900">Drive Imports</h1>
                   <p className="mt-1 text-sm text-gray-500">Google Drive creative synced into the Ad Builder asset store.</p>
                 </div>
               </div>

@@ -17,6 +17,12 @@ const formatResearchAngle = (angle) => {
         .replace(/\b\w/g, char => char.toUpperCase());
 };
 
+const formatCopyReference = (value) => {
+    if (!value) return '';
+    if (typeof value === 'string') return value;
+    return JSON.stringify(value, null, 2);
+};
+
 export default function AdRemix() {
     const { brands, customerProfiles } = useBrands();
     const { showError, showSuccess } = useToast();
@@ -150,6 +156,8 @@ export default function AdRemix() {
                     id: tmpl.id,
                     name: tmpl.name,
                     image_url: tmpl.image_url,
+                    copy_analysis: tmpl.copy_analysis || null,
+                    copy_patterns: tmpl.copy_patterns || null,
                     fromTemplate: true,
                 },
             }));
@@ -768,12 +776,37 @@ export default function AdRemix() {
 
             {/* Winning ad template banner — shown when launched from Browse Templates */}
             {winningAdTemplate && (
-                <div className="mb-4 flex items-center justify-between gap-3 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-sm">
-                    <div className="flex items-start gap-2">
+                <div className="mb-4 flex items-start justify-between gap-3 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-sm">
+                    <div className="flex flex-1 items-start gap-2">
                         <Star size={15} className="text-amber-500 mt-0.5 flex-shrink-0" />
-                        <span className="text-amber-800">
-                            Building from template: <strong>{winningAdTemplate.name}</strong>. Image pre-loaded — pick your brand below.
-                        </span>
+                        <div className="min-w-0 flex-1">
+                            <span className="text-amber-800">
+                                Building from template: <strong>{winningAdTemplate.name}</strong>. Image pre-loaded — pick your brand below.
+                            </span>
+                            {(wizardData.template?.copy_analysis || wizardData.template?.copy_patterns) && (
+                                <details className="mt-3 rounded-lg border border-amber-200 bg-white/70 p-3">
+                                    <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-amber-700">
+                                        Reference copy notes
+                                    </summary>
+                                    <div className="mt-3 space-y-3 text-xs leading-relaxed text-amber-900">
+                                        {wizardData.template?.copy_analysis && (
+                                            <div>
+                                                <div className="mb-1 font-semibold text-amber-800">Copy Analysis</div>
+                                                <p className="whitespace-pre-wrap">{formatCopyReference(wizardData.template.copy_analysis)}</p>
+                                            </div>
+                                        )}
+                                        {wizardData.template?.copy_patterns && (
+                                            <div>
+                                                <div className="mb-1 font-semibold text-amber-800">Copy Patterns</div>
+                                                <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-amber-100/60 p-2 font-sans">
+                                                    {formatCopyReference(wizardData.template.copy_patterns)}
+                                                </pre>
+                                            </div>
+                                        )}
+                                    </div>
+                                </details>
+                            )}
+                        </div>
                     </div>
                     <button
                         type="button"
