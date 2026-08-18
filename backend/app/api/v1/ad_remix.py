@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from typing import List
 import json
+import logging
 import re
 
 from app.database import get_db
@@ -22,16 +23,18 @@ from app.schemas.ad_blueprint import (
 from app.services.ad_remix_service import deconstruct_template, reconstruct_ad
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _SIMILARITY_NGRAM_SIZE = 6
 _SIMILARITY_RETRY_INSTRUCTION = """
 
 SIMILARITY GUARD RETRY:
 Your previous output was too similar to the third-party reference material.
-Rewrite the headline and body copy with completely different wording, sentence structure, and framing.
+Rewrite the headline, body copy, and CTA with completely different wording, sentence structure, and framing.
 Keep the same strategic pattern, audience, offer, and CTA logic, but do not reuse any 6-word phrase or close wording from the reference.
 """
 _SIMILARITY_WARNING = "Reference similarity warning: review copy before launch."
+_SIMILARITY_CTA_WARNING = "Reference similarity warning: CTA closely matches reference material."
 
 
 def _format_research_context(research_inspiration: dict | None) -> str:
@@ -128,6 +131,64 @@ def _normalize_similarity_words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", (text or "").lower())
 
 
+def _format_similarity_source(source_type: str, source_name: str = "") -> str:
+    """Create a short source label for warnings and debug logs."""
+    if source_type == "research":
+        return f"research competitor {source_name}".strip()
+    if source_type == "winning_ad":
+        return f"winning-ad reference {source_name}".strip()
+    return "reference material"
+
+
+def _stringify_reference_value(value) -> str:
+    if not value:
+        return ""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _build_similarity_sources(
+    research_inspiration: dict | None = None,
+    reference_copy_context: dict | None = None,
+) -> list[dict]:
+    """Build raw, untruncated corpora for similarity checks."""
+    sources = []
+
+    if research_inspiration:
+        advertiser = research_inspiration.get("advertiser") or "Unknown competitor"
+        reference_text = "\n".join([
+            research_inspiration.get("headline") or "",
+            research_inspiration.get("body") or "",
+            research_inspiration.get("cta") or "",
+        ]).strip()
+        if reference_text:
+            sources.append({
+                "type": "research",
+                "name": advertiser,
+                "label": _format_similarity_source("research", advertiser),
+                "text": reference_text,
+                "cta": research_inspiration.get("cta") or "",
+            })
+
+    if reference_copy_context:
+        reference_text = "\n".join([
+            _stringify_reference_value(reference_copy_context.get("copy_analysis")),
+            _stringify_reference_value(reference_copy_context.get("copy_patterns")),
+        ]).strip()
+        if reference_text:
+            name = reference_copy_context.get("name") or reference_copy_context.get("template_name") or ""
+            sources.append({
+                "type": "winning_ad",
+                "name": name,
+                "label": _format_similarity_source("winning_ad", name),
+                "text": reference_text,
+                "cta": reference_copy_context.get("cta") or "",
+            })
+
+    return sources
+
+
 def _shared_ngram_phrase(generated_text: str, reference_text: str, size: int = _SIMILARITY_NGRAM_SIZE) -> str | None:
     """Return a shared phrase when generated copy repeats a long reference phrase."""
     generated_words = _normalize_similarity_words(generated_text)
@@ -146,40 +207,94 @@ def _shared_ngram_phrase(generated_text: str, reference_text: str, size: int = _
     return None
 
 
-def _find_reference_similarity(ad_concept: AdConcept, reference_copy_context: dict | None) -> str | None:
-    """Check generated headline/body against formatted reference copy context."""
-    reference_text = _format_reference_copy_context(reference_copy_context)
-    if not reference_text:
+def _similar_cta(generated_cta: str, reference_cta: str) -> str | None:
+    """Catch short CTA reuse that a 6-word n-gram would miss."""
+    generated_words = _normalize_similarity_words(generated_cta)
+    reference_words = _normalize_similarity_words(reference_cta)
+    if not generated_words or not reference_words:
+        return None
+
+    if generated_words == reference_words:
+        return " ".join(generated_words)
+
+    short_len = min(len(generated_words), len(reference_words))
+    if short_len < 2:
+        return None
+    overlap = len(set(generated_words) & set(reference_words))
+    if overlap / max(len(set(generated_words)), len(set(reference_words))) >= 0.8:
+        return " ".join(generated_words)
+    return None
+
+
+def _find_reference_similarity(ad_concept: AdConcept, similarity_sources: list[dict]) -> dict | None:
+    """Check generated headline/body/CTA against raw reference corpora."""
+    if not similarity_sources:
         return None
 
     generated_text = "\n".join([
         ad_concept.headline_remix or "",
         ad_concept.body_copy or "",
+        ad_concept.cta_button or "",
     ])
-    return _shared_ngram_phrase(generated_text, reference_text)
+    for source in similarity_sources:
+        matched_phrase = _shared_ngram_phrase(generated_text, source["text"])
+        if matched_phrase:
+            return {
+                "kind": "phrase",
+                "source": source["label"],
+                "match": matched_phrase,
+            }
+
+        cta_match = _similar_cta(ad_concept.cta_button or "", source.get("cta") or "")
+        if cta_match:
+            return {
+                "kind": "cta",
+                "source": source["label"],
+                "match": cta_match,
+            }
+    return None
+
+
+def _build_similarity_warning(match: dict) -> str:
+    if match["kind"] == "cta":
+        base = _SIMILARITY_CTA_WARNING
+    else:
+        base = _SIMILARITY_WARNING
+    return (
+        f"{base} Similar to {match['source']}. "
+        f"Matched text: \"{match['match']}\". "
+        "Regenerate or manually edit the flagged wording before launching this ad."
+    )
 
 
 async def _reconstruct_with_similarity_guard(
     blueprint: AdBlueprint,
     brand_data: BrandData,
-    reference_copy_context: dict | None,
+    similarity_sources: list[dict],
 ) -> AdConcept:
     """Generate an ad, retry once on reference overlap, then warn without blocking."""
     ad_concept = await reconstruct_ad(blueprint, brand_data)
-    if not reference_copy_context:
+    if not similarity_sources:
+        logger.info("Ad Remix similarity guard: skipped (no reference material)")
         return ad_concept
 
-    matched_phrase = _find_reference_similarity(ad_concept, reference_copy_context)
-    if not matched_phrase:
+    match = _find_reference_similarity(ad_concept, similarity_sources)
+    if not match:
+        logger.info("Ad Remix similarity guard: checked and clean")
         return ad_concept
 
     retry_brand_data = brand_data.model_copy(update={
         "competitor_context": (brand_data.competitor_context or "") + _SIMILARITY_RETRY_INSTRUCTION,
     })
-    retry_concept = await reconstruct_ad(blueprint, retry_brand_data)
-    retry_match = _find_reference_similarity(retry_concept, reference_copy_context)
+    try:
+        retry_concept = await reconstruct_ad(blueprint, retry_brand_data)
+    except Exception:
+        ad_concept.similarity_warning = _build_similarity_warning(match)
+        return ad_concept
+
+    retry_match = _find_reference_similarity(retry_concept, similarity_sources)
     if retry_match:
-        retry_concept.similarity_warning = f"{_SIMILARITY_WARNING} Similar phrase detected: \"{retry_match}\"."
+        retry_concept.similarity_warning = _build_similarity_warning(retry_match)
     return retry_concept
 
 
@@ -271,12 +386,13 @@ async def reconstruct_ad_from_blueprint(
 
     # Reconstruct the blueprint
     blueprint = AdBlueprint(**template.blueprint_json)
+    similarity_sources = _build_similarity_sources(reference_copy_context=request.reference_copy_context)
     
     try:
         ad_concept = await _reconstruct_with_similarity_guard(
             blueprint,
             brand_data,
-            request.reference_copy_context,
+            similarity_sources,
         )
         return ad_concept
         
@@ -345,10 +461,11 @@ async def reconstruct_from_url(
             # No image available (video ad or no creative URL stored).
             blueprint = _generic_blueprint
 
+        similarity_sources = _build_similarity_sources(request.research_inspiration, request.reference_copy_context)
         ad_concept = await _reconstruct_with_similarity_guard(
             blueprint,
             brand_data,
-            request.reference_copy_context,
+            similarity_sources,
         )
         return ad_concept
 

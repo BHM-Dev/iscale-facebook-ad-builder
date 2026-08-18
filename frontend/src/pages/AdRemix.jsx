@@ -37,6 +37,7 @@ const hasCopyContent = (value) => {
 const buildReferenceCopyContext = (template) => {
     if (!hasCopyContent(template?.copy_analysis) && !hasCopyContent(template?.copy_patterns)) return null;
     return {
+        name: template.name || null,
         copy_analysis: hasCopyContent(template.copy_analysis) ? template.copy_analysis : null,
         copy_patterns: hasCopyContent(template.copy_patterns) ? template.copy_patterns : null,
     };
