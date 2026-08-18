@@ -46,6 +46,7 @@ class AdConcept(BaseModel):
     body_copy: str = Field(..., description="Supporting text/bullets adapted to new brand")
     cta_button: str = Field(..., description="Call to action matching blueprint's style")
     image_generation_prompt: str = Field(..., description="Detailed prompt for Fal.ai/Midjourney to generate the visual")
+    similarity_warning: Optional[str] = Field(default=None, description="Non-blocking warning when generated copy remains close to reference material")
 
 
 class DeconstructRequest(BaseModel):

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from typing import List
 import json
+import re
 
 from app.database import get_db
 from app.models import WinningAd, Brand, Product, CustomerProfile
@@ -21,6 +22,16 @@ from app.schemas.ad_blueprint import (
 from app.services.ad_remix_service import deconstruct_template, reconstruct_ad
 
 router = APIRouter()
+
+_SIMILARITY_NGRAM_SIZE = 6
+_SIMILARITY_RETRY_INSTRUCTION = """
+
+SIMILARITY GUARD RETRY:
+Your previous output was too similar to the third-party reference material.
+Rewrite the headline and body copy with completely different wording, sentence structure, and framing.
+Keep the same strategic pattern, audience, offer, and CTA logic, but do not reuse any 6-word phrase or close wording from the reference.
+"""
+_SIMILARITY_WARNING = "Reference similarity warning: review copy before launch."
 
 
 def _format_research_context(research_inspiration: dict | None) -> str:
@@ -112,6 +123,66 @@ def _build_prompt_context(
     ])
 
 
+def _normalize_similarity_words(text: str) -> list[str]:
+    """Normalize copy to words for phrase-overlap checks."""
+    return re.findall(r"[a-z0-9]+", (text or "").lower())
+
+
+def _shared_ngram_phrase(generated_text: str, reference_text: str, size: int = _SIMILARITY_NGRAM_SIZE) -> str | None:
+    """Return a shared phrase when generated copy repeats a long reference phrase."""
+    generated_words = _normalize_similarity_words(generated_text)
+    reference_words = _normalize_similarity_words(reference_text)
+    if len(generated_words) < size or len(reference_words) < size:
+        return None
+
+    reference_ngrams = {
+        tuple(reference_words[i:i + size])
+        for i in range(len(reference_words) - size + 1)
+    }
+    for i in range(len(generated_words) - size + 1):
+        ngram = tuple(generated_words[i:i + size])
+        if ngram in reference_ngrams:
+            return " ".join(ngram)
+    return None
+
+
+def _find_reference_similarity(ad_concept: AdConcept, reference_copy_context: dict | None) -> str | None:
+    """Check generated headline/body against formatted reference copy context."""
+    reference_text = _format_reference_copy_context(reference_copy_context)
+    if not reference_text:
+        return None
+
+    generated_text = "\n".join([
+        ad_concept.headline_remix or "",
+        ad_concept.body_copy or "",
+    ])
+    return _shared_ngram_phrase(generated_text, reference_text)
+
+
+async def _reconstruct_with_similarity_guard(
+    blueprint: AdBlueprint,
+    brand_data: BrandData,
+    reference_copy_context: dict | None,
+) -> AdConcept:
+    """Generate an ad, retry once on reference overlap, then warn without blocking."""
+    ad_concept = await reconstruct_ad(blueprint, brand_data)
+    if not reference_copy_context:
+        return ad_concept
+
+    matched_phrase = _find_reference_similarity(ad_concept, reference_copy_context)
+    if not matched_phrase:
+        return ad_concept
+
+    retry_brand_data = brand_data.model_copy(update={
+        "competitor_context": (brand_data.competitor_context or "") + _SIMILARITY_RETRY_INSTRUCTION,
+    })
+    retry_concept = await reconstruct_ad(blueprint, retry_brand_data)
+    retry_match = _find_reference_similarity(retry_concept, reference_copy_context)
+    if retry_match:
+        retry_concept.similarity_warning = f"{_SIMILARITY_WARNING} Similar phrase detected: \"{retry_match}\"."
+    return retry_concept
+
+
 @router.post("/deconstruct", response_model=AdBlueprint)
 async def deconstruct_ad_template(
     request: DeconstructRequest,
@@ -147,7 +218,7 @@ async def deconstruct_ad_template(
         raise HTTPException(status_code=500, detail=f"Deconstruction failed: {str(e)}")
 
 
-@router.post("/reconstruct", response_model=AdConcept)
+@router.post("/reconstruct", response_model=AdConcept, response_model_exclude_none=True)
 async def reconstruct_ad_from_blueprint(
     request: ReconstructRequest,
     db: Session = Depends(get_db)
@@ -202,14 +273,18 @@ async def reconstruct_ad_from_blueprint(
     blueprint = AdBlueprint(**template.blueprint_json)
     
     try:
-        ad_concept = await reconstruct_ad(blueprint, brand_data)
+        ad_concept = await _reconstruct_with_similarity_guard(
+            blueprint,
+            brand_data,
+            request.reference_copy_context,
+        )
         return ad_concept
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Reconstruction failed: {str(e)}")
 
 
-@router.post("/reconstruct-from-url", response_model=AdConcept)
+@router.post("/reconstruct-from-url", response_model=AdConcept, response_model_exclude_none=True)
 async def reconstruct_from_url(
     request: ReconstructFromUrlRequest,
     db: Session = Depends(get_db)
@@ -270,7 +345,11 @@ async def reconstruct_from_url(
             # No image available (video ad or no creative URL stored).
             blueprint = _generic_blueprint
 
-        ad_concept = await reconstruct_ad(blueprint, brand_data)
+        ad_concept = await _reconstruct_with_similarity_guard(
+            blueprint,
+            brand_data,
+            request.reference_copy_context,
+        )
         return ad_concept
 
     except Exception as e:

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { ChevronRight, ChevronLeft, Sparkles, Check, Image, FileText, Briefcase, Package, Users, Zap, Copy, CheckCircle, Upload, RefreshCw, TrendingUp, ExternalLink, X, Globe, Star } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Sparkles, Check, Image, FileText, Briefcase, Package, Users, Zap, Copy, CheckCircle, Upload, RefreshCw, TrendingUp, ExternalLink, X, Globe, Star, AlertTriangle } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useBrands } from '../context/BrandContext';
 import { useToast } from '../context/ToastContext';
@@ -1163,6 +1163,15 @@ export default function AdRemix() {
 
                                     {/* Variation content */}
                                     <div className="p-6 space-y-4">
+                                        {concept.similarity_warning && (
+                                            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                                                <AlertTriangle size={16} className="mt-0.5 flex-shrink-0 text-amber-600" />
+                                                <div>
+                                                    <p className="font-semibold">Reference similarity warning</p>
+                                                    <p className="text-xs leading-relaxed">{concept.similarity_warning}</p>
+                                                </div>
+                                            </div>
+                                        )}
                                         <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
                                             <p className="text-xs font-semibold text-purple-700 uppercase tracking-wide mb-1">Headline</p>
                                             <p className="text-lg font-bold text-gray-900">{concept.headline_remix}</p>
