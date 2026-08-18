@@ -34,7 +34,6 @@ Rewrite the headline, body copy, and CTA with completely different wording, sent
 Keep the same strategic pattern, audience, offer, and CTA logic, but do not reuse any 6-word phrase or close wording from the reference.
 """
 _SIMILARITY_WARNING = "Reference similarity warning: review copy before launch."
-_SIMILARITY_CTA_WARNING = "Reference similarity warning: CTA closely matches reference material."
 
 
 def _format_research_context(research_inspiration: dict | None) -> str:
@@ -207,25 +206,18 @@ def _shared_ngram_phrase(generated_text: str, reference_text: str, size: int = _
     return None
 
 
-def _similar_cta(generated_cta: str, reference_cta: str) -> str | None:
-    """Catch short CTA reuse that a 6-word n-gram would miss."""
-    generated_words = _normalize_similarity_words(generated_cta)
-    reference_words = _normalize_similarity_words(reference_cta)
-    if not generated_words or not reference_words:
-        return None
-
-    if generated_words == reference_words:
-        return " ".join(generated_words)
-
-    short_len = min(len(generated_words), len(reference_words))
-    if short_len < 2:
-        return None
-    overlap = len(set(generated_words) & set(reference_words))
-    if overlap / max(len(set(generated_words)), len(set(reference_words))) >= 0.8:
-        return " ".join(generated_words)
-    return None
-
-
+# Deliberately NOT doing a standalone short-CTA similarity check (exact/near-match on
+# cta_button alone). Verified live 2026-08-18: this app's own CTA vocabulary is a small,
+# fixed set of generic direct-response phrases (see CTA_MAP in api/v1/facebook.py — "Get
+# Quote", "Learn More", "Get Started", etc.), which every ad in this vertical draws from
+# regardless of what any particular competitor did. A standalone CTA-only check would flag
+# the expected common case (two unrelated ads both landing on "Get My Quote") as
+# "similarity," which is noise, not signal — CTAs aren't distinctive creative expression the
+# way a headline or body hook is. It was also non-functional for the winning-ad/template
+# path in practice, since WinningAd records have no CTA field to compare against.
+# cta_button still participates in the phrase check below (concatenated into
+# generated_text), so a genuinely distinctive multi-word CTA phrase reused verbatim from a
+# reference is still caught — just not a bare match on a generic short CTA.
 def _find_reference_similarity(ad_concept: AdConcept, similarity_sources: list[dict]) -> dict | None:
     """Check generated headline/body/CTA against raw reference corpora."""
     if not similarity_sources:
@@ -244,24 +236,12 @@ def _find_reference_similarity(ad_concept: AdConcept, similarity_sources: list[d
                 "source": source["label"],
                 "match": matched_phrase,
             }
-
-        cta_match = _similar_cta(ad_concept.cta_button or "", source.get("cta") or "")
-        if cta_match:
-            return {
-                "kind": "cta",
-                "source": source["label"],
-                "match": cta_match,
-            }
     return None
 
 
 def _build_similarity_warning(match: dict) -> str:
-    if match["kind"] == "cta":
-        base = _SIMILARITY_CTA_WARNING
-    else:
-        base = _SIMILARITY_WARNING
     return (
-        f"{base} Similar to {match['source']}. "
+        f"{_SIMILARITY_WARNING} Similar to {match['source']}. "
         f"Matched text: \"{match['match']}\". "
         "Regenerate or manually edit the flagged wording before launching this ad."
     )
@@ -283,18 +263,23 @@ async def _reconstruct_with_similarity_guard(
         logger.info("Ad Remix similarity guard: checked and clean")
         return ad_concept
 
+    logger.info("Ad Remix similarity guard: flagged on first pass (%s), retrying once", match["source"])
     retry_brand_data = brand_data.model_copy(update={
         "competitor_context": (brand_data.competitor_context or "") + _SIMILARITY_RETRY_INSTRUCTION,
     })
     try:
         retry_concept = await reconstruct_ad(blueprint, retry_brand_data)
     except Exception:
+        logger.info("Ad Remix similarity guard: retry call failed, returning first result with warning")
         ad_concept.similarity_warning = _build_similarity_warning(match)
         return ad_concept
 
     retry_match = _find_reference_similarity(retry_concept, similarity_sources)
     if retry_match:
+        logger.info("Ad Remix similarity guard: still flagged after retry (%s)", retry_match["source"])
         retry_concept.similarity_warning = _build_similarity_warning(retry_match)
+    else:
+        logger.info("Ad Remix similarity guard: clean after retry")
     return retry_concept
 
 
