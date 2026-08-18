@@ -83,7 +83,7 @@ export default function Layout() {
             icon: Library,
             label: 'Libraries',
             subItems: [
-                { label: 'Ad Library', path: '/generated-ads', icon: FileImage },
+                { label: 'Generated Ads', path: '/generated-ads', icon: FileImage },
                 { label: 'Drive Imports', path: '/creative-library', icon: FolderOpen },
                 { label: 'Copy Library', path: '/copy-library', icon: BookOpen },
             ]

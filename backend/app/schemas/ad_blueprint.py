@@ -63,6 +63,7 @@ class ReconstructRequest(BaseModel):
     campaign_urgency: Optional[str] = None
     campaign_messaging: str
     niche: Optional[str] = ""
+    reference_copy_context: Optional[Dict[str, Any]] = None
 
 
 class ReconstructFromUrlRequest(BaseModel):
@@ -77,3 +78,4 @@ class ReconstructFromUrlRequest(BaseModel):
     campaign_messaging: str
     niche: Optional[str] = ""
     research_inspiration: Optional[Dict[str, Any]] = None
+    reference_copy_context: Optional[Dict[str, Any]] = None

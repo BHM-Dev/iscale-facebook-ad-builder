@@ -34,6 +34,14 @@ const hasCopyContent = (value) => {
     return true;
 };
 
+const buildReferenceCopyContext = (template) => {
+    if (!hasCopyContent(template?.copy_analysis) && !hasCopyContent(template?.copy_patterns)) return null;
+    return {
+        copy_analysis: hasCopyContent(template.copy_analysis) ? template.copy_analysis : null,
+        copy_patterns: hasCopyContent(template.copy_patterns) ? template.copy_patterns : null,
+    };
+};
+
 export default function AdRemix() {
     const { brands, customerProfiles } = useBrands();
     const { showError, showSuccess } = useToast();
@@ -669,6 +677,7 @@ export default function AdRemix() {
             const endpoint = isMetaSource
                 ? `${API_URL}/ad-remix/reconstruct-from-url`
                 : `${API_URL}/ad-remix/reconstruct`;
+            const referenceCopyContext = buildReferenceCopyContext(wizardData.template);
 
             const payload = isMetaSource
                 ? {
@@ -681,6 +690,7 @@ export default function AdRemix() {
                     campaign_messaging: wizardData.campaignDetails.messaging,
                     niche: pendingNiche || "",
                     research_inspiration: researchInspiration || null,
+                    reference_copy_context: referenceCopyContext,
                 }
                 : {
                     template_id: wizardData.template.id,
@@ -692,6 +702,7 @@ export default function AdRemix() {
                     campaign_messaging: wizardData.campaignDetails.messaging,
                     niche: pendingNiche || "",
                     research_inspiration: researchInspiration || null,
+                    reference_copy_context: referenceCopyContext,
                 };
 
             // Advance to step 6 (Generating) before firing requests

@@ -51,6 +51,43 @@ def _format_research_context(research_inspiration: dict | None) -> str:
     return "\n".join(lines)
 
 
+def _format_reference_copy_context(reference_copy_context: dict | None) -> str:
+    """Format saved copy intelligence as pattern guidance, not source copy."""
+    if not reference_copy_context:
+        return ""
+
+    copy_analysis = reference_copy_context.get("copy_analysis")
+    copy_patterns = reference_copy_context.get("copy_patterns")
+    if not copy_analysis and not copy_patterns:
+        return ""
+
+    lines = [
+        "",
+        "REFERENCE COPY INTELLIGENCE FROM WINNING ADS:",
+        "- Use this only as strategic guidance for structure, tone, hook logic, objection handling, CTA logic, and formatting.",
+        "- Do NOT reproduce phrases, sentences, claims, or brand-specific wording from the reference.",
+        "- Write original copy for the selected brand, product, audience, and offer.",
+    ]
+    if copy_analysis:
+        formatted = copy_analysis if isinstance(copy_analysis, str) else json.dumps(copy_analysis, ensure_ascii=False)
+        lines.append(f"- Copy analysis to study, not copy: {formatted[:1200]}")
+    if copy_patterns:
+        formatted = copy_patterns if isinstance(copy_patterns, str) else json.dumps(copy_patterns, ensure_ascii=False)
+        lines.append(f"- Copy patterns to adapt, not copy: {formatted[:1200]}")
+    return "\n".join(lines)
+
+
+def _build_prompt_context(
+    research_inspiration: dict | None = None,
+    reference_copy_context: dict | None = None,
+) -> str:
+    """Combine optional context blocks while preserving an empty no-context path."""
+    return "".join([
+        _format_research_context(research_inspiration),
+        _format_reference_copy_context(reference_copy_context),
+    ])
+
+
 @router.post("/deconstruct", response_model=AdBlueprint)
 async def deconstruct_ad_template(
     request: DeconstructRequest,
@@ -134,7 +171,7 @@ async def reconstruct_ad_from_blueprint(
         campaign_urgency=request.campaign_urgency,
         campaign_messaging=request.campaign_messaging,
         niche=request.niche or "",
-        competitor_context="",
+        competitor_context=_build_prompt_context(reference_copy_context=request.reference_copy_context),
     )
 
     # Reconstruct the blueprint
@@ -184,7 +221,7 @@ async def reconstruct_from_url(
         campaign_urgency=request.campaign_urgency,
         campaign_messaging=request.campaign_messaging,
         niche=request.niche or "",
-        competitor_context=_format_research_context(request.research_inspiration),
+        competitor_context=_build_prompt_context(request.research_inspiration, request.reference_copy_context),
     )
 
     # Generic lead-gen blueprint used as fallback when no image is available
