@@ -23,6 +23,17 @@ const formatCopyReference = (value) => {
     return JSON.stringify(value, null, 2);
 };
 
+// Treats a value as "has real content" — guards against an empty {}/[] from the
+// backend (both truthy in JS) rendering a "Copy Analysis"/"Copy Patterns" header
+// with nothing under it.
+const hasCopyContent = (value) => {
+    if (!value) return false;
+    if (typeof value === 'string') return value.trim().length > 0;
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === 'object') return Object.keys(value).length > 0;
+    return true;
+};
+
 export default function AdRemix() {
     const { brands, customerProfiles } = useBrands();
     const { showError, showSuccess } = useToast();
@@ -779,34 +790,9 @@ export default function AdRemix() {
                 <div className="mb-4 flex items-start justify-between gap-3 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-sm">
                     <div className="flex flex-1 items-start gap-2">
                         <Star size={15} className="text-amber-500 mt-0.5 flex-shrink-0" />
-                        <div className="min-w-0 flex-1">
-                            <span className="text-amber-800">
-                                Building from template: <strong>{winningAdTemplate.name}</strong>. Image pre-loaded — pick your brand below.
-                            </span>
-                            {(wizardData.template?.copy_analysis || wizardData.template?.copy_patterns) && (
-                                <details className="mt-3 rounded-lg border border-amber-200 bg-white/70 p-3">
-                                    <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-amber-700">
-                                        Reference copy notes
-                                    </summary>
-                                    <div className="mt-3 space-y-3 text-xs leading-relaxed text-amber-900">
-                                        {wizardData.template?.copy_analysis && (
-                                            <div>
-                                                <div className="mb-1 font-semibold text-amber-800">Copy Analysis</div>
-                                                <p className="whitespace-pre-wrap">{formatCopyReference(wizardData.template.copy_analysis)}</p>
-                                            </div>
-                                        )}
-                                        {wizardData.template?.copy_patterns && (
-                                            <div>
-                                                <div className="mb-1 font-semibold text-amber-800">Copy Patterns</div>
-                                                <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-amber-100/60 p-2 font-sans">
-                                                    {formatCopyReference(wizardData.template.copy_patterns)}
-                                                </pre>
-                                            </div>
-                                        )}
-                                    </div>
-                                </details>
-                            )}
-                        </div>
+                        <span className="text-amber-800">
+                            Building from template: <strong>{winningAdTemplate.name}</strong>. Image pre-loaded — pick your brand below.
+                        </span>
                     </div>
                     <button
                         type="button"
@@ -817,6 +803,39 @@ export default function AdRemix() {
                         <X size={14} />
                     </button>
                 </div>
+            )}
+
+            {/* Reference copy notes — deliberately independent of the banner above.
+                This carries copy_analysis/copy_patterns forward from the source Winning
+                Ad template so it isn't silently lost the way it used to be. It must NOT
+                be nested inside (or gated on) `winningAdTemplate`/the dismiss button:
+                dismissing that banner previously also unmounted these notes even though
+                wizardData.template still held the data — a one-click way to lose the
+                exact context this feature exists to preserve. Defaults open (not a
+                collapsed <details>) for the same reason: the whole point is that this
+                information shouldn't require a buyer to notice and click to reveal it. */}
+            {(hasCopyContent(wizardData.template?.copy_analysis) || hasCopyContent(wizardData.template?.copy_patterns)) && (
+                <details open className="mb-4 rounded-xl border border-amber-200 bg-amber-50/60 p-3 text-sm">
+                    <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-amber-700">
+                        Reference copy notes
+                    </summary>
+                    <div className="mt-3 space-y-3 text-xs leading-relaxed text-amber-900">
+                        {hasCopyContent(wizardData.template?.copy_analysis) && (
+                            <div>
+                                <div className="mb-1 font-semibold text-amber-800">Copy Analysis</div>
+                                <p className="whitespace-pre-wrap">{formatCopyReference(wizardData.template.copy_analysis)}</p>
+                            </div>
+                        )}
+                        {hasCopyContent(wizardData.template?.copy_patterns) && (
+                            <div>
+                                <div className="mb-1 font-semibold text-amber-800">Copy Patterns</div>
+                                <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-amber-100/60 p-2 font-sans">
+                                    {formatCopyReference(wizardData.template.copy_patterns)}
+                                </pre>
+                            </div>
+                        )}
+                    </div>
+                </details>
             )}
 
             {/* Research inspiration banner — shown when launched from Research section */}
