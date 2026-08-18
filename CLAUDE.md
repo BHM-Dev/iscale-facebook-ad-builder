@@ -141,16 +141,15 @@ Facebook ad builder used daily by Joel Welch (media buyer). Connects to Meta Ads
 ## Infrastructure (Current — 2026-04-27 and later)
 
 - **Backend runs in Docker on the VPS** (confirmed 2026-05-22 by Golden). There is NO local `venv` on the VPS — any script that needs the app's Python deps must be run inside the running backend container.
-- VPS shell access pattern (when Golden runs ad-hoc scripts, e.g. account creation, one-off migrations):
+- **SSH access confirmed working 2026-08-18** — `ssh -i ~/.ssh/id_ed25519 ubuntu@adbuilder.velocitymx.io` from Steve1's Mac, app at `/home/ubuntu/iscale-facebook-ad-builder`. Env var changes and restarts are now self-serve; Golden no longer has to be pinged for routine ops.
+- VPS shell access pattern (ad-hoc scripts, e.g. account creation, one-off checks):
   ```bash
   docker exec -it <backend-container> python -c "..."
   # or
   docker exec -it <backend-container> bash
   ```
-- Env vars are set directly on the VPS by Golden. Never set them via Railway.
-- To request a new env var: message Golden directly at `D075KSE1A1L` with the var name — he adds it server-side and restarts.
-- Restart command: `docker compose restart backend` (Golden runs this when env vars change or a manual restart is needed).
-- Code deploys auto-trigger on push to `develop`. Env var changes and ad-hoc scripts require Golden manual action.
+- Env vars: edit `.env` in the app path over SSH directly, then `docker compose -f docker-compose.prod.yml restart backend`. `VITE_`-prefixed vars are baked at build time and need `docker compose -f docker-compose.prod.yml build --no-cache frontend` instead of a plain restart — verify the served JS hash actually changed after (build-cache has silently served stale bundles before).
+- Code deploys auto-trigger on push to `develop`. Env var changes and ad-hoc scripts can now be done directly over SSH — **only message Golden (`D075KSE1A1L`) for something that genuinely needs his sign-off, not routine var additions.**
 - `REDTRACK_API_KEY` — confirmed added 2026-04-27.
 - `SWITCHBOARD_EVERFLOW_API_KEY` — pending. Source of truth for P&L billable revenue on validated Switchboard accounts.
 - `SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS` — pending. Comma-separated Meta account allow-list for accounts that should use Switchboard revenue instead of RedTrack.
@@ -370,7 +369,7 @@ Run through every item before committing or pushing any backend change. These bu
 ### Final gate
 - [ ] Read the diff one more time (`git diff HEAD`). Ask: "If this breaks, what's the symptom and the 5-minute fix?"
 - [ ] If it involves a DB migration: `alembic upgrade head` runs automatically on deploy — no action needed, no message to Golden.
-- [ ] Does this push include a new **env var**? If yes → DM Golden at `D075KSE1A1L` with the var name. That's the only post-push action that requires human intervention.
+- [ ] Does this push include a new **env var**? SSH into the VPS and add it directly (`~/.ssh/id_ed25519` → `ubuntu@adbuilder.velocitymx.io`), then restart the relevant container. Only DM Golden if it needs his sign-off.
 
 ---
 
@@ -617,6 +616,6 @@ Do not suggest `./venv/bin/python ...` or `source venv/bin/activate` for VPS wor
 
 | Person | Role | Slack | When to contact |
 |--------|------|-------|-----------------|
-| Golden | Dev lead, VPS admin | `C041GSZD1NG` | **Only for new env vars** — migrations and code deploys are fully automated. Never message after a push. |
+| Golden | Dev lead, VPS admin | `C041GSZD1NG` | Migrations and code deploys are fully automated. Env vars/restarts are now self-serve via SSH (`ubuntu@adbuilder.velocitymx.io`) — only message for something needing his sign-off. Never message after a routine push. |
 | Joel Welch | Primary user (media buyer) | `C08G7PJJ6NB` | Bug reports, UX feedback |
 | Steven Sun | CEO / product decisions | — | All product decisions |

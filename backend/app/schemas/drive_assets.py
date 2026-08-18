@@ -13,7 +13,7 @@ class DriveAsset(BaseModel):
     format: str
     folder_path: Optional[str] = None
     file_name: str
-    r2_key: str
+    r2_key: str  # full public R2 URL, not a bare object key — see models.DriveAsset
     thumbnail_r2_key: Optional[str] = None
     drive_modified_time: datetime
     synced_at: datetime

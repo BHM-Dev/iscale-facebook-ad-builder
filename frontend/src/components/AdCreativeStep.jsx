@@ -1,7 +1,7 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useState, useEffect } from 'react';
-import { ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image, BookOpen, Check, Layers } from 'lucide-react';
+import { ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image, BookOpen, Check, Layers, FolderOpen } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
@@ -67,6 +67,67 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const [libraryAds, setLibraryAds] = useState([]);
     const [libraryLoading, setLibraryLoading] = useState(false);
     const [selectedLibraryIds, setSelectedLibraryIds] = useState(new Set());
+
+    // Drive Creative Library modal — same pattern as the Generated Ads Library
+    // above, sourced from Joel's synced Google Drive folder instead.
+    const [showDriveLibraryModal, setShowDriveLibraryModal] = useState(false);
+    const [driveAssets, setDriveAssets] = useState([]);
+    const [driveLibraryLoading, setDriveLibraryLoading] = useState(false);
+    const [driveLibraryError, setDriveLibraryError] = useState(null);
+    const [selectedDriveAssetIds, setSelectedDriveAssetIds] = useState(new Set());
+
+    const fetchDriveAssets = async () => {
+        setDriveLibraryLoading(true);
+        setDriveLibraryError(null);
+        try {
+            const res = await authFetch(`${API_URL}/drive-assets`);
+            if (!res.ok) {
+                // 503 means the migration hasn't landed yet — surface that plainly
+                // rather than a generic failure.
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || `HTTP ${res.status}`);
+            }
+            const data = await res.json();
+            setDriveAssets(Array.isArray(data) ? data : []);
+        } catch (err) {
+            setDriveLibraryError(err.message || 'Failed to load Drive Creative Library');
+        } finally {
+            setDriveLibraryLoading(false);
+        }
+    };
+
+    const openDriveLibraryModal = () => {
+        setSelectedDriveAssetIds(new Set());
+        fetchDriveAssets();
+        setShowDriveLibraryModal(true);
+    };
+
+    const toggleDriveAssetSelection = (assetId) => {
+        setSelectedDriveAssetIds(prev => {
+            const next = new Set(prev);
+            next.has(assetId) ? next.delete(assetId) : next.add(assetId);
+            return next;
+        });
+    };
+
+    const addDriveSelectionToCreatives = () => {
+        const selected = driveAssets.filter(asset => selectedDriveAssetIds.has(asset.id));
+        const newCreatives = selected.map(asset => ({
+            id: `drive_${asset.id}`,
+            file: null,
+            previewUrl: asset.r2_key,
+            imageUrl: asset.format === 'video' ? undefined : asset.r2_key,
+            videoUrl: asset.format === 'video' ? asset.r2_key : undefined,
+            name: asset.file_name,
+            mediaType: asset.format,
+            format: 'feed'
+        }));
+        setCreativeData(prev => ({
+            ...prev,
+            creatives: [...(prev.creatives || []), ...newCreatives]
+        }));
+        setShowDriveLibraryModal(false);
+    };
 
     const fetchLibraryAds = async () => {
         setLibraryLoading(true);
@@ -686,14 +747,24 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         <label className="block text-sm font-medium text-gray-700">
                             Ad Media (Images or Videos) *
                         </label>
-                        <button
-                            type="button"
-                            onClick={openLibraryModal}
-                            className="flex items-center gap-1.5 text-sm text-amber-600 font-medium hover:text-amber-800"
-                        >
-                            <BookOpen size={16} />
-                            Browse Generated Ads Library
-                        </button>
+                        <div className="flex items-center gap-4">
+                            <button
+                                type="button"
+                                onClick={openLibraryModal}
+                                className="flex items-center gap-1.5 text-sm text-amber-600 font-medium hover:text-amber-800"
+                            >
+                                <BookOpen size={16} />
+                                Browse Generated Ads Library
+                            </button>
+                            <button
+                                type="button"
+                                onClick={openDriveLibraryModal}
+                                className="flex items-center gap-1.5 text-sm text-amber-600 font-medium hover:text-amber-800"
+                            >
+                                <FolderOpen size={16} />
+                                Browse Drive Creative Library
+                            </button>
+                        </div>
                     </div>
 
                     {/* Upload Area */}
@@ -1128,6 +1199,75 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 className="px-4 py-2 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                             >
                                 Add {selectedLibraryIds.size > 0 ? selectedLibraryIds.size : ''} to Campaign
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* Drive Creative Library Modal */}
+        {showDriveLibraryModal && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[80vh] flex flex-col">
+                    <div className="flex items-center justify-between p-4 border-b">
+                        <h3 className="text-lg font-semibold">Select from Drive Creative Library</h3>
+                        <button onClick={() => setShowDriveLibraryModal(false)} className="text-gray-500 hover:text-gray-700">
+                            <X size={20} />
+                        </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4">
+                        {driveLibraryLoading ? (
+                            <div className="flex items-center justify-center py-12 gap-2 text-gray-500">
+                                <Loader className="animate-spin" size={20} />
+                                <span>Loading Drive library...</span>
+                            </div>
+                        ) : driveLibraryError ? (
+                            <p className="text-center text-red-600 py-12">{driveLibraryError}</p>
+                        ) : driveAssets.length === 0 ? (
+                            <p className="text-center text-gray-500 py-12">No synced Drive creative yet. It appears here once the Drive sync job (or a manual sync) has run.</p>
+                        ) : (
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                {driveAssets.map(asset => {
+                                    const isSelected = selectedDriveAssetIds.has(asset.id);
+                                    return (
+                                        <div
+                                            key={asset.id}
+                                            onClick={() => toggleDriveAssetSelection(asset.id)}
+                                            className={`relative cursor-pointer rounded-lg overflow-hidden border-2 transition-all ${isSelected ? 'border-amber-500 ring-2 ring-amber-200' : 'border-gray-200 hover:border-amber-300'}`}
+                                        >
+                                            {asset.format === 'video' ? (
+                                                <video src={asset.r2_key} className="w-full aspect-square object-cover" muted />
+                                            ) : (
+                                                <img src={asset.r2_key} alt={asset.file_name} className="w-full aspect-square object-cover" />
+                                            )}
+                                            {isSelected && (
+                                                <div className="absolute top-2 right-2 bg-amber-500 rounded-full p-0.5">
+                                                    <Check size={14} className="text-white" />
+                                                </div>
+                                            )}
+                                            <div className="p-2 text-xs text-gray-600 bg-white">
+                                                <div className="truncate font-medium">{asset.brand_name || 'Unknown brand'}</div>
+                                                <div className="truncate text-gray-400">{asset.folder_path || asset.file_name}</div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                    <div className="p-4 border-t flex items-center justify-between">
+                        <span className="text-sm text-gray-500">{selectedDriveAssetIds.size} selected</span>
+                        <div className="flex gap-3">
+                            <button onClick={() => setShowDriveLibraryModal(false)} className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">
+                                Cancel
+                            </button>
+                            <button
+                                onClick={addDriveSelectionToCreatives}
+                                disabled={selectedDriveAssetIds.size === 0}
+                                className="px-4 py-2 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                            >
+                                Add {selectedDriveAssetIds.size > 0 ? selectedDriveAssetIds.size : ''} to Campaign
                             </button>
                         </div>
                     </div>

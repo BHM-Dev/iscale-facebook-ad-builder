@@ -727,3 +727,48 @@ class PnlMonthSnapshot(Base):
     __table_args__ = (
         UniqueConstraint('ad_account_id', 'month', name='uq_pnl_month_snapshot'),
     )
+
+
+class DriveAsset(Base):
+    """Creative synced from Joel's shared Google Drive folder into R2.
+
+    brand_id is resolved from the top-level folder under the shared Drive root — that's
+    the only reliably-structured level. Everything below it (niche/angle, creative-concept
+    folders, arbitrary depth) is stored verbatim in folder_path rather than forced into
+    columns, since Joel's naming isn't a fixed taxonomy. product_id stays null until a
+    person tags it in the library UI; there's no reliable folder-level signal for it today.
+    """
+    __tablename__ = "drive_assets"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    drive_file_id = Column(String, unique=True, nullable=False, index=True)
+    brand_id = Column(String, ForeignKey("brands.id", ondelete="CASCADE"), nullable=False, index=True)
+    product_id = Column(String, ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True)
+    format = Column(String, nullable=False)
+    folder_path = Column(String, nullable=True)
+    file_name = Column(String, nullable=False)
+    # Despite the name, this stores the full public R2 URL (see
+    # drive_sync_service._upload_to_r2), not a bare object key — the frontend
+    # uses it directly as an <img>/<video> src and as imageUrl/videoUrl. Don't
+    # "fix" this to a bare key without also updating every consumer.
+    r2_key = Column(String, nullable=False)
+    thumbnail_r2_key = Column(String, nullable=True)
+    drive_modified_time = Column(DateTime(timezone=True), nullable=False)
+    synced_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    archived = Column(Boolean, default=False, nullable=False)
+    # Reserved for future features, unused in MVP:
+    soft_tags = Column(String, nullable=True)
+    variant = Column(String, nullable=True)
+    geo = Column(String, nullable=True)
+
+    brand = relationship("Brand")
+    product = relationship("Product")
+
+
+class DriveSyncState(Base):
+    """Singleton key/value store for the Drive changes.list startPageToken checkpoint."""
+    __tablename__ = "drive_sync_state"
+
+    key = Column(String, primary_key=True)
+    value = Column(Text, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
