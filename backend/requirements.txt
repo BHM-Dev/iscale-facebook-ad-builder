@@ -19,3 +19,5 @@ requests>=2.28.0
 alembic
 playwright
 apscheduler>=3.10.0
+google-auth>=2.29.0
+google-api-python-client>=2.129.0

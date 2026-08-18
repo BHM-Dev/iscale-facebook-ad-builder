@@ -309,13 +309,35 @@ async def startup_event():
             except Exception as exc:
                 print(f"⚠️  Token expiry check error: {exc}")
 
+        def scheduled_drive_sync():
+            """Pull shared Google Drive creative into the existing R2-backed library."""
+            db = SessionLocal()
+            try:
+                from app.services.drive_sync_service import DriveSyncService
+                result = DriveSyncService(db).sync_once()
+                changed = result.get("created", 0) + result.get("updated", 0) + result.get("archived", 0)
+                print(
+                    "✅ Drive creative sync: "
+                    f"{result.get('processed', 0)} processed, {result.get('created', 0)} created, "
+                    f"{result.get('updated', 0)} updated, {result.get('archived', 0)} archived, "
+                    f"{result.get('skipped', 0)} skipped"
+                )
+                if not changed:
+                    print("ℹ️  Drive creative sync: no asset changes")
+            except Exception as exc:
+                print(f"⚠️  Drive creative sync error: {exc}")
+            finally:
+                db.close()
+
         # Store sync functions on app state so auth endpoint can trigger them on login
         app.state.meta_sync_fn = scheduled_meta_sync
         app.state.rt_sync_fn = scheduled_redtrack_sync
         app.state.token_check_fn = scheduled_token_check
+        app.state.drive_sync_fn = scheduled_drive_sync
 
         scheduler.add_job(scheduled_check, 'interval', minutes=30, id='auto_pause_check')
         scheduler.add_job(scheduled_redtrack_sync, 'interval', minutes=30, id='redtrack_sync')
+        scheduler.add_job(scheduled_drive_sync, 'interval', minutes=30, id='drive_creative_sync')
         scheduler.add_job(scheduled_token_check, 'cron', hour=13, minute=0, timezone='UTC', id='token_expiry_check')
         # Meta campaign sync runs on login (not on a timer — no value syncing while Joel sleeps)
         scheduler.start()
@@ -335,7 +357,7 @@ async def shutdown_event():
 
 
 # Include Routers
-from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence, creative_angles, pnl
+from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence, creative_angles, pnl, drive_assets
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
@@ -359,6 +381,7 @@ app.include_router(ad_copy_library.router, prefix="/api/v1/ad-copy-library", tag
 app.include_router(pnl.router, prefix="/api/v1/pnl", tags=["pnl"])
 app.include_router(intelligence.router, prefix="/api/v1/intelligence", tags=["intelligence"])
 app.include_router(creative_angles.router, prefix="/api/v1/creative-angles", tags=["creative-angles"])
+app.include_router(drive_assets.router, prefix="/api/v1/drive-assets", tags=["drive-assets"])
 
 # Mount static files for uploads (same path as generated_ads save location)
 uploads_dir = str(settings.upload_dir)

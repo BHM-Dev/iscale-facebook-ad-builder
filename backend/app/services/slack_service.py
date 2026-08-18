@@ -145,3 +145,33 @@ def send_check_summary(
         )
     except Exception as e:
         logger.warning("Slack summary error: %s", e)
+
+
+def send_drive_sync_alert(summary: str, detail: str = "") -> None:
+    """Post a loud alert for Drive creative sync failures."""
+    token = _token()
+    if not token:
+        logger.warning("Drive sync alert skipped because SLACK_BOT_TOKEN is not set: %s", summary)
+        return
+
+    text = f":warning: *Google Drive creative sync failed:* {summary}"
+    if detail:
+        text += f"\n> {detail[:1200]}"
+
+    try:
+        resp = httpx.post(
+            SLACK_API_URL,
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "channel": _channel(),
+                "text": text,
+                "unfurl_links": False,
+                "unfurl_media": False,
+            },
+            timeout=5,
+        )
+        data = resp.json()
+        if not data.get("ok"):
+            logger.warning("Drive sync Slack alert failed: %s", data.get("error"))
+    except Exception as e:
+        logger.warning("Drive sync Slack alert error: %s", e)

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Package, Users, Video, Wand2, Settings, LogOut, Image, ShoppingBag, Target, ChevronLeft, ChevronRight, FileImage, Search, ChevronDown, UserCog, TrendingDown, Zap, Shuffle, PauseCircle, Megaphone, BookOpen, BriefcaseBusiness, DollarSign } from 'lucide-react';
+import { LayoutDashboard, Package, Users, Video, Wand2, Settings, LogOut, Image, ShoppingBag, Target, ChevronLeft, ChevronRight, FileImage, Search, ChevronDown, UserCog, TrendingDown, Zap, Shuffle, PauseCircle, Megaphone, BookOpen, BriefcaseBusiness, DollarSign, FolderOpen } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useBrands } from '../context/BrandContext';
@@ -80,6 +80,7 @@ export default function Layout() {
             ]
         },
         { icon: FileImage, label: 'Ad Library', path: '/generated-ads' },
+        { icon: FolderOpen, label: 'Creative Library', path: '/creative-library' },
         {
             icon: Target,
             label: 'Facebook',
