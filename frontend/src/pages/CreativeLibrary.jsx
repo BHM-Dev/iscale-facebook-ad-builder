@@ -208,11 +208,17 @@ export default function CreativeLibrary() {
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
                   {group.assets.map(asset => (
                     <article key={asset.id} className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+                      {/* No loading="lazy" here: tested live 2026-08-18 and it never fired for
+                          any thumbnail in a 316-item grid rendered all at once — Chrome's native
+                          lazy-load heuristic didn't kick in, leaving every thumbnail blank
+                          (confirmed: removing the attribute loads instantly). Dropped rather than
+                          debugged further since this page has no pagination yet to make
+                          lazy-loading load-bearing; revisit together if pagination is added. */}
                       <div className="relative aspect-[4/3] bg-gray-100">
                         {asset.format === 'video' ? (
                           <video src={asset.r2_key} className="h-full w-full object-cover" muted playsInline preload="metadata" />
                         ) : (
-                          <img src={asset.r2_key} alt={asset.file_name} className="h-full w-full object-cover" loading="lazy" />
+                          <img src={asset.r2_key} alt={asset.file_name} className="h-full w-full object-cover" />
                         )}
                         <div className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-1 text-[11px] font-semibold text-gray-700 shadow-sm">
                           {asset.format === 'video' ? <Film size={12} /> : <Image size={12} />}
