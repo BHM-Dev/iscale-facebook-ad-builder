@@ -51,6 +51,24 @@ def _format_research_context(research_inspiration: dict | None) -> str:
     return "\n".join(lines)
 
 
+def _truncate_for_prompt(text: str, limit: int = 1200) -> str:
+    """Truncate on a word boundary and mark it explicitly, never mid-token.
+
+    Slicing raw JSON at a fixed character offset can leave a dangling,
+    unterminated quoted string right before the model starts generating —
+    which reads exactly like a completion prompt an LLM has a documented
+    tendency to "finish." That's the one failure mode this whole function
+    exists to prevent, so truncation must never produce something that could
+    be mistaken for intact, literal source text to continue.
+    """
+    if len(text) <= limit:
+        return text
+    cut = text.rfind(" ", 0, limit)
+    if cut <= 0:
+        cut = limit
+    return text[:cut] + " …[TRUNCATED — analysis only, not literal source text]"
+
+
 def _format_reference_copy_context(reference_copy_context: dict | None) -> str:
     """Format saved copy intelligence as pattern guidance, not source copy."""
     if not reference_copy_context:
@@ -63,17 +81,23 @@ def _format_reference_copy_context(reference_copy_context: dict | None) -> str:
 
     lines = [
         "",
-        "REFERENCE COPY INTELLIGENCE FROM WINNING ADS:",
-        "- Use this only as strategic guidance for structure, tone, hook logic, objection handling, CTA logic, and formatting.",
-        "- Do NOT reproduce phrases, sentences, claims, or brand-specific wording from the reference.",
-        "- Write original copy for the selected brand, product, audience, and offer.",
+        "THIRD-PARTY REFERENCE MATERIAL — ANALYSIS ONLY, NEVER QUOTE OR PARAPHRASE VERBATIM:",
+        "- The text below is an AI analysis OF a third-party ad (often a competitor's), not your own copy.",
+        "- Use it only as strategic pattern guidance: structure, tone, hook logic, objection handling, CTA logic, formatting.",
+        "- Do NOT reproduce any phrase, sentence, claim, or brand-specific wording from it — not even a fragment.",
+        "- If you find yourself about to write something that could have come from the reference, stop and rewrite it in different words. Never lift wording from below and present it as your output.",
+        "- Write fully original copy for the selected brand, product, audience, and offer.",
     ]
     if copy_analysis:
         formatted = copy_analysis if isinstance(copy_analysis, str) else json.dumps(copy_analysis, ensure_ascii=False)
-        lines.append(f"- Copy analysis to study, not copy: {formatted[:1200]}")
+        lines.append(f"- Reference analysis (do not copy): {_truncate_for_prompt(formatted)}")
     if copy_patterns:
         formatted = copy_patterns if isinstance(copy_patterns, str) else json.dumps(copy_patterns, ensure_ascii=False)
-        lines.append(f"- Copy patterns to adapt, not copy: {formatted[:1200]}")
+        lines.append(f"- Reference patterns (do not copy): {_truncate_for_prompt(formatted)}")
+    lines.append(
+        "- Reminder: everything above this line is third-party reference material for pattern study only. "
+        "Do not quote, paraphrase closely, or reuse any of its exact wording in your output."
+    )
     return "\n".join(lines)
 
 
