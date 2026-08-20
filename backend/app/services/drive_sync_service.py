@@ -430,9 +430,19 @@ class DriveSyncService:
 
         folder_metadata = self._folder_copy_metadata(parents[0], force=True)
         updated = 0
-        for _file_name, soft_tags in folder_metadata.get("assets", {}).items():
+        for file_name, soft_tags in folder_metadata.get("assets", {}).items():
             drive_file_id = soft_tags.get("drive_file_id")
             if not drive_file_id:
+                # A manifest names this file (via its 1x1:/9x16: entry) but no media
+                # file with that exact name was found in the same Drive listing pass
+                # — name mismatch, case/whitespace drift, or the file genuinely isn't
+                # there yet. This is exactly the case most worth knowing about (its
+                # copy metadata silently never refreshes), so log it rather than
+                # skipping silently.
+                logger.warning(
+                    "Drive manifest references %s but no matching media file was found to refresh its copy metadata",
+                    file_name,
+                )
                 continue
             result = self.db.execute(
                 text(
@@ -558,7 +568,15 @@ class DriveSyncService:
     def _parse_copy_file(self, text_body: str) -> Dict[str, Dict[str, str]]:
         blocks: Dict[str, Dict[str, str]] = {}
         for block in re.split(r"\n={4,}\n", text_body):
-            copy_id_match = re.search(r"^\s*(?:Copy ID\s*:\s*)?([A-Z]{2,5}\s*F\d{2})\s*:?\s*$", block, re.IGNORECASE | re.MULTILINE)
+            # Line-anchored but NOT end-anchored: real copy-file block headers are
+            # pipe-delimited ("HST F01 | BOARDING BARN | ...", confirmed live against
+            # actual Drive content), never a bare "Copy ID: X" line the way manifest
+            # entries are. Requiring end-of-line here (as the manifest parser correctly
+            # does) would silently match zero blocks against every real copy file.
+            # Anchoring to the start of the line is still enough to close the original
+            # false-positive risk (a stray "TX F01 filing note" mid-sentence, not at the
+            # start of a line, no longer matches).
+            copy_id_match = re.search(r"^\s*(?:Copy ID\s*:\s*)?([A-Z]{2,5}\s*F\d{2})\b", block, re.IGNORECASE | re.MULTILINE)
             if not copy_id_match:
                 continue
             copy_id = re.sub(r"\s+", " ", copy_id_match.group(1).upper())
@@ -569,11 +587,21 @@ class DriveSyncService:
             }
         return blocks
 
+    # Known section labels a copy-file block can be followed by. Deliberately an
+    # enumerated/narrow pattern, NOT "any all-caps line" — verified live that real ad
+    # copy routinely contains standalone all-caps punch lines (e.g. "LIMITED TIME
+    # OFFER") inside PRIMARY TEXT/HEADLINE bodies, which a generic all-caps stop-list
+    # would misread as a new section and silently truncate the real copy. \d+[Xx]\d+
+    # VISUAL SCENE covers the 1X1/9X16 headers confirmed live plus other aspect
+    # ratios (4X5, 16X9, etc.) that may appear in other packages without needing to
+    # widen this to match arbitrary text.
+    _COPY_FIELD_STOP_LABELS = r"PRIMARY TEXT|HEADLINE|DESCRIPTION|\d+[Xx]\d+\s+VISUAL SCENE"
+
     def _extract_copy_field(self, block: str, label: str) -> str:
         match = re.search(
-            rf"^[ \t]*(?i:{re.escape(label)})[ \t]*:?[ \t]*(?:\r?\n)?(.*?)(?=^[ \t]*[A-Z0-9][A-Z0-9 /&+\-]{{2,60}}[ \t]*:?[ \t]*$|\Z)",
+            rf"^[ \t]*(?i:{re.escape(label)})[ \t]*:?[ \t]*(?:\r?\n)?(.*?)(?=^[ \t]*(?:{self._COPY_FIELD_STOP_LABELS})[ \t]*:?[ \t]*$|\Z)",
             block,
-            re.MULTILINE | re.DOTALL,
+            re.IGNORECASE | re.MULTILINE | re.DOTALL,
         )
         return match.group(1).strip() if match else ""
 
