@@ -47,6 +47,7 @@ class DriveSyncService:
         self._drive = None
         self._path_cache: Dict[str, Optional[List[Dict[str, str]]]] = {}
         self._folder_metadata_cache: Dict[str, Dict[str, Any]] = {}
+        self._package_folder_cache: Dict[str, Optional[str]] = {}
 
     def sync_once(self) -> Dict[str, Any]:
         result = {
@@ -410,11 +411,73 @@ class DriveSyncService:
         guessed, _ = mimetypes.guess_type(file_name)
         return bool((guessed and guessed.startswith(TEXT_PREFIXES)) or file_name.lower().endswith(".txt"))
 
-    def _metadata_for_media_file(self, file_meta: Dict[str, Any], file_name: str) -> Dict[str, Any]:
+    def _find_package_folder(self, file_meta: Dict[str, Any], max_depth: int = 4) -> Optional[str]:
+        """Walk up from a file's immediate parent to find the folder that directly
+        contains a *_HANDOFF_MANIFEST.txt file.
+
+        Verified live 2026-08-20: a media file's own immediate parent is often a
+        typed subfolder ("1x1 Images", "9x16 Images") that is a SIBLING of the
+        folder actually holding the manifest, not a descendant of it — so passing a
+        media file's own parent straight to _folder_copy_metadata (which only
+        searches downward) never finds the manifest. This walks upward first to
+        locate the real package root, then _folder_copy_metadata searches downward
+        from there. Returns None if no manifest is found within max_depth levels —
+        meaning this file simply isn't part of a manifest-backed package, which is
+        the common case (most of Joel's Drive has no manifest at all).
+        """
+        drive = self._client()
         parents = file_meta.get("parents") or []
-        if not parents:
+        current = parents[0] if parents else None
+        depth = 0
+        # Folders visited on the way up whose result isn't known yet — every one of
+        # them resolves to the SAME answer (the package folder we eventually find, or
+        # None), so we cache all of them together at the end rather than caching each
+        # as None as we go — caching "None" prematurely for a folder that turns out to
+        # have a manifest one level further up would wrongly stick for every other file
+        # in that same folder afterward.
+        visited: List[str] = []
+        resolved: Optional[str] = None
+        while current and depth < max_depth:
+            if current in self._package_folder_cache:
+                resolved = self._package_folder_cache[current]
+                break
+            visited.append(current)
+            try:
+                listing = drive.files().list(
+                    q=f"'{current}' in parents and trashed = false",
+                    spaces="drive",
+                    fields="files(name,mimeType)",
+                    includeItemsFromAllDrives=True,
+                    supportsAllDrives=True,
+                ).execute()
+            except Exception as exc:
+                logger.warning("Could not check Drive folder %s for a handoff manifest: %s", current, exc)
+                break
+            has_manifest = any(
+                "handoff" in (item.get("name") or "").lower() and "manifest" in (item.get("name") or "").lower()
+                for item in listing.get("files", [])
+                if item.get("mimeType") != "application/vnd.google-apps.folder"
+            )
+            if has_manifest:
+                resolved = current
+                break
+            try:
+                info = drive.files().get(fileId=current, fields="id,parents", supportsAllDrives=True).execute()
+            except Exception as exc:
+                logger.warning("Could not resolve parent of Drive folder %s: %s", current, exc)
+                break
+            parent_ids = info.get("parents") or []
+            current = parent_ids[0] if parent_ids else None
+            depth += 1
+        for folder_id in visited:
+            self._package_folder_cache[folder_id] = resolved
+        return resolved
+
+    def _metadata_for_media_file(self, file_meta: Dict[str, Any], file_name: str) -> Dict[str, Any]:
+        package_folder = self._find_package_folder(file_meta)
+        if not package_folder:
             return {}
-        folder_metadata = self._folder_copy_metadata(parents[0])
+        folder_metadata = self._folder_copy_metadata(package_folder)
         return folder_metadata.get("assets", {}).get(file_name.lower(), {})
 
     def _refresh_folder_copy_metadata(self, file_meta: Dict[str, Any]) -> int:
@@ -428,7 +491,10 @@ class DriveSyncService:
         if not brand_id:
             return 0
 
-        folder_metadata = self._folder_copy_metadata(parents[0], force=True)
+        package_folder = self._find_package_folder(file_meta)
+        if not package_folder:
+            return 0
+        folder_metadata = self._folder_copy_metadata(package_folder, force=True)
         updated = 0
         for file_name, soft_tags in folder_metadata.get("assets", {}).items():
             drive_file_id = soft_tags.get("drive_file_id")
@@ -460,24 +526,54 @@ class DriveSyncService:
             updated += result.rowcount or 0
         return updated
 
+    def _list_folder_subtree(self, folder_id: str, max_files: int = 2000) -> List[Dict[str, Any]]:
+        """List every non-folder file anywhere under folder_id, recursively.
+
+        Verified live 2026-08-20 that a real handoff package splits its manifest, copy
+        file, and media into separate sibling subfolders (e.g. "Horse and Stable | Fresh
+        Creative" contains the manifest directly, plus child folders "1x1 Images",
+        "9x16 Images", "Ad Copy", "ICP and Strategy") rather than everything sitting
+        beside the manifest. A single non-recursive files().list() on the manifest's own
+        folder finds neither the referenced media nor the copy file it points to — this
+        was a real feature-breaking gap, not a hypothetical one. max_files is a safety
+        cap, not expected to ever bind on a real package.
+        """
+        drive = self._client()
+        collected: List[Dict[str, Any]] = []
+        queue = [folder_id]
+        seen_folders = {folder_id}
+        while queue and len(collected) < max_files:
+            current = queue.pop(0)
+            try:
+                response = drive.files().list(
+                    q=f"'{current}' in parents and trashed = false",
+                    spaces="drive",
+                    fields="files(id,name,mimeType,modifiedTime)",
+                    includeItemsFromAllDrives=True,
+                    supportsAllDrives=True,
+                ).execute()
+            except Exception as exc:
+                logger.warning("Could not list Drive folder %s while resolving package subtree: %s", current, exc)
+                continue
+            for item in response.get("files", []):
+                if item.get("mimeType") == "application/vnd.google-apps.folder":
+                    if item["id"] not in seen_folders:
+                        seen_folders.add(item["id"])
+                        queue.append(item["id"])
+                else:
+                    collected.append(item)
+        return collected
+
     def _folder_copy_metadata(self, folder_id: str, force: bool = False) -> Dict[str, Any]:
         if not force and folder_id in self._folder_metadata_cache:
             return self._folder_metadata_cache[folder_id]
 
-        drive = self._client()
         try:
-            response = drive.files().list(
-                q=f"'{folder_id}' in parents and trashed = false",
-                spaces="drive",
-                fields="files(id,name,mimeType,modifiedTime)",
-                includeItemsFromAllDrives=True,
-                supportsAllDrives=True,
-            ).execute()
+            folder_files = self._list_folder_subtree(folder_id)
         except Exception as exc:
             logger.warning("Could not list Drive folder metadata %s: %s", folder_id, exc)
             self._folder_metadata_cache[folder_id] = {"assets": {}}
             return self._folder_metadata_cache[folder_id]
-        folder_files = response.get("files", [])
         text_files = [
             item for item in folder_files
             if self._is_text_file(item.get("mimeType") or "", item.get("name") or "")
@@ -541,8 +637,12 @@ class DriveSyncService:
         return self._download_file(drive_file_id).decode("utf-8", errors="replace")
 
     def _parse_handoff_manifest(self, text_body: str) -> Dict[str, Any]:
-        landing_match = re.search(r"^\s*Landing page\s*:\s*(\S+)", text_body, re.IGNORECASE | re.MULTILINE)
-        cta_match = re.search(r"^\s*Meta button\s*:\s*([A-Z_ ]+)", text_body, re.IGNORECASE | re.MULTILINE)
+        # Allow an optional leading bullet ("- Meta button: Get Quote.") — verified
+        # live 2026-08-20 that the real manifest's ONLY "Meta button:" occurrence is
+        # bulleted, inside the LOAD INSTRUCTIONS section; without tolerating the "- "
+        # prefix, cta parsed as null for every real package.
+        landing_match = re.search(r"^\s*(?:-\s*)?Landing page\s*:\s*(\S+)", text_body, re.IGNORECASE | re.MULTILINE)
+        cta_match = re.search(r"^\s*(?:-\s*)?Meta button\s*:\s*([A-Za-z_ ]+)", text_body, re.IGNORECASE | re.MULTILINE)
         entries: Dict[str, Dict[str, str]] = {}
         current_id: Optional[str] = None
         for raw_line in text_body.splitlines():
