@@ -1,10 +1,11 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
-import React, { useState, useEffect } from 'react';
-import { ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image, BookOpen, Check, Layers, FolderOpen } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image, BookOpen, Check, Layers, FolderOpen, Search } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
+import { useBrands } from '../context/BrandContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -40,11 +41,79 @@ export const CTA_OPTIONS = [
     'DONATE_NOW',
 ];
 
+const parseDriveTags = (asset) => {
+    if (!asset?.soft_tags) return {};
+    if (typeof asset.soft_tags === 'object') return asset.soft_tags;
+    try {
+        return JSON.parse(asset.soft_tags);
+    } catch (e) {
+        return {};
+    }
+};
+
+const normalizeFilenameBase = (fileName = '') => {
+    const withoutExt = fileName.replace(/\.[^.]+$/, '');
+    const aspectMatch = withoutExt.match(/(?:^|[_\-\s])(1x1|9x16)(?=$|[_\-\s])/i);
+    if (!aspectMatch) return null;
+    const aspect = aspectMatch[1].toLowerCase();
+    const base = withoutExt
+        .replace(/(?:^|[_\-\s])(1x1|9x16)(?=$|[_\-\s])/i, ' ')
+        .replace(/[_\-\s]+/g, ' ')
+        .trim()
+        .toLowerCase();
+    return { base, aspect };
+};
+
+const driveAssetPlacement = (asset) => {
+    const tags = parseDriveTags(asset);
+    if (tags.aspect === '9x16') return 'stories';
+    if (tags.aspect === '1x1') return 'feed';
+    const parsed = normalizeFilenameBase(asset.file_name || '');
+    return parsed?.aspect === '9x16' ? 'stories' : 'feed';
+};
+
+const buildDriveAssetGroups = (assets) => {
+    const grouped = new Map();
+    assets.forEach(asset => {
+        const tags = parseDriveTags(asset);
+        const manifestKey = tags.copy_id ? `manifest:${asset.brand_id}:${asset.folder_path || ''}:${String(tags.copy_id).toLowerCase()}` : null;
+        const filenameParts = normalizeFilenameBase(asset.file_name || '');
+        const filenameKey = filenameParts?.base ? `file:${asset.brand_id}:${asset.folder_path || ''}:${filenameParts.base}` : null;
+        const key = manifestKey || filenameKey || `single:${asset.id}`;
+        const existing = grouped.get(key) || {
+            key,
+            assets: [],
+            copy: tags.copy || null,
+            landingPage: tags.landing_page || null,
+            cta: tags.cta || null,
+        };
+        existing.assets.push(asset);
+        existing.copy = existing.copy || tags.copy || null;
+        existing.landingPage = existing.landingPage || tags.landing_page || null;
+        existing.cta = existing.cta || tags.cta || null;
+        grouped.set(key, existing);
+    });
+
+    return Array.from(grouped.values()).map(group => {
+        const feedAsset = group.assets.find(asset => driveAssetPlacement(asset) === 'feed') || group.assets[0];
+        const storiesAsset = group.assets.find(asset => driveAssetPlacement(asset) === 'stories');
+        return {
+            ...group,
+            id: group.key,
+            displayAsset: feedAsset,
+            feedAsset,
+            storiesAsset,
+            isPair: Boolean(feedAsset && storiesAsset && feedAsset.id !== storiesAsset.id),
+        };
+    });
+};
+
 const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const isMatchImport = mode === 'match-import';
     const { showWarning, showError, showSuccess } = useToast();
     const { authFetch } = useAuth();
     const { creativeData, setCreativeData, selectedAdAccount, adsetData, campaignData } = useCampaign();
+    const { brands } = useBrands();
     // Cache keys for creative defaults (URL/headlines/bodies/description/CTA) are scoped
     // by ad account AND campaign — the same ad account can run multiple niches, each with
     // its own destination URL/copy, so account-only scoping would leak the wrong niche's
@@ -75,6 +144,36 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const [driveLibraryLoading, setDriveLibraryLoading] = useState(false);
     const [driveLibraryError, setDriveLibraryError] = useState(null);
     const [selectedDriveAssetIds, setSelectedDriveAssetIds] = useState(new Set());
+    const [driveSearchTerm, setDriveSearchTerm] = useState('');
+    const [driveFormatFilter, setDriveFormatFilter] = useState('');
+
+    const driveAssetGroups = useMemo(() => {
+        const query = driveSearchTerm.trim().toLowerCase();
+        const visibleAssets = driveAssets.filter(asset => {
+            if (driveFormatFilter && asset.format !== driveFormatFilter) return false;
+            if (!query) return true;
+            const haystack = `${asset.file_name || ''} ${asset.folder_path || ''} ${asset.brand_name || ''}`.toLowerCase();
+            return haystack.includes(query);
+        });
+        return buildDriveAssetGroups(visibleAssets);
+    }, [driveAssets, driveSearchTerm, driveFormatFilter]);
+
+    const driveGroupById = useMemo(() => new Map(driveAssetGroups.map(group => [group.id, group])), [driveAssetGroups]);
+
+    const driveCounts = useMemo(() => {
+        return driveAssets.reduce((acc, asset) => {
+            acc.total += 1;
+            acc[asset.format] = (acc[asset.format] || 0) + 1;
+            return acc;
+        }, { total: 0, image: 0, video: 0 });
+    }, [driveAssets]);
+
+    const defaultUrlForDriveGroup = (group) => {
+        const brandId = group?.displayAsset?.brand_id;
+        const brand = brands.find(item => item.id === brandId);
+        const productsWithUrl = (brand?.products || []).filter(product => product.default_url);
+        return productsWithUrl.length === 1 ? productsWithUrl[0].default_url : '';
+    };
 
     const fetchDriveAssets = async () => {
         setDriveLibraryLoading(true);
@@ -98,6 +197,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
 
     const openDriveLibraryModal = () => {
         setSelectedDriveAssetIds(new Set());
+        setDriveSearchTerm('');
+        setDriveFormatFilter('');
         fetchDriveAssets();
         setShowDriveLibraryModal(true);
     };
@@ -111,21 +212,39 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     };
 
     const addDriveSelectionToCreatives = () => {
-        const selected = driveAssets.filter(asset => selectedDriveAssetIds.has(asset.id));
-        const newCreatives = selected.map(asset => ({
-            id: `drive_${asset.id}`,
-            file: null,
-            previewUrl: asset.r2_key,
-            imageUrl: asset.format === 'video' ? undefined : asset.r2_key,
-            videoUrl: asset.format === 'video' ? asset.r2_key : undefined,
-            name: asset.file_name,
-            mediaType: asset.format,
-            format: 'feed'
-        }));
+        const selectedGroups = [...selectedDriveAssetIds]
+            .map(id => driveGroupById.get(id))
+            .filter(Boolean);
+        const newCreatives = selectedGroups.flatMap(group => {
+            const assets = group.isPair ? [group.feedAsset, group.storiesAsset] : [group.displayAsset];
+            return assets.filter(Boolean).map(asset => ({
+                id: `drive_${asset.id}`,
+                file: null,
+                previewUrl: asset.r2_key,
+                imageUrl: asset.format === 'video' ? undefined : asset.r2_key,
+                videoUrl: asset.format === 'video' ? asset.r2_key : undefined,
+                name: asset.file_name,
+                mediaType: asset.format,
+                format: driveAssetPlacement(asset),
+                drivePairId: group.isPair ? group.id : null
+            }));
+        });
+        const firstWithCopy = selectedGroups.find(group => group.copy || group.landingPage || group.cta);
+        const firstCopy = firstWithCopy?.copy || {};
+        const firstDefaultUrl = selectedGroups.map(defaultUrlForDriveGroup).find(Boolean) || '';
         setCreativeData(prev => ({
             ...prev,
-            creatives: [...(prev.creatives || []), ...newCreatives]
+            creatives: [...(prev.creatives || []), ...newCreatives],
+            headlines: prev.headlines?.[0] ? prev.headlines : (firstCopy.headline ? [firstCopy.headline] : prev.headlines),
+            bodies: prev.bodies?.[0] ? prev.bodies : (firstCopy.primary_text ? [firstCopy.primary_text] : prev.bodies),
+            description: prev.description || firstCopy.description || '',
+            cta: prev.cta && prev.cta !== 'LEARN_MORE' ? prev.cta : (firstWithCopy?.cta || prev.cta || 'LEARN_MORE'),
+            websiteUrl: prev.websiteUrl || firstWithCopy?.landingPage || firstDefaultUrl || ''
         }));
+        if (newCreatives.length > 0) {
+            const pairCount = selectedGroups.filter(group => group.isPair).length;
+            showSuccess(`Added ${newCreatives.length} Drive asset${newCreatives.length !== 1 ? 's' : ''}${pairCount ? ` from ${pairCount} Feed + Stories pair${pairCount !== 1 ? 's' : ''}` : ''}`);
+        }
         setShowDriveLibraryModal(false);
     };
 
@@ -1216,6 +1335,37 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             <X size={20} />
                         </button>
                     </div>
+                    <div className="p-4 border-b space-y-3">
+                        <label className="relative block">
+                            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                            <input
+                                value={driveSearchTerm}
+                                onChange={(e) => setDriveSearchTerm(e.target.value)}
+                                placeholder="Search filenames, folders, or brands"
+                                className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                            />
+                        </label>
+                        <div className="inline-flex overflow-hidden rounded-lg border border-gray-300 bg-white">
+                            {[
+                                { value: '', label: `All ${driveCounts.total}` },
+                                { value: 'image', label: `Images ${driveCounts.image || 0}` },
+                                { value: 'video', label: `Videos ${driveCounts.video || 0}` },
+                            ].map(option => (
+                                <button
+                                    key={option.value || 'all'}
+                                    type="button"
+                                    onClick={() => setDriveFormatFilter(option.value)}
+                                    className={`px-3 py-1.5 text-xs font-semibold transition-colors ${
+                                        driveFormatFilter === option.value
+                                            ? 'bg-gray-900 text-white'
+                                            : 'text-gray-600 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    {option.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
                     <div className="flex-1 overflow-y-auto p-4">
                         {driveLibraryLoading ? (
                             <div className="flex items-center justify-center py-12 gap-2 text-gray-500">
@@ -1226,14 +1376,18 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             <p className="text-center text-red-600 py-12">{driveLibraryError}</p>
                         ) : driveAssets.length === 0 ? (
                             <p className="text-center text-gray-500 py-12">No synced Drive creative yet. It appears here once the Drive sync job (or a manual sync) has run.</p>
+                        ) : driveAssetGroups.length === 0 ? (
+                            <p className="text-center text-gray-500 py-12">No Drive assets match that search.</p>
                         ) : (
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                {driveAssets.map(asset => {
-                                    const isSelected = selectedDriveAssetIds.has(asset.id);
+                                {driveAssetGroups.map(group => {
+                                    const asset = group.displayAsset;
+                                    const isSelected = selectedDriveAssetIds.has(group.id);
+                                    const tags = parseDriveTags(asset);
                                     return (
                                         <div
-                                            key={asset.id}
-                                            onClick={() => toggleDriveAssetSelection(asset.id)}
+                                            key={group.id}
+                                            onClick={() => toggleDriveAssetSelection(group.id)}
                                             className={`relative cursor-pointer rounded-lg overflow-hidden border-2 transition-all ${isSelected ? 'border-amber-500 ring-2 ring-amber-200' : 'border-gray-200 hover:border-amber-300'}`}
                                         >
                                             {asset.format === 'video' ? (
@@ -1246,9 +1400,24 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     <Check size={14} className="text-white" />
                                                 </div>
                                             )}
+                                            {group.isPair && (
+                                                <div className="absolute top-2 left-2 bg-purple-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
+                                                    Feed + Stories pair
+                                                </div>
+                                            )}
+                                            {(group.copy || group.landingPage || group.cta || tags.copy_id) && (
+                                                <div className="absolute bottom-[54px] left-2 bg-emerald-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
+                                                    Copy matched
+                                                </div>
+                                            )}
                                             <div className="p-2 text-xs text-gray-600 bg-white">
                                                 <div className="truncate font-medium">{asset.brand_name || 'Unknown brand'}</div>
                                                 <div className="truncate text-gray-400">{asset.folder_path || asset.file_name}</div>
+                                                {group.isPair && (
+                                                    <div className="mt-1 text-[11px] text-purple-700">
+                                                        {group.feedAsset?.file_name} + {group.storiesAsset?.file_name}
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     );
@@ -1257,7 +1426,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         )}
                     </div>
                     <div className="p-4 border-t flex items-center justify-between">
-                        <span className="text-sm text-gray-500">{selectedDriveAssetIds.size} selected</span>
+                        <span className="text-sm text-gray-500">
+                            {selectedDriveAssetIds.size} selected
+                            {selectedDriveAssetIds.size > 0 && `, ${[...selectedDriveAssetIds].reduce((sum, id) => sum + (driveGroupById.get(id)?.isPair ? 2 : 1), 0)} asset${[...selectedDriveAssetIds].reduce((sum, id) => sum + (driveGroupById.get(id)?.isPair ? 2 : 1), 0) !== 1 ? 's' : ''}`}
+                        </span>
                         <div className="flex gap-3">
                             <button onClick={() => setShowDriveLibraryModal(false)} className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">
                                 Cancel

@@ -44,7 +44,8 @@ def create_brand(
                 brand_id=db_brand.id,
                 name=p.name,
                 description=p.description,
-                product_shots=p.product_shots
+                product_shots=p.product_shots,
+                default_url=p.default_url
             )
             db.add(db_product)
     
@@ -105,6 +106,7 @@ def update_brand(
                 existing_product.name = p.name
                 existing_product.description = p.description
                 existing_product.product_shots = p.product_shots
+                existing_product.default_url = p.default_url
             elif p.id:
                 # Product exists but belongs to another brand - reassign it
                 existing_product = db.query(ProductModel).filter(ProductModel.id == p.id).first()
@@ -114,6 +116,7 @@ def update_brand(
                     existing_product.name = p.name
                     existing_product.description = p.description
                     existing_product.product_shots = p.product_shots
+                    existing_product.default_url = p.default_url
                 else:
                     # Product doesn't exist at all - create new
                     import uuid
@@ -122,7 +125,8 @@ def update_brand(
                         brand_id=brand_id,
                         name=p.name,
                         description=p.description,
-                        product_shots=p.product_shots
+                        product_shots=p.product_shots,
+                        default_url=p.default_url
                     )
                     db.add(new_product)
             else: # p.id is None, so it's a new product without a pre-assigned ID
@@ -134,7 +138,8 @@ def update_brand(
                     brand_id=brand_id,
                     name=p.name,
                     description=p.description,
-                    product_shots=p.product_shots
+                    product_shots=p.product_shots,
+                    default_url=p.default_url
                 )
                 db.add(new_product)
                 incoming_product_ids.add(new_id) # Add the newly generated ID to track it

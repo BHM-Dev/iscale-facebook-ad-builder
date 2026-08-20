@@ -38,7 +38,9 @@ const BrandForm = ({ onClose, onSave, initialData = null }) => {
                     products: [...formData.products, {
                         id: product.id,
                         name: product.name,
-                        description: product.description
+                        description: product.description,
+                        product_shots: product.product_shots || [],
+                        default_url: product.default_url || null
                     }]
                 });
                 setSelectedProductId('');

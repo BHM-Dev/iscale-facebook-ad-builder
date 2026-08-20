@@ -15,7 +15,8 @@ const ProductForm = ({ onClose, onSave, initialData = null }) => {
         name: '',
         description: '',
         brandId: '',
-        product_shots: []
+        product_shots: [],
+        default_url: ''
     });
     const [uploading, setUploading] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -37,7 +38,8 @@ const ProductForm = ({ onClose, onSave, initialData = null }) => {
                 ...formData,
                 name: validateProductName(formData.name),
                 description: validateProductDescription(formData.description),
-                product_shots: formData.product_shots || []
+                product_shots: formData.product_shots || [],
+                default_url: formData.default_url || null
             };
 
             await onSave(validatedData);
@@ -163,6 +165,18 @@ const ProductForm = ({ onClose, onSave, initialData = null }) => {
                             rows="3"
                             placeholder="e.g. Commercial insurance for small business owners — Workers Comp, General Liability, BOP"
                         />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Default Landing Page</label>
+                        <input
+                            type="url"
+                            value={formData.default_url || ''}
+                            onChange={e => setFormData({ ...formData, default_url: e.target.value })}
+                            className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            placeholder="https://www.example.com/quote"
+                        />
+                        <p className="mt-1 text-xs text-gray-500">Used to prefill campaign launch URLs when no Drive manifest URL is available.</p>
                     </div>
 
                     <div>

@@ -6,6 +6,7 @@ class ProductBase(BaseModel):
     name: str
     description: Optional[str] = None
     product_shots: Optional[List[str]] = []
+    default_url: Optional[str] = None
 
 class ProductCreate(ProductBase):
     id: Optional[str] = None
