@@ -244,17 +244,33 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         const firstWithCopy = groupsWithCopy[0] || selectedGroups.find(group => group.landingPage || group.cta);
         const firstCopy = firstWithCopy?.copy || {};
         const firstDefaultUrl = selectedGroups.map(defaultUrlForDriveGroup).find(Boolean) || '';
-        setCreativeData(prev => ({
-            ...prev,
-            creatives: [...(prev.creatives || []), ...newCreatives],
-            headlines: firstCopy.headline && !copyFieldsTouched.headlines ? [firstCopy.headline] : prev.headlines,
-            bodies: firstCopy.primary_text && !copyFieldsTouched.bodies ? [firstCopy.primary_text] : prev.bodies,
-            description: firstCopy.description && !copyFieldsTouched.description ? firstCopy.description : prev.description,
-            cta: firstWithCopy?.cta && !copyFieldsTouched.cta ? firstWithCopy.cta : (prev.cta || 'LEARN_MORE'),
-            websiteUrl: (firstWithCopy?.landingPage || firstDefaultUrl) && !copyFieldsTouched.websiteUrl
+        setCreativeData(prev => {
+            const nextHeadlines = firstCopy.headline && !copyFieldsTouched.headlines ? [firstCopy.headline] : prev.headlines;
+            const nextBodies = firstCopy.primary_text && !copyFieldsTouched.bodies ? [firstCopy.primary_text] : prev.bodies;
+            const nextDescription = firstCopy.description && !copyFieldsTouched.description ? firstCopy.description : prev.description;
+            const nextCta = firstWithCopy?.cta && !copyFieldsTouched.cta ? firstWithCopy.cta : (prev.cta || 'LEARN_MORE');
+            const nextWebsiteUrl = (firstWithCopy?.landingPage || firstDefaultUrl) && !copyFieldsTouched.websiteUrl
                 ? (firstWithCopy?.landingPage || firstDefaultUrl)
-                : prev.websiteUrl
-        }));
+                : prev.websiteUrl;
+
+            if (selectedAdAccount) {
+                safeLocalStorageSet(`defaultHeadlines_${selectedAdAccount.id}_${campaignCacheId}`, JSON.stringify(nextHeadlines || ['']));
+                safeLocalStorageSet(`defaultBodies_${selectedAdAccount.id}_${campaignCacheId}`, JSON.stringify(nextBodies || ['']));
+                safeLocalStorageSet(`defaultDescription_${selectedAdAccount.id}_${campaignCacheId}`, nextDescription || '');
+                safeLocalStorageSet(`defaultCta_${selectedAdAccount.id}_${campaignCacheId}`, nextCta || 'LEARN_MORE');
+                safeLocalStorageSet(`defaultUrl_${selectedAdAccount.id}_${campaignCacheId}`, nextWebsiteUrl || '');
+            }
+
+            return {
+                ...prev,
+                creatives: [...(prev.creatives || []), ...newCreatives],
+                headlines: nextHeadlines,
+                bodies: nextBodies,
+                description: nextDescription,
+                cta: nextCta,
+                websiteUrl: nextWebsiteUrl
+            };
+        });
         if (newCreatives.length > 0) {
             const pairCount = selectedGroups.filter(group => group.isPair).length;
             const copySource = firstWithCopy?.displayAsset?.folder_path || firstWithCopy?.displayAsset?.file_name;
@@ -592,6 +608,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         if (field === 'cta' && selectedAdAccount) {
             safeLocalStorageSet(`defaultCta_${selectedAdAccount.id}_${campaignCacheId}`, value);
         }
+
+        // Persist URL immediately so a Back/remount before Next keeps buyer edits.
+        if (field === 'websiteUrl' && selectedAdAccount) {
+            safeLocalStorageSet(`defaultUrl_${selectedAdAccount.id}_${campaignCacheId}`, value);
+        }
     };
 
     const handleBodyChange = (index, value) => {
@@ -647,6 +668,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 ...prev,
                 bodies: newBodies
             }));
+            if (selectedAdAccount) {
+                safeLocalStorageSet(`defaultBodies_${selectedAdAccount.id}_${campaignCacheId}`, JSON.stringify(newBodies));
+            }
         }
     };
 
@@ -657,6 +681,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 ...prev,
                 headlines: newHeadlines
             }));
+            if (selectedAdAccount) {
+                safeLocalStorageSet(`defaultHeadlines_${selectedAdAccount.id}_${campaignCacheId}`, JSON.stringify(newHeadlines));
+            }
         }
     };
 
