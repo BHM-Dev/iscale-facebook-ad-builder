@@ -430,22 +430,21 @@ class DriveSyncService:
 
         folder_metadata = self._folder_copy_metadata(parents[0], force=True)
         updated = 0
-        for file_name, soft_tags in folder_metadata.get("assets", {}).items():
+        for _file_name, soft_tags in folder_metadata.get("assets", {}).items():
+            drive_file_id = soft_tags.get("drive_file_id")
+            if not drive_file_id:
+                continue
             result = self.db.execute(
                 text(
                     """
                     UPDATE drive_assets
                     SET soft_tags = :soft_tags, synced_at = NOW()
-                    WHERE brand_id = :brand_id
-                      AND COALESCE(folder_path, '') = :folder_path
-                      AND LOWER(file_name) = :file_name
+                    WHERE drive_file_id = :drive_file_id
                     """
                 ),
                 {
                     "soft_tags": json.dumps(soft_tags),
-                    "brand_id": brand_id,
-                    "folder_path": resolved.folder_path or "",
-                    "file_name": file_name,
+                    "drive_file_id": drive_file_id,
                 },
             )
             updated += result.rowcount or 0
@@ -456,17 +455,28 @@ class DriveSyncService:
             return self._folder_metadata_cache[folder_id]
 
         drive = self._client()
-        response = drive.files().list(
-            q=f"'{folder_id}' in parents and trashed = false",
-            spaces="drive",
-            fields="files(id,name,mimeType,modifiedTime)",
-            includeItemsFromAllDrives=True,
-            supportsAllDrives=True,
-        ).execute()
+        try:
+            response = drive.files().list(
+                q=f"'{folder_id}' in parents and trashed = false",
+                spaces="drive",
+                fields="files(id,name,mimeType,modifiedTime)",
+                includeItemsFromAllDrives=True,
+                supportsAllDrives=True,
+            ).execute()
+        except Exception as exc:
+            logger.warning("Could not list Drive folder metadata %s: %s", folder_id, exc)
+            self._folder_metadata_cache[folder_id] = {"assets": {}}
+            return self._folder_metadata_cache[folder_id]
+        folder_files = response.get("files", [])
         text_files = [
-            item for item in response.get("files", [])
+            item for item in folder_files
             if self._is_text_file(item.get("mimeType") or "", item.get("name") or "")
         ]
+        media_by_name = {
+            (item.get("name") or "").lower(): item
+            for item in folder_files
+            if self._is_supported_media(item.get("mimeType") or "", item.get("name") or "")
+        }
         manifest = next(
             (item for item in text_files if "handoff" in item.get("name", "").lower() and "manifest" in item.get("name", "").lower()),
             None,
@@ -503,6 +513,7 @@ class DriveSyncService:
                 file_name = entry.get(aspect)
                 if not file_name:
                     continue
+                media_file = media_by_name.get(file_name.lower())
                 assets[file_name.lower()] = {
                     "copy_id": copy_id,
                     "aspect": aspect,
@@ -510,6 +521,7 @@ class DriveSyncService:
                     "landing_page": manifest_data.get("landing_page"),
                     "cta": manifest_data.get("cta"),
                     "source": "handoff_manifest",
+                    "drive_file_id": media_file.get("id") if media_file else None,
                 }
 
         self._folder_metadata_cache[folder_id] = {"assets": assets}
@@ -525,7 +537,7 @@ class DriveSyncService:
         current_id: Optional[str] = None
         for raw_line in text_body.splitlines():
             line = raw_line.strip()
-            copy_id_match = re.match(r"(?:Copy ID\s*:\s*)?([A-Z]{2,5}\s*F\d{2})\b", line, re.IGNORECASE)
+            copy_id_match = re.match(r"^(?:Copy ID\s*:\s*)?([A-Z]{2,5}\s*F\d{2})\s*:?\s*$", line, re.IGNORECASE)
             if copy_id_match:
                 current_id = re.sub(r"\s+", " ", copy_id_match.group(1).upper())
                 entries.setdefault(current_id, {})
@@ -546,7 +558,7 @@ class DriveSyncService:
     def _parse_copy_file(self, text_body: str) -> Dict[str, Dict[str, str]]:
         blocks: Dict[str, Dict[str, str]] = {}
         for block in re.split(r"\n={4,}\n", text_body):
-            copy_id_match = re.search(r"\b([A-Z]{2,5}\s*F\d{2})\b", block, re.IGNORECASE)
+            copy_id_match = re.search(r"^\s*(?:Copy ID\s*:\s*)?([A-Z]{2,5}\s*F\d{2})\s*:?\s*$", block, re.IGNORECASE | re.MULTILINE)
             if not copy_id_match:
                 continue
             copy_id = re.sub(r"\s+", " ", copy_id_match.group(1).upper())
@@ -559,9 +571,9 @@ class DriveSyncService:
 
     def _extract_copy_field(self, block: str, label: str) -> str:
         match = re.search(
-            rf"^\s*{re.escape(label)}\s*:?\s*\n?(.*?)(?=^\s*(?:PRIMARY TEXT|HEADLINE|DESCRIPTION)\s*:?\s*$|\Z)",
+            rf"^[ \t]*(?i:{re.escape(label)})[ \t]*:?[ \t]*(?:\r?\n)?(.*?)(?=^[ \t]*[A-Z0-9][A-Z0-9 /&+\-]{{2,60}}[ \t]*:?[ \t]*$|\Z)",
             block,
-            re.IGNORECASE | re.MULTILINE | re.DOTALL,
+            re.MULTILINE | re.DOTALL,
         )
         return match.group(1).strip() if match else ""
 

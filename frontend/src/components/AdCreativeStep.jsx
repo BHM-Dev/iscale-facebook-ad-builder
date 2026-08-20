@@ -51,6 +51,12 @@ const parseDriveTags = (asset) => {
     }
 };
 
+const hasCopyText = (copy = {}) => Boolean(
+    copy.headline?.trim() ||
+    copy.primary_text?.trim() ||
+    copy.description?.trim()
+);
+
 const normalizeFilenameBase = (fileName = '') => {
     const withoutExt = fileName.replace(/\.[^.]+$/, '');
     const aspectMatch = withoutExt.match(/(?:^|[_\-\s])(1x1|9x16)(?=$|[_\-\s])/i);
@@ -77,9 +83,7 @@ const buildDriveAssetGroups = (assets) => {
     assets.forEach(asset => {
         const tags = parseDriveTags(asset);
         const manifestKey = tags.copy_id ? `manifest:${asset.brand_id}:${asset.folder_path || ''}:${String(tags.copy_id).toLowerCase()}` : null;
-        const filenameParts = normalizeFilenameBase(asset.file_name || '');
-        const filenameKey = filenameParts?.base ? `file:${asset.brand_id}:${asset.folder_path || ''}:${filenameParts.base}` : null;
-        const key = manifestKey || filenameKey || `single:${asset.id}`;
+        const key = manifestKey || `single:${asset.id}`;
         const existing = grouped.get(key) || {
             key,
             assets: [],
@@ -146,6 +150,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const [selectedDriveAssetIds, setSelectedDriveAssetIds] = useState(new Set());
     const [driveSearchTerm, setDriveSearchTerm] = useState('');
     const [driveFormatFilter, setDriveFormatFilter] = useState('');
+    const [copyFieldsTouched, setCopyFieldsTouched] = useState({
+        headlines: false,
+        bodies: false,
+        description: false,
+        cta: false,
+        websiteUrl: false,
+    });
 
     const driveAssetGroups = useMemo(() => {
         const query = driveSearchTerm.trim().toLowerCase();
@@ -229,21 +240,28 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 drivePairId: group.isPair ? group.id : null
             }));
         });
-        const firstWithCopy = selectedGroups.find(group => group.copy || group.landingPage || group.cta);
+        const groupsWithCopy = selectedGroups.filter(group => hasCopyText(group.copy || {}));
+        const firstWithCopy = groupsWithCopy[0] || selectedGroups.find(group => group.landingPage || group.cta);
         const firstCopy = firstWithCopy?.copy || {};
         const firstDefaultUrl = selectedGroups.map(defaultUrlForDriveGroup).find(Boolean) || '';
         setCreativeData(prev => ({
             ...prev,
             creatives: [...(prev.creatives || []), ...newCreatives],
-            headlines: prev.headlines?.[0] ? prev.headlines : (firstCopy.headline ? [firstCopy.headline] : prev.headlines),
-            bodies: prev.bodies?.[0] ? prev.bodies : (firstCopy.primary_text ? [firstCopy.primary_text] : prev.bodies),
-            description: prev.description || firstCopy.description || '',
-            cta: prev.cta && prev.cta !== 'LEARN_MORE' ? prev.cta : (firstWithCopy?.cta || prev.cta || 'LEARN_MORE'),
-            websiteUrl: prev.websiteUrl || firstWithCopy?.landingPage || firstDefaultUrl || ''
+            headlines: firstCopy.headline && !copyFieldsTouched.headlines ? [firstCopy.headline] : prev.headlines,
+            bodies: firstCopy.primary_text && !copyFieldsTouched.bodies ? [firstCopy.primary_text] : prev.bodies,
+            description: firstCopy.description && !copyFieldsTouched.description ? firstCopy.description : prev.description,
+            cta: firstWithCopy?.cta && !copyFieldsTouched.cta ? firstWithCopy.cta : (prev.cta || 'LEARN_MORE'),
+            websiteUrl: (firstWithCopy?.landingPage || firstDefaultUrl) && !copyFieldsTouched.websiteUrl
+                ? (firstWithCopy?.landingPage || firstDefaultUrl)
+                : prev.websiteUrl
         }));
         if (newCreatives.length > 0) {
             const pairCount = selectedGroups.filter(group => group.isPair).length;
-            showSuccess(`Added ${newCreatives.length} Drive asset${newCreatives.length !== 1 ? 's' : ''}${pairCount ? ` from ${pairCount} Feed + Stories pair${pairCount !== 1 ? 's' : ''}` : ''}`);
+            const copySource = firstWithCopy?.displayAsset?.folder_path || firstWithCopy?.displayAsset?.file_name;
+            const copyNote = hasCopyText(firstCopy)
+                ? ` Applied Drive copy${groupsWithCopy.length > 1 ? ` from ${copySource}; ${groupsWithCopy.length - 1} other copy set${groupsWithCopy.length - 1 !== 1 ? 's were' : ' was'} not applied.` : copySource ? ` from ${copySource}.` : '.'}`
+                : '';
+            showSuccess(`Added ${newCreatives.length} Drive asset${newCreatives.length !== 1 ? 's' : ''}${pairCount ? ` from ${pairCount} Feed + Stories pair${pairCount !== 1 ? 's' : ''}` : ''}.${copyNote}`);
         }
         setShowDriveLibraryModal(false);
     };
@@ -497,6 +515,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             description: savedDescription || '',
             cta: savedCta || 'LEARN_MORE'
         }));
+        setCopyFieldsTouched({
+            headlines: false,
+            bodies: false,
+            description: false,
+            cta: false,
+            websiteUrl: false,
+        });
     }, [selectedAdAccount, campaignCacheId]);
 
     // Fetch pages when ad account is selected
@@ -543,6 +568,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     };
 
     const handleInputChange = (field, value) => {
+        if (['description', 'cta', 'websiteUrl'].includes(field)) {
+            setCopyFieldsTouched(prev => ({ ...prev, [field]: true }));
+        }
         setCreativeData(prev => ({
             ...prev,
             [field]: value,
@@ -567,6 +595,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     };
 
     const handleBodyChange = (index, value) => {
+        setCopyFieldsTouched(prev => ({ ...prev, bodies: true }));
         const newBodies = [...creativeData.bodies];
         newBodies[index] = value;
         setCreativeData(prev => ({
@@ -580,6 +609,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     };
 
     const handleHeadlineChange = (index, value) => {
+        setCopyFieldsTouched(prev => ({ ...prev, headlines: true }));
         const newHeadlines = [...creativeData.headlines];
         newHeadlines[index] = value;
         setCreativeData(prev => ({
@@ -1384,6 +1414,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     const asset = group.displayAsset;
                                     const isSelected = selectedDriveAssetIds.has(group.id);
                                     const tags = parseDriveTags(asset);
+                                    const copyMatched = hasCopyText(group.copy || {});
                                     return (
                                         <div
                                             key={group.id}
@@ -1405,9 +1436,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     Feed + Stories pair
                                                 </div>
                                             )}
-                                            {(group.copy || group.landingPage || group.cta || tags.copy_id) && (
+                                            {(copyMatched || group.landingPage || group.cta || tags.copy_id) && (
                                                 <div className="absolute bottom-[54px] left-2 bg-emerald-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
-                                                    Copy matched
+                                                    {copyMatched ? 'Copy matched' : 'URL matched'}
                                                 </div>
                                             )}
                                             <div className="p-2 text-xs text-gray-600 bg-white">
