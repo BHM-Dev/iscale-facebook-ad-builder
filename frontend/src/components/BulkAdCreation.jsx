@@ -37,6 +37,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             bodyIndex: bIndex,
                             mediaType: creative.mediaType || 'image',
                             format: creative.format || 'feed',
+                            dualPlacement: creative.dualPlacement || false,
                             useDefaultCreative: true
                         });
                     });
@@ -157,6 +158,35 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 instagram_positions: ['stream']
             };
 
+            // Dual-placement targeting overlay — for an ad set made up entirely of
+            // dual-placement creatives (Drive Feed+Stories pairs, each already
+            // carrying its own per-placement image via create_creative's
+            // asset_customization_rules). Locks to exactly the two placements every
+            // creative here customizes for; leaving targeting at its default
+            // (broad/Advantage+) would let Meta serve into placements the creative
+            // doesn't cover (Marketplace, Explore, Right Hand Column, etc.) — the
+            // same "wrong image in wrong placement" failure feedTargeting/
+            // storiesTargeting above already exist to prevent, just for a creative
+            // that spans both placements instead of only one. Mirrors
+            // BulkMatchImport.jsx's dualPlacementTargeting exactly.
+            const dualPlacementTargeting = {
+                ...adsetData.targeting,
+                publisher_platforms: ['facebook', 'instagram'],
+                facebook_positions: ['feed', 'story'],
+                instagram_positions: ['stream', 'story']
+            };
+
+            // Only apply when EVERY feed-bucket ad is dual-placement — if a plain
+            // single-image feed creative shares this ad set, opening it to Stories
+            // too would let Meta serve that creative's square image into Stories,
+            // reintroducing the exact bug feedTargeting exists to prevent for it.
+            // A genuinely mixed batch (some plain feed, some dual-placement, in the
+            // same non-"isMixed" bucket) falls through to today's default behavior
+            // unchanged rather than guessing — Abel's actual test case (a single
+            // Drive-picked pair, or several pairs together) is the clean case this
+            // covers.
+            const hasDualPlacementAds = feedAdsToCreate.length > 0 && feedAdsToCreate.every(ad => ad.dualPlacement);
+
             let fbFeedAdsetId    = adsetData.fbAdsetId; // used for feed ads (or all ads if single-format)
             let fbStoriesAdsetId = null;                // used for stories ads (mixed only)
             let storiesAdsetLocalId = null;
@@ -181,6 +211,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     // Single ad set — stories placements only
                     const storiesPayload = { ...baseAdsetPayload, targeting: storiesTargeting };
                     fbFeedAdsetId = await createFacebookAdSet(storiesPayload, fbCampaignId, selectedAdAccount.accountId, campaignData.budgetType);
+                } else if (hasDualPlacementAds) {
+                    // Single ad set — placement-locked to Feed + Story so Meta's
+                    // asset_customization_rules actually get exercised (see comment
+                    // on dualPlacementTargeting above).
+                    const dualPayload = { ...baseAdsetPayload, targeting: dualPlacementTargeting };
+                    fbFeedAdsetId = await createFacebookAdSet(dualPayload, fbCampaignId, selectedAdAccount.accountId, campaignData.budgetType);
                 } else {
                     // Single ad set — feed (default)
                     fbFeedAdsetId = await createFacebookAdSet(baseAdsetPayload, fbCampaignId, selectedAdAccount.accountId, campaignData.budgetType);
@@ -196,6 +232,13 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 };
                 fbStoriesAdsetId = await createFacebookAdSet(storiesPayload, fbCampaignId, selectedAdAccount.accountId, campaignData.budgetType);
                 storiesAdsetLocalId = `adset_stories_${Date.now()}`;
+            } else if (hasDualPlacementAds) {
+                // Reusing an existing ad set — we can't retroactively confirm or
+                // change its own targeting from here, so warn rather than assume
+                // it already includes Story placement. If it doesn't, Meta may
+                // simply never deliver into Stories for these creatives (safe
+                // failure — no wrong-image risk — but worth Abel/Joel knowing).
+                showWarning('This ad set was created before dual-placement — confirm its targeting includes Stories/Reels placement, or the linked creative may only ever deliver to Feed.');
             }
 
             // Save feed (or sole) ad set locally
@@ -274,6 +317,11 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         videoUrl: isVideo ? (specificCreative?.videoUrl || specificCreative?.previewUrl) : undefined,
                         imageFile: !isVideo && specificCreative ? specificCreative.file : null,
                         videoFile: isVideo && specificCreative ? specificCreative.file : null,
+                        // Feed+Stories Drive pairs carry a secondaryImageUrl — createCompleteAd
+                        // already uploads it and passes secondary_image_hash through to Meta's
+                        // asset_feed_spec dual-placement path (same mechanism Bulk Match Import
+                        // ships). Never set for video creatives — that path is image-only.
+                        secondaryImageUrl: !isVideo ? specificCreative?.secondaryImageUrl : undefined,
                         headlines: [creativeData.headlines[ad.headlineIndex]],
                         bodies: [creativeData.bodies[ad.bodyIndex]]
                     };
@@ -309,6 +357,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             creativeName: creativeData.creativeName,
                             mediaType: isVideo ? 'video' : 'image',
                             imageUrl: adSpecificCreativeData.imageUrl,
+                            secondaryImageUrl: adSpecificCreativeData.secondaryImageUrl,
                             videoUrl: adSpecificCreativeData.videoUrl,
                             videoId: result.videoId,
                             thumbnailUrl: result.thumbnailUrl,

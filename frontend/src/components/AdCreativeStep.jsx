@@ -227,6 +227,34 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             .map(id => driveGroupById.get(id))
             .filter(Boolean);
         const newCreatives = selectedGroups.flatMap(group => {
+            // A real pair (both an image feed asset AND an image stories asset —
+            // create_creative's dual-placement path is image-only, never video,
+            // per its own docstring) becomes ONE creative carrying both URLs, so
+            // it flows through BulkAdCreation as a single ad/ad-set entry that
+            // Meta shows with the right image per placement — reusing the exact
+            // secondary_image_hash mechanism Bulk Match Import already ships and
+            // that's already been through Meta-API domain review, not inventing
+            // a new one. Falls back to two independent creatives (today's
+            // behavior) whenever the pair isn't two real images.
+            const canMergeAsPair = group.isPair
+                && group.feedAsset?.format !== 'video'
+                && group.storiesAsset?.format !== 'video';
+
+            if (canMergeAsPair) {
+                return [{
+                    id: `drive_${group.feedAsset.id}_${group.storiesAsset.id}`,
+                    file: null,
+                    previewUrl: group.feedAsset.r2_key,
+                    imageUrl: group.feedAsset.r2_key,
+                    secondaryImageUrl: group.storiesAsset.r2_key,
+                    name: group.feedAsset.file_name,
+                    mediaType: 'image',
+                    format: 'feed',
+                    dualPlacement: true,
+                    drivePairId: group.id
+                }];
+            }
+
             const assets = group.isPair ? [group.feedAsset, group.storiesAsset] : [group.displayAsset];
             return assets.filter(Boolean).map(asset => ({
                 id: `drive_${asset.id}`,
@@ -1011,15 +1039,26 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             </span>
                                         )}
                                     </div>
+                                    {creative.dualPlacement && (
+                                        <div className="absolute top-2 right-2 bg-purple-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm flex items-center gap-1">
+                                            <Layers size={12} /> Feed + Stories linked
+                                        </div>
+                                    )}
                                     <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); duplicateCreative(creative.id); }}
-                                            className="flex items-center gap-1 px-2 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-xs font-medium transform scale-90 hover:scale-100 transition-all"
-                                            title={`Duplicate as ${(creative.format || 'feed') === 'stories' ? 'Feed (1:1)' : 'Stories (9:16)'}`}
-                                        >
-                                            <Copy size={13} />
-                                            {(creative.format || 'feed') === 'stories' ? 'Dupe as Feed' : 'Dupe as Stories'}
-                                        </button>
+                                        {/* Duplicate-as-opposite-placement doesn't apply once a creative
+                                            already carries both a feed and a stories image — it's not a
+                                            single asset being reused at a second placement, it's already
+                                            both. */}
+                                        {!creative.dualPlacement && (
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); duplicateCreative(creative.id); }}
+                                                className="flex items-center gap-1 px-2 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-xs font-medium transform scale-90 hover:scale-100 transition-all"
+                                                title={`Duplicate as ${(creative.format || 'feed') === 'stories' ? 'Feed (1:1)' : 'Stories (9:16)'}`}
+                                            >
+                                                <Copy size={13} />
+                                                {(creative.format || 'feed') === 'stories' ? 'Dupe as Feed' : 'Dupe as Stories'}
+                                            </button>
+                                        )}
                                         <button
                                             onClick={() => removeCreative(creative.id)}
                                             className="p-2 bg-red-500 text-white rounded-full hover:bg-red-600 transform scale-90 hover:scale-100 transition-all"
@@ -1030,20 +1069,32 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     </div>
                                     <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 text-white text-xs flex items-center gap-1 px-1.5 py-1">
                                         <span className="truncate flex-1 min-w-0">{creative.name}</span>
-                                        <button
-                                            type="button"
-                                            onClick={(e) => { e.stopPropagation(); toggleCreativeFormat(creative.id); }}
-                                            className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold leading-tight transition-colors ${
-                                                (creative.format || 'feed') === 'stories'
-                                                    ? 'bg-purple-500 hover:bg-purple-400'
-                                                    : 'bg-blue-600 hover:bg-blue-500'
-                                            }`}
-                                            title={(creative.format || 'feed') === 'stories'
-                                                ? 'Stories & Reels (9:16) — click to switch to Feed'
-                                                : 'Feed (1:1) — click to switch to Stories & Reels (9:16)'}
-                                        >
-                                            {(creative.format || 'feed') === 'stories' ? '9:16' : '1:1'}
-                                        </button>
+                                        {creative.dualPlacement ? (
+                                            // Not a toggle — this creative already carries both a feed
+                                            // and a stories image via secondaryImageUrl, shown together
+                                            // in Meta as one ad. Nothing to switch between.
+                                            <span
+                                                className="flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold leading-tight bg-purple-500"
+                                                title="Feed (1:1) + Stories (9:16) — one ad, Meta shows the right image per placement"
+                                            >
+                                                1:1 + 9:16
+                                            </span>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                onClick={(e) => { e.stopPropagation(); toggleCreativeFormat(creative.id); }}
+                                                className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold leading-tight transition-colors ${
+                                                    (creative.format || 'feed') === 'stories'
+                                                        ? 'bg-purple-500 hover:bg-purple-400'
+                                                        : 'bg-blue-600 hover:bg-blue-500'
+                                                }`}
+                                                title={(creative.format || 'feed') === 'stories'
+                                                    ? 'Stories & Reels (9:16) — click to switch to Feed'
+                                                    : 'Feed (1:1) — click to switch to Stories & Reels (9:16)'}
+                                            >
+                                                {(creative.format || 'feed') === 'stories' ? '9:16' : '1:1'}
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             ))}
