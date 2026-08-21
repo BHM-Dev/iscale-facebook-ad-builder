@@ -82,7 +82,14 @@ const buildDriveAssetGroups = (assets) => {
     const grouped = new Map();
     assets.forEach(asset => {
         const tags = parseDriveTags(asset);
-        const manifestKey = tags.copy_id ? `manifest:${asset.brand_id}:${asset.folder_path || ''}:${String(tags.copy_id).toLowerCase()}` : null;
+        // Deliberately NOT including folder_path here. Verified live 2026-08-21: a
+        // real manifest's 1x1 and 9x16 versions of the SAME copy_id live in
+        // different subfolders ("1x1 Images" vs "9x16 Images" siblings under the
+        // package folder) — including folder_path in the key made every real pair
+        // fail to match (different folder_path => different key => never merged),
+        // silently defeating pairing for every manifest-backed asset in production.
+        // brand_id + copy_id alone is the correct, unique, manifest-authoritative key.
+        const manifestKey = tags.copy_id ? `manifest:${asset.brand_id}:${String(tags.copy_id).toLowerCase()}` : null;
         const key = manifestKey || `single:${asset.id}`;
         const existing = grouped.get(key) || {
             key,
