@@ -520,15 +520,21 @@ class FacebookService:
 
         # Handle attribution window — convert UI value (e.g. '7d_click_1d_view')
         # to Meta's attribution_spec format required by the API.
+        #
+        # 28-day options removed 2026-08-21 (audit): verified live against
+        # Meta's real API for OFFSITE_CONVERSIONS (what every real BHM
+        # campaign uses) — Meta's own error is explicit: "Based on the
+        # objectives and optimization goals you have selected, supported
+        # values is/are attribution window of 1, 7 day(s)." Confirmed by
+        # pulling every currently-active real ad set on the account: all of
+        # them already use 7d_click/7d_click_1d_view exclusively. 28-day was
+        # never actually usable and would hard-fail at ad-set creation.
         _ATTRIBUTION_MAP = {
             '1d_click':           [{'event_type': 'CLICK_THROUGH', 'window_days': 1}],
             '7d_click':           [{'event_type': 'CLICK_THROUGH', 'window_days': 7}],
-            '28d_click':          [{'event_type': 'CLICK_THROUGH', 'window_days': 28}],
             '1d_click_1d_view':   [{'event_type': 'CLICK_THROUGH', 'window_days': 1},
                                    {'event_type': 'VIEW_THROUGH',  'window_days': 1}],
             '7d_click_1d_view':   [{'event_type': 'CLICK_THROUGH', 'window_days': 7},
-                                   {'event_type': 'VIEW_THROUGH',  'window_days': 1}],
-            '28d_click_1d_view':  [{'event_type': 'CLICK_THROUGH', 'window_days': 28},
                                    {'event_type': 'VIEW_THROUGH',  'window_days': 1}],
         }
         attribution_setting = (

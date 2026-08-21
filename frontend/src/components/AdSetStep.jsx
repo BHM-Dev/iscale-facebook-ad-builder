@@ -28,13 +28,18 @@ const BID_STRATEGIES = [
     { value: 'COST_CAP', label: 'Cost Cap' }
 ];
 
+// 28-day options removed 2026-08-21 (audit): verified live against Meta's real
+// API for OFFSITE_CONVERSIONS (what every real BHM campaign uses) — Meta's own
+// error is explicit: "Based on the objectives and optimization goals you have
+// selected, supported values is/are attribution window of 1, 7 day(s)." Every
+// real active ad set across the account already uses 7d_click/7d_click_1d_view
+// exclusively; 28-day was never actually usable and would hard-fail at ad-set
+// creation if selected.
 const ATTRIBUTION_SETTINGS = [
     { value: '1d_click', label: '1-day click' },
     { value: '7d_click', label: '7-day click' },
     { value: '1d_click_1d_view', label: '1-day click or 1-day view' },
-    { value: '7d_click_1d_view', label: '7-day click or 1-day view' },
-    { value: '28d_click', label: '28-day click' },
-    { value: '28d_click_1d_view', label: '28-day click or 1-day view' }
+    { value: '7d_click_1d_view', label: '7-day click or 1-day view' }
 ];
 
 // List of countries with their codes
