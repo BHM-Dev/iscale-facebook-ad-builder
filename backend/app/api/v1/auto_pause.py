@@ -469,10 +469,15 @@ def check_and_enforce(
 def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
     """Core enforcement logic — called by endpoint and by APScheduler.
 
-    Uses a single bulk Meta API call instead of one call per rule to avoid
-    N×latency when many rules are active.
+    Uses a bulk Meta API call per account instead of one call per rule to
+    avoid N×latency when many rules are active.
     """
-    rules = db.query(AutoPauseRule).filter(AutoPauseRule.is_active == True).all()
+    rules_query = db.query(AutoPauseRule).filter(AutoPauseRule.is_active == True)
+    if ad_account_id:
+        rules_query = rules_query.join(
+            FacebookAdSet, AutoPauseRule.adset_id == FacebookAdSet.id
+        ).filter(FacebookAdSet.fb_account_id == normalize_account_id(ad_account_id))
+    rules = rules_query.all()
 
     paused = []
     skipped = []
@@ -481,14 +486,39 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
 
     svc = FacebookService()
 
-    # One bulk call for all adset insights instead of N sequential calls
+    # Auto-pause rules can span multiple Meta ad accounts, but a single bulk
+    # insights call only ever covers ONE account (Meta's Insights API is
+    # account-scoped). The scheduler's production path (main.py's
+    # scheduled_check) calls _run_check(db) with no ad_account_id at all —
+    # previously that meant every rule outside the service's single
+    # configured default account was silently skipped as "not in bulk
+    # results" and never actually evaluated, every 30 minutes, forever
+    # (audit finding 2026-08-21). Fetch bulk insights once per DISTINCT
+    # account represented among the active rules instead of once total.
+    if ad_account_id:
+        target_accounts = [ad_account_id]
+    else:
+        target_accounts = sorted({
+            rule.adset.fb_account_id
+            for rule in rules
+            if rule.adset and rule.adset.fb_account_id
+        })
+        if any(rule.adset and not rule.adset.fb_account_id for rule in rules):
+            # A rule whose adset has no recorded account can't be resolved to
+            # a specific one — fall back to the service's configured default
+            # account rather than silently dropping it.
+            target_accounts.append(None)
+        if not target_accounts:
+            target_accounts = [None]
+
     bulk_insights = {}
-    try:
-        bulk_insights = svc.get_account_insights_bulk(ad_account_id=ad_account_id)
-    except Exception as e:
-        logger.error("Bulk insights fetch failed for check: %s", e)
-        # Fall back to per-adset calls if bulk fails
-        bulk_insights = None
+    failed_accounts = set()
+    for account in target_accounts:
+        try:
+            bulk_insights.update(svc.get_account_insights_bulk(ad_account_id=account))
+        except Exception as e:
+            logger.error("Bulk insights fetch failed for account %s: %s", account or "(default)", e)
+            failed_accounts.add(account)
 
     for rule in rules:
         adset = rule.adset
@@ -502,14 +532,17 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
             skipped.append({"rule_id": rule.id, "adset": adset.name, "reason": "already paused"})
             continue
 
+        rule_account = adset.fb_account_id or None
         try:
-            if bulk_insights is not None:
-                insights = bulk_insights.get(adset.fb_adset_id)
-                if insights is None:
+            insights = bulk_insights.get(adset.fb_adset_id)
+            if insights is None:
+                if rule_account in failed_accounts:
+                    # That account's bulk fetch failed outright — fall back to
+                    # a live per-adset call rather than skipping the rule.
+                    insights = svc.get_adset_insights(adset.fb_adset_id)
+                else:
                     skipped.append({"rule_id": rule.id, "adset": adset.name, "reason": "not in bulk results"})
                     continue
-            else:
-                insights = svc.get_adset_insights(adset.fb_adset_id)
         except Exception as e:
             logger.error("Insights fetch failed for %s: %s", adset.fb_adset_id, e)
             errors.append({"rule_id": rule.id, "adset": adset.name, "error": str(e)})

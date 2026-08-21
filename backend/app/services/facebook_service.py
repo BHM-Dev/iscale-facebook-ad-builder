@@ -1109,7 +1109,7 @@ class FacebookService:
             return {
                 'spend': 0.0, 'leads': 0, 'cpl': None,
                 'impressions': 0, 'reach': 0, 'frequency': 0.0,
-                'clicks': 0, 'ctr': 0.0,
+                'clicks': 0, 'ctr': None,
                 'revenue': None, 'roas': None,
                 'date_preset': date_preset,
             }
@@ -1121,7 +1121,9 @@ class FacebookService:
         reach = int(row.get('reach', 0) or 0)
         frequency = round(float(row.get('frequency', 0) or 0), 2)
         clicks = int(row.get('clicks', 0) or 0)
-        ctr = float(row.get('ctr', 0) or 0)
+        # Stay None when Meta omits ctr — see matching comment in
+        # get_account_insights_bulk above.
+        ctr = float(row['ctr']) if row.get('ctr') is not None else None
 
         # Count leads: action_type = 'lead' or 'onsite_conversion.lead_grouped'
         leads = 0
@@ -1170,7 +1172,7 @@ class FacebookService:
             'reach': reach,
             'frequency': frequency,
             'clicks': clicks,
-            'ctr': round(ctr, 4),
+            'ctr': round(ctr, 4) if ctr is not None else None,
             'revenue': revenue,
             'roas': roas,
             'date_preset': date_preset,
@@ -1254,7 +1256,12 @@ class FacebookService:
             reach       = int(row.get('reach', 0) or 0)
             frequency   = round(float(row.get('frequency', 0) or 0), 2)
             clicks      = int(row.get('clicks', 0) or 0)
-            ctr         = float(row.get('ctr', 0) or 0)
+            # Stay None when Meta omits ctr, matching cpl's pattern below — a
+            # 'ctr less_than X' auto-pause rule must not treat "Meta didn't
+            # return this field on this row" as "CTR is actually 0", or a
+            # transient omission could fire a real pause (flagged in the
+            # 2026-08-21 audit).
+            ctr = float(row['ctr']) if row.get('ctr') is not None else None
 
             leads = 0
             for action in (row.get('actions') or []):
@@ -1297,7 +1304,7 @@ class FacebookService:
                 'reach':       reach,
                 'frequency':   frequency,
                 'clicks':      clicks,
-                'ctr':         round(ctr, 4),
+                'ctr':         round(ctr, 4) if ctr is not None else None,
                 'revenue':     revenue,
                 'roas':        roas,
                 'date_preset': date_preset,
