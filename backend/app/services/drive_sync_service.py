@@ -628,6 +628,16 @@ class DriveSyncService:
                     "cta": manifest_data.get("cta"),
                     "source": "handoff_manifest",
                     "drive_file_id": media_file.get("id") if media_file else None,
+                    # Disambiguates copy_id across packages — a recurring batch for
+                    # the same brand can plausibly reuse a short prefix like "HST"
+                    # and restart numbering at F01 (flagged in review 2026-08-21:
+                    # brand_id + copy_id alone isn't guaranteed globally unique).
+                    # folder_id here is the resolved PACKAGE folder (via
+                    # _find_package_folder), stable across the "1x1 Images"/
+                    # "9x16 Images" sibling subfolders since both resolve to the
+                    # same package — unlike the per-asset folder_path, which
+                    # differs between the two and was the original pairing bug.
+                    "package_folder_id": folder_id,
                 }
 
         self._folder_metadata_cache[folder_id] = {"assets": assets}

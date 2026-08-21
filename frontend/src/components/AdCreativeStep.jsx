@@ -82,14 +82,21 @@ const buildDriveAssetGroups = (assets) => {
     const grouped = new Map();
     assets.forEach(asset => {
         const tags = parseDriveTags(asset);
-        // Deliberately NOT including folder_path here. Verified live 2026-08-21: a
+        // Deliberately NOT using folder_path here — verified live 2026-08-21 that a
         // real manifest's 1x1 and 9x16 versions of the SAME copy_id live in
         // different subfolders ("1x1 Images" vs "9x16 Images" siblings under the
-        // package folder) — including folder_path in the key made every real pair
-        // fail to match (different folder_path => different key => never merged),
-        // silently defeating pairing for every manifest-backed asset in production.
-        // brand_id + copy_id alone is the correct, unique, manifest-authoritative key.
-        const manifestKey = tags.copy_id ? `manifest:${asset.brand_id}:${String(tags.copy_id).toLowerCase()}` : null;
+        // package folder), so folder_path made every real pair fail to match.
+        // But brand_id + copy_id alone isn't safe either (review, same day): a
+        // recurring batch for the same brand can plausibly reuse a short prefix
+        // like "HST" and restart numbering at F01, silently merging two unrelated
+        // packages' assets. package_folder_id (the resolved package folder, stable
+        // across the 1x1/9x16 siblings, set by drive_sync_service._find_package_folder)
+        // is the real disambiguator — falls back to copy_id-only for any asset
+        // synced before this field existed, matching the prior (narrower) behavior
+        // rather than refusing to pair at all.
+        const manifestKey = tags.copy_id
+            ? `manifest:${asset.brand_id}:${tags.package_folder_id || ''}:${String(tags.copy_id).toLowerCase()}`
+            : null;
         const key = manifestKey || `single:${asset.id}`;
         const existing = grouped.get(key) || {
             key,
