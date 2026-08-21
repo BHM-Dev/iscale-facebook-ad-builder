@@ -198,12 +198,20 @@ def get_adset(
 @router.post("/sync")
 def manual_sync(
     date_preset: str = Query("last_7d"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
     ad_account_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """Manually trigger a RedTrack cache refresh for the given date preset.
-    Same logic as the 30-min scheduler — call this to populate cache immediately.
+    """Manually trigger a RedTrack cache refresh for the given date preset, or
+    an explicit date_from/date_to range (YYYY-MM-DD) — matches /report and
+    /report/sub1's contract. Same logic as the 30-min scheduler.
+
+    Audit finding 2026-08-21: this endpoint never declared date_from/date_to
+    params at all, so FastAPI silently dropped them when the frontend sent a
+    custom-range sync — every "sync" on a custom date range actually
+    refreshed date_preset's default (last_7d), not the visible range.
     """
     svc = _svc()
     if not svc.is_configured():
@@ -213,7 +221,10 @@ def manual_sync(
     from datetime import date
     from app.models import RedTrackCache
 
-    date_from_str, date_to_str = svc.preset_to_dates(date_preset)
+    if date_from and date_to:
+        date_from_str, date_to_str = date_from, date_to
+    else:
+        date_from_str, date_to_str = svc.preset_to_dates(date_preset)
     # raise_on_error so a failed API call is reported as a failed API call. It used
     # to come back as an empty dict, which this endpoint then reported as "no data,
     # check sub2 is in your tracking URLs" — sending media buyers to rewrite

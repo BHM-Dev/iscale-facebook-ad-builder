@@ -216,7 +216,7 @@ function DateFilter({ preset, setPreset, dateFrom, setDateFrom, dateTo, setDateT
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { showSuccess, showError } = useToast();
+  const { showSuccess, showError, showWarning } = useToast();
   const { hasPermission } = useAuth();
   const { activeAccountId, activeAccountLoading, adAccounts } = useCampaign();
   const [loading, setLoading] = useState(true);
@@ -326,13 +326,24 @@ export default function Dashboard() {
       if (df && dt) { params.set('date_from', df); params.set('date_to', dt); }
       else { params.set('date_preset', p || 'today'); }
 
-      const [metaRes] = await Promise.all([
+      const [metaRes, rtRes] = await Promise.all([
         authFetch(`${API_URL}/facebook/sync${activeAccountId ? `?ad_account_id=${encodeURIComponent(activeAccountId)}` : ''}`, { method: 'POST' }),
         authFetch(`${API_URL}/redtrack/sync?${params}`, { method: 'POST' }).catch(() => null),
       ]);
 
       if (!metaRes.ok) { const e = await metaRes.json(); throw new Error(e.detail || 'Meta sync failed'); }
-      showSuccess('Sync complete');
+      // RedTrack failure must never be silently absorbed (audit finding
+      // 2026-08-21: this used to be .catch(() => null) with the response
+      // discarded entirely) — Steve refreshing this page needs to know
+      // revenue may be stale even though Meta's ad structure just synced.
+      if (!rtRes || !rtRes.ok) {
+        const rtErr = rtRes ? await rtRes.json().catch(() => ({})) : {};
+        showWarning(
+          `Meta synced, but RedTrack revenue refresh failed${rtErr.detail ? `: ${rtErr.detail}` : ''} — revenue numbers may be stale.`
+        );
+      } else {
+        showSuccess('Sync complete');
+      }
       load(activeRange);
     } catch (e) { showError(e.message || 'Sync failed'); }
     finally { setSyncing(false); setSyncingRT(false); }

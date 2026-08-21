@@ -910,7 +910,7 @@ function RemixDrawer({ creative, brands, onClose, onLaunchWizard }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function CampaignPerformance() {
   const navigate = useNavigate();
-  const { showSuccess, showError, showInfo } = useToast();
+  const { showSuccess, showError, showInfo, showWarning } = useToast();
   const { brands } = useBrands();
   const { activeAccountId, activeAccountLoading } = useCampaign();
   const adAccountId = activeAccountId || '';
@@ -1236,7 +1236,7 @@ export default function CampaignPerformance() {
         ? new URLSearchParams({ date_from: dateFrom, date_to: dateTo })
         : new URLSearchParams({ date_preset: datePreset });
 
-      const [metaRes] = await Promise.all([
+      const [metaRes, rtRes] = await Promise.all([
         authFetch(`${API_BASE}/facebook/sync${metaParams}`, { method: 'POST' }),
         authFetch(`${API_BASE}/redtrack/sync?${rtParams}`, { method: 'POST' }).catch(() => null),
       ]);
@@ -1246,6 +1246,16 @@ export default function CampaignPerformance() {
         throw new Error(e.detail || 'Meta sync failed');
       }
       const result = await metaRes.json();
+      // RedTrack failure must never be silently absorbed — a buyer refreshing
+      // this page needs to know revenue/CPL may be stale even though the ad
+      // structure just synced clean (audit finding 2026-08-21: this used to
+      // be .catch(() => null) with the response discarded entirely).
+      if (!rtRes || !rtRes.ok) {
+        const rtErr = rtRes ? await rtRes.json().catch(() => ({})) : {};
+        showWarning(
+          `Meta synced, but RedTrack revenue refresh failed${rtErr.detail ? `: ${rtErr.detail}` : ''} — revenue/CPL numbers may be stale.`
+        );
+      }
       showSuccess(
         `Sync complete — ${result.campaigns.created} campaigns, ${result.adsets.created} ad sets imported. ${result.adsets.updated} ad sets updated.`
       );
