@@ -53,4 +53,6 @@ python3 backend/scripts/video_finetuning_harness.py \
 - Do not ask Kie to generate readable text in the video.
 - Keep phone screens angled away, dark, or blurred.
 - Keep US car interiors left-hand-drive.
+- Prefer tight chest-up or interior-only framing.
+- Avoid visible exterior car doors, side panels, badges, decals, stickers, license plates, and signage; Kie can hallucinate fake text on those surfaces even when the seed image is clean.
 - Add CTA/offer text later through overlays, not generated video pixels.

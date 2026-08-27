@@ -1,0 +1,50 @@
+name: Diagnose Frontend Deploy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Version check, then a forced no-cache rebuild of frontend only
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          command_timeout: 15m
+          script: |
+            set -e
+            cd /home/ubuntu/iscale-facebook-ad-builder
+
+            echo "===== docker + compose versions ====="
+            docker --version
+            docker compose version
+            which docker-compose 2>&1 || echo "no separate docker-compose v1 binary found"
+
+            echo ""
+            echo "===== BEFORE: current frontend image top layer age ====="
+            docker history iscale-facebook-ad-builder-frontend --format '{{.CreatedSince}} | {{.CreatedBy}}' | head -3
+
+            echo ""
+            echo "===== forcing a no-cache, no-pull-skip rebuild of frontend only ====="
+            docker compose -f docker-compose.prod.yml build --no-cache --pull frontend
+
+            echo ""
+            echo "===== AFTER BUILD: new frontend image top layer age ====="
+            docker history iscale-facebook-ad-builder-frontend --format '{{.CreatedSince}} | {{.CreatedBy}}' | head -3
+
+            echo ""
+            echo "===== recreating the frontend container from the new image ====="
+            docker compose -f docker-compose.prod.yml up -d --force-recreate frontend
+
+            echo ""
+            echo "===== confirming the new container is serving the new bundle ====="
+            sleep 3
+            docker exec ad-builder-web sh -c "grep -c 'papaparse\|Bulk Match\|ad_number' /usr/share/nginx/html/assets/*.js || echo 'STILL ZERO MATCHES -- something deeper is wrong'"
+            docker exec ad-builder-web ls -la /usr/share/nginx/html/assets/
+
+            echo ""
+            echo "===== DONE ====="

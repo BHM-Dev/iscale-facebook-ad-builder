@@ -37,6 +37,8 @@ CAST_ASSET_DIR = OUTPUT_DIR / "cast_assets"
 JOBS_URL = "https://api.kie.ai/api/v1/jobs"
 UPLOAD_BASE64_URL = "https://kieai.redpandaai.co/api/file-base64-upload"
 COMMON_API_URL = "https://api.kie.ai/api/v1"
+ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1"
+ELEVENLABS_KEYCHAIN_SERVICE = "elevenlabs-api-key"
 
 POLL_INTERVAL_SECONDS = 5
 TASK_TIMEOUT_SECONDS = 900
@@ -46,6 +48,7 @@ MEDIA_DURATION_TOLERANCE_SECONDS = 0.5
 DEFAULT_MAX_PLANNED_CREDITS = 350
 SEEDANCE_FAST_MODEL = "bytedance/seedance-2-fast"
 OMNIHUMAN_LIP_SYNC_MODEL = "omnihuman-1-5"
+ELEVENLABS_DIRECT_MODEL = "eleven_v3"
 SEEDANCE_RESOLUTION = "480p"
 OMNIHUMAN_CREDITS_PER_SECOND = 27
 SEEDANCE_BROLL_CREDITS_PER_SECOND = 15.5
@@ -243,6 +246,10 @@ def is_omnihuman_model(model: str) -> bool:
     return model == OMNIHUMAN_LIP_SYNC_MODEL
 
 
+def omnihuman_prompt(prompt: str) -> str:
+    return "Natural UGC delivery, realistic lip sync, no text, no logos, no watermarks."
+
+
 def log(message: str) -> None:
     print(message, flush=True)
 
@@ -283,6 +290,20 @@ def require_api_key() -> str:
         api_key = read_keychain_secret(("kie-ai-api", "KIE_AI_API_KEY", "kie.ai"))
     if not api_key:
         raise SystemExit("KIE_AI_API_KEY is not set. Export it, put it in a gitignored .env.local, or save it in Keychain service kie-ai-api.")
+    return api_key
+
+
+def require_elevenlabs_api_key() -> str:
+    load_env_file(Path.cwd() / ".env.local")
+    load_env_file(Path.cwd() / "backend" / ".env.local")
+    api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+    if not api_key:
+        api_key = read_keychain_secret((ELEVENLABS_KEYCHAIN_SERVICE, "ELEVENLABS_API_KEY", "elevenlabs"))
+    if not api_key:
+        raise RuntimeError(
+            "ELEVENLABS_API_KEY is not set. Export it, put it in a gitignored .env.local, "
+            f"or save it in Keychain service {ELEVENLABS_KEYCHAIN_SERVICE}."
+        )
     return api_key
 
 
@@ -609,14 +630,17 @@ def build_cast_plans(config: dict[str, Any], niche_ids: list[str], cast_count: i
             cast_age_band = "30-45" if index % 2 else "50-65"
             voice_profile = {
                 "age_band": cast_age_band,
-                "elevenlabs_voice": "Rachel" if index % 2 else "Antoni",
+                "elevenlabs_voice": "Chris" if index % 2 else "Liam",
+                "elevenlabs_voice_id": "iP95p4xoKVk53GoZ742B" if index % 2 else "TX3LPaxmHKxFdv7VOQHJ",
                 "gemini_voice_name": "Puck" if index % 2 else "Charon",
                 "audio_profile": (
-                    "A credible American driver in their thirties or early forties, warm and clear."
+                    "A credible American driver in their thirties or early forties, casual and unscripted, "
+                    "like recording a quick voice memo for a friend; natural pauses, not polished, not read from a script."
                     if index % 2
-                    else "A credible older American driver, grounded, lower register, measured and clear."
+                    else "A credible older American driver, grounded and conversational, like giving quick practical advice "
+                    "to a friend; natural pauses, not polished, not read from a script."
                 ),
-                "style": "Newscaster" if index % 2 else "Empathetic",
+                "style": "Deadpan" if index % 2 else "Empathetic",
                 "pace": "Natural",
             }
             base_prompt = (
@@ -846,31 +870,34 @@ def ensure_cast_library(api_key: str, cast_plans: list[CastPlan], manifest: dict
     return casts
 
 
-def submit_tts_elevenlabs(api_key: str, text: str, voice_profile: dict[str, str]) -> tuple[str, str, str]:
+def submit_tts_elevenlabs(api_key: str, text: str, voice_profile: dict[str, str]) -> tuple[str, str, str, bytes, float | None]:
+    elevenlabs_api_key = require_elevenlabs_api_key()
+    voice_id = voice_profile.get("elevenlabs_voice_id") or "iP95p4xoKVk53GoZ742B"
     payload = {
-        "model": "elevenlabs/text-to-speech-turbo-2-5",
-        "input": {
-            "text": text,
-            "voice": voice_profile.get("elevenlabs_voice", "Rachel"),
-            "stability": 0.5,
-            "similarity_boost": 0.75,
-            "style": 0,
-            "speed": 1,
-            "timestamps": False,
-            "previous_text": "",
-            "next_text": "",
-            "language_code": "",
+        "text": text,
+        "model_id": ELEVENLABS_DIRECT_MODEL,
+        "voice_settings": {
+            "stability": 0.38,
+            "similarity_boost": 0.78,
+            "style": 0.35,
+            "use_speaker_boost": True,
+            "speed": 1.0,
         },
     }
-    task_id = create_task(api_key, payload)
-    data = poll_task(api_key, task_id, "tts elevenlabs")
-    urls = parse_result_urls(data)
-    if not urls:
-        raise RuntimeError(f"ElevenLabs TTS task {task_id} succeeded but no audio URL was found")
-    return urls[0], task_id, "elevenlabs/text-to-speech-turbo-2-5"
+    response = requests.post(
+        f"{ELEVENLABS_API_BASE}/text-to-speech/{voice_id}",
+        params={"output_format": "mp3_44100_128"},
+        headers={"xi-api-key": elevenlabs_api_key, "Content-Type": "application/json"},
+        json=payload,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
+    if not response.ok:
+        raise RuntimeError(f"ElevenLabs direct TTS failed: HTTP {response.status_code}: {response.text[:500]}")
+    task_id = f"direct:{voice_id}:{hashlib.sha256(response.content).hexdigest()[:12]}"
+    return "", task_id, f"elevenlabs/direct/{ELEVENLABS_DIRECT_MODEL}", response.content, None
 
 
-def submit_tts_gemini(api_key: str, text: str, voice_profile: dict[str, str]) -> tuple[str, str, str]:
+def submit_tts_gemini(api_key: str, text: str, voice_profile: dict[str, str]) -> tuple[str, str, str, None, None]:
     payload = {
         "model": "google/gemini-3-1-flash-tts",
         "input": {
@@ -895,7 +922,7 @@ def submit_tts_gemini(api_key: str, text: str, voice_profile: dict[str, str]) ->
     urls = parse_result_urls(data)
     if not urls:
         raise RuntimeError(f"Gemini TTS task {task_id} succeeded but no audio URL was found")
-    return urls[0], task_id, "google/gemini-3-1-flash-tts"
+    return urls[0], task_id, "google/gemini-3-1-flash-tts", None, None
 
 
 def submit_tts_with_fallback(
@@ -930,20 +957,32 @@ def submit_tts_with_fallback(
     failures = []
     for submitter in provider_modes[provider_mode]:
         try:
-            audio_url, task_id, provider = submitter(api_key, text, voice_profile)
-            hosted_audio_url = upload_generated_url(api_key, audio_url, f"{file_stem}.mp3")
+            audio_url, task_id, provider, audio_bytes, duration_seconds = submitter(api_key, text, voice_profile)
+            local_path = OUTPUT_DIR / f"{file_stem}.mp3"
+            if audio_bytes is not None:
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                local_path.write_bytes(audio_bytes)
+                hosted_audio_url = upload_bytes(api_key, audio_bytes, f"{file_stem}.mp3", "audio/mpeg")
+                duration_seconds = media_summary(local_path).get("duration")
+                source_url = None
+            else:
+                hosted_audio_url = upload_generated_url(api_key, audio_url, f"{file_stem}.mp3", local_path)
+                duration_seconds = media_summary(local_path).get("duration")
+                source_url = audio_url
             return {
                 "cache_key": cache_key,
                 "url": hosted_audio_url,
-                "source_url": audio_url,
+                "source_url": source_url,
+                "local_file": local_path.name,
                 "task_id": task_id,
                 "provider": provider,
                 "voice_profile": voice_profile,
                 "failures": failures,
+                "duration_seconds": duration_seconds,
                 "reused": False,
             }
         except Exception as exc:
-            provider_name = "elevenlabs/text-to-speech-turbo-2-5" if submitter is submit_tts_elevenlabs else "google/gemini-3-1-flash-tts"
+            provider_name = f"elevenlabs/direct/{ELEVENLABS_DIRECT_MODEL}" if submitter is submit_tts_elevenlabs else "google/gemini-3-1-flash-tts"
             failures.append({"provider": provider_name, "error": str(exc)})
             print(f"TTS provider failed ({provider_name}); trying fallback if available: {exc}")
     raise RuntimeError("All TTS providers failed: " + json.dumps(failures))
@@ -968,7 +1007,7 @@ def run_talking_head(api_key: str, plan: ClipPlan, cast: dict[str, Any], provide
             "input": {
                 "image_url": cast["photo_urls"][0],
                 "audio_url": tts["url"],
-                "prompt": plan.prompt,
+                "prompt": omnihuman_prompt(plan.prompt),
             },
         }
     elif is_seedance_model(plan.model):

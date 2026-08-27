@@ -88,6 +88,169 @@ Needs from Claude:
 
 ## Codex Updates
 
+### 2026-08-05 09:53 AST — Codex
+
+Changed:
+- Responded to Steven's post-review note that Chris is better but still sounds like voiceover and lacks car/outdoor ambience.
+- Created two no-video-credit audio-mix preview renders from the already-paid Chris OmniHuman clip:
+  - `backend/scripts/finetuning_output/audio_mix_tests/chris_car_cabin_subtle.mp4`
+  - `backend/scripts/finetuning_output/audio_mix_tests/chris_car_cabin_more_ambient.mp4`
+
+Validation:
+- Both previews preserve the existing 1088x1920 video and replace only the audio mix.
+- Both contain video + audio streams and are roughly 6.9s long.
+
+Cost/speed impact:
+- No Kie/OmniHuman/video credits spent.
+- Important production note: use clean speech for lip-sync generation, then apply final car-cabin EQ/room tone/ambient mix after OmniHuman. Do not bake heavy ambient noise into the lip-sync source unless testing proves OmniHuman tolerates it.
+
+Needs from Claude:
+- If these mixes still read as voiceover, the remaining issue is performance/voice identity, not sync. Next cheap step should be a second ElevenLabs audio-only performance pass or a cloned/actor-matched voice, not another paid video.
+
+### 2026-08-05 09:40 AST — Codex
+
+Changed:
+- Ran Steven-approved one-clip paid OmniHuman test using direct ElevenLabs Chris audio for `mapped_why_pay_more`.
+- Sent Joel the hosted Kie/OmniHuman video URL in DM because Slack file upload from Codex is missing `files:write:user` scope.
+
+Validation:
+- Kie task: `da04e7247a4ae53988bb21ad70959203`.
+- Output URL: `https://tempfile.aiquickdraw.com/omnihuman/1785937210221-x94ansphul.mp4`.
+- Local output: `backend/scripts/finetuning_output/auto_insurance_cast_1_auto_insurance_mapped_why_pay_more_talking_head_omnihuman_1_5.mp4`.
+- `ffprobe`: 1088x1920 H.264 video, AAC audio, video 6.92s, audio 6.88s, delta 0.04s.
+- Batch result: 1 succeeded, 0 failed.
+- Review page regenerated at `backend/scripts/finetuning_output/review.html`.
+- Joel DM message: `https://brighthorizonsmedia.slack.com/archives/D08H1LV5HAN/p1785937253173959`.
+
+Cost/speed impact:
+- Starting Kie credits: 10028.23.
+- Approx Kie credits spent: 162.00.
+- Direct ElevenLabs audio + Kie hosted audio + OmniHuman video path is now confirmed end-to-end.
+
+Files touched:
+- `backend/scripts/finetuning_output/manifest.json` and generated outputs (gitignored)
+- `backend/scripts/finetuning_output/batch_summary.json` (gitignored)
+- `backend/scripts/finetuning_output/review.html` (gitignored)
+- `VIDEO_AGENT_COORDINATION.md`
+
+Needs from Claude:
+- Wait for Joel's verdict on actor/voice fit and lip-sync before recommending Liam or another paid video run.
+
+### 2026-08-05 09:30 AST — Codex
+
+Changed:
+- Wired direct ElevenLabs into `backend/scripts/video_finetuning_harness.py` as the harness ElevenLabs TTS path; it no longer uses Kie.ai's flaky ElevenLabs wrapper.
+- Added Keychain/env lookup for `ELEVENLABS_API_KEY` / Keychain service `elevenlabs-api-key`.
+- Updated cast voice defaults from old Rachel/Antoni to Joel's ranked picks: cast 1 = Chris (`iP95p4xoKVk53GoZ742B`), cast 2 = Liam (`TX3LPaxmHKxFdv7VOQHJ`).
+- Direct ElevenLabs now generates MP3 bytes locally, saves them under `finetuning_output/`, uploads the bytes to Kie storage, and passes the hosted `audio_url` into OmniHuman.
+
+Validation:
+- `python3 -m py_compile backend/scripts/video_finetuning_harness.py backend/scripts/elevenlabs_voice_audition.py` passes.
+- Dry run for the intended next test confirms: one cast, `mapped_why_pay_more`, `--video-provider seedance` -> `omnihuman-1-5`, `--tts-provider elevenlabs` -> Chris.
+- Audio-only integration check succeeded: direct ElevenLabs generated Chris, saved `auto_insurance_cast_1_mapped_why_pay_more_voice_elevenlabs_chris_integration.mp3`, uploaded it to Kie storage, returned a hosted URL, and measured duration at 7.68s.
+
+Cost/speed impact:
+- Spent one additional short ElevenLabs audio generation for integration validation; no OmniHuman/video credits spent.
+- The next paid video test can use one command and should not involve Claude unless Steven wants creative review first:
+  `python3 backend/scripts/video_finetuning_harness.py --yes --mode draft --config backend/scripts/video_configs/auto_insurance_mapped_references.json --formats mapped_why_pay_more --cast-count 1 --video-provider seedance --tts-provider elevenlabs --force-tts --force-video --max-planned-credits 500`
+- Planning estimate remains conservative at 15s/405 OmniHuman credits; actual audio is ~8s, and OmniHuman should derive timing from `audio_url`.
+
+Files touched:
+- `backend/scripts/video_finetuning_harness.py`
+- `backend/scripts/elevenlabs_voice_audition.py`
+- `backend/scripts/finetuning_output/` audio outputs (gitignored)
+- `VIDEO_AGENT_COORDINATION.md`
+
+Needs from Claude:
+- No wiring needed. Optional: after Steven runs/listens to the Chris OmniHuman test, compare Chris vs Liam only if actor/voice mismatch remains.
+
+### 2026-08-05 00:03 AST — Codex
+
+Changed:
+- Stored the direct ElevenLabs API key in local macOS Keychain service `elevenlabs-api-key`; no secret was committed or written to durable docs.
+- Added `backend/scripts/elevenlabs_voice_audition.py`, a standalone direct-ElevenLabs audition script that bypasses Kie.ai and reads the key from Keychain.
+- Generated an audio-only ElevenLabs audition set for `mapped_why_pay_more`; no OmniHuman/video generation.
+
+Validation:
+- Initial read-only check caught the first Keychain item was empty; replaced it and confirmed the key can access ElevenLabs Models.
+- Confirmed available TTS models include `eleven_v3`, `eleven_multilingual_v2`, `eleven_flash_v2_5`, and `eleven_turbo_v2_5`.
+- `python3 -m py_compile backend/scripts/elevenlabs_voice_audition.py` passes.
+- Generated review MP3s under `backend/scripts/finetuning_output/voice_auditions/elevenlabs_direct/`:
+  - Roger / Eleven v3: `roger_eleven_v3_mapped_why_pay_more.mp3`, 9.28s.
+  - Will / Eleven v3: `will_eleven_v3_mapped_why_pay_more.mp3`, 8.40s.
+  - Chris / Eleven v3: `chris_eleven_v3_mapped_why_pay_more.mp3`, 8.00s.
+  - Eric / Eleven v3: `eric_eleven_v3_mapped_why_pay_more.mp3`, 8.64s.
+  - Liam / Eleven v3: `liam_eleven_v3_mapped_why_pay_more.mp3`, 8.08s.
+- Summary JSON: `backend/scripts/finetuning_output/voice_auditions/elevenlabs_direct/audition_summary.json`.
+
+Cost/speed impact:
+- Spent only audio-generation credits for five short samples; no video credits spent.
+- Direct ElevenLabs API path works around the Kie ElevenLabs internal-error failure mode.
+- Next paid step should remain blocked until Steven/Joel pick a voice from the MP3s or request a second small audio-only round.
+
+Files touched:
+- `backend/scripts/elevenlabs_voice_audition.py`
+- `backend/scripts/finetuning_output/voice_auditions/elevenlabs_direct/` outputs (gitignored)
+- `VIDEO_AGENT_COORDINATION.md`
+
+Needs from Claude:
+- Listen with Steven/Joel and rank which voice sounds most like a real person casually talking in a car, not a polished ad narrator. If none pass, recommend one narrower second audition set before spending on OmniHuman.
+
+### 2026-08-04 19:48 AST — Codex
+
+Changed:
+- Ran an audio-only voice audition grid for `mapped_why_pay_more`; no video generation.
+- Tested ElevenLabs via Kie first, then Gemini variants using valid enum-only style values.
+- Saved playable review MP3s under `backend/scripts/finetuning_output/voice_auditions/`.
+
+Validation:
+- ElevenLabs Rachel task `d77e55650b634ee6196217009b5d9927` accepted but failed after polling with `internal error, please try again later`.
+- ElevenLabs Antoni task `be10d677ba222b9ea4c6d6c1022c62c3` accepted but failed after polling with the same Kie internal error.
+- Gemini Puck + Empathetic succeeded: `backend/scripts/finetuning_output/voice_auditions/gemini_puck_empathetic.mp3`, 8.76s.
+- Gemini Puck + Vocal Smile succeeded: `backend/scripts/finetuning_output/voice_auditions/gemini_puck_vocal_smile.mp3`, 8.36s.
+- Gemini Orus + Empathetic succeeded: `backend/scripts/finetuning_output/voice_auditions/gemini_orus_empathetic.mp3`, 7.96s.
+- Summary JSON: `backend/scripts/finetuning_output/voice_auditions/audition_summary.json`.
+
+Cost/speed impact:
+- ElevenLabs remains unreliable through Kie in this account; both tested voices failed after task acceptance.
+- Gemini audio-only variants are cheap/fast enough for auditioning before any OmniHuman video spend.
+- No full video credits spent in this audition pass.
+
+Files touched:
+- `backend/scripts/video_finetuning_harness.py`
+- `backend/scripts/finetuning_output/manifest.json` and `voice_auditions/` outputs (gitignored)
+- `VIDEO_AGENT_COORDINATION.md`
+
+Needs from Claude:
+- Listen/rank the three Gemini candidates for "sounds like the man on screen, not a VO read"; if none pass, next step is likely a direct ElevenLabs integration/key or a different TTS provider, not more OmniHuman testing.
+
+### 2026-08-04 19:36 AST — Codex
+
+Changed:
+- Replaced cast voice style defaults in `backend/scripts/video_finetuning_harness.py` to avoid `Newscaster`.
+- Moved the casual/unscripted direction into `audio_profile` because Kie/Gemini rejects free-text `style` values.
+- Set cast 1 style to valid Gemini enum `Deadpan`, pace `Natural`; cast 2 keeps valid enum `Empathetic` with a conversational audio profile.
+- Regenerated only the `mapped_why_pay_more` TTS for cast 1 using Gemini; no OmniHuman/video generation.
+
+Validation:
+- Free-text style attempt failed before task creation with `The style parameter is invalid`.
+- Valid-enum audio-only task succeeded: `b0bd5ed938ef310f777f6bc49c76142b`.
+- Review audio saved at `backend/scripts/finetuning_output/auto_insurance_cast_1_mapped_why_pay_more_voice_deadpan_test_review.mp3`.
+- `ffprobe` confirms review MP3 is 11.68s, mono MP3.
+
+Cost/speed impact:
+- One failed style-validation attempt spent no video credits and did not create a task.
+- One successful TTS-only regeneration; no video credits spent.
+- Do not run another OmniHuman clip until Steven/Joel listen to the standalone voice and approve the delivery.
+
+Files touched:
+- `backend/scripts/video_finetuning_harness.py`
+- `backend/scripts/finetuning_output/manifest.json` and review audio files (gitignored)
+- `VIDEO_AGENT_COORDINATION.md`
+
+Needs from Claude:
+- If the `Deadpan` test still sounds too announcer-like or too flat, next cheap audio-only variants should use valid Gemini styles only: likely `Empathetic` or `Vocal Smile`, with the same casual `audio_profile`.
+
 ### 2026-08-03 14:52 AST — Codex
 
 Changed:
