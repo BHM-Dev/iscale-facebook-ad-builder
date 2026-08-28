@@ -148,13 +148,10 @@ async def login(
     db.add(refresh_token_obj)
     db.commit()
 
-    # Fire Meta + RedTrack sync in background on login (non-blocking)
-    meta_sync_fn = getattr(request.app.state, "meta_sync_fn", None)
-    if meta_sync_fn:
-        background_tasks.add_task(meta_sync_fn)
-    rt_sync_fn = getattr(request.app.state, "rt_sync_fn", None)
-    if rt_sync_fn:
-        background_tasks.add_task(rt_sync_fn)
+    # Do not start full Meta/RedTrack syncs on login. Those jobs can span every
+    # visible ad account and several third-party API calls, delaying the login
+    # response despite being registered as background tasks. The scheduler and
+    # the explicit Sync controls already own data freshness.
 
     return Token(
         access_token=access_token,
@@ -193,14 +190,6 @@ async def login_json(request: Request, background_tasks: BackgroundTasks, user_d
     )
     db.add(refresh_token_obj)
     db.commit()
-
-    # Fire Meta + RedTrack sync in background on login (non-blocking)
-    meta_sync_fn = getattr(request.app.state, "meta_sync_fn", None)
-    if meta_sync_fn:
-        background_tasks.add_task(meta_sync_fn)
-    rt_sync_fn = getattr(request.app.state, "rt_sync_fn", None)
-    if rt_sync_fn:
-        background_tasks.add_task(rt_sync_fn)
 
     return Token(
         access_token=access_token,
