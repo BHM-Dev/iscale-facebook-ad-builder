@@ -207,6 +207,7 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
       </div>
       <p className="mt-1 text-[11px] text-gray-500">
         One row per Meta pixel, not per account — a pixel shared by more than one ad account (e.g. an advertiser's own CAPI pixel also used by another account) is shown once, listing every account that sends to it, so the same dataset never reads as two separate comparisons.
+        {' '}Meta's API has no setting for this — it doesn't accept a date range and always returns its own rolling score (event coverage is explicitly a 7-day average; the match-quality score behaves the same way). Syncing daily just re-checks that same rolling number, it doesn't reset it to "today" — expect these scores to move slowly and reflect an ongoing trend, not a single day's traffic.
       </p>
     </div>
     {loading ? <div className="px-5 py-6 text-center text-sm text-gray-400">Loading...</div>
