@@ -99,6 +99,24 @@ def _extract_freshness(value) -> Optional[str]:
     return None
 
 
+CAPI_QUALITY_ACCOUNT_IDS_ENV = "CAPI_QUALITY_ACCOUNT_IDS"
+
+
+def _tracked_account_allowlist() -> Optional[set]:
+    """Optional comma-separated allowlist of ad_account_ids (same pattern as
+    SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS elsewhere in this app). Unset = track
+    every visible account (the original behavior). Steve scoped this down
+    2026-08-28 — the unscoped version pulled ~26 pixels across all 12 visible
+    accounts (most of them years-old ResourceHelpOnline test pixels with no
+    real data), which both bloated the daily sync's Meta API calls and buried
+    the one actual comparison (RHO vs RHO 4) under noise.
+    """
+    raw = os.getenv(CAPI_QUALITY_ACCOUNT_IDS_ENV, "").strip()
+    if not raw:
+        return None
+    return {normalize_account_id(x.strip()) for x in raw.split(",") if x.strip()}
+
+
 def get_tracked_pixels(svc: FacebookService) -> list[dict]:
     """Distinct (pixel_id, fb_account_id) pairs currently in use, read LIVE from
     Meta's `promoted_object.pixel_id` on every ad set in every visible account —
@@ -111,7 +129,13 @@ def get_tracked_pixels(svc: FacebookService) -> list[dict]:
     feature see zero RHO pixels on day one if it relied on that cache. Querying
     Meta directly is also just more correct — it's the actual live-in-use pixel,
     not whatever we last happened to cache.
+
+    Scoped to CAPI_QUALITY_ACCOUNT_IDS when that env var is set (see
+    _tracked_account_allowlist) — skips get_adsets() entirely for accounts
+    outside the allowlist, so scoping down also cuts the actual Meta API call
+    volume, not just what gets displayed.
     """
+    allowlist = _tracked_account_allowlist()
     seen: dict[tuple, dict] = {}
     try:
         accounts = svc.get_ad_accounts() or []
@@ -122,6 +146,8 @@ def get_tracked_pixels(svc: FacebookService) -> list[dict]:
     for acc in accounts:
         aid = normalize_account_id(acc.get("id") or acc.get("account_id"))
         if not aid:
+            continue
+        if allowlist is not None and aid not in allowlist:
             continue
         try:
             adsets = svc.get_adsets(ad_account_id=aid) or []
@@ -329,6 +355,32 @@ def _upsert_snapshot(db: Session, values: dict) -> None:
     db.commit()
 
 
+def _prune_out_of_scope_snapshots(db: Session) -> int:
+    """Delete stored rows for accounts outside CAPI_QUALITY_ACCOUNT_IDS.
+
+    Runs every sync when an allowlist is configured, not just once — so if
+    the allowlist ever gets tightened further, or a new out-of-scope account
+    starts a fresh CAPI experiment, this keeps cleaning up on its own instead
+    of needing a one-off manual wipe every time. Rows with a NULL
+    fb_account_id (shouldn't normally happen, but defensively) are treated as
+    out of scope too when an allowlist is active — there's no way to know
+    they're in scope.
+    """
+    allowlist = _tracked_account_allowlist()
+    if allowlist is None:
+        return 0
+    deleted = (
+        db.query(CapiQualitySnapshot)
+        .filter(
+            (CapiQualitySnapshot.fb_account_id.is_(None))
+            | (~CapiQualitySnapshot.fb_account_id.in_(allowlist))
+        )
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return deleted
+
+
 def sync_capi_quality(db: Session, snapshot_date: Optional[date] = None) -> dict:
     """Pull today's Dataset Quality snapshot for every pixel we have on file.
 
@@ -339,12 +391,18 @@ def sync_capi_quality(db: Session, snapshot_date: Optional[date] = None) -> dict
     (see _upsert_snapshot) rather than a separate select-then-insert/update,
     so two syncs landing at the same moment can't race each other into a
     duplicate-key error.
+
+    When CAPI_QUALITY_ACCOUNT_IDS is set, also prunes any stored snapshot
+    rows outside that allowlist before syncing — keeps the Dashboard card
+    (and the daily API call volume) scoped down permanently, not just for
+    this one cleanup.
     """
     snapshot_date = snapshot_date or date.today()
     svc = FacebookService()
     if not svc.access_token:
         return {"synced": 0, "failed": 0, "skipped_reason": "FACEBOOK_ACCESS_TOKEN not configured"}
 
+    pruned = _prune_out_of_scope_snapshots(db)
     account_names = _account_name_map(svc)
     tracked = get_tracked_pixels(svc)
     pixel_names: dict[str, Optional[str]] = {}
@@ -420,4 +478,4 @@ def sync_capi_quality(db: Session, snapshot_date: Optional[date] = None) -> dict
                     pixel_id, parsed["event_name"], write_exc,
                 )
 
-    return {"synced": synced, "failed": failed, "tracked_pixels": len(tracked)}
+    return {"synced": synced, "failed": failed, "tracked_pixels": len(tracked), "pruned": pruned}
