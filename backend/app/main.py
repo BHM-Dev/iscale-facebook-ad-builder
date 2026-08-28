@@ -183,12 +183,20 @@ async def startup_event():
                 db.close()
 
         def scheduled_meta_sync():
-            """Sync all Meta campaigns and ad sets into the DB every 30 minutes.
+            """Sync all Meta campaigns and ad sets into the DB.
 
             Iterates every ad account the token can see (not just the default),
             tagging each campaign/adset with its true fb_account_id so the
             account-scoped saved-adsets list stays authoritative for ALL accounts
             on every cycle — no manual per-account backfill required.
+
+            NOT on a 30-min scheduler.add_job() timer and no longer triggered on
+            login either (that full-account-sweep-on-login call was removed —
+            it could span every visible ad account and several Meta API calls,
+            delaying the login response). Currently only reachable via
+            app.state.meta_sync_fn if something explicitly invokes it — kept
+            defined rather than deleted while that trigger path gets sorted out
+            elsewhere, but it is not part of any automatic cadence right now.
             """
             from app.services.facebook_service import FacebookService
             from app.models import FacebookCampaign, FacebookAdSet, normalize_account_id
@@ -353,7 +361,11 @@ async def startup_event():
             finally:
                 db.close()
 
-        # Store sync functions on app state so auth endpoint can trigger them on login
+        # These were stored on app.state so the login endpoint could fire them as
+        # background tasks — that login trigger has been removed (see the note
+        # above scheduled_meta_sync's docstring). Left assigned here in case
+        # something else still reads app.state.*_fn; not currently invoked from
+        # anywhere in the app on its own.
         app.state.meta_sync_fn = scheduled_meta_sync
         app.state.rt_sync_fn = scheduled_redtrack_sync
         app.state.token_check_fn = scheduled_token_check
@@ -364,10 +376,14 @@ async def startup_event():
         scheduler.add_job(scheduled_drive_sync, 'interval', minutes=30, id='drive_creative_sync')
         scheduler.add_job(scheduled_token_check, 'cron', hour=13, minute=0, timezone='UTC', id='token_expiry_check')
         scheduler.add_job(scheduled_capi_quality_sync, 'cron', hour=14, minute=0, timezone='UTC', id='capi_quality_sync')
-        # Meta campaign sync runs on login (not on a timer — no value syncing while Joel sleeps)
+        # Meta/RedTrack syncs no longer fire on login — those jobs can span every
+        # visible ad account and several third-party API calls, delaying the login
+        # response despite being registered as background tasks. The scheduler
+        # (30-min interval jobs above) and the explicit "Sync now" controls in the
+        # UI are the only things that trigger a sync now.
         scheduler.start()
         app.state.scheduler = scheduler
-        print("✅ Scheduler started (auto-pause + RedTrack every 30 min | token expiry daily 13:00 UTC | CAPI quality daily 14:00 UTC | Meta sync on login)")
+        print("✅ Scheduler started (auto-pause + RedTrack every 30 min | token expiry daily 13:00 UTC | CAPI quality daily 14:00 UTC)")
     except Exception as e:
         print(f"⚠️  Could not start auto-pause scheduler: {e}")
 

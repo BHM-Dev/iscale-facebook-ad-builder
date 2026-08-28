@@ -81,9 +81,10 @@ def _safe_float(value) -> Optional[float]:
 
 
 def _extract_percentage(value) -> Optional[float]:
-    """acr/event_coverage are documented as objects carrying a `percentage`
-    field, but that's not confirmed by a first-party example response —
-    handle both "it's an object with percentage" and "it's just a number".
+    """acr/event_coverage/coverage are variously documented (or not confirmed
+    at all) as an object carrying a `percentage` field, a bare number, or a
+    numeric string — handle all three, and anything else (list, bool, garbage
+    dict with no `percentage` key) resolves to None rather than raising.
     """
     if isinstance(value, dict):
         return _safe_float(value.get("percentage"))
@@ -184,14 +185,57 @@ def fetch_dataset_quality(pixel_id: str, access_token: str, agent_name: Optional
     return response.json()
 
 
-def _parse_dataset_quality(raw: dict) -> list[dict]:
+def _parse_match_key_feedback(emq_obj: dict) -> Optional[dict]:
+    """Normalize Meta's `[{identifier, coverage: {percentage}}, ...]` array into
+    a flat `{identifier: percentage}` dict. Every layer here is guarded: Meta
+    (or a mock/future response) could send `match_key_feedback` as something
+    other than a list, an item as something other than a dict, `identifier` as
+    a non-string, or `coverage` as an object, a bare number, a numeric string,
+    or missing entirely — none of those should raise, they just drop that one
+    identifier (or all of them) rather than aborting the whole pixel's sync.
+    """
+    raw_match_keys = emq_obj.get("match_key_feedback")
+    if not isinstance(raw_match_keys, list):
+        return None
+
+    match_key_feedback = {}
+    for item in raw_match_keys:
+        if not isinstance(item, dict):
+            continue
+        identifier = item.get("identifier")
+        if not identifier or not isinstance(identifier, str):
+            continue
+        # coverage can be {"percentage": N}, a bare number/numeric string, or
+        # absent — _extract_percentage already handles all three shapes.
+        match_key_feedback[identifier] = _extract_percentage(item.get("coverage"))
+    return match_key_feedback or None
+
+
+def _parse_dataset_quality(raw) -> list[dict]:
     """Returns one parsed dict per event_name — Meta gives no aggregate/
     all-events row, so we store every event rather than guessing which one
     matters (an earlier version of this code picked data[0] arbitrarily,
     which made two accounts' "EMQ" incomparable — this fixes that).
+
+    Every field extraction here is defensive: a malformed or unexpected shape
+    for any single value resolves to None for that field, it never raises and
+    aborts the pixel's whole sync. `raw` itself might not even be a dict if
+    something upstream ever changes (defensive, not expected in practice since
+    fetch_dataset_quality already calls response.json() on a 2xx response).
     """
-    rows = raw.get("web") or []
-    if not rows:
+    if not isinstance(raw, dict):
+        return [{
+            "event_name": None,
+            "event_match_quality": None,
+            "match_key_feedback": None,
+            "acr": None,
+            "event_coverage": None,
+            "data_freshness": None,
+            "diagnostics": {"raw": raw, "note": "response was not a JSON object"},
+        }]
+
+    rows = raw.get("web")
+    if not isinstance(rows, list) or not rows:
         return [{
             "event_name": None,
             "event_match_quality": None,
@@ -204,27 +248,85 @@ def _parse_dataset_quality(raw: dict) -> list[dict]:
 
     parsed = []
     for row in rows:
-        emq_obj = row.get("event_match_quality") or {}
-        raw_match_keys = emq_obj.get("match_key_feedback") or []
-        # Normalize Meta's array-of-objects shape to a flat {identifier: pct}
-        # dict — easier for the frontend to render generically.
-        match_key_feedback = {}
-        for item in raw_match_keys:
-            identifier = item.get("identifier")
-            coverage = item.get("coverage") or {}
-            if identifier:
-                match_key_feedback[identifier] = _safe_float(coverage.get("percentage"))
+        if not isinstance(row, dict):
+            # A malformed individual row shouldn't drop the rest of the
+            # pixel's events — skip just this one and keep going.
+            logger.warning("capi_quality: skipping non-dict row in 'web' list: %r", row)
+            continue
+
+        emq_raw = row.get("event_match_quality")
+        emq_obj = emq_raw if isinstance(emq_raw, dict) else {}
 
         parsed.append({
             "event_name": row.get("event_name"),
             "event_match_quality": _safe_float(emq_obj.get("composite_score")),
-            "match_key_feedback": match_key_feedback or None,
+            "match_key_feedback": _parse_match_key_feedback(emq_obj),
             "acr": _extract_percentage(row.get("acr")),
             "event_coverage": _extract_percentage(row.get("event_coverage")),
             "data_freshness": _extract_freshness(row.get("data_freshness")),
             "diagnostics": {"raw_row": row},
         })
+
+    if not parsed:
+        # Every row in 'web' was malformed — still return something so the
+        # caller records a visible (empty-but-not-crashed) result for the day
+        # instead of silently storing zero events for this pixel.
+        return [{
+            "event_name": None,
+            "event_match_quality": None,
+            "match_key_feedback": None,
+            "acr": None,
+            "event_coverage": None,
+            "data_freshness": None,
+            "diagnostics": {"raw": raw, "note": "'web' rows were present but all malformed"},
+        }]
     return parsed
+
+
+_UPSERT_CONSTRAINT_NAME = "uq_capi_quality_pixel_account_event_date"
+_UPSERT_UPDATE_COLUMNS = (
+    "account_name",
+    "pixel_name",
+    "event_match_quality",
+    "acr",
+    "event_coverage",
+    "data_freshness",
+    "match_key_feedback",
+    "diagnostics",
+    "fetch_error",
+)
+
+
+def _upsert_snapshot(db: Session, values: dict) -> None:
+    """Single atomic INSERT ... ON CONFLICT DO UPDATE, not a select-then-write.
+
+    The prior version did `query(...).first()` to decide insert vs. update as
+    two separate round trips — two concurrent syncs (the daily scheduler job
+    landing at the same moment as a manual "Sync now" click, say) could both
+    see "no existing row" and both try to INSERT, racing on the unique
+    constraint. This does it in one statement Postgres itself serializes.
+
+    Known limitation, not fixed here: Postgres treats each NULL as distinct in
+    a unique constraint, so two concurrent syncs writing a NULL fb_account_id
+    (an untagged ad set) or NULL event_name (a fetch-error placeholder row)
+    for the same pixel/day could still each successfully INSERT without
+    conflicting — this closes the race for the normal case (real account +
+    real event, which is the vast majority of rows) but not that edge case.
+    Fixing it fully would need a functional unique index over COALESCE'd
+    sentinel values, which is a schema change beyond this fix's scope.
+
+    Raises on failure — caller decides how to handle/log/rollback per row so
+    one bad row can't abort the rest of the sync.
+    """
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    stmt = pg_insert(CapiQualitySnapshot).values(**values)
+    stmt = stmt.on_conflict_do_update(
+        constraint=_UPSERT_CONSTRAINT_NAME,
+        set_={col: stmt.excluded[col] for col in _UPSERT_UPDATE_COLUMNS},
+    )
+    db.execute(stmt)
+    db.commit()
 
 
 def sync_capi_quality(db: Session, snapshot_date: Optional[date] = None) -> dict:
@@ -233,7 +335,10 @@ def sync_capi_quality(db: Session, snapshot_date: Optional[date] = None) -> dict
     One row per (pixel_id, fb_account_id, event_name, snapshot_date) —
     idempotent, safe to call more than once a day (e.g. the scheduled job plus
     a manual "Sync now"); re-running overwrites the same day's rows rather
-    than duplicating them.
+    than duplicating them. Each row is written via a single atomic upsert
+    (see _upsert_snapshot) rather than a separate select-then-insert/update,
+    so two syncs landing at the same moment can't race each other into a
+    duplicate-key error.
     """
     snapshot_date = snapshot_date or date.today()
     svc = FacebookService()
@@ -261,33 +366,23 @@ def sync_capi_quality(db: Session, snapshot_date: Optional[date] = None) -> dict
             # one error row for this pixel/account/day rather than silently
             # skipping it, and null out any stale metrics from a prior success
             # so a failed re-sync can't leave old numbers looking current.
-            db.rollback()
-            existing = (
-                db.query(CapiQualitySnapshot)
-                .filter(
-                    CapiQualitySnapshot.pixel_id == pixel_id,
-                    CapiQualitySnapshot.fb_account_id == fb_account_id,
-                    CapiQualitySnapshot.snapshot_date == snapshot_date,
-                    CapiQualitySnapshot.event_name.is_(None),
-                )
-                .first()
-            )
-            row = existing or CapiQualitySnapshot(
-                id=generate_uuid(), pixel_id=pixel_id, snapshot_date=snapshot_date, event_name=None,
-            )
-            row.fb_account_id = fb_account_id
-            row.account_name = account_name
-            row.pixel_name = pixel_name
-            row.event_match_quality = None
-            row.acr = None
-            row.event_coverage = None
-            row.data_freshness = None
-            row.match_key_feedback = None
-            row.fetch_error = str(exc)[:2000]
             try:
-                if not existing:
-                    db.add(row)
-                db.commit()
+                _upsert_snapshot(db, {
+                    "id": generate_uuid(),
+                    "pixel_id": pixel_id,
+                    "fb_account_id": fb_account_id,
+                    "account_name": account_name,
+                    "pixel_name": pixel_name,
+                    "event_name": None,
+                    "snapshot_date": snapshot_date,
+                    "event_match_quality": None,
+                    "acr": None,
+                    "event_coverage": None,
+                    "data_freshness": None,
+                    "match_key_feedback": None,
+                    "diagnostics": None,
+                    "fetch_error": str(exc)[:2000],
+                })
             except Exception as write_exc:
                 db.rollback()
                 logger.error("capi_quality: could not even record fetch_error for pixel %s: %s", pixel_id, write_exc)
@@ -296,42 +391,28 @@ def sync_capi_quality(db: Session, snapshot_date: Optional[date] = None) -> dict
             continue
 
         for parsed in parsed_rows:
-            existing = (
-                db.query(CapiQualitySnapshot)
-                .filter(
-                    CapiQualitySnapshot.pixel_id == pixel_id,
-                    CapiQualitySnapshot.fb_account_id == fb_account_id,
-                    CapiQualitySnapshot.snapshot_date == snapshot_date,
-                    CapiQualitySnapshot.event_name == parsed["event_name"],
-                )
-                .first()
-            )
-            row = existing or CapiQualitySnapshot(
-                id=generate_uuid(),
-                pixel_id=pixel_id,
-                snapshot_date=snapshot_date,
-                event_name=parsed["event_name"],
-            )
-            row.fb_account_id = fb_account_id
-            row.account_name = account_name
-            row.pixel_name = pixel_name
-            row.event_match_quality = parsed["event_match_quality"]
-            row.acr = parsed["acr"]
-            row.event_coverage = parsed["event_coverage"]
-            row.data_freshness = parsed["data_freshness"]
-            row.match_key_feedback = parsed["match_key_feedback"]
-            row.diagnostics = parsed["diagnostics"]
-            row.fetch_error = None
-
             try:
-                if not existing:
-                    db.add(row)
-                db.commit()
+                _upsert_snapshot(db, {
+                    "id": generate_uuid(),
+                    "pixel_id": pixel_id,
+                    "fb_account_id": fb_account_id,
+                    "account_name": account_name,
+                    "pixel_name": pixel_name,
+                    "event_name": parsed["event_name"],
+                    "snapshot_date": snapshot_date,
+                    "event_match_quality": parsed["event_match_quality"],
+                    "acr": parsed["acr"],
+                    "event_coverage": parsed["event_coverage"],
+                    "data_freshness": parsed["data_freshness"],
+                    "match_key_feedback": parsed["match_key_feedback"],
+                    "diagnostics": parsed["diagnostics"],
+                    "fetch_error": None,
+                })
                 synced += 1
             except Exception as write_exc:
-                # A single bad row (e.g. a constraint violation) can't be
-                # allowed to poison the session and abort every remaining
-                # pixel — roll back just this row and keep going.
+                # A single bad row (e.g. an unexpected constraint violation)
+                # can't be allowed to poison the session and abort every
+                # remaining pixel — roll back just this row and keep going.
                 db.rollback()
                 failed += 1
                 logger.error(
