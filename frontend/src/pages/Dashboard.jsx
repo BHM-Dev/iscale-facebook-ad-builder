@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown, PauseCircle, MessageSquare, Send, Sparkles, DollarSign, Zap } from 'lucide-react';
+import { AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown, PauseCircle, MessageSquare, Send, Sparkles, DollarSign, Zap, Info, ChevronRight } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
@@ -124,6 +124,166 @@ function KpiCard({ label, value, sub, highlight, warn }) {
       {sub && <div className="text-xs text-gray-400 mt-0.5">{sub}</div>}
     </div>
   );
+}
+
+// Real conversion events, in the order we'd trust as "the" score for an
+// account — NOT top-of-funnel events like PageView/ViewContent/AddToCart,
+// which routinely score higher than the event that actually matters (Lead is
+// what every BHM lead-gen ad set optimizes for; Purchase covers e-comm-style
+// accounts). Picking "highest EMQ across all events" looked reasonable but
+// systematically flatters every account by hiding its worst, most-relevant
+// number behind whichever top-of-funnel event happened to score best — two
+// independent reviews caught this before it shipped.
+const CAPI_PRIMARY_EVENT_PRIORITY = ['Lead', 'Purchase', 'CompleteRegistration', 'SubmitApplication'];
+
+function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
+  const [accounts, setAccounts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [expanded, setExpanded] = useState({});
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await authFetch(`${apiUrl}/capi-quality/latest`);
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || 'Failed to load CAPI quality');
+      const data = await response.json();
+      setAccounts((data.accounts || []).slice().sort((a, b) => (a.account_name || '').localeCompare(b.account_name || '')));
+    } catch (error) {
+      showError(error.message || 'Failed to load CAPI quality');
+    } finally { setLoading(false); }
+  }, [apiUrl, authFetch, showError]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const sync = useCallback(async () => {
+    setSyncing(true);
+    try {
+      const response = await authFetch(`${apiUrl}/capi-quality/sync`, { method: 'POST' });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || 'CAPI sync failed');
+      const data = await response.json();
+      showSuccess(`CAPI quality synced: ${data.synced ?? 0} snapshot${data.synced === 1 ? '' : 's'}`);
+      await load();
+    } catch (error) { showError(error.message || 'CAPI sync failed'); }
+    finally { setSyncing(false); }
+  }, [apiUrl, authFetch, showSuccess, showError, load]);
+
+  // Which pixel(s) more than one visible account is on — confirmed live that
+  // RHO and RHO 4 can share one pixel, in which case Meta reports the exact
+  // same score for both (EMQ is a property of the pixel, not the account).
+  // Silently showing "8.9" next to two different account names with no
+  // indication they're the same dataset is the #1 way this card gets
+  // misread as a real comparison when it isn't one — so this has to be
+  // impossible to miss, not just technically present as a small pixel id.
+  const pixelAccountNames = {};
+  accounts.forEach(a => {
+    if (!a.pixel_id) return;
+    (pixelAccountNames[a.pixel_id] = pixelAccountNames[a.pixel_id] || []).push(a.account_name || a.fb_account_id);
+  });
+
+  const headline = (account) => {
+    const events = (account.events || []).filter(event => event.event_match_quality != null);
+    if (!events.length) return null;
+    for (const name of CAPI_PRIMARY_EVENT_PRIORITY) {
+      const match = events.find(event => event.event_name === name);
+      if (match) return { ...match, isBestCase: false };
+    }
+    // No recognized conversion event on this pixel — fall back to the
+    // highest-scoring one, but say so, so it's never mistaken for "the"
+    // score the way an unlabeled fallback would be.
+    const best = events.slice().sort((a, b) => b.event_match_quality - a.event_match_quality)[0];
+    return { ...best, isBestCase: true };
+  };
+  const scoreClass = score => score == null ? 'text-gray-400' : score < 5 ? 'text-red-600' : score <= 7 ? 'text-amber-600' : 'text-green-600';
+  const formatPct = value => value == null ? '—' : `${Number(value).toFixed(1)}%`;
+  // Daily sync runs once at 14:00 UTC — for most of every day before that
+  // job runs, "yesterday's" snapshot is genuinely the freshest data available
+  // and that's normal, not stale. A flat ">1 day" cutoff lit this indicator
+  // for roughly 10 hours every single day (squarely across Steve's 9am-12pm
+  // ET / 13:00-16:00 UTC working hours), which trains people to ignore it —
+  // exactly when a real multi-day sync outage needs it to mean something.
+  // 42h covers one full missed cycle (24h) plus the normal pre-sync gap
+  // (~14h) with room to spare, without firing under normal operation.
+  const CAPI_STALE_THRESHOLD_HOURS = 42;
+  const stale = date => date && ((Date.now() - new Date(`${date}T00:00:00Z`).getTime()) / 3600000 > CAPI_STALE_THRESHOLD_HOURS);
+
+  return <div className="bg-white rounded-xl border border-cyan-100 border-l-4 border-l-cyan-500 shadow-sm overflow-hidden">
+    <div className="px-5 py-3 border-b border-cyan-100 bg-cyan-50/40">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+          <span>CAPI Match Quality</span>
+          <span title="Meta's 0–10 score for how well server-sent conversion data matches real Meta accounts. Higher usually means lower costs."><Info size={14} className="text-gray-400" /></span>
+        </div>
+        <button type="button" onClick={sync} disabled={syncing} title="Sync now" className="text-xs text-cyan-700 hover:text-cyan-900 disabled:opacity-50 flex items-center gap-1">
+          <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} /> Sync now
+        </button>
+      </div>
+      <p className="mt-1 text-[11px] text-gray-500">
+        Compares server-side (CAPI) match quality across accounts — different accounts can run different CAPI integrations (e.g. an advertiser's own setup vs. Everflow's).
+        Accounts on the <em>same pixel</em> will always show identical scores — that's Meta's data, not a bug, and is flagged below when it happens.
+      </p>
+    </div>
+    {loading ? <div className="px-5 py-6 text-center text-sm text-gray-400">Loading...</div>
+      : accounts.length === 0 ? <div className="px-5 py-6 text-center text-sm text-gray-400">No CAPI data yet — click "Sync now" to check your accounts.</div>
+      : <div className="divide-y divide-gray-100">
+        {accounts.map(account => {
+          const event = headline(account);
+          const rowKey = `${account.pixel_id}:${account.fb_account_id}`;
+          const isOpen = !!expanded[rowKey];
+          const sharedWith = (pixelAccountNames[account.pixel_id] || []).filter(name => name !== (account.account_name || account.fb_account_id));
+          return <div key={rowKey}>
+            <button type="button" onClick={() => setExpanded(prev => ({ ...prev, [rowKey]: !isOpen }))} className="w-full px-5 py-3 text-left hover:bg-gray-50 flex items-center gap-3">
+              {isOpen ? <ChevronDown size={15} className="text-gray-400 flex-shrink-0" /> : <ChevronRight size={15} className="text-gray-400 flex-shrink-0" />}
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium text-gray-900 truncate">{account.account_name || account.fb_account_id}</span>
+                <span className="block text-[11px] text-gray-400 truncate">{account.pixel_name || 'Pixel'} · {account.pixel_id}</span>
+                {sharedWith.length > 0 && (
+                  <span className="mt-0.5 inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-medium">
+                    Same pixel as {sharedWith.join(', ')} — scores will match
+                  </span>
+                )}
+              </span>
+              {account.fetch_error ? <span className="text-xs text-red-600">Couldn&apos;t fetch</span> : event ? <>
+                <span className={`text-xl font-bold ${scoreClass(event.event_match_quality)}`}>{event.event_match_quality.toFixed(1)}</span>
+                <span className="text-xs text-gray-500">{event.isBestCase ? `Best: ${event.event_name || 'event'}` : (event.event_name || 'Event')}</span>
+                {event.acr != null && <span className="text-xs text-gray-500">ACR {formatPct(event.acr)}</span>}
+              </> : <span className="text-xs text-gray-400">No event data</span>}
+              {stale(account.snapshot_date) && <span title={`Last synced ${account.snapshot_date} — more than ${CAPI_STALE_THRESHOLD_HOURS}h ago`} className="h-2 w-2 rounded-full bg-gray-400 flex-shrink-0" />}
+            </button>
+            {account.fetch_error && (
+              <div className="px-12 pb-3 text-xs text-red-600">
+                Meta couldn&apos;t return data for this pixel — try &quot;Sync now&quot;, or flag it if this keeps happening.
+                <div className="mt-0.5 text-gray-400">{account.fetch_error.slice(0, 180)}</div>
+              </div>
+            )}
+            {isOpen && !account.fetch_error && <div className="px-12 pb-4 space-y-4">
+              {(account.events || []).map((detail, index) => <div key={`${detail.event_name || 'event'}-${index}`} className="border-l-2 border-cyan-100 pl-3">
+                <div className="flex items-center gap-3 text-xs">
+                  <strong className="text-gray-800">{detail.event_name || 'Event'}</strong>
+                  {detail.event_match_quality != null && <span className={`font-semibold ${scoreClass(detail.event_match_quality)}`}>EMQ {detail.event_match_quality.toFixed(1)}</span>}
+                  {detail.acr != null && <span className="text-gray-500">ACR {formatPct(detail.acr)}</span>}
+                  {detail.data_freshness && <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">{detail.data_freshness}</span>}
+                </div>
+                {detail.fetch_error ? <div className="mt-1 text-xs text-red-600">{detail.fetch_error}</div> : (
+                  Object.keys(detail.match_key_feedback || {}).length === 0
+                    ? <div className="mt-2 text-[11px] text-gray-400">No match-key breakdown returned for this event.</div>
+                    : <div className="mt-2 space-y-1">
+                      {Object.entries(detail.match_key_feedback || {}).map(([identifier, percentage]) => (
+                        <div key={identifier} className="flex items-center gap-2 text-[11px] text-gray-500">
+                          <span className="w-20 truncate">{identifier}</span>
+                          <div className="h-1.5 flex-1 rounded bg-gray-100"><div className="h-full rounded bg-cyan-500" style={{ width: `${Math.max(0, Math.min(100, Number(percentage) || 0))}%` }} /></div>
+                          <span className="w-10 text-right">{formatPct(percentage)}</span>
+                        </div>
+                      ))}
+                    </div>
+                )}
+              </div>)}
+              {/* TODO: trend sparkline via GET /history */}
+            </div>}
+          </div>;
+        })}
+      </div>}
+  </div>;
 }
 
 function DateFilter({ preset, setPreset, dateFrom, setDateFrom, dateTo, setDateTo, onApply }) {
@@ -1077,6 +1237,13 @@ export default function Dashboard() {
           warn={rtRoas != null && rtRoas >= 1 && rtRoas < 1.5}
         />
       </div>
+
+      <CapiMatchQualityCard
+        apiUrl={API_URL}
+        authFetch={authFetch}
+        showSuccess={showSuccess}
+        showError={showError}
+      />
 
       <div className="space-y-4">
         {/* Top Performers */}
