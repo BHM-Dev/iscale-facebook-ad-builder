@@ -137,7 +137,7 @@ function KpiCard({ label, value, sub, highlight, warn }) {
 const CAPI_PRIMARY_EVENT_PRIORITY = ['Lead', 'Purchase', 'CompleteRegistration', 'SubmitApplication'];
 
 function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
-  const [accounts, setAccounts] = useState([]);
+  const [pixels, setPixels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [expanded, setExpanded] = useState({});
@@ -148,7 +148,7 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
       const response = await authFetch(`${apiUrl}/capi-quality/latest`);
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || 'Failed to load CAPI quality');
       const data = await response.json();
-      setAccounts((data.accounts || []).slice().sort((a, b) => (a.account_name || '').localeCompare(b.account_name || '')));
+      setPixels((data.pixels || []).slice().sort((a, b) => (a.pixel_name || '').localeCompare(b.pixel_name || '')));
     } catch (error) {
       showError(error.message || 'Failed to load CAPI quality');
     } finally { setLoading(false); }
@@ -168,21 +168,8 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
     finally { setSyncing(false); }
   }, [apiUrl, authFetch, showSuccess, showError, load]);
 
-  // Which pixel(s) more than one visible account is on — confirmed live that
-  // RHO and RHO 4 can share one pixel, in which case Meta reports the exact
-  // same score for both (EMQ is a property of the pixel, not the account).
-  // Silently showing "8.9" next to two different account names with no
-  // indication they're the same dataset is the #1 way this card gets
-  // misread as a real comparison when it isn't one — so this has to be
-  // impossible to miss, not just technically present as a small pixel id.
-  const pixelAccountNames = {};
-  accounts.forEach(a => {
-    if (!a.pixel_id) return;
-    (pixelAccountNames[a.pixel_id] = pixelAccountNames[a.pixel_id] || []).push(a.account_name || a.fb_account_id);
-  });
-
-  const headline = (account) => {
-    const events = (account.events || []).filter(event => event.event_match_quality != null);
+  const headline = (pixel) => {
+    const events = (pixel.events || []).filter(event => event.event_match_quality != null);
     if (!events.length) return null;
     for (const name of CAPI_PRIMARY_EVENT_PRIORITY) {
       const match = events.find(event => event.event_name === name);
@@ -219,45 +206,42 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
         </button>
       </div>
       <p className="mt-1 text-[11px] text-gray-500">
-        Compares server-side (CAPI) match quality across accounts — different accounts can run different CAPI integrations (e.g. an advertiser's own setup vs. Everflow's).
-        Accounts on the <em>same pixel</em> will always show identical scores — that's Meta's data, not a bug, and is flagged below when it happens.
+        One row per Meta pixel, not per account — a pixel shared by more than one ad account (e.g. an advertiser's own CAPI pixel also used by another account) is shown once, listing every account that sends to it, so the same dataset never reads as two separate comparisons.
       </p>
     </div>
     {loading ? <div className="px-5 py-6 text-center text-sm text-gray-400">Loading...</div>
-      : accounts.length === 0 ? <div className="px-5 py-6 text-center text-sm text-gray-400">No CAPI data yet — click "Sync now" to check your accounts.</div>
+      : pixels.length === 0 ? <div className="px-5 py-6 text-center text-sm text-gray-400">No CAPI data yet — click "Sync now" to check your accounts.</div>
       : <div className="divide-y divide-gray-100">
-        {accounts.map(account => {
-          const event = headline(account);
-          const rowKey = `${account.pixel_id}:${account.fb_account_id}`;
+        {pixels.map(pixel => {
+          const event = headline(pixel);
+          const rowKey = pixel.pixel_id;
           const isOpen = !!expanded[rowKey];
-          const sharedWith = (pixelAccountNames[account.pixel_id] || []).filter(name => name !== (account.account_name || account.fb_account_id));
+          const accountNames = (pixel.accounts || []).map(a => a.account_name || a.fb_account_id).filter(Boolean);
           return <div key={rowKey}>
             <button type="button" onClick={() => setExpanded(prev => ({ ...prev, [rowKey]: !isOpen }))} className="w-full px-5 py-3 text-left hover:bg-gray-50 flex items-center gap-3">
               {isOpen ? <ChevronDown size={15} className="text-gray-400 flex-shrink-0" /> : <ChevronRight size={15} className="text-gray-400 flex-shrink-0" />}
               <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-gray-900 truncate">{account.account_name || account.fb_account_id}</span>
-                <span className="block text-[11px] text-gray-400 truncate">{account.pixel_name || 'Pixel'} · {account.pixel_id}</span>
-                {sharedWith.length > 0 && (
-                  <span className="mt-0.5 inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-medium">
-                    Same pixel as {sharedWith.join(', ')} — scores will match
-                  </span>
-                )}
+                <span className="block text-sm font-medium text-gray-900 truncate">{pixel.pixel_name || 'Pixel'}</span>
+                <span className="block text-[11px] text-gray-400 truncate">
+                  {pixel.pixel_id}
+                  {accountNames.length > 0 && <> · used by {accountNames.join(', ')}</>}
+                </span>
               </span>
-              {account.fetch_error ? <span className="text-xs text-red-600">Couldn&apos;t fetch</span> : event ? <>
+              {pixel.fetch_error ? <span className="text-xs text-red-600">Couldn&apos;t fetch</span> : event ? <>
                 <span className={`text-xl font-bold ${scoreClass(event.event_match_quality)}`}>{event.event_match_quality.toFixed(1)}</span>
                 <span className="text-xs text-gray-500">{event.isBestCase ? `Best: ${event.event_name || 'event'}` : (event.event_name || 'Event')}</span>
                 {event.acr != null && <span className="text-xs text-gray-500">ACR {formatPct(event.acr)}</span>}
               </> : <span className="text-xs text-gray-400">No event data</span>}
-              {stale(account.snapshot_date) && <span title={`Last synced ${account.snapshot_date} — more than ${CAPI_STALE_THRESHOLD_HOURS}h ago`} className="h-2 w-2 rounded-full bg-gray-400 flex-shrink-0" />}
+              {stale(pixel.snapshot_date) && <span title={`Last synced ${pixel.snapshot_date} — more than ${CAPI_STALE_THRESHOLD_HOURS}h ago`} className="h-2 w-2 rounded-full bg-gray-400 flex-shrink-0" />}
             </button>
-            {account.fetch_error && (
+            {pixel.fetch_error && (
               <div className="px-12 pb-3 text-xs text-red-600">
                 Meta couldn&apos;t return data for this pixel — try &quot;Sync now&quot;, or flag it if this keeps happening.
-                <div className="mt-0.5 text-gray-400">{account.fetch_error.slice(0, 180)}</div>
+                <div className="mt-0.5 text-gray-400">{pixel.fetch_error.slice(0, 180)}</div>
               </div>
             )}
-            {isOpen && !account.fetch_error && <div className="px-12 pb-4 space-y-4">
-              {(account.events || []).map((detail, index) => <div key={`${detail.event_name || 'event'}-${index}`} className="border-l-2 border-cyan-100 pl-3">
+            {isOpen && !pixel.fetch_error && <div className="px-12 pb-4 space-y-4">
+              {(pixel.events || []).map((detail, index) => <div key={`${detail.event_name || 'event'}-${index}`} className="border-l-2 border-cyan-100 pl-3">
                 <div className="flex items-center gap-3 text-xs">
                   <strong className="text-gray-800">{detail.event_name || 'Event'}</strong>
                   {detail.event_match_quality != null && <span className={`font-semibold ${scoreClass(detail.event_match_quality)}`}>EMQ {detail.event_match_quality.toFixed(1)}</span>}

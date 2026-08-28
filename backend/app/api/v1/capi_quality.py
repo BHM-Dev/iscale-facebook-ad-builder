@@ -2,15 +2,20 @@
 
 Backs the Dashboard's "CAPI Match Quality" card. Pulls Meta's Dataset Quality
 API (Event Match Quality) once a day per pixel and stores it, so the app can
-show EMQ / ACR / match-key coverage side by side across ad accounts — the
-question this exists to answer: is RHO 4's advertiser-run CAPI actually
-matching better than Everflow's CAPI on the other RHO accounts?
+show EMQ / ACR / match-key coverage side by side across pixels — the question
+this exists to answer: is RHO 4's advertiser-run CAPI pixel actually matching
+better than the original pixel on RHO's own account?
 
 Meta returns EMQ per event_name with no aggregate/all-events row, so each
-account can have more than one event's worth of data on a given day. `/latest`
-groups those into one entry per account with an `events` list — the frontend
-picks which event to headline (e.g. highest `event_match_quality`) and can
-show the rest in an expanded detail view.
+pixel can have more than one event's worth of data on a given day. `/latest`
+groups by PIXEL, not by account — confirmed live 2026-08-28 that grouping by
+account instead was actively misleading: RHO's own account has ad sets on
+the exact same pixel RHO 4 uses, so an account-grouped view showed that one
+pixel's identical data twice, under two different account names, which read
+as "two accounts happen to match" rather than "this is one dataset." Each
+pixel now lists every account that sends to it, so it's structurally
+impossible to mistake one pixel counted twice for a real two-pixel
+comparison.
 """
 from datetime import date, timedelta
 
@@ -61,7 +66,8 @@ _NULL_SENTINEL = "__none__"
 @router.get("/latest")
 def get_latest(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Most recent snapshot per (pixel, account, event), grouped into one
-    entry per account.
+    entry per PIXEL — every account that sends to a given pixel is listed
+    together under it, rather than one row per (pixel, account) pair.
 
     Looks back up to 3 days in case yesterday's daily job hasn't run yet or
     failed for a given pixel; doesn't silently fall back further than that so
@@ -97,30 +103,50 @@ def get_latest(db: Session = Depends(get_db), current_user: User = Depends(get_c
         )
     )
     query = _allowed_filter(query, current_user)
-    rows = query.order_by(CapiQualitySnapshot.account_name.asc().nullslast()).all()
+    # Order accounts-within-a-pixel deterministically too, so "first account
+    # seen" (used below to pick a representative fb_account_id for /history)
+    # is stable across reloads rather than depending on row-fetch order.
+    rows = query.order_by(
+        CapiQualitySnapshot.pixel_name.asc().nullslast(),
+        CapiQualitySnapshot.account_name.asc().nullslast(),
+    ).all()
 
-    accounts: dict[tuple, dict] = {}
-    order: list[tuple] = []
+    pixels: dict[str, dict] = {}
+    order: list[str] = []
+    seen_events: dict[str, set] = {}
     for row in rows:
-        key = (row.pixel_id, row.fb_account_id)
-        if key not in accounts:
-            accounts[key] = {
+        pixel_key = row.pixel_id
+        if pixel_key not in pixels:
+            pixels[pixel_key] = {
                 "pixel_id": row.pixel_id,
                 "pixel_name": row.pixel_name,
-                "fb_account_id": row.fb_account_id,
-                "account_name": row.account_name,
+                "accounts": [],
                 "snapshot_date": row.snapshot_date.isoformat() if row.snapshot_date else None,
                 "events": [],
             }
-            order.append(key)
-        # A fetch-error placeholder row (event_name is None) has no events data
-        # to show — surface it as an account-level error instead of an event.
-        if row.event_name is None and row.fetch_error:
-            accounts[key]["fetch_error"] = row.fetch_error
-        else:
-            accounts[key]["events"].append(_serialize_event(row))
+            order.append(pixel_key)
+            seen_events[pixel_key] = set()
 
-    return {"accounts": [accounts[k] for k in order]}
+        account_entry = {"fb_account_id": row.fb_account_id, "account_name": row.account_name}
+        if account_entry not in pixels[pixel_key]["accounts"]:
+            pixels[pixel_key]["accounts"].append(account_entry)
+
+        # A fetch-error placeholder row (event_name is None) has no events
+        # data to show — surface it as a pixel-level error instead of an
+        # event. Every account sharing a pixel hits the identical Meta call
+        # (dataset_quality only takes the pixel id, not the account), so a
+        # failure here applies to the whole pixel, not just one account.
+        if row.event_name is None and row.fetch_error:
+            pixels[pixel_key]["fetch_error"] = row.fetch_error
+        elif row.event_name not in seen_events[pixel_key]:
+            # Same pixel + same day + same event is identical data no matter
+            # which account's row we're looking at — take the first one seen
+            # instead of listing (and rendering) the same event N times for
+            # an N-account pixel.
+            seen_events[pixel_key].add(row.event_name)
+            pixels[pixel_key]["events"].append(_serialize_event(row))
+
+    return {"pixels": [pixels[k] for k in order]}
 
 
 @router.get("/history")
