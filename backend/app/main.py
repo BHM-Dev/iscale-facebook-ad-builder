@@ -309,6 +309,30 @@ async def startup_event():
             except Exception as exc:
                 print(f"⚠️  Token expiry check error: {exc}")
 
+        def scheduled_capi_quality_sync():
+            """Daily: pull Meta's Dataset Quality (Event Match Quality) for every
+            pixel currently in use, one snapshot per pixel per day.
+
+            EMQ moves slowly (it's a rolling quality signal, not a live metric),
+            so once a day is plenty — this exists to build a trend, not to catch
+            same-day swings.
+            """
+            db = SessionLocal()
+            try:
+                from app.services.capi_quality_service import sync_capi_quality
+                result = sync_capi_quality(db)
+                if result.get("skipped_reason"):
+                    print(f"⚠️  CAPI quality sync skipped: {result['skipped_reason']}")
+                else:
+                    print(
+                        f"✅ CAPI quality sync: {result.get('synced', 0)} pixel(s) synced, "
+                        f"{result.get('failed', 0)} failed, {result.get('tracked_pixels', 0)} tracked"
+                    )
+            except Exception as exc:
+                print(f"⚠️  CAPI quality sync error: {exc}")
+            finally:
+                db.close()
+
         def scheduled_drive_sync():
             """Pull shared Google Drive creative into the existing R2-backed library."""
             db = SessionLocal()
@@ -339,10 +363,11 @@ async def startup_event():
         scheduler.add_job(scheduled_redtrack_sync, 'interval', minutes=30, id='redtrack_sync')
         scheduler.add_job(scheduled_drive_sync, 'interval', minutes=30, id='drive_creative_sync')
         scheduler.add_job(scheduled_token_check, 'cron', hour=13, minute=0, timezone='UTC', id='token_expiry_check')
+        scheduler.add_job(scheduled_capi_quality_sync, 'cron', hour=14, minute=0, timezone='UTC', id='capi_quality_sync')
         # Meta campaign sync runs on login (not on a timer — no value syncing while Joel sleeps)
         scheduler.start()
         app.state.scheduler = scheduler
-        print("✅ Scheduler started (auto-pause + RedTrack every 30 min | token expiry daily 13:00 UTC | Meta sync on login)")
+        print("✅ Scheduler started (auto-pause + RedTrack every 30 min | token expiry daily 13:00 UTC | CAPI quality daily 14:00 UTC | Meta sync on login)")
     except Exception as e:
         print(f"⚠️  Could not start auto-pause scheduler: {e}")
 
@@ -357,7 +382,7 @@ async def shutdown_event():
 
 
 # Include Routers
-from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence, creative_angles, pnl, drive_assets
+from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence, creative_angles, pnl, drive_assets, capi_quality
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
@@ -382,6 +407,7 @@ app.include_router(pnl.router, prefix="/api/v1/pnl", tags=["pnl"])
 app.include_router(intelligence.router, prefix="/api/v1/intelligence", tags=["intelligence"])
 app.include_router(creative_angles.router, prefix="/api/v1/creative-angles", tags=["creative-angles"])
 app.include_router(drive_assets.router, prefix="/api/v1/drive-assets", tags=["drive-assets"])
+app.include_router(capi_quality.router, prefix="/api/v1/capi-quality", tags=["capi-quality"])
 
 # Mount static files for uploads (same path as generated_ads save location)
 uploads_dir = str(settings.upload_dir)

@@ -772,3 +772,61 @@ class DriveSyncState(Base):
     key = Column(String, primary_key=True)
     value = Column(Text, nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class CapiQualitySnapshot(Base):
+    """Daily snapshot of Meta's Dataset Quality API (Event Match Quality) per pixel.
+
+    One row per (pixel_id, fb_account_id, event_name, snapshot_date). Meta's
+    API returns EMQ per event_name with no aggregate/all-events row (confirmed
+    against Meta's live documented example, 2026-08-28) — so we store every
+    event rather than arbitrarily picking one to call "the" score. The
+    Dashboard picks which event to headline (e.g. highest composite_score, or
+    the account's actual conversion_event) at read time.
+
+    Lets us compare CAPI match quality across ad accounts over time — e.g. an
+    advertiser-run CAPI integration (RHO 4) vs. Everflow's CAPI on the other
+    accounts. Two caveats that affect whether the comparison is even valid:
+
+    1. EMQ is a property of the pixel/dataset, not the ad account. If two ad
+       accounts ever share one Meta pixel, this table can't distinguish them —
+       Meta reports the identical score for both. Confirm RHO 4 actually sends
+       to a different pixel/dataset before trusting a difference here.
+    2. A shared/advertiser-owned pixel may not have granted our token
+       dataset-level "Use events dataset" access even if we can manage the ad
+       account — check `fetch_error` before assuming null metrics mean "bad
+       match quality" rather than "we can't see this pixel yet."
+
+    `pixel_id` is Meta's `dataset_id` in their API naming. `fb_account_id` and
+    `account_name` are denormalized at snapshot time so history reads correctly
+    even if an account's pixel gets reassigned later. `match_key_feedback` is
+    normalized at write time from Meta's `[{identifier, coverage:{percentage}}]`
+    array into a flat `{identifier: percentage}` dict for easier rendering.
+    `event_coverage` is documented as a trailing 7-day average, not same-day.
+    """
+    __tablename__ = "capi_quality_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "pixel_id", "fb_account_id", "event_name", "snapshot_date",
+            name="uq_capi_quality_pixel_account_event_date",
+        ),
+    )
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    pixel_id = Column(String, nullable=False, index=True)
+    pixel_name = Column(String, nullable=True)  # e.g. "Commercial Insurance - CAPI" — lets the UI
+    # show which pixel an account is on, so two accounts sharing one pixel (confirmed to happen
+    # here — RHO's own account has a few ad sets pointed at RHO 4's pixel) is visible, not silently
+    # confusing when their EMQ numbers turn out identical.
+    fb_account_id = Column(String, nullable=True, index=True)  # normalized act_...
+    account_name = Column(String, nullable=True)
+    event_name = Column(String, nullable=True)  # Meta's per-event key (e.g. "Lead"); null = fetch-error placeholder row
+    snapshot_date = Column(Date, nullable=False, index=True)
+    event_match_quality = Column(Numeric(precision=4, scale=2), nullable=True)  # Meta's 0-10 EMQ composite_score
+    acr = Column(Numeric(precision=6, scale=2), nullable=True)  # % lift from CAPI vs pixel-only (shape not first-party confirmed)
+    event_coverage = Column(Numeric(precision=6, scale=2), nullable=True)  # trailing 7-day avg % (shape not first-party confirmed)
+    data_freshness = Column(String, nullable=True)  # e.g. real_time | hourly (shape not first-party confirmed)
+    match_key_feedback = Column(JSON, nullable=True)  # normalized {"email": 82.1, ...}
+    diagnostics = Column(JSON, nullable=True)  # Meta's raw row, unmodified, for later per-event UI/debugging
+    fetch_error = Column(Text, nullable=True)  # set instead of the metrics above when the API call failed
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
