@@ -221,8 +221,18 @@ async def set_user_ad_accounts(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ad_account_ids must be a list")
     norm = sorted({normalize_account_id(x) for x in raw if x})
 
-    # Replace the full set (cascade delete-orphan clears the old rows)
-    user.ad_accounts = [UserAdAccount(user_id=user.id, ad_account_id=x) for x in norm]
+    # Replace the full set explicitly. Assigning a new relationship collection
+    # can schedule INSERTs before DELETEs, colliding with the unique
+    # (user_id, ad_account_id) constraint when an existing assignment is kept
+    # or re-added. Flush the delete first so add/remove/replace are all atomic.
+    db.query(UserAdAccount).filter(UserAdAccount.user_id == user.id).delete(
+        synchronize_session=False
+    )
+    db.flush()
+    db.add_all([
+        UserAdAccount(user_id=user.id, ad_account_id=account_id)
+        for account_id in norm
+    ])
     db.commit()
     return {"ad_account_ids": norm, "unrestricted": len(norm) == 0}
 
