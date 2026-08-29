@@ -449,23 +449,27 @@ def sync_capi_quality(db: Session, snapshot_date: Optional[date] = None) -> dict
             logger.warning("capi_quality: fetch failed for pixel %s: %s", pixel_id, exc)
             continue
 
-        # Reaching here means THIS call succeeded — clear any stale error
-        # placeholder row from an earlier failed attempt the same day for
-        # this exact (pixel, account, day). Without this, a transient Meta
-        # 500 on one sync leaves a "Couldn't fetch" banner showing on
-        # /latest indefinitely (until the calendar date rolls over) even
-        # after a later sync that same day succeeds and writes real event
-        # data right alongside it — confirmed live 2026-08-29: a retried
-        # sync fetched real Lead/CompleteRegistration/etc. scores but the
-        # earlier failure's error row was still there, so the UI showed
-        # both a working score AND a "Couldn't fetch" error for one pixel.
+        # Reaching here means THIS call succeeded — clear any leftover
+        # event_name=NULL placeholder row from an earlier attempt the same
+        # day for this exact (pixel, account, day), whether that placeholder
+        # came from an exception (fetch_error set) or from a prior call that
+        # succeeded but got an empty/malformed 'web' list back (fetch_error
+        # NULL — see _parse_dataset_quality's own "no data"/"all malformed"
+        # fallback). Both are stale the moment a later call succeeds with
+        # real data: confirmed live 2026-08-29 in two forms — (1) a "Couldn't
+        # fetch" banner persisting on /latest even after a retried sync
+        # fetched real Lead/CompleteRegistration/etc. scores, and (2) a bogus
+        # phantom event_name=None row sitting in the events list alongside
+        # otherwise-complete real data. If this call's own parse also lands
+        # on the "no data" fallback, the loop below writes a fresh copy of
+        # that same placeholder immediately after — no gap, just no stale
+        # leftovers from a different day's attempt.
         try:
             db.query(CapiQualitySnapshot).filter(
                 CapiQualitySnapshot.pixel_id == pixel_id,
                 CapiQualitySnapshot.fb_account_id == fb_account_id,
                 CapiQualitySnapshot.snapshot_date == snapshot_date,
                 CapiQualitySnapshot.event_name.is_(None),
-                CapiQualitySnapshot.fetch_error.isnot(None),
             ).delete(synchronize_session=False)
             db.commit()
         except Exception as clear_exc:
