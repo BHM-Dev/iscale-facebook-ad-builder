@@ -449,6 +449,29 @@ def sync_capi_quality(db: Session, snapshot_date: Optional[date] = None) -> dict
             logger.warning("capi_quality: fetch failed for pixel %s: %s", pixel_id, exc)
             continue
 
+        # Reaching here means THIS call succeeded — clear any stale error
+        # placeholder row from an earlier failed attempt the same day for
+        # this exact (pixel, account, day). Without this, a transient Meta
+        # 500 on one sync leaves a "Couldn't fetch" banner showing on
+        # /latest indefinitely (until the calendar date rolls over) even
+        # after a later sync that same day succeeds and writes real event
+        # data right alongside it — confirmed live 2026-08-29: a retried
+        # sync fetched real Lead/CompleteRegistration/etc. scores but the
+        # earlier failure's error row was still there, so the UI showed
+        # both a working score AND a "Couldn't fetch" error for one pixel.
+        try:
+            db.query(CapiQualitySnapshot).filter(
+                CapiQualitySnapshot.pixel_id == pixel_id,
+                CapiQualitySnapshot.fb_account_id == fb_account_id,
+                CapiQualitySnapshot.snapshot_date == snapshot_date,
+                CapiQualitySnapshot.event_name.is_(None),
+                CapiQualitySnapshot.fetch_error.isnot(None),
+            ).delete(synchronize_session=False)
+            db.commit()
+        except Exception as clear_exc:
+            db.rollback()
+            logger.warning("capi_quality: could not clear stale error row for pixel %s: %s", pixel_id, clear_exc)
+
         for parsed in parsed_rows:
             try:
                 _upsert_snapshot(db, {
