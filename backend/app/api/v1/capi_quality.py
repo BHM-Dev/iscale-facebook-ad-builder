@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_current_active_user
 from app.database import get_db
 from app.models import CapiQualitySnapshot, User, normalize_account_id
-from app.services.capi_quality_service import sync_capi_quality
+from app.services.capi_quality_service import get_pixel_performance, sync_capi_quality
 
 router = APIRouter()
 
@@ -179,6 +179,30 @@ def get_history(
             for r in rows
         ],
     }
+
+
+@router.get("/performance")
+def get_performance(
+    date_preset: str = Query(default="last_30d"),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Real Meta spend/leads + RedTrack revenue/cost, bucketed by pixel, for
+    an explicit date range — separate from the EMQ score's own rolling
+    window (see capi_quality_service module docstring for why those two
+    numbers can't be perfectly time-aligned).
+
+    Live Meta/RedTrack calls, not the stored snapshot table — not cached,
+    since this is meant to be checked occasionally with different date
+    ranges, not polled on every Dashboard load. Account-scoped the same way
+    as /latest: a restricted user only sees performance for pixels tied to
+    their own allowed accounts.
+    """
+    allowed = current_user.allowed_account_ids()
+    restrict_to = {normalize_account_id(a) for a in allowed} if allowed is not None else None
+    result = get_pixel_performance(date_preset=date_preset, restrict_to_account_ids=restrict_to)
+    if result.get("skipped_reason"):
+        raise HTTPException(status_code=503, detail=result["skipped_reason"])
+    return result
 
 
 @router.post("/sync")

@@ -52,6 +52,7 @@ from sqlalchemy.orm import Session
 
 from app.models import CapiQualitySnapshot, generate_uuid, normalize_account_id
 from app.services.facebook_service import FacebookService
+from app.services.redtrack_service import RedTrackService
 
 logger = logging.getLogger(__name__)
 
@@ -479,3 +480,162 @@ def sync_capi_quality(db: Session, snapshot_date: Optional[date] = None) -> dict
                 )
 
     return {"synced": synced, "failed": failed, "tracked_pixels": len(tracked), "pruned": pruned}
+
+
+_PERFORMANCE_PRESETS = {"today", "yesterday", "last_7d", "last_14d", "last_30d", "this_month"}
+
+
+def get_pixel_performance(
+    date_preset: str = "last_30d",
+    restrict_to_account_ids: Optional[set] = None,
+) -> dict:
+    """Real Meta spend/leads + RedTrack revenue/cost, bucketed by PIXEL for an
+    explicit date range — the actual "is the better EMQ pixel translating
+    into lower cost / higher ROAS" answer, not just the match-quality score.
+
+    Important mismatch, unavoidable given Meta's own API: the EMQ score shown
+    elsewhere on this card has NO selectable date range (see the module
+    docstring) — it's Meta's own rolling default of unknown exact length.
+    This function's numbers DO have an explicit, real date_preset. The two
+    are never perfectly time-aligned; treat them as two separate views, not
+    one apples-to-apples pairing. Surfaced in the API response's date_from/
+    date_to specifically so the frontend can label this honestly rather than
+    implying it's the same window as the EMQ score.
+
+    Ad-set-to-pixel mapping is read live from Meta (promoted_object.pixel_id)
+    same as get_tracked_pixels, for the same reason: the local FacebookAdSet
+    cache doesn't have it for these accounts.
+    """
+    if date_preset not in _PERFORMANCE_PRESETS:
+        date_preset = "last_30d"
+
+    svc = FacebookService()
+    if not svc.access_token:
+        return {"pixels": [], "date_preset": date_preset, "skipped_reason": "FACEBOOK_ACCESS_TOKEN not configured"}
+
+    allowlist = _tracked_account_allowlist()
+    try:
+        accounts = svc.get_ad_accounts() or []
+    except Exception as exc:
+        logger.warning("capi_quality: could not list ad accounts for performance: %s", exc)
+        return {"pixels": [], "date_preset": date_preset, "skipped_reason": str(exc)}
+
+    full_account_ids = []  # allowlist-scoped only, ignoring the caller's own restriction
+    account_ids = []       # also filtered by restrict_to_account_ids — what we actually query
+    for acc in accounts:
+        aid = normalize_account_id(acc.get("id") or acc.get("account_id"))
+        if not aid:
+            continue
+        if allowlist is not None and aid not in allowlist:
+            continue
+        full_account_ids.append(aid)
+        if restrict_to_account_ids is not None and aid not in restrict_to_account_ids:
+            continue
+        account_ids.append(aid)
+
+    # A pixel can be shared across accounts (confirmed real for RHO/RHO4) — if
+    # a restricted user (e.g. Abel/Joel) can see only SOME of the accounts
+    # feeding a shared pixel, their bucket for it is a partial slice of real
+    # spend/leads, not the complete number, and would look identical to a
+    # complete one without a flag. Only pay for this extra pass when a
+    # restriction is actually excluding something (the common case —
+    # superusers, no restriction — skips it entirely).
+    restricted_out_accounts = set(full_account_ids) - set(account_ids)
+    pixel_all_accounts: dict[str, set] = {}
+    if restricted_out_accounts:
+        for aid in full_account_ids:
+            try:
+                for a in svc.get_adsets(ad_account_id=aid) or []:
+                    pid = (a.get("promoted_object") or {}).get("pixel_id")
+                    if pid:
+                        pixel_all_accounts.setdefault(pid, set()).add(aid)
+            except Exception as exc:
+                logger.warning("capi_quality: could not check full account coverage for %s: %s", aid, exc)
+
+    rt_svc = RedTrackService()
+    date_from, date_to = RedTrackService.preset_to_dates(date_preset)
+    try:
+        rt_report = rt_svc.get_report_by_adset_preset(date_preset) if rt_svc.is_configured() else {}
+    except Exception as exc:
+        # RedTrack is supplementary here too — a failure shouldn't blank out
+        # the real Meta spend/lead numbers, just leave revenue/ROAS null.
+        logger.warning("capi_quality: RedTrack fetch failed for performance: %s", exc)
+        rt_report = {}
+
+    buckets: dict[str, dict] = {}
+    for aid in account_ids:
+        try:
+            adsets = svc.get_adsets(ad_account_id=aid) or []
+        except Exception as exc:
+            logger.warning("capi_quality: could not list ad sets for performance on %s: %s", aid, exc)
+            continue
+        adset_pixel = {}
+        for a in adsets:
+            promoted_object = a.get("promoted_object") or {}
+            pixel_id = promoted_object.get("pixel_id")
+            if pixel_id:
+                adset_pixel[str(a.get("id"))] = pixel_id
+
+        try:
+            insights = svc.get_account_insights_bulk(ad_account_id=aid, date_preset=date_preset)
+        except Exception as exc:
+            logger.warning("capi_quality: insights fetch failed for performance on %s: %s", aid, exc)
+            continue
+
+        for fb_adset_id, metrics in (insights or {}).items():
+            pixel_id = adset_pixel.get(str(fb_adset_id))
+            if not pixel_id:
+                # An ad set with no pixel attached (or one Meta didn't return
+                # promoted_object for) has its spend dropped from every
+                # pixel's bucket — sum(pixel.spend) across the response can
+                # legitimately be less than the account's true total spend
+                # for the period. Fine for a per-pixel comparison view, just
+                # not a full account reconciliation.
+                continue
+            b = buckets.setdefault(pixel_id, {
+                "spend": 0.0, "leads": 0, "adset_count": 0,
+                "rt_conversions": 0, "rt_revenue": 0.0, "rt_cost": 0.0,
+            })
+            b["spend"] += _safe_float(metrics.get("spend")) or 0.0
+            # Route through _safe_float first, same as every other field here —
+            # a bare int() on a decimal-formatted string (e.g. "12.0", which
+            # Meta/RedTrack can plausibly send) raises ValueError with no
+            # per-row guard around this line, which would 500 the whole
+            # endpoint over one malformed value instead of just zeroing it.
+            b["leads"] += int(_safe_float(metrics.get("leads")) or 0)
+            b["adset_count"] += 1
+            rt = rt_report.get(str(fb_adset_id)) or {}
+            b["rt_conversions"] += int(_safe_float(rt.get("conversions")) or 0)
+            b["rt_revenue"] += _safe_float(rt.get("revenue")) or 0.0
+            b["rt_cost"] += _safe_float(rt.get("cost")) or 0.0
+
+    # One serial Graph API call per distinct pixel — fine at the current
+    # allowlist-scoped pixel count (2), would need batching (Meta's `?ids=`
+    # multi-get) if this list ever grows large enough for it to matter.
+    pixel_names = {pid: fetch_pixel_name(pid, svc.access_token) for pid in buckets}
+
+    pixels = []
+    for pid, b in buckets.items():
+        cpl = b["spend"] / b["leads"] if b["leads"] else None
+        rt_cpl = b["rt_cost"] / b["rt_conversions"] if b["rt_conversions"] else None
+        rt_roas = b["rt_revenue"] / b["rt_cost"] if b["rt_cost"] else None
+        # True only when this pixel is ALSO fed by an account the caller
+        # can't see — i.e. the numbers below are a real but incomplete slice,
+        # not the full picture for this pixel.
+        partial = bool(pixel_all_accounts.get(pid, set()) - set(account_ids))
+        pixels.append({
+            "pixel_id": pid,
+            "pixel_name": pixel_names.get(pid),
+            "adset_count": b["adset_count"],
+            "spend": round(b["spend"], 2),
+            "leads": b["leads"],
+            "cpl": round(cpl, 2) if cpl is not None else None,
+            "rt_conversions": b["rt_conversions"],
+            "rt_revenue": round(b["rt_revenue"], 2),
+            "rt_cost": round(b["rt_cost"], 2),
+            "rt_cpl": round(rt_cpl, 2) if rt_cpl is not None else None,
+            "rt_roas": round(rt_roas, 4) if rt_roas is not None else None,
+            "partial": partial,
+        })
+
+    return {"pixels": pixels, "date_preset": date_preset, "date_from": date_from, "date_to": date_to}

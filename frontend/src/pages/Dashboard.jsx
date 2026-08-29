@@ -136,11 +136,23 @@ function KpiCard({ label, value, sub, highlight, warn }) {
 // independent reviews caught this before it shipped.
 const CAPI_PRIMARY_EVENT_PRIORITY = ['Lead', 'Purchase', 'CompleteRegistration', 'SubmitApplication'];
 
+const CAPI_PERFORMANCE_PRESETS = [
+  { value: 'last_7d', label: 'Last 7 Days' },
+  { value: 'last_30d', label: 'Last 30 Days' },
+  { value: 'this_month', label: 'This Month' },
+];
+
 function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
   const [pixels, setPixels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [expanded, setExpanded] = useState({});
+
+  const [perfPixels, setPerfPixels] = useState([]);
+  const [perfLoading, setPerfLoading] = useState(true);
+  const [perfError, setPerfError] = useState(null);
+  const [perfPreset, setPerfPreset] = useState('last_30d');
+  const [perfRange, setPerfRange] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -155,6 +167,22 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
   }, [apiUrl, authFetch, showError]);
 
   useEffect(() => { load(); }, [load]);
+
+  const loadPerformance = useCallback(async (preset) => {
+    setPerfLoading(true);
+    setPerfError(null);
+    try {
+      const response = await authFetch(`${apiUrl}/capi-quality/performance?date_preset=${preset}`);
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || 'Failed to load CAPI performance');
+      const data = await response.json();
+      setPerfPixels((data.pixels || []).slice().sort((a, b) => (a.pixel_name || '').localeCompare(b.pixel_name || '')));
+      setPerfRange(data.date_from && data.date_to ? { from: data.date_from, to: data.date_to } : null);
+    } catch (error) {
+      setPerfError(error.message || 'Failed to load CAPI performance');
+    } finally { setPerfLoading(false); }
+  }, [apiUrl, authFetch]);
+
+  useEffect(() => { loadPerformance(perfPreset); }, [loadPerformance, perfPreset]);
 
   const sync = useCallback(async () => {
     setSyncing(true);
@@ -268,6 +296,63 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
           </div>;
         })}
       </div>}
+
+    <div className="border-t border-cyan-100 px-5 py-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="text-xs font-semibold text-gray-700">Performance by pixel (Meta spend + RedTrack revenue)</div>
+        <div className="flex gap-1">
+          {CAPI_PERFORMANCE_PRESETS.map(p => (
+            <button
+              key={p.value}
+              type="button"
+              onClick={() => setPerfPreset(p.value)}
+              className={`text-[11px] px-2 py-1 rounded ${perfPreset === p.value ? 'bg-cyan-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="mt-1 mb-2 text-[11px] text-gray-500">
+        This is a real, explicit date range{perfRange ? ` (${perfRange.from} to ${perfRange.to})` : ''} — a different window than the EMQ scores above, which Meta always computes on its own rolling default (see the note at the top). Don't read these two sections as measuring the identical period; this is the actual cost/ROAS answer, EMQ above is Meta's own match-quality trend.
+      </p>
+      {perfLoading ? <div className="py-3 text-center text-xs text-gray-400">Loading performance...</div>
+        : perfError ? <div className="py-2 text-xs text-red-600">{perfError}</div>
+        : perfPixels.length === 0 ? <div className="py-3 text-center text-xs text-gray-400">No spend in this range for the tracked pixels.</div>
+        : <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-gray-400">
+                <th className="pb-1 pr-3 font-medium">Pixel</th>
+                <th className="pb-1 pr-3 font-medium text-right">Ad sets</th>
+                <th className="pb-1 pr-3 font-medium text-right">Spend</th>
+                <th className="pb-1 pr-3 font-medium text-right">Meta CPL</th>
+                <th className="pb-1 pr-3 font-medium text-right">RT conversions</th>
+                <th className="pb-1 pr-3 font-medium text-right">RT CPL</th>
+                <th className="pb-1 font-medium text-right">RT ROAS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {perfPixels.map(p => (
+                <tr key={p.pixel_id} className="border-t border-gray-50">
+                  <td className="py-1.5 pr-3 text-gray-800 truncate max-w-[160px]">
+                    {p.pixel_name || p.pixel_id}
+                    {p.partial && <span title="This pixel is also fed by an account you don't have access to — these numbers are a partial slice, not the full total for this pixel." className="ml-1 text-amber-500">⚠</span>}
+                  </td>
+                  <td className="py-1.5 pr-3 text-right text-gray-500">{p.adset_count}</td>
+                  <td className="py-1.5 pr-3 text-right text-gray-700">${Number(p.spend).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
+                  <td className="py-1.5 pr-3 text-right text-gray-700">{p.cpl != null ? `$${p.cpl.toFixed(2)}` : '—'}</td>
+                  <td className="py-1.5 pr-3 text-right text-gray-500">{p.rt_conversions}</td>
+                  <td className="py-1.5 pr-3 text-right text-gray-700">{p.rt_cpl != null ? `$${p.rt_cpl.toFixed(2)}` : '—'}</td>
+                  <td className={`py-1.5 text-right font-semibold ${p.rt_roas == null ? 'text-gray-400' : p.rt_roas >= 1.3 ? 'text-green-600' : p.rt_roas >= 1 ? 'text-amber-600' : 'text-red-600'}`}>
+                    {p.rt_roas != null ? `${p.rt_roas.toFixed(2)}x` : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>}
+    </div>
   </div>;
 }
 
