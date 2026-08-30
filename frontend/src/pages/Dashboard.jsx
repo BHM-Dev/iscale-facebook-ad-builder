@@ -370,6 +370,7 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
                               <th className="pb-1 pr-3 font-medium">Niche</th>
                               <th className="pb-1 pr-3 font-medium text-right">Spend</th>
                               <th className="pb-1 pr-3 font-medium text-right">CPL</th>
+                              <th className="pb-1 pr-3 font-medium text-right">RT CPL</th>
                               <th className="pb-1 font-medium text-right">RT ROAS</th>
                             </tr>
                           </thead>
@@ -377,9 +378,15 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
                             {(p.breakdown || []).map(row => (
                               <tr key={`${row.fb_account_id || 'account'}-${row.niche || 'General'}`} className="border-t border-cyan-100/70">
                                 <td className="py-1 pr-3 text-gray-600">{row.account_name || row.fb_account_id || 'Account'}</td>
-                                <td className="py-1 pr-3 text-gray-700">{row.niche || 'General'}</td>
+                                <td className="py-1 pr-3 text-gray-700">
+                                  {row.niche || 'General'}
+                                  {(!row.niche || row.niche === 'General') && (
+                                    <span title="Ad sets whose name didn't match the [Date] - [Niche] - [Batch] pattern, or looked like a batch/test tag rather than a real niche." className="ml-1 text-gray-400 cursor-help">ⓘ</span>
+                                  )}
+                                </td>
                                 <td className="py-1 pr-3 text-right text-gray-700">${Number(row.spend).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
                                 <td className="py-1 pr-3 text-right text-gray-700">{row.cpl != null ? `$${row.cpl.toFixed(2)}` : '—'}</td>
+                                <td className="py-1 pr-3 text-right text-gray-700">{row.rt_cpl != null ? `$${row.rt_cpl.toFixed(2)}` : '—'}</td>
                                 <td className={`py-1 text-right font-semibold ${row.rt_roas == null ? 'text-gray-400' : row.rt_roas >= 1.3 ? 'text-green-600' : row.rt_roas >= 1 ? 'text-amber-600' : 'text-red-600'}`}>
                                   {row.rt_roas != null ? `${row.rt_roas.toFixed(2)}x` : '—'}
                                 </td>
