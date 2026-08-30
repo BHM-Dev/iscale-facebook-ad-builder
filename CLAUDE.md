@@ -216,7 +216,7 @@ If `alembic upgrade head` fails, backend never starts. ALL endpoints (including 
 
 **Chain must be linear — single head only.** `scripts/check_alembic_heads.py` blocks `git push` if multiple heads exist. Run it before every push.
 
-**Current head: `t8p6q2r3s5o1`** (20 revisions, linear back to base `1b02d74254e5`).
+**Current head: `y3u1v7w8x0t6`** (linear back to base `1b02d74254e5`). This line goes stale fast — always confirm with the command below rather than trusting it.
 
 Don't hand-maintain the chain list here — it goes stale fast. Get the real head with:
 
@@ -414,9 +414,11 @@ backend/app/
 │   ├── auto_pause.py    # CRUD + enforcement
 │   ├── templates.py
 │   ├── uploads.py
+│   ├── capi_quality.py  # CAPI Match Quality — /latest, /history, /performance, /sync
 │   └── dashboard.py
 └── services/
     ├── facebook_service.py     # facebook-business SDK (NO constructor args)
+    ├── capi_quality_service.py # Meta Dataset Quality API + performance-by-pixel aggregation
     ├── slack_service.py        # chat.postMessage to C08G7PJJ6NB (auto-pause alerts)
     ├── scheduler_service.py    # APScheduler — auto-pause check every 30 min
     ├── research_service.py
@@ -500,6 +502,7 @@ Custom modal with backdrop blur, clear title, red button for destructive actions
 | `SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS` | Pending — JSON account→offer map; e.g. Commercial Insurance → `Get Business Coverage`, Auto → `Fast Auto Quote.org` |
 | `SLACK_BOT_TOKEN` | Confirm with Golden |
 | `SLACK_SIGNING_SECRET` | Needed for Slack intelligence bot (Phase 2, not yet built) |
+| `CAPI_QUALITY_ACCOUNT_IDS` | Active, added 2026-08-28. Comma-separated `act_...` allowlist scoping the CAPI Match Quality feature (see below) to specific accounts. Currently `act_521142087204815,act_737291135429748` (RHO - Commercial Insurance, RHO 4). Unset = tracks every visible account — don't unset without reason, the unscoped version pulled ~26 mostly-dead legacy pixels. |
 
 **Local dev (`.env.local` in project root):** Connects to production VPS DB + R2 for shared data.
 
@@ -556,6 +559,60 @@ Do not suggest `./venv/bin/python ...` or `source venv/bin/activate` for VPS wor
 ---
 
 ## Pending Features / Known Gaps
+
+### Recently shipped (2026-08-28/29) — CAPI Match Quality
+Answers: is RHO 4's advertiser-run CAPI pixel actually matching better / cheaper than the
+original Everflow-CAPI pixel on RHO's own account?
+
+- **Backend:** `models.CapiQualitySnapshot` (migration `y3u1v7w8x0t6`) — one row per
+  (pixel, account, event, day). `backend/app/services/capi_quality_service.py` pulls Meta's
+  Dataset Quality API (Event Match Quality) — real response root is `"web"`, NOT `"data"`, and
+  `event_match_quality` is a nested `{composite_score, match_key_feedback}` object, not a flat
+  number (verified against Meta's live docs, not assumed). **EMQ has no date-range parameter at
+  all** — Meta always returns its own rolling default (`event_coverage` is explicitly documented
+  as a 7-day average; the match-quality score behaves the same empirically). 3 endpoints under
+  `/api/v1/capi-quality`: `GET /latest` (grouped by **pixel**, not account — a pixel shared by
+  more than one ad account is one row, listing every account that sends to it), `GET /history`,
+  `GET /performance?date_preset=...` (real Meta spend/leads + RedTrack revenue/cost bucketed by
+  pixel, for an explicit selectable date range — deliberately kept visually separate from the EMQ
+  section since the two are never time-aligned). Daily scheduler job at 14:00 UTC
+  (`capi_quality_sync` in `main.py`). Scoped via `CAPI_QUALITY_ACCOUNT_IDS` (see env var table).
+- **Frontend:** `CapiMatchQualityCard` component in `Dashboard.jsx` — EMQ-by-pixel list
+  (expandable per-event detail, match-key coverage bars) plus a "Performance by pixel" table with
+  a 7d/30d/this-month toggle.
+- **Real finding, confirmed live 2026-08-28/29:** RHO's own account and RHO 4 share the exact same
+  Meta pixel (`1529618242272114`, "Commercial Insurance - CAPI") for their CAPI-tagged ad sets —
+  EMQ is a property of the pixel, not the account, so two accounts on one pixel will always show
+  identical scores. That's real Meta behavior, not a bug — surfaced explicitly in the UI, not
+  hidden. RHO's own separate legacy pixel is `1044730294266508` ("Commercial Insurance -").
+  30-day comparison as of 2026-08-29: original pixel $13.64 Meta CPL / 1.09x RT ROAS vs. new CAPI
+  pixel $7.36 Meta CPL / 1.58x RT ROAS — directionally supports the theory, but the CAPI pixel had
+  ~30x less spend and ~20x fewer real conversions at that point (early signal, not yet
+  statistically settled — re-check as it scales).
+- **Known sync-job pattern, worth remembering for any future daily-upsert job:** a failed sync
+  writes an error-placeholder row (`event_name IS NULL`); if a later sync the same day succeeds,
+  nothing clears that placeholder unless you explicitly delete it on the next success — otherwise
+  a stale "Couldn't fetch" (or a phantom empty-data row) can sit right next to fresh real data
+  indefinitely. Fixed in `sync_capi_quality` — explicitly deletes any `event_name IS NULL` row for
+  that exact key the moment a later call succeeds, regardless of whether the stale row came from
+  an exception path or a success-but-empty-response path.
+- **Caution for future live-testing sessions:** heavy repeated `get_adsets`/insights calls against
+  one ad account in a short window tripped a real Meta ad-account-level rate limit ("User request
+  limit reached", code 17) on `act_521142087204815` (RHO - Commercial Insurance) during this
+  build. Self-clears in roughly an hour; don't mistake it for a code bug, and don't hammer the
+  same account repeatedly to "confirm" a fix — space out live-verification calls against a single
+  account instead.
+
+### Recently shipped (2026-08-28) — login speed
+Root cause of "signing in takes way too long": `/auth/login` and `/auth/login/json` fired a full
+Meta+RedTrack sync across every visible ad account as a `BackgroundTask` on every successful
+login. `BackgroundTasks` don't block the HTTP response itself, but this backend runs a **single
+uvicorn worker with no `--workers` flag** and the default SQLAlchemy pool (`pool_size=5,
+max_overflow=10`) — the sync held DB connections/worker capacity for its full duration, so the
+very next thing after login (Dashboard's own 4 parallel load calls) queued behind it. Removed the
+login-triggered sync entirely (`auth.py`) — the 30-min scheduler jobs and the explicit "Sync"
+button already own data freshness; nothing was relying on the login trigger specifically.
+Confirmed by Steve as noticeably faster after the fix.
 
 ### Recently shipped (2026-06-02)
 - [x] **Ad Copy Library** — pulls all ACTIVE/PAUSED ads from Meta, stores headline+body in `ad_copy_library` table, auto-injects 5 relevant examples as few-shot style reference into every copy generation call (`/generate`, `/remix-variations`, `/regenerate-field`). Joel never needs to manually reference it — injection is automatic.
