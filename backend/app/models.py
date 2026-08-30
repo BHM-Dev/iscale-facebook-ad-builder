@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, ForeignKey, DateTime, Text, JSON, Table, Boolean, Numeric, Date, UniqueConstraint
+from sqlalchemy import Column, String, Integer, ForeignKey, DateTime, Text, JSON, Table, Boolean, Numeric, Date, UniqueConstraint, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -279,14 +279,20 @@ class AutoPauseRule(Base):
     __tablename__ = "auto_pause_rules"
 
     id = Column(String, primary_key=True, default=generate_uuid)
-    adset_id = Column(String, ForeignKey("facebook_adsets.id", ondelete="CASCADE"), nullable=False)
+    # index=True on both matches the indexes the original migration
+    # (a1b3c5d7e9f2_add_auto_pause_rules_table) already created in production —
+    # this was undeclared drift, not a new index request. Confirmed via the
+    # CI drift-check job (2026-08-30): these existed in every real DB but not
+    # in this metadata, so a fresh dev DB built from migrations silently
+    # diverged from what the ORM believed the schema was.
+    adset_id = Column(String, ForeignKey("facebook_adsets.id", ondelete="CASCADE"), nullable=False, index=True)
     # metric: 'cpl' | 'cpa' | 'ctr'
     metric = Column(String, nullable=False)
     # operator: 'greater_than' | 'less_than'
     operator = Column(String, nullable=False, default='greater_than')
     threshold = Column(Integer, nullable=False)          # e.g. 50 = $50 CPL
     min_spend = Column(Integer, nullable=False, default=20)  # minimum $ spend before rule fires
-    is_active = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_checked_at = Column(DateTime(timezone=True), nullable=True)
     triggered_at = Column(DateTime(timezone=True), nullable=True)
@@ -620,9 +626,21 @@ class BrandScrapedAd(Base):
 class AdCopyLibrary(Base):
     """Joel's real winning ad copy — used as few-shot examples in copy generation prompts."""
     __tablename__ = "ad_copy_library"
+    # The original migration (k9g7h3i4j6f2_add_ad_copy_library) created a
+    # separate UniqueConstraint('fb_ad_id') (Postgres names it
+    # ad_copy_library_fb_ad_id_key) PLUS a separate non-unique index
+    # ix_ad_copy_library_fb_ad_id — two objects, not the single unique index
+    # `Column(unique=True, index=True)` below would declare. Spelled out
+    # explicitly here to match the real schema (confirmed via CI
+    # drift-check, 2026-08-30) rather than changing production DDL to match
+    # a simpler-but-different model declaration.
+    __table_args__ = (
+        UniqueConstraint('fb_ad_id', name='ad_copy_library_fb_ad_id_key'),
+        Index('ix_ad_copy_library_fb_ad_id', 'fb_ad_id'),
+    )
 
     id = Column(String, primary_key=True, default=generate_uuid)
-    fb_ad_id = Column(String, unique=True, index=True, nullable=False)
+    fb_ad_id = Column(String, nullable=False)
     fb_adset_id = Column(String, nullable=True, index=True)
     adset_name = Column(String, nullable=True)            # raw adset name from Meta
     niche = Column(String, nullable=True, index=True)     # extracted from adset name
@@ -639,9 +657,19 @@ class AdCopyLibrary(Base):
 class RedTrackCache(Base):
     """Cached RedTrack report data per Meta ad set, refreshed every 30 minutes."""
     __tablename__ = "redtrack_cache"
+    # The original migration (b2c4d6e8f0a1_add_redtrack_cache_table) named the
+    # fb_adset_id index ix_redtrack_cache_adset_id (not SQLAlchemy's default
+    # ix_redtrack_cache_fb_adset_id from a plain index=True) and also created
+    # a composite index on (date_from, date_to) this model never declared.
+    # Spelled out explicitly to match the real schema (confirmed via CI
+    # drift-check, 2026-08-30) rather than renaming/adding indexes in prod.
+    __table_args__ = (
+        Index('ix_redtrack_cache_adset_id', 'fb_adset_id'),
+        Index('ix_redtrack_cache_date', 'date_from', 'date_to'),
+    )
 
     id = Column(String, primary_key=True, default=generate_uuid)
-    fb_adset_id = Column(String, nullable=False, index=True)
+    fb_adset_id = Column(String, nullable=False)
     date_from = Column(Date, nullable=False)
     date_to = Column(Date, nullable=False)
     conversions = Column(Integer, nullable=True)
