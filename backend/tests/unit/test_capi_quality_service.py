@@ -361,8 +361,8 @@ def test_get_pixel_performance_groups_unextractable_niche_as_general(monkeypatch
 
         def get_adsets(self, ad_account_id=None):
             return [
-                {"id": "111", "name": "Batch 1", "promoted_object": {"pixel_id": "px_1"}},
-                {"id": "112", "name": "Test", "promoted_object": {"pixel_id": "px_1"}},
+                {"id": "111", "name": "Plumbers", "promoted_object": {"pixel_id": "px_1"}},
+                {"id": "112", "name": "Roofers", "promoted_object": {"pixel_id": "px_1"}},
             ]
 
         def get_account_insights_bulk(self, ad_account_id=None, date_preset="last_30d"):

@@ -631,7 +631,10 @@ def get_pixel_performance(
                 "rt_conversions": 0, "rt_revenue": 0.0, "rt_cost": 0.0,
                 "breakdown": {},
             })
-            niche = _extract_niche(adset_name_map.get(str(fb_adset_id)) or metrics.get("adset_name") or "")
+            niche = _extract_niche(
+                adset_name_map.get(str(fb_adset_id)) or metrics.get("adset_name") or "",
+                require_separator=True,
+            )
             breakdown_key = (aid, niche or "General")
             nb = b["breakdown"].setdefault(breakdown_key, {
                 "fb_account_id": aid,

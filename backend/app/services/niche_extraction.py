@@ -18,19 +18,23 @@ _LEADING_EMOJI_RE = re.compile(
 )
 
 
-def _extract_niche(adset_name: str) -> str | None:
+def _extract_niche(adset_name: str, require_separator: bool = False) -> str | None:
     """Extract niche from ad set name pattern '[Date] - [Niche] - [Batch info]'.
 
     Returns None for empty names or when the extracted candidate looks like a
     batch/test label rather than a real niche. The caller stores None and the
     frontend displays it as 'General'.
 
-    Leading emoji are stripped from the candidate.
+    Leading emoji are stripped from the candidate. Set require_separator=True
+    when callers need unstructured names grouped as General instead of using
+    the whole ad set name as a best-effort niche.
     """
     if not adset_name:
         return None
     parts = adset_name.split(" - ")
     if len(parts) < 2:
+        if require_separator:
+            return None
         # No separator: can't extract niche reliably; store the full name if
         # it doesn't look like a batch tag, otherwise None.
         candidate = _LEADING_EMOJI_RE.sub('', adset_name.strip()).strip()
