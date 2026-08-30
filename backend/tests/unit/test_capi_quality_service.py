@@ -15,6 +15,7 @@ from app.services.capi_quality_service import (
     _parse_match_key_feedback,
     _safe_float,
     _upsert_snapshot,
+    get_pixel_performance,
 )
 from app.models import CapiQualitySnapshot
 
@@ -268,6 +269,128 @@ def test_parse_dataset_quality_acr_and_coverage_as_bare_numbers():
     parsed = _parse_dataset_quality(raw)
     assert parsed[0]["acr"] == 15.0
     assert parsed[0]["event_coverage"] == 88.5
+
+
+# ---------------------------------------------------------------------------
+# get_pixel_performance — pixel totals + account/niche drill-down
+# ---------------------------------------------------------------------------
+
+def test_get_pixel_performance_adds_breakdown_that_sums_to_parent(monkeypatch):
+    class FakeFacebookService:
+        access_token = "token"
+
+        def get_ad_accounts(self):
+            return [
+                {"id": "act_1", "name": "RHO"},
+                {"id": "act_2", "name": "RHO 4"},
+            ]
+
+        def get_adsets(self, ad_account_id=None):
+            return {
+                "act_1": [
+                    {"id": "111", "name": "2026-08-01 - Churches - Batch 1", "promoted_object": {"pixel_id": "px_shared"}},
+                    {"id": "112", "name": "2026-08-01 - Churches - Batch 2", "promoted_object": {"pixel_id": "px_shared"}},
+                ],
+                "act_2": [
+                    {"id": "221", "name": "2026-08-01 - Plumbers - Batch 1", "promoted_object": {"pixel_id": "px_shared"}},
+                ],
+            }[ad_account_id]
+
+        def get_account_insights_bulk(self, ad_account_id=None, date_preset="last_30d"):
+            return {
+                "act_1": {
+                    "111": {"spend": 100, "leads": 4},
+                    "112": {"spend": 50, "leads": 1},
+                },
+                "act_2": {
+                    "221": {"spend": 200, "leads": 5},
+                },
+            }[ad_account_id]
+
+    class FakeRedTrackService:
+        @staticmethod
+        def preset_to_dates(date_preset):
+            return "2026-08-01", "2026-08-30"
+
+        def is_configured(self):
+            return True
+
+        def get_report_by_adset_preset(self, date_preset):
+            return {
+                "111": {"conversions": 3, "revenue": 180, "cost": 90},
+                "112": {"conversions": 1, "revenue": 40, "cost": 45},
+                "221": {"conversions": 4, "revenue": 360, "cost": 180},
+            }
+
+    monkeypatch.delenv("CAPI_QUALITY_ACCOUNT_IDS", raising=False)
+    monkeypatch.setattr("app.services.capi_quality_service.FacebookService", FakeFacebookService)
+    monkeypatch.setattr("app.services.capi_quality_service.RedTrackService", FakeRedTrackService)
+    monkeypatch.setattr("app.services.capi_quality_service.fetch_pixel_name", lambda pixel_id, token: "Shared Pixel")
+
+    result = get_pixel_performance(date_preset="last_30d")
+
+    pixel = result["pixels"][0]
+    assert pixel["pixel_id"] == "px_shared"
+    assert pixel["spend"] == 350
+    assert pixel["leads"] == 10
+    assert pixel["rt_revenue"] == 580
+    assert pixel["rt_cost"] == 315
+
+    assert len(pixel["breakdown"]) == 2
+    assert sum(row["spend"] for row in pixel["breakdown"]) == pixel["spend"]
+    assert sum(row["leads"] for row in pixel["breakdown"]) == pixel["leads"]
+    assert sum(row["rt_revenue"] for row in pixel["breakdown"]) == pixel["rt_revenue"]
+    assert sum(row["rt_cost"] for row in pixel["breakdown"]) == pixel["rt_cost"]
+
+    by_niche = {row["niche"]: row for row in pixel["breakdown"]}
+    assert by_niche["Plumbers"]["account_name"] == "RHO 4"
+    assert by_niche["Plumbers"]["spend"] == 200
+    assert by_niche["Plumbers"]["cpl"] == 40
+    assert by_niche["Plumbers"]["rt_roas"] == 2
+    assert by_niche["Churches"]["account_name"] == "RHO"
+    assert by_niche["Churches"]["adset_count"] == 2
+    assert by_niche["Churches"]["spend"] == 150
+
+
+def test_get_pixel_performance_groups_unextractable_niche_as_general(monkeypatch):
+    class FakeFacebookService:
+        access_token = "token"
+
+        def get_ad_accounts(self):
+            return [{"id": "act_1", "name": "RHO"}]
+
+        def get_adsets(self, ad_account_id=None):
+            return [
+                {"id": "111", "name": "Batch 1", "promoted_object": {"pixel_id": "px_1"}},
+                {"id": "112", "name": "Test", "promoted_object": {"pixel_id": "px_1"}},
+            ]
+
+        def get_account_insights_bulk(self, ad_account_id=None, date_preset="last_30d"):
+            return {
+                "111": {"spend": 40, "leads": 2},
+                "112": {"spend": 60, "leads": 3},
+            }
+
+    class FakeRedTrackService:
+        @staticmethod
+        def preset_to_dates(date_preset):
+            return "2026-08-01", "2026-08-30"
+
+        def is_configured(self):
+            return False
+
+    monkeypatch.delenv("CAPI_QUALITY_ACCOUNT_IDS", raising=False)
+    monkeypatch.setattr("app.services.capi_quality_service.FacebookService", FakeFacebookService)
+    monkeypatch.setattr("app.services.capi_quality_service.RedTrackService", FakeRedTrackService)
+    monkeypatch.setattr("app.services.capi_quality_service.fetch_pixel_name", lambda pixel_id, token: "Pixel")
+
+    result = get_pixel_performance(date_preset="last_30d")
+
+    breakdown = result["pixels"][0]["breakdown"]
+    assert len(breakdown) == 1
+    assert breakdown[0]["niche"] == "General"
+    assert breakdown[0]["spend"] == 100
+    assert breakdown[0]["leads"] == 5
 
 
 # ---------------------------------------------------------------------------

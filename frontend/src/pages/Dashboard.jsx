@@ -153,6 +153,7 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
   const [perfError, setPerfError] = useState(null);
   const [perfPreset, setPerfPreset] = useState('last_30d');
   const [perfRange, setPerfRange] = useState(null);
+  const [expandedPerfPixels, setExpandedPerfPixels] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -333,22 +334,64 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
               </tr>
             </thead>
             <tbody>
-              {perfPixels.map(p => (
-                <tr key={p.pixel_id} className="border-t border-gray-50">
-                  <td className="py-1.5 pr-3 text-gray-800 truncate max-w-[160px]">
-                    {p.pixel_name || p.pixel_id}
-                    {p.partial && <span title="This pixel is also fed by an account you don't have access to — these numbers are a partial slice, not the full total for this pixel." className="ml-1 text-amber-500">⚠</span>}
-                  </td>
-                  <td className="py-1.5 pr-3 text-right text-gray-500">{p.adset_count}</td>
-                  <td className="py-1.5 pr-3 text-right text-gray-700">${Number(p.spend).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
-                  <td className="py-1.5 pr-3 text-right text-gray-700">{p.cpl != null ? `$${p.cpl.toFixed(2)}` : '—'}</td>
-                  <td className="py-1.5 pr-3 text-right text-gray-500">{p.rt_conversions}</td>
-                  <td className="py-1.5 pr-3 text-right text-gray-700">{p.rt_cpl != null ? `$${p.rt_cpl.toFixed(2)}` : '—'}</td>
-                  <td className={`py-1.5 text-right font-semibold ${p.rt_roas == null ? 'text-gray-400' : p.rt_roas >= 1.3 ? 'text-green-600' : p.rt_roas >= 1 ? 'text-amber-600' : 'text-red-600'}`}>
-                    {p.rt_roas != null ? `${p.rt_roas.toFixed(2)}x` : '—'}
-                  </td>
-                </tr>
-              ))}
+              {perfPixels.map(p => {
+                const isExpanded = !!expandedPerfPixels[p.pixel_id];
+                const hasBreakdown = (p.breakdown || []).length > 0;
+                return <React.Fragment key={p.pixel_id}>
+                  <tr
+                    className={`border-t border-gray-50 ${hasBreakdown ? 'cursor-pointer hover:bg-gray-50' : ''}`}
+                    onClick={() => hasBreakdown && setExpandedPerfPixels(prev => ({ ...prev, [p.pixel_id]: !isExpanded }))}
+                  >
+                    <td className="py-1.5 pr-3 text-gray-800 max-w-[160px]">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        {hasBreakdown ? (
+                          isExpanded ? <ChevronDown size={13} className="text-gray-400 flex-shrink-0" /> : <ChevronRight size={13} className="text-gray-400 flex-shrink-0" />
+                        ) : <span className="w-[13px] flex-shrink-0" />}
+                        <span className="truncate">{p.pixel_name || p.pixel_id}</span>
+                        {p.partial && <span title="This pixel is also fed by an account you don't have access to — these numbers are a partial slice, not the full total for this pixel." className="text-amber-500 flex-shrink-0">⚠</span>}
+                      </div>
+                    </td>
+                    <td className="py-1.5 pr-3 text-right text-gray-500">{p.adset_count}</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-700">${Number(p.spend).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-700">{p.cpl != null ? `$${p.cpl.toFixed(2)}` : '—'}</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-500">{p.rt_conversions}</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-700">{p.rt_cpl != null ? `$${p.rt_cpl.toFixed(2)}` : '—'}</td>
+                    <td className={`py-1.5 text-right font-semibold ${p.rt_roas == null ? 'text-gray-400' : p.rt_roas >= 1.3 ? 'text-green-600' : p.rt_roas >= 1 ? 'text-amber-600' : 'text-red-600'}`}>
+                      {p.rt_roas != null ? `${p.rt_roas.toFixed(2)}x` : '—'}
+                    </td>
+                  </tr>
+                  {isExpanded && hasBreakdown && (
+                    <tr className="border-t border-cyan-50 bg-cyan-50/30">
+                      <td colSpan={7} className="px-6 py-2">
+                        <table className="w-full text-[11px]">
+                          <thead>
+                            <tr className="text-left text-gray-400">
+                              <th className="pb-1 pr-3 font-medium">Account</th>
+                              <th className="pb-1 pr-3 font-medium">Niche</th>
+                              <th className="pb-1 pr-3 font-medium text-right">Spend</th>
+                              <th className="pb-1 pr-3 font-medium text-right">CPL</th>
+                              <th className="pb-1 font-medium text-right">RT ROAS</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(p.breakdown || []).map(row => (
+                              <tr key={`${row.fb_account_id || 'account'}-${row.niche || 'General'}`} className="border-t border-cyan-100/70">
+                                <td className="py-1 pr-3 text-gray-600">{row.account_name || row.fb_account_id || 'Account'}</td>
+                                <td className="py-1 pr-3 text-gray-700">{row.niche || 'General'}</td>
+                                <td className="py-1 pr-3 text-right text-gray-700">${Number(row.spend).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
+                                <td className="py-1 pr-3 text-right text-gray-700">{row.cpl != null ? `$${row.cpl.toFixed(2)}` : '—'}</td>
+                                <td className={`py-1 text-right font-semibold ${row.rt_roas == null ? 'text-gray-400' : row.rt_roas >= 1.3 ? 'text-green-600' : row.rt_roas >= 1 ? 'text-amber-600' : 'text-red-600'}`}>
+                                  {row.rt_roas != null ? `${row.rt_roas.toFixed(2)}x` : '—'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>;
+              })}
             </tbody>
           </table>
         </div>}

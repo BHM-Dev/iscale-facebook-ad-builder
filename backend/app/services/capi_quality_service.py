@@ -52,6 +52,7 @@ from sqlalchemy.orm import Session
 
 from app.models import CapiQualitySnapshot, generate_uuid, normalize_account_id
 from app.services.facebook_service import FacebookService
+from app.services.niche_extraction import _extract_niche
 from app.services.redtrack_service import RedTrackService
 
 logger = logging.getLogger(__name__)
@@ -547,6 +548,7 @@ def get_pixel_performance(
         logger.warning("capi_quality: could not list ad accounts for performance: %s", exc)
         return {"pixels": [], "date_preset": date_preset, "skipped_reason": str(exc)}
 
+    account_names = _account_name_map(svc)
     full_account_ids = []  # allowlist-scoped only, ignoring the caller's own restriction
     account_ids = []       # also filtered by restrict_to_account_ids — what we actually query
     for acc in accounts:
@@ -597,11 +599,16 @@ def get_pixel_performance(
             logger.warning("capi_quality: could not list ad sets for performance on %s: %s", aid, exc)
             continue
         adset_pixel = {}
+        adset_name_map = {}
         for a in adsets:
+            raw_adset_id = a.get("id")
+            adset_id = str(raw_adset_id) if raw_adset_id else ""
+            if adset_id:
+                adset_name_map[adset_id] = a.get("name") or ""
             promoted_object = a.get("promoted_object") or {}
             pixel_id = promoted_object.get("pixel_id")
-            if pixel_id:
-                adset_pixel[str(a.get("id"))] = pixel_id
+            if pixel_id and adset_id:
+                adset_pixel[adset_id] = pixel_id
 
         try:
             insights = svc.get_account_insights_bulk(ad_account_id=aid, date_preset=date_preset)
@@ -622,19 +629,44 @@ def get_pixel_performance(
             b = buckets.setdefault(pixel_id, {
                 "spend": 0.0, "leads": 0, "adset_count": 0,
                 "rt_conversions": 0, "rt_revenue": 0.0, "rt_cost": 0.0,
+                "breakdown": {},
             })
-            b["spend"] += _safe_float(metrics.get("spend")) or 0.0
+            niche = _extract_niche(adset_name_map.get(str(fb_adset_id)) or metrics.get("adset_name") or "")
+            breakdown_key = (aid, niche or "General")
+            nb = b["breakdown"].setdefault(breakdown_key, {
+                "fb_account_id": aid,
+                "account_name": account_names.get(aid),
+                "niche": niche or "General",
+                "spend": 0.0,
+                "leads": 0,
+                "adset_count": 0,
+                "rt_conversions": 0,
+                "rt_revenue": 0.0,
+                "rt_cost": 0.0,
+            })
+            spend = _safe_float(metrics.get("spend")) or 0.0
+            b["spend"] += spend
+            nb["spend"] += spend
             # Route through _safe_float first, same as every other field here —
             # a bare int() on a decimal-formatted string (e.g. "12.0", which
             # Meta/RedTrack can plausibly send) raises ValueError with no
             # per-row guard around this line, which would 500 the whole
             # endpoint over one malformed value instead of just zeroing it.
-            b["leads"] += int(_safe_float(metrics.get("leads")) or 0)
+            leads = int(_safe_float(metrics.get("leads")) or 0)
+            b["leads"] += leads
+            nb["leads"] += leads
             b["adset_count"] += 1
+            nb["adset_count"] += 1
             rt = rt_report.get(str(fb_adset_id)) or {}
-            b["rt_conversions"] += int(_safe_float(rt.get("conversions")) or 0)
-            b["rt_revenue"] += _safe_float(rt.get("revenue")) or 0.0
-            b["rt_cost"] += _safe_float(rt.get("cost")) or 0.0
+            rt_conversions = int(_safe_float(rt.get("conversions")) or 0)
+            rt_revenue = _safe_float(rt.get("revenue")) or 0.0
+            rt_cost = _safe_float(rt.get("cost")) or 0.0
+            b["rt_conversions"] += rt_conversions
+            b["rt_revenue"] += rt_revenue
+            b["rt_cost"] += rt_cost
+            nb["rt_conversions"] += rt_conversions
+            nb["rt_revenue"] += rt_revenue
+            nb["rt_cost"] += rt_cost
 
     # One serial Graph API call per distinct pixel — fine at the current
     # allowlist-scoped pixel count (2), would need batching (Meta's `?ids=`
@@ -663,6 +695,22 @@ def get_pixel_performance(
             "rt_cpl": round(rt_cpl, 2) if rt_cpl is not None else None,
             "rt_roas": round(rt_roas, 4) if rt_roas is not None else None,
             "partial": partial,
+            "breakdown": sorted(
+                [
+                    {
+                        **{k: v for k, v in nb.items() if k not in ("spend", "rt_revenue", "rt_cost")},
+                        "spend": round(nb["spend"], 2),
+                        "cpl": round(nb["spend"] / nb["leads"], 2) if nb["leads"] else None,
+                        "rt_revenue": round(nb["rt_revenue"], 2),
+                        "rt_cost": round(nb["rt_cost"], 2),
+                        "rt_cpl": round(nb["rt_cost"] / nb["rt_conversions"], 2) if nb["rt_conversions"] else None,
+                        "rt_roas": round(nb["rt_revenue"] / nb["rt_cost"], 4) if nb["rt_cost"] else None,
+                    }
+                    for nb in b["breakdown"].values()
+                ],
+                key=lambda row: row["spend"],
+                reverse=True,
+            ),
         })
 
     return {"pixels": pixels, "date_preset": date_preset, "date_from": date_from, "date_to": date_to}
