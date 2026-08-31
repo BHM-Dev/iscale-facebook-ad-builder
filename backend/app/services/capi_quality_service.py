@@ -719,8 +719,15 @@ def get_pixel_performance(
     # One serial Graph API call per distinct pixel — fine at the current
     # allowlist-scoped pixel count (2), would need batching (Meta's `?ids=`
     # multi-get) if this list ever grows large enough for it to matter.
-    pixel_names = {pid: fetch_pixel_name(pid, svc.access_token) for pid in buckets}
-    pixel_names.update({pid: name for pid, name in known_pixel_names.items() if name})
+    # known_pixel_names (from the snapshot table) is the fallback, not the
+    # winner — a live Meta name should always take priority when the fetch
+    # succeeds; the snapshot name only matters for a pixel with no currently
+    # live ad set (fetch_pixel_name still tries, but has nothing to resolve
+    # against). Merge order below reflects that: seed with known names,
+    # then let any truthy live result overwrite it.
+    live_pixel_names = {pid: fetch_pixel_name(pid, svc.access_token) for pid in buckets}
+    pixel_names = dict(known_pixel_names)
+    pixel_names.update({pid: name for pid, name in live_pixel_names.items() if name})
 
     pixels = []
     for pid, b in buckets.items():
