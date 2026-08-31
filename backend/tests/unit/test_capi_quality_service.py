@@ -431,6 +431,50 @@ def test_get_pixel_performance_groups_unextractable_niche_as_general(monkeypatch
     assert breakdown[0]["leads"] == 5
 
 
+def test_get_pixel_performance_keeps_tracked_pixel_with_no_insights(monkeypatch):
+    class FakeFacebookService:
+        access_token = "token"
+
+        def get_ad_accounts(self):
+            return [{"id": "act_1", "name": "RHO"}]
+
+        def get_adsets(self, ad_account_id=None):
+            return [
+                {"id": "111", "name": "2026-08-01 - Churches - Batch 1", "promoted_object": {"pixel_id": "px_old"}},
+                {"id": "112", "name": "2026-08-01 - Plumbers - Batch 1", "promoted_object": {"pixel_id": "px_capi"}},
+            ]
+
+        def get_account_insights_bulk(self, ad_account_id=None, date_preset="last_7d"):
+            return {
+                "112": {"spend": 120, "leads": 6},
+            }
+
+    class FakeRedTrackService:
+        @staticmethod
+        def preset_to_dates(date_preset):
+            return "2026-08-25", "2026-08-31"
+
+        def is_configured(self):
+            return False
+
+    monkeypatch.delenv("CAPI_QUALITY_ACCOUNT_IDS", raising=False)
+    monkeypatch.setattr("app.services.capi_quality_service.FacebookService", FakeFacebookService)
+    monkeypatch.setattr("app.services.capi_quality_service.RedTrackService", FakeRedTrackService)
+    monkeypatch.setattr("app.services.capi_quality_service.fetch_pixel_name", lambda pixel_id, token: pixel_id)
+
+    result = get_pixel_performance(date_preset="last_7d")
+
+    by_pixel = {pixel["pixel_id"]: pixel for pixel in result["pixels"]}
+    assert set(by_pixel) == {"px_old", "px_capi"}
+    assert by_pixel["px_old"]["spend"] == 0
+    assert by_pixel["px_old"]["leads"] == 0
+    assert by_pixel["px_old"]["adset_count"] == 0
+    assert by_pixel["px_old"]["cpl"] is None
+    assert by_pixel["px_old"]["breakdown"] == []
+    assert by_pixel["px_capi"]["spend"] == 120
+    assert by_pixel["px_capi"]["leads"] == 6
+
+
 # ---------------------------------------------------------------------------
 # _upsert_snapshot — concurrency / repeated writes (needs real Postgres)
 # ---------------------------------------------------------------------------

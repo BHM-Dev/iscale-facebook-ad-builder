@@ -592,6 +592,15 @@ def get_pixel_performance(
         rt_report = {}
 
     buckets: dict[str, dict] = {}
+
+    def ensure_pixel_bucket(pixel_id: str) -> dict:
+        return buckets.setdefault(pixel_id, {
+            "spend": 0.0, "leads": 0, "adset_count": 0,
+            "rt_conversions": 0, "rt_revenue": 0.0, "rt_cost": 0.0,
+            "breakdown": {},
+            "breakdown_by_campaign": {},
+        })
+
     for aid in account_ids:
         try:
             adsets = svc.get_adsets(ad_account_id=aid) or []
@@ -615,6 +624,10 @@ def get_pixel_performance(
             pixel_id = promoted_object.get("pixel_id")
             if pixel_id and adset_id:
                 adset_pixel[adset_id] = pixel_id
+                # Keep tracked pixels visible even when Meta returns no
+                # insights rows for the selected date preset. Without this,
+                # inactive-but-relevant pixels disappear from the comparison.
+                ensure_pixel_bucket(pixel_id)
 
         try:
             insights = svc.get_account_insights_bulk(ad_account_id=aid, date_preset=date_preset)
@@ -632,12 +645,7 @@ def get_pixel_performance(
                 # for the period. Fine for a per-pixel comparison view, just
                 # not a full account reconciliation.
                 continue
-            b = buckets.setdefault(pixel_id, {
-                "spend": 0.0, "leads": 0, "adset_count": 0,
-                "rt_conversions": 0, "rt_revenue": 0.0, "rt_cost": 0.0,
-                "breakdown": {},
-                "breakdown_by_campaign": {},
-            })
+            b = ensure_pixel_bucket(pixel_id)
             niche = _extract_niche(
                 adset_name_map.get(str(fb_adset_id)) or metrics.get("adset_name") or "",
                 require_separator=True,
