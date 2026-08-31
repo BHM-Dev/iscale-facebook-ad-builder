@@ -154,7 +154,12 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
   const [perfPreset, setPerfPreset] = useState('last_30d');
   const [perfRange, setPerfRange] = useState(null);
   const [expandedPerfPixels, setExpandedPerfPixels] = useState({});
-  const [breakdownDimension, setBreakdownDimension] = useState('niche');
+  // Keyed by pixel_id, not a single shared value — the toggle buttons render
+  // inside each expanded pixel's own row, so a single shared value would flip
+  // every other expanded pixel's view too when you change one (confirmed as
+  // a real confusion risk in review before this shipped). Each pixel starts
+  // on 'niche' the first time it's expanded.
+  const [breakdownDimensionByPixel, setBreakdownDimensionByPixel] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -337,6 +342,7 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
             <tbody>
               {perfPixels.map(p => {
                 const isExpanded = !!expandedPerfPixels[p.pixel_id];
+                const breakdownDimension = breakdownDimensionByPixel[p.pixel_id] || 'niche';
                 const breakdownRows = breakdownDimension === 'campaign' ? (p.breakdown_by_campaign || []) : (p.breakdown || []);
                 const hasBreakdown = breakdownRows.length > 0;
                 return <React.Fragment key={p.pixel_id}>
@@ -372,7 +378,7 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
-                                setBreakdownDimension(dimension);
+                                setBreakdownDimensionByPixel(prev => ({ ...prev, [p.pixel_id]: dimension }));
                               }}
                               className={`text-[11px] px-2 py-1 rounded ${breakdownDimension === dimension ? 'bg-cyan-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-100 border border-cyan-100'}`}
                             >
