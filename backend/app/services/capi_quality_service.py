@@ -600,11 +600,17 @@ def get_pixel_performance(
             continue
         adset_pixel = {}
         adset_name_map = {}
+        adset_campaign_map = {}
         for a in adsets:
             raw_adset_id = a.get("id")
             adset_id = str(raw_adset_id) if raw_adset_id else ""
             if adset_id:
                 adset_name_map[adset_id] = a.get("name") or ""
+                campaign = a.get("campaign") or {}
+                adset_campaign_map[adset_id] = {
+                    "campaign_id": a.get("campaign_id"),
+                    "campaign_name": campaign.get("name") or "Unnamed Campaign",
+                }
             promoted_object = a.get("promoted_object") or {}
             pixel_id = promoted_object.get("pixel_id")
             if pixel_id and adset_id:
@@ -630,6 +636,7 @@ def get_pixel_performance(
                 "spend": 0.0, "leads": 0, "adset_count": 0,
                 "rt_conversions": 0, "rt_revenue": 0.0, "rt_cost": 0.0,
                 "breakdown": {},
+                "breakdown_by_campaign": {},
             })
             niche = _extract_niche(
                 adset_name_map.get(str(fb_adset_id)) or metrics.get("adset_name") or "",
@@ -647,9 +654,24 @@ def get_pixel_performance(
                 "rt_revenue": 0.0,
                 "rt_cost": 0.0,
             })
+            camp = adset_campaign_map.get(str(fb_adset_id)) or {}
+            campaign_key = (aid, camp.get("campaign_id") or "unknown")
+            cb = b["breakdown_by_campaign"].setdefault(campaign_key, {
+                "fb_account_id": aid,
+                "account_name": account_names.get(aid),
+                "campaign_id": camp.get("campaign_id"),
+                "campaign_name": camp.get("campaign_name") or "Unnamed Campaign",
+                "spend": 0.0,
+                "leads": 0,
+                "adset_count": 0,
+                "rt_conversions": 0,
+                "rt_revenue": 0.0,
+                "rt_cost": 0.0,
+            })
             spend = _safe_float(metrics.get("spend")) or 0.0
             b["spend"] += spend
             nb["spend"] += spend
+            cb["spend"] += spend
             # Route through _safe_float first, same as every other field here —
             # a bare int() on a decimal-formatted string (e.g. "12.0", which
             # Meta/RedTrack can plausibly send) raises ValueError with no
@@ -658,8 +680,10 @@ def get_pixel_performance(
             leads = int(_safe_float(metrics.get("leads")) or 0)
             b["leads"] += leads
             nb["leads"] += leads
+            cb["leads"] += leads
             b["adset_count"] += 1
             nb["adset_count"] += 1
+            cb["adset_count"] += 1
             rt = rt_report.get(str(fb_adset_id)) or {}
             rt_conversions = int(_safe_float(rt.get("conversions")) or 0)
             rt_revenue = _safe_float(rt.get("revenue")) or 0.0
@@ -670,6 +694,9 @@ def get_pixel_performance(
             nb["rt_conversions"] += rt_conversions
             nb["rt_revenue"] += rt_revenue
             nb["rt_cost"] += rt_cost
+            cb["rt_conversions"] += rt_conversions
+            cb["rt_revenue"] += rt_revenue
+            cb["rt_cost"] += rt_cost
 
     # One serial Graph API call per distinct pixel — fine at the current
     # allowlist-scoped pixel count (2), would need batching (Meta's `?ids=`
@@ -710,6 +737,22 @@ def get_pixel_performance(
                         "rt_roas": round(nb["rt_revenue"] / nb["rt_cost"], 4) if nb["rt_cost"] else None,
                     }
                     for nb in b["breakdown"].values()
+                ],
+                key=lambda row: row["spend"],
+                reverse=True,
+            ),
+            "breakdown_by_campaign": sorted(
+                [
+                    {
+                        **{k: v for k, v in cb.items() if k not in ("spend", "rt_revenue", "rt_cost")},
+                        "spend": round(cb["spend"], 2),
+                        "cpl": round(cb["spend"] / cb["leads"], 2) if cb["leads"] else None,
+                        "rt_revenue": round(cb["rt_revenue"], 2),
+                        "rt_cost": round(cb["rt_cost"], 2),
+                        "rt_cpl": round(cb["rt_cost"] / cb["rt_conversions"], 2) if cb["rt_conversions"] else None,
+                        "rt_roas": round(cb["rt_revenue"] / cb["rt_cost"], 4) if cb["rt_cost"] else None,
+                    }
+                    for cb in b["breakdown_by_campaign"].values()
                 ],
                 key=lambda row: row["spend"],
                 reverse=True,

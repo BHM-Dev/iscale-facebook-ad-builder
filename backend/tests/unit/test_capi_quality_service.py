@@ -288,11 +288,34 @@ def test_get_pixel_performance_adds_breakdown_that_sums_to_parent(monkeypatch):
         def get_adsets(self, ad_account_id=None):
             return {
                 "act_1": [
-                    {"id": "111", "name": "2026-08-01 - Churches - Batch 1", "promoted_object": {"pixel_id": "px_shared"}},
-                    {"id": "112", "name": "2026-08-01 - Churches - Batch 2", "promoted_object": {"pixel_id": "px_shared"}},
+                    {
+                        "id": "111",
+                        "name": "2026-08-01 - Churches - Batch 1",
+                        "campaign_id": "camp_1",
+                        "campaign": {"name": "RHO Churches"},
+                        "promoted_object": {"pixel_id": "px_shared"},
+                    },
+                    {
+                        "id": "112",
+                        "name": "2026-08-01 - Churches - Batch 2",
+                        "campaign_id": "camp_1",
+                        "campaign": {"name": "RHO Churches"},
+                        "promoted_object": {"pixel_id": "px_shared"},
+                    },
                 ],
                 "act_2": [
-                    {"id": "221", "name": "2026-08-01 - Plumbers - Batch 1", "promoted_object": {"pixel_id": "px_shared"}},
+                    {
+                        "id": "221",
+                        "name": "2026-08-01 - Plumbers - Batch 1",
+                        "campaign_id": "camp_2",
+                        "campaign": {"name": "RHO 4 Plumbers"},
+                        "promoted_object": {"pixel_id": "px_shared"},
+                    },
+                    {
+                        "id": "222",
+                        "name": "2026-08-01 - Roofers - Batch 1",
+                        "promoted_object": {"pixel_id": "px_shared"},
+                    },
                 ],
             }[ad_account_id]
 
@@ -304,6 +327,7 @@ def test_get_pixel_performance_adds_breakdown_that_sums_to_parent(monkeypatch):
                 },
                 "act_2": {
                     "221": {"spend": 200, "leads": 5},
+                    "222": {"spend": 25, "leads": 1},
                 },
             }[ad_account_id]
 
@@ -320,6 +344,7 @@ def test_get_pixel_performance_adds_breakdown_that_sums_to_parent(monkeypatch):
                 "111": {"conversions": 3, "revenue": 180, "cost": 90},
                 "112": {"conversions": 1, "revenue": 40, "cost": 45},
                 "221": {"conversions": 4, "revenue": 360, "cost": 180},
+                "222": {"conversions": 1, "revenue": 60, "cost": 20},
             }
 
     monkeypatch.delenv("CAPI_QUALITY_ACCOUNT_IDS", raising=False)
@@ -331,16 +356,20 @@ def test_get_pixel_performance_adds_breakdown_that_sums_to_parent(monkeypatch):
 
     pixel = result["pixels"][0]
     assert pixel["pixel_id"] == "px_shared"
-    assert pixel["spend"] == 350
-    assert pixel["leads"] == 10
-    assert pixel["rt_revenue"] == 580
-    assert pixel["rt_cost"] == 315
+    assert pixel["spend"] == 375
+    assert pixel["leads"] == 11
+    assert pixel["rt_revenue"] == 640
+    assert pixel["rt_cost"] == 335
 
-    assert len(pixel["breakdown"]) == 2
+    assert len(pixel["breakdown"]) == 3
     assert sum(row["spend"] for row in pixel["breakdown"]) == pixel["spend"]
     assert sum(row["leads"] for row in pixel["breakdown"]) == pixel["leads"]
     assert sum(row["rt_revenue"] for row in pixel["breakdown"]) == pixel["rt_revenue"]
     assert sum(row["rt_cost"] for row in pixel["breakdown"]) == pixel["rt_cost"]
+    assert sum(row["spend"] for row in pixel["breakdown_by_campaign"]) == pixel["spend"]
+    assert sum(row["leads"] for row in pixel["breakdown_by_campaign"]) == pixel["leads"]
+    assert sum(row["rt_revenue"] for row in pixel["breakdown_by_campaign"]) == pixel["rt_revenue"]
+    assert sum(row["rt_cost"] for row in pixel["breakdown_by_campaign"]) == pixel["rt_cost"]
 
     by_niche = {row["niche"]: row for row in pixel["breakdown"]}
     assert by_niche["Plumbers"]["account_name"] == "RHO 4"
@@ -350,6 +379,15 @@ def test_get_pixel_performance_adds_breakdown_that_sums_to_parent(monkeypatch):
     assert by_niche["Churches"]["account_name"] == "RHO"
     assert by_niche["Churches"]["adset_count"] == 2
     assert by_niche["Churches"]["spend"] == 150
+    assert by_niche["Roofers"]["account_name"] == "RHO 4"
+    assert by_niche["Roofers"]["spend"] == 25
+    by_campaign = {row["campaign_name"]: row for row in pixel["breakdown_by_campaign"]}
+    assert by_campaign["RHO Churches"]["adset_count"] == 2
+    assert by_campaign["RHO Churches"]["spend"] == 150
+    assert by_campaign["RHO 4 Plumbers"]["account_name"] == "RHO 4"
+    assert by_campaign["RHO 4 Plumbers"]["spend"] == 200
+    assert by_campaign["Unnamed Campaign"]["campaign_id"] is None
+    assert by_campaign["Unnamed Campaign"]["spend"] == 25
 
 
 def test_get_pixel_performance_groups_unextractable_niche_as_general(monkeypatch):

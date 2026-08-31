@@ -154,6 +154,7 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
   const [perfPreset, setPerfPreset] = useState('last_30d');
   const [perfRange, setPerfRange] = useState(null);
   const [expandedPerfPixels, setExpandedPerfPixels] = useState({});
+  const [breakdownDimension, setBreakdownDimension] = useState('niche');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -336,7 +337,8 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
             <tbody>
               {perfPixels.map(p => {
                 const isExpanded = !!expandedPerfPixels[p.pixel_id];
-                const hasBreakdown = (p.breakdown || []).length > 0;
+                const breakdownRows = breakdownDimension === 'campaign' ? (p.breakdown_by_campaign || []) : (p.breakdown || []);
+                const hasBreakdown = breakdownRows.length > 0;
                 return <React.Fragment key={p.pixel_id}>
                   <tr
                     className={`border-t border-gray-50 ${hasBreakdown ? 'cursor-pointer hover:bg-gray-50' : ''}`}
@@ -363,11 +365,26 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
                   {isExpanded && hasBreakdown && (
                     <tr className="border-t border-cyan-50 bg-cyan-50/30">
                       <td colSpan={7} className="px-6 py-2">
+                        <div className="mb-2 flex justify-end gap-1">
+                          {['niche', 'campaign'].map(dimension => (
+                            <button
+                              key={dimension}
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setBreakdownDimension(dimension);
+                              }}
+                              className={`text-[11px] px-2 py-1 rounded ${breakdownDimension === dimension ? 'bg-cyan-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-100 border border-cyan-100'}`}
+                            >
+                              {dimension === 'niche' ? 'Niche' : 'Campaign'}
+                            </button>
+                          ))}
+                        </div>
                         <table className="w-full text-[11px]">
                           <thead>
                             <tr className="text-left text-gray-400">
                               <th className="pb-1 pr-3 font-medium">Account</th>
-                              <th className="pb-1 pr-3 font-medium">Niche</th>
+                              <th className="pb-1 pr-3 font-medium">{breakdownDimension === 'campaign' ? 'Campaign' : 'Niche'}</th>
                               <th className="pb-1 pr-3 font-medium text-right">Spend</th>
                               <th className="pb-1 pr-3 font-medium text-right">CPL</th>
                               <th className="pb-1 pr-3 font-medium text-right">RT CPL</th>
@@ -375,12 +392,12 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
                             </tr>
                           </thead>
                           <tbody>
-                            {(p.breakdown || []).map(row => (
-                              <tr key={`${row.fb_account_id || 'account'}-${row.niche || 'General'}`} className="border-t border-cyan-100/70">
+                            {breakdownRows.map(row => (
+                              <tr key={`${row.fb_account_id || 'account'}-${breakdownDimension === 'campaign' ? (row.campaign_id || row.campaign_name || 'campaign') : (row.niche || 'General')}`} className="border-t border-cyan-100/70">
                                 <td className="py-1 pr-3 text-gray-600">{row.account_name || row.fb_account_id || 'Account'}</td>
                                 <td className="py-1 pr-3 text-gray-700">
-                                  {row.niche || 'General'}
-                                  {(!row.niche || row.niche === 'General') && (
+                                  {breakdownDimension === 'campaign' ? (row.campaign_name || 'Unnamed Campaign') : (row.niche || 'General')}
+                                  {breakdownDimension === 'niche' && (!row.niche || row.niche === 'General') && (
                                     <span title="Ad sets whose name didn't match the [Date] - [Niche] - [Batch] pattern, or looked like a batch/test tag rather than a real niche." className="ml-1 text-gray-400 cursor-help">ⓘ</span>
                                   )}
                                 </td>
