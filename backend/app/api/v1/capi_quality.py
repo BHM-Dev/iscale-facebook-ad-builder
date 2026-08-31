@@ -184,6 +184,7 @@ def get_history(
 @router.get("/performance")
 def get_performance(
     date_preset: str = Query(default="last_30d"),
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Real Meta spend/leads + RedTrack revenue/cost, bucketed by pixel, for
@@ -199,7 +200,23 @@ def get_performance(
     """
     allowed = current_user.allowed_account_ids()
     restrict_to = {normalize_account_id(a) for a in allowed} if allowed is not None else None
-    result = get_pixel_performance(date_preset=date_preset, restrict_to_account_ids=restrict_to)
+    cutoff = date.today() - timedelta(days=3)
+    known_query = (
+        db.query(CapiQualitySnapshot.pixel_id, func.max(CapiQualitySnapshot.pixel_name).label("pixel_name"))
+        .filter(CapiQualitySnapshot.snapshot_date >= cutoff)
+        .filter(CapiQualitySnapshot.pixel_id.isnot(None))
+        .group_by(CapiQualitySnapshot.pixel_id)
+    )
+    known_query = _allowed_filter(known_query, current_user)
+    known_pixels = [
+        {"pixel_id": row.pixel_id, "pixel_name": row.pixel_name}
+        for row in known_query.all()
+    ]
+    result = get_pixel_performance(
+        date_preset=date_preset,
+        restrict_to_account_ids=restrict_to,
+        known_pixels=known_pixels,
+    )
     if result.get("skipped_reason"):
         raise HTTPException(status_code=503, detail=result["skipped_reason"])
     return result

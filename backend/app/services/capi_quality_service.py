@@ -516,6 +516,7 @@ _PERFORMANCE_PRESETS = {"today", "yesterday", "last_7d", "last_14d", "last_30d",
 def get_pixel_performance(
     date_preset: str = "last_30d",
     restrict_to_account_ids: Optional[set] = None,
+    known_pixels: Optional[list[dict]] = None,
 ) -> dict:
     """Real Meta spend/leads + RedTrack revenue/cost, bucketed by PIXEL for an
     explicit date range — the actual "is the better EMQ pixel translating
@@ -600,6 +601,15 @@ def get_pixel_performance(
             "breakdown": {},
             "breakdown_by_campaign": {},
         })
+
+    known_pixel_names = {}
+    for pixel in known_pixels or []:
+        pixel_id = pixel.get("pixel_id")
+        if not pixel_id:
+            continue
+        ensure_pixel_bucket(pixel_id)
+        if pixel.get("pixel_name"):
+            known_pixel_names[pixel_id] = pixel["pixel_name"]
 
     for aid in account_ids:
         try:
@@ -710,6 +720,7 @@ def get_pixel_performance(
     # allowlist-scoped pixel count (2), would need batching (Meta's `?ids=`
     # multi-get) if this list ever grows large enough for it to matter.
     pixel_names = {pid: fetch_pixel_name(pid, svc.access_token) for pid in buckets}
+    pixel_names.update({pid: name for pid, name in known_pixel_names.items() if name})
 
     pixels = []
     for pid, b in buckets.items():

@@ -475,6 +475,51 @@ def test_get_pixel_performance_keeps_tracked_pixel_with_no_insights(monkeypatch)
     assert by_pixel["px_capi"]["leads"] == 6
 
 
+def test_get_pixel_performance_seeds_known_snapshot_pixels(monkeypatch):
+    class FakeFacebookService:
+        access_token = "token"
+
+        def get_ad_accounts(self):
+            return []
+
+    class FakeRedTrackService:
+        @staticmethod
+        def preset_to_dates(date_preset):
+            return "2026-08-25", "2026-08-31"
+
+        def is_configured(self):
+            return False
+
+    monkeypatch.delenv("CAPI_QUALITY_ACCOUNT_IDS", raising=False)
+    monkeypatch.setattr("app.services.capi_quality_service.FacebookService", FakeFacebookService)
+    monkeypatch.setattr("app.services.capi_quality_service.RedTrackService", FakeRedTrackService)
+    monkeypatch.setattr("app.services.capi_quality_service.fetch_pixel_name", lambda pixel_id, token: None)
+
+    result = get_pixel_performance(
+        date_preset="last_7d",
+        known_pixels=[{"pixel_id": "px_snapshot", "pixel_name": "Snapshot Pixel"}],
+    )
+
+    assert result["pixels"] == [
+        {
+            "pixel_id": "px_snapshot",
+            "pixel_name": "Snapshot Pixel",
+            "adset_count": 0,
+            "spend": 0,
+            "leads": 0,
+            "cpl": None,
+            "rt_conversions": 0,
+            "rt_revenue": 0,
+            "rt_cost": 0,
+            "rt_cpl": None,
+            "rt_roas": None,
+            "partial": False,
+            "breakdown": [],
+            "breakdown_by_campaign": [],
+        }
+    ]
+
+
 # ---------------------------------------------------------------------------
 # _upsert_snapshot — concurrency / repeated writes (needs real Postgres)
 # ---------------------------------------------------------------------------
