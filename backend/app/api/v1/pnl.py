@@ -293,10 +293,34 @@ def _redtrack_revenue_from_cache(
     return revenue, conversions, len(adset_ids - mapped), source, True
 
 
-def _redtrack_revenue(db: Session, account_id: str, start: date, end: date) -> tuple[Decimal, int, int, str, bool]:
+# Sentinel distinguishing "no shared report was passed in — go fetch your own
+# live pull" (every existing single-account call site, unchanged) from "a
+# shared pull was already attempted for this whole batch" — which itself needs
+# two states: a dict (it succeeded, here's the data) or None (it was tried and
+# failed, don't retry — fall straight to cache). None can't double as the
+# 'not provided' default because it's also the valid 'already failed' value.
+_REDTRACK_REPORT_NOT_PROVIDED = object()
+
+
+def _redtrack_revenue(
+    db: Session,
+    account_id: str,
+    start: date,
+    end: date,
+    shared_live_report=_REDTRACK_REPORT_NOT_PROVIDED,
+) -> tuple[Decimal, int, int, str, bool]:
     adset_ids = _redtrack_adset_ids(db, account_id)
     if not adset_ids:
         return Decimal("0"), 0, 0, "none", False
+
+    if shared_live_report is not _REDTRACK_REPORT_NOT_PROVIDED:
+        # Caller (see _summary_all) already made ONE live pull for the whole
+        # account batch instead of one per account — RedTrack's /report
+        # endpoint returns every ad set's data regardless of which Meta
+        # account is asking, so a per-account pull was pure duplication.
+        if shared_live_report is not None:
+            return _redtrack_revenue_from_report(shared_live_report, adset_ids)
+        return _redtrack_revenue_from_cache(db, adset_ids, start, end)
 
     try:
         return _redtrack_revenue_from_report(_live_redtrack_report(start, end), adset_ids)
@@ -437,14 +461,22 @@ def _everflow_revenue(db: Session, account_id: str, start: date, end: date) -> t
     return _everflow_revenue_from_report(db, account_id, report)
 
 
-def _revenue_for_account(db: Session, account_id: str, start: date, end: date) -> tuple[Decimal, int, int, str, bool, Decimal, dict]:
+def _revenue_for_account(
+    db: Session,
+    account_id: str,
+    start: date,
+    end: date,
+    shared_live_redtrack_report=_REDTRACK_REPORT_NOT_PROVIDED,
+) -> tuple[Decimal, int, int, str, bool, Decimal, dict]:
     if _revenue_provider_for_account(account_id) == "everflow":
         try:
             return _everflow_revenue(db, account_id, start, end)
         except Exception:
             return Decimal("0"), 0, 0, "everflow_unavailable", True, Decimal("0"), {}
 
-    revenue, conversions, unmapped, source, incomplete = _redtrack_revenue(db, account_id, start, end)
+    revenue, conversions, unmapped, source, incomplete = _redtrack_revenue(
+        db, account_id, start, end, shared_live_report=shared_live_redtrack_report
+    )
     redtrack_source = f"redtrack_{source}" if source != "none" else "none"
     # RedTrack has no payable-event split — it reports conversions, not event types.
     return revenue, conversions, unmapped, redtrack_source, incomplete, Decimal("0"), {}
@@ -656,6 +688,7 @@ def _summary(
     timings: dict[str, float] | None = None,
     snapshot: PnlMonthSnapshot | None = None,
     include_costs: bool = False,
+    shared_live_redtrack_report=_REDTRACK_REPORT_NOT_PROVIDED,
 ) -> dict:
     data_incomplete = False
     errors = []
@@ -689,7 +722,9 @@ def _summary(
             (Decimal("0"), 0, 0, "everflow_live", False, Decimal("0"), {}),
         )
     else:
-        revenue, conversions, unmapped, revenue_source, revenue_incomplete, unattributed_revenue, event_breakdown = _revenue_for_account(db, account_id, start, end)
+        revenue, conversions, unmapped, revenue_source, revenue_incomplete, unattributed_revenue, event_breakdown = _revenue_for_account(
+            db, account_id, start, end, shared_live_redtrack_report=shared_live_redtrack_report
+        )
     if timings is not None:
         timings["revenue_ms"] = (time.perf_counter() - revenue_start) * 1000
     if revenue_incomplete:
@@ -835,7 +870,31 @@ def _summary_all(
     account_ids = _permitted_active_account_ids(db, current_user)
     if not account_ids:
         raise HTTPException(status_code=400, detail="No active ad accounts are available for P&L.")
-    account_rows = [_summary(db, account_id, start, end, label, include_costs=False) for account_id in account_ids]
+
+    # RedTrack's /report endpoint returns every ad set's data in one call —
+    # it has no account filter — so pulling it once per account here was pure
+    # duplication: this is the Dashboard's own "Running Profit/Loss" widget
+    # (ad_account_id=all), loaded on every visit, and it was firing up to
+    # N (10 as of 2026-09) redundant identical live RedTrack calls for the
+    # same date range on every single load. That was a real, confirmed
+    # contributor to the RedTrack rate-limit (429) pressure investigated
+    # 2026-09-02 — fetch once, share the result (or the "it failed" None)
+    # across every account instead.
+    needs_redtrack = any(_revenue_provider_for_account(aid) != "everflow" for aid in account_ids)
+    shared_redtrack_report = None
+    if needs_redtrack:
+        try:
+            shared_redtrack_report = _live_redtrack_report(start, end)
+        except Exception:
+            shared_redtrack_report = None  # signals "tried, failed" — each account falls to its own cache, no retry
+
+    account_rows = [
+        _summary(
+            db, account_id, start, end, label, include_costs=False,
+            shared_live_redtrack_report=shared_redtrack_report,
+        )
+        for account_id in account_ids
+    ]
     return _all_summary_from_account_rows(db, account_ids, start, end, label, account_rows)
 
 
