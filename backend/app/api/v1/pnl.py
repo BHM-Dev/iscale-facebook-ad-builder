@@ -315,14 +315,23 @@ def _redtrack_monthly_revenue_cache(
     # Measured 2026-07-29: six concurrent pulls made ~20% difference to wall time
     # (23.3s -> ~19s; Meta's six sequential calls dominate) but pushed months onto
     # cache_fallback and none that had previously come back live — RedTrack does not
-    # like a six-way burst. Accuracy matters more than the 4s here, so: fewer
-    # workers, and one retry before giving up on a period and falling back to cache.
-    max_workers = min(3, len(periods))
+    # like a six-way burst. Dropped to 3 that day; that still wasn't enough — real
+    # production logs (2026-09-01) show recurring HTTP 429 "Too many requests" from
+    # RedTrack roughly hourly, independent of and on top of the 30-min scheduled
+    # cache-refresh job's own calls. Serialized fully (max_workers=1): this endpoint
+    # is Month-Over-Month history, not a page a media buyer stares at waiting on —
+    # a few extra seconds of load time is a much smaller cost than tripping the
+    # account-wide rate limit that then also degrades the scheduler's own pulls and
+    # every other page reading live RedTrack data.
+    max_workers = 1
 
     def _pull(start: date, end: date) -> dict:
         try:
             return _live_redtrack_report(start, end)
         except Exception:
+            # A 429 retried with zero delay lands in the same rate-limit window and
+            # just gets 429'd again — this was making the burst worse, not better.
+            time.sleep(2)
             return _live_redtrack_report(start, end)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
