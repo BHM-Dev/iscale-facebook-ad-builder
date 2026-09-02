@@ -253,7 +253,18 @@ def _redtrack_revenue_from_cache(
         .all()
     )
     rows = exact_rows
-    if not rows:
+    # Only widen to a broader cached window (e.g. the 7-day preset) when the
+    # REQUESTED range itself spans multiple days — there a wider cached window is
+    # a defensible best-effort proxy. For a single-day request (start == end,
+    # e.g. "today" or an early-month MTD view), the scheduler's only other
+    # cached windows are for OTHER specific single days ("yesterday") or a
+    # 7-day span — neither is a substitute for the exact day asked for, and
+    # silently reporting the 7-day total AS that one day's revenue overstates it
+    # by up to 7x while looking like real, current data. Confirmed live
+    # 2026-09-02: this was the concrete mechanism behind Joel flagging Dashboard
+    # numbers as "showing incorrect values" during a RedTrack rate-limit window.
+    # Better to report unavailable than fabricate a plausible-looking number.
+    if not rows and start != end:
         fallback_rows = (
             db.query(RedTrackCache)
             .filter(
@@ -268,7 +279,11 @@ def _redtrack_revenue_from_cache(
             current = by_adset.get(row.fb_adset_id)
             current_span = (current.date_to - current.date_from).days if current else -1
             row_span = (row.date_to - row.date_from).days
-            if current is None or row_span > current_span or (row_span == current_span and row.synced_at > current.synced_at):
+            # Prefer the SMALLEST overlapping window, not the largest — a
+            # tighter window is a closer approximation of the requested range.
+            # (Previously preferred the largest span, which is how a single
+            # cached last_7d row could dominate over a closer-fitting one.)
+            if current is None or row_span < current_span or (row_span == current_span and row.synced_at > current.synced_at):
                 by_adset[row.fb_adset_id] = row
         rows = list(by_adset.values())
     mapped = {row.fb_adset_id for row in rows}
