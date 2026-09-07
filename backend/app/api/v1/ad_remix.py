@@ -9,8 +9,9 @@ import json
 import logging
 import re
 
+from app.core.deps import get_current_active_user
 from app.database import get_db
-from app.models import WinningAd, Brand, Product, CustomerProfile
+from app.models import WinningAd, Brand, Product, CustomerProfile, User
 from app.schemas.ad_blueprint import (
     AdBlueprint,
     AdBlueprintResponse,
@@ -286,7 +287,8 @@ async def _reconstruct_with_similarity_guard(
 @router.post("/deconstruct", response_model=AdBlueprint)
 async def deconstruct_ad_template(
     request: DeconstructRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
 ):
     """
     Deconstruct a template into a structural blueprint
@@ -321,7 +323,8 @@ async def deconstruct_ad_template(
 @router.post("/reconstruct", response_model=AdConcept, response_model_exclude_none=True)
 async def reconstruct_ad_from_blueprint(
     request: ReconstructRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
 ):
     """
     Reconstruct an ad by applying brand data to a blueprint
@@ -388,7 +391,8 @@ async def reconstruct_ad_from_blueprint(
 @router.post("/reconstruct-from-url", response_model=AdConcept, response_model_exclude_none=True)
 async def reconstruct_from_url(
     request: ReconstructFromUrlRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
 ):
     """Reconstruct an ad concept directly from a live ad image URL (no saved template needed).
 
@@ -461,7 +465,8 @@ async def reconstruct_from_url(
 @router.get("/blueprints/{template_id}", response_model=AdBlueprint)
 async def get_template_blueprint(
     template_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
 ):
     """
     Get the blueprint for a specific template
@@ -481,7 +486,8 @@ async def get_template_blueprint(
 
 @router.get("/blueprints", response_model=List[dict])
 async def list_templates_with_blueprints(
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
 ):
     """
     List all templates that have been deconstructed

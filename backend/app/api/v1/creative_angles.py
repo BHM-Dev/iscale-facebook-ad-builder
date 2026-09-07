@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from typing import Optional
+from app.core.deps import get_current_active_user
 from app.database import get_db
-from app.models import CreativeAngle, Vertical
+from app.models import CreativeAngle, User, Vertical
 
 router = APIRouter()
 
@@ -12,6 +13,7 @@ def list_creative_angles(
     vertical_id: Optional[str] = Query(None, description="Filter by vertical ID"),
     vertical_name: Optional[str] = Query(None, description="Filter by vertical name (e.g. 'Auto Insurance')"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     query = db.query(CreativeAngle).filter(CreativeAngle.is_active == True)
 
@@ -41,6 +43,6 @@ def list_creative_angles(
 
 
 @router.get("/verticals")
-def list_verticals(db: Session = Depends(get_db)):
+def list_verticals(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     verticals = db.query(Vertical).order_by(Vertical.name).all()
     return [{"id": v.id, "name": v.name, "description": v.description} for v in verticals]

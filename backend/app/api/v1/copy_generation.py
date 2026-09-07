@@ -6,8 +6,9 @@ import asyncio
 import os
 import json
 from sqlalchemy.orm import Session
+from app.core.deps import get_current_active_user
 from app.database import get_db
-from app.models import AdCopyLibrary, Prompt
+from app.models import AdCopyLibrary, Prompt, User
 from app.utils.json_utils import extract_json_from_response
 
 router = APIRouter()
@@ -225,7 +226,7 @@ Return ONLY valid JSON — no markdown, no code fences, no explanatory text:
 
 
 @router.post("/generate")
-async def generate_copy(request: CopyGenerationRequest, db: Session = Depends(get_db)):
+async def generate_copy(request: CopyGenerationRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Generate ad copy variations using Claude AI"""
 
     if not _anthropic_client:
@@ -284,7 +285,7 @@ async def generate_copy(request: CopyGenerationRequest, db: Session = Depends(ge
         raise HTTPException(status_code=500, detail=f"Copy generation failed: {str(e)}")
 
 @router.post("/regenerate-field")
-async def regenerate_field(request: FieldRegenerationRequest, db: Session = Depends(get_db)):
+async def regenerate_field(request: FieldRegenerationRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Regenerate a specific field (headline, body, or cta)"""
 
     if not _anthropic_client:
@@ -354,7 +355,7 @@ class RemixVariationsRequest(BaseModel):
 
 
 @router.post("/remix-variations")
-async def remix_variations(request: RemixVariationsRequest, db: Session = Depends(get_db)):
+async def remix_variations(request: RemixVariationsRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Generate 3 remix variations of a winning ad using a new hook and/or niche.
 
     Kept separate from /generate because remix has a fundamentally different input

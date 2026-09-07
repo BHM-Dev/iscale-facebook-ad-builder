@@ -490,9 +490,13 @@ KIE_AI_BASE_URL = "https://api.kie.ai/api/v1/flux/kontext"
 
 
 @router.get("/test-kie")
-async def test_kie_connection():
+async def test_kie_connection(current_user: User = Depends(get_current_active_user)):
     """Diagnostic: verifies kie.ai Flux Kontext API is reachable and accepts payloads.
-    No auth required. Hits POST /generate only (no polling) so it returns fast.
+    Hits POST /generate only (no polling) so it returns fast.
+
+    Auth added 2026-09-04: this burns real kie.ai credits per call (~4-8/image
+    per CLAUDE.md) with no rate limit — the original "no auth required" design
+    left it callable by anyone who found the URL, an open cost-exposure hole.
 
     Test 1: text-to-image (no inputImage) — should return code 200 + taskId
     Test 2: image-to-image (R2 URL inputImage) — should return code 200 + taskId

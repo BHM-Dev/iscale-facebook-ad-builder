@@ -73,7 +73,9 @@ const BrandScrapes = () => {
             setPageInput('');
             fetchScrapes();
         } catch (error) {
-            const message = error.response?.data?.detail || 'Failed to start scrape';
+            // research.js now throws a plain Error (message = the backend's
+            // `detail`), not an axios error — no more error.response.data.
+            const message = error.message || 'Failed to start scrape';
             showError(message);
         } finally {
             setLoading(false);

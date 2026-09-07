@@ -93,7 +93,7 @@ def _directional_volume_score(rank_position: int | None, is_multiple_versions: b
     return min(score, 100)
 
 @router.post("/search", response_model=List[ScrapedAdSearchResult])
-async def search_ads(request: AdSearchRequest, db: Session = Depends(get_db)):
+async def search_ads(request: AdSearchRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Search ads without saving"""
     # Check rate limit (now uses database)
     allowed, remaining, reset_seconds = rate_limiter.check_limit(db)
@@ -107,7 +107,7 @@ async def search_ads(request: AdSearchRequest, db: Session = Depends(get_db)):
     return await service.search_ads_async(request)
 
 @router.post("/search-and-save")
-async def search_and_save(request: AdSearchRequest, db: Session = Depends(get_db)):
+async def search_and_save(request: AdSearchRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Execute search and save as SavedSearch with all ads"""
     # Check rate limit (now uses database)
     allowed, remaining, reset_seconds = rate_limiter.check_limit(db)
@@ -127,13 +127,13 @@ async def search_and_save(request: AdSearchRequest, db: Session = Depends(get_db
     }
 
 @router.get("/saved-searches", response_model=List[SavedSearchResponse])
-def get_saved_searches(db: Session = Depends(get_db)):
+def get_saved_searches(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Get all saved searches with their ads"""
     service = ResearchService(db)
     return service.get_saved_searches()
 
 @router.get("/saved-searches/{search_id}", response_model=SavedSearchResponse)
-def get_saved_search(search_id: str, db: Session = Depends(get_db)):
+def get_saved_search(search_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Get single saved search with ads"""
     service = ResearchService(db)
     search = service.get_saved_search_with_ads(search_id)
@@ -142,7 +142,7 @@ def get_saved_search(search_id: str, db: Session = Depends(get_db)):
     return search
 
 @router.delete("/saved-searches/{search_id}")
-def delete_saved_search(search_id: str, db: Session = Depends(get_db)):
+def delete_saved_search(search_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Delete saved search and its ads"""
     service = ResearchService(db)
     if service.delete_saved_search(search_id):
@@ -150,7 +150,7 @@ def delete_saved_search(search_id: str, db: Session = Depends(get_db)):
     raise HTTPException(status_code=404, detail="Search not found")
 
 @router.get("/api-usage")
-def get_api_usage(db: Session = Depends(get_db)):
+def get_api_usage(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Get API usage stats grouped by date"""
     from app.models import ApiUsageLog
     from sqlalchemy import func
@@ -176,7 +176,7 @@ def get_api_usage(db: Session = Depends(get_db)):
     ]
 
 @router.get("/blacklist")
-def get_blacklist(db: Session = Depends(get_db)):
+def get_blacklist(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Get all blacklisted pages"""
     from app.models import PageBlacklist
     pages = db.query(PageBlacklist).order_by(PageBlacklist.created_at.desc()).all()
@@ -191,7 +191,7 @@ def get_blacklist(db: Session = Depends(get_db)):
     ]
 
 @router.post("/blacklist")
-def add_to_blacklist(page_name: str, reason: str = None, db: Session = Depends(get_db)):
+def add_to_blacklist(page_name: str, reason: str = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Add page to blacklist"""
     from app.models import PageBlacklist
 
@@ -213,7 +213,7 @@ def add_to_blacklist(page_name: str, reason: str = None, db: Session = Depends(g
     }
 
 @router.delete("/blacklist/{blacklist_id}")
-def remove_from_blacklist(blacklist_id: str, db: Session = Depends(get_db)):
+def remove_from_blacklist(blacklist_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Remove page from blacklist"""
     from app.models import PageBlacklist
 
@@ -226,7 +226,7 @@ def remove_from_blacklist(blacklist_id: str, db: Session = Depends(get_db)):
     return {"message": "Removed from blacklist"}
 
 @router.get("/keyword-blacklist")
-def get_keyword_blacklist(db: Session = Depends(get_db)):
+def get_keyword_blacklist(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Get all blacklisted keywords"""
     from app.models import KeywordBlacklist
     keywords = db.query(KeywordBlacklist).order_by(KeywordBlacklist.created_at.desc()).all()
@@ -241,7 +241,7 @@ def get_keyword_blacklist(db: Session = Depends(get_db)):
     ]
 
 @router.post("/keyword-blacklist")
-def add_to_keyword_blacklist(keyword: str, reason: str = None, db: Session = Depends(get_db)):
+def add_to_keyword_blacklist(keyword: str, reason: str = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Add keyword to blacklist"""
     from app.models import KeywordBlacklist
 
@@ -263,7 +263,7 @@ def add_to_keyword_blacklist(keyword: str, reason: str = None, db: Session = Dep
     }
 
 @router.delete("/keyword-blacklist/{blacklist_id}")
-def remove_from_keyword_blacklist(blacklist_id: str, db: Session = Depends(get_db)):
+def remove_from_keyword_blacklist(blacklist_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Remove keyword from blacklist"""
     from app.models import KeywordBlacklist
 
@@ -276,7 +276,7 @@ def remove_from_keyword_blacklist(blacklist_id: str, db: Session = Depends(get_d
     return {"message": "Removed from keyword blacklist"}
 
 @router.get("/rate-limit")
-def get_rate_limit(db: Session = Depends(get_db)):
+def get_rate_limit(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Get current rate limit usage (trailing 59 minutes)"""
     return rate_limiter.get_usage_stats(db)
 
@@ -285,7 +285,8 @@ def get_facebook_pages(
     limit: int = 50,
     offset: int = 0,
     sort_by: str = "total_ads",  # total_ads, page_name, last_seen
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
 ):
     """Get Facebook pages with ad counts (excludes blacklisted pages)"""
     from app.models import FacebookPage, PageBlacklist
@@ -332,7 +333,7 @@ def get_facebook_pages(
     ]
 
 @router.get("/verticals")
-def get_verticals(db: Session = Depends(get_db)):
+def get_verticals(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Get all verticals"""
     from app.models import Vertical
     verticals = db.query(Vertical).order_by(Vertical.name).all()
@@ -347,7 +348,7 @@ def get_verticals(db: Session = Depends(get_db)):
     ]
 
 @router.post("/run-scheduled-searches")
-async def run_scheduled_searches(db: Session = Depends(get_db)):
+async def run_scheduled_searches(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Manually trigger scheduled searches (called by cron job)"""
     from app.services.scheduler_service import SchedulerService
 
@@ -357,7 +358,7 @@ async def run_scheduled_searches(db: Session = Depends(get_db)):
     return {"message": "Scheduled searches completed"}
 
 @router.post("/verticals")
-def create_vertical(name: str, description: str = None, db: Session = Depends(get_db)):
+def create_vertical(name: str, description: str = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Create a new vertical"""
     from app.models import Vertical
 
@@ -379,7 +380,7 @@ def create_vertical(name: str, description: str = None, db: Session = Depends(ge
     }
 
 @router.get("/verticals/{vertical_id}/aggregated-ads")
-def get_vertical_aggregated_ads(vertical_id: str, db: Session = Depends(get_db)):
+def get_vertical_aggregated_ads(vertical_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Get all unique ads for a vertical, grouped by Facebook page with media type counts (excluding blacklisted pages)"""
     try:
         from app.models import ScrapedAd, SavedSearch, FacebookPage, PageBlacklist
@@ -438,7 +439,7 @@ def get_vertical_aggregated_ads(vertical_id: str, db: Session = Depends(get_db))
         raise HTTPException(status_code=500, detail=f"Error fetching aggregated ads: {str(e)}")
 
 @router.get("/verticals/{vertical_id}/pages/{page_id}/ads")
-def get_vertical_page_ads(vertical_id: str, page_id: str, db: Session = Depends(get_db)):
+def get_vertical_page_ads(vertical_id: str, page_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Get unique ads for a specific Facebook page within a vertical"""
     try:
         from app.models import ScrapedAd, SavedSearch, FacebookPage
@@ -502,7 +503,8 @@ def get_vertical_page_ads(vertical_id: str, page_id: str, db: Session = Depends(
 async def create_brand_scrape(
     request: BrandScrapeCreate,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
 ):
     """Create a new brand scrape and start scraping in background."""
     from app.models import BrandScrape
@@ -554,7 +556,7 @@ async def create_brand_scrape(
 
 
 @router.get("/brand-scrapes", response_model=List[BrandScrapeListResponse])
-def get_brand_scrapes(db: Session = Depends(get_db)):
+def get_brand_scrapes(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Get all brand scrapes."""
     from app.models import BrandScrape
 
@@ -563,7 +565,7 @@ def get_brand_scrapes(db: Session = Depends(get_db)):
 
 
 @router.get("/brand-scrapes/{scrape_id}", response_model=BrandScrapeResponse)
-def get_brand_scrape(scrape_id: str, db: Session = Depends(get_db)):
+def get_brand_scrape(scrape_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Get a single brand scrape with all its ads."""
     from app.models import BrandScrape
 
@@ -575,7 +577,7 @@ def get_brand_scrape(scrape_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/brand-scrapes/{scrape_id}")
-async def delete_brand_scrape(scrape_id: str, db: Session = Depends(get_db)):
+async def delete_brand_scrape(scrape_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Delete a brand scrape and its media from R2."""
     from app.models import BrandScrape
     from app.services.brand_scraper import BrandScraperService
@@ -593,7 +595,7 @@ async def delete_brand_scrape(scrape_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/scraped-ads/{ad_id}/save")
-def unsave_scraped_ad(ad_id: str, db: Session = Depends(get_db)):
+def unsave_scraped_ad(ad_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Remove a scraped ad from the user's curated research library."""
     from app.models import ScrapedAd
     ad = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
@@ -605,7 +607,7 @@ def unsave_scraped_ad(ad_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/scraped-ads/saved")
-def get_saved_ads(db: Session = Depends(get_db)):
+def get_saved_ads(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Return all scraped ads the user has saved to their research library."""
     from app.models import ScrapedAd
     ads = db.query(ScrapedAd).filter(ScrapedAd.is_saved == True).order_by(ScrapedAd.created_at.desc()).all()
@@ -642,7 +644,7 @@ def get_saved_ads(db: Session = Depends(get_db)):
 # ============= Pre-configured Vertical Endpoints =============
 
 @router.get("/vertical-config")
-def get_vertical_config():
+def get_vertical_config(current_user: User = Depends(get_current_active_user)):
     """Return pre-configured keyword sets for each research vertical.
 
     Frontend reads this on mount so keyword sets are never hardcoded in JS.
@@ -840,6 +842,7 @@ def save_scraped_ad_with_angle(
     ad_id: str,
     angle_tag: str | None = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """Mark a scraped ad as saved and optionally assign an angle tag."""
     from app.models import ScrapedAd
@@ -858,6 +861,7 @@ def update_angle_tag(
     ad_id: str,
     angle_tag: str | None = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """Update the angle tag on a scraped ad (can also clear it by passing null)."""
     from app.models import ScrapedAd
@@ -878,6 +882,7 @@ def get_vertical_browse_ads(
     advertiser: str | None = None,
     limit: int = 500,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """Return all unique scraped ads for a pre-configured vertical (flat list for card gallery).
 
@@ -1008,6 +1013,7 @@ def get_vertical_browse_ads(
 def clear_vertical_ads(
     config_id: str,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """Delete all non-saved scraped ads for a pre-configured vertical.
 
@@ -1056,6 +1062,7 @@ async def search_and_save_vertical(
     sub_vertical: str | None = None,
     limit_per_keyword: int = 20,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """Run all keyword searches for a pre-configured vertical and save results.
 

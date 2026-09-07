@@ -3,6 +3,7 @@ import { Settings as SettingsIcon, Plus, Sparkles, Edit, Trash2, Save, X, FileTe
 import { useToast } from '../context/ToastContext';
 import { adStyles as initialStyles, AD_CATEGORIES } from '../data/adStyles';
 import { PROMPT_CATEGORIES } from '../data/prompts';
+import { authFetch } from '../lib/facebookApi';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -28,8 +29,8 @@ export default function Settings() {
         setLoading(true);
         try {
             const [promptsRes, stylesRes] = await Promise.all([
-                fetch(`${API_BASE}/prompts`),
-                fetch(`${API_BASE}/ad-styles`)
+                authFetch(`${API_BASE}/prompts`),
+                authFetch(`${API_BASE}/ad-styles`)
             ]);
 
             if (promptsRes.ok) {
