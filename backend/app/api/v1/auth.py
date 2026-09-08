@@ -1,6 +1,7 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Form, Request
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
+import hashlib
 import os
 
 from app.database import get_db
@@ -25,6 +26,13 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional
 
 router = APIRouter()
+
+
+def _hash_refresh_token(token: str) -> str:
+    """SHA-256 of the raw refresh token — this, not the token itself, is what
+    gets stored and queried. The client still receives and sends the raw
+    token exactly as before; only server-side storage/lookup changed."""
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 # ── One-time admin bootstrap ────────────────────────────────────────────────────
@@ -142,7 +150,7 @@ async def login(
     # Store refresh token in database
     refresh_token_obj = RefreshToken(
         user_id=user.id,
-        token=refresh_token_str,
+        token_hash=_hash_refresh_token(refresh_token_str),
         expires_at=expires_at
     )
     db.add(refresh_token_obj)
@@ -185,7 +193,7 @@ async def login_json(request: Request, background_tasks: BackgroundTasks, user_d
     # Store refresh token in database
     refresh_token_obj = RefreshToken(
         user_id=user.id,
-        token=refresh_token_str,
+        token_hash=_hash_refresh_token(refresh_token_str),
         expires_at=expires_at
     )
     db.add(refresh_token_obj)
@@ -203,7 +211,7 @@ async def refresh_token(request: Request, token_data: TokenRefresh, db: Session 
     """Get new access and refresh tokens using a refresh token (rolling refresh)"""
     # Find the refresh token
     refresh_token_obj = db.query(RefreshToken).filter(
-        RefreshToken.token == token_data.refresh_token
+        RefreshToken.token_hash == _hash_refresh_token(token_data.refresh_token)
     ).first()
 
     if not refresh_token_obj:
@@ -240,7 +248,7 @@ async def refresh_token(request: Request, token_data: TokenRefresh, db: Session 
     # Store new refresh token
     new_refresh_token_obj = RefreshToken(
         user_id=user.id,
-        token=new_refresh_token_str,
+        token_hash=_hash_refresh_token(new_refresh_token_str),
         expires_at=expires_at
     )
     db.add(new_refresh_token_obj)
@@ -261,7 +269,7 @@ async def logout(
     """Logout by invalidating the refresh token"""
     # Find and delete the refresh token
     refresh_token_obj = db.query(RefreshToken).filter(
-        RefreshToken.token == token_data.refresh_token,
+        RefreshToken.token_hash == _hash_refresh_token(token_data.refresh_token),
         RefreshToken.user_id == current_user.id
     ).first()
 

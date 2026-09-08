@@ -130,7 +130,12 @@ class RefreshToken(Base):
 
     id = Column(String, primary_key=True, default=generate_uuid)
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    token = Column(String, unique=True, nullable=False, index=True)
+    # `token` kept (nullable) for schema history only — new code never writes
+    # to it. The plaintext refresh token is verified by hashing the client's
+    # value and comparing against token_hash instead of storing it as-is; see
+    # migration z1a2b3c4d5e6 and app/api/v1/auth.py's _hash_refresh_token().
+    token = Column(String, unique=True, nullable=True, index=True)
+    token_hash = Column(String, unique=True, nullable=True, index=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
