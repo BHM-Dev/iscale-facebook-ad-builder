@@ -14,8 +14,16 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "https://api.eflow.team"
-DEFAULT_TIMEZONE_ID = 90  # Pacific, aligned with the Meta ad account billing day.
+# Eastern, matching Switchboard/Everflow's own portal default (confirmed by
+# Steve 2026-09-09 — Everflow's revenue is the point of truth for billable
+# revenue, so our day/month boundaries must match its own bucketing or the two
+# never fully reconcile). Previously Pacific — that mismatch only accounted for
+# ~$50-150 of variance on a 9-day MTD window, not the ~$2,557 Joel flagged in
+# Slack on 2026-09-09; the bulk of that gap was the P&L "All Accounts" view
+# blending this account's Everflow revenue with a second account's RedTrack
+# revenue, not a calculation bug (confirmed live same day: $18,596.97 Everflow
+# + $3,144.06 RedTrack ≈ the $21,340 he saw). Kept as a real, if smaller, fix.
+DEFAULT_TIMEZONE_ID = 80
 USD_CURRENCY_ID = "USD"
 CENT = Decimal("0.01")
 META_ID_RE = re.compile(r"^\d{10,}$")
@@ -217,10 +225,10 @@ class EverflowService:
         """Bucket a conversion into its month IN THE REPORTING TIMEZONE.
 
         Must not use a naive datetime. The VPS clock is UTC while we report in
-        Pacific (timezone_id 90), so a conversion at 2026-07-01 03:00 UTC is
-        2026-06-30 20:00 Pacific and belongs to June. Bucketing naively puts it
+        Eastern (timezone_id 80), so a conversion at 2026-07-01 03:00 UTC is
+        2026-06-30 23:00 Eastern and belongs to June. Bucketing naively puts it
         in July, which makes /pnl/months disagree with /pnl/summary for the same
-        month — summary asks Everflow for a Pacific-bounded range, so the two
+        month — summary asks Everflow for an Eastern-bounded range, so the two
         would never reconcile.
         """
         tz = EVERFLOW_TZ_BY_ID.get(timezone_id, EVERFLOW_TZ_BY_ID[DEFAULT_TIMEZONE_ID])
