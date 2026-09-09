@@ -117,10 +117,23 @@ class FacebookService:
             
         raise Exception("No Ad Account ID provided and no default account set.")
 
-    def get_campaigns(self, ad_account_id=None):
-        """Fetch all campaigns from the ad account."""
+    def get_campaigns(self, ad_account_id=None, effective_status=None):
+        """Fetch campaigns from the ad account.
+
+        `effective_status` defaults to ACTIVE+PAUSED (the original behavior,
+        tuned for the ad-push modal — it should only offer currently-usable
+        campaigns). Pass an explicit list (e.g. including 'ARCHIVED') for
+        anything that needs the FULL campaign history — notably the
+        /facebook/sync ad-set backfill that P&L's Everflow revenue attribution
+        depends on: an ad set under an archived campaign is still a real,
+        revenue-generating ad set, and excluding it here made it invisible to
+        the local FacebookAdSet table, which under-attributed real billable
+        revenue to the account that actually earned it (confirmed live
+        2026-09-09 — ~$9.1k/month of RHO + RHO 4's own Everflow revenue was
+        sitting on ad sets under archived campaigns and never synced).
+        """
         account = self._get_account(ad_account_id)
-            
+
         fields = [
             Campaign.Field.id,
             Campaign.Field.name,
@@ -136,11 +149,10 @@ class FacebookService:
             'is_adset_budget_sharing_enabled',
         ]
 
-        # Fetch up to 500 campaigns; include ACTIVE and PAUSED so the push modal
-        # shows all usable campaigns regardless of spend state.
+        # Fetch up to 500 campaigns.
         params = {
             'limit': 500,
-            'effective_status': ['ACTIVE', 'PAUSED'],
+            'effective_status': effective_status or ['ACTIVE', 'PAUSED'],
         }
         return account.get_campaigns(fields=fields, params=params)
 

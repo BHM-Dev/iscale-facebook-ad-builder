@@ -273,7 +273,12 @@ def sync_from_meta(
     synced_account = normalize_account_id(ad_account_id or getattr(service, "ad_account_id", None))
 
     try:
-        campaigns_raw = service.get_campaigns(ad_account_id=ad_account_id)
+        # ARCHIVED included (not just ACTIVE/PAUSED): this sync is what populates
+        # FacebookAdSet, which P&L's Everflow revenue attribution matches ad sets
+        # against — an ad set under an archived campaign is still real billable
+        # revenue, and excluding it here made that revenue invisible (see
+        # FacebookService.get_campaigns docstring).
+        campaigns_raw = service.get_campaigns(ad_account_id=ad_account_id, effective_status=['ACTIVE', 'PAUSED', 'ARCHIVED'])
     except Exception as e:
         raise HTTPException(500, f"Failed to fetch campaigns from Meta: {e}")
 
