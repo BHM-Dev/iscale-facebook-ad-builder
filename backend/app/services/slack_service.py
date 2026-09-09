@@ -154,8 +154,12 @@ def send_offer_performance_alert(alerts: list) -> None:
     with nobody noticing until Joel/Abel caught it live.
 
     `alerts` is a list of dicts from offer_performance_service.check_offer_performance():
-    {offer, hour_label, date, actual_count, actual_revenue, baseline_avg}.
-    Silently no-ops if SLACK_BOT_TOKEN is not configured or alerts is empty.
+    {offer, hour_label, date, actual_count, actual_revenue, baseline_avg, is_crater,
+    pause_result?}. A crater (literal 0 conversions) has already triggered an
+    automatic pause of every active ad set on that offer's accounts by the
+    time this posts — the message says so plainly, distinct from a soft dip
+    where nothing was touched. Silently no-ops if SLACK_BOT_TOKEN is not
+    configured or alerts is empty.
     """
     token = _token()
     if not token:
@@ -164,14 +168,40 @@ def send_offer_performance_alert(alerts: list) -> None:
     if not alerts:
         return
 
-    lines = [":rotating_light: *Offer performance dip detected*"]
+    has_crater = any(a.get("is_crater") for a in alerts)
+    header = (
+        ":rotating_light: *0% CR — campaigns auto-paused*" if has_crater
+        else ":rotating_light: *Offer performance dip detected*"
+    )
+    lines = [header]
     for a in alerts:
-        lines.append(
-            f">*{a['offer']}* — {a['hour_label']} ({a['date']}): "
-            f"{a['actual_count']} conversion(s) (${a['actual_revenue']:.2f}) vs. "
-            f"~{a['baseline_avg']} normal for this hour. Worth a quick check — "
-            f"could be a tracking/DB issue upstream (Switchboard/Everflow) rather than a real traffic drop."
-        )
+        if a.get("is_crater"):
+            pr = a.get("pause_result") or {}
+            paused, errors = pr.get("paused") or [], pr.get("errors") or []
+            excluded = pr.get("excluded_shared_accounts") or []
+            status_line = f"*{len(paused)} ad set(s) auto-paused.*"
+            if excluded:
+                status_line += (
+                    f" :warning: {len(excluded)} account(s) mapped to *more than one offer* "
+                    f"were deliberately *not* touched — needs a human call, could affect an unrelated offer."
+                )
+            elif pr.get("no_safe_accounts"):
+                status_line = ":warning: *No account mapping found — nothing was auto-paused.* Check `SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS` config."
+            if errors:
+                status_line += f" :warning: {len(errors)} couldn't be paused — check manually."
+            lines.append(
+                f">*{a['offer']}* — {a['hour_label']} ({a['date']}): "
+                f"0 conversions vs. ~{a['baseline_avg']} normal for this hour. {status_line}"
+                "\n>This does *not* auto-resume. Confirm the tracking issue is resolved "
+                "(Switchboard/Everflow, or the advertiser's own system), then reactivate manually."
+            )
+        else:
+            lines.append(
+                f">*{a['offer']}* — {a['hour_label']} ({a['date']}): "
+                f"{a['actual_count']} conversion(s) (${a['actual_revenue']:.2f}) vs. "
+                f"~{a['baseline_avg']} normal for this hour. Worth a quick check — "
+                f"could be a tracking/DB issue upstream (Switchboard/Everflow) rather than a real traffic drop."
+            )
 
     try:
         resp = httpx.post(

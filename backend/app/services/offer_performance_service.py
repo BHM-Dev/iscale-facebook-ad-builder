@@ -56,30 +56,98 @@ def _maybe_alert_fetch_failure(error: str) -> None:
     slack_service.send_offer_performance_monitor_down_alert(error)
 
 
-def _offer_names() -> set[str]:
-    """Union of every offer name configured across all accounts.
-
-    Mirrors pnl.py's _everflow_offer_names_for_account parsing (trim,
-    str-or-list, dict-type guard) so the two never quietly disagree on what
-    counts as a configured offer name — this file is deliberately broader
-    (every account's offers, not one), but the per-value parsing rules match.
-    """
+def _parsed_offer_config() -> dict:
     raw = os.getenv("SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS", "")
     if not raw.strip():
-        return set()
+        return {}
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        return set()
-    if not isinstance(parsed, dict):
-        return set()
-    names: set[str] = set()
-    for values in parsed.values():
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _account_offer_map() -> dict[str, list[str]]:
+    """account_id -> list of offer names, normalized (str-or-list, trimmed)."""
+    result: dict[str, list[str]] = {}
+    for account_id, values in _parsed_offer_config().items():
         if isinstance(values, str):
             values = [values]
         if not isinstance(values, list):
             continue
-        names.update(str(v).strip() for v in values if str(v).strip())
+        result[account_id] = [str(v).strip() for v in values if str(v).strip()]
+    return result
+
+
+def _accounts_for_offer(offer_name: str) -> tuple[list[str], list[str]]:
+    """Which Meta account IDs run this Switchboard offer, for auto-pause scoping.
+
+    Returns (safe_account_ids, excluded_shared_account_ids). An account
+    mapped to MORE THAN ONE offer is deliberately excluded from the pause
+    target list — today's config never does this, but nothing enforces that
+    staying true, and pausing a shared account on one offer's outage would
+    silently halt spend for a completely unrelated, healthy offer with no one
+    having decided that tradeoff. Fail closed: log/alert the exclusion loudly
+    rather than guess which offer "owns" a shared account.
+    """
+    account_offers = _account_offer_map()
+    safe, excluded = [], []
+    for account_id, offers in account_offers.items():
+        if offer_name not in offers:
+            continue
+        if len(offers) > 1:
+            excluded.append(account_id)
+        else:
+            safe.append(account_id)
+    return safe, excluded
+
+
+def _pause_all_active_adsets(account_ids: list[str]) -> dict:
+    """Emergency stop: pause every currently-ACTIVE ad set on these accounts.
+
+    Pulls LIVE from Meta, not the local FacebookAdSet cache — that cache has
+    known sync gaps (rate-limit-driven, see
+    project_adbuilder_pnl_everflow_billable_revenue.md memory), and an
+    emergency stop must not miss an ad set just because local sync lagged.
+
+    Never auto-resumes anything — that's a deliberate, separate human action.
+    A flapping auto-pause/auto-resume loop on a still-broken tracking pipe
+    would be worse than staying paused an extra hour.
+    """
+    from app.services.facebook_service import FacebookService
+
+    svc = FacebookService()
+    paused = []
+    errors = []
+    for account_id in account_ids:
+        try:
+            adsets = svc.get_adsets(ad_account_id=account_id)
+        except Exception as exc:
+            errors.append({"account_id": account_id, "error": f"could not list ad sets: {exc}"})
+            continue
+        for a in adsets:
+            if a.get("status") != "ACTIVE":
+                continue
+            fb_adset_id = str(a.get("id") or "")
+            if not fb_adset_id:
+                continue
+            try:
+                svc.update_adset_status(fb_adset_id, "PAUSED")
+                paused.append({"account_id": account_id, "fb_adset_id": fb_adset_id, "name": a.get("name")})
+            except Exception as exc:
+                errors.append({"account_id": account_id, "fb_adset_id": fb_adset_id, "name": a.get("name"), "error": str(exc)})
+    return {"paused": paused, "errors": errors}
+
+
+def _offer_names() -> set[str]:
+    """Union of every offer name configured across all accounts.
+
+    Built from the same _account_offer_map() as _accounts_for_offer, so the
+    two can never quietly disagree on what counts as a configured offer name.
+    """
+    names: set[str] = set()
+    for offers in _account_offer_map().values():
+        names.update(offers)
     return names
 
 
@@ -146,6 +214,15 @@ def check_offer_performance() -> dict:
         if actual["count"] > baseline_avg * ALERT_THRESHOLD_RATIO:
             continue  # Within normal range
 
+        # A hard zero (literal 0% CR against a real baseline) escalates past
+        # alerting to an automatic stop — Steve, 2026-09-09: "if we ever drop
+        # to a 0% CR we need to auto pause all campaigns" so a real tracking
+        # outage stops wasting spend immediately rather than waiting for
+        # someone to see the Slack alert. Softer dips (>0 but still ≤25% of
+        # baseline) stay alert-only — this is deliberately conservative,
+        # scoped to the literal-zero case Steve named.
+        is_crater = actual["count"] == 0
+
         alerts.append({
             "offer": offer,
             "hour_label": f"{check_hour_start.strftime('%-I%p').lower()} ET",
@@ -153,7 +230,45 @@ def check_offer_performance() -> dict:
             "actual_count": actual["count"],
             "actual_revenue": float(actual["revenue"]),
             "baseline_avg": round(baseline_avg, 1),
+            "is_crater": is_crater,
         })
+
+        if is_crater:
+            # Never let a failure in the pause path (or even a bug in
+            # _accounts_for_offer itself) abort this loop and skip the final
+            # send_offer_performance_alert() below — that would silently drop
+            # the Slack alert for every offer's finding in this run, not just
+            # this one, which is the exact "monitor goes blind" failure mode
+            # this whole file exists to prevent.
+            try:
+                account_ids, excluded = _accounts_for_offer(offer)
+                if excluded:
+                    logger.warning(
+                        "offer_performance: %s config maps account(s) %s to multiple offers — "
+                        "excluded from auto-pause, needs a human decision",
+                        offer, excluded,
+                    )
+                if account_ids:
+                    pause_result = _pause_all_active_adsets(account_ids)
+                    pause_result["excluded_shared_accounts"] = excluded
+                    alerts[-1]["pause_result"] = pause_result
+                    logger.warning(
+                        "offer_performance: 0%% CR on %s — auto-paused %d ad set(s) across %s, %d error(s): %s",
+                        offer, len(pause_result["paused"]), account_ids, len(pause_result["errors"]), pause_result,
+                    )
+                else:
+                    alerts[-1]["pause_result"] = {
+                        "paused": [], "errors": [], "excluded_shared_accounts": excluded,
+                        "no_safe_accounts": True,
+                    }
+                    logger.warning(
+                        "offer_performance: 0%% CR on %s but no safe account mapping found "
+                        "(excluded shared accounts: %s) — nothing auto-paused",
+                        offer, excluded,
+                    )
+            except Exception as exc:
+                logger.error("offer_performance: auto-pause path failed for %s: %s", offer, exc)
+                alerts[-1]["pause_result"] = {"paused": [], "errors": [{"error": f"pause path crashed: {exc}"}]}
 
     if alerts:
         slack_service.send_offer_performance_alert(alerts)
