@@ -251,7 +251,8 @@ def check_offer_performance() -> dict:
             "date": check_date.isoformat(),
             "actual_count": actual["count"],
             "actual_revenue": float(actual["revenue"]),
-            "baseline_avg": round(baseline_avg, 1),
+            "baseline_avg": round(baseline_avg),  # whole number — a fractional "conversion" reads oddly
+            "pct_of_baseline": round(actual["count"] / baseline_avg * 100),
             "is_crater": is_crater,
         })
 

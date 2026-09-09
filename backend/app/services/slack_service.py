@@ -154,12 +154,18 @@ def send_offer_performance_alert(alerts: list) -> None:
     with nobody noticing until Joel/Abel caught it live.
 
     `alerts` is a list of dicts from offer_performance_service.check_offer_performance():
-    {offer, hour_label, date, actual_count, actual_revenue, baseline_avg, is_crater,
-    pause_result?}. A crater (literal 0 conversions) has already triggered an
-    automatic pause of every active ad set on that offer's accounts by the
-    time this posts — the message says so plainly, distinct from a soft dip
-    where nothing was touched. Silently no-ops if SLACK_BOT_TOKEN is not
-    configured or alerts is empty.
+    {offer, hour_label, date, actual_count, actual_revenue, baseline_avg,
+    pct_of_baseline, is_crater, pause_result?}. A crater (literal 0
+    conversions) has already run the auto-pause path (live or dry-run
+    depending on OFFER_PERFORMANCE_AUTO_PAUSE_ENABLED) by the time this posts.
+
+    Format: the percentage of normal leads every line — that's the one number
+    that actually says how bad it is — with the raw count/baseline and dollar
+    figure as supporting detail, and a single, concrete next step instead of
+    a hedge. Each alert is a self-contained block (severity emoji + offer +
+    hour in its own bold line) so a multi-offer message never reads
+    ambiguously if severities differ. Silently no-ops if SLACK_BOT_TOKEN is
+    not configured or alerts is empty.
     """
     token = _token()
     if not token:
@@ -168,47 +174,36 @@ def send_offer_performance_alert(alerts: list) -> None:
     if not alerts:
         return
 
-    has_crater = any(a.get("is_crater") for a in alerts)
-    header = (
-        ":rotating_light: *0% CR — campaigns auto-paused*" if has_crater
-        else ":rotating_light: *Offer performance dip detected*"
-    )
-    lines = [header]
+    lines = [":bar_chart: *Everflow offer performance*"]
     for a in alerts:
+        pct = a.get("pct_of_baseline", 0)
+        emoji = ":rotating_light:" if a.get("is_crater") else ":warning:"
+        lines.append(
+            f"{emoji} *{a['offer']} — {a['hour_label']} ({a['date']}): {pct}% of normal*"
+        )
+        lines.append(
+            f">{a['actual_count']} of ~{a['baseline_avg']} usual conversion(s) this hour "
+            f"(${a['actual_revenue']:.2f} revenue)"
+        )
+
         if a.get("is_crater"):
             pr = a.get("pause_result") or {}
             paused, errors = pr.get("paused") or [], pr.get("errors") or []
             excluded = pr.get("excluded_shared_accounts") or []
             if pr.get("dry_run"):
-                status_line = (
-                    f":large_yellow_circle: *Auto-pause is OFF (scoped, not live)* — "
-                    f"would have paused ad sets on {', '.join(pr.get('would_pause_accounts') or []) or 'no mapped accounts'}."
-                )
+                accounts = ", ".join(pr.get("would_pause_accounts") or []) or "no mapped accounts"
+                lines.append(f">*Auto-pause is OFF (scoped, not live)* — would have paused ad sets on {accounts}.")
+                lines.append(">*Next step:* check Switchboard/Everflow tracking now.")
+            elif pr.get("no_safe_accounts"):
+                lines.append(">*Nothing auto-paused* — no account mapping found. Check `SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS`.")
             else:
-                status_line = f"*{len(paused)} ad set(s) auto-paused.*"
+                lines.append(f">*{len(paused)} ad set(s) auto-paused.* Does *not* auto-resume — reactivate manually once confirmed fixed.")
                 if excluded:
-                    status_line += (
-                        f" :warning: {len(excluded)} account(s) mapped to *more than one offer* "
-                        f"were deliberately *not* touched — needs a human call, could affect an unrelated offer."
-                    )
-                elif pr.get("no_safe_accounts"):
-                    status_line = ":warning: *No account mapping found — nothing was auto-paused.* Check `SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS` config."
+                    lines.append(f">:warning: {len(excluded)} account(s) shared with another offer were *not* touched — needs a human call.")
                 if errors:
-                    status_line += f" :warning: {len(errors)} couldn't be paused — check manually."
-            lines.append(
-                f">*{a['offer']}* — {a['hour_label']} ({a['date']}): "
-                f"0 conversions vs. ~{a['baseline_avg']} normal for this hour. {status_line}"
-                + ("" if pr.get("dry_run") else
-                   "\n>This does *not* auto-resume. Confirm the tracking issue is resolved "
-                   "(Switchboard/Everflow, or the advertiser's own system), then reactivate manually.")
-            )
+                    lines.append(f">:warning: {len(errors)} ad set(s) couldn't be paused — check manually.")
         else:
-            lines.append(
-                f">*{a['offer']}* — {a['hour_label']} ({a['date']}): "
-                f"{a['actual_count']} conversion(s) (${a['actual_revenue']:.2f}) vs. "
-                f"~{a['baseline_avg']} normal for this hour. Worth a quick check — "
-                f"could be a tracking/DB issue upstream (Switchboard/Everflow) rather than a real traffic drop."
-            )
+            lines.append(">*Next step:* check Switchboard/Everflow tracking before assuming it's a real traffic drop.")
 
     try:
         resp = httpx.post(
