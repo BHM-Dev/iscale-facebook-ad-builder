@@ -46,6 +46,22 @@ BASELINE_DAYS = 7
 FETCH_FAILURE_ALERT_COOLDOWN_HOURS = 4
 _last_fetch_failure_alert: datetime | None = None
 
+# Scoped out, not shipped live (Steve, 2026-09-09): the capability — pausing
+# every active ad set on an offer's accounts when it hits 0% CR — is fully
+# built and reviewed, but stays a dry-run (alert-only, no Meta write) until
+# this is explicitly set to a truthy value. Flip on deliberately when ready,
+# don't infer readiness from this code existing.
+AUTO_PAUSE_ENABLED = os.getenv("OFFER_PERFORMANCE_AUTO_PAUSE_ENABLED", "").strip().lower() in ("1", "true", "yes")
+
+# De-dup: never alert twice for the same (offer, date, hour) — a scheduler
+# misfire-recovery, a process restart mid-hour, or someone manually invoking
+# check_offer_performance() for verification (confirmed real failure mode,
+# 2026-09-09 — a manual test run duplicated a real alert the schedule had
+# already sent for the same hour) would otherwise double-post to a channel
+# people actually watch. Module-level, resets on restart — losing this on a
+# restart risks one possible duplicate, not a correctness problem.
+_alerted_hours: dict[str, tuple[str, int]] = {}
+
 
 def _maybe_alert_fetch_failure(error: str) -> None:
     global _last_fetch_failure_alert
@@ -214,6 +230,12 @@ def check_offer_performance() -> dict:
         if actual["count"] > baseline_avg * ALERT_THRESHOLD_RATIO:
             continue  # Within normal range
 
+        this_hour_key = (check_date.isoformat(), check_hour)
+        if _alerted_hours.get(offer) == this_hour_key:
+            logger.info("offer_performance: already alerted %s for %s — skipping duplicate", offer, this_hour_key)
+            continue
+        _alerted_hours[offer] = this_hour_key
+
         # A hard zero (literal 0% CR against a real baseline) escalates past
         # alerting to an automatic stop — Steve, 2026-09-09: "if we ever drop
         # to a 0% CR we need to auto pause all campaigns" so a real tracking
@@ -248,7 +270,21 @@ def check_offer_performance() -> dict:
                         "excluded from auto-pause, needs a human decision",
                         offer, excluded,
                     )
-                if account_ids:
+                if not AUTO_PAUSE_ENABLED:
+                    # Scoped out, not shipped live — Steve, 2026-09-09: he
+                    # wanted the auto-pause CAPABILITY designed, not turned on
+                    # yet. Alert-only until OFFER_PERFORMANCE_AUTO_PAUSE_ENABLED
+                    # is explicitly set true; no Meta write happens here.
+                    alerts[-1]["pause_result"] = {
+                        "paused": [], "errors": [], "excluded_shared_accounts": excluded,
+                        "dry_run": True, "would_pause_accounts": account_ids,
+                    }
+                    logger.warning(
+                        "offer_performance: 0%% CR on %s — auto-pause is DISABLED "
+                        "(dry run only), would have targeted accounts %s",
+                        offer, account_ids,
+                    )
+                elif account_ids:
                     pause_result = _pause_all_active_adsets(account_ids)
                     pause_result["excluded_shared_accounts"] = excluded
                     alerts[-1]["pause_result"] = pause_result

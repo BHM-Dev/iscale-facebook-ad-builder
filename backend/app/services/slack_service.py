@@ -179,21 +179,28 @@ def send_offer_performance_alert(alerts: list) -> None:
             pr = a.get("pause_result") or {}
             paused, errors = pr.get("paused") or [], pr.get("errors") or []
             excluded = pr.get("excluded_shared_accounts") or []
-            status_line = f"*{len(paused)} ad set(s) auto-paused.*"
-            if excluded:
-                status_line += (
-                    f" :warning: {len(excluded)} account(s) mapped to *more than one offer* "
-                    f"were deliberately *not* touched — needs a human call, could affect an unrelated offer."
+            if pr.get("dry_run"):
+                status_line = (
+                    f":large_yellow_circle: *Auto-pause is OFF (scoped, not live)* — "
+                    f"would have paused ad sets on {', '.join(pr.get('would_pause_accounts') or []) or 'no mapped accounts'}."
                 )
-            elif pr.get("no_safe_accounts"):
-                status_line = ":warning: *No account mapping found — nothing was auto-paused.* Check `SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS` config."
-            if errors:
-                status_line += f" :warning: {len(errors)} couldn't be paused — check manually."
+            else:
+                status_line = f"*{len(paused)} ad set(s) auto-paused.*"
+                if excluded:
+                    status_line += (
+                        f" :warning: {len(excluded)} account(s) mapped to *more than one offer* "
+                        f"were deliberately *not* touched — needs a human call, could affect an unrelated offer."
+                    )
+                elif pr.get("no_safe_accounts"):
+                    status_line = ":warning: *No account mapping found — nothing was auto-paused.* Check `SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS` config."
+                if errors:
+                    status_line += f" :warning: {len(errors)} couldn't be paused — check manually."
             lines.append(
                 f">*{a['offer']}* — {a['hour_label']} ({a['date']}): "
                 f"0 conversions vs. ~{a['baseline_avg']} normal for this hour. {status_line}"
-                "\n>This does *not* auto-resume. Confirm the tracking issue is resolved "
-                "(Switchboard/Everflow, or the advertiser's own system), then reactivate manually."
+                + ("" if pr.get("dry_run") else
+                   "\n>This does *not* auto-resume. Confirm the tracking issue is resolved "
+                   "(Switchboard/Everflow, or the advertiser's own system), then reactivate manually.")
             )
         else:
             lines.append(
