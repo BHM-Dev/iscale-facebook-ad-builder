@@ -2,12 +2,10 @@ import os
 import json
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import or_
@@ -16,10 +14,10 @@ from sqlalchemy.orm import Session
 from app.api.v1.facebook import _resolve_scoped_default_account
 from app.core.deps import require_permission
 from app.database import get_db
-from app.models import FacebookAdSet, PnlCostEntry, PnlMonthSnapshot, RedTrackCache, User, normalize_account_id
+from app.models import FacebookAdSet, PnlCostEntry, PnlMonthSnapshot, User, normalize_account_id
 from app.services.everflow_service import EverflowService
 from app.services.facebook_service import FacebookService
-from app.services.redtrack_service import BASE_URL as REDTRACK_BASE_URL, RedTrackService, today_in_rt_tz
+from app.services.redtrack_service import today_in_rt_tz
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -38,6 +36,7 @@ ALLOCATIONS = {"full", "by_spend", "even"}
 CENT = Decimal("0.01")
 EVERFLOW_ACCOUNT_IDS_ENV = "SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS"
 EVERFLOW_ACCOUNT_OFFERS_ENV = "SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS"
+PNL_ALL_ACCOUNTS_SCOPE_ENV = "PNL_ALL_ACCOUNTS_SCOPE_IDS"
 
 
 def _money(value) -> Decimal:
@@ -113,8 +112,28 @@ def _require_account(current_user: User, ad_account_id: str | None) -> str:
     return normalize_account_id(resolved)
 
 
+def _all_accounts_scope_ids() -> set[str] | None:
+    """Which accounts count as "All Accounts" for the aggregate P&L view.
+
+    Steve, 2026-09-09: "All Accounts" (the Dashboard's blended P&L widget, and
+    the profit base for Abel's %-of-net-profit cost entry) should only ever
+    include RHO / RHO 4 / RHO 3 - Auto Insurance / Trusted Home Service / DIN
+    Auto Insurance — not every active Meta account. Without this, a media
+    buyer's spend on some unrelated test/legacy account silently drags down
+    the aggregate net profit Abel's commission is computed against.
+    Unset (empty env var) falls back to every active account, so this stays
+    backward-compatible if the scope is ever intentionally cleared.
+    """
+    raw = os.getenv(PNL_ALL_ACCOUNTS_SCOPE_ENV, "")
+    ids = {normalize_account_id(account.strip()) for account in raw.split(",") if account.strip()}
+    return ids or None
+
+
 def _permitted_active_account_ids(db: Session, current_user: User) -> list[str]:
     active = set(_active_account_ids(db))
+    scope = _all_accounts_scope_ids()
+    if scope is not None:
+        active &= scope
     allowed = current_user.allowed_account_ids()
     if allowed is not None:
         active &= {normalize_account_id(account_id) for account_id in allowed}
@@ -127,7 +146,18 @@ def _everflow_account_ids() -> set[str]:
 
 
 def _revenue_provider_for_account(account_id: str) -> str:
-    return "everflow" if normalize_account_id(account_id) in _everflow_account_ids() else "redtrack"
+    """Which source (if any) provides this account's billable revenue.
+
+    Everflow-only, per Steve 2026-09-09: Everflow is the point of truth for
+    billable revenue network-wide; RedTrack is click/conversion tracking, not
+    a revenue source of truth, and previously being used as a silent fallback
+    here is exactly what made the P&L "All Accounts" total ($21,340) disagree
+    with Joel's Everflow portal figure ($18,782.85) — RedTrack revenue from a
+    second account (RHO 4) was getting blended in as if it were billable.
+    An account with no Everflow offer mapping now has no billable-revenue
+    source at all, rather than falling back to a lower-trust number.
+    """
+    return "everflow" if normalize_account_id(account_id) in _everflow_account_ids() else "none"
 
 
 def _everflow_offer_names_for_account(account_id: str) -> set[str]:
@@ -177,238 +207,10 @@ def _spend_map(db: Session, start: date, end: date, known: dict[str, Decimal] | 
     return results, incomplete
 
 
-def _live_redtrack_report(start: date, end: date) -> dict:
-    """Live RedTrack pull for an exact period.
-
-    Deliberately not RedTrackService.get_report_by_adset(): that method returns {}
-    on failure, which is indistinguishable from "no conversions" and would make us
-    silently report $0 revenue instead of falling back to cache. We need the
-    exception. Keep the request shape in sync with that method.
-    """
-    svc = RedTrackService()
-    if not svc.is_configured():
-        raise RuntimeError("REDTRACK_API_KEY not configured")
-    resp = httpx.get(
-        f"{REDTRACK_BASE_URL}/report",
-        headers=svc._headers(),
-        params={
-            **svc._auth_params(),
-            "date_from": start.isoformat(),
-            "date_to": end.isoformat(),
-            "group": "sub2",
-        },
-        timeout=15,
-    )
-    resp.raise_for_status()
-    rows = resp.json()
-    result = {}
-    for row in (rows if isinstance(rows, list) else rows.get("data", [])):
-        adset_id = str(row.get("sub2") or "").strip()
-        if not adset_id or adset_id == "0":
-            continue
-        result[adset_id] = {
-            "conversions": int(row.get("total_conversions") or 0),
-            "revenue": round(float(row.get("total_revenue") or 0), 2),
-        }
-    return result
-
-
-def _redtrack_adset_ids(db: Session, account_id: str) -> set[str]:
-    return {
-        row[0]
-        for row in db.query(FacebookAdSet.fb_adset_id)
-        .filter(
-            FacebookAdSet.fb_account_id == account_id,
-            FacebookAdSet.fb_adset_id.isnot(None),
-        )
-        .all()
-        if row[0]
-    }
-
-
-def _redtrack_revenue_from_report(report: dict, adset_ids: set[str]) -> tuple[Decimal, int, int, str, bool]:
-    filtered = {
-        fb_adset_id: metrics
-        for fb_adset_id, metrics in (report or {}).items()
-        if fb_adset_id in adset_ids
-    }
-    revenue = sum((_money(metrics.get("revenue")) for metrics in filtered.values()), Decimal("0"))
-    conversions = sum((int(metrics.get("conversions") or 0) for metrics in filtered.values()), 0)
-    return revenue, conversions, len(adset_ids - set(filtered)), "live", False
-
-
-def _redtrack_revenue_from_cache(
-    db: Session,
-    adset_ids: set[str],
-    start: date,
-    end: date,
-) -> tuple[Decimal, int, int, str, bool]:
-    exact_rows = (
-        db.query(RedTrackCache)
-        .filter(
-            RedTrackCache.fb_adset_id.in_(list(adset_ids)),
-            RedTrackCache.date_from == start,
-            RedTrackCache.date_to == end,
-        )
-        .all()
-    )
-    rows = exact_rows
-    # Only widen to a broader cached window (e.g. the 7-day preset) when the
-    # REQUESTED range itself spans multiple days — there a wider cached window is
-    # a defensible best-effort proxy. For a single-day request (start == end,
-    # e.g. "today" or an early-month MTD view), the scheduler's only other
-    # cached windows are for OTHER specific single days ("yesterday") or a
-    # 7-day span — neither is a substitute for the exact day asked for, and
-    # silently reporting the 7-day total AS that one day's revenue overstates it
-    # by up to 7x while looking like real, current data. Confirmed live
-    # 2026-09-02: this was the concrete mechanism behind Joel flagging Dashboard
-    # numbers as "showing incorrect values" during a RedTrack rate-limit window.
-    # Better to report unavailable than fabricate a plausible-looking number.
-    if not rows and start != end:
-        fallback_rows = (
-            db.query(RedTrackCache)
-            .filter(
-                RedTrackCache.fb_adset_id.in_(list(adset_ids)),
-                RedTrackCache.date_from <= end,
-                RedTrackCache.date_to >= start,
-            )
-            .all()
-        )
-        by_adset = {}
-        for row in fallback_rows:
-            current = by_adset.get(row.fb_adset_id)
-            current_span = (current.date_to - current.date_from).days if current else -1
-            row_span = (row.date_to - row.date_from).days
-            # Prefer the SMALLEST overlapping window, not the largest — a
-            # tighter window is a closer approximation of the requested range.
-            # (Previously preferred the largest span, which is how a single
-            # cached last_7d row could dominate over a closer-fitting one.)
-            if current is None or row_span < current_span or (row_span == current_span and row.synced_at > current.synced_at):
-                by_adset[row.fb_adset_id] = row
-        rows = list(by_adset.values())
-    mapped = {row.fb_adset_id for row in rows}
-    revenue = sum((_money(row.revenue) for row in rows), Decimal("0"))
-    conversions = sum((row.conversions or 0) for row in rows)
-    source = "cache_exact" if exact_rows else ("cache_fallback" if rows else "none")
-    return revenue, conversions, len(adset_ids - mapped), source, True
-
-
-# Sentinel distinguishing "no shared report was passed in — go fetch your own
-# live pull" (every existing single-account call site, unchanged) from "a
-# shared pull was already attempted for this whole batch" — which itself needs
-# two states: a dict (it succeeded, here's the data) or None (it was tried and
-# failed, don't retry — fall straight to cache). None can't double as the
-# 'not provided' default because it's also the valid 'already failed' value.
-_REDTRACK_REPORT_NOT_PROVIDED = object()
-
-
-def _redtrack_revenue(
-    db: Session,
-    account_id: str,
-    start: date,
-    end: date,
-    shared_live_report=_REDTRACK_REPORT_NOT_PROVIDED,
-) -> tuple[Decimal, int, int, str, bool]:
-    adset_ids = _redtrack_adset_ids(db, account_id)
-    if not adset_ids:
-        return Decimal("0"), 0, 0, "none", False
-
-    if shared_live_report is not _REDTRACK_REPORT_NOT_PROVIDED:
-        # Caller (see _summary_all) already made ONE live pull for the whole
-        # account batch instead of one per account — RedTrack's /report
-        # endpoint returns every ad set's data regardless of which Meta
-        # account is asking, so a per-account pull was pure duplication.
-        if shared_live_report is not None:
-            return _redtrack_revenue_from_report(shared_live_report, adset_ids)
-        return _redtrack_revenue_from_cache(db, adset_ids, start, end)
-
-    try:
-        return _redtrack_revenue_from_report(_live_redtrack_report(start, end), adset_ids)
-    except Exception:
-        pass
-
-    return _redtrack_revenue_from_cache(db, adset_ids, start, end)
-
-
-def _redtrack_monthly_revenue_cache(
-    db: Session,
-    account_id: str,
-    periods: list[tuple[date, date, str]],
-) -> dict[str, tuple[Decimal, int, int, str, bool, Decimal, dict]]:
-    adset_ids = {
-        adset_id
-        for adset_id in _redtrack_adset_ids(db, account_id)
-    }
-    empty = (Decimal("0"), 0, 0, "none", False, Decimal("0"), {})
-    if not periods:
-        # ThreadPoolExecutor(max_workers=0) raises. get_months always passes at
-        # least one period (limit has ge=1), but this is a general helper.
-        return {}
-    if not adset_ids:
-        return {s.isoformat(): empty for s, _, _ in periods}
-
-    results: dict[str, tuple[Decimal, int, int, str, bool, Decimal, dict]] = {}
-    live_reports: dict[str, dict] = {}
-    failed_periods: set[str] = set()
-
-    # Measured 2026-07-29: six concurrent pulls made ~20% difference to wall time
-    # (23.3s -> ~19s; Meta's six sequential calls dominate) but pushed months onto
-    # cache_fallback and none that had previously come back live — RedTrack does not
-    # like a six-way burst. Dropped to 3 that day; that still wasn't enough — real
-    # production logs (2026-09-01) show recurring HTTP 429 "Too many requests" from
-    # RedTrack roughly hourly, independent of and on top of the 30-min scheduled
-    # cache-refresh job's own calls. Serialized fully (max_workers=1): this endpoint
-    # is Month-Over-Month history, not a page a media buyer stares at waiting on —
-    # a few extra seconds of load time is a much smaller cost than tripping the
-    # account-wide rate limit that then also degrades the scheduler's own pulls and
-    # every other page reading live RedTrack data.
-    max_workers = 1
-
-    def _pull(start: date, end: date) -> dict:
-        try:
-            return _live_redtrack_report(start, end)
-        except Exception:
-            # A 429 retried with zero delay lands in the same rate-limit window and
-            # just gets 429'd again — this was making the burst worse, not better.
-            time.sleep(2)
-            return _live_redtrack_report(start, end)
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(_pull, s, e): (s, e, label)
-            for s, e, label in periods
-        }
-        for future in as_completed(futures):
-            s, e, label = futures[future]
-            key = s.isoformat()
-            try:
-                live_reports[key] = future.result()
-            except Exception:
-                failed_periods.add(key)
-                logger.exception(
-                    "pnl.months redtrack_live period failed account=%s label=%s range=%s..%s",
-                    account_id,
-                    label,
-                    s.isoformat(),
-                    e.isoformat(),
-                )
-
-    for s, e, _ in periods:
-        key = s.isoformat()
-        if key in live_reports:
-            revenue, conversions, unmapped, source, incomplete = _redtrack_revenue_from_report(live_reports[key], adset_ids)
-        else:
-            revenue, conversions, unmapped, source, incomplete = _redtrack_revenue_from_cache(db, adset_ids, s, e)
-        redtrack_source = f"redtrack_{source}" if source != "none" else "none"
-        results[key] = (revenue, conversions, unmapped, redtrack_source, incomplete, Decimal("0"), {})
-
-    logger.info(
-        "pnl.months redtrack_cache account=%s months=%d live_ok=%d live_failed=%d",
-        account_id,
-        len(periods),
-        len(live_reports),
-        len(failed_periods),
-    )
-    return results
+# RedTrack is deliberately NOT a billable-revenue source (see
+# _revenue_provider_for_account). It's still used elsewhere in the app
+# (Campaign Performance ROAS, CAPI Match Quality performance-by-pixel) — this
+# file just no longer pulls it in for the P&L's "Billable Revenue" number.
 
 
 def _everflow_revenue_from_report(
@@ -429,28 +231,31 @@ def _everflow_revenue_from_report(
 
     by_adset = report.get("adsets") or {}
 
-    # Revenue is EVERYTHING the offer filter admits, per Steve 2026-07-29: the P&L
-    # has to reconcile with the Switchboard portal he checks. Verified against
-    # June 2026 (Pacific): ad-set-attributable $53,981.76 + $1,939.89 with no
-    # usable sub3 = $55,921.65, which is the portal's Get Business Coverage total.
-    # Reporting only the attributable part read ~3.5% light every month.
-    #
-    # SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS is what scopes revenue to an account
-    # now, not the ad-set list. That holds only while each Everflow account maps
-    # to its own offers — if two accounts ever share an offer, both would claim
-    # the whole thing and this has to go back to ad-set scoping with the
-    # remainder on its own line.
-    # total_revenue is rounded once from full precision by the service. Re-summing
-    # the per-ad-set values here would reintroduce the drift it exists to avoid.
-    unattributed = _money(report.get("unattributed_revenue"))
-    revenue = _money(report.get("total_revenue"))
-    events = sum((int(m.get("events") or 0) for m in by_adset.values()), 0)
-    events += int(report.get("unattributed_events") or 0)
+    # Ad-set-attributable ONLY, per account — NOT the offer-wide total any more.
+    # Steve, 2026-09-09: RHO and RHO 4 both run the "Get Business Coverage" offer,
+    # so the old "whole offer belongs to whichever account has it mapped" design
+    # (see git history) would make both accounts claim the full portal total —
+    # exactly the double-count risk that approach's own comment warned about.
+    # Confirmed live same day: of ~$18.8k "Get Business Coverage" revenue this
+    # MTD period, only $6,538.16 traces to RHO's own ad sets and $3,144.06 to
+    # RHO 4's — the remaining ~$9.1k belongs to ad sets on OTHER Meta accounts
+    # (RHO 5 - America First, ResourceHelpOnline) that aren't tracked in this
+    # tool, so it's correctly excluded here rather than credited to either.
+    # Trade-off accepted: this account's number no longer auto-reconciles to
+    # the whole-offer Switchboard portal figure when the offer spans accounts
+    # outside this tool — it reconciles to what's actually this account's own.
+    matched = {aid: m for aid, m in by_adset.items() if aid in adset_ids}
+    revenue = sum((_money(m.get("revenue")) for m in matched.values()), Decimal("0"))
+    events = sum((int(m.get("events") or 0) for m in matched.values()), 0)
+    event_breakdown: dict[str, dict] = {}
+    for m in matched.values():
+        for name, bucket in (m.get("event_breakdown") or {}).items():
+            slot = event_breakdown.setdefault(name, {"events": 0, "revenue": Decimal("0")})
+            slot["events"] += int(bucket.get("events") or 0)
+            slot["revenue"] += _money(bucket.get("revenue"))
 
-    # Still reported so the split stays visible: how much of the above could not
-    # be tied to an ad set, and how many of this account's ad sets saw nothing.
-    return (revenue, events, len(adset_ids - set(by_adset)), "everflow_live", False,
-            unattributed, report.get("event_breakdown") or {})
+    return (revenue, events, len(adset_ids - set(matched)), "everflow_live", False,
+            Decimal("0"), event_breakdown)
 
 
 def _everflow_revenue(db: Session, account_id: str, start: date, end: date) -> tuple[Decimal, int, int, str, bool, Decimal, dict]:
@@ -466,7 +271,6 @@ def _revenue_for_account(
     account_id: str,
     start: date,
     end: date,
-    shared_live_redtrack_report=_REDTRACK_REPORT_NOT_PROVIDED,
 ) -> tuple[Decimal, int, int, str, bool, Decimal, dict]:
     if _revenue_provider_for_account(account_id) == "everflow":
         try:
@@ -474,12 +278,9 @@ def _revenue_for_account(
         except Exception:
             return Decimal("0"), 0, 0, "everflow_unavailable", True, Decimal("0"), {}
 
-    revenue, conversions, unmapped, source, incomplete = _redtrack_revenue(
-        db, account_id, start, end, shared_live_report=shared_live_redtrack_report
-    )
-    redtrack_source = f"redtrack_{source}" if source != "none" else "none"
-    # RedTrack has no payable-event split — it reports conversions, not event types.
-    return revenue, conversions, unmapped, redtrack_source, incomplete, Decimal("0"), {}
+    # No Everflow offer mapping for this account — billable revenue is
+    # Everflow-only, so there's nothing to report, not a lower-trust estimate.
+    return Decimal("0"), 0, 0, "not_tracked", False, Decimal("0"), {}
 
 
 def _everflow_monthly_revenue_cache(
@@ -688,7 +489,6 @@ def _summary(
     timings: dict[str, float] | None = None,
     snapshot: PnlMonthSnapshot | None = None,
     include_costs: bool = False,
-    shared_live_redtrack_report=_REDTRACK_REPORT_NOT_PROVIDED,
 ) -> dict:
     data_incomplete = False
     errors = []
@@ -723,13 +523,13 @@ def _summary(
         )
     else:
         revenue, conversions, unmapped, revenue_source, revenue_incomplete, unattributed_revenue, event_breakdown = _revenue_for_account(
-            db, account_id, start, end, shared_live_redtrack_report=shared_live_redtrack_report
+            db, account_id, start, end
         )
     if timings is not None:
         timings["revenue_ms"] = (time.perf_counter() - revenue_start) * 1000
     if revenue_incomplete:
         data_incomplete = True
-        errors.append("everflow_live_unavailable" if revenue_source == "everflow_unavailable" else "redtrack_live_unavailable")
+        errors.append("everflow_live_unavailable")
 
     cost_start = time.perf_counter()
     costs = []
@@ -871,28 +671,12 @@ def _summary_all(
     if not account_ids:
         raise HTTPException(status_code=400, detail="No active ad accounts are available for P&L.")
 
-    # RedTrack's /report endpoint returns every ad set's data in one call —
-    # it has no account filter — so pulling it once per account here was pure
-    # duplication: this is the Dashboard's own "Running Profit/Loss" widget
-    # (ad_account_id=all), loaded on every visit, and it was firing up to
-    # N (10 as of 2026-09) redundant identical live RedTrack calls for the
-    # same date range on every single load. That was a real, confirmed
-    # contributor to the RedTrack rate-limit (429) pressure investigated
-    # 2026-09-02 — fetch once, share the result (or the "it failed" None)
-    # across every account instead.
-    needs_redtrack = any(_revenue_provider_for_account(aid) != "everflow" for aid in account_ids)
-    shared_redtrack_report = None
-    if needs_redtrack:
-        try:
-            shared_redtrack_report = _live_redtrack_report(start, end)
-        except Exception:
-            shared_redtrack_report = None  # signals "tried, failed" — each account falls to its own cache, no retry
-
+    # Billable revenue is Everflow-only (see _revenue_provider_for_account) —
+    # an account with no Everflow offer mapping resolves to $0/"not_tracked"
+    # with no external call at all, so there's no shared batch pull to make
+    # here any more.
     account_rows = [
-        _summary(
-            db, account_id, start, end, label, include_costs=False,
-            shared_live_redtrack_report=shared_redtrack_report,
-        )
+        _summary(db, account_id, start, end, label, include_costs=False)
         for account_id in account_ids
     ]
     return _all_summary_from_account_rows(db, account_ids, start, end, label, account_rows)
@@ -977,7 +761,13 @@ def _snapshot_provider(revenue_source: str | None) -> str | None:
         return None
     if revenue_source.startswith("everflow"):
         return "everflow"
+    if revenue_source == "not_tracked":
+        return "none"
     if revenue_source.startswith("redtrack"):
+        # No longer a valid billable-revenue provider (see
+        # _revenue_provider_for_account) — returned as its own tag, distinct
+        # from "everflow"/"none", so an old RedTrack-sourced snapshot never
+        # matches an account's current provider and always gets re-fetched.
         return "redtrack"
     return None
 
@@ -1165,15 +955,9 @@ def get_months(
                 len(periods),
                 (time.perf_counter() - cache_start) * 1000,
             )
-    elif revenue_provider == "redtrack" and periods_to_fetch:
-        cache_start = time.perf_counter()
-        revenue_cache = _redtrack_monthly_revenue_cache(db, account_id, periods_to_fetch)
-        logger.info(
-            "pnl.months redtrack_cache account=%s months=%d duration_ms=%.1f status=ok",
-            account_id,
-            len(periods),
-            (time.perf_counter() - cache_start) * 1000,
-        )
+    # revenue_provider == "none": no Everflow mapping, nothing to fetch —
+    # revenue_cache stays None and _summary() resolves each period to
+    # $0/"not_tracked" via _revenue_for_account with no external call.
 
     for s, e, label in periods:
         # Don't pre-build a cross-account spend map here. _summary only needs one

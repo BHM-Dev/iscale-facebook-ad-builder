@@ -26,24 +26,25 @@ function pct(value) {
 
 function revenueSourceLabel(source) {
   if (!source || source === 'none') return 'None';
+  if (source === 'not_tracked') return 'Not tracked (Everflow only)';
   if (source === 'everflow_unavailable') return 'Switchboard unavailable';
   if (source.startsWith('everflow')) return source === 'everflow_live' ? 'Switchboard' : `Switchboard · ${source.replace('everflow_', '').replaceAll('_', ' ')}`;
-  if (source === 'redtrack_unavailable') return 'RedTrack unavailable';
-  if (source.startsWith('redtrack')) return source === 'redtrack_live' ? 'RedTrack' : `RedTrack · ${source.replace('redtrack_', '').replaceAll('_', ' ')}`;
   return source.replaceAll('_', ' ');
 }
 
 // Provider name only, without the live/fallback qualifier — for the page subhead,
 // where the qualifier already appears on the Billable Revenue tile.
 function revenueSourceName(source) {
-  if (!source || source === 'none') return 'RedTrack';
+  if (!source || source === 'none' || source === 'not_tracked') return 'Switchboard';
   if (source.startsWith('everflow')) return 'Switchboard';
-  if (source.startsWith('redtrack')) return 'RedTrack';
   return source.replaceAll('_', ' ');
 }
 
+// "not_tracked" isn't a degraded fetch — it's Everflow's intentional answer for
+// an account with no offer mapping (billable revenue is Everflow-only, no
+// RedTrack fallback). Only flag an actual live-pull failure as "Fallback".
 function isRevenueFallback(source) {
-  return source && !['everflow_live', 'redtrack_live'].includes(source);
+  return source === 'everflow_unavailable';
 }
 
 function monthValue(date = new Date()) {
