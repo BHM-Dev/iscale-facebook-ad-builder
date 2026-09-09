@@ -151,9 +151,9 @@ Facebook ad builder used daily by Joel Welch (media buyer). Connects to Meta Ads
 - Env vars: edit `.env` in the app path over SSH directly, then `docker compose -f docker-compose.prod.yml restart backend`. `VITE_`-prefixed vars are baked at build time and need `docker compose -f docker-compose.prod.yml build --no-cache frontend` instead of a plain restart — verify the served JS hash actually changed after (build-cache has silently served stale bundles before).
 - Code deploys auto-trigger on push to `develop`. Env var changes and ad-hoc scripts can now be done directly over SSH — **only message Golden (`D075KSE1A1L`) for something that genuinely needs his sign-off, not routine var additions.**
 - `REDTRACK_API_KEY` — confirmed added 2026-04-27.
-- `SWITCHBOARD_EVERFLOW_API_KEY` — pending. Source of truth for P&L billable revenue on validated Switchboard accounts.
-- `SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS` — pending. Comma-separated Meta account allow-list for accounts that should use Switchboard revenue instead of RedTrack.
-- `SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS` — pending. JSON map of Meta account id to exact Switchboard offer names, e.g. `{"act_...":["Get Business Coverage"]}`. Required so commercial, auto, and eventually home-services revenue stay tied to the matching Meta spend account.
+- `SWITCHBOARD_EVERFLOW_API_KEY` — **active**. Source of truth for P&L billable revenue on validated Switchboard accounts.
+- `SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS` — **active**: `act_521142087204815`. Comma-separated Meta account allow-list for accounts that should use Switchboard revenue instead of RedTrack.
+- `SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS` — **active**: `{"act_521142087204815":["Get Business Coverage"]}`. JSON map of Meta account id to exact Switchboard offer names. Required so commercial, auto, and eventually home-services revenue stay tied to the matching Meta spend account.
 - `SLACK_BOT_TOKEN` — confirm status with Golden.
 
 ---
@@ -497,9 +497,9 @@ Custom modal with backdrop blur, clear title, red button for destructive actions
 | `VITE_FACEBOOK_ACCESS_TOKEN` | Active |
 | `VITE_FACEBOOK_API_VERSION` | Active (`v24.0`) |
 | `REDTRACK_API_KEY` | Added 2026-04-27 |
-| `SWITCHBOARD_EVERFLOW_API_KEY` | Pending — Switchboard affiliate-realm revenue source for P&L |
-| `SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS` | Pending — comma-separated Meta accounts that use Switchboard revenue |
-| `SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS` | Pending — JSON account→offer map; e.g. Commercial Insurance → `Get Business Coverage`, Auto → `Fast Auto Quote.org` |
+| `SWITCHBOARD_EVERFLOW_API_KEY` | Active — Switchboard affiliate-realm revenue source for P&L |
+| `SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS` | Active — `act_521142087204815` |
+| `SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS` | Active — `{"act_521142087204815":["Get Business Coverage"]}` |
 | `SLACK_BOT_TOKEN` | Confirm with Golden |
 | `SLACK_SIGNING_SECRET` | Needed for Slack intelligence bot (Phase 2, not yet built) |
 | `CAPI_QUALITY_ACCOUNT_IDS` | Active, added 2026-08-28. Comma-separated `act_...` allowlist scoping the CAPI Match Quality feature (see below) to specific accounts. Currently `act_521142087204815,act_737291135429748` (RHO - Commercial Insurance, RHO 4). Unset = tracks every visible account — don't unset without reason, the unscoped version pulled ~26 mostly-dead legacy pixels. |
