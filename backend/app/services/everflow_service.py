@@ -14,6 +14,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+BASE_URL = "https://api.eflow.team"
 # Eastern, matching Switchboard/Everflow's own portal default (confirmed by
 # Steve 2026-09-09 — Everflow's revenue is the point of truth for billable
 # revenue, so our day/month boundaries must match its own bucketing or the two
