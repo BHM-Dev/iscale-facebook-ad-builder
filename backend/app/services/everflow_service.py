@@ -81,6 +81,27 @@ class EverflowService:
             "x-eflow-api-key": self.api_key,
         }
 
+    def get_raw_conversions(
+        self,
+        date_from: str | date,
+        date_to: str | date,
+        timezone_id: int = DEFAULT_TIMEZONE_ID,
+    ) -> list[dict]:
+        """Unfiltered conversion rows for a date range — no offer/account scoping.
+
+        For callers that bucket/filter rows themselves (e.g. the hourly offer-
+        performance monitor, which cares whether the conversion pipe is
+        flowing at all, not which Meta account gets billing credit for it).
+        P&L revenue paths should keep using get_revenue_by_adset /
+        get_revenue_by_adset_by_month, which apply the account-offer scoping
+        and ad-set attribution billable revenue actually needs.
+        """
+        if not self.is_configured():
+            raise RuntimeError("SWITCHBOARD_EVERFLOW_API_KEY not configured")
+        start = date_from.isoformat() if isinstance(date_from, date) else str(date_from)
+        end = date_to.isoformat() if isinstance(date_to, date) else str(date_to)
+        return self._fetch_conversion_rows(start, end, timezone_id)
+
     def get_revenue_by_adset(
         self,
         date_from: str | date,

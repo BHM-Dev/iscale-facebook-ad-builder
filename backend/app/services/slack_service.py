@@ -147,6 +147,84 @@ def send_check_summary(
         logger.warning("Slack summary error: %s", e)
 
 
+def send_offer_performance_alert(alerts: list) -> None:
+    """Post when an offer's just-closed hour falls well below its own trailing
+    7-day baseline for that same hour — catches tracking/DB outages like
+    Justin's 2026-09-09 crash, which silently zeroed an hour of conversions
+    with nobody noticing until Joel/Abel caught it live.
+
+    `alerts` is a list of dicts from offer_performance_service.check_offer_performance():
+    {offer, hour_label, date, actual_count, actual_revenue, baseline_avg}.
+    Silently no-ops if SLACK_BOT_TOKEN is not configured or alerts is empty.
+    """
+    token = _token()
+    if not token:
+        logger.debug("SLACK_BOT_TOKEN not set — skipping offer performance alert")
+        return
+    if not alerts:
+        return
+
+    lines = [":rotating_light: *Offer performance dip detected*"]
+    for a in alerts:
+        lines.append(
+            f">*{a['offer']}* — {a['hour_label']} ({a['date']}): "
+            f"{a['actual_count']} conversion(s) (${a['actual_revenue']:.2f}) vs. "
+            f"~{a['baseline_avg']} normal for this hour. Worth a quick check — "
+            f"could be a tracking/DB issue upstream (Switchboard/Everflow) rather than a real traffic drop."
+        )
+
+    try:
+        resp = httpx.post(
+            SLACK_API_URL,
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "channel": _channel(),
+                "text": "\n".join(lines),
+                "unfurl_links": False,
+                "unfurl_media": False,
+            },
+            timeout=5,
+        )
+        data = resp.json()
+        if not data.get("ok"):
+            logger.warning("Offer performance alert failed: %s", data.get("error"))
+    except Exception as e:
+        logger.warning("Offer performance alert error: %s", e)
+
+
+def send_offer_performance_monitor_down_alert(error: str) -> None:
+    """Post when the hourly offer-performance monitor itself can't reach
+    Everflow — distinct from a real dip alert, since a monitor gone blind
+    could otherwise mean an outage passes completely unnoticed (the exact
+    failure mode it exists to catch, one level removed). Caller throttles
+    this (offer_performance_service.py) so an extended outage doesn't spam.
+    Silently no-ops if SLACK_BOT_TOKEN is not configured.
+    """
+    token = _token()
+    if not token:
+        logger.debug("SLACK_BOT_TOKEN not set — skipping offer performance monitor-down alert")
+        return
+
+    text = (
+        ":warning: *Offer performance monitor couldn't reach Everflow* — "
+        "it's blind until this clears, so a real dip wouldn't be caught right now.\n"
+        f">*Error:* {error[:500]}"
+    )
+
+    try:
+        resp = httpx.post(
+            SLACK_API_URL,
+            headers={"Authorization": f"Bearer {token}"},
+            json={"channel": _channel(), "text": text, "unfurl_links": False, "unfurl_media": False},
+            timeout=5,
+        )
+        data = resp.json()
+        if not data.get("ok"):
+            logger.warning("Offer performance monitor-down alert failed: %s", data.get("error"))
+    except Exception as e:
+        logger.warning("Offer performance monitor-down alert error: %s", e)
+
+
 def send_drive_sync_alert(summary: str, detail: str = "") -> None:
     """Post a loud alert for Drive creative sync failures."""
     token = _token()

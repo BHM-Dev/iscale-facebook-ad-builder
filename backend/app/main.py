@@ -361,6 +361,27 @@ async def startup_event():
             finally:
                 db.close()
 
+        def scheduled_offer_performance_check():
+            """Hourly: catch Everflow conversion-flow outages (e.g. an
+            advertiser-side database crash) by comparing each tracked offer's
+            just-closed hour against its own trailing 7-day baseline for that
+            hour. Stateless — no DB session needed. Posts to Slack only when
+            an anomaly is found; silent otherwise. Built 2026-09-09 after
+            Justin's DB crash silently zeroed an hour of RHO conversions with
+            nobody noticing until Joel/Abel caught it live.
+            """
+            try:
+                from app.services.offer_performance_service import check_offer_performance
+                result = check_offer_performance()
+                if not result.get("checked"):
+                    print(f"⚠️  Offer performance check skipped: {result.get('reason')}")
+                elif result.get("alerts"):
+                    print(f"🔔 Offer performance alert(s): {result['alerts']}")
+                else:
+                    print("✅ Offer performance check: no anomalies")
+            except Exception as exc:
+                print(f"⚠️  Offer performance check error: {exc}")
+
         # These were stored on app.state so the login endpoint could fire them as
         # background tasks — that login trigger has been removed (see the note
         # above scheduled_meta_sync's docstring). Left assigned here in case
@@ -376,6 +397,7 @@ async def startup_event():
         scheduler.add_job(scheduled_drive_sync, 'interval', minutes=30, id='drive_creative_sync')
         scheduler.add_job(scheduled_token_check, 'cron', hour=13, minute=0, timezone='UTC', id='token_expiry_check')
         scheduler.add_job(scheduled_capi_quality_sync, 'cron', hour=14, minute=0, timezone='UTC', id='capi_quality_sync')
+        scheduler.add_job(scheduled_offer_performance_check, 'cron', minute=5, id='offer_performance_check')
         # Meta/RedTrack syncs no longer fire on login — those jobs can span every
         # visible ad account and several third-party API calls, delaying the login
         # response despite being registered as background tasks. The scheduler
@@ -383,7 +405,7 @@ async def startup_event():
         # UI are the only things that trigger a sync now.
         scheduler.start()
         app.state.scheduler = scheduler
-        print("✅ Scheduler started (auto-pause + RedTrack every 30 min | token expiry daily 13:00 UTC | CAPI quality daily 14:00 UTC)")
+        print("✅ Scheduler started (auto-pause + RedTrack every 30 min | token expiry daily 13:00 UTC | CAPI quality daily 14:00 UTC | offer performance hourly :05)")
     except Exception as e:
         print(f"⚠️  Could not start auto-pause scheduler: {e}")
 
