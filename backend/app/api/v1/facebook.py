@@ -242,6 +242,37 @@ def get_config(
     return {"ad_account_id": account_id}
 
 
+@router.get("/rate-limit-usage")
+def get_rate_limit_usage(
+    ad_account_id: Optional[str] = None,
+    service: FacebookService = Depends(get_facebook_service),
+    current_user: User = Depends(get_current_active_user),
+):
+    """How much of Meta's rate-limit budget this ad account has already used.
+
+    Read before starting a large batch so a media buyer knows whether there is
+    room, instead of finding out when the batch dies half-built. Costs one cheap
+    Graph call (`fields=id` on the account).
+
+    Never raises for telemetry reasons: if Meta sends no usage headers, or the
+    lookup itself fails, this returns `available: false` so the UI can stay
+    quiet rather than showing a fabricated 0%.
+    """
+    ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
+    try:
+        return service.get_rate_limit_usage(ad_account_id=ad_account_id)
+    except Exception as e:
+        logger.warning("Rate-limit usage lookup failed: %s", e)
+        return {
+            "account_id": ad_account_id,
+            "usage": None,
+            "app_usage": None,
+            "source": None,
+            "available": False,
+            "error": str(e),
+        }
+
+
 @router.get("/pages")
 def read_pages(
     service: FacebookService = Depends(get_facebook_service),
@@ -828,6 +859,13 @@ def upload_image(
             raise HTTPException(status_code=400, detail="image_url is required")
         image_hash = service.upload_image(image_url, ad_account_id)
         return {"image_hash": image_hash}
+    except HTTPException:
+        raise
+    except FacebookAPIError as e:
+        # Structured detail so the frontend can read the numeric code and detect
+        # a throttle — image upload is inside the per-ad bulk loop.
+        logger.exception("Upload image failed: %s", e)
+        raise HTTPException(status_code=502, detail={"message": str(e), "code": e.code, "subcode": e.subcode})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -868,6 +906,11 @@ def upload_video(
         return result
     except HTTPException:
         raise
+    except FacebookAPIError as e:
+        # Structured so a throttle during video upload reaches the bulk loop
+        # with its numeric code, same as the image/creative/ad routes.
+        logger.exception("Upload video failed: %s", e)
+        raise HTTPException(status_code=502, detail={"message": str(e), "code": e.code, "subcode": e.subcode})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

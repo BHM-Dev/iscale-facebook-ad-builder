@@ -105,6 +105,247 @@ class FacebookService:
             print(f"Error fetching ad accounts: {e}")
             raise e
 
+    # Meta returns usage telemetry on the headers of EVERY Graph response. These
+    # are the three it uses; which ones appear depends on the endpoint and token.
+    #   x-business-use-case-usage — per ad account, the one that matters here
+    #   x-app-usage               — per app, shared across every account
+    #   x-ad-account-usage        — older per-account header, still sent sometimes
+    USAGE_HEADERS = (
+        'x-business-use-case-usage',
+        'x-app-usage',
+        'x-ad-account-usage',
+    )
+
+    @staticmethod
+    def _header_lookup(headers, name):
+        """Case-insensitive header read.
+
+        requests gives the SDK a CaseInsensitiveDict for normal calls, but the
+        SDK's batch path constructs FacebookResponse with a plain dict — so we
+        cannot rely on the mapping being case-insensitive.
+        """
+        if not headers:
+            return None
+        try:
+            direct = headers.get(name)
+        except AttributeError:
+            return None
+        if direct is not None:
+            return direct
+        lowered = name.lower()
+        for key, value in headers.items():
+            if str(key).lower() == lowered:
+                return value
+        return None
+
+    @staticmethod
+    def _meta_error(e, prefix):
+        """Build a FacebookAPIError that preserves Meta's numeric code/subcode.
+
+        Without the code, the HTTP layer can only forward a flattened string and
+        callers lose the ability to tell a throttle (17 / 613 / 80000-family)
+        apart from a real rejection.
+        """
+        body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+        err = body.get('error', {}) if isinstance(body, dict) else {}
+        user_msg = err.get('error_user_msg') or err.get('message') or (
+            e.api_error_message() if hasattr(e, 'api_error_message') and callable(e.api_error_message) else str(e)
+        )
+        code = e.api_error_code() if hasattr(e, 'api_error_code') and callable(e.api_error_code) else err.get('code')
+        subcode = e.api_error_subcode() if hasattr(e, 'api_error_subcode') and callable(e.api_error_subcode) else err.get('error_subcode')
+        return FacebookAPIError(f"{prefix}: {user_msg}", code=code, subcode=subcode)
+
+    def get_rate_limit_usage(self, ad_account_id=None):
+        """Report how much of Meta's rate-limit budget this ad account has used.
+
+        Meta only reports usage on the headers of a real response, so this makes
+        the cheapest call available — reading just `id` off the ad account — and
+        parses the headers off it. One extra request buys an accurate reading,
+        because the counters reflect every call made before it.
+
+        Returns a dict that is always safe to render:
+            {
+              "account_id": "act_123",
+              "usage": {"call_count": 28, "total_cputime": 25, "total_time": 25,
+                        "estimated_time_to_regain_access": 0, "type": "ads_management"},
+              "app_usage": {...} | None,
+              "source": "x-ad-account-usage" | "x-business-use-case-usage" | "x-app-usage" | None,
+              "scope": "ad_account" | "business" | "app" | None,
+              "available": True/False,
+            }
+
+        `available: False` means Meta sent no usage headers. Callers must treat
+        that as "unknown", never as zero — reporting 0% when we simply could not
+        read it would be worse than saying nothing.
+        """
+        account = self._get_account(ad_account_id)
+        account_id = account.get_id_assured() if hasattr(account, 'get_id_assured') else str(account)
+
+        try:
+            response = self.api.call('GET', (account_id,), params={'fields': 'id'})
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            user_msg = err.get('error_user_msg') or err.get('message') or str(e)
+            code = e.api_error_code() if hasattr(e, 'api_error_code') and callable(e.api_error_code) else err.get('code')
+            subcode = e.api_error_subcode() if hasattr(e, 'api_error_subcode') and callable(e.api_error_subcode) else err.get('error_subcode')
+            raise FacebookAPIError(f"Facebook API: {user_msg}", code=code, subcode=subcode) from e
+
+        headers = response.headers() if hasattr(response, 'headers') and callable(response.headers) else {}
+
+        result = {
+            'account_id': account_id,
+            'usage': None,
+            'app_usage': None,
+            'source': None,
+            'scope': None,
+            'available': False,
+        }
+
+        app_raw = self._header_lookup(headers, 'x-app-usage')
+        if app_raw:
+            parsed = self._parse_usage_header(app_raw, account_id, 'x-app-usage')
+            if parsed:
+                result['app_usage'] = parsed
+
+        # Order matters, and it is the opposite of what the header names suggest.
+        #
+        # x-ad-account-usage is the only one that is genuinely per ad account, so
+        # it goes first — it is the number a media buyer can actually act on.
+        #
+        # x-business-use-case-usage is keyed by BUSINESS MANAGER id, not ad
+        # account id. With eight ad accounts under one business, its counters are
+        # aggregated across all of them, so reporting it as "this account" would
+        # attribute other accounts' call volume to whichever one was queried.
+        # It is still useful (it is the header Meta documents as authoritative)
+        # but it must be labelled business-wide, never per-account.
+        for header_name, scope in (
+            ('x-ad-account-usage', 'ad_account'),
+            ('x-business-use-case-usage', 'business'),
+        ):
+            raw = self._header_lookup(headers, header_name)
+            if not raw:
+                continue
+            parsed = self._parse_usage_header(raw, account_id, header_name)
+            if parsed:
+                result['usage'] = parsed
+                result['source'] = header_name
+                result['scope'] = scope
+                result['available'] = True
+                break
+
+        if not result['available'] and result['app_usage']:
+            # App-level is shared by every account this app touches — the least
+            # specific reading, but better than showing nothing. Labelled as such.
+            result['usage'] = result['app_usage']
+            result['source'] = 'x-app-usage'
+            result['scope'] = 'app'
+            result['available'] = True
+
+        return result
+
+    @staticmethod
+    def _parse_usage_header(raw, account_id, header_name=None):
+        """Normalize a Meta usage header into a flat dict of percentages.
+
+        The headers are JSON but not one consistent shape:
+          x-business-use-case-usage -> {"<id>": [{...}, ...]}  (keyed, list per id)
+          x-app-usage               -> {...}                    (flat object)
+        Returns None on anything unparseable — a malformed header must not take
+        down the caller, since this is telemetry, not a result.
+        """
+        import json as _json
+
+        if isinstance(raw, (dict, list)):
+            data = raw
+        else:
+            try:
+                data = _json.loads(raw)
+            except (TypeError, ValueError):
+                return None
+
+        entry = None
+        if isinstance(data, dict):
+            # Keyed by account or business id. Prefer this account's own entry;
+            # fall back to the only entry when the key is a business id we can't
+            # match against the account id we asked about.
+            numeric_id = str(account_id).replace('act_', '')
+            for key in (numeric_id, str(account_id)):
+                if key in data:
+                    entry = data[key]
+                    break
+            if entry is None:
+                values = [v for v in data.values() if isinstance(v, (list, dict))]
+                if len(values) == 1:
+                    entry = values[0]
+                elif not values:
+                    entry = data  # flat shape, e.g. x-app-usage
+        elif isinstance(data, list):
+            entry = data
+
+        if isinstance(entry, list):
+            if not entry:
+                return None
+            # More than one use-case can be reported; the binding constraint is
+            # whichever is highest, so surface that one rather than the first.
+            def _peak(item):
+                if not isinstance(item, dict):
+                    return -1
+                return max(
+                    [float(item.get(k) or 0) for k in ('call_count', 'total_cputime', 'total_time')]
+                    or [-1]
+                )
+            entry = max(entry, key=_peak)
+
+        if not isinstance(entry, dict):
+            return None
+
+        out = {}
+        for field in ('call_count', 'total_cputime', 'total_time'):
+            if field in entry:
+                try:
+                    out[field] = float(entry[field])
+                except (TypeError, ValueError):
+                    pass
+
+        # UNIT TRAP: Meta reports the wait in different units per header.
+        #   x-business-use-case-usage.estimated_time_to_regain_access -> MINUTES
+        #   x-ad-account-usage.reset_time_duration                    -> SECONDS
+        # Normalize both to SECONDS here so nothing downstream has to know which
+        # header answered. Treating the business-use-case value as seconds
+        # understated a 30-minute lockout as "about 1 minute", which would send a
+        # buyer straight back into a still-throttled account.
+        if 'estimated_time_to_regain_access' in entry:
+            try:
+                minutes = float(entry['estimated_time_to_regain_access'])
+                out['estimated_time_to_regain_access'] = minutes * 60
+            except (TypeError, ValueError):
+                pass
+
+        # x-ad-account-usage is a different shape entirely: a single
+        # `acc_id_util_pct` percentage plus a reset window, no per-metric
+        # breakdown. Map it onto call_count so callers have one field to read
+        # regardless of which header answered.
+        if 'call_count' not in out and 'acc_id_util_pct' in entry:
+            try:
+                out['call_count'] = float(entry['acc_id_util_pct'])
+            except (TypeError, ValueError):
+                pass
+        # Already seconds — no conversion, unlike the business-use-case field above.
+        if 'reset_time_duration' in entry and 'estimated_time_to_regain_access' not in out:
+            try:
+                out['estimated_time_to_regain_access'] = float(entry['reset_time_duration'])
+            except (TypeError, ValueError):
+                pass
+
+        if entry.get('type'):
+            out['type'] = entry['type']
+        # Which limit tier the account is on materially changes what these
+        # percentages are measured against — worth surfacing, not dropping.
+        if entry.get('ads_api_access_tier'):
+            out['access_tier'] = entry['ads_api_access_tier']
+        return out or None
+
     def _get_account(self, ad_account_id=None):
         """Helper to get AdAccount object."""
         if ad_account_id:
@@ -600,7 +841,14 @@ class FacebookService:
 
             image = AdImage(parent_id=account.get_id_assured())
             image[AdImage.Field.filename] = local_path
-            image.remote_create()
+            # Image upload is the FIRST Meta write for every ad in a bulk batch,
+            # so it is the most likely place a rate limit is hit. Preserve the
+            # numeric code so the launch loop can stop the batch instead of
+            # grinding the remaining ads into identical throttle errors.
+            try:
+                image.remote_create()
+            except FacebookRequestError as e:
+                raise self._meta_error(e, "Facebook API (image upload)") from e
 
             # Clean up temp file
             try:
@@ -613,7 +861,10 @@ class FacebookService:
             # Local file path
             image = AdImage(parent_id=account.get_id_assured())
             image[AdImage.Field.filename] = image_path_or_url
-            image.remote_create()
+            try:
+                image.remote_create()
+            except FacebookRequestError as e:
+                raise self._meta_error(e, "Facebook API (image upload)") from e
             return image[AdImage.Field.hash]
 
     def upload_video(self, video_path_or_url, ad_account_id=None, wait_for_ready=True, timeout=600):
@@ -660,7 +911,13 @@ class FacebookService:
             # Create and upload video
             video = AdVideo(parent_id=account.get_id_assured())
             video[AdVideo.Field.filepath] = local_path
-            video.remote_create()
+            # Same reason as image upload: this is a per-ad Meta write inside the
+            # bulk launch loop, so the throttle code has to survive or the loop
+            # cannot tell a rate limit apart from a real rejection.
+            try:
+                video.remote_create()
+            except FacebookRequestError as e:
+                raise self._meta_error(e, "Facebook API (video upload)") from e
 
             video_id = video['id']
             print(f"Video uploaded with ID: {video_id}")

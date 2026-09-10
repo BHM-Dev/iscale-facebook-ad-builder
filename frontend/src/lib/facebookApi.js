@@ -30,6 +30,31 @@ function buildFacebookApiError(errorBody, fallbackMessage) {
 }
 
 /**
+ * Read how much of Meta's rate-limit budget an ad account has used.
+ *
+ * Telemetry only — never throws. A failure or a missing header resolves to
+ * `{available: false}` so callers show nothing rather than a made-up 0%.
+ */
+export async function getRateLimitUsage(adAccountId) {
+    // Hard timeout: this sits in front of the Launch button, so a slow or hung
+    // response must not hold up an ad launch. Telemetry is worth a couple of
+    // seconds and not one more.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    try {
+        const qs = adAccountId ? `?ad_account_id=${encodeURIComponent(adAccountId)}` : '';
+        const response = await authFetch(`${API_BASE_URL}/rate-limit-usage${qs}`, { signal: controller.signal });
+        if (!response.ok) return { available: false };
+        return await response.json();
+    } catch (error) {
+        console.warn('Rate-limit usage unavailable:', error);
+        return { available: false };
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+/**
  * Get all ad accounts accessible by the access token
  */
 export async function getAdAccounts() {
@@ -236,7 +261,9 @@ export async function uploadVideoToFacebook(videoUrl, adAccountId, waitForReady 
 
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || 'Failed to upload video to Facebook');
+            // Structured so a Meta throttle during video upload carries its
+            // numeric code to the bulk launch loop, matching the image path.
+            throw buildFacebookApiError(error, 'Failed to upload video to Facebook');
         }
 
         return await response.json();
@@ -332,7 +359,9 @@ export async function uploadImageToFacebook(imageUrl, adAccountId) {
 
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || 'Failed to upload image to Facebook');
+            // Structured so a Meta throttle during upload carries its numeric
+            // code up to the bulk launch loop, which stops the batch on it.
+            throw buildFacebookApiError(error, 'Failed to upload image to Facebook');
         }
 
         const data = await response.json();

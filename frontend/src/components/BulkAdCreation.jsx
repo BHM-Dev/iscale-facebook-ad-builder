@@ -3,7 +3,8 @@ import { useAuth } from '../context/AuthContext';
 import React, { useState } from 'react';
 import { ChevronRight, Plus, Trash2, Loader, Film, Image } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
-import { createCompleteAd, createFacebookCampaign, createFacebookAdSet } from '../lib/facebookApi';
+import { createCompleteAd, createFacebookCampaign, createFacebookAdSet, getRateLimitUsage } from '../lib/facebookApi';
+import { INTER_REQUEST_DELAY_MS, USAGE_WARN_THRESHOLD, delay, isRateLimitError, peakUsagePercent, rateLimitStopMessage } from '../lib/metaRateLimit';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -14,6 +15,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState({ current: 0, total: 0, status: '' });
     const [errors, setErrors] = useState([]);
+    // Last Meta rate-limit reading, shown in the launch panel. null until
+    // a launch is attempted; `available: false` means Meta told us nothing.
+    const [rateLimitUsage, setRateLimitUsage] = useState(null);
+    // Per-row outcome of the last launch: which indexes were created and where a
+    // throttle stopped the batch. Without this the review list shows all N ads
+    // with no indication of which ones actually made it, leaving the user to
+    // reconcile against Ads Manager by hand.
+    const [launchOutcome, setLaunchOutcome] = useState(null);
 
     // Initialize ads based on creatives - generate all permutations
     React.useEffect(() => {
@@ -84,12 +93,45 @@ const BulkAdCreation = ({ onNext, onBack }) => {
 
         setLoading(true);
         setErrors([]);
+        setLaunchOutcome(null);
 
         // Determine format strategy at submission time (not stale closure)
         const feedAdsToCreate    = adsData.filter(ad => (ad.format || 'feed') !== 'stories');
         const storiesAdsToCreate = adsData.filter(ad => ad.format === 'stories');
         const isMixed      = feedAdsToCreate.length > 0 && storiesAdsToCreate.length > 0;
         const isAllStories = feedAdsToCreate.length === 0 && storiesAdsToCreate.length > 0;
+
+        setProgress({ current: 0, total: adsData.length, status: 'Checking Meta rate limits...' });
+
+        // Pre-flight: read how much of this account's Meta budget is already
+        // spent. Purely informational — a high reading does NOT block the
+        // launch, because Meta's percentages are advisory and a buyer may have
+        // a good reason to push on. It exists so a batch that is likely to be
+        // throttled halfway is a known risk rather than a surprise.
+        //
+        // `available: false` means Meta sent no usage headers. That is reported
+        // as unknown and never as 0% — a fabricated zero would be worse than
+        // saying nothing at all.
+        try {
+            const usage = await getRateLimitUsage(selectedAdAccount?.accountId);
+            setRateLimitUsage(usage);
+            if (usage?.available) {
+                const peak = peakUsagePercent(usage.usage);
+                if (peak !== null && peak >= USAGE_WARN_THRESHOLD) {
+                    // A warning with no recommended action just trains people
+                    // to click past it. Say what to do instead.
+                    showWarning(
+                        `This account is at ${Math.round(peak)}% of its Meta rate limit. `
+                        + `Launching ${adsData.length} ad${adsData.length === 1 ? '' : 's'} now may get throttled partway. `
+                        + `Safer: launch 5-10 at a time, or wait ~15 minutes for the limit to recover. `
+                        + `If it does throttle, the batch stops and marks which ads were created.`
+                    );
+                }
+            }
+        } catch (err) {
+            // Telemetry must never block a launch.
+            console.warn('Rate-limit pre-flight skipped:', err);
+        }
 
         setProgress({ current: 0, total: adsData.length, status: 'Starting...' });
 
@@ -294,7 +336,19 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             // ── Step 3: Ads ───────────────────────────────────────────────────────
             const createdAds = [];
             let failedCount = 0;
+            let rateLimited = false;
+            let attempted = 0;
+            const createdIndexes = [];
             for (let i = 0; i < adsData.length; i++) {
+                // Space out the per-ad Meta calls. Each iteration below is
+                // several writes (image upload + creative + ad), so a 20-ad
+                // batch fired back-to-back is a burst big enough to trip the
+                // account's limit partway through and leave a half-built
+                // campaign. Skipped before the first ad so a single ad is not
+                // needlessly delayed.
+                if (i > 0) await delay(INTER_REQUEST_DELAY_MS);
+
+                attempted = i + 1;
                 const ad = adsData[i];
                 const isStoriesAd   = ad.format === 'stories';
                 const adFbAdsetId   = isStoriesAd && fbStoriesAdsetId ? fbStoriesAdsetId : fbFeedAdsetId;
@@ -376,6 +430,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         throw new Error(`Failed to save ad locally: ${err.detail || err.message}`);
                     }
 
+                    createdIndexes.push(i);
                     createdAds.push({
                         ...ad,
                         fbAdId: result.adId,
@@ -386,10 +441,50 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     console.error(`Error creating ad ${ad.name}:`, error);
                     setErrors(prev => [...prev, `Failed to create ${ad.name}: ${error.message}`]);
                     failedCount++;
+
+                    // Meta throttled the account. Stop now rather than grinding
+                    // the remaining ads into a wall of identical errors — every
+                    // further attempt is guaranteed to fail and only pushes the
+                    // account deeper into the limit.
+                    if (isRateLimitError(error)) {
+                        rateLimited = true;
+                        setLaunchOutcome({ createdIndexes: [...createdIndexes], stoppedAtIndex: i });
+
+                        // Read the wait estimate NOW, not from the pre-flight
+                        // check. That reading was taken before the batch started
+                        // and describes a different moment — presenting it as the
+                        // estimate for the throttle that just happened would be a
+                        // number the user plans a retry around. If this read
+                        // fails (likely, the account is throttled), it resolves
+                        // to unavailable and the message falls back to generic
+                        // wording rather than inventing a figure.
+                        let regainSeconds = null;
+                        try {
+                            const fresh = await getRateLimitUsage(selectedAdAccount?.accountId);
+                            setRateLimitUsage(fresh);
+                            regainSeconds = fresh?.usage?.estimated_time_to_regain_access ?? null;
+                        } catch (usageErr) {
+                            console.warn('Post-throttle usage read failed:', usageErr);
+                        }
+
+                        setErrors(prev => [...prev, rateLimitStopMessage({
+                            created: createdAds.length,
+                            total: adsData.length,
+                            attempted,
+                            regainSeconds,
+                            notAttemptedNames: adsData.slice(i + 1).map(a => a.name).filter(Boolean),
+                        })]);
+                        break;
+                    }
                 }
             }
 
-            if (failedCount === 0) {
+            if (rateLimited) {
+                // Don't advance — the batch is incomplete by definition and Joel
+                // needs to see how far it got before deciding what to re-run.
+                setProgress({ current: attempted, total: adsData.length, status: `Stopped — ${createdAds.length} of ${adsData.length} ads created` });
+                setLoading(false);
+            } else if (failedCount === 0) {
                 // All ads created — auto-advance after brief success display
                 setProgress({ current: adsData.length, total: adsData.length, status: 'Complete!' });
                 setTimeout(() => { onNext(); }, 1500);
@@ -492,8 +587,31 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         {adsData.map((ad, index) => {
                             const creative = creativeData.creatives?.find(c => c.id === ad.creativeId);
                             const isVideo = creative?.mediaType === 'video';
+                            // After a throttled launch, say per row what happened.
+                            // "Not attempted" is the important one — those are the
+                            // ads still missing from Meta.
+                            let outcome = null;
+                            if (launchOutcome) {
+                                if (launchOutcome.createdIndexes.includes(index)) {
+                                    outcome = { label: 'Created', cls: 'bg-emerald-100 text-emerald-700' };
+                                } else if (index > launchOutcome.stoppedAtIndex) {
+                                    outcome = { label: 'Not attempted', cls: 'bg-amber-100 text-amber-800' };
+                                } else {
+                                    outcome = { label: 'Failed', cls: 'bg-red-100 text-red-700' };
+                                }
+                            }
                             return (
-                                <div key={ad.id} className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                <div key={ad.id} className={`flex items-center gap-3 p-4 rounded-lg border ${
+                                    outcome?.label === 'Not attempted'
+                                        ? 'bg-amber-50 border-amber-200'
+                                        : 'bg-gray-50 border-gray-200'
+                                }`}>
+                                    {/* Launch outcome (only after a stopped batch) */}
+                                    {outcome && (
+                                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${outcome.cls}`}>
+                                            {outcome.label}
+                                        </span>
+                                    )}
                                     {/* Format badge */}
                                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
                                         ad.format === 'stories'
@@ -559,6 +677,47 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         <Plus size={20} />
                         Add a Custom Ad
                     </button>
+
+                    {/* Meta rate-limit reading from the last launch attempt. Shown
+                        only when Meta actually reported usage — when it doesn't,
+                        this stays hidden rather than implying 0%. */}
+                    {rateLimitUsage?.available && peakUsagePercent(rateLimitUsage.usage) !== null && (
+                        <div className="mt-6">
+                            {(() => {
+                                const peak = Math.round(peakUsagePercent(rateLimitUsage.usage));
+                                const hot = peak >= USAGE_WARN_THRESHOLD;
+                                // Label the scope honestly. x-business-use-case-usage is
+                                // keyed by Business Manager, so with eight ad accounts under
+                                // one business its counters are shared across all of them —
+                                // calling that "this ad account" would be wrong.
+                                const scope = {
+                                    ad_account: 'this ad account',
+                                    business: 'shared across the business',
+                                    app: 'shared app-wide',
+                                }[rateLimitUsage.scope] || 'scope unknown';
+                                return (
+                                    <div className={`rounded-lg border px-4 py-3 text-sm ${hot ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-gray-50 border-gray-200 text-gray-700'}`}>
+                                        <div className="flex items-center justify-between gap-3">
+                                            <span>
+                                                Meta rate limit — <strong>{peak}%</strong> used ({scope})
+                                            </span>
+                                            <div className="h-1.5 w-32 shrink-0 rounded-full bg-gray-200 overflow-hidden">
+                                                <div
+                                                    className={`h-full rounded-full ${hot ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                                                    style={{ width: `${Math.min(100, peak)}%` }}
+                                                />
+                                            </div>
+                                        </div>
+                                        {hot && (
+                                            <p className="mt-1 text-xs">
+                                                Launch 5-10 ads at a time, or wait ~15 minutes. A throttled batch stops and marks which ads were created.
+                                            </p>
+                                        )}
+                                    </div>
+                                );
+                            })()}
+                        </div>
+                    )}
 
                     {/* Errors — partial launch failure */}
                     {errors.length > 0 && (

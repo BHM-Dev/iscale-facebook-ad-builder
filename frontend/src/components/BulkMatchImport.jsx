@@ -6,6 +6,7 @@ import { UploadCloud, Loader, FileText, Image as ImageIcon, CheckCircle2, AlertT
 import { useCampaign } from '../context/CampaignContext';
 import { createCompleteAd, createFacebookCampaign, createFacebookAdSet } from '../lib/facebookApi';
 import { CTA_OPTIONS, HEADLINE_LIMIT, BODY_LIMIT } from './AdCreativeStep';
+import { INTER_REQUEST_DELAY_MS, delay, isRateLimitError } from '../lib/metaRateLimit';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -16,20 +17,16 @@ const FILENAME_PATTERN = /^ad(\d+)-.*-(1x1|9x16)\.(png|jpe?g)$/i;
 // rather than silently chunking — simpler and safer than auto-splitting.
 const MAX_ADS_PER_ADSET = 50;
 
-// Small unconditional delay between per-row Meta calls so a 100-row batch
-// doesn't hammer the API back-to-back. Not a substitute for real backoff —
-// just enough spacing to avoid tripping app-level rate limits on a burst.
-const INTER_ROW_DELAY_MS = 350;
-
-// Meta throttle / rate-limit error codes (Application request limit reached,
-// Ad account limit, and the 80000-80014 custom-throttle family). If a row
-// fails with one of these we stop the batch immediately instead of grinding
-// through the rest into a wall of identical errors.
-const RATE_LIMIT_ERROR_CODES = new Set([17, 613, 80000, 80001, 80002, 80003, 80004, 80005, 80006, 80007, 80008, 80009, 80010, 80011, 80012, 80013, 80014]);
-
-function delay(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
+// Rate-limit spacing, throttle codes and the delay helper are shared with the
+// ad-launch loop in BulkAdCreation.jsx — see lib/metaRateLimit.js, so the CODE
+// LIST cannot drift between the two paths that write to Meta.
+//
+// The user-facing throttle message below is still this file's own, not the
+// shared rateLimitStopMessage(): that one warns against re-launching because
+// BulkAdCreation cannot resume, whereas this importer's rows are driven from a
+// CSV the user can trim and re-upload. Different recovery, so different advice
+// — deliberate, not drift.
+const INTER_ROW_DELAY_MS = INTER_REQUEST_DELAY_MS;
 
 // Extracts the digits from any ad-number format ("12", "AD 12", "ad-12",
 // "012") and drops leading zeros, so both sides of the CSV/filename join
@@ -517,7 +514,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                     setErrors((prev) => [...prev, `Failed to create AD ${row.adNumber}: ${error.message}`]);
                     failedCount++;
 
-                    if (RATE_LIMIT_ERROR_CODES.has(error.metaErrorCode)) {
+                    if (isRateLimitError(error)) {
                         rateLimited = true;
                         const remaining = readyRows.length - (i + 1);
                         setErrors((prev) => [...prev, `Meta rate-limited this account — stopping batch. ${createdAds.length} of ${readyRows.length} ads created. ${remaining} row${remaining !== 1 ? 's' : ''} not attempted — wait a few minutes and retry.`]);
