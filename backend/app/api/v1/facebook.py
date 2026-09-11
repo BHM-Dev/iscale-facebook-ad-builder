@@ -1,4 +1,5 @@
 import logging
+import time
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -318,6 +319,15 @@ def sync_from_meta(
     created_adsets = 0
     updated_adsets = 0
 
+    # Only pace accounts large enough to actually risk the burst limit (the
+    # only one confirmed to trip it, RHO, has 92 campaigns). Most accounts
+    # have well under this and would otherwise pay 1.5s/campaign of pure
+    # wait for no reason — this endpoint already tolerates long-running
+    # calls (uvicorn's --timeout-keep-alive 300 was raised for kie.ai
+    # polling), so pacing a large account's sync is within that budget.
+    PACE_THRESHOLD = 20
+    should_pace = len(campaigns_raw) > PACE_THRESHOLD
+
     for c in campaigns_raw:
         fb_id = str(c.get("id") or c.get(FacebookCampaign.__table__.c.get("fb_campaign_id", "id"), ""))
         if not fb_id:
@@ -352,11 +362,47 @@ def sync_from_meta(
 
         db.flush()  # ensure campaign_db.id is available
 
-        # Sync ad sets for this campaign
+        # Sync ad sets for this campaign. A tight per-campaign loop on a
+        # large account (e.g. RHO's 92 campaigns) reliably trips Meta's
+        # burst rate limit ("User request limit reached", code 17) partway
+        # through, silently truncating the sync — confirmed live 2026-09-11,
+        # only ~29/92 campaigns got through before every remaining
+        # get_adsets call failed and was skipped, leaving real ad sets (and
+        # the Everflow revenue attributed to them) permanently missing from
+        # FacebookAdSet. Paced with a short sleep between calls, plus one
+        # retry honoring Meta's own estimated wait on an actual rate-limit
+        # error, so a throttling blip doesn't cost that campaign's ad sets
+        # for the whole sync. A non-rate-limit error (bad/deleted campaign,
+        # permissions) is NOT retried — retrying that just wastes time and
+        # would misreport a real API error as if it were throttling.
+        RATE_LIMIT_CODES = {4, 17, 32, 613, 80004}
         try:
             adsets_raw = service.get_adsets(campaign_id=fb_id)
-        except Exception:
-            continue
+        except Exception as e:
+            # Only a FacebookRequestError carrying a known rate-limit code is
+            # worth retrying. Anything else (network blip, a genuinely
+            # deleted/permission-denied campaign, a non-Facebook exception)
+            # is skipped exactly as it always was — retrying those would
+            # just misreport a real failure in the logs as throttling.
+            code = e.api_error_code() if isinstance(e, FacebookRequestError) and hasattr(e, "api_error_code") else None
+            if code not in RATE_LIMIT_CODES:
+                logger.warning("facebook.sync: get_adsets failed for campaign %s (code %s): %s", fb_id, code, e)
+                continue
+            wait = 5
+            try:
+                wait = max(wait, int(e.body().get("error", {}).get("error_data", {}).get("estimated_time_to_regain_access", 0)))
+            except Exception:
+                pass
+            logger.warning("facebook.sync: rate limited on campaign %s (code %s), backing off %ss", fb_id, code, wait)
+            time.sleep(wait)
+            try:
+                adsets_raw = service.get_adsets(campaign_id=fb_id)
+            except Exception as e2:
+                logger.warning("facebook.sync: get_adsets failed for campaign %s after backoff retry: %s", fb_id, e2)
+                continue
+        finally:
+            if should_pace:
+                time.sleep(1.5)
 
         for a in adsets_raw:
             fb_adset_id = str(a.get("id") or "")
