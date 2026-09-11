@@ -206,20 +206,17 @@ class FacebookService:
         if app_raw:
             parsed = self._parse_usage_header(app_raw, account_id, 'x-app-usage')
             if parsed:
+                parsed.pop('_key_matched_account', None)
                 result['app_usage'] = parsed
 
-        # Order matters, and it is the opposite of what the header names suggest.
+        # x-ad-account-usage is per ad account by definition, so it goes first.
         #
-        # x-ad-account-usage is the only one that is genuinely per ad account, so
-        # it goes first — it is the number a media buyer can actually act on.
-        #
-        # x-business-use-case-usage is keyed by BUSINESS MANAGER id, not ad
-        # account id. With eight ad accounts under one business, its counters are
-        # aggregated across all of them, so reporting it as "this account" would
-        # attribute other accounts' call volume to whichever one was queried.
-        # It is still useful (it is the header Meta documents as authoritative)
-        # but it must be labelled business-wide, never per-account.
-        for header_name, scope in (
+        # x-business-use-case-usage CAN be keyed by Business Manager id, in which
+        # case its counters aggregate several ad accounts — but a live response
+        # on 2026-09-10 came back keyed by the ad account id instead. Rather than
+        # assume either way, _parse_usage_header reports whether the key matched
+        # the account we asked about and the scope is labelled from that.
+        for header_name, default_scope in (
             ('x-ad-account-usage', 'ad_account'),
             ('x-business-use-case-usage', 'business'),
         ):
@@ -228,9 +225,13 @@ class FacebookService:
                 continue
             parsed = self._parse_usage_header(raw, account_id, header_name)
             if parsed:
+                matched = parsed.pop('_key_matched_account', False)
                 result['usage'] = parsed
                 result['source'] = header_name
-                result['scope'] = scope
+                # x-ad-account-usage is per-account by definition. The
+                # business-use-case header is only per-account when its key was
+                # actually this account id — otherwise it is aggregated.
+                result['scope'] = 'ad_account' if (default_scope == 'ad_account' or matched) else 'business'
                 result['available'] = True
                 break
 
@@ -265,18 +266,27 @@ class FacebookService:
                 return None
 
         entry = None
+        # Whether the header key is THIS ad account, which decides how the
+        # reading may be labelled. Verified against a live response 2026-09-10:
+        # x-business-use-case-usage came back keyed by the ad account id
+        # (521142087204815), not a Business Manager id. It can be keyed by
+        # business id in other setups, so this is detected per response rather
+        # than assumed either way — mislabelling business-wide usage as "this
+        # account" (or the reverse) tells a media buyer something untrue.
+        key_matched_account = False
         if isinstance(data, dict):
-            # Keyed by account or business id. Prefer this account's own entry;
-            # fall back to the only entry when the key is a business id we can't
-            # match against the account id we asked about.
             numeric_id = str(account_id).replace('act_', '')
             for key in (numeric_id, str(account_id)):
                 if key in data:
                     entry = data[key]
+                    key_matched_account = True
                     break
             if entry is None:
                 values = [v for v in data.values() if isinstance(v, (list, dict))]
                 if len(values) == 1:
+                    # A single entry under a key we don't recognise — most likely
+                    # a business id aggregating several ad accounts. Usable, but
+                    # it must not be presented as this account's own usage.
                     entry = values[0]
                 elif not values:
                     entry = data  # flat shape, e.g. x-app-usage
@@ -340,11 +350,22 @@ class FacebookService:
 
         if entry.get('type'):
             out['type'] = entry['type']
+
+        # Capture this BEFORE adding the marker below. The marker is always set,
+        # so it would make `out` unconditionally truthy and turn the "nothing
+        # parseable in this header" case into a reading that looks available but
+        # carries no numbers.
+        had_data = bool(out)
+
+        # Consumed by get_rate_limit_usage to label scope; stripped before the
+        # dict is returned to callers.
+        out['_key_matched_account'] = key_matched_account
         # Which limit tier the account is on materially changes what these
         # percentages are measured against — worth surfacing, not dropping.
         if entry.get('ads_api_access_tier'):
             out['access_tier'] = entry['ads_api_access_tier']
-        return out or None
+            had_data = True
+        return out if had_data else None
 
     def _get_account(self, ad_account_id=None):
         """Helper to get AdAccount object."""
