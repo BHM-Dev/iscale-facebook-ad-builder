@@ -6,6 +6,7 @@ import { useToast } from '../context/ToastContext';
 import { useBrands } from '../context/BrandContext';
 import { useCampaign } from '../context/CampaignContext';
 import { VERTICAL_FILTERS } from '../lib/verticals';
+import AskAiWidget from './AskAiWidget';
 
 // BHM mark — gradient circle with horizon lines, sized for 40×40 container
 function BHMLogo({ size = 40 }) {
@@ -364,6 +365,7 @@ export default function Layout() {
                     <Outlet />
                 </div>
             </main>
+            <AskAiWidget />
         </div>
     );
 }

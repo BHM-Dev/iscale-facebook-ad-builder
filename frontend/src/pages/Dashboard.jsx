@@ -1,109 +1,13 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown, PauseCircle, MessageSquare, Send, Sparkles, DollarSign, Zap, Info, ChevronRight } from 'lucide-react';
+import { AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown, PauseCircle, DollarSign, Zap, Info, ChevronRight } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
 import { useCampaign } from '../context/CampaignContext';
-import { useAuth } from '../context/AuthContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
-function pnlRevenueSourceLabel(source) {
-  if (!source || source === 'none') return 'None';
-  if (source === 'not_tracked') return 'Not tracked (Everflow only)';
-  if (source === 'everflow_unavailable') return 'Switchboard unavailable';
-  if (source.startsWith('everflow')) return source === 'everflow_live' ? 'Switchboard' : `Switchboard · ${source.replace('everflow_', '').replaceAll('_', ' ')}`;
-  return source.replaceAll('_', ' ');
-}
-
 const normalizeStatus = (status) => (status || '').toString().toUpperCase();
-
-function MarkdownAnswer({ text }) {
-  const lines = text.split('\n');
-  const elements = [];
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-
-    // Horizontal rule
-    if (/^---+$/.test(line.trim())) {
-      elements.push(<hr key={i} className="my-3 border-gray-200" />);
-      i++; continue;
-    }
-
-    // Table: detect header row followed by separator
-    if (i + 1 < lines.length && /^\|.*\|$/.test(line) && /^\|[-| :]+\|$/.test(lines[i + 1])) {
-      const headers = line.split('|').filter((_, idx, arr) => idx > 0 && idx < arr.length - 1).map(h => h.trim());
-      i += 2; // skip header + separator
-      const rows = [];
-      while (i < lines.length && /^\|.*\|$/.test(lines[i])) {
-        const cells = lines[i].split('|').filter((_, idx, arr) => idx > 0 && idx < arr.length - 1).map(c => c.trim());
-        rows.push(cells);
-        i++;
-      }
-      elements.push(
-        <div key={`table-${i}`} className="overflow-x-auto my-2">
-          <table className="text-xs w-full border-collapse">
-            <thead>
-              <tr className="bg-gray-100">
-                {headers.map((h, hi) => (
-                  <th key={hi} className="px-2 py-1.5 text-left font-semibold text-gray-700 border border-gray-200">{renderInline(h)}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, ri) => (
-                <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                  {row.map((cell, ci) => (
-                    <td key={ci} className="px-2 py-1.5 border border-gray-200 text-gray-700">{renderInline(cell)}</td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      );
-      continue;
-    }
-
-    // Heading ##
-    const h2 = line.match(/^##\s+(.+)/);
-    if (h2) {
-      elements.push(<p key={i} className="font-semibold text-gray-900 text-sm mt-3 mb-1">{renderInline(h2[1])}</p>);
-      i++; continue;
-    }
-
-    // Heading ###
-    const h3 = line.match(/^###\s+(.+)/);
-    if (h3) {
-      elements.push(<p key={i} className="font-medium text-gray-800 text-sm mt-2 mb-0.5">{renderInline(h3[1])}</p>);
-      i++; continue;
-    }
-
-    // Blank line
-    if (line.trim() === '') {
-      elements.push(<div key={i} className="h-1.5" />);
-      i++; continue;
-    }
-
-    // Regular paragraph
-    elements.push(<p key={i} className="text-sm text-gray-800 leading-relaxed">{renderInline(line)}</p>);
-    i++;
-  }
-
-  return <div className="space-y-0.5">{elements}</div>;
-}
-
-function renderInline(text) {
-  // Split on **bold** markers
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
-  return parts.map((part, i) => {
-    const bold = part.match(/^\*\*(.+)\*\*$/);
-    if (bold) return <strong key={i} className="font-semibold text-gray-900">{bold[1]}</strong>;
-    return part;
-  });
-}
 
 const PRESETS = [
   { value: 'today',    label: 'Today' },
@@ -519,7 +423,6 @@ function DateFilter({ preset, setPreset, dateFrom, setDateFrom, dateTo, setDateT
 export default function Dashboard() {
   const navigate = useNavigate();
   const { showSuccess, showError, showWarning } = useToast();
-  const { hasPermission } = useAuth();
   const { activeAccountId, activeAccountLoading, adAccounts } = useCampaign();
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -532,12 +435,6 @@ export default function Dashboard() {
   const [nicheSummary, setNicheSummary] = useState([]);
   const [rules, setRules] = useState([]);
 
-  // AI Insights panel state
-  const [aiQuery, setAiQuery] = useState('');
-  const [aiAnswer, setAiAnswer] = useState('');
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiDatePreset, setAiDatePreset] = useState('last_7d');
-  const [showAiExamples, setShowAiExamples] = useState(false);
   const [budgetPopover, setBudgetPopover] = useState(null);
   const [campaignBudgetInput, setCampaignBudgetInput] = useState('');
   const [campaignBudgetType, setCampaignBudgetType] = useState('CBO');
@@ -549,8 +446,6 @@ export default function Dashboard() {
   const [quickGeneratingAdsets, setQuickGeneratingAdsets] = useState(new Set());
   const [collapsedSections, setCollapsedSections] = useState({});
   const [expandedSections, setExpandedSections] = useState({});
-  const [pnlSummary, setPnlSummary] = useState(null);
-  const [pnlLoading, setPnlLoading] = useState(false);
 
   // Date filter state
   const [preset, setPreset] = useState(() => localStorage.getItem('bhm_date_preset') || 'today');
@@ -825,56 +720,8 @@ export default function Dashboard() {
     }
   };
 
-  const askAI = async () => {
-    if (!aiQuery.trim() || aiLoading) return;
-    setAiLoading(true);
-    setAiAnswer('');
-    try {
-      const res = await authFetch(`${API_URL}/ai-insights/query`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: aiQuery.trim(), ad_account_id: activeAccountId || undefined, date_preset: aiDatePreset }),
-      });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Query failed'); }
-      const data = await res.json();
-      setAiAnswer(data.answer);
-    } catch (e) {
-      showError(e.message || 'AI query failed — try again');
-    } finally {
-      setAiLoading(false);
-    }
-  };
-
   // Initial load + account switcher reload
   useEffect(() => { load(activeRange); }, [load, activeRange]);
-
-  useEffect(() => {
-    if (!hasPermission('pnl:read')) {
-      setPnlSummary(null);
-      return;
-    }
-    if (activeAccountLoading) return;
-    let cancelled = false;
-    const loadPnl = async () => {
-      setPnlLoading(true);
-      try {
-        const params = new URLSearchParams({
-          ad_account_id: 'all',
-          period: 'mtd',
-        });
-        const res = await authFetch(`${API_URL}/pnl/summary?${params}`);
-        if (!res.ok) throw new Error('Profit/Loss unavailable');
-        const data = await res.json();
-        if (!cancelled) setPnlSummary(data);
-      } catch {
-        if (!cancelled) setPnlSummary(null);
-      } finally {
-        if (!cancelled) setPnlLoading(false);
-      }
-    };
-    loadPnl();
-    return () => { cancelled = true; };
-  }, [activeAccountLoading, hasPermission]);
 
   function handleApply(range) {
     setActiveRange(range);
@@ -1199,51 +1046,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {hasPermission('pnl:read') && (pnlSummary || pnlLoading) && (
-        <Link
-          to="/pnl"
-          className="block rounded-xl border border-green-100 bg-white p-4 shadow-sm transition-colors hover:border-green-200 hover:bg-green-50/30"
-        >
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
-                <DollarSign size={15} className="text-green-600" />
-                Running Profit/Loss
-              </div>
-              <div className="mt-0.5 text-xs text-gray-400">
-                {pnlSummary ? `MTD · ${pnlSummary.date_from} – ${pnlSummary.date_to}` : 'Loading month-to-date profit view'}
-              </div>
-            </div>
-            <div className="flex items-center gap-1 text-xs font-medium text-green-700">
-              View full Profit/Loss <ArrowRight size={12} />
-            </div>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            {[
-              ['Ad Spend', pnlLoading ? '—' : formatMoney(pnlSummary?.spend), 'Meta'],
-              ['Billable Revenue', pnlLoading ? '—' : formatMoney(pnlSummary?.revenue), pnlRevenueSourceLabel(pnlSummary?.revenue_source)],
-              ['Gross Profit', pnlLoading ? '—' : formatMoney(pnlSummary?.gross_profit), 'revenue - spend'],
-              ['Monthly Costs', pnlLoading ? '—' : formatMoney(pnlSummary?.other_costs), pnlSummary?.has_costs ? `${pnlSummary.costs?.length || 0} entries` : 'No costs'],
-              ['Net Profit', pnlLoading ? '—' : formatMoney(pnlSummary?.net_profit), pnlSummary?.data_incomplete ? 'Incomplete' : 'Net'],
-            ].map(([label, value, caption]) => {
-              const isNet = label === 'Net Profit';
-              const tone = isNet && !pnlSummary?.data_incomplete && pnlSummary?.has_costs && pnlSummary?.net_profit > 0
-                ? 'text-green-600'
-                : isNet && !pnlSummary?.data_incomplete && pnlSummary?.has_costs && pnlSummary?.net_profit < 0
-                  ? 'text-red-600'
-                  : 'text-gray-900';
-              return (
-                <div key={label} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-3">
-                  <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">{label}</div>
-                  <div className={`mt-1 text-lg font-bold ${tone}`}>{value}</div>
-                  <div className="mt-0.5 text-[11px] text-gray-400">{caption}</div>
-                </div>
-              );
-            })}
-          </div>
-        </Link>
-      )}
-
       {/* Insights error banner */}
       {insightsError && !loading && (
         <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
@@ -1251,101 +1053,6 @@ export default function Dashboard() {
           {insightsError}
         </div>
       )}
-
-      {/* Ask AI */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="flex items-center gap-2 px-5 pt-4 pb-3 border-b border-gray-100">
-          <Sparkles size={15} className="text-violet-500" />
-          <span className="text-sm font-semibold text-gray-900">Ask AI</span>
-          <span className="hidden sm:inline text-xs font-normal text-gray-400">powered by Claude + live Meta data</span>
-        </div>
-        <div className="px-5 pb-5 pt-3">
-            <div className="flex gap-2 mb-2">
-              {[
-                { value: 'yesterday', label: 'Yesterday' },
-                { value: 'last_3d',   label: 'Last 3 Days' },
-                { value: 'last_7d',   label: 'Last 7 Days' },
-                { value: 'last_30d',  label: 'Last 30 Days' },
-                { value: 'this_month', label: 'MTD' },
-              ].map(p => (
-                <button
-                  key={p.value}
-                  onClick={() => setAiDatePreset(p.value)}
-                  className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                    aiDatePreset === p.value
-                      ? 'border-violet-400 bg-violet-50 text-violet-700 font-medium'
-                      : 'border-gray-200 text-gray-500 hover:border-violet-300 hover:text-violet-600'
-                  }`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={aiQuery}
-                onChange={e => setAiQuery(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && askAI()}
-                placeholder="e.g. What are my worst performing ad sets this week?"
-                className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-transparent"
-                disabled={aiLoading}
-              />
-              <button
-                onClick={askAI}
-                disabled={aiLoading || !aiQuery.trim()}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex-shrink-0"
-              >
-                {aiLoading
-                  ? <><RefreshCw size={13} className="animate-spin" /> Thinking...</>
-                  : <><Send size={13} /> Ask</>
-                }
-              </button>
-            </div>
-            {!aiAnswer && !aiLoading && (
-              <div className="mt-2">
-                <button
-                  onClick={() => setShowAiExamples(v => !v)}
-                  className="text-xs text-gray-400 hover:text-violet-600 transition-colors flex items-center gap-1"
-                >
-                  Examples {showAiExamples ? '▴' : '▾'}
-                </button>
-                {showAiExamples && (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {[
-                      'What are my worst ad sets today?',
-                      'Which creatives have the highest CPL?',
-                      'Show me frequency issues across all campaigns',
-                      'Any pixel or tracking problems I should know about?',
-                    ].map(q => (
-                      <button
-                        key={q}
-                        onClick={() => { setAiQuery(q); setShowAiExamples(false); }}
-                        className="text-xs px-2.5 py-1 rounded-full border border-gray-200 text-gray-500 hover:border-violet-300 hover:text-violet-600 transition-colors"
-                      >
-                        {q}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            {aiAnswer && (
-              <div className="mt-3 p-4 bg-gray-50 rounded-lg border border-gray-100">
-                <div className="flex items-start gap-2">
-                  <MessageSquare size={14} className="text-violet-400 flex-shrink-0 mt-0.5" />
-                  <MarkdownAnswer text={aiAnswer} />
-                </div>
-                <button
-                  onClick={() => { setAiAnswer(''); setAiQuery(''); }}
-                  className="mt-2 text-xs text-gray-400 hover:text-gray-600 transition-colors"
-                >
-                  Clear
-                </button>
-              </div>
-            )}
-          </div>
-      </div>
 
       {/* KPI Row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
