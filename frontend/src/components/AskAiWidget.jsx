@@ -32,15 +32,80 @@ function renderInline(text) {
 
 function MarkdownAnswer({ text }) {
   if (!text) return null;
-  return (
-    <div className="space-y-1">
-      {text.split('\n').map((line, index) => (
-        line.trim()
-          ? <p key={index} className="text-sm leading-relaxed">{renderInline(line)}</p>
-          : <div key={index} className="h-1" />
-      ))}
-    </div>
-  );
+  const lines = text.split('\n');
+  const elements = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Horizontal rule
+    if (/^---+$/.test(line.trim())) {
+      elements.push(<hr key={i} className="my-3 border-gray-200" />);
+      i++; continue;
+    }
+
+    // Table: header row followed by separator row
+    if (i + 1 < lines.length && /^\|.*\|$/.test(line) && /^\|[-| :]+\|$/.test(lines[i + 1])) {
+      const headers = line.split('|').filter((_, idx, arr) => idx > 0 && idx < arr.length - 1).map(h => h.trim());
+      i += 2; // skip header + separator
+      const rows = [];
+      while (i < lines.length && /^\|.*\|$/.test(lines[i])) {
+        const cells = lines[i].split('|').filter((_, idx, arr) => idx > 0 && idx < arr.length - 1).map(c => c.trim());
+        rows.push(cells);
+        i++;
+      }
+      elements.push(
+        <div key={`table-${i}`} className="my-2 overflow-x-auto">
+          <table className="w-full border-collapse text-xs">
+            <thead>
+              <tr className="bg-gray-100">
+                {headers.map((h, hi) => (
+                  <th key={hi} className="border border-gray-200 px-2 py-1.5 text-left font-semibold text-gray-700">{renderInline(h)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, ri) => (
+                <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                  {row.map((cell, ci) => (
+                    <td key={ci} className="border border-gray-200 px-2 py-1.5 text-gray-700">{renderInline(cell)}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+      continue;
+    }
+
+    // Heading ##
+    const h2 = line.match(/^##\s+(.+)/);
+    if (h2) {
+      elements.push(<p key={i} className="mb-1 mt-3 text-sm font-semibold text-gray-900">{renderInline(h2[1])}</p>);
+      i++; continue;
+    }
+
+    // Heading ###
+    const h3 = line.match(/^###\s+(.+)/);
+    if (h3) {
+      elements.push(<p key={i} className="mb-0.5 mt-2 text-sm font-medium text-gray-800">{renderInline(h3[1])}</p>);
+      i++; continue;
+    }
+
+    // Blank line
+    if (line.trim() === '') {
+      elements.push(<div key={i} className="h-1.5" />);
+      i++; continue;
+    }
+
+    // Regular paragraph
+    elements.push(<p key={i} className="text-sm leading-relaxed text-gray-800">{renderInline(line)}</p>);
+    i++;
+  }
+
+  return <div className="space-y-0.5">{elements}</div>;
 }
 
 export default function AskAiWidget() {
@@ -86,7 +151,7 @@ export default function AskAiWidget() {
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3">
+    <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-3">
       {open && (
         <div className="w-[min(28rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
           <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
