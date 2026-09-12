@@ -529,22 +529,36 @@ export default function Dashboard() {
       ]);
 
       if (!metaRes.ok) { const e = await metaRes.json(); throw new Error(e.detail || 'Meta sync failed'); }
+      // complete:false means Meta throttled part of the ad set fetch, so the
+      // local ad set table — and therefore P&L's Everflow revenue matching —
+      // is missing rows. Warn instead of reporting a clean sync.
+      const metaResult = await metaRes.json().catch(() => ({}));
+      const metaIncomplete = metaResult.complete === false;
       // RedTrack failure must never be silently absorbed (audit finding
       // 2026-08-21: this used to be .catch(() => null) with the response
       // discarded entirely) — Steve refreshing this page needs to know
       // revenue may be stale even though Meta's ad structure just synced.
-      if (!rtRes || !rtRes.ok) {
+      const rtFailed = !rtRes || !rtRes.ok;
+      // Meta and RedTrack failures are reported independently — chaining them
+      // as else-if hides the Meta warning whenever RedTrack also fails.
+      if (metaIncomplete) {
+        showWarning(
+          `Meta sync INCOMPLETE — some ad sets could not be fetched${metaResult.errors?.length ? `: ${metaResult.errors.join('; ')}` : ''}. Revenue attribution may be understated until this is re-run.`
+        );
+      }
+      if (rtFailed) {
         const rtErr = rtRes ? await rtRes.json().catch(() => ({})) : {};
         showWarning(
           `Meta synced, but RedTrack revenue refresh failed${rtErr.detail ? `: ${rtErr.detail}` : ''} — revenue numbers may be stale.`
         );
-      } else {
+      }
+      if (!metaIncomplete && !rtFailed) {
         showSuccess('Sync complete');
       }
       load(activeRange);
     } catch (e) { showError(e.message || 'Sync failed'); }
     finally { setSyncing(false); setSyncingRT(false); }
-  }, [activeAccountId, activeAccountLoading, activeRange, adAccounts.length, load, showSuccess, showError]);
+  }, [activeAccountId, activeAccountLoading, activeRange, adAccounts.length, load, showSuccess, showWarning, showError]);
 
   const buildPerformanceParams = useCallback(() => {
     const { preset: p, dateFrom: df, dateTo: dt } = activeRange;

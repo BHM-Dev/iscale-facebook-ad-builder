@@ -1,5 +1,4 @@
 import logging
-import time
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -319,14 +318,11 @@ def sync_from_meta(
     created_adsets = 0
     updated_adsets = 0
 
-    # Only pace accounts large enough to actually risk the burst limit (the
-    # only one confirmed to trip it, RHO, has 92 campaigns). Most accounts
-    # have well under this and would otherwise pay 1.5s/campaign of pure
-    # wait for no reason — this endpoint already tolerates long-running
-    # calls (uvicorn's --timeout-keep-alive 300 was raised for kie.ai
-    # polling), so pacing a large account's sync is within that budget.
-    PACE_THRESHOLD = 20
-    should_pace = len(campaigns_raw) > PACE_THRESHOLD
+    # fb_campaign_id -> local FacebookCampaign row, built as we upsert campaigns
+    # so ad sets can be attached without a per-campaign lookup. FacebookAdSet.
+    # campaign_id is NOT NULL, so an ad set whose parent is missing here cannot
+    # be stored at all — tracked and reported rather than dropped in silence.
+    campaign_by_fb_id = {}
 
     for c in campaigns_raw:
         fb_id = str(c.get("id") or c.get(FacebookCampaign.__table__.c.get("fb_campaign_id", "id"), ""))
@@ -361,81 +357,79 @@ def sync_from_meta(
             created_campaigns += 1
 
         db.flush()  # ensure campaign_db.id is available
+        campaign_by_fb_id[fb_id] = campaign_db
 
-        # Sync ad sets for this campaign. A tight per-campaign loop on a
-        # large account (e.g. RHO's 92 campaigns) reliably trips Meta's
-        # burst rate limit ("User request limit reached", code 17) partway
-        # through, silently truncating the sync — confirmed live 2026-09-11,
-        # only ~29/92 campaigns got through before every remaining
-        # get_adsets call failed and was skipped, leaving real ad sets (and
-        # the Everflow revenue attributed to them) permanently missing from
-        # FacebookAdSet. Paced with a short sleep between calls, plus one
-        # retry honoring Meta's own estimated wait on an actual rate-limit
-        # error, so a throttling blip doesn't cost that campaign's ad sets
-        # for the whole sync. A non-rate-limit error (bad/deleted campaign,
-        # permissions) is NOT retried — retrying that just wastes time and
-        # would misreport a real API error as if it were throttling.
-        RATE_LIMIT_CODES = {4, 17, 32, 613, 80004}
-        try:
-            adsets_raw = service.get_adsets(campaign_id=fb_id)
-        except Exception as e:
-            # Only a FacebookRequestError carrying a known rate-limit code is
-            # worth retrying. Anything else (network blip, a genuinely
-            # deleted/permission-denied campaign, a non-Facebook exception)
-            # is skipped exactly as it always was — retrying those would
-            # just misreport a real failure in the logs as throttling.
-            code = e.api_error_code() if isinstance(e, FacebookRequestError) and hasattr(e, "api_error_code") else None
-            if code not in RATE_LIMIT_CODES:
-                logger.warning("facebook.sync: get_adsets failed for campaign %s (code %s): %s", fb_id, code, e)
-                continue
-            wait = 5
-            try:
-                wait = max(wait, int(e.body().get("error", {}).get("error_data", {}).get("estimated_time_to_regain_access", 0)))
-            except Exception:
-                pass
-            logger.warning("facebook.sync: rate limited on campaign %s (code %s), backing off %ss", fb_id, code, wait)
-            time.sleep(wait)
-            try:
-                adsets_raw = service.get_adsets(campaign_id=fb_id)
-            except Exception as e2:
-                logger.warning("facebook.sync: get_adsets failed for campaign %s after backoff retry: %s", fb_id, e2)
-                continue
-        finally:
-            if should_pace:
-                time.sleep(1.5)
+    # Ad sets come from ONE account-level fetch (~2 paginated calls), not one
+    # call per campaign. The old per-campaign loop burst straight through Meta's
+    # per-ad-account rate limit on a large account — RHO's 92 campaigns lost
+    # 57 of 92 calls even running at 2am — which truncated the sync and left
+    # real ad sets, and the Everflow revenue P&L attributes to them, missing
+    # from the table. See FacebookService.get_all_adsets_for_account for why the
+    # fetch needs two passes to be complete.
+    try:
+        adsets_raw, adset_failures = service.get_all_adsets_for_account(ad_account_id=ad_account_id)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to fetch ad sets from Meta: {e}")
 
-        for a in adsets_raw:
-            fb_adset_id = str(a.get("id") or "")
-            if not fb_adset_id:
-                continue
+    orphan_adsets = 0
+    for a in adsets_raw:
+        fb_adset_id = str(a.get("id") or "")
+        if not fb_adset_id:
+            continue
 
-            existing_as = db.query(FacebookAdSet).filter(FacebookAdSet.fb_adset_id == fb_adset_id).first()
-            if existing_as:
-                existing_as.name = a.get("name", existing_as.name)
-                existing_as.status = a.get("status", existing_as.status)
-                existing_as.fb_adset_id = fb_adset_id
-                if synced_account:
-                    existing_as.fb_account_id = synced_account
-                updated_adsets += 1
-            else:
-                db.add(FacebookAdSet(
-                    id=str(uuid.uuid4()),
-                    campaign_id=campaign_db.id,
-                    name=a.get("name", "Imported Ad Set"),
-                    optimization_goal=a.get("optimization_goal", "LEAD_GENERATION"),
-                    status=a.get("status", "PAUSED"),
-                    fb_adset_id=fb_adset_id,
-                    fb_account_id=synced_account,
-                    daily_budget=int(a["daily_budget"]) if a.get("daily_budget") else None,
-                    budget_schedule_type="DAILY" if a.get("daily_budget") else "LIFETIME",
-                ))
-                created_adsets += 1
+        existing_as = db.query(FacebookAdSet).filter(FacebookAdSet.fb_adset_id == fb_adset_id).first()
+        if existing_as:
+            existing_as.name = a.get("name", existing_as.name)
+            existing_as.status = a.get("status", existing_as.status)
+            existing_as.fb_adset_id = fb_adset_id
+            if synced_account:
+                existing_as.fb_account_id = synced_account
+            updated_adsets += 1
+            continue
+
+        # New ad set: it needs a local parent campaign row to satisfy the FK.
+        parent = campaign_by_fb_id.get(str(a.get("campaign_id") or ""))
+        if parent is None:
+            # Parent campaign wasn't in the ACTIVE/PAUSED/ARCHIVED campaign
+            # fetch (a deleted campaign, most likely). Counted and reported —
+            # an unexplained gap in this table is what caused the original
+            # revenue undercount, so it must not pass unnoticed.
+            orphan_adsets += 1
+            continue
+
+        db.add(FacebookAdSet(
+            id=str(uuid.uuid4()),
+            campaign_id=parent.id,
+            name=a.get("name", "Imported Ad Set"),
+            optimization_goal=a.get("optimization_goal", "LEAD_GENERATION"),
+            status=a.get("status", "PAUSED"),
+            fb_adset_id=fb_adset_id,
+            fb_account_id=synced_account,
+            daily_budget=int(a["daily_budget"]) if a.get("daily_budget") else None,
+            budget_schedule_type="DAILY" if a.get("daily_budget") else "LIFETIME",
+        ))
+        created_adsets += 1
 
     db.commit()
+
+    if adset_failures:
+        logger.warning("facebook.sync: incomplete ad set fetch for %s: %s", synced_account, adset_failures)
+    if orphan_adsets:
+        logger.warning("facebook.sync: %s ad sets skipped for %s (parent campaign not in local DB)", orphan_adsets, synced_account)
+
     return {
-        "message": "Sync complete",
+        # "Sync complete" only when nothing was lost — a partial sync that
+        # reports success is how ~$8.8k/month of RHO revenue went unnoticed.
+        "message": "Sync complete" if not adset_failures else "Sync incomplete — some ad sets could not be fetched",
+        "complete": not adset_failures,
         "campaigns": {"created": created_campaigns, "updated": updated_campaigns},
-        "adsets": {"created": created_adsets, "updated": updated_adsets},
+        "adsets": {
+            "created": created_adsets,
+            "updated": updated_adsets,
+            "fetched": len(adsets_raw),
+            "skipped_no_parent_campaign": orphan_adsets,
+        },
+        "errors": adset_failures,
     }
 
 

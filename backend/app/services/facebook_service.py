@@ -581,6 +581,146 @@ class FacebookService:
 
         return adsets
 
+    # Ad set effective_status values Meta's account-level /adsets edge accepts
+    # as an explicit filter. VERIFIED LIVE against act_521142087204815 on
+    # 2026-09-12 — do NOT extend this from the SDK's enum constants or from
+    # memory. A value the edge rejects hard-errors the entire call, and (worse,
+    # because it fails silently) a narrower list drops ad sets. See the
+    # two-pass explanation in get_all_adsets_for_account.
+    _ADSET_ARCHIVED_FILTER = ['ACTIVE', 'PAUSED', 'ARCHIVED']
+
+    # Do NOT add 'DELETED' here or as a third pass. It is a documented ad set
+    # effective_status value, but the act_{id}/adsets edge REJECTS it as a
+    # filter — verified live 2026-09-12, it returns error 100 "Invalid
+    # parameter", which would hard-fail the whole sync. Coverage was checked
+    # the useful way instead: every ad set Everflow attributes revenue to on
+    # this account falls inside the two-pass union (2026-09-12, $16,472.53 of
+    # $16,472.53 matched), so no revenue-bearing ad set is being missed.
+
+    # Meta error codes that mean "throttled, try again" rather than "this call
+    # is wrong". Mirrors the set used by the sync endpoint.
+    _RATE_LIMIT_CODES = {4, 17, 32, 613, 80004}
+
+    def get_all_adsets_for_account(self, ad_account_id=None):
+        """Fetch EVERY ad set on an account in ~2 paginated calls, not one per campaign.
+
+        Returns (adsets, failures) — `failures` is a list of human-readable
+        strings, one per pass that could not be completed. An empty list means
+        the result is complete. Callers MUST surface a non-empty `failures`
+        rather than treating a short list as a full sync: reporting a truncated
+        sync as complete is the exact failure mode this function exists to kill.
+
+        Why this exists
+        ---------------
+        The /facebook/sync backfill used to call get_adsets(campaign_id=...)
+        once per campaign. On RHO (act_521142087204815, 92 campaigns) that
+        burst reliably trips Meta's per-ad-account rate limit (code 17) partway
+        through, truncating the sync and silently leaving real ad sets out of
+        the FacebookAdSet table — and with them the Everflow revenue that P&L
+        attributes by matching against that table. Confirmed live twice:
+        2026-09-11 (0/92 calls got through) and 2026-09-12 (57/92 still failed
+        at 2am, so it was never just daytime contention from the team using the
+        app). Meta's account-level /adsets edge returns the same ad sets for the
+        whole account through one paginated cursor, cutting ~92 calls to ~2 and
+        removing the burst rather than pacing it.
+
+        Why TWO passes and not one
+        --------------------------
+        Neither query alone is complete. Verified live on RHO, 2026-09-12:
+          * no effective_status          -> 211 ad sets. Includes DERIVED
+            statuses (CAMPAIGN_PAUSED, ADSET_PAUSED, ...) but excludes archived.
+          * effective_status=[A,P,ARCH]  -> 261 ad sets. Picks up the archived
+            ones but DROPS every derived status, because an explicit filter
+            matches effective_status exactly — two of the ten ad sets this bug
+            was reported for are CAMPAIGN_PAUSED and disappear from this pass.
+        The union of both is the real answer, which is why the "obvious" fix of
+        just adding ARCHIVED to a single call would still have lost ad sets.
+        """
+        fields = [
+            AdSet.Field.id,
+            AdSet.Field.name,
+            AdSet.Field.status,
+            AdSet.Field.effective_status,
+            AdSet.Field.daily_budget,
+            AdSet.Field.lifetime_budget,
+            AdSet.Field.optimization_goal,
+            AdSet.Field.campaign_id,
+        ]
+        account = self._get_account(ad_account_id)
+
+        # Unfiltered pass FIRST so its rows win on dedupe — they carry the
+        # live/derived effective_status, which is the more accurate view.
+        passes = [
+            ("unfiltered", {'limit': 500}),
+            ("archived", {'limit': 500, 'effective_status': self._ADSET_ARCHIVED_FILTER}),
+        ]
+
+        merged = {}
+        failures = []
+        for idx, (label, params) in enumerate(passes):
+            if idx:
+                # Space the two passes slightly — a large account paginates a
+                # few times per pass and back-to-back bursts are what Meta
+                # actually throttles on.
+                time.sleep(2)
+            try:
+                rows = self._fetch_adsets_pass(account, fields, params)
+            except Exception as e:
+                # _meta_error returns a FacebookAPIError carrying Meta's numeric
+                # code; we only want its message text here, not to raise it.
+                try:
+                    detail = str(self._meta_error(e, 'adsets'))
+                except Exception:
+                    detail = str(e)[:300]
+                # Pass Meta's own wait estimate through verbatim (unit unstated
+                # by Meta on this field — do not do arithmetic on it), so a
+                # human reading the sync result knows roughly when to re-run.
+                try:
+                    est = (e.body() or {}).get('error', {}).get('error_data', {}).get('estimated_time_to_regain_access')
+                    if est:
+                        detail += f" (Meta estimated_time_to_regain_access={est})"
+                except Exception:
+                    pass
+                failures.append(f"{label} pass failed: {detail}")
+                continue
+            for row in rows:
+                fb_id = str(row.get('id') or '')
+                if fb_id:
+                    merged.setdefault(fb_id, row)
+
+        return list(merged.values()), failures
+
+    def _fetch_adsets_pass(self, account, fields, params, retries=2):
+        """One paginated /adsets pass, retried only on a real rate-limit code.
+
+        A non-rate-limit error (bad params, permissions) is raised immediately —
+        retrying that just burns the account's remaining budget and misreports a
+        real API error as throttling.
+        """
+        delay = 10
+        for attempt in range(retries + 1):
+            try:
+                return list(account.get_ad_sets(fields=fields, params=params))
+            except FacebookRequestError as e:
+                code = e.api_error_code() if hasattr(e, 'api_error_code') else None
+                if code not in self._RATE_LIMIT_CODES or attempt == retries:
+                    raise
+                # Deliberately a fixed short backoff rather than sleeping for
+                # Meta's estimated_time_to_regain_access. That value's unit is
+                # ambiguous (documented as MINUTES on the
+                # X-Business-Use-Case-Usage header; the error body's copy is
+                # undocumented), and guessing wrong is either a 60x under-sleep
+                # that re-trips the limit or a multi-minute hang inside an HTTP
+                # request. Out-waiting an ad-account throttle is not this
+                # endpoint's job — it retries briefly, then reports the failure
+                # so the caller can re-run. The estimate is surfaced in the
+                # error text for whoever reads it, not acted on numerically.
+                print(f"⚠️  get_all_adsets_for_account: rate limited (code {code}), waiting {delay}s before retry {attempt + 1}/{retries}")
+                time.sleep(delay)
+                delay *= 2
+        # Unreachable: the final attempt either returns or re-raises above.
+        raise RuntimeError("adsets pass exhausted retries without returning or raising")
+
     def get_lead_forms(self, page_id):
         """Fetch active lead gen forms for a Facebook Page.
 

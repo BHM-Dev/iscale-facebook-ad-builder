@@ -1250,9 +1250,19 @@ export default function CampaignPerformance() {
           `Meta synced, but RedTrack revenue refresh failed${rtErr.detail ? `: ${rtErr.detail}` : ''} — revenue/CPL numbers may be stale.`
         );
       }
-      showSuccess(
-        `Sync complete — ${result.campaigns.created} campaigns, ${result.adsets.created} ad sets imported. ${result.adsets.updated} ad sets updated.`
-      );
+      // A truncated Meta sync must never read as a clean one. When Meta
+      // throttles the ad set fetch the backend returns complete:false with the
+      // failing pass in `errors` — surfacing that is the whole point, because a
+      // partial sync silently under-attributes Everflow revenue in P&L rather
+      // than failing visibly (RHO, ~$8.8k/month, 2026-09).
+      const detail = `${result.campaigns.created} campaigns, ${result.adsets.created} ad sets imported. ${result.adsets.updated} ad sets updated.`;
+      if (result.complete === false) {
+        showWarning(
+          `Meta sync INCOMPLETE — ${detail} Some ad sets could not be fetched${result.errors?.length ? `: ${result.errors.join('; ')}` : ''}. Revenue attribution may be understated until this is re-run.`
+        );
+      } else {
+        showSuccess(`Sync complete — ${detail}`);
+      }
       loadAdsets();
       const from = datePreset === 'custom' ? dateFrom : null;
       const to   = datePreset === 'custom' ? dateTo   : null;
