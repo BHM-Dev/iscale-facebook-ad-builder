@@ -322,7 +322,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     const creativeId = distinctCreativeIds[m];
                     const creative = creativeData.creatives?.find(c => c.id === creativeId);
                     const sampleAd = adsData.find(ad => ad.creativeId === creativeId);
-                    const mediaLabel = creative?.name || `Media ${m + 1}`;
+                    // Always number the label, even when the file has a real name —
+                    // two separately-uploaded files can share the exact same filename
+                    // (e.g. two phone exports both called "image.png"), which would
+                    // otherwise produce two identically-named, hard-to-tell-apart ad
+                    // sets in Ads Manager with no way to distinguish them after launch.
+                    const mediaLabel = creative?.name ? `${creative.name} (${m + 1})` : `Media ${m + 1}`;
                     const targeting = sampleAd?.dualPlacement
                         ? dualPlacementTargeting
                         : sampleAd?.format === 'stories' ? storiesTargeting : feedTargeting;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronRight, Plus, Check, Loader, X } from 'lucide-react';
+import { ChevronRight, Plus, Check, Loader, X, AlertTriangle } from 'lucide-react';
 import { useCampaign, createDefaultAdsetData } from '../context/CampaignContext';
 import { useToast } from '../context/ToastContext';
 import { getAdSets, getPixels, searchGeoLocations } from '../lib/facebookApi';
@@ -484,7 +484,16 @@ const AdSetStep = ({ onNext, onBack }) => {
                                     : 'border-gray-200 hover:border-amber-300'
                                     }`}
                             >
-                                <div className="font-semibold text-sm">One ad set per media file</div>
+                                <div className="font-semibold text-sm flex items-center gap-1.5">
+                                    One ad set per media file
+                                    {/* This is the option that can multiply ad-set count (and,
+                                        under ABO, budget) by however many files are picked next —
+                                        the toggle previously looked identical to the safe default
+                                        with no visual weight difference at all. */}
+                                    <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full">
+                                        <AlertTriangle size={10} /> multiplies budget
+                                    </span>
+                                </div>
                                 <div className="text-xs text-gray-500 mt-0.5">Creates a separate ad set for each image/video, holding just that file's generated ads.</div>
                             </button>
                         </div>
