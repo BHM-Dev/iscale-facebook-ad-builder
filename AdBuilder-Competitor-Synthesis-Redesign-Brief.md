@@ -113,16 +113,26 @@ field already exists in `wizardData`.
 
 ### 3.4 Campaign Performance / Facebook Campaigns — comparison cells + filter surface
 
-Two independent, smaller changes, both directly named in the capture docs:
+Two independent, smaller changes, both directly named in the capture docs. Status as of 2026-09-13:
 
-- **Comparison cells** (Birch Explorer, §4 of that capture): each metric cell shows current-period
-  value, previous-period value, and a colored delta — instead of today's single flat number. This
-  is the single biggest "why is this number good or bad" gap in `CampaignPerformance.jsx` today —
-  Joel currently has to remember last week's CPL from memory or a separate tab.
-- **Filter surface** (AdEspresso's Campaigns list, §4): status checklist (Active/Paused/etc.),
-  date-range filter, metric-threshold filter (`Filter by... < = > value`). `FacebookCampaigns.jsx`
-  is only 196 lines today — this is a real gap, not a nice-to-have polish item, if the account list
-  grows past what fits on one screen.
+- **Filter surface — partially shipped.** `CampaignPerformance.jsx` (not `FacebookCampaigns.jsx`,
+  which turned out to be the creation wizard, not a browse/manage list — the actual "your ad sets"
+  view is Campaign Performance) already had a status filter, sort, and date-range picker before this
+  pass. The one real gap — a name search box — is now shipped. A metric-threshold filter
+  (`Filter by CPL < = > value`) is not built; status+search+sort already covers most of what Joel
+  actually needs day to day, and a threshold filter is lower-value on top of that. Documented as a
+  follow-up, not fixed.
+- **Comparison cells — deliberately NOT built.** Every named preset here (`today`, `last_7d`,
+  `last_30d`, etc.) is a Meta `date_preset` string resolved server-side by Meta itself — this app
+  has no local knowledge of the exact calendar days each one covers. Computing a "previous period"
+  by guessing Meta's day-boundary convention risks a silently wrong comparison number on Joel's
+  most-used page — precisely the "silent wrong dollar figure" class of bug this codebase's own
+  culture (and several fixes earlier in this same session) exists to prevent. The safe version —
+  computing an unambiguous previous-period range only for explicit custom date ranges — would only
+  fire when Joel picks a custom range, which isn't the common case, so it wasn't worth building for
+  that narrow a trigger. Real fix, if this gets picked back up: confirm Meta's exact date_preset day
+  boundaries against current Marketing API docs first (same standard as the domain-expert Meta-API
+  reviews earlier in this session), then build the comparison against verified ranges only.
 
 ### 3.5 Dashboard — no structural change, one addition
 
@@ -305,28 +315,38 @@ working screen, not closing a real gap.
 
 ---
 
-## 5. Build priority / phased rollout
+## 5. Build priority / phased rollout — all shipped except the one item needing Joel's input
 
-**Phase 1 (do first, smallest surface area, no backend changes):**
-- [x] 3.1 Live counter in `AdCreativeStep.jsx` — shipped, see commit
+**Phase 1 — shipped:**
+- [x] 3.1 Live counter in `AdCreativeStep.jsx`
 - ~~3.5 Dashboard tile/chart color linking~~ — dropped, no chart exists on Dashboard today (§6.3)
-- 3.6 Birch chrome-level patterns (one-primary-button pass, ghosted empty states) — batch into
-  whichever screen each phase below already touches; no standalone pass needed
+- [x] 3.6 Birch chrome-level patterns — batched in as each phase below touched a screen (native
+  preview grid IS the "ghost of the real thing" + single-primary-action treatment applied to
+  `BulkAdCreation.jsx`; persistent error panels already matched the "layered status" pattern)
 
-**Phase 2 (frontend-only, moderate surface area):**
-- 3.2 Native preview grid in `BulkAdCreation.jsx` Review screen
-- 3.3 Persistent right-rail summary in `AdRemix.jsx`
+**Phase 2 — shipped:**
+- [x] 3.2 Native preview grid in `BulkAdCreation.jsx` Review screen
+- [x] 3.3 Persistent right-rail summary in `AdRemix.jsx` (built by Codex per the handoff brief)
 
-**Phase 3 (already scoped elsewhere, proceed per that brief):**
-- Bulk rules engine generalization (`AdBuilder-BulkRules-Feature-Brief.md`) — Birch is the primary
-  reference for this brief already (action catalog, live match-count preview)
+**Phase 3 — shipped:**
+- [x] Bulk rules engine generalization (`AdBuilder-BulkRules-Feature-Brief.md`) — Pause/Notify/
+  Increase budget/Decrease budget, CBO-safe, audit log wired into the UI, notify cooldown
 
-**Phase 4 (real Meta API surface change — needs its own scoping pass, not a quick add):**
-- Three ad-set creation modes from Birch's Stage (§4.4) — touches `facebook_service.py`
+**Phase 4 — shipped:**
+- [x] "One ad set per media file" creation mode (§4.4) — the missing third of Birch's three modes,
+  ABO-multiplication-aware, no contradictory summary banners
 
-**Phase 5 (needs a product decision before scoping):**
-- Targeting-variant testing axis (§4.3) — confirm with Joel first
-- Comparison-cell metrics + filter surface (§3.4) — real but lower urgency
+**Phase 5 — one shipped, one skipped (needs Joel), one deliberately not built:**
+- [x] Name search on `CampaignPerformance.jsx` (the filter-surface gap in §3.4)
+- **Skipped, needs Joel's call, not mine:** Targeting-variant testing axis (§4.3) — a real new
+  audience-targeting capability for a live ad-launch tool shouldn't be built speculatively on a
+  product decision this consequential. Ask him directly: does he want to split-test Gender/
+  Relationship Status/Placement as a second combinatorial axis, or is per-audience testing already
+  handled some other way in his workflow today?
+- **Deliberately not built:** Comparison-cell metrics (§3.4) — see the updated reasoning in that
+  section. This isn't "ran out of time," it's "building it would have required guessing Meta's
+  exact date-preset day boundaries, and guessing wrong on Joel's most-used page is worse than not
+  building it."
 
 ---
 

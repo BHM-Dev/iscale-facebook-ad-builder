@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2, Sparkles, Tag, ChevronLeft, BarChart2, ShieldAlert, DollarSign, Check } from 'lucide-react';
+import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2, Sparkles, Tag, ChevronLeft, BarChart2, ShieldAlert, DollarSign, Check, Search } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
@@ -938,6 +938,10 @@ export default function CampaignPerformance() {
     if (view === 'top-performers') return 'roas';
     return 'spend';
   });
+  // Name search — the one filter primitive AdEspresso's campaign-list view has that
+  // this page didn't, per the competitor synthesis brief (§3.4). Local-only, not
+  // synced to the URL — a transient narrowing while scanning, not a saved view.
+  const [nameSearch, setNameSearch] = useState('');
   const dashboardView = searchParams.get('view'); // derived live from URL — never stale
   const targetAdsetId = searchParams.get('adsetId');
   const intelligencePanelOpen = searchParams.get('panel') === 'intelligence';
@@ -1411,6 +1415,12 @@ export default function CampaignPerformance() {
       list = list.filter(a => isActiveDelivery(a) && isFlagged(a));
     }
 
+    // Name search
+    const q = nameSearch.trim().toLowerCase();
+    if (q) {
+      list = list.filter(a => a.name?.toLowerCase().includes(q));
+    }
+
     // Sort
     list = [...list].sort((a, b) => {
       if (sortBy === 'status') {
@@ -1438,7 +1448,7 @@ export default function CampaignPerformance() {
     });
 
     return list;
-  }, [adsets, statusFilter, sortBy, bulkInsights, isFlagged, getAdsetStatus, isActiveDelivery, isPausedDelivery]);
+  }, [adsets, statusFilter, sortBy, nameSearch, bulkInsights, isFlagged, getAdsetStatus, isActiveDelivery, isPausedDelivery]);
 
   useEffect(() => {
     if (!targetAdsetId || targetAdsetId === 'null') return;
@@ -1691,6 +1701,27 @@ export default function CampaignPerformance() {
             </button>
           </div>
           <div className="flex items-center gap-2">
+            {/* Name search — real gap flagged in the competitor synthesis brief
+                (AdEspresso's campaign-list view has this, this page didn't). */}
+            <div className="relative">
+              <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search ad sets..."
+                value={nameSearch}
+                onChange={e => setNameSearch(e.target.value)}
+                className="border border-gray-200 rounded-lg pl-6 pr-6 py-1.5 text-xs text-gray-600 w-36 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:w-48 transition-all"
+              />
+              {nameSearch && (
+                <button
+                  onClick={() => setNameSearch('')}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  title="Clear search"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
             {/* Status filter */}
             <select
               className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -1732,7 +1763,8 @@ export default function CampaignPerformance() {
           </div>
         ) : visibleAdsets.length === 0 ? (
           <div className="p-8 text-center text-gray-400 text-sm">
-            {statusFilter === 'has_spend' ? 'No ad sets with spend in this date range.' :
+            {nameSearch ? `No ad sets matching "${nameSearch}".` :
+             statusFilter === 'has_spend' ? 'No ad sets with spend in this date range.' :
              statusFilter === 'flagged' ? 'No flagged ad sets — everything looks healthy.' :
              statusFilter !== 'all' ? `No ${statusFilter.toLowerCase()} ad sets found.` :
              'No launched ad sets found. Create and launch a campaign first.'}
