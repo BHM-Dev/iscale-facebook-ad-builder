@@ -193,5 +193,98 @@ DB migration):
   rule kept firing on its old values. Fixed by adding both fields to the schema and persisting
   them the same way `threshold`/`min_spend` already were.
 - **Still not built**: a symmetric ±% single field instead of separate increase/decrease actions;
-  Duplicate action and bid actions (already deferred to Phase 2 in this brief — see §4 below,
-  genuinely its own scope, not a quick follow-up).
+  Duplicate action and bid actions — deferred to Phase 2 in §4 above, now scoped in full in §8.
+
+---
+
+## 8. Phase 2 scope — Duplicate action + bid actions
+
+Scoping only — not built yet. Grounded against the actual codebase (not assumed) before writing
+this, since the two actions turned out to be very different sizes once checked.
+
+### 8.1 Bid actions — small, follows the exact pattern already built
+
+Checked `facebook_service.py`'s `create_adset` (lines ~928-940): `bid_amount`/`bid_strategy`
+already flow through ad-set creation today, with the identical CBO-vs-ABO split my Phase 3 budget
+work already solved — CBO campaigns carry `bid_strategy` at the **campaign** level (ad sets
+inherit it), ABO ad sets carry it themselves. That means `increase_bid`/`decrease_bid` as rule
+actions are close to a copy-paste of `adjust_adset_budget_by_percent`, adjusted for `bid_amount`
+instead of `daily_budget`/`lifetime_budget`, with the same CBO-refuse-if-shared-siblings posture
+carried over rather than re-derived from scratch.
+
+**MVP for this piece:**
+- `increase_bid` / `decrease_bid` actions, mirroring the existing budget-action shape exactly:
+  read live `bid_amount` from Meta at fire time, adjust by a rule-configured percent, same
+  floor/ceiling sanity check, same CBO-sibling refusal, same audit-log/Slack treatment.
+- Reuse `AdSetStep.jsx`'s existing bid fields (already present for manual ad-set creation) as the
+  reference for what a "bid" even means here — `bid_amount` is a per-action cost cap under manual
+  bidding, not meaningful for `LOWEST_COST_WITHOUT_CAP` (the default). **Open question:** does a
+  bid-adjustment rule only apply to ad sets already on manual/cost-cap bidding, and refuse
+  otherwise (mirroring the budget action's CBO refusal pattern) — recommend yes, for the same
+  reason: silently "adjusting" a bid field Meta isn't even using would be a no-op that looks like
+  it worked.
+- Not scoping `set_bid_strategy` (switching bidding models entirely) — a bigger, riskier action
+  than a percent nudge, not requested, not in Birch's own MVP-equivalent tier either.
+
+**Estimate:** genuinely small once Phase 3's budget-action code exists to mirror — a few hours of
+focused work plus the mandatory 2-agent + domain-expert review, not a new phase-sized effort.
+
+### 8.2 Duplicate action — the actual big piece
+
+This is the one Birch's own capture flagged as "the one that most directly answers 'add features
+from good ad launchers'" — and it's a real, multi-step Meta API orchestration, not a field tweak.
+
+**What "Duplicate" has to actually do, step by step:**
+1. Read the target ad set's full config live from Meta (targeting, optimization goal, budget,
+   bid settings) — `get_adsets`/`create_adset`'s existing field lists cover most of this already.
+2. Read every live ad in that ad set and its creative — `get_ads(adset_id)` (exists) +
+   `get_ad_creative(fb_ad_id)` (exists, already used by Copy Library) cover the read side. Meta
+   creative objects reference an `image_hash`/`video_id` already uploaded to the ad **account**
+   (not the ad set) — needs verifying, but if true, a duplicate within the same account can reuse
+   those hashes directly without re-uploading media, which would materially simplify this.
+3. Create a new ad set with the copied config (`create_adset`, already proven) — same budget as
+   the source unless the rule says otherwise (see open question below).
+4. Create a new ad for every ad in the source, using the copied creative
+   (`create_creative`/`create_ad`, already proven) — new ad set, same copy/images.
+5. Launch PAUSED, matching this app's existing convention everywhere else.
+
+**Open questions that need Joel's input before this is buildable, not just a technical
+question — same posture as the targeting-variant axis from the redesign brief, flagged rather
+than guessed:**
+1. **Duplicate ALL ads in the ad set, or only the one(s) that triggered the rule?** A rule fires
+   per ad set, evaluated against ad-set-level metrics — if the trigger is really "this specific ad
+   is a winner," duplicating the whole ad set (including any losers riding alongside it) may not
+   be what's wanted. Recommend asking directly rather than assuming "all ads" is correct.
+2. **Does the duplicate keep the source budget, or does the rule set a new one?** Birch's own
+   duplicate flow (Stage, not the rules engine) lets you pick — worth confirming whether Joel's
+   actual use case ("scale a winner") implies the duplicate should start at a HIGHER budget than
+   the source, which would make this action functionally overlap with `increase_budget` and might
+   be better modeled as "Duplicate + bump budget by X%" as one combined action, not two rules.
+3. **Does duplicating reset ad/ad-set names with a suffix (" - Copy", " - Scaled"), or something
+   more specific** (a date stamp, matching this app's other naming conventions like
+   `${adsetData.name} - Feed`)?
+4. **Should a duplicated ad set get its own new rule automatically** (e.g., "duplicate again if
+   this one also proves out"), or is one-shot duplication enough for MVP? Recommend one-shot only
+   for MVP — an auto-chaining duplicate rule is a real scope-creep risk (a winner that keeps
+   duplicating itself with no cap is its own money-risk story, similar to why budget/pause actions
+   disable themselves after firing).
+
+**Recommended MVP scope, once those are answered:** duplicate the whole ad set (all its ads) with
+the source budget unchanged, `- Copy` suffix, one-shot (rule disables itself after firing, same as
+pause/budget actions today). Anything beyond that (partial-ad duplication, an auto-bumped budget,
+auto-chaining) is real Phase 3-of-Phase-2 scope, not MVP.
+
+**Estimate:** comparable in size to Phase 4 (the per-media ad-set work) or larger — real new
+orchestration across `facebook_service.py`, a new endpoint surface, and its own domain-expert Meta
+API review (image_hash/video_id reuse across ad sets specifically needs verifying against Meta's
+current docs, not assumed) plus the standard 2-agent trigger-file review. Not a follow-up-sized
+task — recommend treating it as its own phase with its own dedicated pass, same as Phases 1-5 were,
+once the open questions above are answered.
+
+### 8.3 Routing note
+
+Both pieces touch `backend/app/services/facebook_service.py` (trigger file) and need Claude Code
+end-to-end, per the same rule that gated Phase 3's budget work. Bid actions can likely go in the
+same pass as their own small feature; Duplicate should get its own dedicated session given its
+size — bundling it into a "quick follow-up" pass would be the wrong scale of review for what it
+actually is.
