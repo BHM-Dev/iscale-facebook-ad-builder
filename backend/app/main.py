@@ -401,7 +401,25 @@ async def startup_event():
         scheduler.add_job(scheduled_drive_sync, 'interval', minutes=30, id='drive_creative_sync')
         scheduler.add_job(scheduled_token_check, 'cron', hour=13, minute=0, timezone='UTC', id='token_expiry_check')
         scheduler.add_job(scheduled_capi_quality_sync, 'cron', hour=14, minute=0, timezone='UTC', id='capi_quality_sync')
-        scheduler.add_job(scheduled_offer_performance_check, 'cron', minute=5, id='offer_performance_check')
+        # PAUSED at Joel's request (2026-09-13). The hourly offer-performance
+        # alert posts to #media-buys whenever an offer's just-closed hour falls
+        # below 25% of its own trailing 7-day baseline; Joel asked for it to
+        # stop. Paused via env var rather than by deleting this line so it can
+        # be switched back on in seconds without a deploy:
+        #
+        #   OFFER_PERFORMANCE_MONITOR_ENABLED=true   (then restart the backend)
+        #
+        # Defaults to ENABLED — the monitor is meant to run, and the pause is
+        # recorded on the VPS .env (which is gitignored and survives deploys),
+        # not smuggled into the code's default. Anyone reading this should see a
+        # live feature that is currently switched off, not a deleted one.
+        offer_monitor_enabled = os.getenv(
+            "OFFER_PERFORMANCE_MONITOR_ENABLED", "true"
+        ).strip().lower() in ("1", "true", "yes")
+        if offer_monitor_enabled:
+            scheduler.add_job(scheduled_offer_performance_check, 'cron', minute=5, id='offer_performance_check')
+        else:
+            print("⏸  Offer performance monitor DISABLED via OFFER_PERFORMANCE_MONITOR_ENABLED — no hourly #media-buys alerts")
         # Meta/RedTrack syncs no longer fire on login — those jobs can span every
         # visible ad account and several third-party API calls, delaying the login
         # response despite being registered as background tasks. The scheduler
@@ -409,7 +427,11 @@ async def startup_event():
         # UI are the only things that trigger a sync now.
         scheduler.start()
         app.state.scheduler = scheduler
-        print("✅ Scheduler started (auto-pause + RedTrack every 30 min | token expiry daily 13:00 UTC | CAPI quality daily 14:00 UTC | offer performance hourly :05)")
+        # Report what is actually registered. A startup line that claims the
+        # offer-performance job is running while it is switched off would send
+        # the next person debugging "why no alerts?" down the wrong path.
+        offer_status = "offer performance hourly :05" if offer_monitor_enabled else "offer performance PAUSED"
+        print(f"✅ Scheduler started (auto-pause + RedTrack every 30 min | token expiry daily 13:00 UTC | CAPI quality daily 14:00 UTC | {offer_status})")
     except Exception as e:
         print(f"⚠️  Could not start auto-pause scheduler: {e}")
 
