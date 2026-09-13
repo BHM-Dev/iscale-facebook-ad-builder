@@ -126,6 +126,17 @@ const buildDriveAssetGroups = (assets) => {
     });
 };
 
+// Live permutation count for the sticky counter below — mirrors BulkAdCreation.jsx's
+// own useEffect (media.length × valid-headlines × valid-bodies) exactly, so the number
+// shown here never drifts from what Review actually generates. Kept as a pure function
+// (not inline in the component) so the two call sites can't quietly diverge.
+const countVariations = (creativeData) => {
+    const media = creativeData?.creatives?.length || 0;
+    const headlines = (creativeData?.headlines || []).filter(h => h && h.trim() !== '').length;
+    const bodies = (creativeData?.bodies || []).filter(b => b && b.trim() !== '').length;
+    return { media, headlines, bodies, total: media * headlines * bodies };
+};
+
 const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const isMatchImport = mode === 'match-import';
     const { showWarning, showError, showSuccess } = useToast();
@@ -143,6 +154,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // before that id exists. The Facebook Page ID cache is intentionally NOT scoped this
     // way — a brand's Page is stable across its niches on the same account.
     const campaignCacheId = campaignData?.fbCampaignId || campaignData?.id || 'new';
+    // Recomputed on every render off creativeData directly (not memoized on a
+    // dependency array) — this step's whole job is showing the count change on every
+    // keystroke/upload, and the computation itself is three array lengths, not worth
+    // the staleness risk of a memo dependency list drifting from the real fields.
+    const variationCount = countVariations(creativeData);
     const [pages, setPages] = useState([]);
     const [loadingPages, setLoadingPages] = useState(false);
 
@@ -880,8 +896,36 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     <p className="text-gray-600 mb-3">
                         This creates standard (non-Dynamic) ads. Each image you upload becomes one separate ad on Facebook.
                     </p>
-                    <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-6 text-sm text-amber-900">
-                        <strong>Want to launch 5 ads?</strong> Upload 5 images below with 1 headline and 1 body — you'll get exactly 5 separate ads. Adding more headlines or body options multiplies the total (e.g. 5 images × 2 headlines = 10 ads).
+                    {/* Live variation counter — updates as media/headlines/bodies are added below,
+                        instead of only surfacing this math once the user reaches Review. Mirrors
+                        the exact computation BulkAdCreation.jsx's Review screen uses. */}
+                    <div className="sticky top-2 z-10 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-6 text-sm text-amber-900 shadow-sm">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="font-mono font-semibold">
+                                {variationCount.media} MEDIA × {variationCount.headlines} HEADLINE{variationCount.headlines !== 1 ? 'S' : ''} × {variationCount.bodies} BOD{variationCount.bodies !== 1 ? 'IES' : 'Y'}
+                            </span>
+                            <span>=</span>
+                            <span className="font-mono font-bold text-amber-950">
+                                {variationCount.total} ad{variationCount.total !== 1 ? 's' : ''}
+                            </span>
+                        </div>
+                        {variationCount.total === 0 && (() => {
+                            // Name the specific missing field(s) rather than a generic
+                            // "add all three" line — a headline/body that's whitespace-only
+                            // (not literally empty) also filters to 0 here, which a generic
+                            // message wouldn't explain to someone who thinks they already
+                            // filled it in.
+                            const missing = [
+                                variationCount.media === 0 && 'an image or video',
+                                variationCount.headlines === 0 && 'a headline',
+                                variationCount.bodies === 0 && 'body text',
+                            ].filter(Boolean);
+                            return (
+                                <p className="mt-1 text-xs text-amber-700">
+                                    Missing: {missing.join(', ')}.
+                                </p>
+                            );
+                        })()}
                     </div>
                 </>
             )}
