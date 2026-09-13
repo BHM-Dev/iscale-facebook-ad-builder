@@ -35,14 +35,29 @@ from app.api.v1.facebook import _assert_adset_allowed, _assert_account_allowed, 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-VALID_ACTIONS = {'pause', 'notify', 'increase_budget', 'decrease_budget'}
-BUDGET_ACTIONS = {'increase_budget', 'decrease_budget'}
+VALID_ACTIONS = {
+    'pause', 'notify', 'increase_budget', 'decrease_budget',
+    'duplicate', 'increase_bid', 'decrease_bid',
+}
+# Actions that use the shared `budget_adjust_pct` column — reused for bid percent too
+# (Phase 2: same shape, same server-side floor/ceiling validation, no reason for two
+# separate percent columns per AdBuilder-BulkRules-Feature-Brief.md §8.1/§8.3).
+PERCENT_ACTIONS = {'increase_budget', 'decrease_budget', 'increase_bid', 'decrease_bid'}
 # Minimum time between Slack notifications for the same still-breached notify rule.
 # Without this, a metric that stays breached for days pings the channel every
 # 30-minute scheduler cycle indefinitely — real alert-fatigue risk flagged in
 # pre-push review, right when a budget-rule alert on the same channel matters most.
 NOTIFY_COOLDOWN_HOURS = 4
 NOTIFY_COOLDOWN = timedelta(hours=NOTIFY_COOLDOWN_HOURS)
+# Repeat-enabled Duplicate rules stay active (unlike every other action, which
+# disables itself after firing once) — without a cooldown this would create a
+# brand-new real ad set (and, unless "empty" is chosen, a full new batch of ads)
+# on Meta every single 30-minute check for as long as the breach persists.
+# Caught in pre-push review (code-auditor: comment claimed "same cooldown
+# pattern as notify" but no gate actually existed). 24h, not 4h like notify —
+# duplicating ad-set structure is a much heavier action than a Slack ping.
+DUPLICATE_REPEAT_COOLDOWN_HOURS = 24
+DUPLICATE_REPEAT_COOLDOWN = timedelta(hours=DUPLICATE_REPEAT_COOLDOWN_HOURS)
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
@@ -53,8 +68,15 @@ class RuleCreate(BaseModel):
     operator: str = 'greater_than'         # 'greater_than' | 'less_than'
     threshold: int                         # e.g. 50 for $50 CPL
     min_spend: int = 20                    # minimum $ spent before rule fires
-    action: str = 'pause'                  # 'pause' | 'notify' | 'increase_budget' | 'decrease_budget'
-    budget_adjust_pct: Optional[int] = None  # required for increase_budget/decrease_budget, e.g. 20 = 20%
+    action: str = 'pause'                  # 'pause' | 'notify' | 'increase_budget' | 'decrease_budget' | 'duplicate' | 'increase_bid' | 'decrease_bid'
+    budget_adjust_pct: Optional[int] = None  # required for budget/bid actions, e.g. 20 = 20%
+    # Duplicate-only fields — defaults match Birch's own Duplicate action, verified
+    # live rather than guessed (AdBuilder-BulkRules-Feature-Brief.md §8.2).
+    duplicate_all_ads: bool = True
+    duplicate_name_suffix: str = '- Copy'
+    duplicate_append_number: bool = False
+    duplicate_pause_original: bool = False
+    duplicate_repeat: bool = False
     ad_account_id: Optional[str] = None   # passed through to Meta API
 
 class BulkRuleCreate(BaseModel):
@@ -69,6 +91,11 @@ class BulkRuleCreate(BaseModel):
     min_spend: int = 20
     action: str = 'pause'
     budget_adjust_pct: Optional[int] = None
+    duplicate_all_ads: bool = True
+    duplicate_name_suffix: str = '- Copy'
+    duplicate_append_number: bool = False
+    duplicate_pause_original: bool = False
+    duplicate_repeat: bool = False
 
 class RulePatch(BaseModel):
     is_active: Optional[bool] = None
@@ -78,6 +105,11 @@ class RulePatch(BaseModel):
     min_spend: Optional[int] = None
     action: Optional[str] = None
     budget_adjust_pct: Optional[int] = None
+    duplicate_all_ads: Optional[bool] = None
+    duplicate_name_suffix: Optional[str] = None
+    duplicate_append_number: Optional[bool] = None
+    duplicate_pause_original: Optional[bool] = None
+    duplicate_repeat: Optional[bool] = None
 
 
 # Server-side ceiling on budget_adjust_pct — the frontend's max="100" is a UI-only
@@ -90,9 +122,9 @@ MAX_BUDGET_ADJUST_PCT = 100
 def _validate_action(action: str, budget_adjust_pct: Optional[int]) -> None:
     if action not in VALID_ACTIONS:
         raise HTTPException(400, f"action must be one of {sorted(VALID_ACTIONS)}")
-    if action in BUDGET_ACTIONS:
+    if action in PERCENT_ACTIONS:
         if not budget_adjust_pct or budget_adjust_pct <= 0:
-            raise HTTPException(400, "budget_adjust_pct must be a positive integer (e.g. 20 for 20%) for budget actions")
+            raise HTTPException(400, "budget_adjust_pct must be a positive integer (e.g. 20 for 20%) for budget/bid actions")
         if budget_adjust_pct > MAX_BUDGET_ADJUST_PCT:
             raise HTTPException(400, f"budget_adjust_pct must be at most {MAX_BUDGET_ADJUST_PCT}")
 
@@ -151,6 +183,11 @@ def list_rules(
             "min_spend": r.min_spend,
             "action": r.action,
             "budget_adjust_pct": r.budget_adjust_pct,
+            "duplicate_all_ads": r.duplicate_all_ads,
+            "duplicate_name_suffix": r.duplicate_name_suffix,
+            "duplicate_append_number": r.duplicate_append_number,
+            "duplicate_pause_original": r.duplicate_pause_original,
+            "duplicate_repeat": r.duplicate_repeat,
             "is_active": r.is_active,
             "created_at": r.created_at,
             "last_checked_at": r.last_checked_at,
@@ -193,7 +230,12 @@ def create_rule(
         threshold=body.threshold,
         min_spend=body.min_spend,
         action=body.action,
-        budget_adjust_pct=body.budget_adjust_pct if body.action in BUDGET_ACTIONS else None,
+        budget_adjust_pct=body.budget_adjust_pct if body.action in PERCENT_ACTIONS else None,
+        duplicate_all_ads=body.duplicate_all_ads if body.action == 'duplicate' else None,
+        duplicate_name_suffix=body.duplicate_name_suffix if body.action == 'duplicate' else None,
+        duplicate_append_number=body.duplicate_append_number if body.action == 'duplicate' else None,
+        duplicate_pause_original=body.duplicate_pause_original if body.action == 'duplicate' else None,
+        duplicate_repeat=body.duplicate_repeat if body.action == 'duplicate' else None,
         is_active=True,
     )
     db.add(rule)
@@ -235,7 +277,12 @@ def create_rules_bulk(
             threshold=body.threshold,
             min_spend=body.min_spend,
             action=body.action,
-            budget_adjust_pct=body.budget_adjust_pct if body.action in BUDGET_ACTIONS else None,
+            budget_adjust_pct=body.budget_adjust_pct if body.action in PERCENT_ACTIONS else None,
+            duplicate_all_ads=body.duplicate_all_ads if body.action == 'duplicate' else None,
+            duplicate_name_suffix=body.duplicate_name_suffix if body.action == 'duplicate' else None,
+            duplicate_append_number=body.duplicate_append_number if body.action == 'duplicate' else None,
+            duplicate_pause_original=body.duplicate_pause_original if body.action == 'duplicate' else None,
+            duplicate_repeat=body.duplicate_repeat if body.action == 'duplicate' else None,
             is_active=True,
         )
         db.add(rule)
@@ -314,12 +361,28 @@ def update_rule(
     # re-validate against the resulting combination, not just the new field alone
     # (e.g. patching budget_adjust_pct to null on a rule whose action is still
     # increase_budget must be rejected, not silently accepted).
-    if body.action is not None or body.budget_adjust_pct is not None:
+    duplicate_fields_touched = any(f is not None for f in (
+        body.duplicate_all_ads, body.duplicate_name_suffix,
+        body.duplicate_append_number, body.duplicate_pause_original, body.duplicate_repeat,
+    ))
+    if body.action is not None or body.budget_adjust_pct is not None or duplicate_fields_touched:
         new_action = body.action if body.action is not None else rule.action
         new_pct = body.budget_adjust_pct if body.budget_adjust_pct is not None else rule.budget_adjust_pct
         _validate_action(new_action, new_pct)
         rule.action = new_action
-        rule.budget_adjust_pct = new_pct if new_action in BUDGET_ACTIONS else None
+        rule.budget_adjust_pct = new_pct if new_action in PERCENT_ACTIONS else None
+        if new_action == 'duplicate':
+            rule.duplicate_all_ads = body.duplicate_all_ads if body.duplicate_all_ads is not None else (rule.duplicate_all_ads if rule.duplicate_all_ads is not None else True)
+            rule.duplicate_name_suffix = body.duplicate_name_suffix if body.duplicate_name_suffix is not None else (rule.duplicate_name_suffix or '- Copy')
+            rule.duplicate_append_number = body.duplicate_append_number if body.duplicate_append_number is not None else (rule.duplicate_append_number or False)
+            rule.duplicate_pause_original = body.duplicate_pause_original if body.duplicate_pause_original is not None else (rule.duplicate_pause_original or False)
+            rule.duplicate_repeat = body.duplicate_repeat if body.duplicate_repeat is not None else (rule.duplicate_repeat or False)
+        else:
+            rule.duplicate_all_ads = None
+            rule.duplicate_name_suffix = None
+            rule.duplicate_append_number = None
+            rule.duplicate_pause_original = None
+            rule.duplicate_repeat = None
     db.commit()
     return {"message": "Rule updated"}
 
@@ -643,6 +706,8 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
     paused = []
     notified = []
     budget_adjusted = []
+    bid_adjusted = []
+    duplicated = []
     skipped = []
     errors = []
     now = datetime.now(timezone.utc)
@@ -804,10 +869,18 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
                     })
                     db.commit()
 
-            elif rule.action in ('increase_budget', 'decrease_budget'):
-                percent_change = rule.budget_adjust_pct if rule.action == 'increase_budget' else -rule.budget_adjust_pct
+            elif rule.action in ('increase_budget', 'decrease_budget', 'increase_bid', 'decrease_bid'):
+                # Bid actions share this branch with budget actions — same percent-adjust
+                # shape, same {level, field, old_cents, new_cents} result, same reporting.
+                # Not worth a separate ~30-line copy for what's otherwise identical logic
+                # (Phase 2, AdBuilder-BulkRules-Feature-Brief.md §8.1).
+                is_bid = rule.action in ('increase_bid', 'decrease_bid')
+                percent_change = rule.budget_adjust_pct if rule.action in ('increase_budget', 'increase_bid') else -rule.budget_adjust_pct
                 try:
-                    budget_result = svc.adjust_adset_budget_by_percent(adset.fb_adset_id, percent_change)
+                    if is_bid:
+                        adjust_result = svc.adjust_adset_bid_by_percent(adset.fb_adset_id, percent_change)
+                    else:
+                        adjust_result = svc.adjust_adset_budget_by_percent(adset.fb_adset_id, percent_change)
                     # Explicit about WHERE the money moved — never let a campaign-level
                     # (CBO) adjustment read identically to an ad-set-level one. This
                     # only fires when the ad set is the sole active one in its CBO
@@ -816,27 +889,110 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
                     # not something scoped just to this ad set.
                     scope_note = (
                         " (CBO campaign budget, shared with this ad set)"
-                        if budget_result['level'] == 'campaign' else ""
+                        if adjust_result['level'] == 'campaign' else ""
                     )
                     detail = (
-                        f"{budget_result['level']} {budget_result['field']}{scope_note} "
-                        f"${budget_result['old_cents'] / 100:.2f} → ${budget_result['new_cents'] / 100:.2f}"
+                        f"{adjust_result['level']} {adjust_result['field']}{scope_note} "
+                        f"${adjust_result['old_cents'] / 100:.2f} → ${adjust_result['new_cents'] / 100:.2f}"
                     )
                     rule.triggered_at = now
                     rule.trigger_reason = reason
                     # Disable after firing, same as pause — an unattended rule that
-                    # kept compounding a budget change every 30 minutes without a
+                    # kept compounding a budget/bid change every 30 minutes without a
                     # human look would be a real money-risk, not a convenience.
                     rule.is_active = False
                     _log('success', detail)
                     db.commit()
-                    budget_adjusted.append({"adset": adset.name, "fb_adset_id": adset.fb_adset_id, "reason": reason, "detail": detail})
-                    logger.info("BUDGET %s adset %s — %s (%s)", rule.action, adset.name, reason, detail)
+                    (bid_adjusted if is_bid else budget_adjusted).append(
+                        {"adset": adset.name, "fb_adset_id": adset.fb_adset_id, "reason": reason, "detail": detail}
+                    )
+                    logger.info("%s %s adset %s — %s (%s)", 'BID' if is_bid else 'BUDGET', rule.action, adset.name, reason, detail)
                     send_rule_action_alert(action=rule.action, adset_name=adset.name, fb_adset_id=adset.fb_adset_id, reason=reason, detail=detail)
                 except Exception as e:
+                    # A bid rule against an ad set with no bid_amount set (most BHM ad
+                    # sets run LOWEST_COST_WITHOUT_CAP — see adjust_adset_bid_by_percent's
+                    # docstring) is a PERMANENT condition, not a transient API hiccup —
+                    # without this check it would retry silently every 30 minutes
+                    # forever, showing a green "Active" pill with no visible error state
+                    # short of clicking into fire history (joel-perspective P0). Detect
+                    # the specific refusal message and disable the rule instead of
+                    # leaving it spinning; anything else (a real transient Meta error,
+                    # rate limit, etc.) still retries as before.
+                    permanent = 'no bid_amount set' in str(e) or 'no budget field' in str(e)
+                    if permanent:
+                        rule.is_active = False
+                        rule.trigger_reason = f"Disabled — not actionable: {e}"
                     _log('error', str(e))
                     db.commit()
                     errors.append({"adset": adset.name, "error": str(e)})
+
+            elif rule.action == 'duplicate':
+                # Repeat-enabled duplicate rules stay active (is_active never flips
+                # to False below), so — unlike every other action here — this branch
+                # must gate on a real cooldown or it creates a brand-new real ad set
+                # (and, unless "empty" is chosen, a full new batch of ads) on Meta
+                # every single 30-minute check for as long as the breach persists.
+                # Mirrors notify's cooldown structure exactly (a prior version of
+                # this comment claimed that without actually implementing it —
+                # caught in pre-push review). One-shot (non-repeat) rules have no
+                # `triggered_at` yet the first time they breach, so this never blocks
+                # their one real fire; only a repeat rule that already fired within
+                # the window gets skipped.
+                cooled_down = not rule.duplicate_repeat or rule.triggered_at is None or \
+                    (now - rule.triggered_at) >= DUPLICATE_REPEAT_COOLDOWN
+                if not cooled_down:
+                    skipped.append({
+                        "rule_id": rule.id, "adset": adset.name,
+                        "reason": f"duplicate repeat cooldown active ({DUPLICATE_REPEAT_COOLDOWN_HOURS}h) — still breached: {reason}"
+                    })
+                    db.commit()
+                else:
+                    try:
+                        dup_result = svc.duplicate_adset(
+                            adset.fb_adset_id,
+                            name_suffix=rule.duplicate_name_suffix or '- Copy',
+                            append_number=bool(rule.duplicate_append_number),
+                            duplicate_all_ads=rule.duplicate_all_ads if rule.duplicate_all_ads is not None else True,
+                            pause_original=bool(rule.duplicate_pause_original),
+                        )
+                        ad_count = len(dup_result['created_ad_ids'])
+                        detail = f"new ad set '{dup_result['new_adset_name']}' ({dup_result['new_fb_adset_id']}), {ad_count} ad(s)"
+                        if dup_result['errors']:
+                            # The new ad set (and whichever ads DID succeed) are real and
+                            # already exist on Meta — say so explicitly rather than let a
+                            # partial failure read as if nothing happened.
+                            detail += f" — {len(dup_result['errors'])} ad(s) failed to duplicate: {'; '.join(dup_result['errors'])}"
+                        if dup_result['original_paused']:
+                            detail += " — original ad set paused"
+                        rule.triggered_at = now
+                        rule.trigger_reason = reason
+                        # One-shot by default (disable after firing, matching pause/budget/
+                        # bid) unless duplicate_repeat is set.
+                        if not rule.duplicate_repeat:
+                            rule.is_active = False
+                        # requested_ads is what duplicate_adset was actually asked to
+                        # create (0 for an intentionally "empty" duplicate) — only the
+                        # all-ads case where every single ad failed (a fully-empty
+                        # result Joel did NOT ask for, e.g. every ad was a lead-gen
+                        # format get_ad_creative_for_duplication can't yet read) is a
+                        # real error. Caught in pre-push review: the prior version only
+                        # flagged this for the internal log, while the API response
+                        # (and the frontend's "success" toast + violet section) still
+                        # counted it as a normal duplicate — Joel would see "Duplicated
+                        # 1 ad set" for a duplication that produced zero real ads.
+                        fully_failed = bool(dup_result['errors']) and not dup_result['created_ad_ids'] and rule.duplicate_all_ads
+                        _log('error' if fully_failed else 'success', detail)
+                        db.commit()
+                        if fully_failed:
+                            errors.append({"adset": adset.name, "error": detail})
+                        else:
+                            duplicated.append({"adset": adset.name, "fb_adset_id": adset.fb_adset_id, "reason": reason, "detail": detail})
+                        logger.info("DUPLICATE adset %s — %s (%s)", adset.name, reason, detail)
+                        send_rule_action_alert(action='duplicate', adset_name=adset.name, fb_adset_id=adset.fb_adset_id, reason=reason, detail=detail)
+                    except Exception as e:
+                        _log('error', str(e))
+                        db.commit()
+                        errors.append({"adset": adset.name, "error": str(e)})
 
             else:
                 # Defense in depth — VALID_ACTIONS/_validate_action should make this
@@ -859,6 +1015,8 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
         errors=errors,
         notified_count=len(notified),
         budget_adjusted_count=len(budget_adjusted),
+        bid_adjusted_count=len(bid_adjusted),
+        duplicated_count=len(duplicated),
     )
 
     return {
@@ -867,6 +1025,8 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
         "paused": paused,
         "notified": notified,
         "budget_adjusted": budget_adjusted,
+        "bid_adjusted": bid_adjusted,
+        "duplicated": duplicated,
         "skipped": skipped,
         "errors": errors,
     }

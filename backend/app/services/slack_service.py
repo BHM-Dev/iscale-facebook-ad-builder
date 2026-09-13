@@ -62,6 +62,18 @@ def send_rule_action_alert(
             ":chart_with_downwards_trend: *Budget decreased:*",
             "Rule fired and decreased the budget on Meta. Rule has been disabled — re-enable it after reviewing.",
         ),
+        'increase_bid': (
+            ":chart_with_upwards_trend: *Bid increased:*",
+            "Rule fired and increased the bid amount on Meta. Rule has been disabled — re-enable it after reviewing.",
+        ),
+        'decrease_bid': (
+            ":chart_with_downwards_trend: *Bid decreased:*",
+            "Rule fired and decreased the bid amount on Meta. Rule has been disabled — re-enable it after reviewing.",
+        ),
+        'duplicate': (
+            ":twisted_rightwards_arrows: *Ad set duplicated:*",
+            "Rule fired and cloned the ad set on Meta. Review the new ad set before it starts spending.",
+        ),
     }
     header, footer = copy.get(action, (f":robot_face: *Rule fired ({action}):*", ""))
 
@@ -141,6 +153,8 @@ def send_check_summary(
     errors: list,
     notified_count: int = 0,
     budget_adjusted_count: int = 0,
+    bid_adjusted_count: int = 0,
+    duplicated_count: int = 0,
 ) -> None:
     """Post a summary when Check Now finds multiple issues or errors.
 
@@ -157,7 +171,7 @@ def send_check_summary(
     token = _token()
     if not token:
         return
-    fired = paused_count + notified_count + budget_adjusted_count
+    fired = paused_count + notified_count + budget_adjusted_count + bid_adjusted_count + duplicated_count
     if fired == 0 and not errors:
         return  # Nothing to report
 
@@ -168,6 +182,10 @@ def send_check_summary(
         lines.append(f">:bell: {notified_count} notify rule(s) fired")
     if budget_adjusted_count:
         lines.append(f">:moneybag: {budget_adjusted_count} budget rule(s) fired")
+    if bid_adjusted_count:
+        lines.append(f">:dart: {bid_adjusted_count} bid rule(s) fired")
+    if duplicated_count:
+        lines.append(f">:twisted_rightwards_arrows: {duplicated_count} ad set(s) duplicated")
     if errors:
         lines.append(f">:warning: {len(errors)} error(s) — check logs")
 

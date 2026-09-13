@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { PauseCircle, PlayCircle, Trash2, Plus, RefreshCw, AlertTriangle, CheckCircle, Zap, Target, Bell, TrendingUp, TrendingDown, Search, Pencil } from 'lucide-react';
+import { PauseCircle, PlayCircle, Trash2, Plus, RefreshCw, AlertTriangle, CheckCircle, Zap, Target, Bell, TrendingUp, TrendingDown, Search, Pencil, Copy } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { authFetch } from '../lib/facebookApi';
 
@@ -13,14 +13,25 @@ const ACTION_OPTIONS = [
   { value: 'notify', label: 'Notify (Slack only, no change on Meta)', icon: Bell, color: 'text-blue-500' },
   { value: 'increase_budget', label: 'Increase budget', icon: TrendingUp, color: 'text-emerald-600' },
   { value: 'decrease_budget', label: 'Decrease budget', icon: TrendingDown, color: 'text-amber-600' },
+  { value: 'increase_bid', label: 'Increase bid', icon: TrendingUp, color: 'text-emerald-600' },
+  { value: 'decrease_bid', label: 'Decrease bid', icon: TrendingDown, color: 'text-amber-600' },
+  { value: 'duplicate', label: 'Duplicate the ad set', icon: Copy, color: 'text-violet-600' },
 ];
 const ACTION_LABELS = Object.fromEntries(ACTION_OPTIONS.map(a => [a.value, a.label]));
-const BUDGET_ACTIONS = new Set(['increase_budget', 'decrease_budget']);
+// Renamed from BUDGET_ACTIONS (Phase 2) — bid actions share the exact same
+// percent-adjust field/validation/confirm-step as budget actions, so they're
+// folded into the same gate rather than duplicating it. Matches the backend
+// rename in auto_pause.py.
+const PERCENT_ACTIONS = new Set(['increase_budget', 'decrease_budget', 'increase_bid', 'decrease_bid']);
+const DUPLICATE_ACTION = 'duplicate';
 const ACTION_BADGE_CLS = {
   pause: 'bg-red-50 text-red-600',
   notify: 'bg-blue-50 text-blue-600',
   increase_budget: 'bg-emerald-50 text-emerald-700',
   decrease_budget: 'bg-amber-50 text-amber-700',
+  increase_bid: 'bg-emerald-50 text-emerald-700',
+  decrease_bid: 'bg-amber-50 text-amber-700',
+  duplicate: 'bg-violet-50 text-violet-700',
 };
 // Action-specific "already fired" copy — a generic red "Triggered" pill reads
 // identically for a paused ad set and a budget change, which pre-push review
@@ -30,6 +41,9 @@ const TRIGGERED_LABELS = {
   notify: 'Notified',
   increase_budget: 'Budget increased',
   decrease_budget: 'Budget decreased',
+  increase_bid: 'Bid increased',
+  decrease_bid: 'Bid decreased',
+  duplicate: 'Duplicated',
 };
 
 // Best-effort CURRENT budget for the pre-commit confirmation step, from whatever
@@ -66,11 +80,17 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
     min_spend: 20,
     action: 'pause',
     budget_adjust_pct: 20,
+    duplicate_all_ads: true,
+    duplicate_name_suffix: '- Copy',
+    duplicate_append_number: false,
+    duplicate_pause_original: false,
+    duplicate_repeat: false,
   });
   const [saving, setSaving] = useState(false);
-  // 'form' | 'confirm' — budget actions get a mandatory second step listing every
-  // matched ad set's current → computed-new budget before anything is written.
-  // Pause/notify skip straight to save() since neither moves money.
+  // 'form' | 'confirm' — budget/bid actions AND duplicate get a mandatory second
+  // step listing every matched ad set before anything is written: budget/bid
+  // moves money, duplicate moves ad-set structure (new ad sets, new ads). Only
+  // pause/notify skip straight to save() since neither does either.
   const [step, setStep] = useState('form');
 
   const filteredAdsets = useMemo(() => {
@@ -104,19 +124,24 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
 
   const validateBeforeContinue = () => {
     if (selectedIds.size === 0) { showError('Select at least one ad set'); return false; }
-    if (BUDGET_ACTIONS.has(form.action) && (!form.budget_adjust_pct || form.budget_adjust_pct <= 0)) {
-      showError('Enter a budget adjustment percentage greater than 0');
+    if (PERCENT_ACTIONS.has(form.action) && (!form.budget_adjust_pct || form.budget_adjust_pct <= 0)) {
+      showError('Enter an adjustment percentage greater than 0');
+      return false;
+    }
+    if (form.action === DUPLICATE_ACTION && !form.duplicate_name_suffix?.trim()) {
+      showError('Enter a name suffix for the duplicated ad set');
       return false;
     }
     return true;
   };
 
-  // Budget actions never submit directly from the form — they route through the
-  // confirm step below first (P0 per pre-push review: bulk-scoped budget changes
-  // need a review-before-commit step, not just a live count).
+  // Budget/bid and duplicate actions never submit directly from the form — they
+  // route through the confirm step below first (P0 per pre-push review:
+  // bulk-scoped money or structure changes need a review-before-commit step,
+  // not just a live count).
   const handlePrimaryAction = () => {
     if (!validateBeforeContinue()) return;
-    if (BUDGET_ACTIONS.has(form.action)) {
+    if (PERCENT_ACTIONS.has(form.action) || form.action === DUPLICATE_ACTION) {
       setStep('confirm');
     } else {
       save();
@@ -127,6 +152,7 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
     if (!validateBeforeContinue()) return;
     setSaving(true);
     try {
+      const isDuplicate = form.action === DUPLICATE_ACTION;
       const res = await authFetch(`${API_BASE}/auto-pause/rules/bulk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -137,7 +163,12 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
           threshold: form.threshold,
           min_spend: form.min_spend,
           action: form.action,
-          budget_adjust_pct: BUDGET_ACTIONS.has(form.action) ? form.budget_adjust_pct : null,
+          budget_adjust_pct: PERCENT_ACTIONS.has(form.action) ? form.budget_adjust_pct : null,
+          duplicate_all_ads: isDuplicate ? form.duplicate_all_ads : null,
+          duplicate_name_suffix: isDuplicate ? form.duplicate_name_suffix : null,
+          duplicate_append_number: isDuplicate ? form.duplicate_append_number : null,
+          duplicate_pause_original: isDuplicate ? form.duplicate_pause_original : null,
+          duplicate_repeat: isDuplicate ? form.duplicate_repeat : null,
         }),
       });
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
@@ -152,29 +183,49 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
   const allFilteredSelected = filteredAdsets.length > 0 && filteredAdsets.every(a => selectedIds.has(a.id));
   const selectedAdsets = adsets.filter(a => selectedIds.has(a.id));
 
-  // ── Confirm step (budget actions only) — every matched ad set + its current →
-  // computed-new budget, reviewed before anything is written. Replaces "a live
-  // count is the only guardrail" with an actual line-by-line preview.
+  // ── Confirm step (budget/bid actions, and duplicate) — every matched ad set
+  // previewed before anything is written. Replaces "a live count is the only
+  // guardrail" with an actual line-by-line preview.
   if (step === 'confirm') {
-    const pct = form.action === 'increase_budget' ? form.budget_adjust_pct : -form.budget_adjust_pct;
+    const isDuplicate = form.action === DUPLICATE_ACTION;
+    const isBid = form.action === 'increase_bid' || form.action === 'decrease_bid';
+    const pct = (form.action === 'increase_budget' || form.action === 'increase_bid') ? form.budget_adjust_pct : -form.budget_adjust_pct;
     return (
       <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
         <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
           <h2 className="text-lg font-bold text-gray-900 mb-1 flex items-center gap-2">
-            <AlertTriangle size={20} className="text-amber-500" /> Confirm budget rule
+            <AlertTriangle size={20} className="text-amber-500" /> Confirm {isDuplicate ? 'duplicate' : isBid ? 'bid' : 'budget'} rule
           </h2>
           <p className="text-sm text-gray-600 mb-4">
-            Review every ad set this rule will apply to before creating it. Each row fires
-            independently — this is real live Meta spend, not a preview.
+            {isDuplicate
+              ? 'Review every ad set this rule will apply to before creating it. Each row fires independently and creates a real new ad set (and, unless set to empty, new ads) on Meta — not a preview.'
+              : 'Review every ad set this rule will apply to before creating it. Each row fires independently — this is real live Meta spend, not a preview.'}
           </p>
 
           <div className="border border-gray-200 rounded-lg divide-y divide-gray-50 max-h-64 overflow-y-auto mb-4">
             {selectedAdsets.map(a => {
+              if (isDuplicate) {
+                return (
+                  <div key={a.id} className="px-3 py-2 text-sm">
+                    <div className="font-medium text-gray-900 truncate">{a.name}</div>
+                    <div className="text-xs text-gray-500">
+                      Clones to <strong>"{a.name}{form.duplicate_name_suffix}{form.duplicate_append_number ? ' N' : ''}"</strong>
+                      {form.duplicate_append_number ? ' (N = next free number, computed live at fire time)' : ''}
+                      {form.duplicate_all_ads ? ', with all its ads' : ', empty (no ads)'}
+                      {form.duplicate_pause_original ? ' — original will be paused' : ''}
+                    </div>
+                  </div>
+                );
+              }
               const current = currentBudgetCents(a);
               return (
                 <div key={a.id} className="px-3 py-2 text-sm">
                   <div className="font-medium text-gray-900 truncate">{a.name}</div>
-                  {current ? (
+                  {isBid ? (
+                    <div className="text-xs text-gray-500">
+                      Bid amount adjusted by {pct > 0 ? '+' : ''}{pct}% — read live from Meta when this rule fires (no cached bid to preview here).
+                    </div>
+                  ) : current ? (
                     <div className="text-xs text-gray-500">
                       Current ({current.source}, {current.unit === 'lifetime' ? 'lifetime budget' : 'daily budget'}, as of last sync): <strong>${(current.cents / 100).toFixed(2)}</strong>
                       {' → '}
@@ -193,8 +244,10 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
 
           <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800 mb-4">
             This creates {selectedAdsets.length} independent rule{selectedAdsets.length !== 1 ? 's' : ''} — each can be
-            edited or disabled on its own afterward. None of them run once; every rule disables itself the moment it fires,
-            so it won't keep compounding this change every 30 minutes unattended.
+            edited or disabled on its own afterward.{' '}
+            {form.duplicate_repeat
+              ? 'This rule repeats — it will keep firing on this ad set until you disable it or turn off repeat.'
+              : "None of them run more than once; every rule disables itself the moment it fires, so it won't keep compounding this change every 30 minutes unattended."}
           </div>
 
           <div className="flex gap-3">
@@ -262,30 +315,92 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
             </select>
           </Field>
 
-          {BUDGET_ACTIONS.has(form.action) && (
+          {PERCENT_ACTIONS.has(form.action) && (
             <>
               {/* Hard visual break from the low-friction pause/notify path — this
                   moves real, live ad spend on Meta with no confirmation dialog on
                   Meta's own side (unlike Ads Manager, which confirms every manual
-                  budget edit). Shown the moment a budget action is picked, before
+                  budget edit). Shown the moment a budget/bid action is picked, before
                   any field below it is even filled in. */}
               <div className="flex items-start gap-2 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2.5 text-xs text-amber-900">
                 <AlertTriangle size={15} className="text-amber-600 flex-shrink-0 mt-0.5" />
                 <span>
-                  <strong>This automatically changes live ad spend on Meta</strong> — unattended, checked every
+                  <strong>This automatically changes live {form.action.includes('bid') ? 'bid amount' : 'ad spend'} on Meta</strong> — unattended, checked every
                   30 minutes, with no confirmation dialog when it fires. It disables itself after firing once.
+                  {form.action.includes('bid') && (
+                    <> If the ad set has no manual bid cap set (e.g. it's running Meta's automatic "Lowest Cost" bidding —
+                    common on BHM ad sets), this rule can't do anything and will disable itself with an error the first
+                    time it checks — visible in the rule's fire history.</>
+                  )}
                 </span>
               </div>
-              <Field label="Adjust budget by (%)">
+              <Field label={`Adjust ${form.action.includes('bid') ? 'bid' : 'budget'} by (%)`}>
                 <input
                   type="number" min="1" max="100" className="input-base"
                   value={form.budget_adjust_pct}
                   onChange={e => setForm({...form, budget_adjust_pct: Number(e.target.value)})}
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  {form.action === 'increase_budget' ? 'Increases' : 'Decreases'} the ad set's (or its CBO campaign's)
-                  current budget by this percentage. Reads the live Meta value at fire time, not a cached one.
+                  {form.action.startsWith('increase') ? 'Increases' : 'Decreases'} the ad set's
+                  {form.action.includes('bid') ? ' bid amount' : " (or its CBO campaign's) current budget"} by this
+                  percentage. Reads the live Meta value at fire time, not a cached one.
                 </p>
+              </Field>
+            </>
+          )}
+
+          {form.action === DUPLICATE_ACTION && (
+            <>
+              <div className="flex items-start gap-2 bg-violet-50 border border-violet-300 rounded-lg px-3 py-2.5 text-xs text-violet-900">
+                <AlertTriangle size={15} className="text-violet-600 flex-shrink-0 mt-0.5" />
+                <span>
+                  <strong>This creates a real new ad set on Meta, starting from zero spend</strong> — unattended,
+                  checked every 30 minutes. Riskier than a budget/bid nudge: it's brand-new inventory, not an
+                  adjustment to something already running. The new ad set (and its ads, if included) launch
+                  <strong> PAUSED</strong> — nothing spends until someone reviews and turns it on. It inherits the
+                  original's budget (or shares its CBO campaign's budget) exactly as-is. Disables itself after firing
+                  once unless "Repeat" is checked below.
+                </span>
+              </div>
+
+              <Field label="Ads to include">
+                <div className="flex gap-4 text-sm">
+                  <label className="flex items-center gap-1.5">
+                    <input type="radio" checked={form.duplicate_all_ads} onChange={() => setForm({...form, duplicate_all_ads: true})} />
+                    All ads
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input type="radio" checked={!form.duplicate_all_ads} onChange={() => setForm({...form, duplicate_all_ads: false})} />
+                    Empty ad set (no ads)
+                  </label>
+                </div>
+              </Field>
+
+              <Field label="New ad set name suffix">
+                <input
+                  type="text" className="input-base"
+                  value={form.duplicate_name_suffix}
+                  onChange={e => setForm({...form, duplicate_name_suffix: e.target.value})}
+                />
+                <label className="flex items-center gap-1.5 text-xs text-gray-600 mt-1.5">
+                  <input type="checkbox" checked={form.duplicate_append_number} onChange={e => setForm({...form, duplicate_append_number: e.target.checked})} />
+                  Append a number if the name already exists (e.g. "- Copy 2")
+                </label>
+              </Field>
+
+              <Field label="Original ad set">
+                <label className="flex items-center gap-1.5 text-sm">
+                  <input type="checkbox" checked={form.duplicate_pause_original} onChange={e => setForm({...form, duplicate_pause_original: e.target.checked})} />
+                  Pause the original ad set after duplicating
+                </label>
+              </Field>
+
+              <Field label="Repeat">
+                <label className="flex items-center gap-1.5 text-sm">
+                  <input type="checkbox" checked={form.duplicate_repeat} onChange={e => setForm({...form, duplicate_repeat: e.target.checked})} />
+                  Keep creating a new duplicate every time this rule re-breaches (24h minimum between duplicates) —
+                  default is one-shot, like Birch
+                </label>
               </Field>
             </>
           )}
@@ -340,7 +455,7 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
         <div className="flex gap-3 mt-6">
           <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
           <button onClick={handlePrimaryAction} disabled={saving || adsets.length === 0} className="flex-1 btn-primary">
-            {saving ? 'Saving...' : BUDGET_ACTIONS.has(form.action)
+            {saving ? 'Saving...' : (PERCENT_ACTIONS.has(form.action) || form.action === DUPLICATE_ACTION)
               ? 'Review & Continue'
               : `Create Rule${selectedIds.size > 1 ? ` (${selectedIds.size})` : ''}`}
           </button>
@@ -364,16 +479,26 @@ function EditRuleModal({ rule, onClose, onSaved }) {
     min_spend: rule.min_spend,
     action: rule.action,
     budget_adjust_pct: rule.budget_adjust_pct || 20,
+    duplicate_all_ads: rule.duplicate_all_ads ?? true,
+    duplicate_name_suffix: rule.duplicate_name_suffix || '- Copy',
+    duplicate_append_number: rule.duplicate_append_number || false,
+    duplicate_pause_original: rule.duplicate_pause_original || false,
+    duplicate_repeat: rule.duplicate_repeat || false,
   });
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
-    if (BUDGET_ACTIONS.has(form.action) && (!form.budget_adjust_pct || form.budget_adjust_pct <= 0)) {
-      showError('Enter a budget adjustment percentage greater than 0');
+    if (PERCENT_ACTIONS.has(form.action) && (!form.budget_adjust_pct || form.budget_adjust_pct <= 0)) {
+      showError('Enter an adjustment percentage greater than 0');
+      return;
+    }
+    if (form.action === DUPLICATE_ACTION && !form.duplicate_name_suffix?.trim()) {
+      showError('Enter a name suffix for the duplicated ad set');
       return;
     }
     setSaving(true);
     try {
+      const isDuplicate = form.action === DUPLICATE_ACTION;
       const res = await authFetch(`${API_BASE}/auto-pause/rules/${rule.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -383,7 +508,12 @@ function EditRuleModal({ rule, onClose, onSaved }) {
           threshold: form.threshold,
           min_spend: form.min_spend,
           action: form.action,
-          budget_adjust_pct: BUDGET_ACTIONS.has(form.action) ? form.budget_adjust_pct : null,
+          budget_adjust_pct: PERCENT_ACTIONS.has(form.action) ? form.budget_adjust_pct : null,
+          duplicate_all_ads: isDuplicate ? form.duplicate_all_ads : null,
+          duplicate_name_suffix: isDuplicate ? form.duplicate_name_suffix : null,
+          duplicate_append_number: isDuplicate ? form.duplicate_append_number : null,
+          duplicate_pause_original: isDuplicate ? form.duplicate_pause_original : null,
+          duplicate_repeat: isDuplicate ? form.duplicate_repeat : null,
         }),
       });
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed to update rule'); }
@@ -409,21 +539,79 @@ function EditRuleModal({ rule, onClose, onSaved }) {
             </select>
           </Field>
 
-          {BUDGET_ACTIONS.has(form.action) && (
+          {PERCENT_ACTIONS.has(form.action) && (
             <>
               <div className="flex items-start gap-2 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2.5 text-xs text-amber-900">
                 <AlertTriangle size={15} className="text-amber-600 flex-shrink-0 mt-0.5" />
                 <span>
-                  <strong>This automatically changes live ad spend on Meta</strong> — unattended, checked every
+                  <strong>This automatically changes live {form.action.includes('bid') ? 'bid amount' : 'ad spend'} on Meta</strong> — unattended, checked every
                   30 minutes, with no confirmation dialog when it fires.
+                  {form.action.includes('bid') && (
+                    <> If the ad set has no manual bid cap set (e.g. it's running Meta's automatic "Lowest Cost" bidding),
+                    this rule can't do anything and will disable itself with an error the first time it checks — visible
+                    in the rule's fire history.</>
+                  )}
                 </span>
               </div>
-              <Field label="Adjust budget by (%)">
+              <Field label={`Adjust ${form.action.includes('bid') ? 'bid' : 'budget'} by (%)`}>
                 <input
                   type="number" min="1" max="100" className="input-base"
                   value={form.budget_adjust_pct}
                   onChange={e => setForm({...form, budget_adjust_pct: Number(e.target.value)})}
                 />
+              </Field>
+            </>
+          )}
+
+          {form.action === DUPLICATE_ACTION && (
+            <>
+              <div className="flex items-start gap-2 bg-violet-50 border border-violet-300 rounded-lg px-3 py-2.5 text-xs text-violet-900">
+                <AlertTriangle size={15} className="text-violet-600 flex-shrink-0 mt-0.5" />
+                <span>
+                  <strong>This creates a real new ad set on Meta, starting from zero spend</strong> — unattended,
+                  checked every 30 minutes. The new ad set (and its ads, if included) launch <strong>PAUSED</strong> —
+                  nothing spends until someone reviews and turns it on. It inherits the original's budget (or shares
+                  its CBO campaign's budget) exactly as-is.
+                </span>
+              </div>
+
+              <Field label="Ads to include">
+                <div className="flex gap-4 text-sm">
+                  <label className="flex items-center gap-1.5">
+                    <input type="radio" checked={form.duplicate_all_ads} onChange={() => setForm({...form, duplicate_all_ads: true})} />
+                    All ads
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input type="radio" checked={!form.duplicate_all_ads} onChange={() => setForm({...form, duplicate_all_ads: false})} />
+                    Empty ad set (no ads)
+                  </label>
+                </div>
+              </Field>
+
+              <Field label="New ad set name suffix">
+                <input
+                  type="text" className="input-base"
+                  value={form.duplicate_name_suffix}
+                  onChange={e => setForm({...form, duplicate_name_suffix: e.target.value})}
+                />
+                <label className="flex items-center gap-1.5 text-xs text-gray-600 mt-1.5">
+                  <input type="checkbox" checked={form.duplicate_append_number} onChange={e => setForm({...form, duplicate_append_number: e.target.checked})} />
+                  Append a number if the name already exists (e.g. "- Copy 2")
+                </label>
+              </Field>
+
+              <Field label="Original ad set">
+                <label className="flex items-center gap-1.5 text-sm">
+                  <input type="checkbox" checked={form.duplicate_pause_original} onChange={e => setForm({...form, duplicate_pause_original: e.target.checked})} />
+                  Pause the original ad set after duplicating
+                </label>
+              </Field>
+
+              <Field label="Repeat">
+                <label className="flex items-center gap-1.5 text-sm">
+                  <input type="checkbox" checked={form.duplicate_repeat} onChange={e => setForm({...form, duplicate_repeat: e.target.checked})} />
+                  Keep creating a new duplicate every time this rule re-breaches (24h minimum between duplicates)
+                </label>
               </Field>
             </>
           )}
@@ -614,7 +802,8 @@ export default function AutoPauseRules() {
       if (!res.ok) throw new Error('Check failed');
       const result = await res.json();
       setLastCheckResult(result);
-      const firedCount = (result.paused?.length || 0) + (result.notified?.length || 0) + (result.budget_adjusted?.length || 0);
+      const firedCount = (result.paused?.length || 0) + (result.notified?.length || 0) + (result.budget_adjusted?.length || 0)
+        + (result.bid_adjusted?.length || 0) + (result.duplicated?.length || 0);
       const errorCount = result.errors?.length || 0;
       if (firedCount > 0) {
         showSuccess(`${firedCount} rule(s) fired!`);
@@ -638,7 +827,7 @@ export default function AutoPauseRules() {
             Rules Engine
           </h1>
           <p className="text-gray-500 text-sm mt-1">
-            Pause an ad set, notify Slack, or adjust its budget when a metric breaches a threshold — checked automatically every 30 minutes.
+            Pause an ad set, notify Slack, adjust its budget/bid, or duplicate it when a metric breaches a threshold — checked automatically every 30 minutes.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -665,8 +854,10 @@ export default function AutoPauseRules() {
         const paused = lastCheckResult.paused || [];
         const notified = lastCheckResult.notified || [];
         const budgetAdjusted = lastCheckResult.budget_adjusted || [];
+        const bidAdjusted = lastCheckResult.bid_adjusted || [];
+        const duplicated = lastCheckResult.duplicated || [];
         const errors = lastCheckResult.errors || [];
-        const firedCount = paused.length + notified.length + budgetAdjusted.length;
+        const firedCount = paused.length + notified.length + budgetAdjusted.length + bidAdjusted.length + duplicated.length;
         // Errors can exist even when nothing fired (an insights fetch failure, or a
         // rule action that threw) — previously this branch only checked firedCount,
         // so a run with 0 fires but real errors silently rendered as "All clear"
@@ -716,6 +907,26 @@ export default function AutoPauseRules() {
                     </h3>
                     {budgetAdjusted.map((b, i) => (
                       <div key={i} className="text-sm text-emerald-700"><strong>{b.adset}</strong> — {b.detail}</div>
+                    ))}
+                  </div>
+                )}
+                {bidAdjusted.length > 0 && (
+                  <div>
+                    <h3 className="font-semibold text-emerald-800 flex items-center gap-2 mb-1">
+                      <TrendingUp size={16} /> Bid adjusted on {bidAdjusted.length} ad set{bidAdjusted.length !== 1 ? 's' : ''}
+                    </h3>
+                    {bidAdjusted.map((b, i) => (
+                      <div key={i} className="text-sm text-emerald-700"><strong>{b.adset}</strong> — {b.detail}</div>
+                    ))}
+                  </div>
+                )}
+                {duplicated.length > 0 && (
+                  <div>
+                    <h3 className="font-semibold text-violet-800 flex items-center gap-2 mb-1">
+                      <Copy size={16} /> Duplicated {duplicated.length} ad set{duplicated.length !== 1 ? 's' : ''}
+                    </h3>
+                    {duplicated.map((d, i) => (
+                      <div key={i} className="text-sm text-violet-700"><strong>{d.adset}</strong> — {d.detail}</div>
                     ))}
                   </div>
                 )}
@@ -770,7 +981,11 @@ export default function AutoPauseRules() {
                       </span>
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                         rule.triggered_at
-                          ? 'bg-red-100 text-red-700'
+                          // Red only for pause (a real red=bad/stopped outcome in Joel's
+                          // Ads Manager mental model) — Duplicate is a scaling action, not
+                          // a stop, so it stays in the action's own violet rather than
+                          // reusing pause's alarm color (joel-perspective P2).
+                          ? (rule.action === DUPLICATE_ACTION ? 'bg-violet-100 text-violet-700' : 'bg-red-100 text-red-700')
                           : rule.is_active
                             ? 'bg-green-100 text-green-700'
                             : 'bg-gray-100 text-gray-500'
@@ -784,7 +999,7 @@ export default function AutoPauseRules() {
 
                     <p className="text-xs text-gray-500 mt-1">
                       {ACTION_LABELS[rule.action] || rule.action}
-                      {BUDGET_ACTIONS.has(rule.action) && rule.budget_adjust_pct ? ` by ${rule.budget_adjust_pct}%` : ''}
+                      {PERCENT_ACTIONS.has(rule.action) && rule.budget_adjust_pct ? ` by ${rule.budget_adjust_pct}%` : ''}
                       {' '}if {METRIC_LABELS[rule.metric]} {rule.operator === 'greater_than' ? '>' : '<'} {METRIC_UNITS[rule.metric]}{rule.threshold}
                       {' '}after ${rule.min_spend} spend
                     </p>
@@ -862,9 +1077,10 @@ export default function AutoPauseRules() {
             themselves — flagged in pre-push review as a real behavior difference
             worth stating explicitly, not just in a rule-row badge. */}
         <p className="text-xs text-gray-400 mt-4 pt-4 border-t border-gray-100">
-          Unlike Ads Manager's own automated rules: Pause and budget-adjustment rules here fire <strong>once</strong>, then
-          disable themselves — they won't keep re-firing every 30 minutes. Notify rules keep re-checking (with a
-          4-hour cooldown between repeat Slack alerts for the same ongoing breach) since nothing changes on Meta to disable.
+          Unlike Ads Manager's own automated rules: Pause, budget/bid, and Duplicate rules here fire <strong>once</strong>, then
+          disable themselves — they won't keep re-firing every 30 minutes (Duplicate can be set to repeat instead).
+          Notify rules keep re-checking (with a 4-hour cooldown between repeat Slack alerts for the same ongoing breach)
+          since nothing changes on Meta to disable.
         </p>
       </div>
 

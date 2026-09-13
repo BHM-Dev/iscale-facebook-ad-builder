@@ -122,6 +122,10 @@ async def startup_event():
                     print(f"🔔 Notify rule(s) fired: {result['notified']}")
                 if result.get("budget_adjusted"):
                     print(f"💰 Budget rule(s) fired: {result['budget_adjusted']}")
+                if result.get("bid_adjusted"):
+                    print(f"🎯 Bid rule(s) fired: {result['bid_adjusted']}")
+                if result.get("duplicated"):
+                    print(f"🔀 Duplicate rule(s) fired: {result['duplicated']}")
             except Exception as exc:
                 print(f"⚠️  Auto-pause scheduler error: {exc}")
             finally:

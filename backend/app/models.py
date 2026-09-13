@@ -297,12 +297,26 @@ class AutoPauseRule(Base):
     operator = Column(String, nullable=False, default='greater_than')
     threshold = Column(Integer, nullable=False)          # e.g. 50 = $50 CPL
     min_spend = Column(Integer, nullable=False, default=20)  # minimum $ spend before rule fires
-    # action: 'pause' | 'notify' | 'increase_budget' | 'decrease_budget'. Default 'pause'
-    # matches every row created before this column existed — same behavior as today.
+    # action: 'pause' | 'notify' | 'increase_budget' | 'decrease_budget' | 'duplicate' |
+    # 'increase_bid' | 'decrease_bid'. Default 'pause' matches every row created before this
+    # column existed — same behavior as today.
     action = Column(String, nullable=False, default='pause')
-    # Percent to adjust budget by for increase_budget/decrease_budget (e.g. 20 = ±20%).
-    # NULL for pause/notify rules.
+    # Percent to adjust by for increase_budget/decrease_budget/increase_bid/decrease_bid
+    # (e.g. 20 = ±20%). Reused across both budget and bid actions — same shape, same
+    # validation, no reason for two separate percent columns. NULL for every other action.
     budget_adjust_pct = Column(Integer, nullable=True)
+    # Duplicate-action config — all nullable/defaulted so every pre-existing row (and every
+    # row using a non-duplicate action) is unaffected. Defaults chosen to match Birch's own
+    # Duplicate action, verified live against its actual config screen rather than guessed
+    # (see AdBuilder-BulkRules-Feature-Brief.md §8.2) — not invented from scratch.
+    duplicate_all_ads = Column(Boolean, nullable=True, default=True)
+    duplicate_name_suffix = Column(String, nullable=True, default='- Copy')
+    duplicate_append_number = Column(Boolean, nullable=True, default=False)
+    duplicate_pause_original = Column(Boolean, nullable=True, default=False)
+    # One-shot (disables itself after firing, matching pause/budget/bid) unless True, in
+    # which case it behaves like `notify` — stays active, same cooldown pattern applies so
+    # a repeat-enabled duplicate rule can't fire every 30 minutes indefinitely.
+    duplicate_repeat = Column(Boolean, nullable=True, default=False)
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_checked_at = Column(DateTime(timezone=True), nullable=True)

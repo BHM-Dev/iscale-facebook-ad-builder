@@ -2203,6 +2203,383 @@ class FacebookService:
             logger.error("Failed to fetch creative for ad %s: %s", fb_ad_id, msg)
             raise RuntimeError(f"Facebook API: {msg}") from e
 
+    def get_ad_creative_for_duplication(self, fb_ad_id: str) -> dict:
+        """Fetch what's needed to REBUILD an ad's creative on a new ad set, not just
+        display it. Deliberately a separate method from get_ad_creative (used by Copy
+        Library to render a preview) rather than extending that one — get_ad_creative's
+        existing return shape is a public-ish contract several callers already depend
+        on, and adding fields to it risks nothing today but changing what it returns
+        for a field IT doesn't use is exactly the kind of "worked before, unrelated
+        caller broke" bug this repo's own culture flags.
+
+        The key difference: get_ad_creative resolves `image_url` (a renderable link,
+        useful for showing a thumbnail) but never requests `image_hash`/`video_id` —
+        the actual account-level references create_creative needs to reuse an existing
+        image/video without re-uploading it. Meta creative media lives at the AD
+        ACCOUNT level, not the ad set — an image/video already uploaded to this account
+        can be referenced by hash/id directly in a brand-new creative on ANY ad set in
+        the same account, no re-upload required.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        try:
+            ad = Ad(fbid=fb_ad_id)
+            ad_data = ad.api_get(fields=[
+                Ad.Field.name,
+                'creative{title,body,call_to_action,'
+                'object_story_spec{page_id,link_data{link,message,name,image_hash,description},'
+                'video_data{video_id,image_url,message,title,link_data{link}}}}',
+            ])
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            msg = err.get('message') or str(e)
+            code = e.api_error_code() if hasattr(e, 'api_error_code') and callable(e.api_error_code) else err.get('code')
+            subcode = e.api_error_subcode() if hasattr(e, 'api_error_subcode') and callable(e.api_error_subcode) else err.get('error_subcode')
+            logger.error("Failed to fetch creative for duplication, ad %s: %s", fb_ad_id, msg)
+            raise FacebookAPIError(f"Facebook API: {msg}", code=code, subcode=subcode) from e
+
+        creative = ad_data.get('creative', {}) or {}
+        oss = creative.get('object_story_spec', {}) or {}
+        link_data = oss.get('link_data', {}) or {}
+        video_data = oss.get('video_data', {}) or {}
+
+        headline = creative.get('title') or link_data.get('name') or video_data.get('title')
+        body = creative.get('body') or link_data.get('message') or video_data.get('message')
+        cta_obj = creative.get('call_to_action', {})
+        cta_label = cta_obj.get('type') if isinstance(cta_obj, dict) else None
+        cta_value = cta_obj.get('value', {}) if isinstance(cta_obj, dict) else {}
+        # Fallback chain, in order: link ad's own link_data.link, then the top-level
+        # call_to_action mirror (needed for video ads — a video ad's real destination
+        # link lives on call_to_action.value.link, not video_data.link_data, which is
+        # rarely populated), then video_data.link_data.link as a last resort. The
+        # call_to_action mirror is confirmed working for link ads in production
+        # (get_ad_creative); video-ad coverage specifically should get one live test
+        # before this ships broadly (Meta-API domain-expert review, 2026-09-13) — if it
+        # doesn't resolve, this returns None and the per-ad duplication for that ad
+        # fails with a clear "no reusable image/video reference" error rather than
+        # silently sending a bad payload.
+        website_url = link_data.get('link') or cta_value.get('link') or video_data.get('link_data', {}).get('link')
+
+        return {
+            "ad_name": ad_data.get('name'),
+            "page_id": oss.get('page_id'),
+            "headline": headline,
+            "body": body,
+            "description": link_data.get('description'),
+            "cta_label": cta_label,
+            "website_url": website_url,
+            "image_hash": link_data.get('image_hash'),
+            "video_id": video_data.get('video_id'),
+        }
+
+    def duplicate_adset(
+        self,
+        fb_adset_id: str,
+        name_suffix: str = '- Copy',
+        append_number: bool = False,
+        duplicate_all_ads: bool = True,
+        pause_original: bool = False,
+        ad_account_id=None,
+    ) -> dict:
+        """Clone an ad set (config + optionally its ads) into a new ad set on the same
+        campaign. Defaults verified live against Birch's own Duplicate action rather than
+        guessed — see AdBuilder-BulkRules-Feature-Brief.md §8.2.
+
+        Deliberately does NOT reuse create_adset()'s param-building — that method
+        transforms THIS APP'S OWN UI-shaped payload (camelCase keys, HEC stripping for a
+        brand-new wizard-driven ad set) into Meta's params. A live ad set read back from
+        Meta is already in Meta's own snake_case field shape, and passing it through
+        create_adset's camelCase-keyed lookups (`adset_data.get('ageMin')` etc.) would
+        silently drop nearly every field, since Meta returns `age_min` not `ageMin`.
+        Builds params directly from the read-back object instead.
+
+        Every new ad launches PAUSED, matching this app's convention everywhere else.
+        Partial-ad-creation failures are tolerated per-ad (like the existing bulk-ad
+        creation loop) rather than aborting the whole duplication — the new ad set and
+        whichever ads succeeded are real and already exist; the caller gets back exactly
+        which ads failed so nothing is silently lost.
+
+        NOT copied (Meta-API domain-expert review, 2026-09-13): day-parting
+        (adset_schedule/pacing_type), frequency_control_specs, and is_dynamic_creative.
+        This is not a faithful 1:1 clone of every ad set setting — only the fields
+        listed in `params` below are reproduced. Flagged as a known follow-up rather
+        than silently dropped without a trace.
+
+        Returns:
+            {
+                "new_fb_adset_id": str,
+                "new_adset_name": str,
+                "created_ad_ids": [str, ...],
+                "errors": [str, ...],   # one entry per ad that failed to duplicate
+                "original_paused": bool,
+            }
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        source_adset = AdSet(fbid=fb_adset_id)
+        try:
+            source = source_adset.api_get(fields=[
+                AdSet.Field.name,
+                AdSet.Field.campaign_id,
+                AdSet.Field.targeting,
+                AdSet.Field.optimization_goal,
+                AdSet.Field.billing_event,
+                AdSet.Field.bid_amount,
+                AdSet.Field.bid_strategy,
+                AdSet.Field.daily_budget,
+                AdSet.Field.lifetime_budget,
+                AdSet.Field.start_time,
+                AdSet.Field.end_time,
+                AdSet.Field.promoted_object,
+                'attribution_spec',
+            ])
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            msg = err.get('message') or str(e)
+            code = e.api_error_code() if hasattr(e, 'api_error_code') and callable(e.api_error_code) else err.get('code')
+            subcode = e.api_error_subcode() if hasattr(e, 'api_error_subcode') and callable(e.api_error_subcode) else err.get('error_subcode')
+            logger.error("Failed to read source adset %s for duplication: %s", fb_adset_id, msg)
+            raise FacebookAPIError(f"Facebook API: {msg}", code=code, subcode=subcode) from e
+
+        base_name = source.get(AdSet.Field.name) or 'Ad Set'
+        campaign_id = source.get(AdSet.Field.campaign_id)
+
+        # Numbering — count existing siblings in the same campaign already using this
+        # exact suffix, so a repeat-enabled rule (or manual re-duplication) produces
+        # "- Copy 1", "- Copy 2" instead of two ad sets sharing one identical name — the
+        # same collision class fixed for per-media ad sets in Phase 4.
+        new_name = f"{base_name} {name_suffix}".strip()
+        if append_number:
+            try:
+                campaign = Campaign(campaign_id)
+                cursor = campaign.get_ad_sets(fields=[AdSet.Field.name], params={'limit': 500})
+                # Paginate through every page — the SDK cursor only materializes one
+                # page at a time (same gotcha get_adset_name_map exists to fix). Without
+                # this, a campaign with >500 ad sets (increasingly likely after Phase 4's
+                # "one ad set per media file" mode) would silently undercount and could
+                # produce two ad sets both named e.g. "- Copy 3" — a real collision, not
+                # just a cosmetic miss. Caught in pre-push review (code-auditor).
+                prefix = f"{base_name} {name_suffix}".strip()
+                existing_count = 0
+                while True:
+                    for s in cursor:
+                        if (s.get(AdSet.Field.name) or '').startswith(prefix):
+                            existing_count += 1
+                    if not cursor.load_next_page():
+                        break
+                new_name = f"{prefix} {existing_count + 1}"
+            except Exception as e:
+                # Numbering is a naming-quality nicety, not correctness-critical — if the
+                # sibling lookup fails for any reason, fall back to the unnumbered name
+                # rather than aborting the whole duplication over a cosmetic detail.
+                logger.warning("Could not count sibling ad sets for numbering (falling back to unnumbered name): %s", e)
+
+        params = {
+            AdSet.Field.name: new_name,
+            AdSet.Field.campaign_id: campaign_id,
+            AdSet.Field.optimization_goal: source.get(AdSet.Field.optimization_goal),
+            AdSet.Field.billing_event: source.get(AdSet.Field.billing_event, 'IMPRESSIONS'),
+            AdSet.Field.targeting: source.get(AdSet.Field.targeting),
+            AdSet.Field.status: 'PAUSED',
+        }
+        # Only set budget/bid fields the source actually has. A CBO ad set has neither
+        # daily_budget nor lifetime_budget of its own (Meta omits the field entirely,
+        # not a zero — see Phase 3's adjust_adset_budget_by_percent for the same
+        # reasoning) — leaving them unset here means the new ad set correctly inherits
+        # its campaign's shared CBO budget automatically, with no extra branching needed.
+        if source.get(AdSet.Field.daily_budget) is not None:
+            params[AdSet.Field.daily_budget] = int(source[AdSet.Field.daily_budget])
+        if source.get(AdSet.Field.lifetime_budget) is not None:
+            params[AdSet.Field.lifetime_budget] = int(source[AdSet.Field.lifetime_budget])
+        if source.get(AdSet.Field.bid_amount) is not None:
+            params[AdSet.Field.bid_amount] = int(source[AdSet.Field.bid_amount])
+        # bid_strategy only at ad-set level when the source ad set is ABO (has its own
+        # budget) — under CBO, bid_strategy lives on the CAMPAIGN (create_adset() already
+        # makes this exact distinction; this method builds its own params instead of
+        # reusing create_adset(), so it needs its own copy of the same check). Sending
+        # an ad-set-level bid_strategy for a new ad set landing in a CBO campaign risks
+        # Meta rejecting it as conflicting with the campaign's own strategy. Caught in
+        # pre-push review (Meta-API domain-expert pass).
+        is_abo = source.get(AdSet.Field.daily_budget) is not None or source.get(AdSet.Field.lifetime_budget) is not None
+        if is_abo and source.get(AdSet.Field.bid_strategy):
+            params[AdSet.Field.bid_strategy] = source[AdSet.Field.bid_strategy]
+        if source.get(AdSet.Field.start_time):
+            params[AdSet.Field.start_time] = source[AdSet.Field.start_time]
+        if source.get(AdSet.Field.end_time):
+            params[AdSet.Field.end_time] = source[AdSet.Field.end_time]
+        if source.get(AdSet.Field.promoted_object):
+            params[AdSet.Field.promoted_object] = source[AdSet.Field.promoted_object]
+        if source.get('attribution_spec'):
+            params['attribution_spec'] = source['attribution_spec']
+
+        account = self._get_account(ad_account_id)
+        try:
+            new_adset = account.create_ad_set(params=params)
+            new_fb_adset_id = new_adset.get('id') if hasattr(new_adset, 'get') else str(new_adset)
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            msg = err.get('message') or str(e)
+            code = e.api_error_code() if hasattr(e, 'api_error_code') and callable(e.api_error_code) else err.get('code')
+            subcode = e.api_error_subcode() if hasattr(e, 'api_error_subcode') and callable(e.api_error_subcode) else err.get('error_subcode')
+            logger.error("Failed to create duplicate adset from %s: %s", fb_adset_id, msg)
+            raise FacebookAPIError(f"Facebook API: {msg}", code=code, subcode=subcode) from e
+
+        result = {
+            "new_fb_adset_id": new_fb_adset_id,
+            "new_adset_name": new_name,
+            "created_ad_ids": [],
+            "errors": [],
+            "original_paused": False,
+        }
+
+        if duplicate_all_ads:
+            try:
+                source_ads = self.get_ads(fb_adset_id)
+            except Exception as e:
+                # The new (empty) ad set already exists on Meta at this point — name that
+                # explicitly rather than letting the caller think nothing happened.
+                result["errors"].append(
+                    f"New ad set {new_fb_adset_id} was created, but could not list the "
+                    f"source ad set's ads to duplicate: {e}"
+                )
+                source_ads = []
+
+            for ad in source_ads:
+                ad_id = ad.get(Ad.Field.id)
+                ad_name = ad.get(Ad.Field.name) or 'Ad'
+                try:
+                    creative_detail = self.get_ad_creative_for_duplication(ad_id)
+                    if not creative_detail.get('page_id'):
+                        raise RuntimeError(f"'{ad_name}' has no page_id on its creative — cannot rebuild it")
+                    if not creative_detail.get('image_hash') and not creative_detail.get('video_id'):
+                        raise RuntimeError(f"'{ad_name}' has no reusable image/video reference — cannot rebuild it")
+
+                    new_creative = self.create_creative({
+                        'page_id': creative_detail['page_id'],
+                        'image_hash': creative_detail.get('image_hash'),
+                        'video_id': creative_detail.get('video_id'),
+                        'primary_text': creative_detail.get('body') or '',
+                        'headline': creative_detail.get('headline') or ad_name,
+                        'cta': creative_detail.get('cta_label') or 'LEARN_MORE',
+                        'creative_name': f"{ad_name} {name_suffix}".strip(),
+                        'website_url': creative_detail.get('website_url'),
+                    }, ad_account_id)
+                    new_creative_id = new_creative.get('id') if hasattr(new_creative, 'get') else str(new_creative)
+
+                    new_ad = self.create_ad({
+                        'adset_id': new_fb_adset_id,
+                        'creative_id': new_creative_id,
+                        'name': f"{ad_name} {name_suffix}".strip(),
+                        'status': 'PAUSED',
+                    }, ad_account_id)
+                    new_ad_id = new_ad.get('id') if hasattr(new_ad, 'get') else str(new_ad)
+                    result["created_ad_ids"].append(new_ad_id)
+                except Exception as e:
+                    # Tolerate per-ad failure, same as the existing bulk-ad-creation loop —
+                    # the new ad set and every ad that DID succeed are real; collect the
+                    # failure and continue rather than aborting the whole duplication.
+                    logger.error("Failed to duplicate ad %s ('%s') into new adset %s: %s", ad_id, ad_name, new_fb_adset_id, e)
+                    result["errors"].append(f"Failed to duplicate '{ad_name}': {e}")
+
+        if pause_original:
+            try:
+                self.update_adset_status(fb_adset_id, 'PAUSED')
+                result["original_paused"] = True
+            except Exception as e:
+                # Non-fatal — the duplicate itself already succeeded. Surface the failure
+                # to pause the original as an error, not silently ignore it.
+                logger.error("Duplicate of %s succeeded, but failed to pause the original: %s", fb_adset_id, e)
+                result["errors"].append(f"Duplicate succeeded, but failed to pause the original ad set: {e}")
+
+        return result
+
+    # Meta will reject a bid below its own account-currency minimum — same "cheap sanity
+    # floor, not Meta's real minimum" reasoning as MIN_BUDGET_CENTS in
+    # adjust_adset_budget_by_percent above. Raised from 1 cent (Meta-API domain-expert
+    # review: a 1-cent floor provides no real protection — a repeated decrease_bid
+    # rule could drive a real bid to a functionally useless fraction of a cent before
+    # ever tripping it). 25 cents is still well under any realistic BHM bid, just not
+    # meaninglessly low.
+    MIN_BID_CENTS = 25
+
+    def adjust_adset_bid_by_percent(self, fb_adset_id: str, percent_change: float) -> dict:
+        """Increase or decrease an ad set's bid_amount by a percentage, live against Meta.
+
+        Mirrors adjust_adset_budget_by_percent's structure almost exactly (read-modify-
+        write against the live value, never the local cache; CBO-shared-sibling refusal;
+        a sanity floor) — bid_amount has the same CBO/ABO split budget does: under CBO,
+        bid_strategy lives on the CAMPAIGN, and an ad set on a CBO campaign typically has
+        no bid_amount of its own to adjust at all (it inherits the campaign's bidding).
+
+        Refuses (raises RuntimeError, no Meta call made) rather than silently no-op'ing
+        when the ad set has no bid_amount set — most BHM ad sets run
+        LOWEST_COST_WITHOUT_CAP (no manual bid cap), where "adjusting the bid" would
+        silently do nothing useful even if Meta accepted the call.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        adset = AdSet(fbid=fb_adset_id)
+        try:
+            adset_data = adset.api_get(fields=[AdSet.Field.bid_amount, AdSet.Field.campaign_id])
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            msg = err.get('message') or str(e)
+            code = e.api_error_code() if hasattr(e, 'api_error_code') and callable(e.api_error_code) else err.get('code')
+            subcode = e.api_error_subcode() if hasattr(e, 'api_error_subcode') and callable(e.api_error_subcode) else err.get('error_subcode')
+            logger.error("Failed to read adset %s for bid adjust: %s", fb_adset_id, msg)
+            raise FacebookAPIError(f"Facebook API: {msg}", code=code, subcode=subcode) from e
+
+        if adset_data.get(AdSet.Field.bid_amount) is None:
+            raise RuntimeError(
+                f"AdSet {fb_adset_id} has no bid_amount set — it's likely running "
+                "LOWEST_COST_WITHOUT_CAP (no manual bid cap) or inherits bidding from "
+                "a CBO campaign. Refusing to adjust a bid field Meta isn't using."
+            )
+        current_cents = int(adset_data[AdSet.Field.bid_amount])
+
+        # No separate CBO-sibling-sharing check needed here, unlike the budget action —
+        # bid_amount is a per-ad-set field regardless of CBO/ABO; a CBO ad set that
+        # inherits its campaign's bid strategy simply has no bid_amount of its own,
+        # which the check above already catches and refuses on. Flagged explicitly for
+        # the Meta-API domain-expert review: verify bid_amount can never legitimately be
+        # shared/campaign-level the way daily_budget/lifetime_budget are under CBO — if
+        # that assumption is wrong, this method needs the same sibling-refusal pattern
+        # adjust_adset_budget_by_percent has.
+
+        new_cents = int(round(current_cents * (1 + percent_change / 100)))
+        if new_cents < self.MIN_BID_CENTS:
+            raise RuntimeError(
+                f"Computed new bid ${new_cents / 100:.2f} is below the ${self.MIN_BID_CENTS / 100:.2f} "
+                f"floor (current ${current_cents / 100:.2f}, {percent_change:+.0f}%) — refusing to send this to Meta."
+            )
+
+        try:
+            adset.api_update(params={AdSet.Field.bid_amount: new_cents})
+            logger.info("AdSet %s bid_amount $%.2f → $%.2f (%+.0f%%)", fb_adset_id, current_cents / 100, new_cents / 100, percent_change)
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            msg = err.get('message') or str(e)
+            code = e.api_error_code() if hasattr(e, 'api_error_code') and callable(e.api_error_code) else err.get('code')
+            subcode = e.api_error_subcode() if hasattr(e, 'api_error_subcode') and callable(e.api_error_subcode) else err.get('error_subcode')
+            logger.error("Failed to update adset %s bid_amount: %s", fb_adset_id, msg)
+            raise FacebookAPIError(f"Facebook API: {msg}", code=code, subcode=subcode) from e
+
+        return {
+            'level': 'adset',
+            'target_id': fb_adset_id,
+            'field': AdSet.Field.bid_amount,
+            'old_cents': current_cents,
+            'new_cents': new_cents,
+        }
+
     def get_adset_name_map(self, ad_account_id=None) -> dict:
         """Fetch all ad set IDs → names for the account in one call.
 
