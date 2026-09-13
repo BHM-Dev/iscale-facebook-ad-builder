@@ -897,6 +897,7 @@ export default function AdRemix() {
             )}
 
             {/* Step Content */}
+            <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 min-h-[500px]">
                 {loading && (
                     <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center rounded-xl">
@@ -1201,6 +1202,37 @@ export default function AdRemix() {
                         </div>
                     </div>
                 )}
+            </div>
+
+            {currentStep >= 2 && currentStep <= 6 && (
+                <aside className="hidden lg:block sticky top-6 bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-3">
+                    <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+                        <div className="w-7 h-7 rounded-lg bg-purple-100 flex items-center justify-center">
+                            <Sparkles size={14} className="text-purple-600" />
+                        </div>
+                        <div>
+                            <h2 className="text-sm font-semibold text-gray-900">Your selections</h2>
+                            <p className="text-[11px] text-gray-400">Updates as you build</p>
+                        </div>
+                    </div>
+
+                    {[
+                        ['Brand', wizardData.brand?.name],
+                        ['Product', wizardData.product?.name],
+                        ['Audience Profile', wizardData.profile?.name],
+                        ['Offer / Hook', wizardData.campaignDetails.offer],
+                        ['Urgency', wizardData.campaignDetails.urgency],
+                        ['Key Messaging', wizardData.campaignDetails.messaging],
+                    ].map(([label, value]) => (
+                        <div key={label} className="space-y-0.5">
+                            <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{label}</div>
+                            <div className={`text-sm leading-snug break-words ${value ? 'text-gray-800' : 'text-gray-300'}`}>
+                                {value || '—'}
+                            </div>
+                        </div>
+                    ))}
+                </aside>
+            )}
             </div>
 
             {/* Navigation */}
