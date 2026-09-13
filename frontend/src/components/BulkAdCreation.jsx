@@ -1,7 +1,7 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useState } from 'react';
-import { ChevronRight, Plus, Loader, Film, Image, X } from 'lucide-react';
+import { ChevronRight, Loader, Film, Image, X } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { createCompleteAd, createFacebookCampaign, createFacebookAdSet, getRateLimitUsage } from '../lib/facebookApi';
 import { INTER_REQUEST_DELAY_MS, USAGE_WARN_THRESHOLD, delay, isRateLimitError, peakUsagePercent, rateLimitStopMessage } from '../lib/metaRateLimit';
@@ -34,6 +34,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState({ current: 0, total: 0, status: '' });
     const [errors, setErrors] = useState([]);
+    // Gates the actual launch behind one extra confirm step when per-media mode
+    // + ABO means N distinct budgets stack — the Review screen already shows this
+    // math in a warning banner, but that's informational only. Flagged in
+    // pre-push follow-up: no confirm gate existed before an ABO per-media launch
+    // actually created N ad sets, each carrying the full configured budget.
+    const [showLaunchConfirm, setShowLaunchConfirm] = useState(false);
     // Last Meta rate-limit reading, shown in the launch panel. null until
     // a launch is attempted; `available: false` means Meta told us nothing.
     const [rateLimitUsage, setRateLimitUsage] = useState(null);
@@ -42,6 +48,20 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // with no indication of which ones actually made it, leaving the user to
     // reconcile against Ads Manager by hand.
     const [launchOutcome, setLaunchOutcome] = useState(null);
+    // Recently-excluded ads (most recent last), so the exclude ("✕") button on a
+    // dense multi-column grid — a smaller, closer-together target than the old
+    // isolated row button — has an undo path. Flagged in pre-push review: no
+    // confirm and no undo meant an accidental exclude on a good combination
+    // silently dropped it with no recovery short of redoing the whole batch. A
+    // STACK, not a single slot — a second exclude within the window used to
+    // silently overwrite the first one's undo with no indication anything was
+    // lost, the realistic failure mode on a dense grid (rarely just one
+    // misclick). Capped so a rapid-fire clearing pass doesn't stack banners
+    // indefinitely. A shared-app-wide Toast redesign (action buttons inside a
+    // toast) would be a bigger, riskier change for what this needs —
+    // self-contained here instead.
+    const [removedStack, setRemovedStack] = useState([]);
+    const MAX_UNDO_STACK = 3;
 
     // Initialize ads based on creatives - generate all permutations
     React.useEffect(() => {
@@ -102,19 +122,35 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // multiplier is however many distinct media files there are).
     const perMediaModeActive = adsetData.creationMode === 'per_media' && !adsetData.isExisting;
 
-    const addAd = () => {
-        setAdsData(prev => [
-            ...prev,
-            {
-                id: `ad_${Date.now()}_${prev.length}`,
-                name: `Ad ${prev.length + 1}`,
-                useDefaultCreative: true
-            }
-        ]);
+    const removeAd = (index) => {
+        // Computed BEFORE the setAdsData updater, not inside it — an updater must
+        // be pure (React may invoke it more than once for the same transition,
+        // most visibly under StrictMode's double-invoke); calling setRemovedStack
+        // from inside setAdsData's callback was exactly that anti-pattern, caught
+        // in pre-push review. Reading adsData directly here instead.
+        const ad = adsData[index];
+        const key = `${ad.id}_${Date.now()}`;
+        setRemovedStack(prev => [...prev.slice(-(MAX_UNDO_STACK - 1)), { key, ad, index }]);
+        setAdsData(prev => prev.filter((_, i) => i !== index));
+        // Each entry expires independently, 8s from when IT was added — not a
+        // single shared timer that a later removal would reset for an earlier one.
+        setTimeout(() => {
+            setRemovedStack(prev => prev.filter(r => r.key !== key));
+        }, 8000);
     };
 
-    const removeAd = (index) => {
-        setAdsData(prev => prev.filter((_, i) => i !== index));
+    const undoRemove = (key) => {
+        const entry = removedStack.find(r => r.key === key);
+        if (!entry) return;
+        setAdsData(prev => {
+            const next = [...prev];
+            // Clamp — the list may have shrunk further (another exclude, or a
+            // re-launch that regenerated adsData) since this one was removed.
+            const insertAt = Math.min(entry.index, next.length);
+            next.splice(insertAt, 0, entry.ad);
+            return next;
+        });
+        setRemovedStack(prev => prev.filter(r => r.key !== key));
     };
 
     const updateAdName = (index, name) => {
@@ -766,6 +802,34 @@ const BulkAdCreation = ({ onNext, onBack }) => {
 
             {!loading ? (
                 <>
+                    {/* Undo banners — the exclude ("✕") button on this dense grid is a
+                        smaller, closer-together target than the old isolated row button
+                        it replaced, with no confirm step. This is the safety net for a
+                        misclick, not a confirm dialog on every exclude (CLAUDE.md bans
+                        native confirm() outright, and a modal on every card-corner click
+                        would be worse friction than the problem it solves).
+                        `sticky top-2` — flagged in review: at a real 15-20 ad batch, a
+                        misclick usually happens scrolled well past the top of the grid,
+                        and a banner in normal document flow above it renders off-screen
+                        exactly when it's needed. A stack (not one slot) — a second
+                        exclude within the window no longer silently overwrites the
+                        first one's undo with no indication anything was lost. */}
+                    {removedStack.length > 0 && (
+                        <div className="sticky top-2 z-20 space-y-2 mb-3">
+                            {removedStack.map(entry => (
+                                <div key={entry.key} className="flex items-center justify-between gap-3 px-4 py-2.5 bg-gray-800 text-white text-sm rounded-lg shadow-lg">
+                                    <span>Removed "{entry.ad.name}"</span>
+                                    <div className="flex items-center gap-3 flex-shrink-0">
+                                        <button onClick={() => undoRemove(entry.key)} className="font-semibold text-amber-300 hover:text-amber-200">Undo</button>
+                                        <button onClick={() => setRemovedStack(prev => prev.filter(r => r.key !== entry.key))} className="text-gray-400 hover:text-gray-200" aria-label="Dismiss">
+                                            <X size={14} />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
                     {/* Ads Preview Grid — one native-style Facebook feed-preview card per
                         combination, instead of a thumbnail + rename row. Shows the actual
                         headline/body text for that specific combination so a bad pairing is
@@ -927,15 +991,13 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         })}
                     </div>
 
-                    {/* Add Ad Button */}
-                    <button
-                        onClick={addAd}
-                        className="w-full p-4 border-2 border-dashed border-gray-300 rounded-lg text-gray-600 hover:border-blue-500 hover:text-blue-600 transition-colors flex items-center justify-center gap-2"
-                        title="Adds a blank ad slot — use this only if you want to manually add an ad outside the auto-generated combinations above"
-                    >
-                        <Plus size={20} />
-                        Add a Custom Ad
-                    </button>
+                    {/* "Add a Custom Ad" removed — it produced a permutation with no
+                        creative/headline/body attached and no follow-up form to fill
+                        those in, a guaranteed-to-fail dead end (flagged in pre-push
+                        review of the preview-grid work, where it got an explicit
+                        "will fail" card treatment instead of a real fix). Removing the
+                        trap rather than building the missing attach-creative form,
+                        which nothing has asked for. */}
 
                     {/* Meta rate-limit reading from the last launch attempt. Shown
                         only when Meta actually reported usage — when it doesn't,
@@ -1014,7 +1076,15 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             </button>
                         ) : (
                             <button
-                                onClick={handleSubmit}
+                                onClick={() => {
+                                    const distinctMediaCount = new Set(adsData.map(ad => ad.creativeId)).size;
+                                    const isRiskyLaunch = perMediaModeActive && campaignData.budgetType === 'ABO' && distinctMediaCount > 1;
+                                    if (isRiskyLaunch) {
+                                        setShowLaunchConfirm(true);
+                                    } else {
+                                        handleSubmit();
+                                    }
+                                }}
                                 disabled={adsData.length === 0}
                                 className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                             >
@@ -1022,6 +1092,43 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             </button>
                         )}
                     </div>
+
+                    {/* Confirm gate — per-media + ABO only. Custom modal, not native
+                        confirm() (CLAUDE.md bans that outright), and only inserted for
+                        the specific combination that stacks N full budgets, not every
+                        launch — the common case stays a single click, unchanged. */}
+                    {showLaunchConfirm && (() => {
+                        const distinctMediaCount = new Set(adsData.map(ad => ad.creativeId)).size;
+                        const perAdsetBudget = adsetData.budgetScheduleType === 'LIFETIME'
+                            ? Number(adsetData.lifetimeBudget || 0)
+                            : Number(adsetData.dailyBudget || 0);
+                        const totalBudget = perAdsetBudget * distinctMediaCount;
+                        const unit = adsetData.budgetScheduleType === 'LIFETIME' ? 'total lifetime' : '/day';
+                        return (
+                            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
+                                <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md">
+                                    <h2 className="text-lg font-bold text-gray-900 mb-2">Confirm launch</h2>
+                                    <p className="text-sm text-gray-600 mb-4">
+                                        This creates <strong>{distinctMediaCount} new ad sets</strong> (one per media file),
+                                        each carrying its own <strong>${perAdsetBudget.toFixed(2)}{unit === '/day' ? '/day' : ' lifetime'}</strong> budget —
+                                        <strong className="text-amber-700"> ${totalBudget.toFixed(2)}{unit === '/day' ? '/day' : ' total'}</strong> once
+                                        every ad set is activated in Ads Manager.
+                                    </p>
+                                    <div className="flex gap-3">
+                                        <button onClick={() => setShowLaunchConfirm(false)} className="flex-1 px-4 py-2.5 rounded-lg border border-gray-200 text-gray-700 font-medium hover:bg-gray-50">
+                                            Back
+                                        </button>
+                                        <button
+                                            onClick={() => { setShowLaunchConfirm(false); handleSubmit(); }}
+                                            className="flex-1 px-4 py-2.5 rounded-lg bg-green-600 text-white font-medium hover:bg-green-700"
+                                        >
+                                            Launch anyway
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
                 </>
             ) : (
                 <>
