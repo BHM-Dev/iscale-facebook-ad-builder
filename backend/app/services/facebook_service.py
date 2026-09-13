@@ -1894,6 +1894,164 @@ class FacebookService:
             logger.error("Failed to update adset %s status: %s", fb_adset_id, msg)
             raise RuntimeError(f"Facebook API: {msg}") from e
 
+    # A cheap sanity floor, NOT Meta's real minimum — Meta's actual minimum budget
+    # varies by objective, billing event, optimization goal, and CBO vs ABO (a CBO
+    # campaign's floor is roughly the sum of its ad sets' individual minimums, often
+    # well above $1/day for a conversion-optimized campaign). This just catches an
+    # obviously-broken computed value (e.g. a 99% decrease) before it's sent — a
+    # value that clears this floor can still be rejected by Meta's own server-side
+    # minimum, which is caught by the FacebookRequestError handling below, not by
+    # this constant. $1.00/day, in cents, matching the units Meta's budget fields
+    # use everywhere else in this file.
+    MIN_BUDGET_CENTS = 100
+
+    def adjust_adset_budget_by_percent(self, fb_adset_id: str, percent_change: float) -> dict:
+        """Increase or decrease an ad set's budget by a percentage, live against Meta.
+
+        Auto-pause rules are always scoped to one specific ad set, but that ad set's
+        budget doesn't necessarily live on the ad set itself — under a CBO ("Campaign
+        Budget Optimization") campaign, budget is set on the CAMPAIGN, and the ad set's
+        own daily_budget/lifetime_budget fields are simply absent from Meta's response
+        (not zero, not null-but-present — the field key doesn't come back at all).
+        Blindly calling adset.api_update({'daily_budget': ...}) in that case doesn't
+        error, it just silently does nothing, which is worse than an error for a rule
+        meant to run unattended every 30 minutes.
+
+        Always reads the CURRENT budget live from Meta immediately before writing
+        (read-modify-write) rather than trusting this app's own locally-synced copy,
+        which can be stale if a buyer changed the budget by hand in Ads Manager since
+        the last sync.
+
+        Returns a dict describing exactly what happened, for the audit log:
+        {level: 'adset'|'campaign', target_id, field: 'daily_budget'|'lifetime_budget',
+         old_cents, new_cents}. Raises RuntimeError on any Meta API failure or if
+        neither the ad set nor its parent campaign has a budget field set at all
+        (e.g. an ad-set-level budget field literally hasn't been configured, which
+        would otherwise look identical to "successfully adjusted nothing").
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        adset = AdSet(fbid=fb_adset_id)
+        try:
+            adset_data = adset.api_get(fields=[
+                AdSet.Field.daily_budget,
+                AdSet.Field.lifetime_budget,
+                AdSet.Field.campaign_id,
+            ])
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            msg = err.get('message') or str(e)
+            logger.error("Failed to read adset %s for budget adjust: %s", fb_adset_id, msg)
+            raise RuntimeError(f"Facebook API: {msg}") from e
+
+        target = None
+        field = None
+        current_cents = None
+        level = None
+        target_id = None
+
+        # `is not None`, not bare truthiness — Meta's documented CBO behavior is to
+        # omit the field entirely (not return a literal 0), but relying on that
+        # alone via `if adset_data.get(...):` would misfire if Meta ever did return
+        # an actual 0 for a real budget (bool(0) is False, same as a missing key).
+        # This function writes real money; don't let that ambiguity through.
+        if adset_data.get(AdSet.Field.daily_budget) is not None:
+            target, field, current_cents = adset, AdSet.Field.daily_budget, int(adset_data[AdSet.Field.daily_budget])
+            level, target_id = 'adset', fb_adset_id
+        elif adset_data.get(AdSet.Field.lifetime_budget) is not None:
+            target, field, current_cents = adset, AdSet.Field.lifetime_budget, int(adset_data[AdSet.Field.lifetime_budget])
+            level, target_id = 'adset', fb_adset_id
+        else:
+            # Ad set itself has no budget field — check the parent campaign (CBO).
+            campaign_id = adset_data.get(AdSet.Field.campaign_id)
+            if not campaign_id:
+                raise RuntimeError(
+                    f"AdSet {fb_adset_id} has no budget field and no parent campaign_id — cannot adjust budget."
+                )
+            campaign = Campaign(fbid=campaign_id)
+            try:
+                campaign_data = campaign.api_get(fields=[Campaign.Field.daily_budget, Campaign.Field.lifetime_budget])
+            except FacebookRequestError as e:
+                body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+                err = body.get('error', {}) if isinstance(body, dict) else {}
+                msg = err.get('message') or str(e)
+                logger.error("Failed to read campaign %s for budget adjust: %s", campaign_id, msg)
+                raise RuntimeError(f"Facebook API: {msg}") from e
+
+            if campaign_data.get(Campaign.Field.daily_budget) is not None:
+                target, field, current_cents = campaign, Campaign.Field.daily_budget, int(campaign_data[Campaign.Field.daily_budget])
+                level, target_id = 'campaign', campaign_id
+            elif campaign_data.get(Campaign.Field.lifetime_budget) is not None:
+                target, field, current_cents = campaign, Campaign.Field.lifetime_budget, int(campaign_data[Campaign.Field.lifetime_budget])
+                level, target_id = 'campaign', campaign_id
+            else:
+                raise RuntimeError(
+                    f"Neither AdSet {fb_adset_id} nor its parent Campaign {campaign_id} "
+                    "has a budget field set — cannot determine where to adjust."
+                )
+
+            # A CBO campaign's budget is shared across EVERY ad set under it, not just
+            # the one this rule was scoped to — but a rule is always configured
+            # against one specific ad set (per the docstring above). Adjusting the
+            # campaign here would silently move budget for sibling ad sets too,
+            # including ones performing fine, with nothing in the Slack alert or
+            # audit log saying so unless we make that explicit. Caught in domain-
+            # expert review (Meta API pass) as the single highest-risk gap in this
+            # method — a rule aimed at one loser could quietly cut a winner's spend.
+            # Refuse rather than silently proceed whenever another ACTIVE sibling
+            # exists; only adjust automatically when this ad set is the sole active
+            # one in the campaign (the shared budget is, in effect, just its own).
+            try:
+                sibling_adsets = list(campaign.get_ad_sets(fields=[AdSet.Field.id, AdSet.Field.status]))
+            except FacebookRequestError as e:
+                body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+                err = body.get('error', {}) if isinstance(body, dict) else {}
+                msg = err.get('message') or str(e)
+                logger.error("Failed to list sibling ad sets for campaign %s: %s", campaign_id, msg)
+                raise RuntimeError(f"Facebook API: {msg}") from e
+
+            active_siblings = [
+                a for a in sibling_adsets
+                if a.get(AdSet.Field.id) != fb_adset_id and a.get(AdSet.Field.status) == 'ACTIVE'
+            ]
+            if active_siblings:
+                raise RuntimeError(
+                    f"AdSet {fb_adset_id}'s budget is CBO-shared at the campaign level with "
+                    f"{len(active_siblings)} other active ad set(s) — refusing to adjust it here, "
+                    "since that would silently change budget for all of them. Manage this campaign's "
+                    "budget directly, or scope this rule to an ad set that isn't in a shared CBO campaign."
+                )
+
+        new_cents = int(round(current_cents * (1 + percent_change / 100)))
+        if new_cents < self.MIN_BUDGET_CENTS:
+            raise RuntimeError(
+                f"Computed new budget ${new_cents / 100:.2f} is below the ${self.MIN_BUDGET_CENTS / 100:.2f} "
+                f"floor (current ${current_cents / 100:.2f}, {percent_change:+.0f}%) — refusing to send this to Meta."
+            )
+
+        try:
+            target.api_update(params={field: new_cents})
+            logger.info(
+                "%s %s budget %s $%.2f → $%.2f (%+.0f%%)",
+                level, target_id, field, current_cents / 100, new_cents / 100, percent_change,
+            )
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            msg = err.get('message') or str(e)
+            logger.error("Failed to update %s %s budget: %s", level, target_id, msg)
+            raise RuntimeError(f"Facebook API: {msg}") from e
+
+        return {
+            'level': level,
+            'target_id': target_id,
+            'field': field,
+            'old_cents': current_cents,
+            'new_cents': new_cents,
+        }
+
     def update_ad_status(self, fb_ad_id: str, status: str) -> None:
         """Set an individual ad's delivery status (ACTIVE | PAUSED) via Meta API."""
         import logging

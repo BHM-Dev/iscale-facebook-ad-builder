@@ -27,28 +27,53 @@ def _channel() -> str:
     return os.getenv("SLACK_ALERT_CHANNEL", DEFAULT_CHANNEL)
 
 
-def send_auto_pause_alert(
+def send_rule_action_alert(
+    action: str,
     adset_name: str,
     fb_adset_id: str,
     reason: str,
-    rules_evaluated: int,
+    detail: Optional[str] = None,
 ) -> None:
-    """Post a Slack message when an auto-pause rule fires.
+    """Post a Slack message when a rules-engine rule fires — pause, notify, or a
+    budget adjustment. Replaces the old pause-only send_auto_pause_alert as part of
+    generalizing auto_pause_rules past pause-only (AdBuilder-BulkRules-Feature-Brief.md).
 
     Silently no-ops if SLACK_BOT_TOKEN is not configured.
     """
     token = _token()
     if not token:
-        logger.debug("SLACK_BOT_TOKEN not set — skipping auto-pause alert")
+        logger.debug("SLACK_BOT_TOKEN not set — skipping rule action alert")
         return
 
-    text = (
-        f":pause_button: *Auto-paused:* {adset_name}\n"
-        f">*Reason:* {reason}\n"
-        f">*Ad Set ID:* `{fb_adset_id}`\n"
-        f">Rule fired and ad set has been paused on Meta. "
-        f"Re-enable the rule in the Ad Builder after reviewing."
-    )
+    copy = {
+        'pause': (
+            ":pause_button: *Auto-paused:*",
+            "Rule fired and ad set has been paused on Meta. Re-enable the rule in the Ad Builder after reviewing.",
+        ),
+        'notify': (
+            ":bell: *Rule triggered:*",
+            "Notify-only rule — no change was made on Meta. Review and act manually if needed.",
+        ),
+        'increase_budget': (
+            ":chart_with_upwards_trend: *Budget increased:*",
+            "Rule fired and increased the budget on Meta. Rule has been disabled — re-enable it after reviewing.",
+        ),
+        'decrease_budget': (
+            ":chart_with_downwards_trend: *Budget decreased:*",
+            "Rule fired and decreased the budget on Meta. Rule has been disabled — re-enable it after reviewing.",
+        ),
+    }
+    header, footer = copy.get(action, (f":robot_face: *Rule fired ({action}):*", ""))
+
+    lines = [
+        f"{header} {adset_name}",
+        f">*Reason:* {reason}",
+        f">*Ad Set ID:* `{fb_adset_id}`",
+    ]
+    if detail:
+        lines.append(f">*Detail:* {detail}")
+    if footer:
+        lines.append(f">{footer}")
 
     try:
         resp = httpx.post(
@@ -56,7 +81,7 @@ def send_auto_pause_alert(
             headers={"Authorization": f"Bearer {token}"},
             json={
                 "channel": _channel(),
-                "text": text,
+                "text": "\n".join(lines),
                 "unfurl_links": False,
                 "unfurl_media": False,
             },
@@ -64,9 +89,9 @@ def send_auto_pause_alert(
         )
         data = resp.json()
         if not data.get("ok"):
-            logger.warning("Slack alert failed: %s", data.get("error"))
+            logger.warning("Rule action Slack alert failed: %s", data.get("error"))
     except Exception as e:
-        logger.warning("Slack alert error: %s", e)
+        logger.warning("Rule action Slack alert error: %s", e)
 
 
 def send_token_expiry_alert(days_left, expires_on: str, is_valid: bool) -> None:
@@ -114,23 +139,37 @@ def send_check_summary(
     rules_evaluated: int,
     paused_count: int,
     errors: list,
+    notified_count: int = 0,
+    budget_adjusted_count: int = 0,
 ) -> None:
     """Post a summary when Check Now finds multiple issues or errors.
 
-    Only fires if something notable happened (paused > 0 or errors exist).
+    Only fires if something notable happened (any action fired, or errors exist).
     Silently no-ops if SLACK_BOT_TOKEN is not configured.
+
+    notified_count/budget_adjusted_count default to 0 so existing call sites (if
+    any) don't break — but this generalization exists specifically because the
+    original pause-only gate (`paused_count == 0 and not errors`) would otherwise
+    suppress this whole roll-up on a run that fired only notify/budget rules —
+    caught in pre-push review (code-auditor: real live budget changes could
+    happen with zero Slack roll-up if nothing was also paused that same cycle).
     """
     token = _token()
     if not token:
         return
-    if paused_count == 0 and not errors:
+    fired = paused_count + notified_count + budget_adjusted_count
+    if fired == 0 and not errors:
         return  # Nothing to report
 
-    lines = [f":robot_face: *Auto-pause check complete* — {rules_evaluated} rules evaluated"]
+    lines = [f":robot_face: *Rules engine check complete* — {rules_evaluated} rules evaluated"]
     if paused_count:
         lines.append(f">:pause_button: {paused_count} ad set(s) paused")
+    if notified_count:
+        lines.append(f">:bell: {notified_count} notify rule(s) fired")
+    if budget_adjusted_count:
+        lines.append(f">:moneybag: {budget_adjusted_count} budget rule(s) fired")
     if errors:
-        lines.append(f">:warning: {len(errors)} error(s) fetching insights — check logs")
+        lines.append(f">:warning: {len(errors)} error(s) — check logs")
 
     try:
         httpx.post(

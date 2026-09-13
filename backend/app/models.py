@@ -297,6 +297,12 @@ class AutoPauseRule(Base):
     operator = Column(String, nullable=False, default='greater_than')
     threshold = Column(Integer, nullable=False)          # e.g. 50 = $50 CPL
     min_spend = Column(Integer, nullable=False, default=20)  # minimum $ spend before rule fires
+    # action: 'pause' | 'notify' | 'increase_budget' | 'decrease_budget'. Default 'pause'
+    # matches every row created before this column existed — same behavior as today.
+    action = Column(String, nullable=False, default='pause')
+    # Percent to adjust budget by for increase_budget/decrease_budget (e.g. 20 = ±20%).
+    # NULL for pause/notify rules.
+    budget_adjust_pct = Column(Integer, nullable=True)
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_checked_at = Column(DateTime(timezone=True), nullable=True)
@@ -304,6 +310,35 @@ class AutoPauseRule(Base):
     trigger_reason = Column(String, nullable=True)       # human-readable e.g. "CPL $68 > $50"
 
     adset = relationship("FacebookAdSet", backref="auto_pause_rules")
+
+
+class AutoPauseRuleLog(Base):
+    """Persistent audit trail of every rule evaluation that actually fired (breached its
+    threshold), across all action types — not just pause. Distinct from
+    AutoPauseRule.triggered_at/trigger_reason, which only remember the MOST RECENT fire per
+    rule and get overwritten on the next one. Was on the "Still pending" list in CLAUDE.md;
+    built now while generalizing this feature past pause-only, per
+    AdBuilder-BulkRules-Feature-Brief.md."""
+    __tablename__ = "auto_pause_rule_logs"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    # SET NULL (not CASCADE) — deleting the rule that produced a log entry shouldn't erase
+    # the historical record of what it did.
+    rule_id = Column(String, ForeignKey("auto_pause_rules.id", ondelete="SET NULL"), nullable=True, index=True)
+    adset_id = Column(String, ForeignKey("facebook_adsets.id", ondelete="SET NULL"), nullable=True, index=True)
+    fb_adset_id = Column(String, nullable=True)
+    action = Column(String, nullable=False)
+    metric = Column(String, nullable=False)
+    metric_value = Column(Numeric(precision=10, scale=2), nullable=True)
+    threshold = Column(Integer, nullable=False)
+    spend = Column(Numeric(precision=10, scale=2), nullable=True)
+    # result: 'success' | 'error'
+    result = Column(String, nullable=False)
+    detail = Column(String, nullable=True)  # e.g. new budget amount, or the Meta error message
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    rule = relationship("AutoPauseRule")
+    adset = relationship("FacebookAdSet")
 
 
 class WinningAd(Base):

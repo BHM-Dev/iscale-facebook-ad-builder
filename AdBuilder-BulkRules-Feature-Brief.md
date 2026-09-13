@@ -149,12 +149,42 @@ architectural decision on generalizing an existing rules engine vs. bolting on).
 
 ## 6. Open questions before scoping the MVP for real
 
-1. Confirm with Joel: of the four MVP actions (Pause/Notify/Increase budget/Decrease budget),
-   which does he actually want first? He's doing manual notify-equivalent work in Slack daily —
-   Notify might be the fastest win with the least risk (no ad spend touched).
-2. Match-count preview — do we compute this live against Meta's API (adds a request) or against
-   the local synced ad-set cache (faster, could be stale by a sync cycle)? Given the 30-min
-   scheduler already exists, staleness window is bounded either way.
-3. Does a generalized rules engine replace `auto_pause.py` outright, or run alongside it during a
-   transition? Recommend replace-in-place since it's a superset, but worth confirming before
-   Claude Code starts.
+1. ~~Confirm with Joel: of the four MVP actions...~~ — shipped all four (Pause/Notify/Increase
+   budget/Decrease budget) rather than picking one first; Joel can use whichever he wants per rule.
+2. ~~Match-count preview — live vs. cached?~~ — resolved: local synced cache (`/facebook/adsets/saved`),
+   not a live Meta call. The count itself is just `selectedIds.size` (client-side, instant); the
+   optional confirm-step budget preview uses the same cached `daily_budget`/`campaign_daily_budget`
+   fields, explicitly labeled "as of last sync" — the rule's actual fire always re-reads the true
+   live value from Meta regardless, so a stale preview number can't cause a wrong amount to be sent.
+3. ~~Replace auto_pause.py outright, or run alongside?~~ — replaced in place, as recommended. Existing
+   pause-only rules keep working unchanged (`action` defaults to `'pause'` on every pre-existing row).
+
+## 7. Shipped 2026-09-13 — what actually got built vs. this brief
+
+Built substantially as scoped, plus real fixes surfaced by the mandatory pre-push review (code-auditor
++ joel-perspective + a Meta-API domain-expert pass, since this touches `facebook_service.py` and a
+DB migration):
+
+- **All four MVP actions** — Pause/Notify/Increase budget/Decrease budget, per rule.
+- **Budget actions are CBO-aware and safety-refuse rather than silently affect siblings.** A CBO
+  campaign's budget is shared across every ad set under it — the domain-expert review caught that
+  a rule scoped to one ad set could silently move budget for OTHER ad sets sharing that campaign,
+  with nothing in the Slack alert or audit log saying so. Fixed conservatively: the rule refuses to
+  fire (logs an error, no Meta call made) whenever another ACTIVE ad set shares the same CBO
+  campaign, and always labels a campaign-level adjustment explicitly when it does proceed.
+  Read-modify-write against Meta's live budget value at fire time (never trusts the local cache for
+  the actual write), with a sanity floor+ceiling on the percent adjustment.
+- **Rule-trigger audit log** — `auto_pause_rule_logs` table + `GET /rules/{id}/logs`, wired into the
+  UI as a per-rule "Fire history" popover (not just built and left unused on the backend).
+- **Live match-count + bulk create** — multi-select ad sets with a search box, `POST /rules/bulk`
+  creates one independent rule per selected ad set (all-or-nothing validation).
+- **Budget-action confirm step** — a mandatory second screen listing every matched ad set's current
+  → computed-new budget before any rule is created, plus an explicit "this moves real live spend,
+  unattended" warning the moment a budget action is picked. Neither existed in the original build;
+  both came out of joel-perspective's review flagging bulk-scoped budget changes as a real footgun
+  with only a live count as the guardrail.
+- **Notify cooldown** — 4 hours between repeat Slack alerts for the same still-breached notify rule,
+  to avoid indefinite alert-fatigue spam (also from joel-perspective review).
+- **Not built, documented as follow-ups**: an edit UI for changing a rule's action/percentage after
+  creation (delete+recreate today); a symmetric ±% single field instead of separate increase/decrease
+  actions; Duplicate action and bid actions (already deferred to Phase 2 in this brief).

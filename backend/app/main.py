@@ -118,6 +118,10 @@ async def startup_event():
                 result = _run_check(db)
                 if result["paused"]:
                     print(f"⏸  Auto-pause fired: {result['paused']}")
+                if result.get("notified"):
+                    print(f"🔔 Notify rule(s) fired: {result['notified']}")
+                if result.get("budget_adjusted"):
+                    print(f"💰 Budget rule(s) fired: {result['budget_adjusted']}")
             except Exception as exc:
                 print(f"⚠️  Auto-pause scheduler error: {exc}")
             finally:
