@@ -6,31 +6,48 @@ carried them. One production ad showed an unexpanded ``{{ad.id}}``. This helper
 makes the app set the macros so ad-level attribution
 (generated_ads.fb_ad_id -> RedTrack sub1) cannot silently drop.
 
-IMPORTANT (Meta behavior): dynamic tags like {{ad.id}} are expanded by Meta
-ONLY in the Ad-level ``url_tags`` field — NOT inside the creative's
-``link_data.link``. Braces placed in the destination link are treated as literal
-characters and never expand. So this module returns a ``url_tags`` query string
-to set on the Ad object; it must NOT be folded into the destination URL.
+IMPORTANT (Meta behavior), CORRECTED 2026-09-13: Meta expands dynamic tags like
+{{ad.id}} in BOTH the ad-level ``url_tags`` field AND the destination link.
 
-Meta appends ``url_tags`` to the resolved landing URL at click time. It does not
-de-duplicate, so we avoid re-emitting correct existing macros. If a RedTrack sub
-key is already present with the wrong macro or any other value, we emit the
-correct macro in ``url_tags`` as well.
+This file previously asserted the opposite — that braces in ``link_data.link``
+are literal characters that never expand — and reasoned from it. That was wrong,
+and the correction matters because the false version makes stripping subs out of
+the destination link look harmless. It is not. Live evidence, from the
+``facebook_ads.website_url`` column in production:
 
-UNVERIFIED, and it matters: when the destination URL already carries a WRONG
-value, the click arrives with the key twice (``sub2=<wrong>&sub2={{adset.id}}``)
-and **which one RedTrack honours has not been tested**. If RedTrack reads the
-first occurrence, appending the right macro does not actually fix a wrong one —
-the destination URL's query would have to be rewritten instead, which this
-function cannot do because it only returns ``url_tags`` and the caller sets the
-link separately. So treat this as "correct macros are always present", not as a
-guaranteed repair of a bad saved URL. Absent keys — the common case — are fixed
-outright either way.
+    https://go.getfbquotes.com/<offer-id>?sub1={{ad.id}}&sub2={{adset.id}}
+      &sub3={{campaign.id}}&sub4={{ad.name}}&sub5={{adset.name}}
+      &sub6={{campaign.name}}&sub7={{placement}}&sub8={{site_source_name}}
 
-Worth resolving by pushing one test ad and reading which value lands in
-RedTrack. The bug this guards against is real: on 2026-08-06 three live
+``sub4``-``sub8`` exist ONLY in the link — ``url_tags`` never carries them — and
+those values arrive populated downstream (ad name, ad set name, placement). If
+link braces did not expand they would all be literal ``{{ad.name}}``. They are
+not. The "one production ad showed an unexpanded {{ad.id}}" anecdote that
+motivated this file is far better explained by the missed link update behind the
+2026-08-06 incident than by a platform rule contradicted by every other ad.
+
+CONSEQUENCE — do not "fix" a bad link in code. Standing instruction from Steve
+(2026-09-13): this tool does not touch destination-link formatting. Appending a
+missing macro through ``url_tags`` is the entire mandate. A WRONG value in a
+saved link is repaired by a human in Meta's UI, per
+``Tracking-Link-Checklist.md`` in the repo root, which is what Joel and Abel
+work from. A strip implemented here would have deleted five working tracking
+params.
+
+KNOWN GAP: when the destination URL already carries a WRONG value, the click
+arrives with the key twice (``sub2=<wrong>&sub2={{adset.id}}``) because Meta
+appends ``url_tags`` without de-duplicating, and which one RedTrack honours has
+not been tested. So treat this as "correct macros are always PRESENT", not as a
+repair of a bad saved URL. Absent keys — the common case — are fixed outright
+either way. The duplicate is deliberately left alone rather than resolved by
+rewriting the link; see CONSEQUENCE above.
+
+The precedence question would be settled by pushing one test ad and reading
+which value lands in RedTrack — worth doing, but it only affects links that are
+already wrong. The bug this guards against is real: on 2026-08-06 three live
 campaigns ran with ``sub2={{campaign.id}}``, which cost RedTrack every dollar of
-spend attribution on them while revenue kept flowing.
+spend attribution on them while revenue kept flowing; the same macro defect left
+$3,254 of Everflow revenue unattributed in the August P&L.
 """
 from urllib.parse import urlsplit, parse_qsl
 
