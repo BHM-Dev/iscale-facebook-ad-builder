@@ -72,6 +72,8 @@ class BulkRuleCreate(BaseModel):
 
 class RulePatch(BaseModel):
     is_active: Optional[bool] = None
+    metric: Optional[str] = None
+    operator: Optional[str] = None
     threshold: Optional[int] = None
     min_spend: Optional[int] = None
     action: Optional[str] = None
@@ -292,6 +294,18 @@ def update_rule(
         _assert_account_allowed(current_user, rule.adset.fb_account_id if rule.adset else None)
     if body.is_active is not None:
         rule.is_active = body.is_active
+    # metric/operator were accepted by the frontend's edit form and silently
+    # dropped here — RulePatch never declared these two fields, so Pydantic's
+    # default extra="ignore" discarded them with no error, and the edit still
+    # returned a "Rule updated" success toast. A genuinely silent data-loss bug
+    # on the very feature meant to replace delete-and-recreate. Caught in
+    # pre-push review; validated the same way create_rule validates them.
+    if body.metric is not None or body.operator is not None:
+        new_metric = body.metric if body.metric is not None else rule.metric
+        new_operator = body.operator if body.operator is not None else rule.operator
+        _validate_metric_operator(new_metric, new_operator)
+        rule.metric = new_metric
+        rule.operator = new_operator
     if body.threshold is not None:
         rule.threshold = body.threshold
     if body.min_spend is not None:

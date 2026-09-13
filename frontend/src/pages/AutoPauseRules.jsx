@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { PauseCircle, PlayCircle, Trash2, Plus, RefreshCw, AlertTriangle, CheckCircle, Zap, Target, Bell, TrendingUp, TrendingDown, Search } from 'lucide-react';
+import { PauseCircle, PlayCircle, Trash2, Plus, RefreshCw, AlertTriangle, CheckCircle, Zap, Target, Bell, TrendingUp, TrendingDown, Search, Pencil } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { authFetch } from '../lib/facebookApi';
 
@@ -350,6 +350,128 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
   );
 }
 
+// ── Edit-rule modal ────────────────────────────────────────────────────────────
+// Existing rules previously had NO way to change action/threshold/percentage
+// short of delete-and-recreate, despite the backend's PATCH /rules/{id} fully
+// supporting it (correct re-validation on the action+pct combination) since the
+// rules-engine generalization shipped. Follow-up from that same review.
+function EditRuleModal({ rule, onClose, onSaved }) {
+  const { showSuccess, showError } = useToast();
+  const [form, setForm] = useState({
+    metric: rule.metric,
+    operator: rule.operator,
+    threshold: rule.threshold,
+    min_spend: rule.min_spend,
+    action: rule.action,
+    budget_adjust_pct: rule.budget_adjust_pct || 20,
+  });
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (BUDGET_ACTIONS.has(form.action) && (!form.budget_adjust_pct || form.budget_adjust_pct <= 0)) {
+      showError('Enter a budget adjustment percentage greater than 0');
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await authFetch(`${API_BASE}/auto-pause/rules/${rule.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          metric: form.metric,
+          operator: form.operator,
+          threshold: form.threshold,
+          min_spend: form.min_spend,
+          action: form.action,
+          budget_adjust_pct: BUDGET_ACTIONS.has(form.action) ? form.budget_adjust_pct : null,
+        }),
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed to update rule'); }
+      showSuccess('Rule updated');
+      onSaved();
+      onClose();
+    } catch (e) { showError(e.message); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <h2 className="text-lg font-bold text-gray-900 mb-1 flex items-center gap-2">
+          <Pencil size={18} className="text-gray-500" /> Edit Rule
+        </h2>
+        <p className="text-sm text-gray-500 mb-4">{rule.adset_name || rule.adset_id}</p>
+
+        <div className="space-y-4">
+          <Field label="Action">
+            <select className="input-base" value={form.action} onChange={e => setForm({...form, action: e.target.value})}>
+              {ACTION_OPTIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+            </select>
+          </Field>
+
+          {BUDGET_ACTIONS.has(form.action) && (
+            <>
+              <div className="flex items-start gap-2 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2.5 text-xs text-amber-900">
+                <AlertTriangle size={15} className="text-amber-600 flex-shrink-0 mt-0.5" />
+                <span>
+                  <strong>This automatically changes live ad spend on Meta</strong> — unattended, checked every
+                  30 minutes, with no confirmation dialog when it fires.
+                </span>
+              </div>
+              <Field label="Adjust budget by (%)">
+                <input
+                  type="number" min="1" max="100" className="input-base"
+                  value={form.budget_adjust_pct}
+                  onChange={e => setForm({...form, budget_adjust_pct: Number(e.target.value)})}
+                />
+              </Field>
+            </>
+          )}
+
+          <Field label="Metric">
+            <select className="input-base" value={form.metric} onChange={e => setForm({...form, metric: e.target.value})}>
+              <option value="cpl">Cost Per Lead (CPL)</option>
+              <option value="cpa">Cost Per Action (CPA)</option>
+              <option value="ctr">Click-Through Rate (CTR)</option>
+              <option value="roas">ROAS</option>
+            </select>
+          </Field>
+
+          <Field label="Condition">
+            <select className="input-base" value={form.operator} onChange={e => setForm({...form, operator: e.target.value})}>
+              <option value="greater_than">Greater than (&gt;)</option>
+              <option value="less_than">Less than (&lt;)</option>
+            </select>
+          </Field>
+
+          <Field label={`Threshold (${METRIC_UNITS[form.metric]})`}>
+            <input
+              type="number" min="0" step={form.metric === 'roas' ? '0.1' : '1'} className="input-base"
+              value={form.threshold}
+              onChange={e => setForm({...form, threshold: Number(e.target.value)})}
+            />
+          </Field>
+
+          <Field label="Minimum Spend Before Rule Fires ($)">
+            <input
+              type="number" min="0" className="input-base"
+              value={form.min_spend}
+              onChange={e => setForm({...form, min_spend: Number(e.target.value)})}
+            />
+          </Field>
+        </div>
+
+        <div className="flex gap-3 mt-6">
+          <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
+          <button onClick={save} disabled={saving} className="flex-1 btn-primary">
+            {saving ? 'Saving...' : 'Save Changes'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Field({ label, children }) {
   return (
     <div>
@@ -435,6 +557,7 @@ export default function AutoPauseRules() {
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   const [showAddRule, setShowAddRule] = useState(false);
+  const [editingRule, setEditingRule] = useState(null);
   const [lastCheckResult, setLastCheckResult] = useState(null);
 
   const loadRules = useCallback(async () => {
@@ -682,6 +805,13 @@ export default function AutoPauseRules() {
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <RuleHistoryToggle rule={rule} />
                     <button
+                      onClick={() => setEditingRule(rule)}
+                      className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-700"
+                      title="Edit rule"
+                    >
+                      <Pencil size={16} />
+                    </button>
+                    <button
                       onClick={() => toggleRule(rule)}
                       className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-700"
                       title={rule.is_active ? 'Disable rule' : 'Enable rule'}
@@ -743,6 +873,14 @@ export default function AutoPauseRules() {
           adsets={adsets}
           onClose={() => setShowAddRule(false)}
           onCreated={loadRules}
+        />
+      )}
+
+      {editingRule && (
+        <EditRuleModal
+          rule={editingRule}
+          onClose={() => setEditingRule(null)}
+          onSaved={loadRules}
         />
       )}
     </div>

@@ -942,6 +942,12 @@ export default function CampaignPerformance() {
   // this page didn't, per the competitor synthesis brief (§3.4). Local-only, not
   // synced to the URL — a transient narrowing while scanning, not a saved view.
   const [nameSearch, setNameSearch] = useState('');
+  // Metric-threshold filter — AdEspresso's "Filter by CPL < = > value" (§4 of that
+  // capture), the other filter-surface gap logged in the same brief section.
+  // `value === ''` means inactive; a real value narrows visibleAdsets by the
+  // already-loaded bulkInsights numbers, same data source status/search use —
+  // no new API call.
+  const [metricFilter, setMetricFilter] = useState({ metric: 'cpl', operator: 'lt', value: '' });
   const dashboardView = searchParams.get('view'); // derived live from URL — never stale
   const targetAdsetId = searchParams.get('adsetId');
   const intelligencePanelOpen = searchParams.get('panel') === 'intelligence';
@@ -1421,6 +1427,23 @@ export default function CampaignPerformance() {
       list = list.filter(a => a.name?.toLowerCase().includes(q));
     }
 
+    // Metric-threshold filter (AdEspresso's "Filter by CPL < = > value")
+    if (metricFilter.value !== '' && !Number.isNaN(Number(metricFilter.value))) {
+      const threshold = Number(metricFilter.value);
+      list = list.filter(a => {
+        const insight = bulkInsights?.[a.fb_adset_id];
+        const metricValue = metricFilter.metric === 'cpl' ? insight?.cpl
+          : metricFilter.metric === 'spend' ? insight?.spend
+          : metricFilter.metric === 'roas' ? insight?.redtrack?.roas
+          : null;
+        // No data for this ad set on the current metric — exclude rather than
+        // include-by-default, since "does CPL < $50" can't be answered true for
+        // an ad set with no CPL reading at all.
+        if (metricValue == null) return false;
+        return metricFilter.operator === 'lt' ? metricValue < threshold : metricValue > threshold;
+      });
+    }
+
     // Sort
     list = [...list].sort((a, b) => {
       if (sortBy === 'status') {
@@ -1448,7 +1471,7 @@ export default function CampaignPerformance() {
     });
 
     return list;
-  }, [adsets, statusFilter, sortBy, nameSearch, bulkInsights, isFlagged, getAdsetStatus, isActiveDelivery, isPausedDelivery]);
+  }, [adsets, statusFilter, sortBy, nameSearch, metricFilter, bulkInsights, isFlagged, getAdsetStatus, isActiveDelivery, isPausedDelivery]);
 
   useEffect(() => {
     if (!targetAdsetId || targetAdsetId === 'null') return;
@@ -1722,6 +1745,44 @@ export default function CampaignPerformance() {
                 </button>
               )}
             </div>
+            {/* Metric-threshold filter — the other filter-surface gap from the same
+                brief section (AdEspresso's "Filter by CPL < = > value"). Reads
+                already-loaded bulkInsights, no new API call. */}
+            <div className="flex items-center gap-1 border border-gray-200 rounded-lg px-1.5 py-1">
+              <select
+                className="text-xs text-gray-600 bg-transparent focus:outline-none"
+                value={metricFilter.metric}
+                onChange={e => setMetricFilter(prev => ({ ...prev, metric: e.target.value }))}
+              >
+                <option value="cpl">CPL</option>
+                <option value="spend">Spend</option>
+                <option value="roas">RT ROAS</option>
+              </select>
+              <select
+                className="text-xs text-gray-600 bg-transparent focus:outline-none"
+                value={metricFilter.operator}
+                onChange={e => setMetricFilter(prev => ({ ...prev, operator: e.target.value }))}
+              >
+                <option value="lt">&lt;</option>
+                <option value="gt">&gt;</option>
+              </select>
+              <input
+                type="number"
+                placeholder="value"
+                value={metricFilter.value}
+                onChange={e => setMetricFilter(prev => ({ ...prev, value: e.target.value }))}
+                className="w-14 text-xs text-gray-600 bg-transparent focus:outline-none"
+              />
+              {metricFilter.value !== '' && (
+                <button
+                  onClick={() => setMetricFilter(prev => ({ ...prev, value: '' }))}
+                  className="text-gray-400 hover:text-gray-600"
+                  title="Clear metric filter"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
             {/* Status filter */}
             <select
               className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -1764,6 +1825,7 @@ export default function CampaignPerformance() {
         ) : visibleAdsets.length === 0 ? (
           <div className="p-8 text-center text-gray-400 text-sm">
             {nameSearch ? `No ad sets matching "${nameSearch}".` :
+             metricFilter.value !== '' ? `No ad sets with ${metricFilter.metric.toUpperCase()} ${metricFilter.operator === 'lt' ? '<' : '>'} ${metricFilter.value}.` :
              statusFilter === 'has_spend' ? 'No ad sets with spend in this date range.' :
              statusFilter === 'flagged' ? 'No flagged ad sets — everything looks healthy.' :
              statusFilter !== 'all' ? `No ${statusFilter.toLowerCase()} ad sets found.` :
