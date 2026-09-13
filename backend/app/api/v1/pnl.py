@@ -749,7 +749,10 @@ def _everflow_unknown_revenue(
     for row in rows:
         if allowed_offers and EverflowService._offer_name(row).casefold() not in allowed_offers:
             continue
-        revenue = _money(row.get("revenue"))
+        # Full precision, NOT _money() — rounding each row before summing drifts
+        # from Switchboard's own total (3c over Aug 2026). Quantized once at the
+        # end, matching how everflow_service aggregates.
+        revenue = Decimal(str(row.get("revenue") or 0))
         sub3 = str(row.get("sub3") or "").strip()
 
         if not META_ID_RE.fullmatch(sub3):
@@ -763,7 +766,11 @@ def _everflow_unknown_revenue(
         else:
             foreign += revenue          # someone else's, or unrecognised
 
-    return unknown, True, foreign
+    return (
+        unknown.quantize(CENT, rounding=ROUND_HALF_UP),
+        True,
+        foreign.quantize(CENT, rounding=ROUND_HALF_UP),
+    )
 
 
 def _summary_all(
