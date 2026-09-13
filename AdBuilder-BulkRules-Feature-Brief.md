@@ -414,5 +414,32 @@ before push:**
   is expected to work based on the pattern already proven for link ads, but hasn't been live-tested
   against a real video ad specifically — worth one live check before duplicating video-heavy ad
   sets at scale.
-- Carousel and dynamic-creative (`asset_feed_spec`) ads can't be duplicated yet — reported as a
-  clear per-ad error, not silent.
+- True carousel ads (multiple distinct card/link combinations, not just multiple images under one
+  headline) still can't be duplicated faithfully — only the first title/body/link is used. Reported
+  as a safe single-image simplification, not an error.
+
+## 10. Live-tested 2026-09-13 (commit `dc9c750`) — found and fixed a real bug
+
+Ran the Duplicate action against real production ad sets (not just code review) before calling
+Phase 2 done:
+
+- **Empty-mode duplicate** (no ads) — worked correctly first try: PAUSED status, budget, bid
+  strategy, and targeting all round-tripped exactly onto the new ad set.
+- **Full duplicate** (with ads) — failed 100% of the time on first try. Root cause: the test ads
+  used `asset_feed_spec` (this app's own Bulk Match Import dual-placement creative format), which
+  `get_ad_creative_for_duplication` never read — only `object_story_spec`. Not a rare case; it's
+  this app's flagship creative shape. Fixed (see §9's asset_feed_spec entry — same commit
+  message, `dc9c750`) and confirmed the CTA (`call_to_action_types` fallback), headline, body,
+  image, and link all reproduce correctly on re-test.
+- **Real risk caught mid-fix, before it shipped:** the fix's first draft guessed Feed/Story
+  placement assignment for any 2-image `asset_feed_spec` ad. Live evidence from the actual test ad
+  showed its `adlabels` were Meta's own auto-generated placement-customization names
+  (`placement_asset_...`), not this app's `feed_image`/`story_image` convention — meaning most
+  `asset_feed_spec` ads in these accounts were built by Meta's tooling, not this app, with no
+  guaranteed 2-image Feed+Story structure. Both the code-auditor and Meta-API domain-expert review
+  passes independently flagged this before push. Fixed: dual-placement reconstruction only fires
+  when both images carry this app's own explicit labels; anything else duplicates as a plain
+  single-image ad rather than risk silently swapping which image lands in which placement.
+- Two test ad sets (one in "The Better Normal", one in DIN Auto Insurance — both already-paused,
+  low-spend ad sets) were created during this verification and deleted immediately after
+  confirming results.
