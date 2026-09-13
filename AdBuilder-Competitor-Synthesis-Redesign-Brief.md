@@ -227,18 +227,58 @@ item on this list that needs a product decision before scoping: does Joel actual
 split-test targeting variants inside one ad set, or is per-audience testing already handled some
 other way in his workflow today? Flag for Joel, don't build speculatively.
 
-### 4.4 Three ad-set creation modes (Birch Stage — real functional gap, not styling)
+### 4.4 Three ad-set creation modes (Birch Stage — real functional gap, not styling) — shipped 2026-09-13
 Birch's Stage build card (capture doc §5b) names three distinct ways bulk-created ads land in ad
 sets: **Duplicate ad set** (clone one ad set, all N ads inside it), **Duplicate ad set for each
 media** (clone a separate ad set per file — one ad each), **Add to ad set** (append into an ad set
-that already exists, no cloning). `BulkAdCreation.jsx` today only does the equivalent of the first
-mode, and only within a single ad set already selected upstream — it can't append to an existing
-ad set without cloning, and it can't spin up one ad set per creative automatically. Birch's own
-**live plain-English summary line** under the mode picker ("Creates 2 ads in 1 new ad set",
-recalculated from the actual file count + mode before commit) is the cheap, portable detail to
-copy alongside it — same spirit as §3.1's live counter, just for ad-set fan-out instead of ad
-count. This is a real Meta API surface change (new ad-set creation/lookup logic in
-`facebook_service.py`), not a rendering change like §3.1-3.3 — scope and review it accordingly.
+that already exists, no cloning).
+
+Turned out the first and third modes already existed — `adsetData.isExisting: false` was already
+"Duplicate ad set" and `isExisting: true` was already "Add to ad set." The actual gap was just the
+middle one, so that's what got built: a new **"One ad set per media file"** toggle in
+`AdSetStep.jsx`, with the fan-out logic in `BulkAdCreation.jsx` (one new Meta ad set per distinct
+creative, each correctly feed/stories/dual-targeted based on that creative's own format — no
+mixed-ad-set targeting ambiguity the way the existing 2-ad-set mixed-format path has to handle).
+Birch's live plain-English summary line ("Creates N ads in M ad sets") is shipped in two places:
+on `AdSetStep.jsx`'s toggle itself (when media was already picked in an earlier pass through the
+wizard) and on the Review screen's summary box.
+
+Pre-push review (code-auditor + joel-perspective, required for this trigger file + new Meta API
+surface) caught real money/trust risk, all fixed before push:
+- **Silent ABO budget multiplication** — both reviewers independently found this. Each per-media
+  ad set is built from the same `adsetData` budget config; under ABO, N media files means N× the
+  daily spend Joel configured, with zero warning before this fix (the existing 2-ad-set
+  mixed-format case already warns for its ×2 version, but nothing existed for the new N× case).
+  Fixed: an explicit `$X × N ad sets = $Y/day total` warning on both the Ad Set step's live count
+  and the Review screen's summary, matching the existing warning's exact pattern.
+- **Contradictory summary banners** — if per-media mode was combined with a feed+stories mixed
+  batch, the OLD "2 ad sets will be used" banner and the NEW "creates N ad sets" banner rendered
+  simultaneously, with the old banner's ABO ×2 math now simply wrong (real multiplier is N, not
+  2). Fixed: the old feed/stories banners are gated off entirely when per-media mode is active;
+  their relevant info (which format each ad set targets) folds into the per-media banner instead.
+  Real, not a rare edge case — Joel's actual test cases already mix Feed/Stories per the
+  dual-placement work in this same file's git history.
+- **Ad-set-creation failure was toast-only** — every other partial-failure path in this file
+  (per-ad failures, rate-limit stops) uses a persistent on-screen error panel; a failure partway
+  through the new per-media ad-set-creation loop only showed a 5-second auto-dismissing toast,
+  despite carrying the single most consequential message in the file ("N ad sets already exist on
+  Meta, don't re-launch from scratch"). Fixed: routed into the same persistent panel.
+- **No rate-limit-specific messaging in the new loop** (medium) — the per-media loop can make up
+  to one Meta call per distinct media file, more than the existing path's max of 2, so it's more
+  likely to hit a throttle. Fixed with a lighter version of the existing rate-limit detection
+  (names the cause in the error message) rather than the full `launchOutcome` UI Step 3's ad loop
+  has — building that same rich UI for a failure this early (before any ad exists yet) was judged
+  a bigger lift than this gap warranted right now.
+
+**Deferred, documented as follow-ups (P1/P2, not blockers):**
+- No confirm gate before a large-batch + big-ABO-budget combination actually creates ad sets on
+  Meta — the warnings are informational only. Same shape of gap as Phase 3's budget-rule confirm
+  step; worth the same treatment if this mode sees real use.
+- No visual risk-differentiation between the two toggle options (the mode that can multiply
+  ad-set count/budget looks identical to the safe default).
+- Ad-set naming collision risk when media filenames aren't distinctive ("Media 1", "Media 2" if a
+  creative has no real name).
+- No per-file → per-ad-set mapping preview before commit (only aggregate N/M counts).
 
 ### 4.5 Bulk rules — already scoped, re-affirmed here
 `AdBuilder-BulkRules-Feature-Brief.md` already covers this in full (MVP: Pause/Notify/Increase

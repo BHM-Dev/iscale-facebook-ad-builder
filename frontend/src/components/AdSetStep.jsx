@@ -70,7 +70,7 @@ const COUNTRIES = [
 const HEC_CATEGORIES = new Set(['HOUSING', 'EMPLOYMENT', 'FINANCIAL_PRODUCTS_SERVICES']);
 
 const AdSetStep = ({ onNext, onBack }) => {
-    const { campaignData, adsetData, setAdsetData, selectedAdAccount } = useCampaign();
+    const { campaignData, adsetData, setAdsetData, selectedAdAccount, creativeData } = useCampaign();
     const { showError, showWarning } = useToast();
     const isHECRestricted = (campaignData.specialAdCategories || []).some(c => HEC_CATEGORIES.has(c));
     // Initialize from context, not a hardcoded default — see CampaignStep.jsx for why:
@@ -458,6 +458,61 @@ const AdSetStep = ({ onNext, onBack }) => {
             {/* New Ad Set Form */}
             {mode === 'new' && (
                 <div className="space-y-4">
+                    {/* How ads land in ad sets — Birch's "Duplicate ad set" (default here) vs.
+                        "Duplicate ad set for each media" mode. Only relevant when creating a
+                        NEW ad set; "Use Existing Ad Set" above is already Birch's third mode
+                        ("Add to ad set"), unchanged. */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">How to create ad sets</label>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setAdsetData(prev => ({ ...prev, creationMode: 'single' }))}
+                                className={`text-left p-3 rounded-lg border-2 transition-all ${(adsetData.creationMode || 'single') === 'single'
+                                    ? 'border-amber-600 bg-amber-50'
+                                    : 'border-gray-200 hover:border-amber-300'
+                                    }`}
+                            >
+                                <div className="font-semibold text-sm">One ad set for all ads</div>
+                                <div className="text-xs text-gray-500 mt-0.5">Every generated ad goes into this single ad set. (Default — unchanged behavior.)</div>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setAdsetData(prev => ({ ...prev, creationMode: 'per_media' }))}
+                                className={`text-left p-3 rounded-lg border-2 transition-all ${adsetData.creationMode === 'per_media'
+                                    ? 'border-amber-600 bg-amber-50'
+                                    : 'border-gray-200 hover:border-amber-300'
+                                    }`}
+                            >
+                                <div className="font-semibold text-sm">One ad set per media file</div>
+                                <div className="text-xs text-gray-500 mt-0.5">Creates a separate ad set for each image/video, holding just that file's generated ads.</div>
+                            </button>
+                        </div>
+                        {/* Live count when available — media is picked in the NEXT step
+                            (Creative), so on a fresh forward pass through the wizard there's
+                            nothing to count yet. But CampaignContext persists across steps,
+                            so this reads real numbers if the user already picked media and
+                            came back here. Birch's own Stage build shows this exact "N ads in
+                            M ad sets" line directly under its mode picker (flagged in the
+                            competitor capture as the single most portable detail) — matching
+                            it here whenever the data to compute it actually exists yet. */}
+                        {adsetData.creationMode === 'per_media' && (
+                            creativeData?.creatives?.length > 0 ? (
+                                <p className="text-xs mt-2 font-medium text-gray-600">
+                                    {creativeData.creatives.length} media file{creativeData.creatives.length !== 1 ? 's' : ''} already selected →
+                                    creates {creativeData.creatives.length} new ad set{creativeData.creatives.length !== 1 ? 's' : ''}
+                                    {campaignData?.budgetType === 'ABO' && adsetData.dailyBudget > 0 && (
+                                        <> — <span className="text-amber-700">${(Number(adsetData.dailyBudget) * creativeData.creatives.length).toFixed(2)}/day total (ABO, each gets its own budget)</span></>
+                                    )}
+                                </p>
+                            ) : (
+                                <p className="text-xs mt-2 text-gray-400">
+                                    You'll pick media in the next step — one ad set will be created per file.
+                                </p>
+                            )
+                        )}
+                    </div>
+
                     {/* HEC targeting restriction banner */}
                     {isHECRestricted && (
                         <div className="p-4 bg-amber-50 border border-amber-300 rounded-xl text-sm text-amber-900">

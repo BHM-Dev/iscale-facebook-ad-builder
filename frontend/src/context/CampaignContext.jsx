@@ -92,7 +92,13 @@ export const createDefaultAdsetData = () => ({
     fbAdsetId: null,
     isExisting: false,
     adScheduleEnabled: false,
-    adSchedule: [] // Array of { days: [0-6], startMinute: number, endMinute: number }
+    adSchedule: [], // Array of { days: [0-6], startMinute: number, endMinute: number }
+    // 'single' — one new ad set holds every generated ad (today's only behavior).
+    // 'per_media' — one new ad set per distinct media file, each holding just the
+    // ads generated from that file (Birch Stage's "Duplicate ad set for each
+    // media" mode). Only meaningful when isExisting is false — "Use Existing Ad
+    // Set" is already Birch's third mode ("Add to ad set") with no change needed.
+    creationMode: 'single'
 });
 
 export const CampaignProvider = ({ children }) => {

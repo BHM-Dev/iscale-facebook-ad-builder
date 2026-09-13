@@ -96,6 +96,11 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const storiesAds = adsData.filter(ad => ad.format === 'stories');
     const isMixedFormat  = feedAds.length > 0 && storiesAds.length > 0;
     const allStoriesFormat = feedAds.length === 0 && storiesAds.length > 0;
+    // Render-time mirror of handleSubmit's own perMediaMode check — used to gate the
+    // feed/stories summary banners below, which describe an ad-set model per-media
+    // mode doesn't actually use (and whose ABO ×2 math would be wrong once the real
+    // multiplier is however many distinct media files there are).
+    const perMediaModeActive = adsetData.creationMode === 'per_media' && !adsetData.isExisting;
 
     const addAd = () => {
         setAdsData(prev => [
@@ -263,8 +268,89 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             let fbFeedAdsetId    = adsetData.fbAdsetId; // used for feed ads (or all ads if single-format)
             let fbStoriesAdsetId = null;                // used for stories ads (mixed only)
             let storiesAdsetLocalId = null;
+            // creativeId -> { fbAdsetId, localAdsetId } — only populated in per-media mode
+            // (Birch Stage's "Duplicate ad set for each media"). Each distinct creative
+            // gets its own ad set, so there's no feed/stories "mixed ad set" concern here
+            // the way there is for the single-ad-set mode below — a per-media ad set only
+            // ever holds ads for one creative, which has exactly one format already.
+            const perMediaAdsetMap = new Map();
+            const perMediaMode = adsetData.creationMode === 'per_media' && !adsetData.isExisting;
 
-            if (!adsetData.isExisting) {
+            if (perMediaMode) {
+                const distinctCreativeIds = [...new Set(adsData.map(ad => ad.creativeId))];
+                for (let m = 0; m < distinctCreativeIds.length; m++) {
+                    // Same reasoning as the inter-ad delay below — N ad-set creations
+                    // back-to-back is its own burst worth spacing out.
+                    if (m > 0) await delay(INTER_REQUEST_DELAY_MS);
+
+                    const creativeId = distinctCreativeIds[m];
+                    const creative = creativeData.creatives?.find(c => c.id === creativeId);
+                    const sampleAd = adsData.find(ad => ad.creativeId === creativeId);
+                    const mediaLabel = creative?.name || `Media ${m + 1}`;
+                    const targeting = sampleAd?.dualPlacement
+                        ? dualPlacementTargeting
+                        : sampleAd?.format === 'stories' ? storiesTargeting : feedTargeting;
+                    const payload = { ...baseAdsetPayload, name: `${adsetData.name} - ${mediaLabel}`, targeting };
+
+                    setProgress(prev => ({ ...prev, status: `Creating ad set ${m + 1} of ${distinctCreativeIds.length} (${mediaLabel})...` }));
+
+                    let newFbAdsetId;
+                    try {
+                        newFbAdsetId = await createFacebookAdSet(payload, fbCampaignId, selectedAdAccount.accountId, campaignData.budgetType);
+                    } catch (err) {
+                        // No ads have been created yet (Step 3 hasn't started) — the only
+                        // state to reconcile is whichever ad sets already succeeded before
+                        // this one failed. Abort rather than silently continuing with a
+                        // media file that has nowhere for its ads to go.
+                        //
+                        // Name a rate-limit throttle specifically — this loop can make up
+                        // to one Meta call per distinct media file (more than the existing
+                        // single/mixed path's max of 2), so it's more likely than before to
+                        // actually hit one. Step 3's ad loop gets a richer treatment
+                        // (wait-time estimate, launchOutcome state); this is the cheaper
+                        // version — naming the cause so the fix ("wait, don't retry
+                        // immediately") is obvious from the message alone, since building
+                        // the same rich UI for a failure this early (before any ad exists)
+                        // is a bigger lift than this fix warrants right now.
+                        const rateLimitNote = isRateLimitError(err)
+                            ? ' This looks like a Meta rate-limit throttle — wait ~15 minutes before retrying, don\'t immediately re-launch.'
+                            : '';
+                        throw new Error(
+                            `Failed to create ad set for "${mediaLabel}" (${m + 1} of ${distinctCreativeIds.length}): ${err.message}.`
+                            + `${rateLimitNote} `
+                            + `${perMediaAdsetMap.size} ad set(s) were already created on Meta before this failure — `
+                            + `do not re-launch from scratch, they already exist on the account.`
+                        );
+                    }
+
+                    const localAdsetId = `adset_media_${creativeId}_${Date.now()}`;
+                    perMediaAdsetMap.set(creativeId, { fbAdsetId: newFbAdsetId, localAdsetId });
+
+                    // Local mirror is best-effort, same as the Stories ad set save below —
+                    // Meta already has the real ad set; a local-save failure only affects
+                    // this app's own bookkeeping, not correctness on the account.
+                    try {
+                        await authFetch(`${API_URL}/facebook/adsets/save`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                ...adsetData,
+                                id: localAdsetId,
+                                campaignId: campaignData.id,
+                                name: payload.name,
+                                fbAdsetId: newFbAdsetId,
+                                dailyBudget: adsetData.dailyBudget ? Number(adsetData.dailyBudget) : null,
+                                lifetimeBudget: adsetData.lifetimeBudget ? Number(adsetData.lifetimeBudget) : null,
+                                budgetScheduleType: adsetData.budgetScheduleType || 'DAILY',
+                                endTime: adsetData.endTime || null,
+                                bidAmount: adsetData.bidAmount ? Number(adsetData.bidAmount) : null
+                            })
+                        });
+                    } catch (err) {
+                        console.warn(`Could not save per-media ad set locally (${mediaLabel}) — continuing:`, err);
+                    }
+                }
+            } else if (!adsetData.isExisting) {
                 setProgress(prev => ({ ...prev, status: 'Creating ad set on Facebook...' }));
 
                 if (isMixed) {
@@ -314,53 +400,56 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 showWarning('This ad set was created before dual-placement — confirm its targeting includes Stories/Reels placement, or the linked creative may only ever deliver to Feed.');
             }
 
-            // Save feed (or sole) ad set locally
-            const adsetSaveBody = {
-                ...adsetData,
-                campaignId: campaignData.id,
-                fbAdsetId: fbFeedAdsetId,
-                dailyBudget: adsetData.dailyBudget ? Number(adsetData.dailyBudget) : null,
-                lifetimeBudget: adsetData.lifetimeBudget ? Number(adsetData.lifetimeBudget) : null,
-                budgetScheduleType: adsetData.budgetScheduleType || 'DAILY',
-                endTime: adsetData.endTime || null,
-                bidAmount: adsetData.bidAmount ? Number(adsetData.bidAmount) : null
-            };
-            try {
-                const saveAdSetRes = await authFetch(`${API_URL}/facebook/adsets/save`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(adsetSaveBody)
-                });
-                if (!saveAdSetRes.ok) {
-                    const err = await saveAdSetRes.json().catch(() => ({}));
-                    // Same as the campaign save above: the ad set is live on Meta,
-                    // only the local row is missing.
-                    throw new Error(
-                        `Ad set ${fbFeedAdsetId} was created on Meta but could not be saved locally: `
-                        + `${err.detail || err.message || saveAdSetRes.status}. `
-                        + `Do not re-launch — it already exists on the account.`
-                    );
-                }
-            } catch (err) {
-                console.error('Error saving ad set locally:', err);
-                throw err;
-            }
-
-            // Save stories ad set locally (non-fatal if it fails)
-            if (fbStoriesAdsetId && storiesAdsetLocalId) {
+            // Save feed (or sole) ad set locally — per-media mode already saved each of
+            // its ad sets individually inside the loop above, nothing left to do here.
+            if (!perMediaMode) {
+                const adsetSaveBody = {
+                    ...adsetData,
+                    campaignId: campaignData.id,
+                    fbAdsetId: fbFeedAdsetId,
+                    dailyBudget: adsetData.dailyBudget ? Number(adsetData.dailyBudget) : null,
+                    lifetimeBudget: adsetData.lifetimeBudget ? Number(adsetData.lifetimeBudget) : null,
+                    budgetScheduleType: adsetData.budgetScheduleType || 'DAILY',
+                    endTime: adsetData.endTime || null,
+                    bidAmount: adsetData.bidAmount ? Number(adsetData.bidAmount) : null
+                };
                 try {
-                    await authFetch(`${API_URL}/facebook/adsets/save`, {
+                    const saveAdSetRes = await authFetch(`${API_URL}/facebook/adsets/save`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            ...adsetSaveBody,
-                            id: storiesAdsetLocalId,
-                            name: `${adsetData.name} - Stories & Reels`,
-                            fbAdsetId: fbStoriesAdsetId
-                        })
+                        body: JSON.stringify(adsetSaveBody)
                     });
+                    if (!saveAdSetRes.ok) {
+                        const err = await saveAdSetRes.json().catch(() => ({}));
+                        // Same as the campaign save above: the ad set is live on Meta,
+                        // only the local row is missing.
+                        throw new Error(
+                            `Ad set ${fbFeedAdsetId} was created on Meta but could not be saved locally: `
+                            + `${err.detail || err.message || saveAdSetRes.status}. `
+                            + `Do not re-launch — it already exists on the account.`
+                        );
+                    }
                 } catch (err) {
-                    console.warn('Could not save stories ad set locally — continuing:', err);
+                    console.error('Error saving ad set locally:', err);
+                    throw err;
+                }
+
+                // Save stories ad set locally (non-fatal if it fails)
+                if (fbStoriesAdsetId && storiesAdsetLocalId) {
+                    try {
+                        await authFetch(`${API_URL}/facebook/adsets/save`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                ...adsetSaveBody,
+                                id: storiesAdsetLocalId,
+                                name: `${adsetData.name} - Stories & Reels`,
+                                fbAdsetId: fbStoriesAdsetId
+                            })
+                        });
+                    } catch (err) {
+                        console.warn('Could not save stories ad set locally — continuing:', err);
+                    }
                 }
             }
 
@@ -382,8 +471,25 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 attempted = i + 1;
                 const ad = adsData[i];
                 const isStoriesAd   = ad.format === 'stories';
-                const adFbAdsetId   = isStoriesAd && fbStoriesAdsetId ? fbStoriesAdsetId : fbFeedAdsetId;
-                const adLocalAdsetId = isStoriesAd && storiesAdsetLocalId ? storiesAdsetLocalId : adsetData.id;
+                let adFbAdsetId, adLocalAdsetId;
+                if (perMediaMode) {
+                    const entry = perMediaAdsetMap.get(ad.creativeId);
+                    adFbAdsetId = entry?.fbAdsetId;
+                    adLocalAdsetId = entry?.localAdsetId;
+                } else {
+                    adFbAdsetId = isStoriesAd && fbStoriesAdsetId ? fbStoriesAdsetId : fbFeedAdsetId;
+                    adLocalAdsetId = isStoriesAd && storiesAdsetLocalId ? storiesAdsetLocalId : adsetData.id;
+                }
+
+                if (perMediaMode && !adFbAdsetId) {
+                    // Defensive only — every creativeId in adsData should have an entry
+                    // from the loop above, which aborts the whole launch on any ad-set
+                    // creation failure. If this still happens, fail this ad loudly
+                    // rather than silently dropping it into an undefined ad set.
+                    setErrors(prev => [...prev, `Skipped ${ad.name}: no ad set was created for its media.`]);
+                    failedCount++;
+                    continue;
+                }
 
                 setProgress({
                     current: i + 1,
@@ -527,7 +633,16 @@ const BulkAdCreation = ({ onNext, onBack }) => {
 
         } catch (error) {
             console.error('Error in bulk ad creation:', error);
+            // A toast alone auto-dismisses after a few seconds. For campaign/ad-set
+            // creation failures — which can mean "N ad sets already exist on Meta,
+            // don't re-launch from scratch" (the per-media loop above especially) —
+            // that's the weakest treatment in this file for the message most likely
+            // to cause real damage if missed: a buyer multitasking through an 8-20
+            // ad batch clicks Create again and duplicates ad sets/spend. Route into
+            // the same persistent red panel every other partial-failure path here
+            // already uses, not just a toast. Caught in pre-push review.
             showError(`Error: ${error.message}`);
+            setErrors(prev => [...prev, error.message]);
             setLoading(false);
         }
     };
@@ -580,7 +695,16 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         const bodies = creativeData.bodies?.filter(b => b && b.trim()).length || 0;
                         return `${media} media × ${headlines} headline${headlines !== 1 ? 's' : ''} × ${bodies} body`;
                     })()})</div>
-                    {isMixedFormat && (
+                    {/* Per-media mode creates its OWN ad-set breakdown below — the
+                        feed/stories "2 ad sets" banner describes a model that isn't
+                        actually in use here (per-media can create many more than 2,
+                        each already correctly feed/stories/dual-targeted per its own
+                        creative), and its ABO "×2" math would be flatly wrong once
+                        the real multiplier is N media files, not 2. Gating these away
+                        instead of just leaving them to render alongside the per-media
+                        banner avoids showing two contradictory ad-set-count stories on
+                        the same screen. Caught in pre-push review. */}
+                    {isMixedFormat && !perMediaModeActive && (
                         <div className="mt-2 pt-2 border-t border-blue-200 space-y-0.5">
                             <div className="font-semibold text-blue-800">🗂 2 ad sets will be used:</div>
                             {adsetData.isExisting ? (
@@ -596,7 +720,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             )}
                         </div>
                     )}
-                    {isMixedFormat && campaignData.budgetType === 'ABO' && (
+                    {isMixedFormat && !perMediaModeActive && campaignData.budgetType === 'ABO' && (
                         <div className="mt-2 pt-2 border-t border-blue-200 text-sm font-medium text-amber-700">
                             ⚠️ ABO: each ad set gets its own budget —{' '}
                             {adsetData.budgetScheduleType === 'LIFETIME'
@@ -605,9 +729,38 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             }.
                         </div>
                     )}
-                    {allStoriesFormat && (
+                    {allStoriesFormat && !perMediaModeActive && (
                         <div className="mt-1 text-blue-700 font-medium">📱 All creatives are 9:16 — ad set will target Stories & Reels only</div>
                     )}
+                    {perMediaModeActive && (() => {
+                        // Same "state the literal computed outcome in one sentence" pattern
+                        // as Birch's Stage build card ("Creates N ads in M ad sets") — the
+                        // most portable single detail from that competitor capture.
+                        const distinctMediaCount = new Set(adsData.map(ad => ad.creativeId)).size;
+                        return (
+                            <div className="mt-2 pt-2 border-t border-blue-200 text-sm space-y-1">
+                                <div className="font-semibold text-blue-800">
+                                    🗂 Creates {adsData.length} ad{adsData.length !== 1 ? 's' : ''} in {distinctMediaCount} new ad set{distinctMediaCount !== 1 ? 's' : ''} — one ad set per media file
+                                </div>
+                                {isMixedFormat && (
+                                    <div className="text-blue-700">Each ad set targets Feed (1:1) or Stories & Reels (9:16) based on that file's own format.</div>
+                                )}
+                                {campaignData.budgetType === 'ABO' && (
+                                    <div className="font-medium text-amber-700">
+                                        ⚠️ ABO: EVERY one of these {distinctMediaCount} ad sets gets its own full budget —{' '}
+                                        {adsetData.budgetScheduleType === 'LIFETIME'
+                                            ? `total lifetime spend will be $${(Number(adsetData.lifetimeBudget || 0) * distinctMediaCount).toFixed(2)}`
+                                            : `total daily spend will be $${(Number(adsetData.dailyBudget || 0) * distinctMediaCount).toFixed(2)}/day`
+                                        } — not $
+                                        {adsetData.budgetScheduleType === 'LIFETIME'
+                                            ? Number(adsetData.lifetimeBudget || 0).toFixed(2)
+                                            : Number(adsetData.dailyBudget || 0).toFixed(2)
+                                        }.
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })()}
                 </div>
             </div>
 
