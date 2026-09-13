@@ -2229,7 +2229,22 @@ class FacebookService:
                 Ad.Field.name,
                 'creative{title,body,call_to_action,'
                 'object_story_spec{page_id,link_data{link,message,name,image_hash,description},'
-                'video_data{video_id,image_url,message,title,link_data{link}}}}',
+                'video_data{video_id,image_url,message,title,link_data{link}}},'
+                # asset_feed_spec fallback for the Bulk Match Import dual-placement
+                # creative shape (Feed+Story) — this app's OWN creative-creation path
+                # (create_creative's secondary_image_hash feature) produces ads with
+                # NO object_story_spec.link_data at all, only asset_feed_spec. Live-
+                # confirmed 2026-09-13: without this, every such ad (which is not a
+                # rare case — it's this app's own flagship dual-placement format)
+                # fails duplication with "no reusable image/video reference", even
+                # though get_ad_creative already has this exact fallback for display.
+                # call_to_action_types requested too — this app's own dual-placement
+                # branch of create_creative writes the CTA there, not into a top-level
+                # call_to_action field (pre-push review, code-auditor: without this,
+                # every duplicated dual-placement ad would silently fall back to
+                # LEARN_MORE with no error).
+                'asset_feed_spec{images{hash,adlabels},link_urls{website_url},titles,bodies,'
+                'descriptions,call_to_action_types}}',
             ])
         except FacebookRequestError as e:
             body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
@@ -2244,33 +2259,89 @@ class FacebookService:
         oss = creative.get('object_story_spec', {}) or {}
         link_data = oss.get('link_data', {}) or {}
         video_data = oss.get('video_data', {}) or {}
+        afs = creative.get('asset_feed_spec', {}) or {}
+        afs_images = afs.get('images', []) or []
+        afs_titles = afs.get('titles', []) or []
+        afs_bodies = afs.get('bodies', []) or []
+        afs_link_urls = afs.get('link_urls', []) or []
+        afs_descriptions = afs.get('descriptions', []) or []
+        afs_ctas = afs.get('call_to_action_types', []) or []
 
         headline = creative.get('title') or link_data.get('name') or video_data.get('title')
+        if not headline and afs_titles:
+            headline = afs_titles[0].get('text')
         body = creative.get('body') or link_data.get('message') or video_data.get('message')
+        if not body and afs_bodies:
+            body = afs_bodies[0].get('text')
         cta_obj = creative.get('call_to_action', {})
         cta_label = cta_obj.get('type') if isinstance(cta_obj, dict) else None
+        if not cta_label and afs_ctas:
+            cta_label = afs_ctas[0]
         cta_value = cta_obj.get('value', {}) if isinstance(cta_obj, dict) else {}
         # Fallback chain, in order: link ad's own link_data.link, then the top-level
         # call_to_action mirror (needed for video ads — a video ad's real destination
         # link lives on call_to_action.value.link, not video_data.link_data, which is
-        # rarely populated), then video_data.link_data.link as a last resort. The
-        # call_to_action mirror is confirmed working for link ads in production
-        # (get_ad_creative); video-ad coverage specifically should get one live test
-        # before this ships broadly (Meta-API domain-expert review, 2026-09-13) — if it
-        # doesn't resolve, this returns None and the per-ad duplication for that ad
-        # fails with a clear "no reusable image/video reference" error rather than
-        # silently sending a bad payload.
-        website_url = link_data.get('link') or cta_value.get('link') or video_data.get('link_data', {}).get('link')
+        # rarely populated), then video_data.link_data.link, then
+        # asset_feed_spec.link_urls[0] as a last resort. The call_to_action mirror is
+        # confirmed working for link ads in production (get_ad_creative); video-ad
+        # coverage specifically should get one live test before this ships broadly
+        # (Meta-API domain-expert review, 2026-09-13) — if it doesn't resolve, this
+        # returns None and the per-ad duplication for that ad fails with a clear "no
+        # reusable image/video reference" error rather than silently sending a bad
+        # payload.
+        website_url = (
+            link_data.get('link') or cta_value.get('link') or
+            video_data.get('link_data', {}).get('link') or
+            (afs_link_urls[0].get('website_url') if afs_link_urls else None)
+        )
+
+        # asset_feed_spec image resolution. Live-tested 2026-09-13 against a real
+        # production ad and found NOT to be this app's own convention: that ad's
+        # `adlabels` were Meta-auto-generated placement-customization names
+        # ("placement_asset_..."), not the literal 'feed_image'/'story_image' labels
+        # create_creative() writes (line ~1368-1369) — meaning most asset_feed_spec
+        # ads in this account were built by Meta's own tooling, not this app, and
+        # can carry an arbitrary number of images/placement rules with no guaranteed
+        # feed/story structure at all.
+        #
+        # Pre-push review (code-auditor + Meta-API domain-expert) both flagged the
+        # same real risk in an earlier version of this method: blindly picking
+        # "the labeled one, else images[0]" as primary and "whatever's left" as
+        # secondary would silently rebuild a generic multi-image ad as if it were a
+        # Feed+Story pair, potentially swapping which image lands in which
+        # placement — no error, no warning, just a wrong-but-plausible ad.
+        #
+        # So `secondary_image_hash` is populated ONLY when BOTH images carry this
+        # app's own explicit 'feed_image'/'story_image' labels — i.e. only when this
+        # ad was actually built by create_creative's dual-placement path. Any other
+        # asset_feed_spec shape (Meta-generated placement customization, a genuine
+        # multi-image/carousel spec, anything untagged) duplicates as a plain
+        # single-image ad using the first image/title/body — a safe, honest
+        # simplification rather than a guess.
+        primary_hash = link_data.get('image_hash')
+        secondary_hash = None
+        if not primary_hash and afs_images:
+            def _labeled(img, name):
+                return any(label.get('name') == name for label in (img.get('adlabels') or []))
+
+            feed_image = next((img for img in afs_images if _labeled(img, 'feed_image')), None)
+            story_image = next((img for img in afs_images if _labeled(img, 'story_image')), None)
+            if feed_image and story_image:
+                primary_hash = feed_image.get('hash')
+                secondary_hash = story_image.get('hash')
+            else:
+                primary_hash = afs_images[0].get('hash')
 
         return {
             "ad_name": ad_data.get('name'),
             "page_id": oss.get('page_id'),
             "headline": headline,
             "body": body,
-            "description": link_data.get('description'),
+            "description": link_data.get('description') or (afs_descriptions[0].get('text') if afs_descriptions else None),
             "cta_label": cta_label,
             "website_url": website_url,
-            "image_hash": link_data.get('image_hash'),
+            "image_hash": primary_hash,
+            "secondary_image_hash": secondary_hash,
             "video_id": video_data.get('video_id'),
         }
 
@@ -2462,6 +2533,7 @@ class FacebookService:
                     new_creative = self.create_creative({
                         'page_id': creative_detail['page_id'],
                         'image_hash': creative_detail.get('image_hash'),
+                        'secondary_image_hash': creative_detail.get('secondary_image_hash'),
                         'video_id': creative_detail.get('video_id'),
                         'primary_text': creative_detail.get('body') or '',
                         'headline': creative_detail.get('headline') or ad_name,
