@@ -335,7 +335,7 @@ class AutoPauseRuleLog(Base):
     # result: 'success' | 'error'
     result = Column(String, nullable=False)
     detail = Column(String, nullable=True)  # e.g. new budget amount, or the Meta error message
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
 
     rule = relationship("AutoPauseRule")
     adset = relationship("FacebookAdSet")
