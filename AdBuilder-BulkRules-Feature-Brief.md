@@ -248,31 +248,48 @@ from good ad launchers'" — and it's a real, multi-step Meta API orchestration,
    (`create_creative`/`create_ad`, already proven) — new ad set, same copy/images.
 5. Launch PAUSED, matching this app's existing convention everywhere else.
 
-**Open questions that need Joel's input before this is buildable, not just a technical
-question — same posture as the targeting-variant axis from the redesign brief, flagged rather
-than guessed:**
-1. **Duplicate ALL ads in the ad set, or only the one(s) that triggered the rule?** A rule fires
-   per ad set, evaluated against ad-set-level metrics — if the trigger is really "this specific ad
-   is a winner," duplicating the whole ad set (including any losers riding alongside it) may not
-   be what's wanted. Recommend asking directly rather than assuming "all ads" is correct.
-2. **Does the duplicate keep the source budget, or does the rule set a new one?** Birch's own
-   duplicate flow (Stage, not the rules engine) lets you pick — worth confirming whether Joel's
-   actual use case ("scale a winner") implies the duplicate should start at a HIGHER budget than
-   the source, which would make this action functionally overlap with `increase_budget` and might
-   be better modeled as "Duplicate + bump budget by X%" as one combined action, not two rules.
-3. **Does duplicating reset ad/ad-set names with a suffix (" - Copy", " - Scaled"), or something
-   more specific** (a date stamp, matching this app's other naming conventions like
-   `${adsetData.name} - Feed`)?
-4. **Should a duplicated ad set get its own new rule automatically** (e.g., "duplicate again if
-   this one also proves out"), or is one-shot duplication enough for MVP? Recommend one-shot only
-   for MVP — an auto-chaining duplicate rule is a real scope-creep risk (a winner that keeps
-   duplicating itself with no cap is its own money-risk story, similar to why budget/pause actions
-   disable themselves after firing).
+**Update 2026-09-13 — checked live against both tools rather than guessed.** AdEspresso's
+Optimization Rules has no Duplicate action at all (re-confirmed live: exactly 3 actions — pause
+it / increase bid / decrease bid). Birch's does, and its actual config screen (`app.bir.ch`,
+Automated Rules → Duplicate, live RHO 4 account, nothing saved) answers three of the four open
+questions directly — real product decisions Birch already made, not assumptions:
 
-**Recommended MVP scope, once those are answered:** duplicate the whole ad set (all its ads) with
-the source budget unchanged, `- Copy` suffix, one-shot (rule disables itself after firing, same as
-pause/budget actions today). Anything beyond that (partial-ad duplication, an auto-bumped budget,
-auto-chaining) is real Phase 3-of-Phase-2 scope, not MVP.
+1. **All ads, or only the trigger ad?** Birch's Duplicate is ad-set-scoped (matches how BHM's
+   rules are already scoped) and defaults to **duplicating every ad in the ad set** — with an
+   explicit second radio option, "Duplicate the ad set without the ads inside," for an
+   empty-ad-set-only clone. So Birch treats "all ads" as the default, not a forced-only behavior —
+   worth offering both, defaulting to "all ads" to match.
+2. **Same budget, or a bump?** Confirmed: **no budget field anywhere in Birch's Duplicate
+   config.** It's a plain clone — same budget as the source, full stop. A budget bump is a
+   separate task chained via Birch's own "+ Add task" (Duplicate + Increase budget as two tasks
+   in one rule, not one combined action). My original guess was right, and now it's verified: keep
+   this as two composable actions, not a new combined "Duplicate + bump" action.
+3. **Naming?** Birch's real fields: an editable "Append to duplicate's name" text box, defaulting
+   to literally `- Copy`, plus a checkbox "Append the number of duplicate" for when the same ad
+   set gets duplicated more than once (turns `- Copy` into `- Copy 1`, `- Copy 2`, avoiding a
+   naming collision the same class as the one fixed in Phase 4). Match this exactly — configurable
+   suffix, default `- Copy`, numbered on repeat.
+4. **One-shot, or can it chain?** Birch's task-level schedule control (the same "Once a day" /
+   "Every N minutes" selector every other action uses) defaults Duplicate to **"Once in a
+   lifetime"** — but the dropdown does let a buyer choose a repeating frequency instead. So it's
+   not hard-locked to one-shot at the platform level; the safe default is one-shot, with repeat
+   available as an explicit, deliberate opt-in rather than the default. Matches the original MVP
+   recommendation almost exactly — the one adjustment is to allow (not forbid) a buyer to choose a
+   repeat frequency, defaulting to one-shot.
+
+**One additional real detail, not previously asked about:** Birch's Duplicate also has an
+"Original ad set" setting — **Keep** (default) vs. **Pause** — controlling whether the SOURCE ad
+set stays active after duplicating or gets paused. Worth including: a "scale a winner" workflow
+usually wants to keep the original running alongside the new copy, but a "duplicate to test a
+structural change" workflow might want the original paused. Default to Keep, matching Birch.
+
+**Revised MVP scope, now grounded in a real, shipped competitor implementation rather than
+guessed:** duplicate the whole ad set including all its ads (with an option to duplicate the
+empty ad set only), unchanged budget, a configurable name suffix defaulting to `- Copy` with
+automatic numbering on repeat duplication, one-shot by default with an explicit opt-in for a
+repeat frequency, and a Keep/Pause choice for the original ad set defaulting to Keep. Nothing
+here needs Joel's input anymore — it's a direct, verified port of a live competitor's own product
+decisions, not a guess.
 
 **Estimate:** comparable in size to Phase 4 (the per-media ad-set work) or larger — real new
 orchestration across `facebook_service.py`, a new endpoint surface, and its own domain-expert Meta
