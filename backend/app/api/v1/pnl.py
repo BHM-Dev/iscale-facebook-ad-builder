@@ -14,8 +14,8 @@ from sqlalchemy.orm import Session
 from app.api.v1.facebook import _resolve_scoped_default_account
 from app.core.deps import require_permission
 from app.database import get_db
-from app.models import FacebookAdSet, PnlCostEntry, PnlMonthSnapshot, User, normalize_account_id
-from app.services.everflow_service import EverflowService
+from app.models import FacebookAdSet, FacebookCampaign, PnlCostEntry, PnlMonthSnapshot, User, normalize_account_id
+from app.services.everflow_service import META_ID_RE, EverflowService
 from app.services.facebook_service import FacebookService
 from app.services.redtrack_service import today_in_rt_tz
 
@@ -614,14 +614,30 @@ def _all_summary_from_account_rows(
     end: date,
     label: str,
     account_rows: list[dict],
+    unknown_revenue: Decimal | None = None,
+    unknown_ok: bool = True,
+    foreign_revenue: Decimal | None = None,
 ) -> dict:
     spend = sum((_money(row.get("spend")) for row in account_rows if row.get("spend") is not None), Decimal("0"))
-    revenue = sum((_money(row.get("revenue")) for row in account_rows if row.get("revenue") is not None), Decimal("0"))
+    attributed_revenue = sum((_money(row.get("revenue")) for row in account_rows if row.get("revenue") is not None), Decimal("0"))
+    # Revenue that belongs to the period but to no single account — included in
+    # the total so profit reflects what Switchboard actually bills, and reported
+    # separately so it is always visible as unknown rather than quietly folded
+    # into an account's number. Aug 2026 was short by $3,253.99 without this.
+    unknown_revenue = _money(unknown_revenue or 0)
+    revenue = attributed_revenue + unknown_revenue
     gross_profit = revenue - spend
     costs, total_costs = _resolve_aggregate_costs(db, account_ids, start, end, spend, revenue)
     net_profit = gross_profit - total_costs
     data_incomplete = any(row.get("data_incomplete") or row.get("spend") is None or row.get("revenue") is None for row in account_rows)
+    if not unknown_ok:
+        # Couldn't reach Everflow for the unknown segment. Say so — reporting the
+        # attributed-only total as if it were complete is how this understated
+        # August in the first place.
+        data_incomplete = True
     errors = []
+    if not unknown_ok:
+        errors.append("all:everflow_unknown_revenue_unavailable")
     for row in account_rows:
         account = row.get("ad_account_id")
         if row.get("spend") is None:
@@ -648,6 +664,12 @@ def _all_summary_from_account_rows(
         "margin_type": "net",
         "roas": float(revenue / spend) if spend > 0 and revenue > 0 else None,
         "revenue_source": _aggregate_revenue_source(account_rows),
+        "attributed_revenue": _float(attributed_revenue),
+        "unknown_revenue": _float(unknown_revenue),
+        # Billed by Switchboard on these offers but traceable to ad sets outside
+        # this aggregate's scope. Reported so the difference from the portal
+        # total is explainable, deliberately NOT added to revenue.
+        "foreign_revenue": _float(_money(foreign_revenue or 0)),
         "unattributed_revenue": _float(sum((_money(row.get("unattributed_revenue")) for row in account_rows), Decimal("0"))),
         "from_snapshot": bool(account_rows) and all(row.get("from_snapshot") for row in account_rows),
         "synced_at": None,
@@ -658,6 +680,90 @@ def _all_summary_from_account_rows(
         "has_costs": len(costs) > 0,
         "costs": costs,
     }
+
+
+def _everflow_unknown_revenue(
+    db: Session,
+    account_ids: list[str],
+    start: date,
+    end: date,
+) -> tuple[Decimal, bool, Decimal]:
+    """Billable Everflow revenue for the period that no scoped ad set can claim.
+
+    Returns (unknown_revenue, ok, foreign_revenue).
+
+    Counted as UNKNOWN — real money billed to us that belongs in the aggregate:
+      * `sub3` missing or not a Meta id at all. Unattributable by construction,
+        and the offers queried are the scoped accounts' own, so it is theirs.
+      * `sub3` holding a Meta CAMPAIGN id belonging to a scoped account. This is
+        the broken-tracking-macro case — Aug 2026 had $1,306.67 of it across
+        five RHO campaigns, unambiguously that account's revenue.
+
+    Deliberately EXCLUDED, because crediting it would overstate:
+      * revenue already attributable to a known ad set — the per-account rows
+        have it, and adding it here would double-count
+      * a campaign id belonging to an account outside this aggregate's scope
+      * a Meta id we recognise as neither ad set nor campaign. Most likely
+        another account's ad set (the 2026-09-09 note records ~$9.1k/month of
+        "Get Business Coverage" sitting on accounts this tool doesn't track).
+        Returned as `foreign_revenue` so it is visible rather than silently
+        dropped — never added to the total.
+
+    Computed ONCE per period from raw conversions, never per account, so the
+    2026-09-09 rule that per-account revenue stays ad-set-attributable only is
+    untouched and no account can claim a shared offer twice. Because it reads
+    raw rows rather than subtracting an attributed figure, it is also safe to
+    combine with FROZEN per-account snapshots — it does not drift when ad sets
+    sync after a month was snapshotted.
+    """
+    scope = {normalize_account_id(a) for a in account_ids}
+    offer_names: set[str] = set()
+    for account_id in _everflow_account_ids():
+        if normalize_account_id(account_id) in scope:
+            offer_names |= _everflow_offer_names_for_account(account_id)
+    if not offer_names:
+        return Decimal("0"), True, Decimal("0")
+
+    try:
+        svc = EverflowService()
+        if not svc.is_configured():
+            return Decimal("0"), False, Decimal("0")
+        rows = svc.get_raw_conversions(start, end)
+    except Exception as exc:  # noqa: BLE001 — never fail the P&L over telemetry
+        logger.warning("Everflow unknown-revenue lookup failed for %s..%s: %s", start, end, exc)
+        return Decimal("0"), False, Decimal("0")
+
+    allowed_offers = {name.casefold() for name in offer_names if name}
+    known_adsets = {
+        row[0] for row in db.query(FacebookAdSet.fb_adset_id)
+        .filter(FacebookAdSet.fb_adset_id.isnot(None)).all() if row[0]
+    }
+    campaign_owner = {
+        str(row[0]): normalize_account_id(row[1]) if row[1] else None
+        for row in db.query(FacebookCampaign.fb_campaign_id, FacebookCampaign.fb_account_id)
+        .filter(FacebookCampaign.fb_campaign_id.isnot(None)).all()
+    }
+
+    unknown = Decimal("0")
+    foreign = Decimal("0")
+    for row in rows:
+        if allowed_offers and EverflowService._offer_name(row).casefold() not in allowed_offers:
+            continue
+        revenue = _money(row.get("revenue"))
+        sub3 = str(row.get("sub3") or "").strip()
+
+        if not META_ID_RE.fullmatch(sub3):
+            unknown += revenue          # no usable id — unattributable, but ours
+            continue
+        if sub3 in known_adsets:
+            continue                    # already in a per-account row
+        owner = campaign_owner.get(sub3)
+        if owner and owner in scope:
+            unknown += revenue          # campaign id of a scoped account
+        else:
+            foreign += revenue          # someone else's, or unrecognised
+
+    return unknown, True, foreign
 
 
 def _summary_all(
@@ -679,7 +785,12 @@ def _summary_all(
         _summary(db, account_id, start, end, label, include_costs=False)
         for account_id in account_ids
     ]
-    return _all_summary_from_account_rows(db, account_ids, start, end, label, account_rows)
+    unknown_revenue, unknown_ok, foreign_revenue = _everflow_unknown_revenue(db, account_ids, start, end)
+    return _all_summary_from_account_rows(
+        db, account_ids, start, end, label, account_rows,
+        unknown_revenue=unknown_revenue, unknown_ok=unknown_ok,
+        foreign_revenue=foreign_revenue,
+    )
 
 
 class CostEntryBody(BaseModel):
@@ -860,7 +971,18 @@ def _get_months_all(
             if snapshot is None and start != current_month and _snapshot_eligible(row):
                 _write_month_snapshot(db, account_id, start, end, row, current_user)
             account_rows.append(row)
-        rows.append(_all_summary_from_account_rows(db, account_ids, start, end, label, account_rows))
+        # Same unknown segment as /summary. Without this the trailing-window
+        # table keeps understating closed months — which is exactly where the
+        # Aug 2026 $42,191.52-vs-$45,445.51 gap was spotted. One Everflow read
+        # per month shown; the per-account figures may be frozen snapshots, and
+        # that is safe here because the unknown segment is derived from raw
+        # conversions rather than by subtracting the attributed total.
+        unknown_revenue, unknown_ok, foreign_revenue = _everflow_unknown_revenue(db, account_ids, start, end)
+        rows.append(_all_summary_from_account_rows(
+            db, account_ids, start, end, label, account_rows,
+            unknown_revenue=unknown_revenue, unknown_ok=unknown_ok,
+            foreign_revenue=foreign_revenue,
+        ))
     return rows
 
 
@@ -1047,7 +1169,15 @@ def resync_month(
             _write_month_snapshot(db, scoped_account_id, start, end, row, current_user)
             row["from_snapshot"] = True
             account_rows.append(row)
-        return _all_summary_from_account_rows(db, account_ids, start, end, label, account_rows)
+        # Resync returns the same shape as /summary, so it needs the unknown
+        # segment too — otherwise a resync would "correct" a month back down to
+        # the attributed-only figure it was just fixed from.
+        unknown_revenue, unknown_ok, foreign_revenue = _everflow_unknown_revenue(db, account_ids, start, end)
+        return _all_summary_from_account_rows(
+            db, account_ids, start, end, label, account_rows,
+            unknown_revenue=unknown_revenue, unknown_ok=unknown_ok,
+            foreign_revenue=foreign_revenue,
+        )
 
     row = _summary(db, account_id, start, end, label)
     if row.get("data_incomplete"):
