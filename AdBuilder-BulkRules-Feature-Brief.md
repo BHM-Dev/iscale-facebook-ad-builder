@@ -298,7 +298,67 @@ current docs, not assumed) plus the standard 2-agent trigger-file review. Not a 
 task — recommend treating it as its own phase with its own dedicated pass, same as Phases 1-5 were,
 once the open questions above are answered.
 
-### 8.3 Routing note
+**Correction, checked against the actual codebase before finalizing this scope:** `get_ad_creative`
+does NOT already cover the read side, as first assumed above. Read it directly (`facebook_service.py`
+~line 2084) — it fetches `image_url`/`picture`/`thumbnail_url` for display (built for Copy Library's
+UI, which only ever renders a preview), never `image_hash`/`video_id`. `create_creative` (the write
+side, confirmed at ~line 1248) takes `image_hash`/`video_id` directly as its media reference — so the
+account-level-hash reuse assumption is correct, but the existing read method needs extending
+(add `link_data{...,image_hash}` / `video_data{video_id,...}` to its field request) or a new
+duplication-specific read method needs to sit alongside it. Small, contained fix once identified —
+exactly the kind of gap this scoping pass exists to catch before it becomes a build-time surprise.
+
+### 8.3 Concrete technical plan (once the questions above are confirmed acceptable)
+
+**Migration + model** — new columns on `auto_pause_rules`, all nullable/defaulted so existing rows
+are unaffected (same pattern as Phase 3's `action`/`budget_adjust_pct` addition):
+- `duplicate_all_ads` (bool, default `true`) — false = clone the empty ad set only, per Birch's
+  second radio option.
+- `duplicate_name_suffix` (string, default `'- Copy'`)
+- `duplicate_append_number` (bool, default `false`) — turns the suffix into `- Copy 1`, `- Copy 2`
+  on repeat firings of a repeat-enabled rule.
+- `duplicate_pause_original` (bool, default `false`) — Keep vs. Pause for the source ad set.
+- `duplicate_repeat` (bool, default `false`) — one-shot (disables itself after firing, matching
+  every other action's default) unless explicitly set. No per-rule frequency field is needed the
+  way Birch has one — this app's scheduler is a fixed 30-minute global cycle, not configurable per
+  rule, so "repeat" here just means "don't disable `is_active` after firing," same mechanism
+  `notify` already uses.
+- `increase_bid`/`decrease_bid`/`bid_adjust_pct` reuse the exact same `action`/`budget_adjust_pct`
+  columns already on the table — no new columns needed for bid actions, just new accepted values
+  for the existing `action` field.
+
+**`facebook_service.py` additions:**
+- Extend `get_ad_creative` (or add a sibling read method) to also return `image_hash`/`video_id`,
+  not just the renderable URL — the correction above.
+- New `duplicate_adset(fb_adset_id, name_suffix, append_number, duplicate_all_ads, pause_original)`:
+  read the source ad set's live config (targeting/optimization/budget/bid — the same field list
+  `get_adsets` already requests) → if `duplicate_all_ads`, read every ad via `get_ads` + the
+  extended creative-hash read → `create_adset` with the copied config and computed name → for each
+  source ad, `create_creative` (reusing the hash/video_id, no re-upload) + `create_ad` → optionally
+  `update_adset_status(source, 'PAUSED')` if `pause_original` → launch every new ad PAUSED, matching
+  this app's convention everywhere else. Partial-failure handling mirrors Phase 4's per-media
+  loop exactly: if ad N of M fails mid-duplication, abort with a message naming how many ads
+  already exist on the new ad set, don't silently continue.
+- New `adjust_adset_bid_by_percent(fb_adset_id, percent_change)` — near-identical structure to
+  `adjust_adset_budget_by_percent` (Phase 3), refusing when the ad set isn't on a manual/cost-cap
+  bid strategy (mirrors the CBO-refusal posture, same reasoning: adjusting a field Meta isn't
+  using would be a silent no-op).
+
+**`auto_pause.py` additions:** `'duplicate'` and `'increase_bid'`/`'decrease_bid'` added to
+`VALID_ACTIONS`; a validation function for the duplicate-specific fields (mirroring
+`_validate_action`'s pattern); a new branch in `_run_check` calling `duplicate_adset`, writing the
+audit log, sending the Slack alert, and disabling the rule unless `duplicate_repeat` is set (if it
+is, apply the same notify-cooldown pattern already built for `notify` rules, so a repeat-enabled
+duplicate rule can't fire every 30 minutes indefinitely).
+
+**Frontend (`AutoPauseRules.jsx`):** a 5th action option in `ACTION_OPTIONS`, with its own config
+block in `AddRuleModal`/`EditRuleModal` — all-ads-vs-empty radio, name-suffix text field +
+append-number checkbox, pause-original checkbox, repeat checkbox — all directly mirroring Birch's
+actual field layout rather than inventing a new one. Given this action moves ad-set structure (not
+just a number), it should get the same confirm-step treatment budget actions already have —
+listing exactly what will be created before the rule is saved.
+
+### 8.4 Routing note
 
 Both pieces touch `backend/app/services/facebook_service.py` (trigger file) and need Claude Code
 end-to-end, per the same rule that gated Phase 3's budget work. Bid actions can likely go in the
