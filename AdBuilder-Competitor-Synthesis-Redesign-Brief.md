@@ -207,21 +207,19 @@ joel-perspective) surfaced two real bugs, both fixed before push:
   to attach one) that the new card would otherwise render as a normal-looking sparse ad. Fixed
   with an explicit red "No creative attached — this ad will fail" card state instead.
 
-**Deferred, not fixed (documented per the pre-push rule — P1/P2 findings become follow-ups, not
-blockers):**
-- The deeper issue behind the item above — "Add a Custom Ad" has no real follow-up UI at all, so
-  the feature is a dead end regardless of how the card displays it — needs a product decision
-  (remove the button, or build the missing attach-creative form) before it's actually fixed, not
-  just displayed honestly.
+**Follow-ups — resolved 2026-09-13:**
+- ~~"Add a Custom Ad" is a dead end~~ — resolved by removing the button entirely rather than
+  building the missing attach-creative form, which nothing had asked for.
+- ~~Exclude ("✕") button has no confirm/undo~~ — added a stacked, sticky undo banner (up to 3
+  concurrent removals, each independently expiring) rather than a confirm dialog on every click.
+
+**Still deferred, not fixed:**
 - Grid scan density at Joel's typical 5-20 ad batch, especially a mixed Feed(1:1)/Stories(9:16)
   batch producing uneven row heights across the grid — flagged by joel-perspective as working
   against the "faster to catch a bad pairing" goal at real batch sizes. Possible follow-up: group
   cards by format before rendering, or a toggle back to the old compact list for large batches.
-- Exclude ("✕") button is now a smaller, denser tap target inside a multi-column grid versus the
-  old isolated row button, with no confirm/undo — worth a lightweight confirm or undo toast given
-  the density change, even though `removeAd` itself is unchanged.
 - Avatar is initials-only, never the real Page photo — a visible "tell" against the real-ad-unit
-  illusion, cosmetic only.
+  illusion, cosmetic only. Would need a new field/config to fetch the real Page profile photo.
 
 ### 4.2 Live combinatorial counter during creative entry
 Covered in §3.1. Cheap, and removes the "how many ads am I actually about to make" ambiguity a
@@ -280,15 +278,19 @@ surface) caught real money/trust risk, all fixed before push:
   has — building that same rich UI for a failure this early (before any ad exists yet) was judged
   a bigger lift than this gap warranted right now.
 
-**Deferred, documented as follow-ups (P1/P2, not blockers):**
-- No confirm gate before a large-batch + big-ABO-budget combination actually creates ad sets on
-  Meta — the warnings are informational only. Same shape of gap as Phase 3's budget-rule confirm
-  step; worth the same treatment if this mode sees real use.
-- No visual risk-differentiation between the two toggle options (the mode that can multiply
-  ad-set count/budget looks identical to the safe default).
-- Ad-set naming collision risk when media filenames aren't distinctive ("Media 1", "Media 2" if a
-  creative has no real name).
-- No per-file → per-ad-set mapping preview before commit (only aggregate N/M counts).
+**Follow-ups — resolved 2026-09-13:**
+- ~~No confirm gate before a large-batch + big-ABO-budget combination~~ — added a one-time confirm
+  modal (spend math spelled out) gated specifically on per-media + ABO + >1 media file; every
+  other launch combination still fires on a single click, unchanged.
+- ~~No visual risk-differentiation between the two toggle options~~ — added a small amber
+  "multiplies budget" tag to the per-media option.
+- ~~Ad-set naming collision risk~~ — per-media ad-set names now always carry a numeric suffix,
+  even when the file has a real name, so two files sharing a filename can't produce two
+  identically-named ad sets in Ads Manager.
+
+**Still deferred, not fixed:**
+- No per-file → per-ad-set mapping preview before commit (only aggregate N/M counts) — lower
+  value once the confirm modal above already surfaces the dollar consequence.
 
 ### 4.5 Bulk rules — already scoped, re-affirmed here
 `AdBuilder-BulkRules-Feature-Brief.md` already covers this in full (MVP: Pause/Notify/Increase

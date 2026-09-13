@@ -185,6 +185,13 @@ DB migration):
   with only a live count as the guardrail.
 - **Notify cooldown** — 4 hours between repeat Slack alerts for the same still-breached notify rule,
   to avoid indefinite alert-fatigue spam (also from joel-perspective review).
-- **Not built, documented as follow-ups**: an edit UI for changing a rule's action/percentage after
-  creation (delete+recreate today); a symmetric ±% single field instead of separate increase/decrease
-  actions; Duplicate action and bid actions (already deferred to Phase 2 in this brief).
+- **Shipped 2026-09-13**: an edit UI (`EditRuleModal`) for changing an existing rule's
+  action/percentage/metric/operator/threshold/min-spend via PATCH instead of delete+recreate.
+  Pre-push review caught a real blocking bug in the first pass — the backend's `RulePatch` schema
+  never declared `metric`/`operator`, so Pydantic silently dropped both fields; a user editing
+  Metric or Condition got a "Rule updated" success toast while the change was discarded and the
+  rule kept firing on its old values. Fixed by adding both fields to the schema and persisting
+  them the same way `threshold`/`min_spend` already were.
+- **Still not built**: a symmetric ±% single field instead of separate increase/decrease actions;
+  Duplicate action and bid actions (already deferred to Phase 2 in this brief — see §4 below,
+  genuinely its own scope, not a quick follow-up).
