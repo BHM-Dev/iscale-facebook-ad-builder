@@ -212,6 +212,14 @@ def create_campaign(
     try:
         result = service.create_campaign(campaign, ad_account_id)
         return dict(result)
+    except FacebookAPIError as e:
+        # Structured detail (message/code/subcode), not a flattened string — the
+        # frontend's buildFacebookApiError()/isRateLimitError() need the numeric
+        # code to actually detect a Meta throttle. FacebookAPIError is a
+        # RuntimeError subclass, so this must be caught BEFORE the (ValueError,
+        # RuntimeError) branch below or it would fall into the flattened path.
+        logger.exception("Create campaign failed: %s", e)
+        raise HTTPException(status_code=502, detail={"message": str(e), "code": e.code, "subcode": e.subcode})
     except (ValueError, RuntimeError) as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
@@ -498,7 +506,9 @@ def read_saved_adsets(
                 a.campaign.budget_type or ('CBO' if a.campaign.daily_budget else None)
             ) if a.campaign else None,
             "campaign_daily_budget": a.campaign.daily_budget if a.campaign else None,
+            "campaign_lifetime_budget": a.campaign.lifetime_budget if a.campaign else None,
             "daily_budget": a.daily_budget,
+            "lifetime_budget": a.lifetime_budget,
             "brand_id": a.brand_id,
             "brand_name": a.brand.name if a.brand else None,
         }
@@ -655,6 +665,12 @@ def create_adset(
     try:
         result = service.create_adset(adset, ad_account_id)
         return dict(result)
+    except FacebookAPIError as e:
+        # Same fix as /campaigns above — structured detail so the frontend can
+        # actually detect a Meta throttle here. Must come before (ValueError,
+        # RuntimeError) since FacebookAPIError subclasses RuntimeError.
+        logger.exception("Create adset failed: %s", e)
+        raise HTTPException(status_code=502, detail={"message": str(e), "code": e.code, "subcode": e.subcode})
     except (ValueError, RuntimeError) as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:

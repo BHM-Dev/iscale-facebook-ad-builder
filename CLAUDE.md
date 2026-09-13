@@ -148,7 +148,7 @@ Facebook ad builder used daily by Joel Welch (media buyer). Connects to Meta Ads
   # or
   docker exec -it <backend-container> bash
   ```
-- Env vars: edit `.env` in the app path over SSH directly, then `docker compose -f docker-compose.prod.yml restart backend`. `VITE_`-prefixed vars are baked at build time and need `docker compose -f docker-compose.prod.yml build --no-cache frontend` instead of a plain restart — verify the served JS hash actually changed after (build-cache has silently served stale bundles before).
+- Env vars: edit `.env` in the app path over SSH directly, then **`docker compose -f docker-compose.prod.yml up -d backend`** — NOT `restart`. `restart` reuses the existing container and does **not** re-read `env_file`, so the new value never reaches the process and the change looks like it silently did nothing (proved empirically 2026-09-13: after `restart` the var was absent from `printenv` inside the container; after `up -d` it was there). Deploys run `up -d --build`, which does recreate — so a var added before the next push appears to work eventually, which is why this went unnoticed. Always confirm with `docker exec ad-builder-api printenv | grep YOUR_VAR`. `VITE_`-prefixed vars are baked at build time and need `docker compose -f docker-compose.prod.yml build --no-cache frontend` instead of a plain restart — verify the served JS hash actually changed after (build-cache has silently served stale bundles before).
 - Code deploys auto-trigger on push to `develop`. Env var changes and ad-hoc scripts can now be done directly over SSH — **only message Golden (`D075KSE1A1L`) for something that genuinely needs his sign-off, not routine var additions.**
 - `REDTRACK_API_KEY` — confirmed added 2026-04-27.
 - `SWITCHBOARD_EVERFLOW_API_KEY` — **active**. Source of truth for P&L billable revenue on validated Switchboard accounts.
@@ -553,7 +553,7 @@ Do not suggest `./venv/bin/python ...` or `source venv/bin/activate` for VPS wor
    - A GitHub Actions outage takes deploys down with it: on 2026-08-06 every job died in `Set up job` with "Failed to resolve action download info", ten minutes were lost waiting for a deploy that was never going to happen. The workflow now asserts the pushed SHA is actually in the deployed tree, polls the API afterwards, and posts to Slack on failure via a job with no `uses:` (so it still fires during exactly that kind of outage). That notifier needs `SLACK_DEPLOY_WEBHOOK` in the repo's Actions secrets; without it, failures reach the Actions log only.
 3. `alembic upgrade head` runs automatically as part of the Docker startup sequence — confirmed by Golden 2026-06-02. **Do NOT message Golden about migrations.**
 4. **Never message Golden after a push** — code and migrations are fully automated.
-5. Env var changes → DM Golden at `D075KSE1A1L`. He adds the var, runs `docker compose restart backend`. This is the ONLY reason to message Golden.
+5. Env var changes → usually self-serve over SSH (see above). If Golden does it, he must run `docker compose -f docker-compose.prod.yml up -d backend`, not `restart` — `restart` does not re-read `.env`. Only message Golden for something needing his sign-off.
 6. Post-deploy: check `https://adbuilder-api.velocitymx.io/api/v1/docs` is reachable.
 
 ---

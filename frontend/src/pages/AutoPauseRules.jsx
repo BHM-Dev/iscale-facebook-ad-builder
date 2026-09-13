@@ -40,8 +40,17 @@ const TRIGGERED_LABELS = {
 // it can only make the PREVIEW number look off by however much has drifted since
 // the last sync. Labeled "as of last sync" in the UI so that's not implied to be live.
 const currentBudgetCents = (adset) => {
-  if (adset.daily_budget) return { cents: adset.daily_budget, source: 'ad set' };
-  if (adset.campaign_daily_budget) return { cents: adset.campaign_daily_budget, source: 'CBO campaign' };
+  // Daily and lifetime budgets are mutually exclusive on both the ad set and its
+  // CBO campaign — checking daily first, then lifetime, at each level covers
+  // both without guessing which one an ad set actually uses. Missing this for
+  // lifetime-budget ad sets meant the pre-commit confirm step (§4.1 of
+  // AdBuilder-Competitor-Synthesis-Redesign-Brief.md) silently showed nothing
+  // for them — the exact "no current -> new preview" gap it exists to close.
+  // Caught in Codex's review.
+  if (adset.daily_budget) return { cents: adset.daily_budget, source: 'ad set', unit: 'day' };
+  if (adset.lifetime_budget) return { cents: adset.lifetime_budget, source: 'ad set', unit: 'lifetime' };
+  if (adset.campaign_daily_budget) return { cents: adset.campaign_daily_budget, source: 'CBO campaign', unit: 'day' };
+  if (adset.campaign_lifetime_budget) return { cents: adset.campaign_lifetime_budget, source: 'CBO campaign', unit: 'lifetime' };
   return null;
 };
 
@@ -167,7 +176,7 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
                   <div className="font-medium text-gray-900 truncate">{a.name}</div>
                   {current ? (
                     <div className="text-xs text-gray-500">
-                      Current ({current.source}, as of last sync): <strong>${(current.cents / 100).toFixed(2)}</strong>
+                      Current ({current.source}, {current.unit === 'lifetime' ? 'lifetime budget' : 'daily budget'}, as of last sync): <strong>${(current.cents / 100).toFixed(2)}</strong>
                       {' → '}
                       new: <strong className={form.action === 'increase_budget' ? 'text-emerald-700' : 'text-amber-700'}>
                         ${((current.cents / 100) * (1 + pct / 100)).toFixed(2)}

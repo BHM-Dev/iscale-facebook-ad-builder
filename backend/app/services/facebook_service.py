@@ -456,13 +456,20 @@ class FacebookService:
         try:
             return account.create_campaign(params=params)
         except FacebookRequestError as e:
-            err = e.api_error_subcode() and {} or {}
             try:
                 err = e.body().get('error', {})
             except Exception:
-                pass
+                err = {}
             user_msg = err.get('error_user_msg') or err.get('message') or (e.api_error_message() if hasattr(e, 'api_error_message') and callable(e.api_error_message) else str(e))
-            raise RuntimeError(f"Facebook API: {user_msg}") from e
+            # FacebookAPIError (not plain RuntimeError) — preserves the numeric Meta
+            # error code/subcode so the frontend's isRateLimitError() can actually
+            # detect a throttle here, same pattern as get_rate_limit_usage above.
+            # This was silently never wired for campaign creation — caught via
+            # Codex's review of the Phase 4 per-media ad-set work, which added
+            # rate-limit-specific handling on top of this same broken foundation.
+            code = e.api_error_code() if hasattr(e, 'api_error_code') and callable(e.api_error_code) else err.get('code')
+            subcode = e.api_error_subcode() if hasattr(e, 'api_error_subcode') and callable(e.api_error_subcode) else err.get('error_subcode')
+            raise FacebookAPIError(f"Facebook API: {user_msg}", code=code, subcode=subcode) from e
 
 
     def get_pixels(self, ad_account_id=None):
@@ -976,7 +983,13 @@ class FacebookService:
                 pass
             logger.error("Meta adset creation error. params=%s  error=%s", params, err)
             user_msg = err.get('error_user_msg') or err.get('message') or (e.api_error_message() if hasattr(e, 'api_error_message') and callable(e.api_error_message) else str(e))
-            raise RuntimeError(f"Facebook API: {user_msg}") from e
+            # FacebookAPIError, not plain RuntimeError — see create_campaign above for
+            # why (isRateLimitError() on the frontend needs the numeric code/subcode
+            # preserved, especially now that BulkAdCreation.jsx's per-media ad-set
+            # loop specifically checks for a throttle on this exact call).
+            code = e.api_error_code() if hasattr(e, 'api_error_code') and callable(e.api_error_code) else err.get('code')
+            subcode = e.api_error_subcode() if hasattr(e, 'api_error_subcode') and callable(e.api_error_subcode) else err.get('error_subcode')
+            raise FacebookAPIError(f"Facebook API: {user_msg}", code=code, subcode=subcode) from e
 
     def upload_image(self, image_path_or_url, ad_account_id=None):
         """Upload an image to the ad library."""

@@ -387,7 +387,12 @@ export async function createFacebookCampaign(campaignData, adAccountId) {
 
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || 'Failed to create campaign');
+            // buildFacebookApiError (not a plain Error) — this is the write path that
+            // launches campaigns; without the structured metaErrorCode attached,
+            // isRateLimitError() downstream (BulkAdCreation.jsx) can never actually
+            // detect a Meta throttle here, silently disabling the "wait before
+            // retrying" guidance. Caught in Codex's review of the redesign work.
+            throw buildFacebookApiError(error, 'Failed to create campaign');
         }
 
         const data = await response.json();
@@ -428,7 +433,12 @@ export async function createFacebookAdSet(adsetData, campaignId, adAccountId, bu
 
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || 'Failed to create ad set');
+            // Same fix as createFacebookCampaign above — the per-media ad-set-creation
+            // loop (BulkAdCreation.jsx, Phase 4) specifically added isRateLimitError()
+            // handling around this call, which was silently never able to fire because
+            // this function only ever threw a plain Error with no metaErrorCode
+            // attached. Caught in Codex's review.
+            throw buildFacebookApiError(error, 'Failed to create ad set');
         }
 
         const data = await response.json();
