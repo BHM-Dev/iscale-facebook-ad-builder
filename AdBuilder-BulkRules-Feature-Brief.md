@@ -365,3 +365,54 @@ end-to-end, per the same rule that gated Phase 3's budget work. Bid actions can 
 same pass as their own small feature; Duplicate should get its own dedicated session given its
 size — bundling it into a "quick follow-up" pass would be the wrong scale of review for what it
 actually is.
+
+## 9. Shipped 2026-09-13 — Phase 2 (commit `a89e236`)
+
+Both pieces from §8 built and shipped together in one pass, per plan.
+
+**Backend:** migration `g3h5i7j9k1l3` (5 new nullable `auto_pause_rules` columns:
+`duplicate_all_ads`, `duplicate_name_suffix`, `duplicate_append_number`,
+`duplicate_pause_original`, `duplicate_repeat`). Three new `facebook_service.py` methods —
+`get_ad_creative_for_duplication` (deliberately separate from `get_ad_creative`, which never
+fetches `image_hash`/`video_id`), `duplicate_adset` (builds params directly from the live
+read-back rather than reusing `create_adset`'s camelCase-keyed transform, which would have
+silently dropped nearly every field), `adjust_adset_bid_by_percent` (mirrors the Phase 3 budget
+adjuster; refuses when `bid_amount` isn't set, e.g. automatic/"Lowest Cost" bidding). `auto_pause.py`
+renamed `BUDGET_ACTIONS` → `PERCENT_ACTIONS` (now covers both budget and bid), added full
+CRUD/enforcement-loop wiring for `duplicate`/`increase_bid`/`decrease_bid`.
+
+**Frontend:** `AutoPauseRules.jsx` — 3 new `ACTION_OPTIONS`, full Duplicate config UI (all-ads vs.
+empty radio, name-suffix + append-number, pause-original, repeat) in both Add/Edit rule modals,
+confirm-step preview extended to bid and duplicate actions.
+
+**Pre-push review (code-auditor + joel-perspective + Meta-API domain-expert) caught and fixed
+before push:**
+- Duplicate-repeat had no cooldown — would have created a brand-new ad set every 30 minutes
+  indefinitely for as long as a breach persisted. Added `DUPLICATE_REPEAT_COOLDOWN` (24h), same
+  gate structure as `notify`'s existing 4h cooldown.
+- A fully-failed duplication (e.g. an ad set that's 100% lead-gen ads — `get_ad_creative_for_duplication`
+  can't yet read lead-gen CTAs) was counted as a "success" in both the internal log and the API
+  response Joel's UI renders. Now routes to `errors` instead when `duplicate_all_ads` was requested
+  and every single ad failed.
+- Sibling-count numbering (`duplicate_append_number`) only read the first page of a campaign's ad
+  sets — silently undercounts (and can produce real name collisions) past 500 ad sets. Fixed to
+  paginate via `load_next_page()`, same pattern as `get_adset_name_map`.
+- `bid_strategy` was copied onto the new ad set unconditionally — under CBO that field lives on the
+  campaign, and setting it at ad-set level risks Meta rejecting the create call as conflicting with
+  the campaign's own strategy. Now gated on the source ad set actually being ABO (having its own
+  budget field).
+- A bid-adjust rule against an ad set with no `bid_amount` (the common case — most BHM ad sets run
+  automatic bidding) retried silently forever with a green "Active" pill and no visible error state.
+  Now detects the permanent-refusal condition and disables the rule with a clear reason.
+- `MIN_BID_CENTS` raised from 1¢ to 25¢ — the original value was too low to function as a real
+  sanity floor.
+
+**Known follow-ups, documented in code rather than silently left implicit:**
+- `duplicate_adset` does not copy day-parting, `frequency_control_specs`, or `is_dynamic_creative` —
+  not a fully faithful 1:1 clone of every ad set setting.
+- Video-ad link resolution in `get_ad_creative_for_duplication` (`call_to_action` mirror fallback)
+  is expected to work based on the pattern already proven for link ads, but hasn't been live-tested
+  against a real video ad specifically — worth one live check before duplicating video-heavy ad
+  sets at scale.
+- Carousel and dynamic-creative (`asset_feed_spec`) ads can't be duplicated yet — reported as a
+  clear per-ad error, not silent.
