@@ -1,12 +1,31 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useState } from 'react';
-import { ChevronRight, Plus, Trash2, Loader, Film, Image } from 'lucide-react';
+import { ChevronRight, Plus, Loader, Film, Image, X } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { createCompleteAd, createFacebookCampaign, createFacebookAdSet, getRateLimitUsage } from '../lib/facebookApi';
 import { INTER_REQUEST_DELAY_MS, USAGE_WARN_THRESHOLD, delay, isRateLimitError, peakUsagePercent, rateLimitStopMessage } from '../lib/metaRateLimit';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+
+// Best-effort domain for the preview card's link strip — falls back to the raw
+// string rather than hiding the field entirely if the URL doesn't parse (e.g.
+// still mid-edit in a prior step).
+const displayDomain = (url) => {
+    if (!url) return '';
+    try {
+        return new URL(url).hostname.replace(/^www\./, '');
+    } catch {
+        return url;
+    }
+};
+
+// 'LEARN_MORE' -> 'Learn More' — same values BulkAdCreation already sends to Meta
+// (AdCreativeStep.jsx's CTA_OPTIONS), just title-cased for a native-looking button.
+const formatCtaLabel = (cta) => (cta || 'LEARN_MORE')
+    .split('_')
+    .map(word => word.charAt(0) + word.slice(1).toLowerCase())
+    .join(' ');
 
 const BulkAdCreation = ({ onNext, onBack }) => {
     const { showWarning, showError } = useToast();
@@ -27,15 +46,27 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // Initialize ads based on creatives - generate all permutations
     React.useEffect(() => {
         if (creativeData.creatives && creativeData.creatives.length > 0) {
-            // Filter out empty headlines and bodies
-            const validHeadlines = creativeData.headlines.filter(h => h && h.trim() !== '');
-            const validBodies = creativeData.bodies.filter(b => b && b.trim() !== '');
+            // Filter out empty headlines and bodies — keep each one paired with its
+            // ORIGINAL position in creativeData.headlines/bodies (not its position in
+            // this filtered list). Every consumer of headlineIndex/bodyIndex — the real
+            // Meta payload below and the Review screen's preview card — indexes back
+            // into the raw, unfiltered creativeData.headlines/bodies. Storing a
+            // filtered-list position here silently pulls the wrong headline/body the
+            // moment a blank slot sits anywhere but the tail of the list (e.g. slot 2
+            // cleared, slots 1 and 3 still filled) — found via pre-push review while
+            // building the preview card, real bug independent of that card.
+            const validHeadlines = creativeData.headlines
+                .map((text, index) => ({ text, index }))
+                .filter(h => h.text && h.text.trim() !== '');
+            const validBodies = creativeData.bodies
+                .map((text, index) => ({ text, index }))
+                .filter(b => b.text && b.text.trim() !== '');
 
             // Generate all permutations: media × headlines × bodies
             const permutations = [];
             creativeData.creatives.forEach((creative, creativeIndex) => {
-                validHeadlines.forEach((headline, hIndex) => {
-                    validBodies.forEach((body, bIndex) => {
+                validHeadlines.forEach(({ index: hIndex }) => {
+                    validBodies.forEach(({ index: bIndex }) => {
                         const isVideo = creative.mediaType === 'video';
                         const mediaLabel = isVideo ? 'Video' : 'Image';
                         permutations.push({
@@ -582,12 +613,29 @@ const BulkAdCreation = ({ onNext, onBack }) => {
 
             {!loading ? (
                 <>
-                    {/* Ads List */}
-                    <div className="space-y-2 mb-4">
+                    {/* Ads Preview Grid — one native-style Facebook feed-preview card per
+                        combination, instead of a thumbnail + rename row. Shows the actual
+                        headline/body text for that specific combination so a bad pairing is
+                        visible before launch, not just trusted from the permutation math. */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-4">
                         {adsData.map((ad, index) => {
                             const creative = creativeData.creatives?.find(c => c.id === ad.creativeId);
                             const isVideo = creative?.mediaType === 'video';
-                            // After a throttled launch, say per row what happened.
+                            const headline = creativeData.headlines?.[ad.headlineIndex];
+                            const body = creativeData.bodies?.[ad.bodyIndex];
+                            // Distinct from a real confirmed name — never render the unconfirmed
+                            // placeholder with the same confident styling as a real Page name.
+                            // A stale-but-real-looking name (or a generic "Your Page" that reads
+                            // as literally correct) is worse than an obvious "unconfirmed" label,
+                            // since this card exists specifically to be trusted before launch.
+                            const pageConfirmed = Boolean(creativeData.pageName);
+                            const pageName = creativeData.pageName || 'Page not confirmed';
+                            // "Add a Custom Ad" produces a permutation with no creative/headline/
+                            // body attached (no follow-up form exists to fill those in) — it is
+                            // guaranteed to fail against Meta. Show that plainly instead of a
+                            // normal-looking sparse card.
+                            const isEmptyCustomAd = !creative && !headline && !body;
+                            // After a throttled launch, say per card what happened.
                             // "Not attempted" is the important one — those are the
                             // ads still missing from Meta.
                             let outcome = null;
@@ -601,68 +649,126 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 }
                             }
                             return (
-                                <div key={ad.id} className={`flex items-center gap-3 p-4 rounded-lg border ${
+                                <div key={ad.id} className={`relative flex flex-col rounded-lg border overflow-hidden ${
                                     outcome?.label === 'Not attempted'
                                         ? 'bg-amber-50 border-amber-200'
-                                        : 'bg-gray-50 border-gray-200'
+                                        : 'bg-white border-gray-200'
                                 }`}>
-                                    {/* Launch outcome (only after a stopped batch) */}
-                                    {outcome && (
-                                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${outcome.cls}`}>
-                                            {outcome.label}
+                                    {/* Exclude-before-launch — same removeAd used by the old row list,
+                                        just relocated onto the card corner (AdEspresso's "✕" on its
+                                        preview grid). */}
+                                    <button
+                                        onClick={() => removeAd(index)}
+                                        title="Exclude this ad from the launch"
+                                        className="absolute top-2 right-2 z-10 p-1 rounded-full bg-white/90 text-red-500 hover:text-red-700 hover:bg-white shadow-sm transition-colors"
+                                    >
+                                        <X size={14} />
+                                    </button>
+
+                                    {/* Status strip: launch outcome + format, top of card */}
+                                    <div className="flex items-center gap-2 px-3 pt-3">
+                                        {outcome && (
+                                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${outcome.cls}`}>
+                                                {outcome.label}
+                                            </span>
+                                        )}
+                                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                                            ad.format === 'stories'
+                                                ? 'bg-purple-100 text-purple-700'
+                                                : 'bg-blue-100 text-blue-700'
+                                        }`}>
+                                            {ad.format === 'stories' ? '9:16' : '1:1'}
                                         </span>
-                                    )}
-                                    {/* Format badge */}
-                                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
-                                        ad.format === 'stories'
-                                            ? 'bg-purple-100 text-purple-700'
-                                            : 'bg-blue-100 text-blue-700'
-                                    }`}>
-                                        {ad.format === 'stories' ? '9:16' : '1:1'}
-                                    </span>
-                                    {/* Thumbnail */}
-                                    {creative && (
-                                        <div className="w-12 h-12 rounded overflow-hidden bg-gray-200 flex-shrink-0 relative">
+                                    </div>
+
+                                    {/* Native-style header: Page name + "Sponsored", like the real
+                                        feed unit this ad will render as. Unconfirmed name gets a
+                                        visibly different (gray/italic/dashed-avatar) treatment —
+                                        never the same confident styling as a real, resolved name. */}
+                                    <div className="flex items-center gap-2 px-3 pt-2 pb-2">
+                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0 ${
+                                            pageConfirmed ? 'bg-gray-200 text-gray-500' : 'bg-gray-100 text-gray-400 border border-dashed border-gray-300'
+                                        }`}>
+                                            {pageConfirmed ? (pageName.trim().charAt(0).toUpperCase() || 'P') : '?'}
+                                        </div>
+                                        <div className="min-w-0">
+                                            <div className={`text-sm truncate ${pageConfirmed ? 'font-semibold text-gray-900' : 'italic text-gray-400'}`}>
+                                                {pageName}
+                                            </div>
+                                            <div className="text-xs text-gray-500">Sponsored</div>
+                                        </div>
+                                    </div>
+
+                                    {/* Body copy — an explicit placeholder when missing, not a
+                                        silently sparse card. A blank paragraph reads as "this
+                                        variant just has no caption"; this reads as "check this."
+                                        Skipped for an empty custom-ad slot — the red banner below
+                                        already covers that case comprehensively. */}
+                                    {!isEmptyCustomAd && (body ? (
+                                        <p className="px-3 pb-2 text-sm text-gray-800 line-clamp-3">{body}</p>
+                                    ) : (
+                                        <p className="px-3 pb-2 text-sm italic text-amber-700">No body text — check this combination</p>
+                                    ))}
+
+                                    {/* Media — aspect ratio matches this ad's actual placement
+                                        format, not a generic feed+story pair like AdEspresso shows
+                                        for every combination regardless of relevance. A "Custom Ad"
+                                        slot (added via the button below) has no creative attached
+                                        and no follow-up form to add one — it is guaranteed to fail
+                                        against Meta on launch. Say that plainly instead of rendering
+                                        a normal-looking card with a blank media area. */}
+                                    {creative ? (
+                                        <div className={`bg-gray-200 relative ${ad.format === 'stories' ? 'aspect-[9/16]' : 'aspect-square'}`}>
                                             {isVideo ? (
                                                 <>
-                                                    <video
-                                                        src={creative.previewUrl}
-                                                        className="w-full h-full object-cover"
-                                                        muted
-                                                    />
-                                                    <div className="absolute bottom-0 right-0 bg-purple-600 text-white p-0.5 rounded-tl">
-                                                        <Film size={10} />
+                                                    <video src={creative.previewUrl} className="w-full h-full object-cover" muted />
+                                                    <div className="absolute bottom-2 right-2 bg-purple-600 text-white p-1 rounded">
+                                                        <Film size={12} />
                                                     </div>
                                                 </>
                                             ) : (
                                                 <>
-                                                    <img
-                                                        src={creative.previewUrl}
-                                                        alt="Thumbnail"
-                                                        className="w-full h-full object-cover"
-                                                    />
-                                                    <div className="absolute bottom-0 right-0 bg-blue-600 text-white p-0.5 rounded-tl">
-                                                        <Image size={10} />
+                                                    <img src={creative.previewUrl} alt="Ad creative" className="w-full h-full object-cover" />
+                                                    <div className="absolute bottom-2 right-2 bg-blue-600 text-white p-1 rounded">
+                                                        <Image size={12} />
                                                     </div>
                                                 </>
                                             )}
                                         </div>
+                                    ) : isEmptyCustomAd ? (
+                                        <div className="px-3 py-4 bg-red-50 border-y border-red-200 text-sm text-red-800">
+                                            <strong>No creative attached.</strong> This ad will fail on launch — remove it or attach media/copy before continuing.
+                                        </div>
+                                    ) : null}
+
+                                    {/* Link strip — domain + headline + CTA button, exactly the
+                                        block that sits under the image on a real Facebook ad.
+                                        Skipped for an empty custom-ad slot — a CTA/domain/headline
+                                        row would be meaningless chrome around a guaranteed failure. */}
+                                    {!isEmptyCustomAd && (
+                                        <div className="flex items-center justify-between gap-2 px-3 py-2 bg-gray-50 border-t border-gray-200">
+                                            <div className="min-w-0">
+                                                {creativeData.websiteUrl && (
+                                                    <div className="text-[11px] uppercase text-gray-400 truncate">{displayDomain(creativeData.websiteUrl)}</div>
+                                                )}
+                                                <div className="text-sm font-semibold text-gray-900 truncate">{headline || '—'}</div>
+                                            </div>
+                                            <span className="flex-shrink-0 text-xs font-medium px-3 py-1.5 rounded bg-gray-200 text-gray-700">
+                                                {formatCtaLabel(creativeData.cta)}
+                                            </span>
+                                        </div>
                                     )}
-                                    <div className="flex-1">
+
+                                    {/* Rename — same input as before, moved into the card footer */}
+                                    <div className="px-3 py-2 border-t border-gray-100">
                                         <input
                                             type="text"
                                             value={ad.name}
                                             onChange={(e) => updateAdName(index, e.target.value)}
                                             placeholder={`Ad ${index + 1} name`}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                         />
                                     </div>
-                                    <button
-                                        onClick={() => removeAd(index)}
-                                        className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
-                                    >
-                                        <Trash2 size={20} />
-                                    </button>
                                 </div>
                             );
                         })}

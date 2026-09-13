@@ -177,9 +177,41 @@ pass.
 
 ## 4. Functionality improvements — ranked
 
-### 4.1 Native ad-preview grid on Review (highest priority)
+### 4.1 Native ad-preview grid on Review (highest priority) — shipped, with follow-ups
 Covered in §3.2. This is the change with the most direct dollar-risk reduction — it's the last
-screen before real Meta spend.
+screen before real Meta spend. Shipped 2026-09-13 after pre-push review (code-auditor +
+joel-perspective) surfaced two real bugs, both fixed before push:
+- **`headlineIndex`/`bodyIndex` bug (pre-existing, not introduced by this change):** the
+  permutation generator stored a position in the *filtered* (non-empty) headline/body list, but
+  both the real Meta payload and the new preview card indexed into the *raw* list — a gap
+  anywhere but the tail of the headline/body fields (e.g. slot 2 cleared, slots 1 and 3 filled)
+  silently sent the wrong headline/body to Meta. Fixed by carrying the true original array index
+  through the filter instead of relying on filtered-list position.
+- **Stale Page name on manual Page-ID entry:** switching from the dropdown to typing a Page ID
+  by hand left the *previous* dropdown-selected Page's real name attached, so the preview card
+  could show a specific, confident-looking, wrong Page name with zero visual cue it was stale.
+  Fixed by clearing it in the same code path that already clears `instagramId` on that branch, and
+  by giving the "unconfirmed" state its own distinct (grayed/dashed) styling instead of ever
+  rendering a placeholder with the same confidence as a real resolved name.
+- **"Add a Custom Ad" produces a guaranteed-to-fail permutation** (no creative, no follow-up form
+  to attach one) that the new card would otherwise render as a normal-looking sparse ad. Fixed
+  with an explicit red "No creative attached — this ad will fail" card state instead.
+
+**Deferred, not fixed (documented per the pre-push rule — P1/P2 findings become follow-ups, not
+blockers):**
+- The deeper issue behind the item above — "Add a Custom Ad" has no real follow-up UI at all, so
+  the feature is a dead end regardless of how the card displays it — needs a product decision
+  (remove the button, or build the missing attach-creative form) before it's actually fixed, not
+  just displayed honestly.
+- Grid scan density at Joel's typical 5-20 ad batch, especially a mixed Feed(1:1)/Stories(9:16)
+  batch producing uneven row heights across the grid — flagged by joel-perspective as working
+  against the "faster to catch a bad pairing" goal at real batch sizes. Possible follow-up: group
+  cards by format before rendering, or a toggle back to the old compact list for large batches.
+- Exclude ("✕") button is now a smaller, denser tap target inside a multi-column grid versus the
+  old isolated row button, with no confirm/undo — worth a lightweight confirm or undo toast given
+  the density change, even though `removeAd` itself is unchanged.
+- Avatar is initials-only, never the real Page photo — a visible "tell" against the real-ad-unit
+  illusion, cosmetic only.
 
 ### 4.2 Live combinatorial counter during creative entry
 Covered in §3.1. Cheap, and removes the "how many ads am I actually about to make" ambiguity a

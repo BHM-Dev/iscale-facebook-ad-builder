@@ -634,6 +634,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         setCreativeData(prev => ({
             ...prev,
             pageId,
+            // Real Page name, so the Review screen's ad-preview cards (BulkAdCreation.jsx)
+            // can show the actual Page name instead of a generic placeholder — getPages()
+            // already fetches this, it just wasn't being persisted onto creativeData before.
+            pageName: selectedPage ? selectedPage.name : prev.pageName,
             instagramId: selectedPage ? selectedPage.instagramId : null
         }));
         if (selectedAdAccount) {
@@ -648,8 +652,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         setCreativeData(prev => ({
             ...prev,
             [field]: value,
-            // When manually entering a Page ID, clear the instagramId to prevent using Page ID as IG ID
-            ...(field === 'pageId' ? { instagramId: null } : {})
+            // When manually entering a Page ID, clear instagramId (prevents using Page ID as
+            // IG ID) AND pageName — otherwise the Review screen's preview card (BulkAdCreation.jsx)
+            // keeps showing the PREVIOUS dropdown-selected page's real name next to a Page ID
+            // that no longer matches it. A stale-but-real-looking name is worse than no name:
+            // it reads as a confirmed preview when it isn't. Caught in pre-push review.
+            ...(field === 'pageId' ? { instagramId: null, pageName: null } : {})
         }));
 
         // Persist page ID
