@@ -275,7 +275,10 @@ continuing the original generation thread. **Lesson for any future agent-tool us
 always continue the original thread when iterating on a specific asset — never start a new chat and
 describe it by name.**
 
-**Relevance to our own pipeline:** worth a direct sanity check of `text_overlay_service.py` against the
-same failure mode — logo/CTA overlay on a kie.ai-generated dark background. This is exactly the kind of
-defect that's invisible in code review and only shows up by looking at real rendered output, which is
-why [[verify-in-production-not-by-assertion]] applies to creative-gen QA too, not just data pipelines.
+**Relevance to our own pipeline — checked, we're safe:** `text_overlay_service.py` always renders the
+logo badge inside a solid white rounded-rect backing plate (`fill=(255,255,255,242)`, line 319) — the
+logo is pasted on top of that plate, never composited directly onto the photo. A dark logo on a dark
+background can't happen in our pipeline regardless of scene brightness. Body text similarly always
+carries a black stroke ("stroke handles any background", the file's own docstring). This was a design
+choice we already made correctly; RyzeAI's generator just didn't. No fix needed — confirmed by reading
+the code, not assumed.
