@@ -412,12 +412,48 @@ async def _build_ai_image_prompt(
         lighting = request.template.get("lighting", "natural") if request.template else "natural"
         niche = (request.niche or "").strip()
         image_mode = (request.imageMode or "iterate").strip()
+        brand_colors = request.brand.get("colors") if request.brand else None
+        brand_color = brand_colors.get("primary", "") if isinstance(brand_colors, dict) else ""
 
         is_portrait = aspect_ratio in ("9:16", "3:4")
         composition_note = (
             "vertical full-frame composition, subject fills frame top to bottom"
             if is_portrait else
             "full-bleed horizontal composition, subject fills the entire frame"
+        )
+
+        # ── Overlay-zone description ──────────────────────────────────────────────
+        # Mirrors text_overlay_service.py's actual anchor math (LEFT=5.5% margin,
+        # text block up to 60% width, starting at 47-54% height depending on aspect
+        # ratio — see apply_text_overlay()) so the generated scene reserves real
+        # visual space for the headline/offer/CTA instead of gambling that a generic
+        # scene happens to have empty space where the overlay lands. Also covers the
+        # top-right logo badge zone. This was the concrete gap found vs. RyzeAI's own
+        # generation prompts (see AdBuilder-RyzeAI-Competitive-Research.md §8).
+        if aspect_ratio in ("9:16",):
+            overlay_zone = (
+                "Reserve the lower half of the frame (roughly the bottom 45%, "
+                "spanning the full width) as a visually calm, uncluttered, "
+                "darker area with no important detail, faces, or text there — "
+                "ad copy will be overlaid on top of it."
+            )
+        elif is_portrait:
+            overlay_zone = (
+                "Reserve the lower-left area of the frame (roughly the bottom half, "
+                "left 60% of the width) as a visually calm, uncluttered, darker zone "
+                "with no important detail or faces there — ad copy will be overlaid "
+                "on top of it."
+            )
+        else:
+            overlay_zone = (
+                "Reserve the lower-left area of the frame (bottom 45%, left 60% of "
+                "the width) as a visually calm, uncluttered, darker zone with no "
+                "important detail or faces there — ad copy will be overlaid on top "
+                "of it."
+            )
+        overlay_zone += (
+            " Also keep the top-right corner (roughly the top 12%, right 30%) "
+            "relatively plain — a small logo badge goes there."
         )
 
         # ── iterate mode: background-swap prompt for Nano Banana ─────────────────
@@ -431,9 +467,10 @@ async def _build_ai_image_prompt(
                 f" that feels {lighting} and {mood}."
                 f"{niche_context}"
                 f" Preserve all text overlays, logos, CTA buttons, and any foreground"
-                f" design elements exactly as they appear in the reference image."
+                f" design elements exactly as they appear in the reference image,"
+                f" in their exact same positions."
                 f" The new background should complement the business context"
-                f" without distracting from the overlay content."
+                f" without distracting from the overlay content. {overlay_zone}"
                 f" {composition_note}. Photorealistic, contemporary professional setting."
             )
             print(f"🔄 Iterate (background-swap) prompt ({aspect_ratio}): {prompt}")
@@ -445,24 +482,36 @@ async def _build_ai_image_prompt(
         override = _get_niche_override(niche or product_name)
         if override:
             print(f"🏛️  Niche override for '{niche or product_name}': skipping Sonnet")
-            return f"{override} {composition_note}"
+            return f"{override} {composition_note}. {overlay_zone}"
 
         # Sonnet generates scene for trades, professionals, and everything else.
         # Tuned for Nano Banana (Google Gemini 2.5 Flash Image) — natural language
         # descriptions work best; avoid Flux-specific syntax.
-        system_prompt = """You write short image generation prompts for Google Gemini (Nano Banana Pro) for Facebook ad backgrounds.
+        system_prompt = """You write image generation prompts for Google Gemini (Nano Banana Pro) for Facebook ad backgrounds. Write like an art director briefing a photographer, not a keyword list.
 
-Rules:
-- Buildings / places (hotel, gym, office, warehouse, marina, etc.): show the exterior or interior. No people.
-- Trades (welding, plumbing, roofing, HVAC, construction, etc.): show the worker doing the job. Tools, action, craft.
-- Professionals (lawyer, doctor, accountant, etc.): one person at a desk or in their workspace.
-- Vehicles / transport: the vehicle itself or a driver in context.
-- Natural signage on buildings is OK (adds authenticity). Do NOT include advertising copy, watermarks, or text overlays.
-- No illustrations. No stock-photo couples. No gray backdrops. Photorealistic only.
+Rules by category — include the matching action AND the matching negative-anchor so the scene reads as a real, specific business, not a generic stock photo:
+- Buildings / places (hotel, gym, office, warehouse, marina, etc.): show the exterior or interior. No people. Avoid: generic stock-photo architecture with no distinguishing detail.
+- Trades (welding, plumbing, roofing, HVAC, construction, etc.): show the worker doing the job. Tools, action, craft. Avoid: posed/staged "hero shot" catalog imagery — this should read as a candid documentary moment, mid-task.
+- Professionals (lawyer, doctor, accountant, etc.): one person at a desk or in their workspace. Avoid: generic corporate stock-photo poses (crossed arms, forced smile at camera).
+- Vehicles / transport / dealerships: the vehicle(s) or a driver/owner in context. Avoid: glossy showroom staging — this should look like a real working lot or garage, not an ad for the vehicle itself.
+- Animals / livestock / specialty operations (equine, farm, veterinary, etc.): the owner/operator actually working with the animal. Avoid: luxury lifestyle or recreational framing — this is a serious working business, not a leisure activity.
+- Natural signage on buildings is OK (adds authenticity). Do NOT include advertising copy, watermarks, or text overlays — the background must be completely clean of text/logos, those are added in a separate step.
+- No illustrations. No stock-photo couples. No gray backdrops. Photorealistic, candid, editorial-documentary feel — never a posed advertising shoot.
+- Name the light source and time of day (e.g. "natural soft light from one window", "blue hour", "overcast midday") rather than just saying "natural lighting."
+- Composition and overlay-zone instructions (given below) are mandatory — always include them.
 - End every prompt with: Photorealistic, contemporary professional setting.
-- Max 45 words. Return ONLY the prompt."""
+- Aim for 60-100 words — enough to art-direct the scene specifically, not a generic one-liner. Return ONLY the prompt, no preamble."""
 
-        user_msg = f"Niche: {niche or product_name}\nLighting: {lighting}\nMood: {mood}\n\nWrite the image prompt."
+        brand_color_line = f"\nBrand accent color (nod to it subtly in lighting/highlights, do not force it): {brand_color}" if brand_color else ""
+        user_msg = (
+            f"Niche: {niche or product_name}\n"
+            f"Lighting mood: {lighting}\n"
+            f"Overall mood: {mood}"
+            f"{brand_color_line}\n"
+            f"Composition: {composition_note}\n"
+            f"Overlay zone (must be respected in the scene): {overlay_zone}\n\n"
+            f"Write the image prompt."
+        )
 
         response = await _async_anthropic.messages.create(
             model=_PROMPT_MODEL,
