@@ -282,3 +282,62 @@ background can't happen in our pipeline regardless of scene brightness. Body tex
 carries a black stroke ("stroke handles any background", the file's own docstring). This was a design
 choice we already made correctly; RyzeAI's generator just didn't. No fix needed — confirmed by reading
 the code, not assumed.
+
+## 8. Why Ryze's generated ads look polished and ours look "clunky" (2026-09-14)
+
+Steve's direct question after seeing the two new proven-niche creatives (Horse & Stable, Auto Dealership)
+generated cleanly in one pass: what does Ryze actually do differently in image generation that we could
+copy? Answer, from reading the real tool-call trace (not guessing) of both generations:
+
+**Both tools use the same two-stage architecture — clean background photo, then a separate text/logo
+overlay pass.** This isn't the gap. Ryze's own background-generation prompt for the horse creative ends
+with the identical instruction our own system uses: *"No logos, no carrier names. No text, no
+watermarks."* Confirmed by reading `text_overlay_service.py` (§ above) — we already do this correctly.
+
+**The real gap is prompt depth and composition-awareness.** Ryze's actual background-photo prompt (pulled
+from the tool-call trace, not summarized):
+
+> *"Photorealistic candid editorial photograph for a commercial insurance ad: a real horse boarding stable
+> owner in her late 40s wearing a practical dark work jacket, standing at the open entrance of a
+> well-kept American barn at blue hour, gently checking a bay horse in a stall while a second horse is
+> visible deeper inside. The scene should communicate a serious working equine business, not a luxury
+> fashion shoot and not recreational riding. Natural soft dusk light from one source, realistic wood, hay
+> and tack details, trustworthy documentary mood. Vertical 4:5 framing; place the owner and horses in the
+> right half and lower-right two thirds; preserve a broad, dark, visually quiet barn-wall zone across the
+> entire upper-left and mid-left for large ad copy. Deep navy shadows with restrained warm stable light
+> and subtle mint-compatible highlights. No logos, no carrier names. No text, no watermarks."*
+
+Three things this prompt does that ours ([`_build_ai_image_prompt`](backend/app/api/v1/generated_ads.py:385),
+system prompt at line 453) does not:
+
+1. **Composition planning for the overlay, baked into the photo prompt itself** — "preserve a broad, dark,
+   visually quiet barn-wall zone across the entire upper-left and mid-left for large ad copy." Our overlay
+   always anchors lower-left ([`text_overlay_service.py:217-230`](backend/app/services/text_overlay_service.py:217))
+   but our image prompt never tells the model to keep that zone clear. We're gambling that the generated
+   scene happens to have a plain dark area where the text lands — Ryze plans it. This is very likely the
+   actual source of the "clunky" look: text landing over a face, a bright sky, or busy detail instead of a
+   deliberately reserved dark zone.
+2. **Brand-color awareness inside the scene itself** — "subtle mint-compatible highlights" ties the photo's
+   own lighting palette to the brand's actual accent color (pulled from the live brand-kit `get_object`
+   call earlier in the trace), not just the overlay elements. Ours passes `brand_color` through in the
+   *fallback* static-prompt path (`build_comprehensive_prompt`, line 82) but the Sonnet-generated path
+   (the one actually used whenever niche + Anthropic key are present) never receives brand color at all —
+   confirmed by reading `_build_ai_image_prompt`'s `user_msg` (line 465): only niche/lighting/mood, no color.
+3. **Explicit negative-anchoring against generic stock-photo tropes** — "not a luxury fashion shoot and not
+   recreational riding" heads off exactly the kind of generic/glossy output a bare "engaging, natural"
+   mood pair invites. Our system prompt has no equivalent for niche-specific misfires.
+
+**Also notable: our prompt is capped at 45 words** (`system_prompt`, line 463: *"Max 45 words. Return ONLY
+the prompt."*); Ryze's ran well over 100 words with specific framing, lighting-source, and material detail
+(realistic wood/hay/tack). More words isn't inherently better, but the cap forecloses exactly the kind of
+compositional and material specificity in the example above.
+
+**Concrete fix, not requiring a new model or vendor — just a better prompt:** extend
+`_build_ai_image_prompt`'s system prompt to (a) always state where the overlay text zone is and instruct
+the model to keep it visually quiet/dark there, using the actual overlay anchor position already computed
+by `text_overlay_service.py`'s aspect-ratio branching (line 224-230); (b) pass `brand_color` into the
+Sonnet `user_msg` so scene lighting can nod to it; (c) raise the word cap and add 1-2 sentences of
+negative-anchoring per niche category (the same rules block at line 456-461 already has per-category
+buckets — trades/professionals/vehicles — that's the natural place to add a matching "avoid generic X"
+line per bucket). This is a same-day prompt-engineering change, not an architecture change — worth
+scoping as a real ticket rather than just a research note.
