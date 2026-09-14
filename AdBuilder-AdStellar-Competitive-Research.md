@@ -259,6 +259,109 @@ more accurate [reporting]") — a third-party attribution layer competing direct
 conceptually the same slot our RedTrack/Everflow stack already fills. Not actionable, just confirms the
 "don't trust Meta's own attribution alone" pattern is category-standard.
 
+## 8c. Video creation — Canvas Video mode, Talking Actors, Video Editor (2026-09-14)
+
+Steve wants the video-ad track kept open (separate from the 2026-08-27 pause on our own in-house UGC
+build), so this section documents AdStellar's video pipeline in the same depth as the image pipeline
+above, backed by two real paid generations (one b-roll video, one talking-actor video).
+
+### Two distinct video paths, two different models
+
+Canvas's video generator is a genuine three-way tool, not just "image mode + a video toggle": **Talking
+Actors**, **Video** (cinematic b-roll, no actor), **Image**.
+
+- **Video (b-roll)** runs on a real **multi-model marketplace** — model dropdown offers MiniMax H3 Max
+  (default), Kling 3.0 Pro, MiniMax H3 Max Turbo, MiniMax H3 (2K), Seedance 2.5, Seedance 2.0, and Sora 2
+  Pro (flagged "SLOW" in the picker itself). Controls: aspect ratio, duration, resolution (768p default),
+  a Balanced/quality dial, and reference-upload slots for up to 9 images / 3 audio clips / 3 video clips to
+  ground the generation, plus an optional Product attachment.
+- **Talking Actors** runs on a single model, **Omnihuman 1.5** — the same OmniHuman technology our own
+  paused R&D explored directly (`video_finetuning_harness.py` / direct-ElevenLabs / OmniHuman work sitting
+  uncommitted in the repo per the 2026-08-27 pause note). Two sub-modes: **"Realistic UGC"** (describe the
+  video, the actor riffs/improvises naturally) vs. **"Exact Script"** (write a script, the actor speaks it
+  word-for-word — with a live "~Ns / 60s" pacing estimate that updates as you type, same live-preview
+  instinct as the naming-template system in §4a). Actor selection reuses the same 310-avatar library from
+  Library → AI Actors (§3), lets you pick up to 5 actors in one generation, and auto-assigns a matched
+  voice per actor (visible as "Voice selected," with a play-preview and a settings gear).
+
+### The single most useful finding of this pass: a visible AI prompt-rewrite step before every video generation
+
+Submitting a b-roll Video generation does **not** send your raw prompt straight to the model the way Image
+mode does. It first opens a **"Review your prepared prompt"** modal: your original input (40 words, in our
+test) side-by-side with a **fully rewritten, materially richer cinematographic prompt** (113 words) —
+adding explicit camera framing, lighting direction, and shot-composition detail beyond what was typed. When
+the requested duration doesn't fit naturally, it explains the change ("We adjusted your prompt so the actor
+doesn't sound rushed in the selected duration") before you approve. You approve or cancel; nothing generates
+without a look at what will actually run.
+
+This is a materially better pattern than what we do today (Ad Remix / Batch Generate send the user's raw
+prompt, or our own template-assembled prompt, directly to kie.ai with no preview) and is more actionable
+than the tips-panel idea already in the synthesis doc (recommendation #8) — an actual AI prompt-expansion
+pass with an approve/cancel gate, not just static tips. Worth a follow-on synthesis recommendation if we
+ever revisit prompt quality for kie.ai generations (see synthesis doc update).
+
+### Real cost data (from actual paid generations, not documentation)
+
+| Generation | Model | Length | Credits | Cost @ $100/50k credits |
+|---|---|---|---|---|
+| Static image | GPT Image 2.5 Flare | — | 53 | ~$0.11 |
+| B-roll video | MiniMax H3 Max | 10s | 896 | ~$1.79 (~$0.18/sec) |
+| Talking-actor video | Omnihuman 1.5 | 30s | **5,376** | **~$10.75** (~$0.36/sec) |
+
+Talking-actor video is roughly **2× the per-second cost** of plain b-roll, and **~100×** the cost of a
+single static image. This is a real, concrete data point for the "Arcads vs. build in-house" question
+Steve already settled 2026-08-27 — at AdStellar's pricing, a 30-second UGC ad costs ~$10.75 in raw
+generation credits alone (before any iteration/re-rolls), which is a useful anchor if Arcads' own per-video
+pricing is ever renegotiated or re-evaluated.
+
+### Real reliability finding: talking-actor generation is materially slower and less predictable than b-roll
+
+The b-roll MiniMax H3 Max video (locksmith rekeying a lock, tested with an explicit "no text/logos/
+watermarks" instruction) completed cleanly in under 4 minutes and the output was genuinely good —
+photorealistic, correct warm/golden-hour lighting, real hand/key motion, no baked-in text, matching the
+auto-expanded prompt closely. The Omnihuman 1.5 talking-actor video (Dr Smith avatar, Exact Script mode,
+30-second commercial-insurance script) **stalled at 50% for 10+ minutes** across multiple reloads (the
+progress bar itself did correctly survive every reload — confirms the reload-survival pattern flagged in
+§7/the synthesis doc is real) with no further progress observed before this research session closed. Not
+confirmed as a systemic defect from a single sample — but it's a real, first-hand data point that the
+talking-actor path is both much more expensive and materially less predictable than either static images or
+plain b-roll video on this platform, worth weighing against Arcads' own reliability if that comparison ever
+gets revisited.
+
+### Video Editor — full timeline NLE, gated export on trial
+
+A genuine multi-track video editor (Library → Video Editor, or reachable from any Canvas video): Media / My
+Assets / Text / Stock / Transitions / Captions / AI Audio side panels, a real timeline with cut/delete/
+undo/redo/zoom. Two features worth noting on their own:
+
+- **Captions**: "Generate Auto Captions with AI" (transcribe + auto-style), Import SRT file, or add
+  manually — table-stakes for UGC-style ads today, something neither our pipeline nor Arcads' output
+  necessarily handles post-generation.
+- **AI Audio**: a standalone Text-to-Speech tool (reuses the same actor voice library, independent of
+  generating a talking-actor video — useful for a plain voiceover-over-b-roll ad) plus a separate Sound
+  Effects generator tab.
+- **Real gate found**: a persistent banner — *"You're on a free trial — export is available when you
+  activate your plan."* Generation itself worked fully on the trial (both paid test videos rendered/
+  previewed normally), but the Video Editor's actual **Export** button is locked until the plan is
+  activated (paid). This is a meaningfully different trial-limitation shape than Canvas's own Save/Download/
+  Launch-to-Meta actions on a generated image or video, which were not gated the same way.
+
+### Developers / MCP — a real external-agent integration surface
+
+Settings → Developers exposes a genuine **Model Context Protocol (MCP) server** endpoint
+(`https://app.adstellar.ai/api/mcp`) plus a REST API and scoped API keys, explicitly pitched to "connect AI
+clients like Claude, Cursor, or your own agents to AdStellar." Image/video generation calls made this way
+draw from the same team AI-credit balance as in-app generation; copy generation and read-only calls
+(analytics, listings, status checks via a documented `get_credit_balance` tool) are free. Not a build
+recommendation — our own Ad Builder is single-tenant internal tooling, not something we're exposing to
+external AI clients — but worth flagging as a real, working example of a SaaS ad tool built to be driven by
+an agent session like this one, the inverse of how we use it.
+
+### Settings pages not otherwise covered — Team/Members/Workspaces
+
+Standard multi-tenant SaaS team management (invite members, manage workspaces, per-seat roles). Confirmed
+category-standard, no BHM-specific gap — single-org internal tool has no use for this surface.
+
 ## 9. What doesn't apply to BHM (noted, not chased further)
 
 - Products/catalog ads (dynamic product ads) — no e-commerce catalog to sync.

@@ -136,6 +136,26 @@ composition/negative-space instructions ("reserve the upper-left third for text"
 pattern our own prompt engineering already ships (commit `1447c26`, reserve-overlay-zone-space) — good
 independent confirmation across model families, not a gap.
 
+### 9. AI prompt-rewrite-and-approve step before spending generation credits (new, video track)
+
+**What it looks like elsewhere:** AdStellar's Canvas Video mode (full detail in §8c of its brief, from a
+2026-09-14 video-focused pass) doesn't send your typed prompt straight to the model. It first shows a
+**"Review your prepared prompt"** modal: your raw input side-by-side with a fully AI-rewritten, materially
+richer prompt (camera framing, lighting, shot composition added), with a plain-English note when it
+adjusted something ("we adjusted your prompt so the actor doesn't sound rushed in the selected duration").
+You approve or cancel before any credits are spent.
+
+**Why this is a step up from recommendation #8:** the tips-panel idea (static, always-visible prompt
+advice) is cheap but passive — the user still has to apply the advice themselves. This pattern actually
+does the rewriting for them and shows its work before committing spend. Directly relevant if we ever
+revisit prompt quality for `kie.ai` generations in `BatchGenerate.jsx`/`ImageAds.jsx`/Ad Remix: an
+LLM-rewrite-and-preview step (using the copy-generation Gemini call we already have) between "Joel types a
+concept" and "we call kie.ai" would catch weak/vague prompts before spending a generation.
+
+**Scope note:** this is a genuinely bigger build than #8 (needs an LLM call + a review UI + an
+approve/cancel gate), so it's additive to #8, not a replacement — ship the cheap tips panel first, revisit
+this only if prompt quality turns out to be a recurring problem in practice.
+
 ## 2. Confirmed as category-standard, not BHM-specific — validate our existing choices
 
 - **Background jobs with persistent, navigable, reload-surviving progress** (AdStellar's campaign import
@@ -183,3 +203,7 @@ independent confirmation across model families, not a gap.
 7. Combinatorial ad-set targeting (recommendation #7) — hold until explicitly requested.
 8. **Pre-spend cost/prompt-tips panel** (recommendation #8) — smallest scope of the whole list, can ship
    independently of everything else whenever `BatchGenerate.jsx`/`ImageAds.jsx` is next touched.
+9. **AI prompt-rewrite-and-approve step** (recommendation #9) — bigger lift, only worth it if #8 alone
+   doesn't move the needle on prompt quality; the video-track research pass that surfaced this is being
+   kept open per Steve's 2026-09-14 call (separate from the 2026-08-27 in-house-UGC pause), so revisit
+   alongside that track.
