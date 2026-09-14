@@ -69,7 +69,7 @@ const COUNTRIES = [
 // HEC categories restrict age, gender, city, DMA, and location exclusions at ad set level
 const HEC_CATEGORIES = new Set(['HOUSING', 'EMPLOYMENT', 'FINANCIAL_PRODUCTS_SERVICES']);
 
-const AdSetStep = ({ onNext, onBack }) => {
+const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
     const { campaignData, adsetData, setAdsetData, selectedAdAccount, creativeData } = useCampaign();
     const { showError, showWarning } = useToast();
     const isHECRestricted = (campaignData.specialAdCategories || []).some(c => HEC_CATEGORIES.has(c));
@@ -77,6 +77,11 @@ const AdSetStep = ({ onNext, onBack }) => {
     // this component unmounts/remounts on step navigation and adsetData.isExisting is
     // the durable record of a prior "Use Existing" selection.
     const [mode, setMode] = useState(adsetData.isExisting ? 'existing' : 'new');
+    // Quick Ad — see the matching effect in CampaignStep.jsx for why this is needed
+    // (same mode-gating bug, same fix).
+    useEffect(() => {
+        if (forceExistingMode) setMode('existing');
+    }, [forceExistingMode]);
     const [existingAdsets, setExistingAdsets] = useState([]);
     const [selectedAdset, setSelectedAdset] = useState(null);
     // Tracks how the current selectedAdset was chosen:

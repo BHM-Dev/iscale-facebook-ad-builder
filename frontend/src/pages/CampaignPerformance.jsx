@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2, Sparkles, Tag, ChevronLeft, BarChart2, ShieldAlert, DollarSign, Check, Search } from 'lucide-react';
+import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2, Sparkles, Tag, ChevronLeft, BarChart2, ShieldAlert, DollarSign, Check, Search, Rocket } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
 import { useBrands } from '../context/BrandContext';
 import { useCampaign } from '../context/CampaignContext';
+import { safeLocalStorageSet } from '../lib/safeLocalStorage';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -355,13 +356,38 @@ function CampaignIntelligencePanel({ adAccountId, initialOpen = false, initialPr
 
 // ── Creative breakdown table (ad-level) ──────────────────────────────────────
 // onRemix: ({ ad_id, ad_name, headline, body, cta_label, image_url, adsetName, campaign_id }) => void
-function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adsBulk, adsLoading, rtAdsBulk, onAdStatusChange, onRemix }) {
+function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccountId, adsBulk, adsLoading, rtAdsBulk, onAdStatusChange, onRemix }) {
   const { showSuccess, showError } = useToast();
   const navigate = useNavigate();
   const [pausingAds, setPausingAds] = useState(new Set());
   const [adStatuses, setAdStatuses] = useState({}); // local optimistic status overrides
   const [remixingAd, setRemixingAd] = useState(null);
   const [quickAd, setQuickAd] = useState(null);
+
+  // "Quick Ad" — the template-free launch path (AdBuilder-QuickAd-Feature-Brief.md).
+  // Unlike Remix/Quick Variations/Quick Generate above (all AI-copy-assist tools that
+  // still route through /ad-remix's template-deconstruction step), this is for when
+  // Joel already has his own creative + copy ready and just wants to launch it —
+  // seeds the exact localStorage cache keys AdAccountStep/CampaignStep/AdSetStep
+  // already read for their own "auto-select from last used" behavior, so the wizard
+  // on /facebook-campaigns arrives pre-aimed at this ad's account/campaign/ad set
+  // without Joel having to search for any of them.
+  const handleQuickAd = () => {
+    if (!adAccountId || !fbCampaignId || !fbAdsetId) {
+      showError('Missing account/campaign/ad set context for this row — cannot Quick Ad from here.');
+      return;
+    }
+    safeLocalStorageSet('lastSelectedAdAccountId', adAccountId);
+    safeLocalStorageSet('lastSelectedCampaignId_' + adAccountId, fbCampaignId);
+    safeLocalStorageSet('lastSelectedAdSetId_' + fbCampaignId, fbAdsetId);
+    safeLocalStorageSet('pendingQuickAd', JSON.stringify({
+      ad_account_id: adAccountId,
+      fb_campaign_id: fbCampaignId,
+      fb_adset_id: fbAdsetId,
+      adset_name: adsetName || '',
+    }));
+    navigate('/facebook-campaigns');
+  };
 
   const handleRemix = async (ad) => {
     setRemixingAd(ad.ad_id);
@@ -593,6 +619,21 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adsBulk,
                       title="Generate more creative variants from this ad"
                     >
                       <Zap size={11} /> Quick Generate
+                    </button>
+                    {/* Quick Ad → skips /ad-remix's template step entirely. For when
+                        Joel already has his own creative + copy ready to launch, not
+                        looking for AI remix/variation assistance. Labeled "Launch Own
+                        Ad" rather than another "Quick *" name — three other buttons on
+                        this row already share that prefix (Quick Variations, Quick
+                        Generate), and this is the only one of the four that skips AI
+                        copy assistance entirely; a tooltip alone wasn't going to carry
+                        that distinction (joel-perspective P1). */}
+                    <button
+                      onClick={handleQuickAd}
+                      className="flex items-center gap-1 px-2 py-1 rounded text-teal-700 bg-teal-50 hover:bg-teal-100 transition-colors text-xs font-medium whitespace-nowrap"
+                      title="Launch with your own creative — skips the AI remix template, straight to Bulk Ad Creation for this account/campaign/ad set"
+                    >
+                      <Rocket size={11} /> Launch Own Ad
                     </button>
                     {/* Pause / Resume */}
                     <button
@@ -2300,6 +2341,7 @@ export default function CampaignPerformance() {
                                         fbCampaignId={adset.fb_campaign_id || ''}
                                         adsetName={adset.name}
                                         campaignId={adset.campaign_id}
+                                        adAccountId={adAccountId}
                                         adsBulk={adsBulk}
                                         adsLoading={adsLoading}
                                         rtAdsBulk={rtAdsBulk}

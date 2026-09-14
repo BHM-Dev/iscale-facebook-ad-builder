@@ -20,13 +20,23 @@ const BID_STRATEGIES = [
     { value: 'COST_CAP', label: 'Cost Cap (Cost Per Result Goal)' }
 ];
 
-const CampaignStep = ({ onNext, onBack }) => {
+const CampaignStep = ({ onNext, onBack, forceExistingMode = false }) => {
     const { campaignData, setCampaignData, selectedAdAccount } = useCampaign();
     const { showError, showWarning } = useToast();
     // Initialize from context, not a hardcoded default — CampaignStep unmounts/remounts
     // when the wizard navigates between steps, and campaignData.isExisting is the only
     // durable record of a prior "Use Existing" selection (local `mode` state is not).
     const [mode, setMode] = useState(campaignData.isExisting ? 'existing' : 'new');
+    // Quick Ad (AdBuilder-QuickAd-Feature-Brief.md) arrives with a target campaign
+    // already known via the cache keys handleQuickAd seeds — but this step defaults
+    // to 'new' unless the user has manually clicked "Use Existing Campaign" before
+    // (or campaignData.isExisting was already true), so without this the cache-
+    // restore effect below never runs and Quick Ad silently stalls on a blank
+    // "Create New Campaign" form. Caught in pre-push review (code-auditor: BLOCKING —
+    // "Quick Ad can never auto-advance past the Campaign step").
+    useEffect(() => {
+        if (forceExistingMode) setMode('existing');
+    }, [forceExistingMode]);
     const [existingCampaigns, setExistingCampaigns] = useState([]);
     const [selectedCampaign, setSelectedCampaign] = useState(null);
     // Tracks how the current selectedCampaign was chosen:

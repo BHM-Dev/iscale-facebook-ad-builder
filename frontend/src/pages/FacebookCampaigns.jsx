@@ -1,12 +1,19 @@
-import React, { useState } from 'react';
-import { Check, Target, Users, Image as ImageIcon, CreditCard, Megaphone, CheckCircle2 } from 'lucide-react';
-import { CampaignProvider } from '../context/CampaignContext';
+import React, { useState, useEffect, useRef } from 'react';
+import { Check, Target, Users, Image as ImageIcon, CreditCard, Megaphone, CheckCircle2, RefreshCw } from 'lucide-react';
+import { CampaignProvider, useCampaign } from '../context/CampaignContext';
+import { useToast } from '../context/ToastContext';
 import AdAccountStep from '../components/AdAccountStep';
 import CampaignStep from '../components/CampaignStep';
 import AdSetStep from '../components/AdSetStep';
 import AdCreativeStep from '../components/AdCreativeStep';
 import BulkAdCreation from '../components/BulkAdCreation';
 import BulkMatchImport from '../components/BulkMatchImport';
+
+// How long Quick Ad's auto-advance chain (Account → Campaign → Ad Set) is given to
+// fully resolve before giving up and letting Joel proceed manually from wherever it
+// stalled — a bad/deleted campaign or ad set ID, or a slow Meta fetch, should never
+// leave him staring at a step that silently never advances with no explanation.
+const QUICK_AD_TIMEOUT_MS = 8000;
 
 // Shared toggle UI for choosing how Step 5 will build ads. Lives at Step 4 so
 // the mode is known before the Creative form renders — Step 5 just reads it.
@@ -41,6 +48,104 @@ const FacebookCampaignWizardInner = () => {
         creativeId: null,
     });
 
+    // ── Quick Ad auto-advance (AdBuilder-QuickAd-Feature-Brief.md) ──────────────
+    // CampaignPerformance's "Quick Ad" button seeds the exact localStorage cache
+    // keys AdAccountStep/CampaignStep/AdSetStep already read for their own
+    // "restore last used" behavior, then writes `pendingQuickAd` and navigates
+    // here. Rather than forcing currentStep to 4 outright (which would skip past
+    // those steps' own mount effects — the ones that actually populate
+    // selectedAdAccount/campaignData/adsetData with real Meta data, not just an
+    // id), this lets each step mount and run its existing, already-reviewed
+    // auto-select-from-cache logic, and advances the instant each one resolves to
+    // the intended target — so Joel never has to search for or click any of them,
+    // he just watches it land on Creative.
+    const { showWarning } = useToast();
+    const { selectedAdAccount, campaignData, adsetData } = useCampaign();
+    const [quickAdTarget, setQuickAdTarget] = useState(null);
+    // Persists past quickAdTarget being cleared — this is what actually answers
+    // pre-push review's P0 (joel-perspective): "which account/campaign/ad set did
+    // Quick Ad land me on?" needs to stay visible on the Creative/Bulk Ads/Review
+    // steps, not just flash during the ~1-2s auto-advance itself.
+    const [quickAdResolved, setQuickAdResolved] = useState(null);
+    const quickAdTimeoutRef = useRef(null);
+
+    const stopQuickAd = (warningMessage) => {
+        // Deliberately reads state via the functional updater, NOT the outer
+        // `quickAdTarget` closure variable — the timeout callback that calls this is
+        // scheduled once inside the mount-only effect below, so its closure over
+        // `quickAdTarget` is permanently stuck at that render's value (null). Only
+        // the updater form is guaranteed to see the CURRENT value regardless of
+        // which render's closure is calling it. This does mean showWarning (a side
+        // effect) runs inside the updater — StrictMode double-invokes updaters in
+        // dev, so a real timeout could show the toast twice in dev only (never in
+        // prod, pre-push review re-audit: LOW, not worth the correctness tradeoff of
+        // "fixing" it the other way).
+        clearTimeout(quickAdTimeoutRef.current);
+        setQuickAdTarget(current => {
+            if (current && warningMessage) showWarning(warningMessage);
+            return null;
+        });
+    };
+
+    useEffect(() => {
+        let raw;
+        try {
+            raw = localStorage.getItem('pendingQuickAd');
+        } catch {
+            raw = null;
+        }
+        if (!raw) return;
+        try {
+            localStorage.removeItem('pendingQuickAd');
+        } catch { /* non-fatal */ }
+        try {
+            const parsed = JSON.parse(raw);
+            if (parsed?.ad_account_id && parsed?.fb_campaign_id && parsed?.fb_adset_id) {
+                setQuickAdTarget(parsed);
+                quickAdTimeoutRef.current = setTimeout(() => {
+                    stopQuickAd(
+                        parsed.adset_name
+                            ? `Couldn't auto-load "${parsed.adset_name}" — continue manually below.`
+                            : "Couldn't auto-load the campaign/ad set — continue manually below."
+                    );
+                }, QUICK_AD_TIMEOUT_MS);
+            }
+        } catch {
+            // Malformed payload — fail open, just behave like a normal visit to this page.
+        }
+        return () => clearTimeout(quickAdTimeoutRef.current);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    useEffect(() => {
+        if (!quickAdTarget) return;
+        if (currentStep === 1) {
+            if (selectedAdAccount?.id === quickAdTarget.ad_account_id) {
+                setCurrentStep(2);
+            } else if (selectedAdAccount) {
+                // AdAccountStep resolved to SOMETHING, but not the target — e.g. the
+                // seeded lastSelectedAdAccountId wasn't in the fetched list (token
+                // permission gap, pagination) and it silently fell back to the first
+                // account instead. Don't wait out the full timeout showing a wrong
+                // account as if it were normal — fail fast with a specific reason.
+                // Caught in pre-push review (code-auditor: HIGH).
+                stopQuickAd("Quick Ad couldn't find that ad account in your list — continuing manually from here.");
+            }
+        } else if (currentStep === 2 && campaignData?.fbCampaignId === quickAdTarget.fb_campaign_id) {
+            setCurrentStep(3);
+        } else if (currentStep === 3 && adsetData?.fbAdsetId === quickAdTarget.fb_adset_id) {
+            setQuickAdResolved({
+                accountName: selectedAdAccount?.name || '',
+                campaignName: campaignData?.name || '',
+                adsetName: adsetData?.name || quickAdTarget.adset_name || '',
+            });
+            setCurrentStep(4);
+            clearTimeout(quickAdTimeoutRef.current);
+            setQuickAdTarget(null);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [quickAdTarget, currentStep, selectedAdAccount, campaignData, adsetData]);
+
     const steps = [
         { id: 1, label: 'Ad Account', icon: CreditCard },
         { id: 2, label: 'Campaign', icon: Target },
@@ -50,13 +155,20 @@ const FacebookCampaignWizardInner = () => {
         { id: 6, label: 'Review & Launch', icon: CheckCircle2 },
     ];
 
+    // Manual navigation always wins over the auto-advance chain — the instant Joel
+    // clicks Next/Back himself, Quick Ad steps aside rather than racing his click
+    // (pre-push review: MEDIUM — an in-flight auto-advance effect could otherwise
+    // fire alongside a manual step change and produce a confusing double-jump, or
+    // a stale timeout toast for a "failure" that was actually just Joel taking over).
     const handleNext = () => {
+        if (quickAdTarget) stopQuickAd(null);
         if (currentStep < steps.length) {
             setCurrentStep(currentStep + 1);
         }
     };
 
     const handleBack = () => {
+        if (quickAdTarget) stopQuickAd(null);
         if (currentStep > 1) {
             setCurrentStep(currentStep - 1);
         }
@@ -72,6 +184,38 @@ const FacebookCampaignWizardInner = () => {
                 </h1>
                 <p className="text-gray-600">Create and manage your Facebook ad campaigns</p>
             </div>
+
+            {/* Quick Ad auto-advance banner — shown only while the auto-select chain
+                from CampaignPerformance's "Quick Ad" button is still resolving. Names
+                the step it's on (out of 3) so an 8-second wait reads as progress, not
+                a frozen page. */}
+            {quickAdTarget && (
+                <div className="flex items-center gap-2 bg-teal-50 border border-teal-200 rounded-lg px-4 py-3 text-sm text-teal-800">
+                    <RefreshCw size={15} className="animate-spin flex-shrink-0" />
+                    <span>
+                        <strong>Quick Ad:</strong> loading step {Math.min(currentStep, 3)} of 3
+                        ({['ad account', 'campaign', 'ad set'][Math.min(currentStep, 3) - 1]})
+                        {quickAdTarget.adset_name ? <> for <strong>{quickAdTarget.adset_name}</strong></> : ''} —
+                        you'll land on Creative in a moment.
+                    </span>
+                </div>
+            )}
+
+            {/* Persistent breadcrumb — this is what actually answers "which account/
+                campaign/ad set did Quick Ad land me on," which the transient banner
+                above (gone the instant it resolves) doesn't. Stays visible through
+                Creative/Bulk Ads/Review so Joel never has to guess before he builds or
+                launches against it. Caught in pre-push review (joel-perspective: P0). */}
+            {quickAdResolved && currentStep >= 4 && (
+                <div className="flex items-center gap-2 bg-teal-50 border border-teal-200 rounded-lg px-4 py-2.5 text-xs text-teal-800">
+                    <CheckCircle2 size={14} className="flex-shrink-0" />
+                    <span>
+                        <strong>Quick Ad</strong> loaded: {quickAdResolved.accountName || 'this account'}
+                        {' → '}{quickAdResolved.campaignName || 'this campaign'}
+                        {' → '}{quickAdResolved.adsetName || 'this ad set'}
+                    </span>
+                </div>
+            )}
 
             {/* Wizard Steps */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
@@ -130,6 +274,7 @@ const FacebookCampaignWizardInner = () => {
                             onCampaignSelect={(id) => setFormData({ ...formData, campaignId: id })}
                             onNext={handleNext}
                             onBack={handleBack}
+                            forceExistingMode={Boolean(quickAdTarget)}
                         />
                     )}
                     {currentStep === 3 && (
@@ -140,6 +285,7 @@ const FacebookCampaignWizardInner = () => {
                             onAdSetSelect={(id) => setFormData({ ...formData, adSetId: id })}
                             onNext={handleNext}
                             onBack={handleBack}
+                            forceExistingMode={Boolean(quickAdTarget)}
                         />
                     )}
                     {currentStep === 4 && (
