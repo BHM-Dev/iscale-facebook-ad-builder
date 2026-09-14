@@ -115,6 +115,27 @@ set, matching how Joel actually thinks (one ad set = one audience). This is real
 — flag as a phase-3-or-later idea, not something to build reactively off this research alone. Revisit only
 if Joel explicitly asks for "test this audience against that one" as a recurring workflow.
 
+### 8. Pre-spend cost confirmation with embedded prompt tips (new, cheap)
+
+**What it looks like elsewhere:** AdStellar's Canvas image-generation flow (full detail in §8b of its
+brief, added after a deeper live-credit-spending pass 2026-09-14) shows an exact "Ready to generate?" modal
+before every generation — credits this will cost (53), balance before/after, a "skip this next time"
+checkbox — plus three embedded, always-visible prompt-engineering tips: keep content brand-safe (off-policy
+renders auto-reject and refund), lead with the product and the hook (models weight the first 30-50 words
+heavily), and direction beats description (specific photographic direction beats vague description).
+
+**Why this is worth building:** our own `kie.ai` generation flow has no equivalent — Joel or Steve click
+generate with no visibility into cost or a nudge toward better prompts before the ~4-8 credits are spent. A
+small tips panel next to the generate button in `BatchGenerate.jsx`/`ImageAds.jsx` costs almost nothing to
+build and directly reduces the "generated a bad ad and had to redo it" cost. Skip the credit-balance-math
+part (kie.ai billing isn't per-generation-visible to Joel today) and keep the tips + a lightweight "this
+will use ~N credits" line.
+
+**Related, no new build needed:** AdStellar's confirmation that GPT Image 2.5 Flare respects explicit
+composition/negative-space instructions ("reserve the upper-left third for text") validates the same
+pattern our own prompt engineering already ships (commit `1447c26`, reserve-overlay-zone-space) — good
+independent confirmation across model families, not a gap.
+
 ## 2. Confirmed as category-standard, not BHM-specific — validate our existing choices
 
 - **Background jobs with persistent, navigable, reload-surviving progress** (AdStellar's campaign import
@@ -160,3 +181,5 @@ if Joel explicitly asks for "test this audience against that one" as a recurring
    whenever `BulkAdCreation.jsx`/`AdCreativeStep.jsx` work is next touched.
 6. **Reuse-vs-fresh generation dial** (recommendation #6) — sequence after #2 ships and gets real usage.
 7. Combinatorial ad-set targeting (recommendation #7) — hold until explicitly requested.
+8. **Pre-spend cost/prompt-tips panel** (recommendation #8) — smallest scope of the whole list, can ship
+   independently of everything else whenever `BatchGenerate.jsx`/`ImageAds.jsx` is next touched.

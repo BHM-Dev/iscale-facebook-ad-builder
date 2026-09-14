@@ -196,6 +196,69 @@ thinking/tool use), **Deep research** (up to 1,700 credits/message, big analyses
 not pursue full plan/pricing-tier details since the credit-mode structure was the only pricing-relevant
 detail directly touching the UX question this research track was scoped to answer.
 
+## 8b. Second pass — billing, model transparency, and live credit-spend testing (2026-09-14)
+
+Went back in for a deeper pass (Steve: "are you sure you've gone through their platform with a fine
+tooth comb? Plus, we have credits to spend here") — this section is genuinely new, not a rewrite of §8.
+
+**Billing confirmed:** $100/month plan = 50,000 AI credits. Account was "Trialing," 7 days left, with an
+"End Trial Early & Get 100,000 Bonus AI Credits ($200 value)" upsell banner. Canvas image generation costs
+**53 credits per image** — shown in an exact pre-spend "Ready to generate?" confirmation modal (balance
+before/after, a "Skip this confirmation next time" checkbox) before every generation.
+
+**AI Preferences page — real, useful pattern worth copying the shape of:** exposes the actual underlying
+model family by name (System default, Claude Opus 5 "Recommended," Claude Fable 5.1/5, Claude Opus 4.8/4.6,
+Claude Sonnet 4.6 "-40% cost," Claude Haiku 4.5 "-80% cost"), a Reasoning depth selector (Auto/Low/Medium/
+High), a Personality/tone dropdown, and a durable **"Custom instructions" field (4000 chars)** that applies
+workspace-wide to every AI generation. Conceptually this is AdStellar's version of our own CLAUDE.md — a
+persistent, editable instruction layer the AI always reads. **Not recommending we build model choice or a
+reasoning-depth picker** (single internal buyer, not a multi-tenant SaaS selling AI transparency as a
+feature) — but the "durable custom-instructions field that shapes every generation" idea is worth 1:1
+comparing against how `copy_generation.py`'s system prompts are currently hardcoded per-vertical; a
+Joel-editable version of that could be a small, cheap win.
+
+**Canvas image model is GPT Image 2.5 Flare (OpenAI-based), not Flux/Nano-Banana** — this matters because
+its behavior differs materially from the Flux-Kontext-Pro model our own kie.ai pipeline uses:
+
+- **Confirmed defect: does not reliably honor simple negative-text instructions.** A Painting Contractors
+  generation prompted with "no text, no logos, no watermarks" ignored it and baked in a full marketing
+  sidebar — headline text, bullet icons, a CTA banner — directly into the photo. **Confirmed fix:** a
+  Trucking-niche regeneration with a much more emphatic, repeated instruction ("A single photograph only,
+  pure photography with zero graphic design elements... this must be a raw unedited photograph with
+  absolutely no text, no words, no letters, no banners, no icons, no infographics, no marketing copy, no
+  logos, and no watermarks anywhere in the image") produced a clean result. **Takeaway for our own
+  prompting:** GPT-Image-family models need materially stronger/more repetitive anti-text phrasing than
+  Flux-family models to get the same result — worth keeping in mind only if we ever add an OpenAI image
+  model as an option; not actionable against kie.ai/Flux today.
+- **Confirmed working well: composition/negative-space zone-reservation.** A Religious Orgs (storm-damage)
+  generation explicitly instructed "compose the shot with the subject in the right two-thirds of the frame,
+  leaving the upper-left third visually calm and empty sky/wall for text to be added later" — the model
+  complied cleanly (subject correctly right-weighted, calm sky reserved upper-left, no baked-in text). This
+  is the same "reserve overlay-zone space" pattern we already ship in our own prompt engineering (commit
+  `1447c26`) — good independent confirmation the pattern generalizes across model families, not a new build.
+- **Real UX gap: "Launch to Meta" from a generated Canvas image drops the specific image.** Clicking it
+  routes to a fresh, empty AI Launch flow rather than carrying that exact generated image forward as a
+  pre-filled quick-launch. This is worse than our own Quick Ad pattern, which does carry a specific
+  generated ad forward via a `pendingBatchCopy`-style localStorage handoff. Confirms our existing pattern is
+  the right one, not a gap to close.
+- **The pre-spend confirmation modal's embedded prompt tips are a genuinely reusable, cheap UI pattern**:
+  "Keep content brand-safe" (off-policy renders are auto-rejected and refunded automatically), "Lead with
+  the product and the hook" (models weight the first 30-50 words heavily), "Direction beats description"
+  (specific photographic direction beats vague description). Cheap to add a version of this — a small tips
+  panel next to our own kie.ai generation button — see synthesis doc recommendation #8.
+
+**AI Actors library** (Library → AI Actors): 310 pre-built stock UGC avatars, filterable by gender, skin
+tone, shooting style (Selfie/Presenter), age band, and style (Professional/Casual), each tagged by use-case
+(ugc/podcast/studio) and clip count, plus a "Create AI Actor" custom option. Notable only as a scale
+data-point — confirms this is a heavily-invested competitive surface — but reinforces rather than reopens
+Steve's 2026-08-27 call to pause video/UGC-avatar work; no action.
+
+**Integrations page** — only 3 listed: Meta Ads (connected), Slack (the agent-in-Slack heartbeat pattern
+already flagged in §7), and **Cometly** ("use Cometly's 1st-party attribution data in place of Meta's for
+more accurate [reporting]") — a third-party attribution layer competing directly with Meta's own numbers,
+conceptually the same slot our RedTrack/Everflow stack already fills. Not actionable, just confirms the
+"don't trust Meta's own attribution alone" pattern is category-standard.
+
 ## 9. What doesn't apply to BHM (noted, not chased further)
 
 - Products/catalog ads (dynamic product ads) — no e-commerce catalog to sync.
