@@ -248,3 +248,34 @@ interaction pattern for anything Joel needs quickly — the Ad Builder's own kie
 Pro, ~4-8 credits/image) returns in seconds to low tens of seconds by comparison. Grounding a
 recommendation in live account data is worth the wait once; doing it as the default path for every
 routine creative would be a real workflow-speed regression versus what Joel has today.
+
+## 7. Real defect found and fixed: logo legibility on dark backgrounds (2026-09-14)
+
+The "Dealer plates" creative above (renamed "Dealer Moving Parts" in the library) shipped with a real
+quality bug: the "Get Business Coverage" logo — a dark navy shield + dark navy/teal wordmark — was
+composited directly onto a dark navy background scene with zero contrast treatment, making the logo
+nearly unreadable. Not a random one-off: it's a systematic gap in the generator (no low-contrast
+detection, no auto-backing-plate, no light-logo-variant swap when the chosen scene is dark).
+
+**The agent fixed it correctly on request, in two iterations, once given the actual file:**
+1. First ask ("make the logo legible") — from a **fresh chat**, described the creative by name. The
+   agent could not locate it: burned 24 credits (222→198) across two separate lookup attempts (9 tools
+   the first time, 2 more the second) before concluding it needed the file attached directly. **No
+   creative-memory across chat sessions** — confirmed twice, not a fluke.
+2. Once the "White Logo Fix" file (which already existed in the library — someone had made a first pass
+   at this before, name suggests exactly what changed) was attached directly: it correctly identified
+   the shield icon still needed its own outline (distinct ask from the wordmark fix already done),
+   generated an "Outlined Shield Fix" version in one pass (~90 seconds), and the result was verified
+   correct — thin light outline around the shield, white wordmark, bordered box behind the whole
+   lockup. All three elements of the logo now read clearly against the dark scene.
+
+**Total cost: 222 → 194 credits (28 credits)** for one real fix — only ~4 of those credits went to the
+actual successful edit; the other 24 were wasted lookup overhead from starting fresh chats instead of
+continuing the original generation thread. **Lesson for any future agent-tool use of this pattern:
+always continue the original thread when iterating on a specific asset — never start a new chat and
+describe it by name.**
+
+**Relevance to our own pipeline:** worth a direct sanity check of `text_overlay_service.py` against the
+same failure mode — logo/CTA overlay on a kie.ai-generated dark background. This is exactly the kind of
+defect that's invisible in code review and only shows up by looking at real rendered output, which is
+why [[verify-in-production-not-by-assertion]] applies to creative-gen QA too, not just data pipelines.
