@@ -196,3 +196,55 @@ bridge exposing Ad Builder tools externally, and per-client memory the productio
 automatically (a lighter "why this rule exists" text field is the right-sized version of that idea, not
 full agent memory) — these are all real, well-built capabilities that solve problems specific to a
 multi-tenant agency SaaS platform, not BHM's single internal tool.
+
+## 6. Last-call checks before cancelling the trial (2026-09-14)
+
+Three things pulled specifically because they disappear once the subscription ends:
+
+**Credits/billing economics** — 233 of the original 250 trial credits remained unused at cancel time.
+**Credits expire when a subscription ends** (per their own help docs) — cancelling forfeits them
+regardless of the $1 already paid; flagged to Steve before acting, not a blocker. Mechanics, for the
+record: Fast/Smart/Powerful model tiers cost 0.25/0.5/1.5 credits per "AI step" (each round of reasoning
+the model does, not each tool call — tool calls themselves are free); ad creative generation and SEO data
+lookups carry a flat fee on top (5 credits and 0.5 credits respectively, confirmed by a live burn: the
+real creative-generation test below cost exactly 5 credits, plus ~6 credits of research/reasoning steps
+beforehand). **Approvals-queue research is explicitly free — you're only charged when you approve a
+proposal and the agent goes to apply it.** That "detection is free, action costs" split is the same
+principle behind recommendation #1 in §5 and is worth keeping in mind if a future LLM-based rules-engine
+addition ever needs to justify its own API-cost model to Steve. Top-up packs: 100 credits/$39, 300/$99,
+600/$179.
+
+**Locked-feature pricing** (SEO and A/B Testing modals, the two gated nav items whose pricing wasn't
+captured in the first pass): **SEO Autopilot $129/mo** (90 pages/month, content optimized for AI search,
+competitor-page rewrites) with a **$599/mo "Traffic Printer"** tier above it (+ 50 backlinks/month);
+**A/B Testing is a $1,499/mo, sales-assisted-only tier** ("this plan isn't self-serve — talk to us"), done
+for you by Ryze's own engineering team rather than self-configured. Confirms the tiered-SaaS pricing
+ladder described in §3 with real numbers. (Search Performance and AI Visibility, the two other
+nav-listed-locked items, disappeared from the sidebar entirely once Google Search Console wasn't
+connected — never got their pricing modal; not worth re-chasing.)
+
+**A real ad-creative generation, run to completion, not just described from a template thumbnail:**
+Asked the AI Analyst ("I want to create a creative. Recommend me something") and it independently:
+(1) pulled and analyzed the account's real performance data (checked Meta Ads 12+ times across the
+research phase) to identify the actual best-performing live ad ("Dealer Plates" — 52 real Meta-reported
+forms, $826.04 spend, $15.89/form, 95% of that campaign's forms) as the concept's evidence base;
+(2) proposed a specific creative concept building on that winner, including a data-grounded budget/kill
+rule ("$14-$19 per raw form... stop if link click rate is below 1.0% after 2,000 impressions or CRM
+shows no accepted leads") — notably applying the CRM-acceptance-rate caution from onboarding's `memory`
+facts even though CRM still wasn't connected, confirming memory is genuinely read on a later, unrelated
+task, not just stored; (3) on approval, generated a real, on-brand 4:5 image — the auto-detected brand
+green (`#36D07F`) highlighting "moving parts" in the headline, the logo correctly placed, three
+data-derived tag pills ("Dealer plates," "Test drives," "Customer vehicles"), and a footer CTA
+("Free comparison · No obligation") pulled straight from its own recommendation text. **Genuinely
+production-plausible output** — the one thing a template thumbnail or feature description can't prove,
+now confirmed firsthand.
+
+**The one real caveat worth weighing against that quality: it took roughly 4 minutes end-to-end** for a
+single creative (the recommendation step alone ran ~90 seconds of live Meta API research before even
+proposing a concept, then a separate confirmation step, then ~2 more minutes to actually render the
+image) — the "Running Create creative" step specifically sat with no visible progress for over 3 minutes
+straight. Not a dealbreaker for an occasional one-off, but a real data point against using this
+interaction pattern for anything Joel needs quickly — the Ad Builder's own kie.ai pipeline (Flux Kontext
+Pro, ~4-8 credits/image) returns in seconds to low tens of seconds by comparison. Grounding a
+recommendation in live account data is worth the wait once; doing it as the default path for every
+routine creative would be a real workflow-speed regression versus what Joel has today.
