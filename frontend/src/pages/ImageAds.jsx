@@ -498,7 +498,7 @@ export default function ImageAds() {
     };
 
     return (
-        <div className={`${mode === 'quick' ? 'max-w-7xl' : 'max-w-5xl'} mx-auto`}>
+        <div className={`${mode === 'quick' ? 'max-w-[1800px]' : 'max-w-5xl'} mx-auto`}>
             {/* Header */}
             <div className="mb-8">
                 <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
