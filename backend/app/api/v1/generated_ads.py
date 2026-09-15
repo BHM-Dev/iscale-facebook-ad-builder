@@ -174,6 +174,15 @@ _VERTICAL_HINTS: Dict[str, str] = {
     "health insurance":  "An active person outdoors in natural light.",
 }
 
+_NO_TEXT_SUFFIX = (
+    "CRITICAL: pure, unedited photograph with ABSOLUTELY NO text, words, letters, numbers, "
+    "banners, icons, infographics, marketing copy, logos, or watermarks anywhere in the image. "
+    "Zero graphic design elements. If you are tempted to add text or a graphic overlay, do not — "
+    "it is added separately afterward and doubling it up breaks the ad."
+)
+
+_NO_TEXT_SUFFIX_LEGACY = "No text, no logos. Photorealistic."
+
 def _get_vertical_hint(product_name: str, product_desc: str) -> str:
     """Match product name/description to a vertical hint. Returns empty string if no match."""
     combined = f"{product_name} {product_desc}".lower()
@@ -372,7 +381,11 @@ def _get_niche_override(niche: str) -> str | None:
         if re.search(rf"\b{re.escape(key)}\b", niche_lower):
             chosen = random.choice(prompts)
             print(f"🏛️  Niche override for '{niche}': picked scene {prompts.index(chosen)+1}/{len(prompts)}")
-            return chosen
+            # Normalize every curated scene to the same emphatic anti-text instruction. The
+            # legacy suffix is present on most entries, but doing this at the return boundary
+            # also covers future entries that forget it.
+            scene = chosen.replace(_NO_TEXT_SUFFIX_LEGACY, "").rstrip(" .")
+            return f"{scene}. {_NO_TEXT_SUFFIX} Photorealistic."
     return None
 
 
@@ -495,7 +508,7 @@ Rules by category — include the matching action AND the matching negative-anch
 - Professionals (lawyer, doctor, accountant, etc.): one person at a desk or in their workspace. Avoid: generic corporate stock-photo poses (crossed arms, forced smile at camera).
 - Vehicles / transport / dealerships: the vehicle(s) or a driver/owner in context. Avoid: glossy showroom staging — this should look like a real working lot or garage, not an ad for the vehicle itself.
 - Animals / livestock / specialty operations (equine, farm, veterinary, etc.): the owner/operator actually working with the animal. Avoid: luxury lifestyle or recreational framing — this is a serious working business, not a leisure activity.
-- Natural signage on buildings is OK (adds authenticity). Do NOT include advertising copy, watermarks, or text overlays — the background must be completely clean of text/logos, those are added in a separate step.
+- CRITICAL — this must be a pure, unedited photograph with ABSOLUTELY NO text, words, letters, numbers, banners, icons, infographics, marketing copy, logos, or watermarks anywhere in the image. Zero graphic design elements. Do not add signage, advertising copy, typography, UI, labels, or graphic overlays. If you are tempted to add any text or graphic overlay, do not — it is added in a separate step afterward and doubling it up breaks the ad. Repeat: the generated background must contain no text and no graphic design elements.
 - No illustrations. No stock-photo couples. No gray backdrops. Photorealistic, candid, editorial-documentary feel — never a posed advertising shoot.
 - Name the light source and time of day (e.g. "natural soft light from one window", "blue hour", "overcast midday") rather than just saying "natural lighting."
 - Composition and overlay-zone instructions (given below) are mandatory — always include them.
@@ -872,6 +885,49 @@ async def _kie_generate_nano(
     )
 
 
+def _get_aspect_ratio(width: int, height: int) -> str:
+    ratio = width / height
+    if ratio >= 1.7:
+        return "16:9"
+    if ratio >= 1.2:
+        return "4:3"
+    if ratio >= 0.9:
+        return "1:1"
+    if ratio >= 0.7:
+        return "3:4"
+    return "9:16"
+
+
+async def _get_prompt_for_size(
+    request: ImageGenerationRequest,
+    width: int,
+    height: int,
+    has_input_image: bool = False,
+) -> str:
+    if request.customPrompt:
+        return request.customPrompt
+    return await _build_ai_image_prompt(
+        request,
+        aspect_ratio=_get_aspect_ratio(width, height),
+        has_input_image=has_input_image,
+    )
+
+
+@router.post("/prepare-image-prompt")
+async def prepare_image_prompt(
+    request: ImageGenerationRequest,
+    current_user: User = Depends(require_permission("ads:write"))
+):
+    """Resolve the representative image prompt without spending image-generation credits."""
+    prompt = await _get_prompt_for_size(
+        request,
+        width=1080,
+        height=1080,
+        has_input_image=bool(request.useProductImage and request.productShots),
+    )
+    return {"prompt": prompt}
+
+
 @router.post("/generate-image")
 async def generate_image(
     request: ImageGenerationRequest,
@@ -886,14 +942,6 @@ async def generate_image(
         print(f"Generating images with kie.ai...")
     else:
         print("KIE_AI_API_KEY not set — using placeholder images")
-
-    def _get_aspect_ratio(w: int, h: int) -> str:
-        ratio = w / h
-        if ratio >= 1.7:   return "16:9"
-        elif ratio >= 1.2: return "4:3"
-        elif ratio >= 0.9: return "1:1"
-        elif ratio >= 0.7: return "3:4"
-        else:              return "9:16"
 
     # ── Resolve reference image ONCE before the generation loops ─────────────────
     # Must happen before prompt building so _build_ai_image_prompt knows whether
@@ -949,14 +997,15 @@ async def generate_image(
     # Custom prompt bypasses AI entirely.
     _prompt_cache: Dict[str, str] = {}
 
-    async def _get_prompt_for_size(w: int, h: int) -> str:
+    async def _get_cached_prompt_for_size(w: int, h: int) -> str:
         if request.customPrompt:
             return request.customPrompt
         ar = _get_aspect_ratio(w, h)
         if ar not in _prompt_cache:
-            _prompt_cache[ar] = await _build_ai_image_prompt(
+            _prompt_cache[ar] = await _get_prompt_for_size(
                 request,
-                aspect_ratio=ar,
+                width=w,
+                height=h,
                 has_input_image=bool(input_image),
             )
         return _prompt_cache[ar]
@@ -969,7 +1018,7 @@ async def generate_image(
             height = size.get('height', 1080)
             size_name = size.get('name', 'Square')
 
-            prompt = await _get_prompt_for_size(width, height)
+            prompt = await _get_cached_prompt_for_size(width, height)
 
             print(f"\n{'='*80}")
             print(f"IMAGE GENERATION REQUEST")

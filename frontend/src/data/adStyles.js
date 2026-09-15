@@ -32,6 +32,7 @@ export const adStyles = [
     },
     {
         id: 'pr-feature',
+        bakesInText: true,
         name: 'The PR Feature (The "As Seen In")',
         category: AD_CATEGORIES.TRUST_AUTHORITY,
         description: 'Single professional hero image with media credibility bar',
@@ -47,6 +48,7 @@ export const adStyles = [
     },
     {
         id: 'founders-promise',
+        bakesInText: true,
         name: 'The "Founder\'s Promise"',
         category: AD_CATEGORIES.TRUST_AUTHORITY,
         description: 'Portrait with direct eye contact and personal touch',
@@ -66,6 +68,7 @@ export const adStyles = [
     // ========================================
     {
         id: 'comic-strip-agitator',
+        bakesInText: true,
         name: 'The Comic Strip Agitator',
         category: AD_CATEGORIES.PROBLEM_SOLUTION,
         description: 'Sequential narrative showing transformation journey',
@@ -82,6 +85,7 @@ export const adStyles = [
     },
     {
         id: 'us-vs-them-chart',
+        bakesInText: true,
         name: 'The "Us vs. Them" Chart',
         category: AD_CATEGORIES.PROBLEM_SOLUTION,
         description: 'Comparison table framing the rational choice',
@@ -117,6 +121,7 @@ export const adStyles = [
     // ========================================
     {
         id: 'iphone-note',
+        bakesInText: true,
         name: 'The "iPhone Note" Screenshot',
         category: AD_CATEGORIES.SOCIAL_PROOF,
         description: 'Native-looking personal note that blends into feeds',
@@ -132,6 +137,7 @@ export const adStyles = [
     },
     {
         id: 'testimonial-sandwich',
+        bakesInText: true,
         name: 'The Testimonial Sandwich',
         category: AD_CATEGORIES.SOCIAL_PROOF,
         description: 'Product centered with social proof above and below',
@@ -200,6 +206,7 @@ export const adStyles = [
     // ========================================
     {
         id: 'ugly-ad-doodle',
+        bakesInText: true,
         name: 'The "Ugly Ad" (Doodle)',
         category: AD_CATEGORIES.DISRUPTION,
         description: 'Intentionally crude graphics that stand out',
@@ -214,6 +221,7 @@ export const adStyles = [
     },
     {
         id: 'warning-label',
+        bakesInText: true,
         name: 'The "Warning Label"',
         category: AD_CATEGORIES.DISRUPTION,
         description: 'Caution-style design triggering attention',
@@ -229,6 +237,7 @@ export const adStyles = [
     },
     {
         id: 'notification-fakeout',
+        bakesInText: true,
         name: 'The "Notification" Fakeout',
         category: AD_CATEGORIES.DISRUPTION,
         description: 'Realistic notification that grabs attention',
