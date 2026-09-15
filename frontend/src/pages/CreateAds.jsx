@@ -1,6 +1,13 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileImage, Video, Zap, Shuffle, ArrowRight } from 'lucide-react';
+import { FileImage, Video, Zap, Shuffle, ArrowRight, HardDrive } from 'lucide-react';
+
+const DRIVE_LAUNCH_TOOL = {
+    path: '/facebook-campaigns',
+    icon: HardDrive,
+    title: 'Launch from Drive',
+    description: 'Skip generation — mass-upload and launch ads straight from your synced Google Drive folder. Pick an ad account, campaign, and ad set, then choose "Drive Creative Library" on the Creative step.',
+};
 
 const TOOLS = [
     {
@@ -56,6 +63,27 @@ export default function CreateAds() {
                 <p className="text-gray-600 mt-2">Choose your workflow</p>
             </div>
 
+            <button
+                onClick={() => navigate(DRIVE_LAUNCH_TOOL.path)}
+                className="group w-full flex items-center gap-5 p-6 mb-8 bg-blue-50 rounded-2xl border-2 border-blue-200 hover:border-blue-400 hover:shadow-lg transition-all duration-300 text-left"
+            >
+                <div className="w-14 h-14 shrink-0 bg-blue-100 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                    <HardDrive size={28} className="text-blue-700" />
+                </div>
+                <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-bold text-gray-900">{DRIVE_LAUNCH_TOOL.title}</h3>
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Already have creatives?</span>
+                    </div>
+                    <p className="text-gray-600 text-sm mt-1">{DRIVE_LAUNCH_TOOL.description}</p>
+                </div>
+                <div className="shrink-0 flex items-center gap-2 text-sm font-semibold text-blue-700 group-hover:gap-3 transition-all">
+                    Get Started <ArrowRight size={16} />
+                </div>
+            </button>
+
+            <p className="text-sm font-semibold text-gray-500 mb-4">Or generate new creatives</p>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {TOOLS.map(tool => {
                     const Icon = tool.icon;
@@ -66,7 +94,7 @@ export default function CreateAds() {
                             className={`group relative flex flex-col items-start p-8 bg-white rounded-2xl border-2 border-gray-100 ${tool.borderHover} hover:shadow-xl transition-all duration-300 text-left`}
                         >
                             {tool.badge && (
-                                <span className="absolute top-4 right-4 text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">
+                                <span className={`absolute top-4 right-4 text-xs font-semibold px-2 py-0.5 rounded-full ${tool.badgeColor || 'bg-gray-100 text-gray-700'}`}>
                                     {tool.badge}
                                 </span>
                             )}
