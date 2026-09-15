@@ -2141,7 +2141,19 @@ function QuickGeneratePanel({
                 <BrandSelectionStep
                     brands={brands}
                     selectedBrand={wizardData.brand}
-                    onSelect={(brand) => updateData('brand', brand)}
+                    onSelect={(brand) => {
+                        updateData('brand', brand);
+                        // Quick Generate has no Product-selection step (unlike Guided
+                        // Wizard), so wizardData.product stayed null here, causing the
+                        // image prompt to fall back to a generic "Product Photography of
+                        // Product" instead of the brand's real product name/description
+                        // (confirmed live 2026-09-15 via the prompt-review modal). Every
+                        // real brand today has exactly 1 product, so auto-select it —
+                        // mirrors the existing auto-skip pattern already used for
+                        // single-product brands elsewhere in the app.
+                        const products = brand?.products || [];
+                        updateData('product', products.length === 1 ? products[0] : null);
+                    }}
                 />
             </div>
 
