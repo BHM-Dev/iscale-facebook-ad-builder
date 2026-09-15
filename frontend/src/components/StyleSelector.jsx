@@ -102,7 +102,7 @@ export default function StyleSelector({ onSelect, selectedStyle = null }) {
             </div>
 
             {/* Style Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {filteredStyles.map((style) => {
                     const color = categoryColors[style.category];
                     const Icon = categoryIcons[style.category];

@@ -8,6 +8,7 @@ import BrandSelectionStep from '../components/steps/BrandSelectionStep';
 import ProductSelectionStep from '../components/steps/ProductSelectionStep';
 import ProfileSelectionStep from '../components/steps/ProfileSelectionStep';
 import StyleSelector from '../components/StyleSelector';
+import AdPreviewPanel from '../components/AdPreviewPanel';
 import PushToMetaModal from '../components/PushToMetaModal';
 import { VERTICAL_FILTERS, inferBrandVertical } from '../lib/verticals';
 
@@ -497,7 +498,7 @@ export default function ImageAds() {
     };
 
     return (
-        <div className="max-w-5xl mx-auto">
+        <div className={`${mode === 'quick' ? 'max-w-7xl' : 'max-w-5xl'} mx-auto`}>
             {/* Header */}
             <div className="mb-8">
                 <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
@@ -598,38 +599,51 @@ export default function ImageAds() {
 
                 {/* Quick Generate Panel */}
                 {mode === 'quick' && currentStep !== 10 && (
-                    <QuickGeneratePanel
-                        wizardData={wizardData}
-                        updateData={updateData}
-                        brands={quickBrands}
-                        activeVerticalFilter={activeVerticalFilter}
-                        anglePerformance={anglePerformance}
-                        quickCopy={quickCopy}
-                        setQuickCopy={setQuickCopy}
-                        quickCopyImport={quickCopyImport}
-                        setQuickCopyImport={setQuickCopyImport}
-                        templateMode={templateMode}
-                        setTemplateMode={setTemplateMode}
-                        overlayEnabled={overlayEnabled}
-                        setOverlayEnabled={setOverlayEnabled}
-                        overlayOfferLine={overlayOfferLine}
-                        setOverlayOfferLine={setOverlayOfferLine}
-                        overlayNicheLine={overlayNicheLine}
-                        setOverlayNicheLine={setOverlayNicheLine}
-                        setOverlayLogoUrl={setOverlayLogoUrl}
-                        overlayLogoPreview={overlayLogoPreview}
-                        setOverlayLogoPreview={setOverlayLogoPreview}
-                        uploadingLogo={uploadingLogo}
-                        logoFileInputRef={logoFileInputRef}
-                        uploadLogoImage={uploadLogoImage}
-                        generating={generating}
-                        onGenerate={() => handleImageGeneration({
-                            headline: quickCopy.headline,
-                            body: quickCopy.body,
-                            cta: quickCopy.cta?.trim() || 'GET MY QUOTE',
-                            angle: quickCopy.angle || null,
-                        })}
-                    />
+                    <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-6 items-start">
+                        <QuickGeneratePanel
+                            wizardData={wizardData}
+                            updateData={updateData}
+                            brands={quickBrands}
+                            activeVerticalFilter={activeVerticalFilter}
+                            anglePerformance={anglePerformance}
+                            quickCopy={quickCopy}
+                            setQuickCopy={setQuickCopy}
+                            quickCopyImport={quickCopyImport}
+                            setQuickCopyImport={setQuickCopyImport}
+                            templateMode={templateMode}
+                            setTemplateMode={setTemplateMode}
+                            overlayEnabled={overlayEnabled}
+                            setOverlayEnabled={setOverlayEnabled}
+                            overlayOfferLine={overlayOfferLine}
+                            setOverlayOfferLine={setOverlayOfferLine}
+                            overlayNicheLine={overlayNicheLine}
+                            setOverlayNicheLine={setOverlayNicheLine}
+                            setOverlayLogoUrl={setOverlayLogoUrl}
+                            overlayLogoPreview={overlayLogoPreview}
+                            setOverlayLogoPreview={setOverlayLogoPreview}
+                            uploadingLogo={uploadingLogo}
+                            logoFileInputRef={logoFileInputRef}
+                            uploadLogoImage={uploadLogoImage}
+                            generating={generating}
+                            onGenerate={() => handleImageGeneration({
+                                headline: quickCopy.headline,
+                                body: quickCopy.body,
+                                cta: quickCopy.cta?.trim() || 'GET MY QUOTE',
+                                angle: quickCopy.angle || null,
+                            })}
+                        />
+                        <div className="sticky top-6">
+                            <AdPreviewPanel
+                                headline={quickCopy.headline}
+                                body={quickCopy.body}
+                                cta={quickCopy.cta}
+                                style={wizardData.template}
+                                overlayEnabled={overlayEnabled}
+                                overlayNicheLine={overlayNicheLine}
+                                overlayOfferLine={overlayOfferLine}
+                            />
+                        </div>
+                    </div>
                 )}
 
                 {/* Wizard Steps 1–9 */}
@@ -2110,7 +2124,8 @@ function QuickGeneratePanel({
             <div className="bg-gray-50 rounded-xl border border-gray-200 p-5">
                 <h4 className="font-semibold text-gray-800 mb-4">Your Copy</h4>
                 <div className="space-y-4">
-                    <div>
+                    <div className="grid grid-cols-1 md:grid-cols-[1fr_240px] gap-4">
+                        <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                             Headline <span className="text-red-500">*</span>
                         </label>
@@ -2126,6 +2141,26 @@ function QuickGeneratePanel({
                         />
                         <div className="text-xs text-gray-500 mt-1">
                             {quickCopy.headline.length} / 40 characters
+                        </div>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                CTA
+                                <span className="ml-1 text-xs text-gray-400 font-normal">optional</span>
+                            </label>
+                            <input
+                                type="text"
+                                value={quickCopy.cta}
+                                onChange={e => {
+                                    markImportedCopyEdited();
+                                    setQuickCopy(prev => ({ ...prev, cta: e.target.value }));
+                                }}
+                                placeholder="GET MY QUOTE"
+                                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                            />
+                            <div className="text-xs text-gray-500 mt-1">
+                                {quickCopy.cta.length} / 20 characters
+                            </div>
                         </div>
                     </div>
                     <div>
@@ -2144,25 +2179,6 @@ function QuickGeneratePanel({
                         />
                         <div className="text-xs text-gray-500 mt-1">
                             {quickCopy.body.length} / 125 characters (recommended)
-                        </div>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            CTA
-                            <span className="ml-1 text-xs text-gray-400 font-normal">optional — defaults to GET MY QUOTE</span>
-                        </label>
-                        <input
-                            type="text"
-                            value={quickCopy.cta}
-                            onChange={e => {
-                                markImportedCopyEdited();
-                                setQuickCopy(prev => ({ ...prev, cta: e.target.value }));
-                            }}
-                            placeholder="GET MY QUOTE"
-                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                        />
-                        <div className="text-xs text-gray-500 mt-1">
-                            {quickCopy.cta.length} / 20 characters
                         </div>
                     </div>
                 </div>
