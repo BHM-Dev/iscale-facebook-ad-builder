@@ -98,12 +98,34 @@ const buildDriveAssetGroups = (assets) => {
             ? `manifest:${asset.brand_id}:${tags.package_folder_id || ''}:${String(tags.copy_id).toLowerCase()}`
             : null;
         const key = manifestKey || `single:${asset.id}`;
+        // Filename-based cluster key for assets with no copy_id tag — used
+        // ONLY to sort same-creative-different-size singles next to each
+        // other in the grid (Joel's complaint: without this, Drive's own
+        // "1x1 Images"/"9x16 Images" sibling-folder layout means the natural
+        // fetch order clusters ALL 1x1s together and ALL 9x16s together,
+        // never adjacent). Deliberately NOT folded into `key` above — an
+        // untagged filename match is a display hint, not proof these two
+        // files are the same creative. Merging them into one group would
+        // make them one `isPair` tile that auto dual-places the "stories"
+        // file onto the "feed" creative's ad with no review surface (pre-push
+        // review, code-auditor: BLOCKING — a generic filename collision
+        // across two unrelated packages, e.g. two different clients both
+        // naming a file "final_1x1.jpg"/"final_9x16.jpg", would silently
+        // launch a mismatched image to Stories). Real pairing — the kind that
+        // actually merges into one dual-placement ad — stays gated on the
+        // verified copy_id/package_folder_id manifest tags above.
+        const filenameParsed = !manifestKey ? normalizeFilenameBase(asset.file_name || '') : null;
+        const packageFolderScope = (asset.folder_path || '').split('/').slice(0, -1).join('/');
+        const sortClusterKey = filenameParsed
+            ? `filename:${asset.brand_id}:${packageFolderScope}:${filenameParsed.base}`
+            : null;
         const existing = grouped.get(key) || {
             key,
             assets: [],
             copy: tags.copy || null,
             landingPage: tags.landing_page || null,
             cta: tags.cta || null,
+            sortClusterKey,
         };
         existing.assets.push(asset);
         existing.copy = existing.copy || tags.copy || null;
@@ -112,7 +134,12 @@ const buildDriveAssetGroups = (assets) => {
         grouped.set(key, existing);
     });
 
-    return Array.from(grouped.values()).map(group => {
+    const latestSyncedAt = (group) => group.assets.reduce((max, asset) => {
+        const t = asset.synced_at ? new Date(asset.synced_at).getTime() : 0;
+        return Number.isFinite(t) && t > max ? t : max;
+    }, 0);
+
+    const groups = Array.from(grouped.values()).map(group => {
         const feedAsset = group.assets.find(asset => driveAssetPlacement(asset) === 'feed') || group.assets[0];
         const storiesAsset = group.assets.find(asset => driveAssetPlacement(asset) === 'stories');
         return {
@@ -122,8 +149,36 @@ const buildDriveAssetGroups = (assets) => {
             feedAsset,
             storiesAsset,
             isPair: Boolean(feedAsset && storiesAsset && feedAsset.id !== storiesAsset.id),
+            syncedAt: latestSyncedAt(group),
         };
     });
+
+    // A cluster (same-named-different-size singles, see sortClusterKey above)
+    // sorts as one unit by its most-recently-synced member, so the two tiles
+    // land adjacent instead of scattered by their own individual timestamps.
+    const clusterRecency = new Map();
+    groups.forEach(group => {
+        if (!group.sortClusterKey) return;
+        clusterRecency.set(group.sortClusterKey, Math.max(clusterRecency.get(group.sortClusterKey) || 0, group.syncedAt));
+    });
+
+    // Most-recently-synced first — gives "Select first N" a predictable,
+    // Ads-Manager-like "newest first" meaning instead of whatever arbitrary
+    // order the backend/Drive folder structure happened to return (pre-push
+    // review, joel-perspective: P2 — "first N" was otherwise a black box).
+    return groups
+        .map((group, index) => ({ group, index }))
+        .sort((a, b) => {
+            const aRecency = a.group.sortClusterKey ? clusterRecency.get(a.group.sortClusterKey) : a.group.syncedAt;
+            const bRecency = b.group.sortClusterKey ? clusterRecency.get(b.group.sortClusterKey) : b.group.syncedAt;
+            if (aRecency !== bRecency) return bRecency - aRecency;
+            if (a.group.sortClusterKey && a.group.sortClusterKey === b.group.sortClusterKey) {
+                // Same cluster, same recency — feed before its stories counterpart.
+                return driveAssetPlacement(a.group.displayAsset) === 'stories' ? 1 : -1;
+            }
+            return a.index - b.index;
+        })
+        .map(({ group }) => group);
 };
 
 // Live permutation count for the sticky counter below — mirrors BulkAdCreation.jsx's
@@ -203,6 +258,24 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     }, [driveAssets, driveSearchTerm, driveFormatFilter]);
 
     const driveGroupById = useMemo(() => new Map(driveAssetGroups.map(group => [group.id, group])), [driveAssetGroups]);
+    const driveSelectionAssetCount = useMemo(
+        () => [...selectedDriveAssetIds].reduce((sum, id) => sum + (driveGroupById.get(id)?.isPair ? 2 : 1), 0),
+        [selectedDriveAssetIds, driveGroupById]
+    );
+
+    // Drops any selected id that narrowing the search/format filter has
+    // scrolled out of driveAssetGroups — without this, a tile selected
+    // before a filter change stays counted (and stays in the payload) even
+    // though it's no longer visible or deselectable by clicking it. Worst
+    // case found in review: every selected id goes stale this way and "Add N
+    // to Campaign" silently does nothing, with no toast, because the button
+    // was enabled off the raw Set size rather than what's actually resolvable.
+    useEffect(() => {
+        setSelectedDriveAssetIds(prev => {
+            const next = new Set([...prev].filter(id => driveGroupById.has(id)));
+            return next.size === prev.size ? prev : next;
+        });
+    }, [driveGroupById]);
 
     const driveCounts = useMemo(() => {
         return driveAssets.reduce((acc, asset) => {
@@ -263,6 +336,38 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         setSelectedDriveAssetIds(prev => {
             const next = new Set(prev);
             next.has(assetId) ? next.delete(assetId) : next.add(assetId);
+            return next;
+        });
+    };
+
+    // Bulk-select shortcuts — clicking through 50 tiles one at a time was the
+    // direct complaint. All three operate on driveAssetGroups in its CURRENT
+    // filtered/searched order, so "select first N" means "first N of whatever
+    // you're currently looking at," not the full unfiltered library.
+    const [driveSelectCount, setDriveSelectCount] = useState('');
+
+    // All three ADD to whatever is already selected rather than replacing it —
+    // pre-push review (joel-perspective): a hard replace meant a few manual
+    // picks could be silently wiped by a later "Select first N," with no
+    // warning. "Clear selection" is the one explicit way to actually reset.
+    const selectAllVisibleDriveAssets = () => {
+        setSelectedDriveAssetIds(prev => {
+            const next = new Set(prev);
+            driveAssetGroups.forEach(group => next.add(group.id));
+            return next;
+        });
+    };
+
+    const clearDriveAssetSelection = () => {
+        setSelectedDriveAssetIds(new Set());
+    };
+
+    const selectFirstNDriveAssets = () => {
+        const n = parseInt(driveSelectCount, 10);
+        if (!Number.isFinite(n) || n <= 0) return;
+        setSelectedDriveAssetIds(prev => {
+            const next = new Set(prev);
+            driveAssetGroups.slice(0, n).forEach(group => next.add(group.id));
             return next;
         });
     };
@@ -1570,6 +1675,43 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 </button>
                             ))}
                         </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={selectAllVisibleDriveAssets}
+                                disabled={driveAssetGroups.length === 0}
+                                className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                Select all {driveAssetGroups.length > 0 ? `(${driveAssetGroups.length})` : ''}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={clearDriveAssetSelection}
+                                disabled={selectedDriveAssetIds.size === 0}
+                                className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                Clear selection
+                            </button>
+                            <div className="flex items-center gap-1.5">
+                                <span className="text-xs text-gray-500">Select first (most recent)</span>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    value={driveSelectCount}
+                                    onChange={(e) => setDriveSelectCount(e.target.value)}
+                                    placeholder="e.g. 50"
+                                    className="w-20 rounded-lg border border-gray-300 py-1.5 px-2 text-xs focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={selectFirstNDriveAssets}
+                                    disabled={!driveSelectCount || driveAssetGroups.length === 0}
+                                    className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    Go
+                                </button>
+                            </div>
+                        </div>
                     </div>
                     <div className="flex-1 overflow-y-auto p-4">
                         {driveLibraryLoading ? (
@@ -1631,10 +1773,21 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             </div>
                         )}
                     </div>
-                    <div className="p-4 border-t flex items-center justify-between">
+                    <div className="p-4 border-t flex items-center justify-between gap-3 flex-wrap">
                         <span className="text-sm text-gray-500">
                             {selectedDriveAssetIds.size} selected
-                            {selectedDriveAssetIds.size > 0 && `, ${[...selectedDriveAssetIds].reduce((sum, id) => sum + (driveGroupById.get(id)?.isPair ? 2 : 1), 0)} asset${[...selectedDriveAssetIds].reduce((sum, id) => sum + (driveGroupById.get(id)?.isPair ? 2 : 1), 0) !== 1 ? 's' : ''}`}
+                            {selectedDriveAssetIds.size > 0 && `, ${driveSelectionAssetCount} asset${driveSelectionAssetCount !== 1 ? 's' : ''}`}
+                            {/* Surfaces the permutation multiplication BEFORE the click that
+                                commits it — bulk-selecting 50 assets against several queued
+                                headlines/bodies doesn't create 50 ads, it multiplies (see
+                                countVariations above), and that math was previously only
+                                visible on the main step after closing this modal (pre-push
+                                review, joel-perspective: P1). */}
+                            {selectedDriveAssetIds.size > 0 && (variationCount.headlines > 1 || variationCount.bodies > 1) && (
+                                <span className="block text-xs text-amber-700 mt-0.5">
+                                    → {(variationCount.media + driveSelectionAssetCount) * Math.max(variationCount.headlines, 1) * Math.max(variationCount.bodies, 1)} total ad combinations after adding ({variationCount.media + driveSelectionAssetCount} media × {variationCount.headlines || 1} headline{variationCount.headlines !== 1 ? 's' : ''} × {variationCount.bodies || 1} bod{variationCount.bodies !== 1 ? 'ies' : 'y'})
+                                </span>
+                            )}
                         </span>
                         <div className="flex gap-3">
                             <button onClick={() => setShowDriveLibraryModal(false)} className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">
