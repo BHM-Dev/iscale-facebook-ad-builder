@@ -56,6 +56,17 @@ const TOOLS = [
 export default function CreateAds() {
     const navigate = useNavigate();
 
+    const launchFromDrive = () => {
+        // Consumed once by FacebookCampaigns.jsx on mount to auto-advance through
+        // Ad Account → Campaign → Ad Set using each step's own last-used cache,
+        // landing directly on Creative instead of making Joel re-click through
+        // steps that were only ever going to restore the same selection anyway.
+        try {
+            localStorage.setItem('pendingDriveLaunch', '1');
+        } catch { /* non-fatal — worst case Joel clicks through manually */ }
+        navigate(DRIVE_LAUNCH_TOOL.path);
+    };
+
     return (
         <div className="max-w-5xl mx-auto">
             <div className="mb-8">
@@ -64,7 +75,7 @@ export default function CreateAds() {
             </div>
 
             <button
-                onClick={() => navigate(DRIVE_LAUNCH_TOOL.path)}
+                onClick={launchFromDrive}
                 className="group w-full flex items-center gap-5 p-6 mb-8 bg-blue-50 rounded-2xl border-2 border-blue-200 hover:border-blue-400 hover:shadow-lg transition-all duration-300 text-left"
             >
                 <div className="w-14 h-14 shrink-0 bg-blue-100 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform duration-300">

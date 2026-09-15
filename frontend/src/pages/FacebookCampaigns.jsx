@@ -15,6 +15,10 @@ import BulkMatchImport from '../components/BulkMatchImport';
 // leave him staring at a step that silently never advances with no explanation.
 const QUICK_AD_TIMEOUT_MS = 8000;
 
+// Same idea as Quick Ad's timeout, for the Drive Launch shortcut below — same
+// 3-step chain length (Account → Campaign → Ad Set), same failure shape.
+const DRIVE_LAUNCH_TIMEOUT_MS = 8000;
+
 // Shared toggle UI for choosing how Step 5 will build ads. Lives at Step 4 so
 // the mode is known before the Creative form renders — Step 5 just reads it.
 const BatchModeToggle = ({ batchMode, setBatchMode }) => (
@@ -146,6 +150,91 @@ const FacebookCampaignWizardInner = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [quickAdTarget, currentStep, selectedAdAccount, campaignData, adsetData]);
 
+    // ── Drive Launch shortcut (Build Creatives → "Launch from Drive") ───────────
+    // Unlike Quick Ad, this has no specific account/campaign/ad set target to match
+    // against — Joel hasn't picked anything yet, he just wants to skip re-clicking
+    // through Account → Campaign → Ad Set when each one already restores its own
+    // last-used selection from cache. So this chain just watches for each step to
+    // resolve ANYTHING (cache or context) and advances, rather than waiting for a
+    // specific id like Quick Ad does. forceExistingMode is required for Campaign/Ad
+    // Set — both default to "new" mode otherwise and never run their cache-restore
+    // effect at all (see CampaignStep.jsx / AdSetStep.jsx).
+    const [driveLaunchActive, setDriveLaunchActive] = useState(false);
+    // Persists past driveLaunchActive being cleared — same reasoning as
+    // quickAdResolved above. Unlike Quick Ad, this shortcut has no specific target
+    // to name up front, so THIS is the only place Joel ever finds out which
+    // account/campaign/ad set he actually landed on (pre-push review, joel-
+    // perspective: P0 — a shortcut whose whole point is "don't make me re-pick
+    // these" must not also make it invisible what got auto-picked; he juggles
+    // multiple niches/ad accounts and could otherwise mass-launch Drive creatives
+    // into the wrong one without any visible confirmation).
+    const [driveLaunchResolved, setDriveLaunchResolved] = useState(null);
+    const driveLaunchTimeoutRef = useRef(null);
+
+    const stopDriveLaunch = (warningMessage) => {
+        clearTimeout(driveLaunchTimeoutRef.current);
+        setDriveLaunchActive(current => {
+            if (current && warningMessage) showWarning(warningMessage);
+            return false;
+        });
+    };
+
+    useEffect(() => {
+        let raw;
+        try {
+            raw = localStorage.getItem('pendingDriveLaunch');
+        } catch {
+            raw = null;
+        }
+        if (!raw) return;
+        try {
+            localStorage.removeItem('pendingDriveLaunch');
+        } catch { /* non-fatal */ }
+        // If Quick Ad's own pending flag is ALSO sitting in localStorage (e.g. two
+        // tabs, an interrupted navigation), let Quick Ad's exact-match chain own the
+        // auto-advance instead of running both — they'd otherwise both react to the
+        // same currentStep/context changes with no precedence between them (pre-push
+        // review, code-auditor: MEDIUM).
+        let quickAdRaw;
+        try {
+            quickAdRaw = localStorage.getItem('pendingQuickAd');
+        } catch {
+            quickAdRaw = null;
+        }
+        if (quickAdRaw) return;
+        setDriveLaunchActive(true);
+        driveLaunchTimeoutRef.current = setTimeout(() => {
+            stopDriveLaunch("Couldn't auto-resolve an ad account/campaign/ad set — continue manually below.");
+        }, DRIVE_LAUNCH_TIMEOUT_MS);
+        return () => clearTimeout(driveLaunchTimeoutRef.current);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    useEffect(() => {
+        if (!driveLaunchActive) return;
+        if (currentStep === 1 && selectedAdAccount) {
+            setCurrentStep(2);
+        } else if (currentStep === 2 && campaignData?.fbCampaignId) {
+            setCurrentStep(3);
+        } else if (currentStep === 3 && adsetData?.fbAdsetId) {
+            // Capture what actually got auto-selected BEFORE landing on Creative —
+            // this is the only place Joel can see it, since unlike Quick Ad there's
+            // no named target to show up front (pre-push review: both code-auditor
+            // and joel-perspective flagged this as BLOCKING/P0 — a shortcut that
+            // silently accepts whatever was last cached, with zero confirmation,
+            // risks mass-launching Drive creatives into the wrong niche/ad set).
+            setDriveLaunchResolved({
+                accountName: selectedAdAccount?.name || '',
+                campaignName: campaignData?.name || '',
+                adsetName: adsetData?.name || '',
+            });
+            setCurrentStep(4);
+            clearTimeout(driveLaunchTimeoutRef.current);
+            setDriveLaunchActive(false);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [driveLaunchActive, currentStep, selectedAdAccount, campaignData, adsetData]);
+
     const steps = [
         { id: 1, label: 'Ad Account', icon: CreditCard },
         { id: 2, label: 'Campaign', icon: Target },
@@ -162,6 +251,7 @@ const FacebookCampaignWizardInner = () => {
     // a stale timeout toast for a "failure" that was actually just Joel taking over).
     const handleNext = () => {
         if (quickAdTarget) stopQuickAd(null);
+        if (driveLaunchActive) stopDriveLaunch(null);
         if (currentStep < steps.length) {
             setCurrentStep(currentStep + 1);
         }
@@ -169,6 +259,7 @@ const FacebookCampaignWizardInner = () => {
 
     const handleBack = () => {
         if (quickAdTarget) stopQuickAd(null);
+        if (driveLaunchActive) stopDriveLaunch(null);
         if (currentStep > 1) {
             setCurrentStep(currentStep - 1);
         }
@@ -201,6 +292,24 @@ const FacebookCampaignWizardInner = () => {
                 </div>
             )}
 
+            {/* Drive Launch shortcut banner — same shape as Quick Ad's above. Deliberately
+                does NOT say "last-used" — AdAccountStep silently falls back to the first
+                fetched account when there's no cache hit, so this can't promise it's
+                restoring anything specific, only that it's resolving each step for you
+                (pre-push review, code-auditor: HIGH — banner text must not claim more
+                than the mechanism can back up). The persistent breadcrumb below is what
+                lets Joel actually verify it before he builds or launches anything. */}
+            {driveLaunchActive && (
+                <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-sm text-blue-800">
+                    <RefreshCw size={15} className="animate-spin flex-shrink-0" />
+                    <span>
+                        <strong>Launch from Drive:</strong> resolving step {Math.min(currentStep, 3)} of 3
+                        ({['ad account', 'campaign', 'ad set'][Math.min(currentStep, 3) - 1]}) —
+                        you'll land on Creative in a moment.
+                    </span>
+                </div>
+            )}
+
             {/* Persistent breadcrumb — this is what actually answers "which account/
                 campaign/ad set did Quick Ad land me on," which the transient banner
                 above (gone the instant it resolves) doesn't. Stays visible through
@@ -214,6 +323,29 @@ const FacebookCampaignWizardInner = () => {
                         {' → '}{quickAdResolved.campaignName || 'this campaign'}
                         {' → '}{quickAdResolved.adsetName || 'this ad set'}
                     </span>
+                </div>
+            )}
+
+            {/* Same idea for Drive Launch — no target was named up front, so this is
+                the first and only place Joel sees what got auto-selected. Includes a
+                one-click way to back out to Step 1 in case it's the wrong niche/ad
+                account, rather than making him hunt for the right collapsed step header
+                (pre-push review, joel-perspective: P0/P2). */}
+            {driveLaunchResolved && currentStep >= 4 && (
+                <div className="flex items-center justify-between gap-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 text-xs text-blue-800">
+                    <span className="flex items-center gap-2">
+                        <CheckCircle2 size={14} className="flex-shrink-0" />
+                        <strong>Launch from Drive</strong> loaded: {driveLaunchResolved.accountName || 'this account'}
+                        {' → '}{driveLaunchResolved.campaignName || 'this campaign'}
+                        {' → '}{driveLaunchResolved.adsetName || 'this ad set'}
+                    </span>
+                    <button
+                        type="button"
+                        onClick={() => { setDriveLaunchResolved(null); setCurrentStep(1); }}
+                        className="font-semibold underline shrink-0 hover:text-blue-900"
+                    >
+                        Not right? Switch
+                    </button>
                 </div>
             )}
 
@@ -274,7 +406,7 @@ const FacebookCampaignWizardInner = () => {
                             onCampaignSelect={(id) => setFormData({ ...formData, campaignId: id })}
                             onNext={handleNext}
                             onBack={handleBack}
-                            forceExistingMode={Boolean(quickAdTarget)}
+                            forceExistingMode={Boolean(quickAdTarget) || driveLaunchActive}
                         />
                     )}
                     {currentStep === 3 && (
@@ -285,7 +417,7 @@ const FacebookCampaignWizardInner = () => {
                             onAdSetSelect={(id) => setFormData({ ...formData, adSetId: id })}
                             onNext={handleNext}
                             onBack={handleBack}
-                            forceExistingMode={Boolean(quickAdTarget)}
+                            forceExistingMode={Boolean(quickAdTarget) || driveLaunchActive}
                         />
                     )}
                     {currentStep === 4 && (
