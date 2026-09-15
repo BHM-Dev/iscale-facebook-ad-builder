@@ -25,6 +25,12 @@ class ImageGenerationRequest(BaseModel):
     productShots: List[str] = []
     model: str = "nano-banana-pro"
     customPrompt: Optional[str] = None
+    # Prompt approved via the Quick Generate "Review before generating" modal (prepare-image-prompt
+    # is only ever resolved for the required Square/1:1 size). Unlike customPrompt — a full override
+    # applied to every requested size uniformly — this seeds ONLY the 1:1 bucket in generate_image's
+    # per-aspect-ratio cache, so Vertical/Story sizes still get their own Sonnet-generated prompt with
+    # correct aspect-ratio-specific overlay-zone framing instead of inheriting the Square composition.
+    reviewedPrompt: Optional[str] = None
     useProductImage: bool = False  # Use uploaded product image as base
     niche: Optional[str] = None   # e.g. "Religious organizations", "Flower shops" — passed to AI prompt builder
     # imageMode controls how a reference image (productShots[0]) is used:
@@ -996,6 +1002,11 @@ async def generate_image(
     # Build prompts per aspect-ratio bucket — one Sonnet call per unique AR.
     # Custom prompt bypasses AI entirely.
     _prompt_cache: Dict[str, str] = {}
+    if request.reviewedPrompt:
+        # Only pre-seed the Square/1:1 bucket — prepare-image-prompt only ever resolves
+        # that size. Other requested sizes (Vertical, Story) still resolve their own
+        # aspect-ratio-correct prompt below instead of inheriting the Square framing.
+        _prompt_cache["1:1"] = request.reviewedPrompt
 
     async def _get_cached_prompt_for_size(w: int, h: int) -> str:
         if request.customPrompt:

@@ -344,7 +344,7 @@ export default function ImageAds() {
         }
     };
 
-    const buildImageGenerationPayload = (copy, promptOverride = customImagePrompt) => ({
+    const buildImageGenerationPayload = (copy, reviewedPrompt = null) => ({
         template: wizardData.template,
         brand: wizardData.brand,
         product: wizardData.product,
@@ -355,7 +355,12 @@ export default function ImageAds() {
         model: wizardData.model,
         productShots: wizardData.useProductShots ? wizardData.product?.product_shots : [],
         useProductImage: wizardData.useProductShots,
-        customPrompt: promptOverride,
+        // customPrompt (Guided Wizard's Advanced Settings field) is a full override applied to
+        // every requested size uniformly. reviewedPrompt (Quick Generate's review-modal approval)
+        // only ever covers the Square/1:1 size — the backend seeds just that bucket so Vertical/
+        // Story sizes still get their own aspect-ratio-correct Sonnet prompt. Never send both.
+        customPrompt: customImagePrompt,
+        reviewedPrompt,
         overlay_enabled: overlayEnabled,
         overlay_niche_line: overlayEnabled
             ? (overlayNicheLine.trim()
@@ -370,11 +375,11 @@ export default function ImageAds() {
     });
 
     // Generate images for one copy variant — returns array of images with bundleId attached
-    const generateImagesForCopy = async (copy, promptOverride = customImagePrompt) => {
+    const generateImagesForCopy = async (copy, reviewedPrompt = null) => {
         const response = await authFetch(`${API_URL}/generated-ads/generate-image`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(buildImageGenerationPayload(copy, promptOverride))
+            body: JSON.stringify(buildImageGenerationPayload(copy, reviewedPrompt))
         });
 
         if (!response.ok) {
@@ -430,7 +435,7 @@ export default function ImageAds() {
     };
 
     // Main handler — accepts a single copy object OR an array of copies (for batch)
-    const handleImageGeneration = async (copyOrCopies, promptOverride = customImagePrompt) => {
+    const handleImageGeneration = async (copyOrCopies, reviewedPrompt = null) => {
         const copies = Array.isArray(copyOrCopies) ? copyOrCopies : [copyOrCopies];
         setSelectedCopy(copies[0]);
         setGenerating(true);
@@ -441,7 +446,7 @@ export default function ImageAds() {
             let done = 0;
             const results = await Promise.allSettled(
                 copies.map(copy =>
-                    generateImagesForCopy(copy, promptOverride).then(imgs => {
+                    generateImagesForCopy(copy, reviewedPrompt).then(imgs => {
                         done++;
                         setGeneratingProgress({ done, total: copies.length });
                         return imgs;
