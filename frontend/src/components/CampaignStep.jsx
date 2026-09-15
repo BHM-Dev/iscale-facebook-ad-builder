@@ -88,13 +88,23 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false }) => {
         }
     }, [existingCampaigns, mode, campaignData.isExisting, campaignData.fbCampaignId, selectedAdAccount]);
 
+    // ACTIVE first, then everything else in whatever order Meta returned it —
+    // most ad accounts here carry far more paused/test campaigns than live ones
+    // (RHO 4 alone has a dozen+ PAUSED "RHO v2 | CBO | LEADS | ..." campaigns),
+    // so without this the one or two campaigns actually running today can be
+    // buried below a wall of paused ones.
+    const sortActiveFirst = (campaigns) => {
+        const rank = (c) => (c.status === 'ACTIVE' ? 0 : 1);
+        return [...campaigns].sort((a, b) => rank(a) - rank(b));
+    };
+
     const fetchExistingCampaigns = async () => {
         if (!selectedAdAccount) return;
 
         setLoadingCampaigns(true);
         try {
             const campaigns = await getCampaigns(selectedAdAccount.id);
-            setExistingCampaigns(campaigns);
+            setExistingCampaigns(sortActiveFirst(campaigns));
         } catch (error) {
             console.error('Error fetching campaigns:', error);
             showError(`Error fetching campaigns: ${error.message}`);

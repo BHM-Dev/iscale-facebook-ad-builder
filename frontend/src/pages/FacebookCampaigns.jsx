@@ -283,12 +283,31 @@ const FacebookCampaignWizardInner = () => {
     return (
         <div className="max-w-6xl mx-auto space-y-8">
             {/* Header */}
-            <div>
-                <h1 className="text-3xl font-bold text-gray-900 mb-2 flex items-center gap-3">
-                    <Megaphone size={32} className="text-amber-600" />
-                    Facebook Campaigns
-                </h1>
-                <p className="text-gray-600">Create and manage your Facebook ad campaigns</p>
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                    <h1 className="text-3xl font-bold text-gray-900 mb-2 flex items-center gap-3">
+                        <Megaphone size={32} className="text-amber-600" />
+                        Facebook Campaigns
+                    </h1>
+                    <p className="text-gray-600">Create and manage your Facebook ad campaigns</p>
+                </div>
+                {/* Always-visible ad account indicator once one is picked — this page's
+                    own account selection (Step 1) is a completely separate thing from
+                    the "Meta account" banner Layout.jsx hides here (see that file's
+                    comment), so without this there was no way to see which account
+                    you're building against past Step 1 short of jumping back to check.
+                    Clicking it jumps straight back to Ad Account via goToStep. */}
+                {selectedAdAccount && currentStep > 1 && (
+                    <button
+                        type="button"
+                        onClick={() => goToStep(1)}
+                        className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm hover:border-amber-300 hover:bg-amber-50 transition-colors"
+                    >
+                        <CreditCard size={15} className="text-gray-400" />
+                        <span className="text-gray-500">Ad Account:</span>
+                        <span className="font-semibold text-gray-900">{selectedAdAccount.name}</span>
+                    </button>
+                )}
             </div>
 
             {/* Quick Ad auto-advance banner — shown only while the auto-select chain

@@ -23,6 +23,18 @@ const CONVERSION_EVENTS = [
     'INITIATE_CHECKOUT', 'ADD_PAYMENT_INFO', 'CONTACT', 'SUBSCRIBE'
 ];
 
+// Meta's adset_schedule DayPart objects use days/start_minute/end_minute
+// (snake_case, matching this app's local adSchedule shape 1:1 apart from
+// casing) — see AdSet.Field.adset_schedule in facebook_service.py.
+const mapMetaAdSchedule = (rawSchedule) => {
+    if (!Array.isArray(rawSchedule) || rawSchedule.length === 0) return null;
+    return rawSchedule.map(part => ({
+        days: part.days || [],
+        startMinute: part.start_minute ?? 0,
+        endMinute: part.end_minute ?? 1440,
+    }));
+};
+
 const BID_STRATEGIES = [
     { value: 'LOWEST_COST_WITHOUT_CAP', label: 'Lowest Cost (No Cap)' },
     { value: 'LOWEST_COST_WITH_BID_CAP', label: 'Lowest Cost with Bid Cap' },
@@ -197,6 +209,58 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
         }
     }, [selectedAdAccount]);
 
+    // Pre-fills (does NOT enable) a brand-new ad set's day-parting hours from
+    // whatever schedule an active ad set in THIS SAME CAMPAIGN is already
+    // running, so if Joel turns the toggle on himself the hours are already
+    // right instead of blank. Two things pre-push review flagged as BLOCKING
+    // in an earlier version of this effect, both fixed here:
+    //   1. Scope was account-wide ("any active ad set on the account"), which
+    //      on a mixed-niche account (e.g. RHO 4 running several verticals
+    //      side by side) could silently borrow a completely unrelated niche's
+    //      business hours onto a new 24/7 campaign. Scoped to the campaign
+    //      being built against instead — the one case where "same hours as
+    //      what's already running" is actually a safe assumption.
+    //   2. It silently flipped adScheduleEnabled to true AND budgetScheduleType
+    //      to LIFETIME as a side effect of a background fetch — a media buyer
+    //      never has a budget-type choice silently changed for them in Ads
+    //      Manager. Now it only ever populates the hours array; turning the
+    //      toggle on (and the resulting Lifetime Budget requirement) stays the
+    //      user's own explicit action via the existing toggle handler below.
+    // Never overrides anything already present (existing ad set's own real
+    // schedule from handleSelectExisting, or the user's own edits) — checked
+    // via the functional setAdsetData form so a fetch that resolves after the
+    // user has already interacted can't clobber their choice.
+    useEffect(() => {
+        if (mode !== 'new' || !selectedAdAccount) return;
+        const campaignIdToUse = campaignData.fbCampaignId || campaignData.id;
+        if (!campaignIdToUse || campaignIdToUse.startsWith('camp_')) return;
+        let cancelled = false;
+
+        const applyReferenceSchedule = async () => {
+            try {
+                const campaignAdsets = await getAdSets(campaignIdToUse);
+                if (cancelled) return;
+                const reference = (campaignAdsets || [])
+                    .filter(a => a.status === 'ACTIVE')
+                    .map(a => mapMetaAdSchedule(a.adset_schedule))
+                    .find(Boolean);
+                if (!reference) return;
+                setAdsetData(prev => {
+                    if (prev.isExisting || prev.adScheduleEnabled || (prev.adSchedule || []).length > 0) {
+                        return prev; // user already has a real value — don't touch it
+                    }
+                    return { ...prev, adSchedule: reference };
+                });
+            } catch (error) {
+                // Non-fatal — this is a convenience default, not a required fetch.
+                console.error('Error fetching reference ad schedule:', error);
+            }
+        };
+
+        applyReferenceSchedule();
+        return () => { cancelled = true; };
+    }, [mode, selectedAdAccount, campaignData.fbCampaignId, campaignData.id]);
+
     // Close country dropdown when clicking outside
     useEffect(() => {
         const handleClickOutside = (event) => {
@@ -209,6 +273,29 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [showCountryDropdown]);
 
+    // Auto-selects the pixel so Joel doesn't have to when it's unambiguous —
+    // most accounts here really only have one pixel wired up (RHO 4 shares
+    // "Commercial Insurance - CAPI" with RHO's own account). Only handles the
+    // single-pixel case — dropped an earlier "restore whichever pixel was last
+    // picked on this account" fallback for multiple pixels, since that could
+    // silently carry a backup/test pixel picked on one niche/campaign onto an
+    // unrelated one sharing the same ad account, with no visible indication it
+    // was auto-applied (pre-push review, joel-perspective: P1).
+    //
+    // Writes pixelId directly via setAdsetData rather than through
+    // handleInputChange, and never fires when adsetData.isExisting is true —
+    // handleInputChange unconditionally sets isExisting: false on every write,
+    // which BulkAdCreation.jsx branches on to decide whether to create a brand
+    // new ad set vs. reuse the selected one. A real existing ad set that
+    // simply has no pixel configured yet (adsetData.pixelId === '') would
+    // otherwise race against this auto-select and get silently flipped to
+    // "new", creating a duplicate ad set on Meta instead of adding ads to the
+    // one Joel explicitly picked (pre-push review, code-auditor: BLOCKING).
+    const autoSelectPixel = (fetchedPixels) => {
+        if (adsetData.isExisting || adsetData.pixelId || fetchedPixels?.length !== 1) return;
+        setAdsetData(prev => (prev.isExisting || prev.pixelId ? prev : { ...prev, pixelId: fetchedPixels[0].id }));
+    };
+
     const fetchPixels = async () => {
         if (!selectedAdAccount?.id) return;
         setLoadingPixels(true);
@@ -216,6 +303,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
         try {
             const fetchedPixels = await getPixels(selectedAdAccount.id);
             setPixels(fetchedPixels || []);
+            autoSelectPixel(fetchedPixels || []);
         } catch (error) {
             console.error('Error fetching pixels:', error);
             setPixelsError(error.message || 'Unable to load pixels. Check your token has ads_management and the ad account has a pixel in Events Manager.');
@@ -263,6 +351,8 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
             conversionEvent = adset.promoted_object.custom_event_type || '';
         }
 
+        const existingSchedule = mapMetaAdSchedule(adset.adset_schedule);
+
         setAdsetData({
             ...adset,
             // Map snake_case from API to camelCase for state
@@ -275,7 +365,9 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
             fbAdsetId: adset.id,
             isExisting: true,
             // Ensure targeting is preserved (it's usually 'targeting' in both)
-            targeting: adset.targeting || {}
+            targeting: adset.targeting || {},
+            adScheduleEnabled: Boolean(existingSchedule),
+            adSchedule: existingSchedule || []
         });
 
         const campaignIdToUse = campaignData.fbCampaignId || campaignData.id;

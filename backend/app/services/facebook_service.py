@@ -558,6 +558,7 @@ class FacebookService:
             AdSet.Field.campaign_id,
             AdSet.Field.start_time,
             AdSet.Field.end_time,
+            AdSet.Field.adset_schedule,
         ]
         campaign_fields = [Campaign.Field.id, Campaign.Field.name, Campaign.Field.objective]
 
