@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Package, Users, Video, Wand2, Settings, LogOut, Image, ShoppingBag, Target, ChevronLeft, ChevronRight, FileImage, Search, ChevronDown, UserCog, TrendingDown, Zap, Shuffle, PauseCircle, Megaphone, BookOpen, BriefcaseBusiness, DollarSign, FolderOpen, Library } from 'lucide-react';
+import { LayoutDashboard, Wand2, Settings, LogOut, ShoppingBag, Target, ChevronLeft, ChevronRight, UserCog, Search, Library, DollarSign, BriefcaseBusiness } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useBrands } from '../context/BrandContext';
@@ -40,7 +40,6 @@ export default function Layout() {
     const { showSuccess } = useToast();
     const { activeVerticalFilter, setActiveVerticalFilter } = useBrands();
     const { activeAccountId, setActiveAccountId, adAccounts, activeAccountLoading } = useCampaign();
-    const [expandedMenus, setExpandedMenus] = useState({ Brands: false, Research: false, Facebook: true, 'Build Creatives': true, Libraries: true });
     const [isCollapsed, setIsCollapsed] = useState(false);
 
     const handleLogout = async () => {
@@ -52,60 +51,12 @@ export default function Layout() {
     const menuItems = [
         { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
         ...(hasPermission('pnl:read') ? [{ icon: DollarSign, label: 'Profit/Loss', path: '/pnl' }] : []),
-        {
-            icon: Search,
-            label: 'Research',
-            subItems: [
-                { label: 'Research', path: '/research' },
-                { label: 'Scrape Brand Ads', path: '/research/brand-scrapes' },
-                { label: 'Settings', path: '/research/settings' }
-            ]
-        },
-        {
-            icon: Wand2,
-            label: 'Build Creatives',
-            subItems: [
-                { label: 'Image Ad',         path: '/image-ads',       icon: Image },
-                { label: 'Batch Generate',   path: '/batch-generate',  icon: Zap },
-                { label: 'Build New Ad',     path: '/ad-remix',        icon: Shuffle },
-                { label: 'Video Ad',         path: '/video-ads',       icon: Video },
-            ]
-        },
-        {
-            icon: ShoppingBag,
-            label: 'Brands',
-            subItems: [
-                { label: 'Brands', path: '/brands' },
-                { label: 'Products', path: '/products' },
-                { label: 'Customer Profiles', path: '/profiles' }
-            ]
-        },
-        {
-            icon: Library,
-            label: 'Libraries',
-            subItems: [
-                { label: 'Generated Ads', path: '/generated-ads', icon: FileImage },
-                { label: 'Drive Imports', path: '/creative-library', icon: FolderOpen },
-                { label: 'Copy Library', path: '/copy-library', icon: BookOpen },
-            ]
-        },
-        {
-            icon: Target,
-            label: 'Facebook',
-            subItems: [
-                { label: 'Performance',      path: '/campaign-performance', icon: TrendingDown },
-                { label: 'Auto-Pause Rules', path: '/auto-pause-rules',    icon: PauseCircle },
-                { label: 'Campaign Builder', path: '/facebook-campaigns',  icon: Megaphone },
-            ]
-        },
+        { icon: Search, label: 'Research', path: '/research' },
+        { icon: Wand2, label: 'Build Creatives', path: '/build-creatives' },
+        { icon: ShoppingBag, label: 'Brands', path: '/brand-hub' },
+        { icon: Library, label: 'Libraries', path: '/libraries' },
+        { icon: Target, label: 'Facebook', path: '/facebook-hub' },
     ];
-
-    const toggleMenu = (label) => {
-        setExpandedMenus(prev => ({
-            ...prev,
-            [label]: !prev[label]
-        }));
-    };
 
     const formatAccountId = (account) => {
         const rawId = account.id || account.account_id || account.accountId || '';
@@ -118,19 +69,18 @@ export default function Layout() {
         <div className="flex h-screen bg-gray-50">
             {/* Sidebar */}
             <aside
-                className={`${isCollapsed ? 'w-20' : 'w-64'} flex flex-col shadow-lg transition-all duration-300 ease-in-out relative`}
-                style={{ backgroundColor: '#2D2463' }}
+                className={`${isCollapsed ? 'w-20' : 'w-64'} flex flex-col bg-white border-r border-gray-200 shadow-lg transition-all duration-300 ease-in-out relative`}
             >
                 {/* Toggle Button */}
                 <button
                     onClick={() => setIsCollapsed(!isCollapsed)}
-                    className="absolute -right-3 top-9 bg-white rounded-full p-1 shadow-md z-10 text-gray-500 hover:text-gray-700"
+                    className="absolute -right-3 top-9 bg-white border border-gray-200 rounded-full p-1 shadow-md z-10 text-gray-500 hover:text-gray-700"
                 >
                     {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
                 </button>
 
                 {/* Logo / Brand */}
-                <div className={`p-5 border-b border-white/10 ${isCollapsed ? 'px-4' : ''}`}>
+                <div className={`p-5 border-b border-gray-200 ${isCollapsed ? 'px-4' : ''}`}>
                     <div className={`flex items-center ${isCollapsed ? 'justify-center' : ''}`}>
                         {isCollapsed ? (
                             <BHMLogo size={36} />
@@ -149,67 +99,14 @@ export default function Layout() {
                     {menuItems.map((item) => {
                         const Icon = item.icon;
 
-                        if (item.subItems) {
-                            const isExpanded = expandedMenus[item.label];
-                            const isActive = item.subItems.some(sub => location.pathname === sub.path.split('?')[0]);
-
-                            return (
-                                <div key={item.label} className="space-y-0.5">
-                                    <button
-                                        onClick={() => {
-                                            if (!isCollapsed) toggleMenu(item.label);
-                                            if (item.subItems?.[0]?.path) navigate(item.subItems[0].path);
-                                        }}
-                                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 group ${
-                                            isActive ? 'bg-white/15 text-white' : 'text-white/60 hover:bg-white/10 hover:text-white'
-                                        } ${isCollapsed ? 'justify-center px-2' : ''}`}
-                                        title={isCollapsed ? item.label : ''}
-                                    >
-                                        <Icon size={18} className="flex-shrink-0 transition-colors" />
-                                        {!isCollapsed && (
-                                            <>
-                                                <span className="flex-1 text-left text-sm whitespace-nowrap overflow-hidden">{item.label}</span>
-                                                {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                            </>
-                                        )}
-                                    </button>
-
-                                    {!isCollapsed && isExpanded && (
-                                        <div className="pl-9 space-y-0.5">
-                                            {item.subItems.map(subItem => {
-                                                const SubIcon = subItem.icon;
-                                                const subPath = subItem.path.split('?')[0];
-                                                const subQuery = subItem.path.includes('?') ? subItem.path.split('?')[1] : null;
-                                                const isSubActive = location.pathname === subPath &&
-                                                    (!subQuery || location.search === `?${subQuery}`);
-                                                return (
-                                                    <Link
-                                                        key={subItem.path}
-                                                        to={subItem.path}
-                                                        className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
-                                                            isSubActive
-                                                                ? 'text-white bg-white/15 font-medium'
-                                                                : 'text-white/50 hover:text-white hover:bg-white/10'
-                                                        }`}
-                                                    >
-                                                        {SubIcon && <SubIcon size={13} className="flex-shrink-0" />}
-                                                        {subItem.label}
-                                                    </Link>
-                                                );
-                                            })}
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        }
-
-                        const isActive = location.pathname === item.path;
+                        const isActive = location.pathname === item.path ||
+                            (item.path === '/research' && location.pathname.startsWith('/research/'));
                         return (
                             <Link
                                 key={item.path}
                                 to={item.path}
                                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 group ${
-                                    isActive ? 'bg-white/15 text-white font-medium' : 'text-white/60 hover:bg-white/10 hover:text-white'
+                                    isActive ? 'bg-gray-100 text-gray-900 font-medium' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
                                 } ${isCollapsed ? 'justify-center px-2' : ''}`}
                                 title={isCollapsed ? item.label : ''}
                             >
@@ -221,14 +118,14 @@ export default function Layout() {
                 </nav>
 
                 {/* Bottom Section */}
-                <div className="p-3 border-t border-white/10 space-y-0.5">
+                <div className="p-3 border-t border-gray-200 space-y-0.5">
                     {hasRole('admin') && (
                         <Link
                             to="/users"
                             className={`flex items-center gap-3 px-3 py-2.5 w-full rounded-lg transition-colors group ${
                                 location.pathname === '/users'
-                                    ? 'bg-white/15 text-white font-medium'
-                                    : 'text-white/60 hover:bg-white/10 hover:text-white'
+                                    ? 'bg-gray-100 text-gray-900 font-medium'
+                                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
                             } ${isCollapsed ? 'justify-center px-2' : ''}`}
                             title={isCollapsed ? 'User Management' : ''}
                         >
@@ -240,8 +137,8 @@ export default function Layout() {
                         to="/settings"
                         className={`flex items-center gap-3 px-3 py-2.5 w-full rounded-lg transition-colors group ${
                             location.pathname === '/settings'
-                                ? 'bg-white/15 text-white font-medium'
-                                : 'text-white/60 hover:bg-white/10 hover:text-white'
+                                ? 'bg-gray-100 text-gray-900 font-medium'
+                                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
                         } ${isCollapsed ? 'justify-center px-2' : ''}`}
                         title={isCollapsed ? 'Settings' : ''}
                     >
@@ -250,17 +147,17 @@ export default function Layout() {
                     </Link>
 
                     {!isCollapsed && user && (
-                        <div className="px-3 py-2.5 mt-1 bg-white/8 rounded-lg border border-white/10">
-                            <div className="text-sm font-medium text-white truncate">
+                        <div className="px-3 py-2.5 mt-1 bg-gray-50 rounded-lg border border-gray-200">
+                            <div className="text-sm font-medium text-gray-900 truncate">
                                 {user.name || user.email}
                             </div>
-                            <div className="text-xs text-white/40 truncate">{user.email}</div>
+                            <div className="text-xs text-gray-500 truncate">{user.email}</div>
                         </div>
                     )}
 
                     <button
                         onClick={handleLogout}
-                        className={`flex items-center gap-3 px-3 py-2.5 w-full text-red-400 hover:bg-red-500/10 hover:text-red-300 rounded-lg transition-colors mt-1 ${isCollapsed ? 'justify-center px-2' : ''}`}
+                        className={`flex items-center gap-3 px-3 py-2.5 w-full text-gray-600 hover:bg-gray-100 hover:text-gray-900 rounded-lg transition-colors mt-1 ${isCollapsed ? 'justify-center px-2' : ''}`}
                         title={isCollapsed ? 'Logout' : ''}
                     >
                         <LogOut size={18} className="flex-shrink-0" />
@@ -284,30 +181,30 @@ export default function Layout() {
                         (authClient listens for the storage event and clears this
                         banner). */}
                     {sessionExpired && (
-                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-300 bg-gray-50 px-4 py-3">
                             <div>
-                                <p className="text-sm font-semibold text-amber-900">Your session has expired</p>
-                                <p className="text-sm text-amber-800">
+                                <p className="text-sm font-semibold text-gray-900">Your session has expired</p>
+                                <p className="text-sm text-gray-700">
                                     Anything on screen may be out of date, and nothing will save until you sign in.
                                     Sign in on the new tab and come back here — this page keeps whatever you were working on.
                                 </p>
                             </div>
                             <button
                                 onClick={() => window.open('/login', '_blank', 'noopener')}
-                                className="shrink-0 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700"
+                                className="shrink-0 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
                             >
                                 Sign in (new tab)
                             </button>
                         </div>
                     )}
                     {adAccounts.length > 0 && (
-                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-white px-4 py-3 shadow-sm">
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
                             <div className="flex items-center gap-3">
-                                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gray-100 text-gray-700">
                                     <BriefcaseBusiness size={18} />
                                 </div>
                                 <div>
-                                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-500">Meta account</p>
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Meta account</p>
                                     <p className="text-sm text-gray-600">Primary data scope for performance and dashboard views.</p>
                                 </div>
                             </div>
@@ -321,7 +218,7 @@ export default function Layout() {
                                     value={activeAccountId}
                                     disabled={activeAccountLoading}
                                     onChange={(e) => setActiveAccountId(e.target.value)}
-                                    className="min-w-72 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
+                                    className="min-w-72 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-900 shadow-sm focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-400 disabled:bg-gray-50 disabled:text-gray-400"
                                 >
                                     {adAccounts.map(account => {
                                         const accountId = formatAccountId(account);
@@ -352,7 +249,7 @@ export default function Layout() {
                                         onClick={() => setActiveVerticalFilter(vertical.id)}
                                         className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
                                             activeVerticalFilter === vertical.id
-                                                ? 'bg-indigo-600 text-white shadow-sm'
+                                                ? 'bg-gray-900 text-white shadow-sm'
                                                 : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900'
                                         }`}
                                     >

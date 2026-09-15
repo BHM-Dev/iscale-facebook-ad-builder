@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Ban, FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, Zap, X, Upload, BookOpen, Video, BarChart3 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
@@ -143,7 +143,7 @@ function SaveButton({ ad, isSaved, onSave, onUnsave, angleTags }) {
   }, [open]);
 
   if (isSaved) {
-    return (
+  return (
       <button
         type="button"
         onClick={() => onUnsave(ad)}
@@ -752,8 +752,26 @@ export default function Research() {
   }, [activeVertical, activeSubVertical, config, subVerticals]);
 
   // ── Render ────────────────────────────────────────────────────
-  return (
+    return (
     <div className="max-w-7xl mx-auto space-y-5">
+      <nav className="flex items-center gap-5 border-b border-gray-200" aria-label="Research sections">
+        {[
+          { label: 'Research', path: '/research' },
+          { label: 'Scrape Brand Ads', path: '/research/brand-scrapes' },
+          { label: 'Settings', path: '/research/settings' },
+        ].map(item => (
+          <NavLink
+            key={item.path}
+            to={item.path}
+            end={item.path === '/research'}
+            className={({ isActive }) => `border-b-2 px-1 py-2.5 text-sm font-medium -mb-px transition-colors ${
+              isActive ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-800'
+            }`}
+          >
+            {item.label}
+          </NavLink>
+        ))}
+      </nav>
       {/* Page header */}
       <div className="flex items-center justify-between gap-4">
         <div>

@@ -17,6 +17,9 @@ import PrivateRoute from './components/PrivateRoute';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import CreateAds from './pages/CreateAds';
+import BrandsHub from './pages/BrandsHub';
+import LibrariesHub from './pages/LibrariesHub';
+import FacebookHub from './pages/FacebookHub';
 import ImageAds from './pages/ImageAds';
 import VideoAds from './pages/VideoAds';
 import Reporting from './pages/Reporting';
@@ -72,6 +75,9 @@ function App() {
                   <Route path="research/brand-scrapes" element={<BrandScrapes />} />
                   <Route path="research/settings" element={<ResearchSettings />} />
                   <Route path="build-creatives" element={<CreateAds />} />
+                  <Route path="brand-hub" element={<BrandsHub />} />
+                  <Route path="libraries" element={<LibrariesHub />} />
+                  <Route path="facebook-hub" element={<FacebookHub />} />
                   <Route path="image-ads" element={<ImageAds />} />
                   <Route path="batch-generate" element={<BatchGenerate />} />
                   <Route path="video-ads" element={<VideoAds />} />
