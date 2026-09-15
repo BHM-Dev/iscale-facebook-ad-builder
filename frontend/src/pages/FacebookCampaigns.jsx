@@ -265,6 +265,21 @@ const FacebookCampaignWizardInner = () => {
         }
     };
 
+    // Lets Joel jump directly back to any already-completed step (e.g. Ad Account)
+    // instead of clicking Back repeatedly — the step tracker rendered these as
+    // plain non-interactive icons before, which was the ONLY way to switch ad
+    // account/campaign/ad set once past Step 1. That became a real dead end once
+    // the page-level "Meta account" banner was hidden on this route (it never
+    // actually drove this wizard anyway — see the comment in Layout.jsx — but at
+    // least it LOOKED like an escape hatch). Only completed steps are clickable;
+    // you can't skip ahead to a step you haven't reached yet.
+    const goToStep = (stepId) => {
+        if (stepId >= currentStep) return;
+        if (quickAdTarget) stopQuickAd(null);
+        if (driveLaunchActive) stopDriveLaunch(null);
+        setCurrentStep(stepId);
+    };
+
     return (
         <div className="max-w-6xl mx-auto space-y-8">
             {/* Header */}
@@ -366,12 +381,18 @@ const FacebookCampaignWizardInner = () => {
                         const isCurrent = step.id === currentStep;
 
                         return (
-                            <div key={step.id} className="flex flex-col items-center gap-2 bg-white px-2">
+                            <button
+                                key={step.id}
+                                type="button"
+                                onClick={() => goToStep(step.id)}
+                                disabled={!isCompleted}
+                                className={`flex flex-col items-center gap-2 bg-white px-2 ${isCompleted ? 'cursor-pointer' : 'cursor-default'}`}
+                            >
                                 <div
                                     className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${isCompleted || isCurrent
                                         ? 'bg-amber-600 text-white shadow-md scale-110'
                                         : 'bg-gray-100 text-gray-400'
-                                        }`}
+                                        } ${isCompleted ? 'hover:scale-125' : ''}`}
                                 >
                                     {isCompleted ? (
                                         <CheckCircle2 size={20} />
@@ -385,7 +406,7 @@ const FacebookCampaignWizardInner = () => {
                                 >
                                     {step.label}
                                 </span>
-                            </div>
+                            </button>
                         );
                     })}
                 </div>

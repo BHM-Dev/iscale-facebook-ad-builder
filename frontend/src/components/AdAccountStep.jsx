@@ -1,13 +1,13 @@
 import { useToast } from '../context/ToastContext';
 import React, { useState, useEffect } from 'react';
 import { ChevronRight, Loader, Building2, CreditCard, TrendingUp, Calendar, DollarSign, AlertCircle } from 'lucide-react';
-import { useCampaign } from '../context/CampaignContext';
+import { useCampaign, createDefaultCampaignData, createDefaultAdsetData } from '../context/CampaignContext';
 import { getAdAccounts } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 
 const AdAccountStep = ({ onNext }) => {
     const { showWarning } = useToast();
-    const { selectedAdAccount, setSelectedAdAccount } = useCampaign();
+    const { selectedAdAccount, setSelectedAdAccount, setCampaignData, setAdsetData } = useCampaign();
     const [adAccounts, setAdAccounts] = useState([]);
     const [loadingAccounts, setLoadingAccounts] = useState(true);
     const [accountsError, setAccountsError] = useState(null);
@@ -55,6 +55,19 @@ const AdAccountStep = ({ onNext }) => {
     );
 
     const handleAccountSelect = (account) => {
+        // A deliberate re-pick of a DIFFERENT account (not the mount-time restore
+        // above, which never calls this) invalidates any in-progress "new
+        // campaign"/"new ad set" draft — budget, objective, targeting, etc. have
+        // no account-association check on Next, so without this they'd silently
+        // carry over into whatever gets created against the newly-picked account
+        // (pre-push review, code-auditor: MEDIUM — surfaced after adding
+        // clickable step navigation made jumping back here a one-click action).
+        // "Existing" campaign/ad set selections aren't at risk either way since
+        // Meta ids can't coincidentally collide across accounts.
+        if (selectedAdAccount && account && selectedAdAccount.id !== account.id) {
+            setCampaignData(createDefaultCampaignData());
+            setAdsetData(createDefaultAdsetData());
+        }
         setSelectedAdAccount(account);
         setSearchQuery(account.name);
         setShowDropdown(false);
