@@ -261,6 +261,35 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
         return () => { cancelled = true; };
     }, [mode, selectedAdAccount, campaignData.fbCampaignId, campaignData.id]);
 
+    // Defaults Conversion Event to match the campaign's real objective — found
+    // live 2026-09-15: a new ad set under a Leads-objective (OUTCOME_LEADS)
+    // campaign still defaulted Conversion Event to PURCHASE. Optimization Goal
+    // itself correctly stays OFFSITE_CONVERSIONS regardless (see the
+    // ATTRIBUTION_SETTINGS comment above — every real BHM ad set uses that
+    // goal even under "Leads"-labeled campaigns; that part isn't the bug), but
+    // the pixel event a Leads campaign actually fires is "Lead", not
+    // "Purchase". Never touches an existing ad set restored from its own real
+    // values (isExisting check). Infers "untouched" from the value still
+    // being exactly the PURCHASE default rather than a real touched flag —
+    // same proxy this file's other new-ad-set defaults (pixel, schedule) use.
+    // Known edge case, not fixed here: if a user picks PURCHASE deliberately
+    // on a Leads campaign, then goes Back and Forward through the wizard
+    // without changing the objective (remounting this component), the guard
+    // can't tell that apart from "never touched" and will reset it to LEAD.
+    // Same asymmetry the other direction — changing the objective AWAY from
+    // Leads after this has already fired leaves conversionEvent stuck on
+    // LEAD. Both require deliberate Back/Forward navigation to hit; a real
+    // touched flag would close this properly if it becomes a real complaint.
+    useEffect(() => {
+        if (mode !== 'new' || campaignData.objective !== 'OUTCOME_LEADS') return;
+        setAdsetData(prev => {
+            if (prev.isExisting || prev.optimizationGoal !== 'OFFSITE_CONVERSIONS' || prev.conversionEvent !== 'PURCHASE') {
+                return prev;
+            }
+            return { ...prev, conversionEvent: 'LEAD' };
+        });
+    }, [mode, campaignData.objective]);
+
     // Close country dropdown when clicking outside
     useEffect(() => {
         const handleClickOutside = (event) => {
