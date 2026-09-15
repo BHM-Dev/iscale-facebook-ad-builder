@@ -86,7 +86,7 @@ export default function Layout() {
                             <BHMLogo size={36} />
                         ) : (
                             <img
-                                src="/bhm-logo.png"
+                                src="/bhm_logo_1color_blue@3x.png"
                                 alt="Bright Horizons Media"
                                 className="h-8 w-auto object-contain object-left"
                             />
