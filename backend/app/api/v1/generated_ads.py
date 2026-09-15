@@ -48,9 +48,9 @@ def build_comprehensive_prompt(request: ImageGenerationRequest) -> str:
     """
     Build comprehensive prompt using old system's approach:
     - Product name + description
-    - Brand name, voice, and primary color
-    - Copy context (headline)
+    - Brand primary color
     - Template metadata (mood, lighting, composition, design_style)
+    (brand.voice deliberately excluded — see note below)
     """
 
     # Custom prompt override
@@ -60,9 +60,16 @@ def build_comprehensive_prompt(request: ImageGenerationRequest) -> str:
     # Extract all context
     product_name = request.product.get('name', 'Product') if request.product else 'Product'
     product_desc = request.product.get('description', '') if request.product else ''
-    brand_name = request.brand.get('name', '') if request.brand else ''
-    brand_voice = request.brand.get('voice', 'Professional') if request.brand else 'Professional'
     brand_color = request.brand.get('colors', {}).get('primary', '') if request.brand else ''
+    # NOTE: brand.voice is deliberately NOT used here. It's a copywriting-tone field
+    # (feeds copy_generation.py's ad-copy prompts) — some brands' voice fields are
+    # multi-paragraph creative briefs, not short visual descriptors. Dropping a raw
+    # copy brief into an image-generation prompt produced garbled, text-heavy output
+    # (confirmed live 2026-09-15 via the Quick Generate prompt-review modal — Sonnet's
+    # connection briefly failed, this fallback ran, and "Commercial Insurance"'s voice
+    # field — several paragraphs of ad-copy direction — got dropped straight into the
+    # image prompt). Visual style comes entirely from the template's own mood/lighting/
+    # composition/design_style fields below, which is what this function is for.
 
     # Get template metadata
     template_type = request.template.get('type') if request.template else None
@@ -84,7 +91,6 @@ def build_comprehensive_prompt(request: ImageGenerationRequest) -> str:
     parts = [
         f"Product Photography of {product_name}",
         f"- {product_desc}" if product_desc else "",
-        f"{brand_name} style: {brand_voice}" if brand_name else f"Style: {brand_voice}",
         f"Primary Color: {brand_color}" if brand_color else "",
     ]
 
@@ -96,6 +102,11 @@ def build_comprehensive_prompt(request: ImageGenerationRequest) -> str:
 
     # Quality standards
     parts.append("High quality, photorealistic, 4k, advertising standard")
+
+    # Anti-text safety net — this is the fallback path (Sonnet call failed or is
+    # unavailable), so it gets the same emphatic protection as the primary path and
+    # the niche overrides. Previously had none at all.
+    parts.append(_NO_TEXT_SUFFIX)
 
     # Join non-empty parts
     prompt = ". ".join([p for p in parts if p])
@@ -532,19 +543,30 @@ Rules by category — include the matching action AND the matching negative-anch
             f"Write the image prompt."
         )
 
-        response = await _async_anthropic.messages.create(
-            model=_PROMPT_MODEL,
-            max_tokens=300,
-            messages=[{"role": "user", "content": user_msg}],
-            system=system_prompt,
-        )
-
-        ai_prompt = response.content[0].text.strip()
-        print(f"🤖 AI scene prompt ({aspect_ratio}, mode={image_mode}): {ai_prompt}")
-        return ai_prompt
+        # One retry on transient failures (e.g. "Connection error" — confirmed live
+        # 2026-09-15, a single rare blip) before dropping to the static fallback,
+        # which has meaningfully weaker text/logo protection than this path.
+        last_error = None
+        for attempt in range(2):
+            try:
+                response = await _async_anthropic.messages.create(
+                    model=_PROMPT_MODEL,
+                    max_tokens=300,
+                    messages=[{"role": "user", "content": user_msg}],
+                    system=system_prompt,
+                )
+                ai_prompt = response.content[0].text.strip()
+                print(f"🤖 AI scene prompt ({aspect_ratio}, mode={image_mode}, attempt={attempt + 1}): {ai_prompt}")
+                return ai_prompt
+            except Exception as e:
+                last_error = e
+                if attempt == 0:
+                    print(f"AI prompt generation attempt 1 failed, retrying once: {e}")
+                    await asyncio.sleep(1)
+        raise last_error
 
     except Exception as e:
-        print(f"AI prompt generation failed, falling back to static prompt: {e}")
+        print(f"AI prompt generation failed after retry, falling back to static prompt: {e}")
         return build_comprehensive_prompt(request)
 
 # ── kie.ai Flux Kontext API ─────────────────────────────────────────────────────
