@@ -5,6 +5,7 @@ import { useToast } from '../context/ToastContext';
 import { authFetch } from '../lib/facebookApi';
 import BatchPushModal from '../components/BatchPushModal';
 import PromptReviewModal from '../components/PromptReviewModal';
+import AngleStyleControls from '../components/AngleStyleControls';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -181,6 +182,7 @@ export default function BatchGenerate() {
     return ['square'];
   });
   const [niche, setNiche] = useState('');
+  const [styleSettings, setStyleSettings] = useState({});
   const [iterateLinkUrl, setIterateLinkUrl] = useState(''); // destination URL from source ad creative
 
   // Text overlay
@@ -199,7 +201,7 @@ export default function BatchGenerate() {
   });
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const logoFileInputRef = useRef(null);
-  const [openSections, setOpenSections] = useState({ reference: true, sizes: true, overlay: false, context: false });
+  const [openSections, setOpenSections] = useState({ reference: true, sizes: true, overlay: false, context: false, style: false });
 
   const toggleSection = (key) => {
     setOpenSections(prev => ({ ...prev, [key]: !prev[key] }));
@@ -406,6 +408,7 @@ export default function BatchGenerate() {
   const buildGenerationPayload = useCallback((variant, sizeConfig, reviewedPrompt = null) => ({
     ...(niche ? { niche } : {}),
     imageMode: 'style_ref',
+    template: styleSettings.angle ? { type: 'style', ...styleSettings } : null,
     count: 1,
     imageSizes: [{ width: sizeConfig.width, height: sizeConfig.height, name: sizeConfig.label }],
     copy: { headline: variant.headline, body: variant.body, cta: variant.cta },
@@ -421,7 +424,7 @@ export default function BatchGenerate() {
     // enforces this) — the backend seeds just that size's aspect-ratio bucket, so
     // any other size still resolves its own aspect-ratio-correct prompt.
     reviewedPrompt,
-  }), [niche, refImageUrl, overlayEnabled, overlayNicheLine, overlayOfferLine, overlayLogoUrl]);
+  }), [niche, refImageUrl, overlayEnabled, overlayNicheLine, overlayOfferLine, overlayLogoUrl, styleSettings]);
 
   const generateOne = useCallback(async (variant, sizeConfig, reviewedPrompt = null) => {
     const key = `${variant.id}-${sizeConfig.id}`;
@@ -458,6 +461,7 @@ export default function BatchGenerate() {
             sizeName: sizeConfig.label,
             dimensions: `${sizeConfig.width}x${sizeConfig.height}`,
             mediaType: 'image',
+            angle: styleSettings.angle || null,
             // Persist overlay settings so Iterate/Remix can reconstruct what was baked in
             niche,
             overlayEnabled,
@@ -824,6 +828,23 @@ export default function BatchGenerate() {
                   onChange={e => setNiche(e.target.value)}
                 />
                 <p className="text-xs text-gray-400 mt-1.5">Gives the AI context for the image style and subject matter</p>
+              </div>
+            )}
+          </div>
+
+          {/* Persuasion angle + visual defaults */}
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <button
+              type="button"
+              onClick={() => toggleSection('style')}
+              className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-gray-800 hover:bg-gray-50 transition-colors"
+            >
+              <span>Style / Angle <span className="ml-1 text-xs font-normal text-gray-400">optional</span></span>
+              <ChevronDown size={15} className={`text-gray-400 transition-transform ${openSections.style ? '' : '-rotate-90'}`} />
+            </button>
+            {openSections.style && (
+              <div className="px-4 pb-4">
+                <AngleStyleControls value={styleSettings} onChange={setStyleSettings} compact />
               </div>
             )}
           </div>

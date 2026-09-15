@@ -9,6 +9,94 @@ export const AD_CATEGORIES = {
     DISRUPTION: 'Disruption'
 };
 
+// Persuasion angles sit above the existing visual style catalog. Selecting one
+// supplies sensible art direction defaults, while the individual fields remain
+// editable in the generation flows.
+export const STYLE_ANGLES = [
+    {
+        label: 'Before/After',
+        mood: 'Transformative and hopeful',
+        lighting: 'Contrasting lighting from dim to bright',
+        composition: 'Side-by-side before and after split composition',
+        design_style: 'Clear transformation-focused editorial design',
+        promptInstruction: 'Show a clear visual transformation from a problem state to a better outcome; keep the contrast literal and easy to understand.'
+    },
+    {
+        label: 'Benefit Without Objection',
+        mood: 'Reassuring and confident',
+        lighting: 'Bright natural lighting with soft shadows',
+        composition: 'Clean hero composition with generous negative space',
+        design_style: 'Clean, trustworthy direct-response design',
+        promptInstruction: 'Make the desired benefit feel easy, safe, and attainable; visually reduce friction rather than dramatizing the problem.'
+    },
+    {
+        label: 'Comparison',
+        mood: 'Logical and decisive',
+        lighting: 'Even flat lighting with clear tonal contrast',
+        composition: 'Balanced split-screen comparison layout',
+        design_style: 'Clean infographic-inspired commercial design',
+        promptInstruction: 'Create a visually clear comparison between the old or competing option and the preferred option.'
+    },
+    {
+        label: 'Features Callout',
+        mood: 'Informative and capable',
+        lighting: 'Bright clean studio lighting',
+        composition: 'Centered hero subject with space for feature callouts',
+        design_style: 'Modern product-explainer design',
+        promptInstruction: 'Emphasize the subject and leave calm, intentional space where feature callouts can be overlaid later.'
+    },
+    {
+        label: 'Problem → Solution',
+        mood: 'Empathetic and relieving',
+        lighting: 'Natural lighting transitioning from subdued to warm',
+        composition: 'Sequential problem-to-solution visual flow',
+        design_style: 'Direct-response narrative design',
+        promptInstruction: 'Visually establish the real problem first, then show a credible solution or moment of relief.'
+    },
+    {
+        label: 'Question Framework',
+        mood: 'Curious and relatable',
+        lighting: 'Natural conversational lighting',
+        composition: 'Subject-forward composition with open space for a question headline',
+        design_style: 'Native social-feed editorial design',
+        promptInstruction: 'Frame the scene around a relatable question or moment of uncertainty that invites the viewer to identify with it.'
+    },
+    {
+        label: 'Results-Driven Showcase',
+        mood: 'Confident and successful',
+        lighting: 'Bright optimistic daylight',
+        composition: 'Hero result composition with the outcome as the focal point',
+        design_style: 'Polished performance-marketing design',
+        promptInstruction: 'Make the concrete result or outcome the visual focal point, with an authentic and believable sense of achievement.'
+    },
+    {
+        label: 'Social Proof',
+        mood: 'Validated and trustworthy',
+        lighting: 'Bright natural everyday lighting',
+        composition: 'Authentic user-centered composition with space for proof elements',
+        design_style: 'Native testimonial and review design',
+        promptInstruction: 'Make the scene feel like credible real-world evidence from people or businesses like the viewer.'
+    },
+    {
+        label: 'Testimonial',
+        mood: 'Warm and authentic',
+        lighting: 'Warm natural window lighting',
+        composition: 'Candid portrait or usage scene with clear space for a quote',
+        design_style: 'Human, editorial testimonial design',
+        promptInstruction: 'Prioritize a believable human moment and leave clean space for a testimonial quote overlay.'
+    },
+    {
+        label: 'Sale/Offer',
+        mood: 'Urgent and attention-grabbing',
+        lighting: 'High-contrast bright commercial lighting',
+        composition: 'Centered offer-focused composition with strong open space for pricing',
+        design_style: 'Bold promotional direct-response design',
+        promptInstruction: 'Create a visually immediate promotional scene with clear focal hierarchy and room for an offer or urgency overlay.'
+    }
+];
+
+export const getStyleAngle = (label) => STYLE_ANGLES.find(angle => angle.label === label) || null;
+
 export const adStyles = [
     // ========================================
     // Category 1: Trust & Authority

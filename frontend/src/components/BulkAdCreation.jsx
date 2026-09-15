@@ -5,6 +5,8 @@ import { ChevronRight, Loader, Film, Image, X } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { createCompleteAd, createFacebookCampaign, createFacebookAdSet, getRateLimitUsage } from '../lib/facebookApi';
 import { INTER_REQUEST_DELAY_MS, USAGE_WARN_THRESHOLD, delay, isRateLimitError, peakUsagePercent, rateLimitStopMessage } from '../lib/metaRateLimit';
+import { safeLocalStorageGet } from '../lib/safeLocalStorage';
+import { resolveNamingTemplate } from '../lib/namingTemplates';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -19,6 +21,8 @@ const displayDomain = (url) => {
         return url;
     }
 };
+
+const formatNamingDate = () => new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
 // 'LEARN_MORE' -> 'Learn More' — same values BulkAdCreation already sends to Meta
 // (AdCreativeStep.jsx's CTA_OPTIONS), just title-cased for a native-looking button.
@@ -61,6 +65,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // toast) would be a bigger, riskier change for what this needs —
     // self-contained here instead.
     const [removedStack, setRemovedStack] = useState([]);
+    const adNamingPattern = safeLocalStorageGet('adNamingPattern') || '{media_name} - H{headline_num}B{body_num}';
     const MAX_UNDO_STACK = 3;
 
     // Initialize ads based on creatives - generate all permutations
@@ -91,7 +96,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         const mediaLabel = isVideo ? 'Video' : 'Image';
                         permutations.push({
                             id: `ad_${Date.now()}_${creativeIndex}_${hIndex}_${bIndex}`,
-                            name: `${creative.name || `${mediaLabel} ${creativeIndex + 1}`} - H${hIndex + 1}B${bIndex + 1}`,
+                            name: resolveNamingTemplate(adNamingPattern, {
+                                campaign_name: campaignData.name || '',
+                                ad_set_name: adsetData.name || '',
+                                headline_num: hIndex + 1,
+                                body_num: bIndex + 1,
+                                media_name: creative.name || `${mediaLabel} ${creativeIndex + 1}`,
+                                date: formatNamingDate(),
+                            }),
                             creativeId: creative.id,
                             headlineIndex: hIndex,
                             bodyIndex: bIndex,

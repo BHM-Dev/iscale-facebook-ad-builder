@@ -73,6 +73,8 @@ def build_comprehensive_prompt(request: ImageGenerationRequest) -> str:
 
     # Get template metadata
     template_type = request.template.get('type') if request.template else None
+    angle = request.template.get('angle') if request.template else None
+    angle_instruction = request.template.get('prompt_instruction') if request.template else None
 
     if template_type == 'style':
         # Style archetype - has metadata fields
@@ -99,6 +101,8 @@ def build_comprehensive_prompt(request: ImageGenerationRequest) -> str:
 
     # Add template art direction
     parts.append(f"Art Direction: {mood}, {lighting}, {composition}, {design_style}")
+    if angle:
+        parts.append(f"Persuasion angle: {angle}. {angle_instruction or 'Compose the visual to support this angle without adding text or graphic overlays.'}")
 
     # Quality standards
     parts.append("High quality, photorealistic, 4k, advertising standard")
@@ -440,6 +444,8 @@ async def _build_ai_image_prompt(
         product_name = request.product.get("name", "") if request.product else ""
         mood = request.template.get("mood", "engaging") if request.template else "engaging"
         lighting = request.template.get("lighting", "natural") if request.template else "natural"
+        angle = request.template.get("angle") if request.template else None
+        angle_instruction = request.template.get("prompt_instruction") if request.template else None
         niche = (request.niche or "").strip()
         image_mode = (request.imageMode or "iterate").strip()
         brand_colors = request.brand.get("colors") if request.brand else None
@@ -537,10 +543,11 @@ Rules by category — include the matching action AND the matching negative-anch
             f"Niche: {niche or product_name}\n"
             f"Lighting mood: {lighting}\n"
             f"Overall mood: {mood}"
-            f"{brand_color_line}\n"
-            f"Composition: {composition_note}\n"
-            f"Overlay zone (must be respected in the scene): {overlay_zone}\n\n"
-            f"Write the image prompt."
+            + (f"\nPersuasion angle: {angle}. {angle_instruction or ''}" if angle else "")
+            + f"{brand_color_line}\n"
+            + f"Composition: {composition_note}\n"
+            + f"Overlay zone (must be respected in the scene): {overlay_zone}\n\n"
+            + f"Write the image prompt."
         )
 
         # One retry on transient failures (e.g. "Connection error" — confirmed live

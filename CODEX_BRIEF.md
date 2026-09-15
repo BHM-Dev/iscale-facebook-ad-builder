@@ -1,4 +1,4 @@
-# Naming templates for Campaign Name and Ad Set Name
+# Naming templates for Campaign Name, Ad Set Name, and generated Ads
 
 Item #1 of the post-research build order (`AdBuilder-CrossPlatform-Launch-UX-Synthesis.md`, recommendation
 #2 — originally ranked #1 for smallest scope + highest daily-use impact). Solves Joel's actual daily pain:
@@ -7,7 +7,8 @@ Campaigns builder (`/facebook-campaigns`).
 
 Matches AdStellar's own naming-template pattern (documented in `AdBuilder-AdStellar-Competitive-Research.md`
 §4a): a saved named template containing `{token}` placeholders, with a live-resolved preview shown before
-the resolved value is applied to the real name field.
+the resolved value is applied to the real name field. Campaign and Ad Set templates are user-managed;
+generated Ad names use the same resolver with a safe default pattern.
 
 No migration needed — templates persist to `localStorage`, matching the synthesis doc's explicit guidance
 ("this does not need a migration to deliver value").
@@ -43,6 +44,13 @@ export function getSavedTemplates(scope) { ... }
 export function saveNamingTemplate(scope, label, pattern) { ... }
 export function deleteNamingTemplate(scope, id) { ... }
 ```
+
+The resolver is also used for generated Ad names in `BulkAdCreation.jsx`. The optional localStorage key
+`adNamingPattern` can provide the pattern; when absent, the safe default is
+`{media_name} - H{headline_num}B{body_num}`. Supported Ad-level Dynamic Tags are
+`{campaign_name}`, `{ad_set_name}`, `{headline_num}`, `{body_num}`, `{media_name}`, and `{date}`.
+Unknown tokens remain literal. Per-asset Placeholder Text tags such as `{offer}` and `{concept}` are
+Phase 2 and are intentionally not supported here because they require a DriveAsset migration.
 
 ## 2. Shared component — `frontend/src/components/NamingTemplateField.jsx` (new file)
 

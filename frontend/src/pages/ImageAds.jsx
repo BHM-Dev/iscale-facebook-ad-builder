@@ -8,6 +8,7 @@ import BrandSelectionStep from '../components/steps/BrandSelectionStep';
 import ProductSelectionStep from '../components/steps/ProductSelectionStep';
 import ProfileSelectionStep from '../components/steps/ProfileSelectionStep';
 import StyleSelector from '../components/StyleSelector';
+import AngleStyleControls from '../components/AngleStyleControls';
 import AdPreviewPanel from '../components/AdPreviewPanel';
 import PromptReviewModal from '../components/PromptReviewModal';
 import PushToMetaModal from '../components/PushToMetaModal';
@@ -495,7 +496,7 @@ export default function ImageAds() {
                     adBundleId: img.adBundleId,
                     niche: wizardData.niche || null,
                     profileId: wizardData.profile?.id || null,
-                    angle: copies[0]?.angle || null,  // learning loop: which angle produced this creative
+                    angle: wizardData.template?.angle || copies[0]?.angle || null,  // selected visual angle, then copy angle fallback
                 }));
 
                 const saveResponse = await authFetch(`${API_URL}/generated-ads/batch`, {
@@ -758,13 +759,22 @@ export default function ImageAds() {
                             </button>
                         </div>
 
+                        <AngleStyleControls
+                            value={wizardData.template || {}}
+                            onChange={(nextStyle) => updateData('template', { type: 'style', ...nextStyle })}
+                        />
+
                         {/* Conditional Rendering */}
                         {templateMode === 'style' ? (
                             <StyleSelector
                                 onSelect={(style) => {
                                     updateData('template', {
                                         type: 'style',
-                                        ...style
+                                        ...style,
+                                        ...(wizardData.template?.angle ? {
+                                            angle: wizardData.template.angle,
+                                            prompt_instruction: wizardData.template.prompt_instruction,
+                                        } : {})
                                     });
                                     nextStep();
                                 }}

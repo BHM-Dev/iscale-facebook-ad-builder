@@ -180,6 +180,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const [selectedDriveAssetIds, setSelectedDriveAssetIds] = useState(new Set());
     const [driveSearchTerm, setDriveSearchTerm] = useState('');
     const [driveFormatFilter, setDriveFormatFilter] = useState('');
+    const [showDriveLibraryHint, setShowDriveLibraryHint] = useState(
+        () => safeLocalStorageGet('driveLibraryHintSeen') !== 'true'
+    );
     const [copyFieldsTouched, setCopyFieldsTouched] = useState({
         headlines: false,
         bodies: false,
@@ -234,6 +237,17 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         } finally {
             setDriveLibraryLoading(false);
         }
+    };
+
+    // Load the count as soon as Step 4 is visited, not only after the modal is
+    // opened, so the primary action is discoverable and accurately labelled.
+    useEffect(() => {
+        fetchDriveAssets();
+    }, []);
+
+    const dismissDriveLibraryHint = () => {
+        setShowDriveLibraryHint(false);
+        safeLocalStorageSet('driveLibraryHintSeen', 'true');
     };
 
     const openDriveLibraryModal = () => {
@@ -1018,6 +1032,30 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             Ad Media (Images or Videos) *
                         </label>
                         <div className="flex items-center gap-4">
+                            <div className="relative">
+                            {showDriveLibraryHint && (
+                                <div className="absolute right-0 bottom-full z-10 mb-2 w-64 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-left text-xs text-indigo-900 shadow-md">
+                                    <button
+                                        type="button"
+                                        onClick={dismissDriveLibraryHint}
+                                        className="absolute right-2 top-1 text-indigo-400 hover:text-indigo-700"
+                                        aria-label="Dismiss Drive library hint"
+                                    >
+                                        ×
+                                    </button>
+                                    <strong className="block pr-3">New: browse your synced Drive assets here</strong>
+                                    <span className="block mt-1">Your shared creative library is ready for bulk ad launches.</span>
+                                </div>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => { dismissDriveLibraryHint(); openDriveLibraryModal(); }}
+                                className="flex items-center gap-1.5 text-sm text-indigo-700 font-semibold hover:text-indigo-900"
+                            >
+                                <FolderOpen size={16} />
+                                Browse Drive Creative Library ({driveAssets.length})
+                            </button>
+                            </div>
                             <button
                                 type="button"
                                 onClick={openLibraryModal}
@@ -1025,14 +1063,6 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             >
                                 <BookOpen size={16} />
                                 Browse Generated Ads Library
-                            </button>
-                            <button
-                                type="button"
-                                onClick={openDriveLibraryModal}
-                                className="flex items-center gap-1.5 text-sm text-amber-600 font-medium hover:text-amber-800"
-                            >
-                                <FolderOpen size={16} />
-                                Browse Drive Creative Library
                             </button>
                         </div>
                     </div>
