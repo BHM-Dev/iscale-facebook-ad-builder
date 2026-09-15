@@ -8,20 +8,17 @@ import { useCampaign } from '../context/CampaignContext';
 import { VERTICAL_FILTERS } from '../lib/verticals';
 import AskAiWidget from './AskAiWidget';
 
-// BHM mark — gradient circle with horizon lines, sized for 40×40 container
+// BHM mark — flat single-color circle with horizon lines, matching
+// bhm_logo_1color_blue@3x.png (#301A5B), sized for 40×40 container
 function BHMLogo({ size = 40 }) {
     return (
         <svg width={size} height={size} viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
             <defs>
-                <linearGradient id="bhm-grad" x1="20" y1="0" x2="20" y2="40" gradientUnits="userSpaceOnUse">
-                    <stop offset="0%" stopColor="#F0547A" />
-                    <stop offset="100%" stopColor="#FFAA00" />
-                </linearGradient>
                 <clipPath id="bhm-circle">
                     <circle cx="20" cy="20" r="18" />
                 </clipPath>
             </defs>
-            <circle cx="20" cy="20" r="18" fill="url(#bhm-grad)" />
+            <circle cx="20" cy="20" r="18" fill="#301A5B" />
             {/* Horizon lines */}
             <g clipPath="url(#bhm-circle)" opacity="0.92">
                 <rect x="8"  y="18" width="24" height="2.2" rx="1.1" fill="white" />
