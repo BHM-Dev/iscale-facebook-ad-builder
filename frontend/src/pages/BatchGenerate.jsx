@@ -590,7 +590,7 @@ export default function BatchGenerate() {
   const hasResults = Object.keys(results).length > 0;
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
+    <div className="max-w-[1800px] mx-auto space-y-8">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
@@ -1063,7 +1063,7 @@ export default function BatchGenerate() {
             )}
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-4">
             {Object.entries(results).map(([key, result]) => {
               const { variantId, sizeId } = parseResultKey(key);
               const variant = variants.find(v => v.id === variantId);

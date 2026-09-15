@@ -18,7 +18,7 @@ export default function BrandSelectionStep({ brands = [], selectedBrand, onSelec
         <div>
             <h3 className="text-xl font-bold mb-4">Select Your Brand</h3>
             <p className="text-gray-600 mb-6">Choose the brand for this ad campaign</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl">
                 {brands.map(brand => (
                     <div
                         key={brand.id}

@@ -24,7 +24,7 @@ export default function ProductSelectionStep({ products, selectedProduct, onSele
                     </Link>
                 </div>
             ) : (
-                <div className="space-y-3">
+                <div className="space-y-3 max-w-2xl">
                     {products.map(product => (
                         <div
                             key={product.id}

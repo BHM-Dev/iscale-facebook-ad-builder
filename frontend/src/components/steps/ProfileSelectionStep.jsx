@@ -11,7 +11,7 @@ export default function ProfileSelectionStep({ profiles, selectedProfile, onSele
                     No customer profiles found for this brand. Please add profiles first.
                 </div>
             ) : (
-                <div className="space-y-3">
+                <div className="space-y-3 max-w-2xl">
                     {profiles.map(profile => (
                         <div
                             key={profile.id}

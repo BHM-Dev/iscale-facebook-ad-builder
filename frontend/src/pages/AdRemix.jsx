@@ -745,7 +745,7 @@ export default function AdRemix() {
 
     return (
         <>
-        <div className="max-w-5xl mx-auto">
+        <div className="max-w-[1800px] mx-auto">
             {/* Header */}
             <div className="mb-8">
                 <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
@@ -926,7 +926,7 @@ export default function AdRemix() {
                             </div>
                         )}
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-3xl">
                             {/* Path A: From a live winning ad */}
                             <Link
                                 to="/campaign-performance"
@@ -1061,7 +1061,7 @@ export default function AdRemix() {
                             </div>
                         )}
 
-                        <div className="space-y-4">
+                        <div className="space-y-4 max-w-2xl">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-2">
                                     Offer / Hook *
