@@ -51,11 +51,11 @@ export default function Layout() {
     const menuItems = [
         { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
         ...(hasPermission('pnl:read') ? [{ icon: DollarSign, label: 'Profit/Loss', path: '/pnl' }] : []),
-        { icon: Search, label: 'Research', path: '/research' },
-        { icon: Wand2, label: 'Build Creatives', path: '/build-creatives' },
-        { icon: ShoppingBag, label: 'Brands', path: '/brand-hub' },
-        { icon: Library, label: 'Libraries', path: '/libraries' },
-        { icon: Target, label: 'Facebook', path: '/facebook-hub' },
+        { icon: Search, label: 'Research', path: '/research', matchPrefixes: ['/research/'] },
+        { icon: Wand2, label: 'Build Creatives', path: '/build-creatives', matchPaths: ['/image-ads', '/batch-generate', '/ad-remix', '/video-ads'] },
+        { icon: ShoppingBag, label: 'Brands', path: '/brand-hub', matchPaths: ['/brands', '/products', '/profiles'] },
+        { icon: Library, label: 'Libraries', path: '/libraries', matchPaths: ['/generated-ads', '/creative-library', '/copy-library'] },
+        { icon: Target, label: 'Facebook', path: '/facebook-hub', matchPaths: ['/campaign-performance', '/auto-pause-rules', '/facebook-campaigns'] },
     ];
 
     const formatAccountId = (account) => {
@@ -100,7 +100,8 @@ export default function Layout() {
                         const Icon = item.icon;
 
                         const isActive = location.pathname === item.path ||
-                            (item.path === '/research' && location.pathname.startsWith('/research/'));
+                            (item.matchPaths && item.matchPaths.includes(location.pathname)) ||
+                            (item.matchPrefixes && item.matchPrefixes.some(prefix => location.pathname.startsWith(prefix)));
                         return (
                             <Link
                                 key={item.path}
