@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useToast } from '../context/ToastContext';
 import { authFetch } from '../lib/facebookApi';
 import BatchPushModal from '../components/BatchPushModal';
+import PromptReviewModal from '../components/PromptReviewModal';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -324,6 +325,7 @@ export default function BatchGenerate() {
   const [generatingTotal, setGeneratingTotal] = useState(0);
   const [batchPushOpen, setBatchPushOpen] = useState(false);
   const [generatingAIVariants, setGeneratingAIVariants] = useState(false);
+  const [promptReview, setPromptReview] = useState(null);
 
   // ── Ref image upload ────────────────────────────────────────────────────────
   const uploadRefImage = useCallback(async (file) => {
@@ -397,29 +399,35 @@ export default function BatchGenerate() {
     setVariants(prev => prev.map(v => v.id === id ? { ...v, [field]: value } : v));
 
   // ── Generation ──────────────────────────────────────────────────────────────
-  const generateOne = useCallback(async (variant, sizeConfig) => {
+  // imageMode:
+  //   "style_ref" — reference image provides visual style influence only;
+  //                 backend (Sonnet) generates a fresh scene prompt around the niche.
+  //   no reference — text-to-image; Pexels for place/property niches, kie.ai for trades.
+  const buildGenerationPayload = useCallback((variant, sizeConfig, reviewedPrompt = null) => ({
+    ...(niche ? { niche } : {}),
+    imageMode: 'style_ref',
+    count: 1,
+    imageSizes: [{ width: sizeConfig.width, height: sizeConfig.height, name: sizeConfig.label }],
+    copy: { headline: variant.headline, body: variant.body, cta: variant.cta },
+    ...(refImageUrl ? { productShots: [refImageUrl], useProductImage: true } : {}),
+    ...(overlayEnabled ? {
+      overlay_enabled: true,
+      overlay_niche_line: overlayNicheLine,
+      overlay_offer_line: overlayOfferLine,
+      overlay_cta: variant.cta,
+      ...(overlayLogoUrl ? { overlay_logo_url: overlayLogoUrl } : {}),
+    } : {}),
+    // Non-null only for the exact size that was previewed/approved (runGeneration
+    // enforces this) — the backend seeds just that size's aspect-ratio bucket, so
+    // any other size still resolves its own aspect-ratio-correct prompt.
+    reviewedPrompt,
+  }), [niche, refImageUrl, overlayEnabled, overlayNicheLine, overlayOfferLine, overlayLogoUrl]);
+
+  const generateOne = useCallback(async (variant, sizeConfig, reviewedPrompt = null) => {
     const key = `${variant.id}-${sizeConfig.id}`;
     setResults(prev => ({ ...prev, [key]: { status: 'generating', imageUrl: null, error: null } }));
 
-    // imageMode:
-    //   "style_ref" — reference image provides visual style influence only;
-    //                 backend (Sonnet) generates a fresh scene prompt around the niche.
-    //   no reference — text-to-image; Pexels for place/property niches, kie.ai for trades.
-    const payload = {
-      ...(niche ? { niche } : {}),
-      imageMode: 'style_ref',
-      count: 1,
-      imageSizes: [{ width: sizeConfig.width, height: sizeConfig.height, name: sizeConfig.label }],
-      copy: { headline: variant.headline, body: variant.body, cta: variant.cta },
-      ...(refImageUrl ? { productShots: [refImageUrl], useProductImage: true } : {}),
-      ...(overlayEnabled ? {
-        overlay_enabled: true,
-        overlay_niche_line: overlayNicheLine,
-        overlay_offer_line: overlayOfferLine,
-        overlay_cta: variant.cta,
-        ...(overlayLogoUrl ? { overlay_logo_url: overlayLogoUrl } : {}),
-      } : {}),
-    };
+    const payload = buildGenerationPayload(variant, sizeConfig, reviewedPrompt);
 
     try {
       const res = await authFetch(`${API_URL}/generated-ads/generate-image`, {
@@ -470,22 +478,17 @@ export default function BatchGenerate() {
       setResults(prev => ({ ...prev, [key]: { status: 'failed', imageUrl: null, error: msg } }));
       return 'failed';
     }
-  }, [niche, refImageUrl, overlayEnabled, overlayNicheLine, overlayOfferLine, overlayLogoUrl]);
+  }, [niche, overlayEnabled, overlayNicheLine, overlayOfferLine, overlayLogoUrl, buildGenerationPayload]);
 
-  const handleGenerate = useCallback(async () => {
-    // When overlay is on, headline is optional — the niche label + offer line carry the messaging.
-    // When overlay is off, headline is required as the primary ad copy.
-    const valid = overlayEnabled
+  // When overlay is on, headline is optional — the niche label + offer line carry the messaging.
+  // When overlay is off, headline is required as the primary ad copy.
+  const getValidVariants = useCallback(() => (
+    overlayEnabled
       ? variants.filter(v => v.headline.trim() || v.body.trim() || overlayNicheLine.trim() || overlayOfferLine.trim())
-      : variants.filter(v => v.headline.trim());
-    if (valid.length === 0) {
-      showError(overlayEnabled
-        ? 'Fill in at least one variant or add a Niche Label / Offer Line to the overlay'
-        : 'Add at least one headline before generating');
-      return;
-    }
+      : variants.filter(v => v.headline.trim())
+  ), [variants, overlayEnabled, overlayNicheLine, overlayOfferLine]);
 
-    const sizes = SIZE_OPTIONS.filter(s => selectedSizes.includes(s.id));
+  const runGeneration = useCallback(async (valid, sizes, reviewedPrompt = null, reviewedSizeId = null) => {
     const total = valid.length * sizes.length;
 
     setRunning(true);
@@ -508,7 +511,12 @@ export default function BatchGenerate() {
     let failed = 0;
     for (const variant of valid) {
       for (const size of sizes) {
-        const outcome = await generateOne(variant, size);
+        // Batch Generate fires one HTTP request per size (unlike Image Ad's single
+        // multi-size request), so the reviewed prompt is only valid for the exact
+        // size it was resolved for — other sizes must resolve their own
+        // aspect-ratio-correct prompt, not inherit this one.
+        const promptForThisSize = size.id === reviewedSizeId ? reviewedPrompt : null;
+        const outcome = await generateOne(variant, size, promptForThisSize);
         if (outcome === 'done') succeeded++;
         else failed++;
         completed++;
@@ -525,7 +533,48 @@ export default function BatchGenerate() {
     } else {
       showSuccess(`Done — ${succeeded} saved, ${failed} failed`);
     }
-  }, [variants, selectedSizes, generateOne, overlayEnabled, overlayNicheLine, overlayOfferLine, showSuccess, showError]);
+  }, [generateOne, showSuccess, showError]);
+
+  const handleGenerateClick = useCallback(async () => {
+    const valid = getValidVariants();
+    if (valid.length === 0) {
+      showError(overlayEnabled
+        ? 'Fill in at least one variant or add a Niche Label / Offer Line to the overlay'
+        : 'Add at least one headline before generating');
+      return;
+    }
+    const sizes = SIZE_OPTIONS.filter(s => selectedSizes.includes(s.id));
+    if (sizes.length === 0) { showError('Select at least one size'); return; }
+
+    // Preview the prompt for the Square size (or the first selected size if Square
+    // isn't picked) — copy doesn't affect the scene prompt (only niche/mood/lighting
+    // do), so every variant shares this same resolved prompt for a given size.
+    const previewSize = sizes.find(s => s.id === 'square') || sizes[0];
+    const previewPayload = buildGenerationPayload(valid[0], previewSize);
+    setPromptReview({ status: 'loading', valid, sizes, previewSizeId: previewSize.id, prompt: '', payload: previewPayload });
+    try {
+      const response = await authFetch(`${API_URL}/generated-ads/prepare-image-prompt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(previewPayload),
+      });
+      if (!response.ok) throw new Error(`Prompt preparation failed (${response.status})`);
+      const data = await response.json();
+      if (!data.prompt) throw new Error('Prompt preparation returned no prompt');
+      setPromptReview({ status: 'ready', valid, sizes, previewSizeId: previewSize.id, prompt: data.prompt || '' });
+    } catch (error) {
+      console.error('Prompt review failed; generating directly:', error);
+      setPromptReview(null);
+      runGeneration(valid, sizes);
+    }
+  }, [getValidVariants, overlayEnabled, selectedSizes, buildGenerationPayload, runGeneration, showError]);
+
+  const approvePromptReview = useCallback(() => {
+    if (!promptReview?.valid) return;
+    const { valid, sizes, prompt, previewSizeId } = promptReview;
+    setPromptReview(null);
+    runGeneration(valid, sizes, prompt, previewSizeId);
+  }, [promptReview, runGeneration]);
 
   const handleRetry = useCallback(async (resultKey) => {
     const { variantId, sizeId } = parseResultKey(resultKey);
@@ -611,7 +660,7 @@ export default function BatchGenerate() {
         </div>
         {filledVariants.length > 0 && !running && (
           <button
-            onClick={handleGenerate}
+            onClick={handleGenerateClick}
             className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity"
             style={{ backgroundColor: '#2D2463' }}
           >
@@ -1025,7 +1074,7 @@ export default function BatchGenerate() {
 
           {/* Generate button */}
           <button
-            onClick={handleGenerate}
+            onClick={handleGenerateClick}
             disabled={running || filledVariants.length === 0}
             className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity disabled:opacity-40"
             style={{ backgroundColor: '#2D2463' }}
@@ -1167,6 +1216,14 @@ export default function BatchGenerate() {
           />
         );
       })()}
+
+      {promptReview && (
+        <PromptReviewModal
+          promptReview={promptReview}
+          onCancel={() => setPromptReview(null)}
+          onApprove={approvePromptReview}
+        />
+      )}
     </div>
   );
 }

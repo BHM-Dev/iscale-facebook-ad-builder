@@ -947,10 +947,16 @@ async def prepare_image_prompt(
     current_user: User = Depends(require_permission("ads:write"))
 ):
     """Resolve the representative image prompt without spending image-generation credits."""
+    # Preview whichever size the caller actually intends to generate — defaults to
+    # Square/1:1 (1080x1080) if imageSizes wasn't sent, but honors the first entry
+    # otherwise so the preview stays accurate even if Square isn't selected.
+    first_size = request.imageSizes[0] if request.imageSizes else {}
+    width = first_size.get("width", 1080)
+    height = first_size.get("height", 1080)
     prompt = await _get_prompt_for_size(
         request,
-        width=1080,
-        height=1080,
+        width=width,
+        height=height,
         has_input_image=bool(request.useProductImage and request.productShots),
     )
     return {"prompt": prompt}
@@ -1025,10 +1031,13 @@ async def generate_image(
     # Custom prompt bypasses AI entirely.
     _prompt_cache: Dict[str, str] = {}
     if request.reviewedPrompt:
-        # Only pre-seed the Square/1:1 bucket — prepare-image-prompt only ever resolves
-        # that size. Other requested sizes (Vertical, Story) still resolve their own
-        # aspect-ratio-correct prompt below instead of inheriting the Square framing.
-        _prompt_cache["1:1"] = request.reviewedPrompt
+        # Only pre-seed the bucket matching whichever size prepare-image-prompt actually
+        # previewed (the first entry in imageSizes, by convention the same size both
+        # callers preview) — any other requested size still resolves its own
+        # aspect-ratio-correct prompt below instead of inheriting the previewed framing.
+        _reviewed_size = request.imageSizes[0] if request.imageSizes else {}
+        _reviewed_ar = _get_aspect_ratio(_reviewed_size.get("width", 1080), _reviewed_size.get("height", 1080))
+        _prompt_cache[_reviewed_ar] = request.reviewedPrompt
 
     async def _get_cached_prompt_for_size(w: int, h: int) -> str:
         if request.customPrompt:
