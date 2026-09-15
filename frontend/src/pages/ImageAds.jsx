@@ -496,7 +496,14 @@ export default function ImageAds() {
                     adBundleId: img.adBundleId,
                     niche: wizardData.niche || null,
                     profileId: wizardData.profile?.id || null,
-                    angle: wizardData.template?.angle || copies[0]?.angle || null,  // selected visual angle, then copy angle fallback
+                    // NOTE: this is the learning-loop copy-attribution angle (e.g. "Structure
+                    // Gap"), consumed by GeneratedAds.jsx's Top Angles table and the AnglePicker's
+                    // "Recommended" sort. The new visual/persuasion Angle picked in
+                    // AngleStyleControls (wizardData.template.angle, e.g. "Testimonial") is a
+                    // different taxonomy and deliberately NOT written here — it already reaches
+                    // generation via request.template.angle for prompt-building; persisting it for
+                    // its own analytics needs a dedicated column, not this one.
+                    angle: copies[0]?.angle || null,
                 }));
 
                 const saveResponse = await authFetch(`${API_URL}/generated-ads/batch`, {
@@ -768,13 +775,18 @@ export default function ImageAds() {
                         {templateMode === 'style' ? (
                             <StyleSelector
                                 onSelect={(style) => {
+                                    // Picking a canned style replaces mood/lighting/composition/
+                                    // design_style wholesale — carrying the old Angle's label and
+                                    // prompt_instruction forward here previously left the dropdown
+                                    // still showing e.g. "Testimonial" while the actual visual
+                                    // fields belonged to a different style, sending contradictory
+                                    // instructions into the AI prompt. Clear the angle instead so
+                                    // the dropdown honestly resets to "Choose an angle…".
                                     updateData('template', {
                                         type: 'style',
                                         ...style,
-                                        ...(wizardData.template?.angle ? {
-                                            angle: wizardData.template.angle,
-                                            prompt_instruction: wizardData.template.prompt_instruction,
-                                        } : {})
+                                        angle: null,
+                                        prompt_instruction: null,
                                     });
                                     nextStep();
                                 }}

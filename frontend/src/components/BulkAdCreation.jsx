@@ -121,7 +121,11 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             // Fallback if no creatives (shouldn't happen due to validation)
             setAdsData([]);
         }
-    }, [creativeData.creatives, creativeData.headlines, creativeData.bodies]);
+    // campaignData.name/adsetData.name are baked into each permutation's name —
+    // without them as deps, going Back to fix a typo in either name and returning
+    // forward (without touching creatives/headlines/bodies) would silently keep
+    // launching ads named after the pre-edit value.
+    }, [creativeData.creatives, creativeData.headlines, creativeData.bodies, campaignData.name, adsetData.name]);
 
     // Format detection — drives multi-adset launch logic
     const feedAds    = adsData.filter(ad => (ad.format || 'feed') !== 'stories');

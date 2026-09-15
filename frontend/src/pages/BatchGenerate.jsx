@@ -461,7 +461,12 @@ export default function BatchGenerate() {
             sizeName: sizeConfig.label,
             dimensions: `${sizeConfig.width}x${sizeConfig.height}`,
             mediaType: 'image',
-            angle: styleSettings.angle || null,
+            // NOTE: the visual/persuasion Angle picked above (styleSettings.angle, e.g.
+            // "Testimonial") is deliberately not written to the `angle` field — that column
+            // is the learning-loop copy-attribution angle read by GeneratedAds.jsx's Top
+            // Angles table across every generation flow, and mixing in this different
+            // taxonomy would silently pollute that profit-by-angle rollup. The visual angle
+            // already reaches generation via the `template` field for prompt-building.
             // Persist overlay settings so Iterate/Remix can reconstruct what was baked in
             niche,
             overlayEnabled,

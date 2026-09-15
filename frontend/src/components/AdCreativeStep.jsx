@@ -254,7 +254,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         setSelectedDriveAssetIds(new Set());
         setDriveSearchTerm('');
         setDriveFormatFilter('');
-        fetchDriveAssets();
+        // Step-mount already fetches this for the button's live count — avoid a
+        // second, redundant request (and a loading-state flicker) on every open.
         setShowDriveLibraryModal(true);
     };
 
