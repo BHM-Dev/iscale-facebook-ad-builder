@@ -2030,7 +2030,7 @@ function QuickGeneratePanel({
     ];
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 min-w-0">
             <div>
                 <h3 className="text-xl font-bold text-gray-900 mb-1">Quick Generate</h3>
                 <p className="text-gray-500 text-sm">Pick a brand and template, paste your copy, and generate images immediately.</p>
@@ -2146,7 +2146,7 @@ function QuickGeneratePanel({
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
                                 CTA
-                                <span className="ml-1 text-xs text-gray-400 font-normal">optional</span>
+                                <span className="ml-1 text-xs text-gray-400 font-normal">optional — defaults to GET MY QUOTE</span>
                             </label>
                             <input
                                 type="text"
