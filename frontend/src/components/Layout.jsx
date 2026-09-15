@@ -195,7 +195,15 @@ export default function Layout() {
                             </button>
                         </div>
                     )}
-                    {adAccounts.length > 0 && (
+                    {/* This banner scopes Dashboard/P&L/performance views only (activeAccountId,
+                        its own CampaignProvider state) — it does NOT affect the Facebook Campaigns
+                        ad-launch wizard, which reads a completely separate `selectedAdAccount` from
+                        its own nested CampaignProvider (see FacebookCampaigns.jsx). Showing both on
+                        the same page reads as one "current account" control when it isn't — Steve
+                        hit this directly: switching this dropdown left the wizard's own Ad Account
+                        step and campaign list untouched, since they don't share state. Suppressed
+                        here since Step 1 of that wizard is its own equivalent selector. */}
+                    {adAccounts.length > 0 && location.pathname !== '/facebook-campaigns' && (
                         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
                             <div className="flex items-center gap-3">
                                 <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gray-100 text-gray-700">
