@@ -5,8 +5,9 @@ import { ChevronRight, Loader, Film, Image, X } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { createCompleteAd, createFacebookCampaign, createFacebookAdSet, getRateLimitUsage } from '../lib/facebookApi';
 import { INTER_REQUEST_DELAY_MS, USAGE_WARN_THRESHOLD, delay, isRateLimitError, peakUsagePercent, rateLimitStopMessage } from '../lib/metaRateLimit';
-import { safeLocalStorageGet } from '../lib/safeLocalStorage';
+import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 import { resolveNamingTemplate } from '../lib/namingTemplates';
+import NamingTemplateField from './NamingTemplateField';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -32,7 +33,7 @@ const formatCtaLabel = (cta) => (cta || 'LEARN_MORE')
     .join(' ');
 
 const BulkAdCreation = ({ onNext, onBack }) => {
-    const { showWarning, showError } = useToast();
+    const { showWarning, showError, showSuccess } = useToast();
     const { authFetch } = useAuth();
     const { campaignData, adsetData, creativeData, adsData, setAdsData, selectedAdAccount } = useCampaign();
     const [loading, setLoading] = useState(false);
@@ -65,8 +66,61 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // toast) would be a bigger, riskier change for what this needs —
     // self-contained here instead.
     const [removedStack, setRemovedStack] = useState([]);
-    const adNamingPattern = safeLocalStorageGet('adNamingPattern') || '{media_name} - H{headline_num}B{body_num}';
+    // Was read-only from localStorage with no in-app control — Joel could only
+    // change it by hand-editing browser storage. NamingTemplateField below
+    // gives it the same Templates UI Campaign/Ad Set naming already has
+    // (2931145), reusing the same resolveNamingTemplate/saveNamingTemplate
+    // infra — this field just needed the last bit of UI wiring.
+    const [adNamingPattern, setAdNamingPattern] = useState(
+        () => safeLocalStorageGet('adNamingPattern') || '{media_name} - H{headline_num}B{body_num}'
+    );
+    const handleAdNamingPatternChange = (value) => {
+        setAdNamingPattern(value);
+        safeLocalStorageSet('adNamingPattern', value);
+    };
+    const adNamingTokens = {
+        campaign_name: campaignData.name || '',
+        ad_set_name: adsetData.name || '',
+        headline_num: 1,
+        body_num: 1,
+        media_name: creativeData.creatives?.[0]?.name || 'Image 1',
+        date: formatNamingDate(),
+    };
+    const adNamingTokenList = [
+        { key: 'campaign_name', label: 'Campaign Name' },
+        { key: 'ad_set_name', label: 'Ad Set Name' },
+        { key: 'media_name', label: 'Media Name' },
+        { key: 'headline_num', label: 'Headline #' },
+        { key: 'body_num', label: 'Body #' },
+        { key: 'date', label: 'Date' },
+    ];
     const MAX_UNDO_STACK = 3;
+
+    // Tracks whichever pattern is actually baked into the CURRENT adsData —
+    // vs. adNamingPattern, which tracks whatever's live in the field right now.
+    // The two can diverge the instant Joel edits the field without clicking
+    // "Rename current ads," and that divergence needs to be visible (pre-push
+    // review, joel-perspective: P1 — a silent field with no bound-looking grid
+    // reads as either broken or already-applied; either way he could launch on
+    // stale names without realizing it).
+    const [lastAppliedNamingPattern, setLastAppliedNamingPattern] = useState(adNamingPattern);
+
+    // Shared by initial generation, the explicit re-apply action, and undo —
+    // one place computing a pattern-derived ad name so all three can never
+    // drift out of sync with each other.
+    const computeAdName = (pattern, { headlineIndex, bodyIndex, creativeId, mediaType }) => {
+        const creativeIndex = creativeData.creatives.findIndex(c => c.id === creativeId);
+        const creative = creativeIndex >= 0 ? creativeData.creatives[creativeIndex] : null;
+        const mediaLabel = mediaType === 'video' ? 'Video' : 'Image';
+        return resolveNamingTemplate(pattern, {
+            campaign_name: campaignData.name || '',
+            ad_set_name: adsetData.name || '',
+            headline_num: headlineIndex + 1,
+            body_num: bodyIndex + 1,
+            media_name: creative?.name || `${mediaLabel} ${creativeIndex + 1}`,
+            date: formatNamingDate(),
+        });
+    };
 
     // Initialize ads based on creatives - generate all permutations
     React.useEffect(() => {
@@ -92,18 +146,15 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             creativeData.creatives.forEach((creative, creativeIndex) => {
                 validHeadlines.forEach(({ index: hIndex }) => {
                     validBodies.forEach(({ index: bIndex }) => {
-                        const isVideo = creative.mediaType === 'video';
-                        const mediaLabel = isVideo ? 'Video' : 'Image';
                         permutations.push({
                             id: `ad_${Date.now()}_${creativeIndex}_${hIndex}_${bIndex}`,
-                            name: resolveNamingTemplate(adNamingPattern, {
-                                campaign_name: campaignData.name || '',
-                                ad_set_name: adsetData.name || '',
-                                headline_num: hIndex + 1,
-                                body_num: bIndex + 1,
-                                media_name: creative.name || `${mediaLabel} ${creativeIndex + 1}`,
-                                date: formatNamingDate(),
+                            name: computeAdName(adNamingPattern, {
+                                headlineIndex: hIndex,
+                                bodyIndex: bIndex,
+                                creativeId: creative.id,
+                                mediaType: creative.mediaType,
                             }),
+                            nameManuallyEdited: false,
                             creativeId: creative.id,
                             headlineIndex: hIndex,
                             bodyIndex: bIndex,
@@ -117,6 +168,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             });
 
             setAdsData(permutations);
+            setLastAppliedNamingPattern(adNamingPattern);
         } else {
             // Fallback if no creatives (shouldn't happen due to validation)
             setAdsData([]);
@@ -125,6 +177,17 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // without them as deps, going Back to fix a typo in either name and returning
     // forward (without touching creatives/headlines/bodies) would silently keep
     // launching ads named after the pre-edit value.
+    //
+    // Deliberately NOT depending on adNamingPattern here even though it's now
+    // editable on this same screen (see the field below) — this effect fully
+    // regenerates `adsData` from scratch, which would silently wipe any manual
+    // per-ad rename or exclusion Joel already made on the grid the moment he
+    // tweaks the pattern. Renaming the CURRENT batch to match a pattern change
+    // is instead an explicit action (applyNamingPatternToCurrentAds below),
+    // not an automatic side effect of typing in the field. This effect still
+    // reads whatever adNamingPattern holds AT THE TIME it fires (a fresh
+    // generation always uses the live field value), it just doesn't re-fire
+    // solely because that field changed.
     }, [creativeData.creatives, creativeData.headlines, creativeData.bodies, campaignData.name, adsetData.name]);
 
     // Format detection — drives multi-adset launch logic
@@ -163,14 +226,47 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             // Clamp — the list may have shrunk further (another exclude, or a
             // re-launch that regenerated adsData) since this one was removed.
             const insertAt = Math.min(entry.index, next.length);
-            next.splice(insertAt, 0, entry.ad);
+            // Re-derive the restored ad's name against whatever pattern is
+            // CURRENTLY applied to the rest of the batch (lastAppliedNamingPattern,
+            // not necessarily what's live in the field) — otherwise an ad excluded
+            // before a "Rename current ads" click comes back on the stale pattern,
+            // silently mismatched against every other ad in the grid with no
+            // indication anything's off (pre-push review, code-auditor: MEDIUM).
+            // Skipped for an ad Joel manually renamed by hand — that's a deliberate
+            // choice, not a pattern artifact, and undo should restore exactly what
+            // he typed, not overwrite it.
+            const restoredAd = entry.ad.nameManuallyEdited
+                ? entry.ad
+                : { ...entry.ad, name: computeAdName(lastAppliedNamingPattern, entry.ad) };
+            next.splice(insertAt, 0, restoredAd);
             return next;
         });
         setRemovedStack(prev => prev.filter(r => r.key !== key));
     };
 
     const updateAdName = (index, name) => {
-        setAdsData(prev => prev.map((ad, i) => i === index ? { ...ad, name } : ad));
+        setAdsData(prev => prev.map((ad, i) => i === index ? { ...ad, name, nameManuallyEdited: true } : ad));
+    };
+
+    // Explicit, opt-in re-name of the CURRENT batch against whatever pattern is
+    // in the field right now — every other field (exclusions already reflected
+    // in adsData's length, media, headline/body index) is left untouched, only
+    // `name` is recomputed. Deliberately a button click, not a side effect of
+    // typing in the field (see the naming-pattern effect-deps comment above).
+    // Overwrites even manually-renamed ads — Joel clicked an action explicitly
+    // labeled "using this pattern," covering every ad currently in the grid, so
+    // this is the one place a manual rename is expected to be replaced; the
+    // nameManuallyEdited flag resets since the name is pattern-derived again.
+    const applyNamingPatternToCurrentAds = () => {
+        setAdsData(prev => prev.map(ad => {
+            return {
+                ...ad,
+                name: computeAdName(adNamingPattern, ad),
+                nameManuallyEdited: false,
+            };
+        }));
+        setLastAppliedNamingPattern(adNamingPattern);
+        showSuccess(`Renamed ${adsData.length} ad${adsData.length !== 1 ? 's' : ''} using the new pattern.`);
     };
 
     const handleSubmit = async () => {
@@ -819,6 +915,55 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         );
                     })()}
                 </div>
+            </div>
+
+            {/* Ad naming pattern — previously only settable by hand-editing the
+                adNamingPattern localStorage key, no in-app control at all. Changing
+                it here does NOT retroactively touch the ads already listed below
+                (that would silently wipe manual renames/exclusions) — the button
+                applies it to the current batch on purpose. The banner below is what
+                makes that two-step model visible instead of silent: without it,
+                Joel could edit the field, see no change in the grid, and assume
+                either "broken" or "already applied" — and launch on stale names
+                either way (pre-push review, joel-perspective: P1). */}
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-6">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Ad Naming Pattern
+                </label>
+                <NamingTemplateField
+                    value={adNamingPattern}
+                    onChange={handleAdNamingPatternChange}
+                    placeholder="{media_name} - H{headline_num}B{body_num}"
+                    tokens={adNamingTokens}
+                    tokenList={adNamingTokenList}
+                    scope="ad"
+                />
+                {adNamingPattern !== lastAppliedNamingPattern && adsData.length > 0 ? (
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
+                        <span className="text-xs font-medium text-amber-800">
+                            Pattern changed — the {adsData.length} ad{adsData.length !== 1 ? 's' : ''} below still use the previous one.
+                        </span>
+                        <button
+                            type="button"
+                            onClick={applyNamingPatternToCurrentAds}
+                            className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-semibold hover:bg-amber-700"
+                        >
+                            Rename {adsData.length} ad{adsData.length !== 1 ? 's' : ''} now
+                        </button>
+                    </div>
+                ) : (
+                    <div className="mt-2 flex items-center gap-3">
+                        <button
+                            type="button"
+                            onClick={applyNamingPatternToCurrentAds}
+                            disabled={adsData.length === 0}
+                            className="text-xs font-semibold text-amber-700 hover:text-amber-900 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                            Re-apply this pattern to the current {adsData.length} ad{adsData.length !== 1 ? 's' : ''}
+                        </button>
+                        <span className="text-xs text-gray-500">New ads generated after a Back/Next use it automatically.</span>
+                    </div>
+                )}
             </div>
 
             {!loading ? (
