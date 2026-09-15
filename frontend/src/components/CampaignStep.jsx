@@ -4,6 +4,7 @@ import { useCampaign, createDefaultCampaignData } from '../context/CampaignConte
 import { useToast } from '../context/ToastContext';
 import { getCampaigns } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
+import NamingTemplateField from './NamingTemplateField';
 
 const CAMPAIGN_OBJECTIVES = [
     { value: 'OUTCOME_SALES', label: 'Sales - Drive purchases and conversions' },
@@ -191,6 +192,16 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false }) => {
         onNext();
     };
 
+    const objectiveLabel = CAMPAIGN_OBJECTIVES.find(o => o.value === campaignData.objective)?.label.split(' - ')[0] || '';
+    const namingTokens = {
+        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        objective: objectiveLabel
+    };
+    const namingTokenList = [
+        { key: 'date', label: 'Date' },
+        { key: 'objective', label: 'Objective' }
+    ];
+
     return (
         <div>
             <h2 className="text-2xl font-bold mb-6">Campaign Setup</h2>
@@ -304,12 +315,13 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false }) => {
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                             Campaign Name *
                         </label>
-                        <input
-                            type="text"
+                        <NamingTemplateField
                             value={campaignData.name}
-                            onChange={(e) => handleInputChange('name', e.target.value)}
+                            onChange={(value) => handleInputChange('name', value)}
                             placeholder="Summer Sale Campaign"
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                            tokens={namingTokens}
+                            tokenList={namingTokenList}
+                            scope="campaign"
                         />
                     </div>
 

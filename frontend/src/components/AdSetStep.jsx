@@ -4,6 +4,7 @@ import { useCampaign, createDefaultAdsetData } from '../context/CampaignContext'
 import { useToast } from '../context/ToastContext';
 import { getAdSets, getPixels, searchGeoLocations } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
+import NamingTemplateField from './NamingTemplateField';
 
 const OPTIMIZATION_GOALS = [
     { value: 'OFFSITE_CONVERSIONS', label: 'Sales/Purchases', description: 'Optimize for conversions on your website' },
@@ -73,6 +74,26 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
     const { campaignData, adsetData, setAdsetData, selectedAdAccount, creativeData } = useCampaign();
     const { showError, showWarning } = useToast();
     const isHECRestricted = (campaignData.specialAdCategories || []).some(c => HEC_CATEGORIES.has(c));
+    const objectiveLabels = {
+        OUTCOME_SALES: 'Sales',
+        OUTCOME_TRAFFIC: 'Traffic',
+        OUTCOME_LEADS: 'Leads',
+        OUTCOME_ENGAGEMENT: 'Engagement',
+        OUTCOME_AWARENESS: 'Awareness',
+        OUTCOME_APP_PROMOTION: 'App Promotion'
+    };
+    const adsetNamingTokens = {
+        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        objective: objectiveLabels[campaignData.objective] || '',
+        countries: (adsetData.targeting?.geo_locations?.countries || []).join('/') || 'US',
+        age_range: `${adsetData.targeting?.ageMin ?? 18}-${adsetData.targeting?.ageMax ?? 65}`
+    };
+    const adsetNamingTokenList = [
+        { key: 'date', label: 'Date' },
+        { key: 'objective', label: 'Objective' },
+        { key: 'countries', label: 'Countries' },
+        { key: 'age_range', label: 'Age Range' }
+    ];
     // Initialize from context, not a hardcoded default — see CampaignStep.jsx for why:
     // this component unmounts/remounts on step navigation and adsetData.isExisting is
     // the durable record of a prior "Use Existing" selection.
@@ -545,12 +566,13 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                             Ad Set Name *
                         </label>
-                        <input
-                            type="text"
+                        <NamingTemplateField
                             value={adsetData.name}
-                            onChange={(e) => handleInputChange('name', e.target.value)}
+                            onChange={(value) => handleInputChange('name', value)}
                             placeholder="US - Adults 25-55"
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                            tokens={adsetNamingTokens}
+                            tokenList={adsetNamingTokenList}
+                            scope="adset"
                         />
                     </div>
 

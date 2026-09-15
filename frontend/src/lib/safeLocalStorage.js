@@ -14,7 +14,9 @@ export const safeLocalStorageGet = (key) => {
 export const safeLocalStorageSet = (key, value) => {
     try {
         localStorage.setItem(key, value);
+        return true;
     } catch (e) {
         console.error('localStorage write failed', e);
+        return false;
     }
 };
