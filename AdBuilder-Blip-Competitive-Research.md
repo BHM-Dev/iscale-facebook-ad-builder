@@ -144,6 +144,37 @@ seats or ad volume.
   Threshold % (default 150, alerts when daily spend exceeds X% of ABO budget) — both wired to a
   native "Get Anomaly Alerts in Slack" connector button.
 
+## Deep-dive: built and published a real (paused) test ad end-to-end
+
+Went past the click-through tour and actually ran a test ad through Blip's full create → publish
+flow on our real DIN Auto Insurance account, into the live "US - BROAD" ad set (5 other active ads
+running), to see every field-level behavior. Ad Status was set to Paused before publish — $0 spend,
+never served, confirmed after the fact in both Blip's own ad list and Meta's Marketing API response
+(`Pending Review`, `$0.00`).
+
+- **Ad Name Formula variable set is bigger than it looks in the tour**: File Name, File Type
+  (Static/Video), Date (DD/MM/YYYY), Date (DD-MMM-YYYY), Date (custom — user enters their own
+  format string), Iteration (1/2/3...), URL Slug (text after the last `/` in the landing URL), and
+  an **Ad Type (CAR/FLEX)** token specific to the vertical. Resolves to `{{Variable Name}}` syntax
+  — double-curly, human-readable names — versus our own naming-templates' single-brace `{token}`
+  convention. Not better or worse, but worth knowing before we add our own tokens so ours don't
+  collide visually with anyone copy-pasting a Blip pattern into our tool.
+- **Grammarly is wired directly into Primary Text and Headline fields** — a live suggestion badge,
+  not a mockup. Small thing, but it's a real quality-of-life detail Joel would notice immediately
+  if we had it and stopped having it.
+- **Publish button has a hidden second mode**: the chevron next to "Publish Ads" opens "Save Draft"
+  (named, revisitable, doesn't touch Meta) and "Copy Preview Link" (a shareable link to preview the
+  ad before it's live — built for getting sign-off from someone who isn't in the tool, e.g. Steve
+  or a client, before it actually launches). We have no equivalent today; everything we build goes
+  straight to a real Meta object once Publish is clicked.
+- **The "Duplicate Existing Ads" picker doubles as a live ad-audit table** — toggle it on, pick a
+  campaign + ad set, and it returns every ad in that ad set with thumbnail, name, 30-day spend, and
+  live Meta status (`Pending Review`, `Campaign Paused`, etc.) in one screen, independent of the
+  Analytics section. Confirmed our test ad appeared here within seconds of publishing, correctly
+  labeled.
+- **File upload is a real native file input**, not a fake/CSV-only dropzone — confirmed by
+  uploading a real local file and watching it flow through to a live Meta creative object.
+
 ## Where this maps onto our own roadmap
 - **Naming templates (`2931145`)**: Blip's account-level default + auto-import-from-recent-ads
   pattern is the fix for the "per-browser storage, not shared between Joel/Abel" gap the Joel-POV
@@ -155,5 +186,30 @@ seats or ad volume.
 - **Drive sync**: confirmed again (as with Adnova) that Google Drive integration is table stakes
   among the top ad launchers, not a differentiator — Blip also does Dropbox and Frame.io, which we
   don't.
-- **Meta Creative Enhancements toggle exposure**: genuinely worth a quick internal check — if we
-  don't expose these at all today, that's a real feature gap, not a nice-to-have.
+- **Meta Creative Enhancements toggle exposure — confirmed gap, not hypothetical.** Checked our own
+  `backend/app/services/facebook_service.py:1434-1478`: the `AdCreative` creation payload sets only
+  `name`, `object_story_spec`, `asset_feed_spec` (dual-placement), and `url_tags` — there is no
+  `degrees_of_freedom_spec` / `creative_features_spec` key anywhere in the creative or ad payload,
+  and no matching UI in `AdCreativeStep.jsx`. Since we never send that field, **Meta silently
+  applies its own defaults** (historically mostly ON) to every ad we launch — meaning Meta may
+  already be altering Joel's ad text, images, and CTAs today with zero visibility or control on our
+  side. Blip's account-default toggle screen is exactly the fix: expose the same ~20 flags at the
+  account-preference level, wire `degrees_of_freedom_spec.creative_features_spec` into
+  `create_creative()`, and Joel gets the same control Blip gives its users.
+
+## Prioritized recommendations
+
+1. **Add `degrees_of_freedom_spec` support to `facebook_service.py`** — currently a silent gap, not
+   a nice-to-have. Even shipping it as "all OFF by default, opt-in per toggle" would put us ahead
+   of where we are now (implicit, invisible Meta defaults). This is a trigger-file change
+   (`facebook_service.py` + `AdCreativeStep.jsx`) — needs the mandatory 2-agent pre-push review.
+2. **Naming templates v1.1** — move from per-browser `localStorage` to an account-level default
+   (mirrors Blip's Preferences-page pattern), which directly closes the "why isn't my template
+   here" gap the Joel-POV review already flagged on `2931145`.
+3. **Poor Performing Ads / Anomaly Thresholds** — worth comparing line-by-line against our
+   auto-pause-on-0%-CR design (currently off). Blip's version is simpler than what we built
+   (fixed %-threshold vs. 0% CR trigger) but ships with native Slack alerting as a first-class
+   setting, not custom plumbing.
+4. **Save Draft / Preview Link before publish** — genuinely new idea for us, not something we have
+   any version of. Worth scoping separately; it's a real workflow gap for getting sign-off before
+   an ad goes live.
