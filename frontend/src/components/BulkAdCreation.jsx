@@ -176,6 +176,28 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 });
             });
 
+            // A creative with no own headline/body AND no manually-typed
+            // headlines/bodies anywhere resolves to zero permutations here —
+            // it silently vanishes from adsData with no error, no toast, no
+            // trace in the Review grid. This is a realistic outcome for the
+            // Drive-copy-autofill path specifically: a strategy-doc block
+            // missing its `**Meta headline:**` line leaves creative.headline
+            // as '' (falsy, correctly falls through to validHeadlines above),
+            // and if Joel is relying entirely on Drive copy with nothing
+            // manually typed, validHeadlines is also empty — that creative
+            // just disappears from the batch with nothing telling him why
+            // (code-auditor pre-push review, MEDIUM — flagged as a real risk
+            // for the #1 priority Drive-copy feature specifically).
+            const coveredCreativeIds = new Set(permutations.map(p => p.creativeId));
+            const droppedCreatives = creativeData.creatives.filter(c => !coveredCreativeIds.has(c.id));
+            if (droppedCreatives.length > 0) {
+                showWarning(
+                    `${droppedCreatives.length} creative${droppedCreatives.length !== 1 ? 's' : ''} `
+                    + `(${droppedCreatives.map(c => c.name || c.id).join(', ')}) produced no ads — `
+                    + `missing headline/body and no manual headline/body typed as a fallback.`
+                );
+            }
+
             setAdsData(permutations);
             setLastAppliedNamingPattern(adNamingPattern);
         } else {
@@ -1139,19 +1161,37 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                         block that sits under the image on a real Facebook ad.
                                         Skipped for an empty custom-ad slot — a CTA/domain/headline
                                         row would be meaningless chrome around a guaranteed failure. */}
-                                    {!isEmptyCustomAd && (
-                                        <div className="flex items-center justify-between gap-2 px-3 py-2 bg-gray-50 border-t border-gray-200">
-                                            <div className="min-w-0">
-                                                {creativeData.websiteUrl && (
-                                                    <div className="text-[11px] uppercase text-gray-400 truncate">{displayDomain(creativeData.websiteUrl)}</div>
-                                                )}
-                                                <div className="text-sm font-semibold text-gray-900 truncate">{headline || '—'}</div>
+                                    {!isEmptyCustomAd && (() => {
+                                        // Mirrors the headline/body pattern above: prefer the
+                                        // per-creative override (e.g. a Drive-matched pair's own
+                                        // CTA/landing URL from its strategy doc) over the global
+                                        // form field. This card exists specifically so a bad
+                                        // pairing is visible before launch — it was previously
+                                        // always showing the GLOBAL cta/websiteUrl here even when
+                                        // Meta would actually receive a different, correct
+                                        // per-creative value, which is the opposite of what a
+                                        // pre-launch review card is for (joel-perspective pre-push
+                                        // review, P1).
+                                        // Same three-way fallback the actual submit path uses
+                                        // (~line 680) — matching it exactly, not just the
+                                        // two-tier headline/body shape, since cta has its own
+                                        // separate ad.ctaOverride tier the others don't.
+                                        const websiteUrl = creative?.websiteUrl || creativeData.websiteUrl;
+                                        const cta = creative?.cta || ad.ctaOverride || creativeData.cta;
+                                        return (
+                                            <div className="flex items-center justify-between gap-2 px-3 py-2 bg-gray-50 border-t border-gray-200">
+                                                <div className="min-w-0">
+                                                    {websiteUrl && (
+                                                        <div className="text-[11px] uppercase text-gray-400 truncate">{displayDomain(websiteUrl)}</div>
+                                                    )}
+                                                    <div className="text-sm font-semibold text-gray-900 truncate">{headline || '—'}</div>
+                                                </div>
+                                                <span className="flex-shrink-0 text-xs font-medium px-3 py-1.5 rounded bg-gray-200 text-gray-700">
+                                                    {formatCtaLabel(cta)}
+                                                </span>
                                             </div>
-                                            <span className="flex-shrink-0 text-xs font-medium px-3 py-1.5 rounded bg-gray-200 text-gray-700">
-                                                {formatCtaLabel(creativeData.cta)}
-                                            </span>
-                                        </div>
-                                    )}
+                                        );
+                                    })()}
 
                                     {/* Rename — same input as before, moved into the card footer */}
                                     <div className="px-3 py-2 border-t border-gray-100">
