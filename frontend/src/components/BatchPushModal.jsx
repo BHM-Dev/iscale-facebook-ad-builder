@@ -6,6 +6,7 @@ import {
 import { getCampaigns, getAdSets, getPages, createCompleteAd, createFacebookAdSet, authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
+import CreativeEnhancementsPanel from './CreativeEnhancementsPanel';
 
 const FB_API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1') + '/facebook';
 const GEN_ADS_API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1') + '/generated-ads';
@@ -51,6 +52,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
         return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
     });
     const [loading, setLoading] = useState(false);
+    const [creativeEnhancements, setCreativeEnhancements] = useState({});
 
     // Ad set mode — always default to 'new' so Joel creates a fresh ad set each push
     const [adsetMode, setAdsetMode] = useState('new');
@@ -78,6 +80,10 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     const isCBO = selectedCampaign?.isCBO === true;
     const doneItems = items.filter(it => pushStatuses[it.key] === 'done');
     const errorItems = items.filter(it => pushStatuses[it.key] === 'error');
+
+    useEffect(() => {
+        setCreativeEnhancements({});
+    }, [adAccountId, selectedCampaignId]);
 
     // Auto-load on mount — fetch ad account ID from backend config so Joel never has to type it
     useEffect(() => {
@@ -252,6 +258,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                         bodies: [copy.body || item.body],
                         cta: copy.cta || sharedCta,
                         websiteUrl,
+                        creative_enhancements: creativeEnhancements,
                     },
                     { id: `batch_${item.key}_${Date.now()}`, name: copy.headline || item.headline || 'Batch Ad' },
                     pageId,
@@ -389,6 +396,8 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                             </div>
                         </div>
                     )}
+
+                    <CreativeEnhancementsPanel value={creativeEnhancements} onChange={setCreativeEnhancements} />
 
                     {/* Ad Account */}
                     <div>

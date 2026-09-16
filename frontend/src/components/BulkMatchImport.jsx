@@ -7,6 +7,7 @@ import { useCampaign } from '../context/CampaignContext';
 import { createCompleteAd, createFacebookCampaign, createFacebookAdSet } from '../lib/facebookApi';
 import { CTA_OPTIONS, HEADLINE_LIMIT, BODY_LIMIT } from './AdCreativeStep';
 import { INTER_REQUEST_DELAY_MS, delay, isRateLimitError } from '../lib/metaRateLimit';
+import CreativeEnhancementsPanel from './CreativeEnhancementsPanel';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -91,6 +92,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState({ current: 0, total: 0, status: '' });
     const [errors, setErrors] = useState([]);
+    const [creativeEnhancements, setCreativeEnhancements] = useState({});
 
     // Inline edits made in the review table, keyed by adNumber. Kept separate
     // from csvRows so a typo fix never requires re-uploading the CSV — these
@@ -463,15 +465,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                         headlines: [row.headline],
                         bodies: [row.primaryText],
                         cta: row.cta,
-                        // Match Import has no Creative Enhancements UI (the panel and
-                        // its "N enabled" badge are only rendered in AdCreativeStep's
-                        // Combinations mode), so shared creativeData can carry a stale
-                        // creative_enhancements dict left over from a Combinations
-                        // session in the same tab — silently applying it here with no
-                        // visible control would violate this feature's own opt-in
-                        // premise (code-auditor pre-push review, HIGH). Explicitly
-                        // excluded until Match Import gets its own toggle UI.
-                        creative_enhancements: undefined
+                        creative_enhancements: creativeEnhancements
                     };
 
                     const adData = {
@@ -651,6 +645,8 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                         <strong>Destination link (shared by this batch):</strong>{' '}
                         {creativeData.websiteUrl || <span className="text-red-600">Not set — go back to the Creative step</span>}
                     </div>
+
+                    <CreativeEnhancementsPanel value={creativeEnhancements} onChange={setCreativeEnhancements} />
 
                     {/* Review table */}
                     {matchedRows.length > 0 && (

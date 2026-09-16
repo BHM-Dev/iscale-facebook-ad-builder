@@ -7,6 +7,7 @@ import { getPages } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 import { cropImageToAspect } from '../lib/imageCrop';
 import { useBrands } from '../context/BrandContext';
+import CreativeEnhancementsPanel from './CreativeEnhancementsPanel';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -22,20 +23,6 @@ export const HEADLINE_LIMIT = 255;
 const BODY_WARN = 125;
 export const BODY_LIMIT = 2200;
 const DESC_LIMIT = 255;
-
-const CREATIVE_ENHANCEMENT_OPTIONS = [
-    { key: 'advantage_plus_creative', label: 'Advantage+ Creative', description: 'Allow Meta to apply its available creative optimizations.' },
-    { key: 'enhance_cta', label: 'CTA Enhancement', description: 'Allow Meta to optimize the call-to-action presentation.' },
-    { key: 'image_animation', label: 'Image Animation', description: 'Allow Meta to animate eligible image creatives.' },
-    { key: 'image_brightness_and_contrast', label: 'Brightness & Contrast', description: 'Allow Meta to adjust image brightness and contrast.' },
-    { key: 'image_templates', label: 'Image Templates', description: 'Allow Meta to apply eligible image template treatments.' },
-    { key: 'image_touchups', label: 'Image Touchups', description: 'Allow Meta to apply eligible image touchups.' },
-    { key: 'image_uncrop', label: 'Image Uncrop', description: 'Allow Meta to expand an image for placement fit.' },
-    { key: 'site_extensions', label: 'Site Extensions', description: 'Allow eligible site extension treatments.' },
-    { key: 'standard_enhancements', label: 'Standard Enhancements', description: 'Opt into Meta’s standard enhancement bundle.' },
-    { key: 'text_generation', label: 'Text Generation', description: 'Allow Meta to generate eligible text variations.' },
-    { key: 'text_optimizations', label: 'Text Optimizations', description: 'Allow Meta to optimize eligible text variations.' },
-];
 
 const charCountClass = (len, warn, limit) => {
     if (len > limit) return 'text-red-600 font-semibold';
@@ -279,14 +266,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const [creativeEnhancements, setCreativeEnhancements] = useState(
         () => creativeData.creative_enhancements || {}
     );
-    const [isEnhancementsPanelOpen, setIsEnhancementsPanelOpen] = useState(false);
-
-    const toggleCreativeEnhancement = (key) => {
-        setCreativeEnhancements(prev => {
-            const next = { ...prev, [key]: !prev[key] };
-            setCreativeData(current => ({ ...current, creative_enhancements: next }));
-            return next;
-        });
+    const handleCreativeEnhancementsChange = (next) => {
+        setCreativeEnhancements(next);
+        setCreativeData(current => ({ ...current, creative_enhancements: next }));
     };
 
     const driveAssetGroups = useMemo(() => {
@@ -1776,47 +1758,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     account switch by the scope-reset effect above, alongside
                     `creatives`. */}
                 {!isMatchImport && (
-                <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 overflow-hidden">
-                    <button
-                        type="button"
-                        onClick={() => setIsEnhancementsPanelOpen(prev => !prev)}
-                        className="w-full flex items-center justify-between px-4 py-3 text-left text-sm font-semibold text-gray-800 hover:bg-gray-100"
-                    >
-                        <span className="flex items-center gap-2">
-                            Creative Enhancements
-                            <span className="text-xs font-normal text-gray-500">optional · default off</span>
-                            {/* Collapsed-state visibility: Joel-perspective review flagged that
-                                once this panel is closed there was no way to tell what's enabled
-                                without reopening it. This badge is the fix — visible without
-                                expanding, and visible on every ad in a bulk batch. */}
-                            {Object.values(creativeEnhancements).some(Boolean) && (
-                                <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-medium">
-                                    {Object.values(creativeEnhancements).filter(Boolean).length} enabled
-                                </span>
-                            )}
-                        </span>
-                        <span className="text-xs text-gray-500">{isEnhancementsPanelOpen ? 'Hide' : 'Show'}</span>
-                    </button>
-                    {isEnhancementsPanelOpen && (
-                        <div className="border-t border-gray-200 px-4 py-3 space-y-2">
-                            <p className="text-xs text-gray-500 mb-3">Opt in per ad request. Nothing is sent to Meta unless you enable a toggle.</p>
-                            {CREATIVE_ENHANCEMENT_OPTIONS.map(option => (
-                                <label key={option.key} className="flex items-start gap-3 rounded-md px-2 py-2 hover:bg-white cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={Boolean(creativeEnhancements[option.key])}
-                                        onChange={() => toggleCreativeEnhancement(option.key)}
-                                        className="mt-0.5 rounded text-amber-600 focus:ring-amber-500"
-                                    />
-                                    <span>
-                                        <span className="block text-sm font-medium text-gray-700">{option.label}</span>
-                                        <span className="block text-xs text-gray-500">{option.description}</span>
-                                    </span>
-                                </label>
-                            ))}
-                        </div>
-                    )}
-                </div>
+                <CreativeEnhancementsPanel
+                    value={creativeEnhancements}
+                    onChange={handleCreativeEnhancementsChange}
+                    className="mt-4"
+                />
                 )}
 
                 {/* URL Input (Optional fallback) */}

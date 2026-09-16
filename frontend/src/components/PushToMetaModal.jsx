@@ -3,6 +3,7 @@ import { Rocket, Loader, X, CheckCircle2, ExternalLink, PlusCircle, ListFilter }
 import { getAdAccounts, getCampaigns, getAdSets, getPages, createCompleteAd, createFacebookAdSet, authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
+import CreativeEnhancementsPanel from './CreativeEnhancementsPanel';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -64,6 +65,7 @@ export default function PushToMetaModal({
     // Persistent (not toast) HEC-stripped-targeting warning — a toast alone is easy to
     // miss mid-bulk-push, and this silently changes the ad set Joel will later activate.
     const [hecWarning, setHecWarning] = useState(null);
+    const [creativeEnhancements, setCreativeEnhancements] = useState({});
 
     // Always default to 'new' — Joel always creates a fresh ad set when pushing
     const [adsetMode, setAdsetMode] = useState('new');
@@ -91,6 +93,10 @@ export default function PushToMetaModal({
         body: initialBody,
         cta: initialCta || 'LEARN_MORE',
     });
+
+    useEffect(() => {
+        setCreativeEnhancements({});
+    }, [pushForm.adAccountId, pushForm.campaignId]);
 
     const hydrateAccount = (adAccountId) => {
         if (!adAccountId) return;
@@ -297,6 +303,7 @@ export default function PushToMetaModal({
                     bodies: [pushForm.body],
                     cta: pushForm.cta,
                     websiteUrl: pushForm.websiteUrl,
+                    creative_enhancements: creativeEnhancements,
                 },
                 { id: `pushed_img_${Date.now()}`, name: pushForm.headline || 'Ad from Image Builder' },
                 pushForm.pageId,
@@ -721,6 +728,8 @@ export default function PushToMetaModal({
                             )}
                         </div>
                     )}
+
+                    <CreativeEnhancementsPanel value={creativeEnhancements} onChange={setCreativeEnhancements} />
 
                     {/* Headline */}
                     <div>
