@@ -821,8 +821,23 @@ class DriveSyncService:
         return blocks
 
     def _extract_strategy_field(self, block: str, label: str) -> str:
+        # Confirmed live against the real production doc (ran the actual parser
+        # against Joel's real Drive folder, not synthetic test text): every ad
+        # block ends with a "---" horizontal rule before the next `## AD-XX`
+        # heading, and the LAST ad in an ad-set is followed by that rule PLUS
+        # the next ad-set's own "# Ad Set N — Title" / "**Ad set name:**" /
+        # "**Angle:**" header text before its first `## AD-XX` sub-heading. The
+        # original lookahead only stopped at another "**Label:**" field or
+        # end-of-block, so it silently swallowed the "---" rule and, for the
+        # last ad in each set, the ENTIRE next section's header text into
+        # whatever field happened to be extracted last (Meta headline, since
+        # it's the final field per ad) — for the very last ad in the whole
+        # document, this ballooned to include internal production notes,
+        # approval-request text, and citation URLs with no next field to stop
+        # at. Now also stops at a markdown horizontal rule (---, ***, ___) or
+        # any heading line (#, ##, ...), not just another bolded field.
         match = re.search(
-            rf"^\s*\*\*{re.escape(label)}:\*\*\s*(.*?)(?=^\s*\*\*[A-Za-z][^\n:]*:\*\*|\Z)",
+            rf"^\s*\*\*{re.escape(label)}:\*\*\s*(.*?)(?=^\s*\*\*[A-Za-z][^\n:]*:\*\*|^\s*(?:-{{3,}}|\*{{3,}}|_{{3,}})\s*$|^\s*#{{1,6}}\s|\Z)",
             block,
             re.IGNORECASE | re.MULTILINE | re.DOTALL,
         )
