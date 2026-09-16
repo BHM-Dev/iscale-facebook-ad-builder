@@ -1469,16 +1469,15 @@ export default function CampaignPerformance() {
   const compassBuckets = useMemo(() => {
     const active = adsets.filter(a => a.fb_adset_id && normalizeStatus(adsetStatusOverrides[a.fb_adset_id] ?? a.status) === 'ACTIVE' && (!a.campaign_status || normalizeStatus(a.campaign_status) === 'ACTIVE'));
     const attention = active.map(adset => ({ adset, reasons: getAttentionReasons(adset) })).filter(item => item.reasons.length).map(item => ({ ...item, id: `attention-${item.adset.id}`, detail: item.reasons[0] }));
-    const withInsights = adsets.filter(a => a.fb_adset_id && bulkInsights?.[a.fb_adset_id]);
-    const winners = withInsights.map(adset => ({ adset, ins: bulkInsights[adset.fb_adset_id] })).filter(({ ins }) => (ins.spend ?? 0) >= 50 && ins.redtrack?.roas > 0).sort((a, b) => b.ins.redtrack.roas - a.ins.redtrack.roas).map(({ adset, ins }) => ({ id: `winner-${adset.id}`, adset, detail: `RT ROAS ${ins.redtrack.roas.toFixed(2)}x · ${formatMoney(ins.spend)} spend` }));
+    const winners = active.filter(a => bulkInsights?.[a.fb_adset_id]).map(adset => ({ adset, ins: bulkInsights[adset.fb_adset_id] })).filter(({ ins }) => (ins.spend ?? 0) >= 50 && ins.redtrack?.roas > 0).sort((a, b) => b.ins.redtrack.roas - a.ins.redtrack.roas).map(({ adset, ins }) => ({ id: `winner-${adset.id}`, adset, detail: `RT ROAS ${ins.redtrack.roas.toFixed(2)}x · ${formatMoney(ins.spend)} spend` }));
     const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
     const recent = active.filter(adset => adset.start_time && !Number.isNaN(Date.parse(adset.start_time)) && Date.parse(adset.start_time) >= cutoff).map(adset => ({ id: `recent-${adset.id}`, adset, detail: `Started ${new Date(adset.start_time).toLocaleDateString()}` }));
     const potential = active.map(adset => ({ adset, ins: bulkInsights?.[adset.fb_adset_id] })).filter(({ ins }) => ins?.ctr != null && ins.ctr > 2 && (ins.spend ?? 0) < 75).map(({ adset, ins }) => ({ id: `potential-${adset.id}`, adset, detail: `CTR ${Number(ins.ctr).toFixed(2)}% · ${formatMoney(ins.spend)} spend` }));
     return [
-      { key: 'attention', label: 'Needs attention', color: 'text-orange-700', rule: 'Frequency ≥3, zero leads after $50, RT ROAS <1, or CPL >1.5x blended average.', items: attention },
-      { key: 'winners', label: 'Winners', color: 'text-green-700', rule: 'RT ROAS >0 with at least $50 spend, sorted highest first.', items: winners },
-      { key: 'recent', label: 'Launched recently', color: 'text-blue-700', rule: 'Ad sets with Meta start_time inside the last 14 days.', items: recent },
-      { key: 'potential', label: 'High potential', color: 'text-violet-700', rule: 'CTR >2.0% with less than $75 spend — early signal, not a winner yet.', items: potential },
+      { key: 'attention', label: 'Needs attention', color: 'text-orange-700', rule: 'Frequency ≥3, zero leads after $50, RT ROAS <1, CPL >1.5x blended average, or an auto-pause rule triggered.', items: attention },
+      { key: 'winners', label: 'Winners', color: 'text-green-700', rule: 'Active ad sets with RT ROAS >0 and at least $50 spend, sorted highest first.', items: winners },
+      { key: 'recent', label: 'Launched recently', color: 'text-blue-700', rule: 'Active ad sets with Meta start_time inside the last 14 days.', items: recent },
+      { key: 'potential', label: 'High potential', color: 'text-violet-700', rule: 'Active ad sets with CTR >2.0% and less than $75 spend — early signal, not a winner yet.', items: potential },
       { key: 'scaling', label: 'Scaling', color: 'text-emerald-700', rule: 'Needs a clean prior-period spend comparison; no misleading day-over-day proxy is used.', items: [], empty: 'Needs prior-period data before this bucket can make a claim.' },
     ];
   }, [adsets, bulkInsights, getAttentionReasons, adsetStatusOverrides]);
@@ -1693,10 +1692,18 @@ export default function CampaignPerformance() {
   );
 
   const openCompassAdset = useCallback((adset) => {
+    // Compass buckets only surface active-delivery ad sets (Winners included, after the
+    // active-status fix below) — force the table filters back to a state where the target
+    // is guaranteed visible, rather than risk a silent no-op if the buyer had a different
+    // status/search/metric filter active when they clicked.
+    setStatusFilter('ACTIVE');
+    setNameSearch('');
+    setMetricFilter({ metric: 'cpl', operator: 'lt', value: '' });
     setHighlightedAdsetId(adset.fb_adset_id);
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
       next.set('adsetId', adset.fb_adset_id);
+      next.set('view', 'compass');
       return next;
     });
   }, [setSearchParams]);

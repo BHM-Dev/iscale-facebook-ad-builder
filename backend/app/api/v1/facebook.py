@@ -762,16 +762,7 @@ def save_campaign_locally(
                 end_time = None
 
         start_time = None
-        start_time_raw = adset_data.get('startTime') or adset_data.get('start_time')
-        if start_time_raw:
-            try:
-                from datetime import datetime as _dt
-                start_time = _dt.fromisoformat(str(start_time_raw).replace('Z', '+00:00'))
-            except Exception:
-                start_time = None
-
-        start_time = None
-        start_time_raw = adset_data.get('startTime') or adset_data.get('start_time')
+        start_time_raw = campaign_data.get('startTime') or campaign_data.get('start_time')
         if start_time_raw:
             try:
                 from datetime import datetime as _dt
@@ -846,6 +837,15 @@ def save_adset_locally(
                 end_time = _dt.fromisoformat(str(end_time_raw).replace('Z', '+00:00'))
             except Exception:
                 end_time = None
+
+        start_time = None
+        start_time_raw = adset_data.get('startTime') or adset_data.get('start_time')
+        if start_time_raw:
+            try:
+                from datetime import datetime as _dt
+                start_time = _dt.fromisoformat(str(start_time_raw).replace('Z', '+00:00'))
+            except Exception:
+                start_time = None
 
         new_adset = FacebookAdSet(
             id=adset_data.get('id'),
