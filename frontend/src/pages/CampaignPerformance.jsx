@@ -164,33 +164,46 @@ function CampaignIntelligencePanel({ adAccountId, initialOpen = false, initialPr
   };
 
   return (
-    <div className="bg-white rounded-xl border border-violet-200 border-l-4 border-l-violet-500 shadow-sm overflow-hidden">
-      <div
-        className="px-6 py-4 flex items-center justify-between cursor-pointer select-none bg-violet-50/40 hover:bg-violet-50/70 transition-colors"
+    <>
+      <button
         onClick={toggleOpen}
+        className="order-first flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100 transition-colors"
+        title="Campaign Intelligence — action queue, tracking checks, niche decisions"
       >
-        <div>
-          <h2 className="font-semibold text-gray-900 flex items-center gap-2">
-            <Sparkles size={16} className="text-violet-500" />
-            Campaign Intelligence
-            <span className="text-xs font-normal text-gray-400">Action queue · tracking checks · niche decisions</span>
-          </h2>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={e => { e.stopPropagation(); loadIntelligence(preset, customFrom, customTo); }}
-            disabled={loading}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-40"
-            title="Refresh intelligence"
-          >
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-          </button>
-          <ChevronDown size={16} className={`text-gray-400 transition-transform ${open ? '' : '-rotate-90'}`} />
-        </div>
-      </div>
+        <Sparkles size={14} />
+        Intelligence
+      </button>
 
       {open && (
-        <div className="px-6 pb-5">
+        // z-40, one below the Remix drawer's z-50 — if both are ever open at once,
+        // stacking is deterministic instead of relying on DOM insertion order.
+        <div className="fixed inset-0 z-40 flex justify-end pointer-events-none">
+          {/* Backdrop */}
+          <div className="absolute inset-0 bg-black/30 pointer-events-auto" onClick={toggleOpen} />
+          {/* Drawer */}
+          <div className="relative w-full max-w-3xl bg-white shadow-2xl pointer-events-auto flex flex-col h-full overflow-y-auto">
+            <div className="px-6 py-4 flex items-center justify-between bg-violet-50/40 border-b border-violet-100 sticky top-0 z-10">
+              <h2 className="font-semibold text-gray-900 flex items-center gap-2">
+                <Sparkles size={16} className="text-violet-500" />
+                Campaign Intelligence
+                <span className="text-xs font-normal text-gray-400">Action queue · tracking checks · niche decisions</span>
+              </h2>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => loadIntelligence(preset, customFrom, customTo)}
+                  disabled={loading}
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-40"
+                  title="Refresh intelligence"
+                >
+                  <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+                </button>
+                <button onClick={toggleOpen} className="text-gray-400 hover:text-gray-600 p-1">
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            <div className="px-6 py-5">
           <div className="flex flex-wrap gap-1.5 mb-4">
             {INTELLIGENCE_PRESETS.map(p => (
               <button
@@ -383,9 +396,11 @@ function CampaignIntelligencePanel({ adAccountId, initialOpen = false, initialPr
           {!loading && !error && !data && (
             <p className="text-sm text-gray-400 text-center py-4">Open or select a preset to load intelligence.</p>
           )}
+            </div>
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -1723,6 +1738,11 @@ export default function CampaignPerformance() {
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
+          <CampaignIntelligencePanel
+            adAccountId={adAccountId}
+            initialOpen={intelligencePanelOpen}
+            initialPreset={intelligenceInitialPreset}
+          />
           <button
             onClick={() => setShowAddRuleModal(true)}
             className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-orange-200 text-orange-600 bg-orange-50 hover:bg-orange-100 transition-colors"
@@ -1807,11 +1827,6 @@ export default function CampaignPerformance() {
 
       <div className="px-5 pb-5 space-y-4 mt-1">
       <CreativeCompass buckets={compassBuckets} onOpenAdset={openCompassAdset} />
-      <CampaignIntelligencePanel
-        adAccountId={adAccountId}
-        initialOpen={intelligencePanelOpen}
-        initialPreset={intelligenceInitialPreset}
-      />
 
       {/* Ad Set Performance Table */}
       <div className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-clip">
