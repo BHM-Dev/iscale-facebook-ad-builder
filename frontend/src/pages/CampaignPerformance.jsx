@@ -1710,7 +1710,7 @@ export default function CampaignPerformance() {
 
   return (
     <>
-    <div className="-m-5 space-y-0">
+    <div className="-m-5 mx-auto max-w-[1800px] space-y-0">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-5 pt-5 pb-4">
         <div>
@@ -1946,13 +1946,13 @@ export default function CampaignPerformance() {
           </div>
         ) : (
           <div>
-            <div className="grid grid-cols-[minmax(360px,480px)_96px_84px_96px_96px_124px] px-6 py-1.5 border-b border-slate-200 bg-slate-50 text-[10px] font-semibold uppercase tracking-wide text-gray-400 sticky top-0 z-10">
+            <div className="grid grid-cols-[minmax(360px,1fr)_96px_84px_96px_96px_124px] px-6 py-1.5 border-b border-slate-200 bg-slate-50 text-[10px] font-semibold uppercase tracking-wide text-gray-400 sticky top-0 z-10">
               <div />
               {['Spend', 'Leads', 'CPL', 'ROAS', 'Budget'].map(col => (
                 <div key={col} className="border-l border-slate-200 px-3 text-right">{col}</div>
               ))}
             </div>
-            <div className="grid grid-cols-[minmax(360px,480px)_96px_84px_96px_96px_124px] px-6 py-3 border-b border-indigo-100 bg-indigo-50/60 text-left">
+            <div className="grid grid-cols-[minmax(360px,1fr)_96px_84px_96px_96px_124px] px-6 py-3 border-b border-indigo-100 bg-indigo-50/60 text-left">
               <div className="flex items-center gap-2 min-w-0 pr-4">
                 <span className="font-semibold text-gray-900 text-sm">Visible total</span>
                 <span className="text-xs text-gray-500">
@@ -1984,7 +1984,7 @@ export default function CampaignPerformance() {
                 <div key={group.key} className="border-b border-gray-100 last:border-b-0">
                   <div
                     onClick={() => toggleCampaign(group.key)}
-                    className="w-full grid grid-cols-[minmax(360px,480px)_96px_84px_96px_96px_124px] px-6 py-3 bg-slate-100/80 hover:bg-slate-100 transition-colors text-left border-b border-slate-200 border-l-4 border-l-slate-500"
+                    className="w-full grid grid-cols-[minmax(360px,1fr)_96px_84px_96px_96px_124px] px-6 py-3 bg-slate-100/80 hover:bg-slate-100 transition-colors text-left border-b border-slate-200 border-l-4 border-l-slate-500"
                     role="button"
                     tabIndex={0}
                     onKeyDown={e => {
