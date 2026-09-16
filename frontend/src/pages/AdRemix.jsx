@@ -17,6 +17,35 @@ const formatResearchAngle = (angle) => {
         .replace(/\b\w/g, char => char.toUpperCase());
 };
 
+function SourceAdReferenceCard({ researchInspiration, uploadedInspiration }) {
+    const source = researchInspiration || uploadedInspiration;
+    if (!source) return null;
+    const imageUrl = source.mediaUrl || source.thumbnailUrl || source.imageUrl;
+    const strategy = [
+        ['Hook', source.hook_type],
+        ['Persona', source.persona],
+        ['Promise', source.promise],
+        ['Proof', source.proof_type],
+        ['Funnel', source.funnel_stage],
+    ].filter(([, value]) => value);
+    return (
+        <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-3 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Source ad</div>
+                {source.adLink && <a href={source.adLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800" title="Open original ad"><ExternalLink size={11} />Open</a>}
+            </div>
+            {imageUrl ? <img src={imageUrl} alt="Competitor source ad" className="w-full max-h-56 rounded-lg bg-gray-100 object-contain" /> : <div className="rounded-lg border border-dashed border-indigo-200 bg-white px-3 py-5 text-center text-xs text-gray-400">No source image stored</div>}
+            <div>
+                <div className="text-xs font-semibold text-gray-500">{source.advertiser || source.fileName || 'Reference creative'}</div>
+                {source.headline && <div className="mt-1 text-sm font-semibold leading-snug text-gray-900">{source.headline}</div>}
+                {source.body && <div className="mt-1 max-h-28 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-gray-600">{source.body}</div>}
+            </div>
+            {strategy.length > 0 && <div className="border-t border-indigo-100 pt-2 space-y-1"><div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-500">Strategy notes</div>{strategy.map(([label, value]) => <div key={label} className="text-xs leading-snug text-gray-700"><span className="font-semibold text-gray-500">{label}:</span> {value}</div>)}</div>}
+            {researchInspiration && <div className="text-[10px] text-indigo-600">Reference only — the source image is never used in the generated ad.</div>}
+        </div>
+    );
+}
+
 const formatCopyReference = (value) => {
     if (!value) return '';
     if (typeof value === 'string') return value;
@@ -1205,7 +1234,9 @@ export default function AdRemix() {
             </div>
 
             {currentStep >= 2 && currentStep <= 6 && (
-                <aside className="hidden lg:block sticky top-6 bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-3">
+                <aside className="hidden lg:block sticky top-6 space-y-3">
+                    <SourceAdReferenceCard researchInspiration={researchInspiration} uploadedInspiration={uploadedInspiration} />
+                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-3">
                     <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
                         <div className="w-7 h-7 rounded-lg bg-purple-100 flex items-center justify-center">
                             <Sparkles size={14} className="text-purple-600" />
@@ -1231,6 +1262,7 @@ export default function AdRemix() {
                             </div>
                         </div>
                     ))}
+                    </div>
                 </aside>
             )}
             </div>
