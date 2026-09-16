@@ -47,6 +47,13 @@ def _format_research_context(research_inspiration: dict | None) -> str:
     headline = research_inspiration.get("headline") or ""
     body = research_inspiration.get("body") or ""
     cta = research_inspiration.get("cta") or ""
+    strategy_fields = {
+        "Hook type": research_inspiration.get("hook_type"),
+        "Persona": research_inspiration.get("persona"),
+        "Promise": research_inspiration.get("promise"),
+        "Proof type": research_inspiration.get("proof_type"),
+        "Funnel stage": research_inspiration.get("funnel_stage"),
+    }
 
     lines = [
         "",
@@ -61,6 +68,9 @@ def _format_research_context(research_inspiration: dict | None) -> str:
         lines.append(f"- Competitor body to study, not copy: {body[:700]}")
     if cta:
         lines.append(f"- Competitor CTA: {cta}")
+    for label, value in strategy_fields.items():
+        if value:
+            lines.append(f"- Strategy {label}: {value}")
     lines.append("- Instruction: create original copy for the selected brand using the same strategic angle, not the same words.")
     return "\n".join(lines)
 

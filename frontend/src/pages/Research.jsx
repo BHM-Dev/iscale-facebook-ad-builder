@@ -420,6 +420,22 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
 
 // ── Saved panel card (compact) ───────────────────────────────────
 function SavedCard({ ad, onUnsave, onUseAsInspiration, boards, onAddToBoard, onCreateBoard }) {
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [notes, setNotes] = useState({ hook_type: ad.hook_type || '', persona: ad.persona || '', promise: ad.promise || '', proof_type: ad.proof_type || '', funnel_stage: ad.funnel_stage || '' });
+  const [savingNotes, setSavingNotes] = useState(false);
+  const { showSuccess, showError } = useToast();
+  const saveNotes = async () => {
+    setSavingNotes(true);
+    try {
+      const res = await authFetch(`${API_URL}/research/scraped-ads/${ad.id}/strategy-notes`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(notes),
+      });
+      if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.detail || 'Failed to save strategy notes'); }
+      Object.assign(ad, notes);
+      setEditingNotes(false);
+      showSuccess('Strategy notes saved');
+    } catch (error) { showError(error.message); } finally { setSavingNotes(false); }
+  };
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-col gap-2">
       <div className="flex items-start justify-between gap-2">
@@ -438,6 +454,7 @@ function SavedCard({ ad, onUnsave, onUseAsInspiration, boards, onAddToBoard, onC
       </div>
       <div className="flex items-center gap-1.5 flex-wrap">
         {ad.angle_tag && <AngleBadge tag={ad.angle_tag} />}
+        {ad.funnel_stage && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-xs font-semibold text-violet-700">{ad.funnel_stage}</span>}
         {ad.media_type === 'video' && (
           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold bg-purple-50 text-purple-600">
             <Video size={10} />
@@ -459,6 +476,19 @@ function SavedCard({ ad, onUnsave, onUseAsInspiration, boards, onAddToBoard, onC
         <Zap size={11} />
         Build from this ad
       </button>
+      <button type="button" onClick={() => setEditingNotes(value => !value)} className="text-left text-xs font-medium text-indigo-500 hover:text-indigo-700">
+        {editingNotes ? 'Hide strategy notes' : 'Add strategy notes'}
+      </button>
+      {editingNotes && (
+        <div className="space-y-2 rounded-lg border border-indigo-100 bg-indigo-50/40 p-2">
+          {[
+            ['hook_type', 'Hook type'], ['persona', 'Persona'], ['promise', 'Promise'], ['proof_type', 'Proof type'], ['funnel_stage', 'Funnel stage'],
+          ].map(([key, label]) => (
+            <input key={key} value={notes[key]} onChange={event => setNotes(prev => ({ ...prev, [key]: event.target.value }))} placeholder={label} className="w-full rounded border border-gray-200 bg-white px-2 py-1.5 text-xs focus:border-indigo-400 focus:outline-none" />
+          ))}
+          <button type="button" onClick={saveNotes} disabled={savingNotes} className="rounded bg-indigo-600 px-2.5 py-1.5 text-xs font-medium text-white disabled:opacity-50">{savingNotes ? 'Saving…' : 'Save notes'}</button>
+        </div>
+      )}
       <BoardSaveButton ad={ad} boards={boards} onAdd={onAddToBoard} onCreate={onCreateBoard} />
     </div>
   );
@@ -952,6 +982,11 @@ export default function Research() {
       scrapedAdId: ad.id,
       vertical: currentVerticalLabel,
       angle: ad.angle_tag,
+      hook_type: ad.hook_type,
+      persona: ad.persona,
+      promise: ad.promise,
+      proof_type: ad.proof_type,
+      funnel_stage: ad.funnel_stage,
       source: 'research',
     }));
     navigate('/ad-remix');

@@ -46,6 +46,11 @@ def _serialize_scraped_ad(ad, board_item_id=None):
         "start_date": ad.start_date,
         "seen_count": ad.seen_count or 1,
         "angle_tag": ad.angle_tag,
+        "hook_type": ad.hook_type,
+        "persona": ad.persona,
+        "promise": ad.promise,
+        "proof_type": ad.proof_type,
+        "funnel_stage": ad.funnel_stage,
         "is_saved": ad.is_saved,
         "created_at": ad.created_at.isoformat() if ad.created_at else None,
         "last_seen": ad.last_seen.isoformat() if ad.last_seen else None,
@@ -1038,6 +1043,29 @@ def update_angle_tag(
     return {"id": ad_id, "angle_tag": ad.angle_tag}
 
 
+@router.patch("/scraped-ads/{ad_id}/strategy-notes")
+def update_strategy_notes(
+    ad_id: str,
+    notes: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Partially update the free-text strategy notes for a scraped ad."""
+    from app.models import ScrapedAd
+    allowed = {'hook_type', 'persona', 'promise', 'proof_type', 'funnel_stage'}
+    unknown = set(notes) - allowed
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown strategy note field(s): {sorted(unknown)}")
+    ad = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Ad not found")
+    for field in allowed & set(notes):
+        value = notes[field]
+        setattr(ad, field, value.strip() if isinstance(value, str) and value.strip() else None)
+    db.commit()
+    return {"id": ad_id, **{field: getattr(ad, field) for field in allowed}}
+
+
 @router.get("/config-verticals/{config_id}/browse-ads")
 def get_vertical_browse_ads(
     config_id: str,
@@ -1167,6 +1195,11 @@ def get_vertical_browse_ads(
             "is_active": is_active,
             "seen_count": ad.seen_count or 1,
             "angle_tag": ad.angle_tag,
+            "hook_type": ad.hook_type,
+            "persona": ad.persona,
+            "promise": ad.promise,
+            "proof_type": ad.proof_type,
+            "funnel_stage": ad.funnel_stage,
             "is_saved": ad.is_saved,
             "last_seen": ad.last_seen.isoformat() if ad.last_seen else None,
         })

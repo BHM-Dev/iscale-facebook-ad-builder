@@ -599,6 +599,11 @@ class ScrapedAd(Base):
     facebook_page_id = Column(String, ForeignKey('facebook_pages.id', ondelete='SET NULL'), nullable=True)
     is_saved = Column(Boolean, default=False, nullable=False, server_default='false')  # User-curated save flag
     angle_tag = Column(String, nullable=True)  # Assigned angle: fear/social_proof/urgency/savings/authority/story/curiosity
+    hook_type = Column(String, nullable=True)
+    persona = Column(String, nullable=True)
+    promise = Column(Text, nullable=True)
+    proof_type = Column(String, nullable=True)
+    funnel_stage = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     saved_search = relationship("SavedSearch", back_populates="ads")
