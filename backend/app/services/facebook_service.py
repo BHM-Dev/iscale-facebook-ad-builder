@@ -1246,7 +1246,7 @@ class FacebookService:
             print(f"⚠️  Instagram user lookup failed for page {page_id}: {e}")
             return None
 
-    def create_creative(self, creative_data, ad_account_id=None):
+    def create_creative(self, creative_data, ad_account_id=None, creative_enhancements=None):
         """Create an ad creative (supports both image and video).
 
         `secondary_image_hash` (optional): the Meta image hash of a 9x16
@@ -1435,6 +1435,38 @@ class FacebookService:
             AdCreative.Field.name: creative_name,
             AdCreative.Field.object_story_spec: object_story_spec,
         }
+        # Opt-in only: preserve today's behavior exactly when the UI sends no
+        # enabled enhancement flags. The allow-list mirrors the current SDK's
+        # AdCreativeFeaturesSpec fields; unknown client keys are ignored rather
+        # than forwarded to Meta as potentially invalid feature names.
+        enhancement_flags = {
+            'advantage_plus_creative',
+            'enhance_cta',
+            'image_animation',
+            'image_brightness_and_contrast',
+            'image_templates',
+            'image_touchups',
+            'image_uncrop',
+            'site_extensions',
+            'standard_enhancements',
+            'text_generation',
+            'text_optimizations',
+        }
+        requested_enhancements = (
+            creative_enhancements
+            if creative_enhancements is not None
+            else creative_data.get('creative_enhancements')
+        )
+        if isinstance(requested_enhancements, dict):
+            enabled_features = {
+                key: {'enroll_status': 'OPT_IN'}
+                for key, enabled in requested_enhancements.items()
+                if key in enhancement_flags and enabled is True
+            }
+            if enabled_features:
+                params[AdCreative.Field.degrees_of_freedom_spec] = {
+                    'creative_features_spec': enabled_features
+                }
         if secondary_image_hash and not video_id and not lead_gen_form_id:
             params[AdCreative.Field.asset_feed_spec] = asset_feed_spec
 

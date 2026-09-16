@@ -465,6 +465,7 @@ export async function createFacebookAdSet(adsetData, campaignId, adAccountId, bu
  *   asset (Bulk Match Import only). When provided alongside imageHash, the backend
  *   builds a dual-placement creative (Feed square + Stories/Reels vertical, same
  *   copy) instead of a single-image creative. Ignored for video ads.
+ * @param {Object|null} creativeEnhancements - Optional per-ad opt-in feature flags.
  */
 export async function createFacebookCreative(creativeData, imageHash, pageId, adAccountId, videoData = null, secondaryImageHash = null) {
     try {
