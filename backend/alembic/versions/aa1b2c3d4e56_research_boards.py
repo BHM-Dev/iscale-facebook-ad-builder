@@ -1,13 +1,13 @@
 """add workspace-shared research boards
 
-Revision ID: aa1b2c3d4e5
+Revision ID: aa1b2c3d4e56
 Revises: g3h5i7j9k1l3
 """
 from alembic import op
 import sqlalchemy as sa
 
 
-revision = 'aa1b2c3d4e5'
+revision = 'aa1b2c3d4e56'
 down_revision = 'g3h5i7j9k1l3'
 branch_labels = None
 depends_on = None

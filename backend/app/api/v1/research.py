@@ -786,12 +786,21 @@ def get_research_board_items(
     current_user: User = Depends(get_current_active_user),
 ):
     from app.models import ResearchBoard, ResearchBoardItem
+    from sqlalchemy.orm import contains_eager
 
     if not db.query(ResearchBoard.id).filter(ResearchBoard.id == board_id).first():
         raise HTTPException(status_code=404, detail="Research board not found")
-    items = db.query(ResearchBoardItem).filter(
+    # .join() alone only affects the SQL WHERE/JOIN — it does not populate the
+    # ORM relationship, so `item.scraped_ad` below would otherwise issue one
+    # extra SELECT per item (N+1), which scales badly for exactly the
+    # many-ads-per-board case this feature exists for (code-auditor pre-push
+    # review, MEDIUM). contains_eager tells the ORM to hydrate `scraped_ad`
+    # from the same joined query instead of lazy-loading it per row.
+    items = db.query(ResearchBoardItem).join(ResearchBoardItem.scraped_ad).options(
+        contains_eager(ResearchBoardItem.scraped_ad)
+    ).filter(
         ResearchBoardItem.board_id == board_id,
-    ).join(ResearchBoardItem.scraped_ad).order_by(
+    ).order_by(
         ResearchBoardItem.sort_order.asc(), ResearchBoardItem.created_at.desc()
     ).all()
     return [_serialize_scraped_ad(item.scraped_ad, item.id) for item in items]

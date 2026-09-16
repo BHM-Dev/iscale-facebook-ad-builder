@@ -10,6 +10,7 @@ import {
   deleteResearchBoardItem,
   getResearchBoardItems,
   getResearchBoards,
+  searchAndSave,
 } from '../api/research';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -690,8 +691,13 @@ export default function Research() {
       setNewBoardName('');
       setActiveBoardId(board.id);
       if (firstAd) {
-        await addResearchBoardItem(board.id, firstAd.id);
-        setBoardAds([firstAd]);
+        // Use the server's response, not the raw `firstAd` object — it's the
+        // only place `board_item_id` actually gets set (see the comment on
+        // handleAddToBoard below for why that matters). Using `firstAd`
+        // directly here left the board's only item permanently un-removable
+        // until a reload (code-auditor pre-push review, HIGH).
+        const savedItem = await addResearchBoardItem(board.id, firstAd.id);
+        setBoardAds([savedItem]);
         setBoards(prev => prev.map(item => item.id === board.id ? { ...item, item_count: 1 } : item));
       }
       showSuccess(`Board “${board.name}” created`);
@@ -706,9 +712,15 @@ export default function Research() {
 
   const handleAddToBoard = async (boardId, ad) => {
     try {
-      await addResearchBoardItem(boardId, ad.id);
+      // `ad` here is a browse/saved-ad object with no `board_item_id` — that
+      // field only exists on the response from this call (or from
+      // getResearchBoardItems). Optimistically inserting the raw `ad` left
+      // "Remove" a silent no-op on it until the board was reloaded
+      // (code-auditor pre-push review, HIGH) — use the server's response
+      // instead, same fix as handleCreateBoard's firstAd path above.
+      const savedItem = await addResearchBoardItem(boardId, ad.id);
       if (activeBoardId === boardId && !boardAds.some(item => item.id === ad.id)) {
-        setBoardAds(prev => [ad, ...prev]);
+        setBoardAds(prev => [savedItem, ...prev]);
       }
       loadBoards();
       showSuccess('Ad added to board');
@@ -745,13 +757,11 @@ export default function Research() {
     if (!trimmedQuery || queryLoading) return;
     setQueryLoading(true);
     try {
-      const res = await authFetch(`${API_URL}/research/search-and-save`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: trimmedQuery, platform: 'facebook', limit: 30, country: 'US', search_type: 'one_time' }),
-      });
-      const result = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(result.detail || 'Search failed');
+      // Uses the shared searchAndSave() helper (frontend/src/api/research.js)
+      // rather than a second hand-built fetch call against the same endpoint
+      // — the two had already started drifting in header/error-shape
+      // handling (code-auditor pre-push review, LOW).
+      const result = await searchAndSave({ query: trimmedQuery, platform: 'facebook', limit: 30, country: 'US', search_type: 'one_time' });
       const filtered = (result.ads || []).filter(ad => (
         (!angleFilter || ad.angle_tag === angleFilter) &&
         (!advertiserFilter.trim() || (ad.brand_name || '').toLowerCase().includes(advertiserFilter.trim().toLowerCase())) &&
