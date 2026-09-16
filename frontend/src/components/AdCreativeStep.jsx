@@ -511,7 +511,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     mediaType: 'image',
                     format: 'feed',
                     dualPlacement: true,
-                    drivePairId: group.id
+                    drivePairId: group.id,
+                    headline: group.copy?.headline || '',
+                    body: group.copy?.primary_text || '',
+                    cta: group.cta || '',
+                    websiteUrl: group.landingPage || ''
                 }];
             }
 
@@ -529,7 +533,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     name: asset.file_name,
                     mediaType: asset.format,
                     format: driveAssetPlacement(asset),
-                    drivePairId: null
+                    drivePairId: null,
+                    headline: group.copy?.headline || '',
+                    body: group.copy?.primary_text || '',
+                    cta: group.cta || '',
+                    websiteUrl: group.landingPage || ''
                 });
             }
 
@@ -546,7 +554,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 name: asset.file_name,
                 mediaType: asset.format,
                 format: driveAssetPlacement(asset),
-                drivePairId: group.id
+                drivePairId: group.id,
+                headline: group.copy?.headline || '',
+                body: group.copy?.primary_text || '',
+                cta: group.cta || '',
+                websiteUrl: group.landingPage || ''
             }));
         });
         const groupsWithCopy = selectedGroups.filter(group => hasCopyText(group.copy || {}));
@@ -2198,12 +2210,24 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                         <div
                                             key={group.id}
                                             onClick={() => toggleDriveAssetSelection(group.id)}
-                                            className={`relative cursor-pointer rounded-lg overflow-hidden border-2 transition-all ${isSelected ? 'border-amber-500 ring-2 ring-amber-200' : 'border-gray-200 hover:border-amber-300'}`}
+                                            className={`relative cursor-pointer rounded-lg overflow-hidden border-2 transition-all ${group.isPair && copyMatched ? 'flex items-stretch' : ''} ${isSelected ? 'border-amber-500 ring-2 ring-amber-200' : 'border-gray-200 hover:border-amber-300'}`}
                                         >
-                                            {asset.format === 'video' ? (
-                                                <video src={asset.r2_key} className="w-full aspect-square object-cover" muted />
-                                            ) : (
-                                                <img src={asset.r2_key} alt={asset.file_name} className="w-full aspect-square object-cover" />
+                                            <div className={group.isPair && copyMatched ? 'w-1/2 shrink-0' : 'w-full'}>
+                                                {asset.format === 'video' ? (
+                                                    <video src={asset.r2_key} className="w-full aspect-square object-cover" muted />
+                                                ) : (
+                                                    <img src={asset.r2_key} alt={asset.file_name} className="w-full aspect-square object-cover" />
+                                                )}
+                                                {group.isPair && group.storiesAsset && (
+                                                    <img src={group.storiesAsset.r2_key} alt={group.storiesAsset.file_name} className="w-full aspect-[9/16] object-cover border-t border-white" />
+                                                )}
+                                            </div>
+                                            {group.isPair && copyMatched && (
+                                                <div className="w-1/2 p-2 bg-white text-[11px] text-gray-600 overflow-hidden">
+                                                    <div className="font-semibold text-gray-800 line-clamp-3">{group.copy.headline}</div>
+                                                    <div className="mt-1 line-clamp-6">{group.copy.primary_text}</div>
+                                                    {group.cta && <div className="mt-2 font-medium text-emerald-700">{group.cta.replace(/_/g, ' ')}</div>}
+                                                </div>
                                             )}
                                             {isSelected && (
                                                 <div className="absolute top-2 right-2 bg-amber-500 rounded-full p-0.5">

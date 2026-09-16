@@ -144,8 +144,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             // Generate all permutations: media × headlines × bodies
             const permutations = [];
             creativeData.creatives.forEach((creative, creativeIndex) => {
-                validHeadlines.forEach(({ index: hIndex }) => {
-                    validBodies.forEach(({ index: bIndex }) => {
+                const creativeHeadlines = creative.headline
+                    ? [{ index: null, override: creative.headline }]
+                    : validHeadlines.map(({ index }) => ({ index }));
+                const creativeBodies = creative.body
+                    ? [{ index: null, override: creative.body }]
+                    : validBodies.map(({ index }) => ({ index }));
+                creativeHeadlines.forEach(({ index: hIndex, override: headlineOverride }) => {
+                    creativeBodies.forEach(({ index: bIndex, override: bodyOverride }) => {
                         permutations.push({
                             id: `ad_${Date.now()}_${creativeIndex}_${hIndex}_${bIndex}`,
                             name: computeAdName(adNamingPattern, {
@@ -158,6 +164,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             creativeId: creative.id,
                             headlineIndex: hIndex,
                             bodyIndex: bIndex,
+                            headlineOverride,
+                            bodyOverride,
+                            ctaOverride: creative.cta || '',
                             mediaType: creative.mediaType || 'image',
                             format: creative.format || 'feed',
                             dualPlacement: creative.dualPlacement || false,
@@ -666,8 +675,10 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         // asset_feed_spec dual-placement path (same mechanism Bulk Match Import
                         // ships). Never set for video creatives — that path is image-only.
                         secondaryImageUrl: !isVideo ? specificCreative?.secondaryImageUrl : undefined,
-                        headlines: [creativeData.headlines[ad.headlineIndex]],
-                        bodies: [creativeData.bodies[ad.bodyIndex]]
+                        headlines: [ad.headlineOverride || creativeData.headlines[ad.headlineIndex]],
+                        bodies: [ad.bodyOverride || creativeData.bodies[ad.bodyIndex]],
+                        cta: specificCreative?.cta || ad.ctaOverride || creativeData.cta,
+                        websiteUrl: specificCreative?.websiteUrl || creativeData.websiteUrl
                     };
 
                     if (!creativeData.pageId) {
@@ -708,8 +719,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             bodies: creativeData.bodies.filter(b => b.trim() !== ''),
                             headlines: creativeData.headlines.filter(h => h.trim() !== ''),
                             description: creativeData.description,
-                            cta: creativeData.cta,
-                            websiteUrl: creativeData.websiteUrl,
+                            cta: adSpecificCreativeData.cta,
+                            websiteUrl: adSpecificCreativeData.websiteUrl,
                             status: 'PAUSED',
                             fbAdId: result.adId,
                             fbCreativeId: result.creativeId
@@ -1004,8 +1015,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         {adsData.map((ad, index) => {
                             const creative = creativeData.creatives?.find(c => c.id === ad.creativeId);
                             const isVideo = creative?.mediaType === 'video';
-                            const headline = creativeData.headlines?.[ad.headlineIndex];
-                            const body = creativeData.bodies?.[ad.bodyIndex];
+                            const headline = ad.headlineOverride || creativeData.headlines?.[ad.headlineIndex];
+                            const body = ad.bodyOverride || creativeData.bodies?.[ad.bodyIndex];
                             // Distinct from a real confirmed name — never render the unconfirmed
                             // placeholder with the same confident styling as a real Page name.
                             // A stale-but-real-looking name (or a generic "Your Page" that reads

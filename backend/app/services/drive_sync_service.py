@@ -475,9 +475,15 @@ class DriveSyncService:
 
     def _metadata_for_media_file(self, file_meta: Dict[str, Any], file_name: str) -> Dict[str, Any]:
         package_folder = self._find_package_folder(file_meta)
-        if not package_folder:
+        if package_folder:
+            folder_metadata = self._folder_copy_metadata(package_folder)
+            metadata = folder_metadata.get("assets", {}).get(file_name.lower(), {})
+            if metadata:
+                return metadata
+        strategy_folder = self._find_strategy_package_folder(file_meta)
+        if not strategy_folder:
             return {}
-        folder_metadata = self._folder_copy_metadata(package_folder)
+        folder_metadata = self._folder_copy_metadata(strategy_folder)
         return folder_metadata.get("assets", {}).get(file_name.lower(), {})
 
     def _refresh_folder_copy_metadata(self, file_meta: Dict[str, Any]) -> int:
@@ -492,9 +498,13 @@ class DriveSyncService:
             return 0
 
         package_folder = self._find_package_folder(file_meta)
-        if not package_folder:
-            return 0
-        folder_metadata = self._folder_copy_metadata(package_folder, force=True)
+        if package_folder:
+            folder_metadata = self._folder_copy_metadata(package_folder, force=True)
+        else:
+            strategy_folder = self._find_strategy_package_folder(file_meta)
+            if not strategy_folder:
+                return 0
+            folder_metadata = self._folder_copy_metadata(strategy_folder, force=True)
         updated = 0
         for file_name, soft_tags in folder_metadata.get("assets", {}).items():
             drive_file_id = soft_tags.get("drive_file_id")
@@ -564,6 +574,39 @@ class DriveSyncService:
                     collected.append(item)
         return collected
 
+    def _find_strategy_package_folder(self, file_meta: Dict[str, Any], max_depth: int = 4) -> Optional[str]:
+        """Find the nearest ancestor containing a strategy-copy markdown document."""
+        drive = self._client()
+        parents = file_meta.get("parents") or []
+        current = parents[0] if parents else None
+        visited: List[str] = []
+        depth = 0
+        while current and depth < max_depth:
+            visited.append(current)
+            try:
+                folder_files = self._list_folder_subtree(current)
+            except Exception as exc:
+                logger.warning("Could not inspect Drive folder %s for strategy copy docs: %s", current, exc)
+                break
+            for item in folder_files:
+                if not self._is_text_file(item.get("mimeType") or "", item.get("name") or ""):
+                    continue
+                try:
+                    text_body = self._download_text_file(item["id"])
+                except Exception:
+                    continue
+                if self._looks_like_strategy_copy_doc(text_body):
+                    return current
+            try:
+                info = drive.files().get(fileId=current, fields="id,parents", supportsAllDrives=True).execute()
+            except Exception as exc:
+                logger.warning("Could not resolve parent of Drive folder %s: %s", current, exc)
+                break
+            parent_ids = info.get("parents") or []
+            current = parent_ids[0] if parent_ids else None
+            depth += 1
+        return None
+
     def _folder_copy_metadata(self, folder_id: str, force: bool = False) -> Dict[str, Any]:
         if not force and folder_id in self._folder_metadata_cache:
             return self._folder_metadata_cache[folder_id]
@@ -587,16 +630,43 @@ class DriveSyncService:
             (item for item in text_files if "handoff" in item.get("name", "").lower() and "manifest" in item.get("name", "").lower()),
             None,
         )
-        if not manifest:
-            self._folder_metadata_cache[folder_id] = {"assets": {}}
-            return self._folder_metadata_cache[folder_id]
+        if manifest:
+            try:
+                manifest_text = self._download_text_file(manifest["id"])
+            except Exception:
+                logger.warning("Could not read Drive handoff manifest %s", manifest.get("name"))
+                self._folder_metadata_cache[folder_id] = {"assets": {}}
+                return self._folder_metadata_cache[folder_id]
 
+            metadata = self._handoff_folder_copy_metadata(folder_id, folder_files, text_files, media_by_name, manifest_text)
+            self._folder_metadata_cache[folder_id] = metadata
+            return metadata
+
+        strategy_file = next(
+            (item for item in text_files if self._looks_like_strategy_copy_doc(self._safe_download_text_file(item["id"]))),
+            None,
+        )
+        if strategy_file:
+            try:
+                strategy_text = self._download_text_file(strategy_file["id"])
+            except Exception:
+                logger.warning("Could not read Drive strategy copy document %s", strategy_file.get("name"))
+                self._folder_metadata_cache[folder_id] = {"assets": {}}
+                return self._folder_metadata_cache[folder_id]
+            metadata = self._strategy_folder_copy_metadata(folder_id, folder_files, media_by_name, strategy_text)
+            self._folder_metadata_cache[folder_id] = metadata
+            return metadata
+
+        self._folder_metadata_cache[folder_id] = {"assets": {}}
+        return self._folder_metadata_cache[folder_id]
+
+    def _safe_download_text_file(self, drive_file_id: str) -> str:
         try:
-            manifest_text = self._download_text_file(manifest["id"])
+            return self._download_text_file(drive_file_id)
         except Exception:
-            logger.warning("Could not read Drive handoff manifest %s", manifest.get("name"))
-            self._folder_metadata_cache[folder_id] = {"assets": {}}
-            return self._folder_metadata_cache[folder_id]
+            return ""
+
+    def _handoff_folder_copy_metadata(self, folder_id, folder_files, text_files, media_by_name, manifest_text):
 
         manifest_data = self._parse_handoff_manifest(manifest_text)
         copy_file_names = {entry.get("copy_file", "").lower() for entry in manifest_data.get("entries", {}).values() if entry.get("copy_file")}
@@ -640,8 +710,69 @@ class DriveSyncService:
                     "package_folder_id": folder_id,
                 }
 
-        self._folder_metadata_cache[folder_id] = {"assets": assets}
-        return self._folder_metadata_cache[folder_id]
+        return {"assets": assets}
+
+    def _looks_like_strategy_copy_doc(self, text_body: str) -> bool:
+        return bool(re.search(r"^##\s+AD-[A-Z0-9]+-\d{2}\b", text_body, re.IGNORECASE | re.MULTILINE))
+
+    def _strategy_folder_copy_metadata(self, folder_id, folder_files, media_by_name, text_body):
+        blocks = self._parse_strategy_copy_doc(text_body)
+        assets: Dict[str, Dict[str, Any]] = {}
+        for item in media_by_name.values():
+            file_name = item.get("name") or ""
+            aspect_match = re.search(r"(?:^|[-_ ])(1x1|9x16)(?=\.[^.]+$)", file_name, re.IGNORECASE)
+            if not aspect_match:
+                continue
+            code_match = re.match(r"^(AD-[A-Z0-9]+-\d{2})-", file_name, re.IGNORECASE)
+            prefix = code_match.group(1).upper() if code_match else ""
+            block = blocks.get(prefix)
+            if not block:
+                continue
+            aspect = aspect_match.group(1).lower()
+            assets[file_name.lower()] = {
+                "copy_id": prefix,
+                "aspect": aspect,
+                "copy": {
+                    "headline": block.get("headline", ""),
+                    "primary_text": block.get("primary_text", ""),
+                    "description": None,
+                },
+                "landing_page": block.get("landing_page"),
+                "cta": block.get("cta"),
+                "source": "strategy_copy_doc",
+                "drive_file_id": item.get("id"),
+                "package_folder_id": folder_id,
+            }
+        return {"assets": assets}
+
+    def _parse_strategy_copy_doc(self, text_body: str) -> Dict[str, Dict[str, Any]]:
+        shared_cta = re.search(r"^\s*(?:\*\*)?(?:CTA|Call to action|Meta button)(?:\*\*)?\s*:\s*(.+?)\s*$", text_body, re.IGNORECASE | re.MULTILINE)
+        landing = re.search(r"^\s*(?:\*\*)?(?:Landing page|Landing URL|Destination URL)(?:\*\*)?\s*:\s*(\S+)\s*$", text_body, re.IGNORECASE | re.MULTILINE)
+        cta = self._normalize_cta(self._clean_markdown_value(shared_cta.group(1))) if shared_cta else None
+        landing_page = self._clean_markdown_value(landing.group(1)) if landing else None
+        headings = list(re.finditer(r"^##\s+(AD-[A-Z0-9]+-\d{2})\b.*$", text_body, re.IGNORECASE | re.MULTILINE))
+        blocks: Dict[str, Dict[str, Any]] = {}
+        for index, heading in enumerate(headings):
+            block_text = text_body[heading.end():headings[index + 1].start() if index + 1 < len(headings) else len(text_body)]
+            code = heading.group(1).upper()
+            blocks[code] = {
+                "headline": self._clean_markdown_value(self._extract_strategy_field(block_text, "Meta headline")),
+                "primary_text": self._clean_markdown_value(self._extract_strategy_field(block_text, "Primary text")),
+                "landing_page": landing_page,
+                "cta": cta,
+            }
+        return blocks
+
+    def _extract_strategy_field(self, block: str, label: str) -> str:
+        match = re.search(
+            rf"^\s*\*\*{re.escape(label)}:\*\*\s*(.*?)(?=^\s*\*\*[A-Za-z][^\n:]*:\*\*|\Z)",
+            block,
+            re.IGNORECASE | re.MULTILINE | re.DOTALL,
+        )
+        return match.group(1).strip() if match else ""
+
+    def _clean_markdown_value(self, value: Optional[str]) -> str:
+        return re.sub(r"\*\*|`", "", (value or "")).strip()
 
     def _download_text_file(self, drive_file_id: str) -> str:
         return self._download_file(drive_file_id).decode("utf-8", errors="replace")
