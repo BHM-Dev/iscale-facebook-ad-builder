@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import List, Tuple
 from datetime import datetime
 import hashlib
@@ -9,7 +10,8 @@ from app.core.deps import get_current_active_user
 from app.models import User
 from app.schemas.research import (
     AdSearchRequest, ScrapedAdResponse, ScrapedAdCreate, ScrapedAdSearchResult, SavedSearchResponse,
-    BrandScrapeCreate, BrandScrapeResponse, BrandScrapeListResponse, AdLibraryImportRequest
+    BrandScrapeCreate, BrandScrapeResponse, BrandScrapeListResponse, AdLibraryImportRequest,
+    ResearchBoardCreate, ResearchBoardItemCreate, ResearchBoardResponse, ResearchBoardItemResponse
 )
 from app.services.research_service import ResearchService
 from app.services.rate_limiter import rate_limiter
@@ -20,6 +22,37 @@ MAX_AD_LIBRARY_IMPORT_ADS = 100
 MAX_AD_LIBRARY_VIDEO_URLS = 3
 MAX_AD_LIBRARY_TEXT_CHARS = 5000
 MAX_AD_LIBRARY_CREATIVE_INTEL_CHARS = 12000
+
+
+def _serialize_scraped_ad(ad, board_item_id=None):
+    result = {
+        "id": ad.id,
+        "brand_name": ad.brand_name,
+        "headline": ad.headline,
+        "ad_copy": ad.ad_copy,
+        "cta_text": ad.cta_text,
+        "media_type": ad.media_type,
+        "media_url": ad.media_url,
+        "destination_domain": ad.destination_domain,
+        "source_query": ad.source_query,
+        "rank_position": ad.rank_position,
+        "sort_mode": ad.sort_mode,
+        "is_multiple_versions": ad.is_multiple_versions,
+        "video_urls": ad.video_urls,
+        "thumbnail_url": ad.thumbnail_url,
+        "creative_intel": ad.creative_intel,
+        "volume_score": ad.volume_score,
+        "ad_link": ad.ad_link,
+        "start_date": ad.start_date,
+        "seen_count": ad.seen_count or 1,
+        "angle_tag": ad.angle_tag,
+        "is_saved": ad.is_saved,
+        "created_at": ad.created_at.isoformat() if ad.created_at else None,
+        "last_seen": ad.last_seen.isoformat() if ad.last_seen else None,
+    }
+    if board_item_id is not None:
+        result["board_item_id"] = board_item_id
+    return result
 
 
 def _truncate_text(value: str | None, max_chars: int = MAX_AD_LIBRARY_TEXT_CHARS) -> str | None:
@@ -123,7 +156,10 @@ async def search_and_save(request: AdSearchRequest, db: Session = Depends(get_db
         "search_id": saved_search.id,
         "query": saved_search.query,
         "country": saved_search.country,
-        "ads_count": len(ads)
+        "ads_count": len(ads),
+        # search-and-save is deliberately the query bar's persistence boundary:
+        # every ad returned here is already a real ScrapedAd with a stable id.
+        "ads": [_serialize_scraped_ad(ad) for ad in ads],
     }
 
 @router.get("/saved-searches", response_model=List[SavedSearchResponse])
@@ -611,34 +647,154 @@ def get_saved_ads(db: Session = Depends(get_db), current_user: User = Depends(ge
     """Return all scraped ads the user has saved to their research library."""
     from app.models import ScrapedAd
     ads = db.query(ScrapedAd).filter(ScrapedAd.is_saved == True).order_by(ScrapedAd.created_at.desc()).all()
+    return [_serialize_scraped_ad(ad) for ad in ads]
+
+
+# ============= Shared research boards =============
+
+@router.get("/boards", response_model=List[ResearchBoardResponse])
+def get_research_boards(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    """List workspace-shared boards with their current item counts."""
+    from app.models import ResearchBoard, ResearchBoardItem
+    from sqlalchemy import func
+
+    rows = (
+        db.query(ResearchBoard, func.count(ResearchBoardItem.id).label("item_count"))
+        .outerjoin(ResearchBoardItem, ResearchBoardItem.board_id == ResearchBoard.id)
+        .group_by(ResearchBoard.id)
+        .order_by(ResearchBoard.updated_at.desc(), ResearchBoard.created_at.desc())
+        .all()
+    )
     return [
         {
-            "id": ad.id,
-            "brand_name": ad.brand_name,
-            "headline": ad.headline,
-            "ad_copy": ad.ad_copy,
-            "cta_text": ad.cta_text,
-            "media_type": ad.media_type,
-            "media_url": ad.media_url,
-            "destination_domain": ad.destination_domain,
-            "source_query": ad.source_query,
-            "rank_position": ad.rank_position,
-            "sort_mode": ad.sort_mode,
-            "is_multiple_versions": ad.is_multiple_versions,
-            "video_urls": ad.video_urls,
-            "thumbnail_url": ad.thumbnail_url,
-            "creative_intel": ad.creative_intel,
-            "volume_score": ad.volume_score,
-            "ad_link": ad.ad_link,
-            "start_date": ad.start_date,
-            "seen_count": ad.seen_count or 1,
-            "angle_tag": ad.angle_tag,
-            "is_saved": ad.is_saved,
-            "created_at": ad.created_at.isoformat() if ad.created_at else None,
-            "last_seen": ad.last_seen.isoformat() if ad.last_seen else None,
+            "id": board.id,
+            "name": board.name,
+            "vertical_id": board.vertical_id,
+            "created_by": board.created_by,
+            "created_at": board.created_at,
+            "updated_at": board.updated_at,
+            "item_count": item_count,
         }
-        for ad in ads
+        for board, item_count in rows
     ]
+
+
+@router.post("/boards", response_model=ResearchBoardResponse, status_code=201)
+def create_research_board(
+    request: ResearchBoardCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.models import ResearchBoard
+
+    board = ResearchBoard(
+        name=request.name.strip(),
+        vertical_id=request.vertical_id,
+        created_by=current_user.id,
+    )
+    db.add(board)
+    db.commit()
+    db.refresh(board)
+    return {
+        "id": board.id,
+        "name": board.name,
+        "vertical_id": board.vertical_id,
+        "created_by": board.created_by,
+        "created_at": board.created_at,
+        "updated_at": board.updated_at,
+        "item_count": 0,
+    }
+
+
+@router.delete("/boards/{board_id}")
+def delete_research_board(board_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    from app.models import ResearchBoard
+
+    board = db.query(ResearchBoard).filter(ResearchBoard.id == board_id).first()
+    if not board:
+        raise HTTPException(status_code=404, detail="Research board not found")
+    db.delete(board)
+    db.commit()
+    return {"message": "Research board deleted"}
+
+
+@router.post("/boards/{board_id}/items", response_model=ResearchBoardItemResponse)
+def add_research_board_item(
+    board_id: str,
+    request: ResearchBoardItemCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.models import ResearchBoard, ResearchBoardItem, ScrapedAd
+
+    board = db.query(ResearchBoard).filter(ResearchBoard.id == board_id).first()
+    if not board:
+        raise HTTPException(status_code=404, detail="Research board not found")
+    ad = db.query(ScrapedAd).filter(ScrapedAd.id == request.scraped_ad_id).first()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Ad not found")
+
+    existing = db.query(ResearchBoardItem).filter(
+        ResearchBoardItem.board_id == board_id,
+        ResearchBoardItem.scraped_ad_id == request.scraped_ad_id,
+    ).first()
+    if existing:
+        return {**_serialize_scraped_ad(ad, existing.id)}
+
+    item = ResearchBoardItem(board_id=board_id, scraped_ad_id=ad.id)
+    db.add(item)
+    try:
+        db.commit()
+        db.refresh(item)
+    except IntegrityError:
+        # The DB constraint is the concurrency guarantee; a second request
+        # racing the pre-check is a successful no-op, not a 500.
+        db.rollback()
+        item = db.query(ResearchBoardItem).filter(
+            ResearchBoardItem.board_id == board_id,
+            ResearchBoardItem.scraped_ad_id == ad.id,
+        ).first()
+        if not item:
+            raise
+    return {**_serialize_scraped_ad(ad, item.id)}
+
+
+@router.delete("/boards/{board_id}/items/{item_id}")
+def delete_research_board_item(
+    board_id: str,
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.models import ResearchBoardItem
+
+    item = db.query(ResearchBoardItem).filter(
+        ResearchBoardItem.id == item_id,
+        ResearchBoardItem.board_id == board_id,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Board item not found")
+    db.delete(item)
+    db.commit()
+    return {"message": "Ad removed from research board"}
+
+
+@router.get("/boards/{board_id}/items", response_model=List[ResearchBoardItemResponse])
+def get_research_board_items(
+    board_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.models import ResearchBoard, ResearchBoardItem
+
+    if not db.query(ResearchBoard.id).filter(ResearchBoard.id == board_id).first():
+        raise HTTPException(status_code=404, detail="Research board not found")
+    items = db.query(ResearchBoardItem).filter(
+        ResearchBoardItem.board_id == board_id,
+    ).join(ResearchBoardItem.scraped_ad).order_by(
+        ResearchBoardItem.sort_order.asc(), ResearchBoardItem.created_at.desc()
+    ).all()
+    return [_serialize_scraped_ad(item.scraped_ad, item.id) for item in items]
 
 
 # ============= Pre-configured Vertical Endpoints =============

@@ -36,6 +36,44 @@ export const searchAndSave = async (request) => {
     return unwrap(response, 'Error searching and saving');
 };
 
+export const getResearchBoards = async () => {
+    const response = await authFetch(`${API_URL}/boards`);
+    return unwrap(response, 'Error fetching research boards');
+};
+
+export const createResearchBoard = async (name, verticalId = null) => {
+    const response = await authFetch(`${API_URL}/boards`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, ...(verticalId ? { vertical_id: verticalId } : {}) }),
+    });
+    return unwrap(response, 'Error creating research board');
+};
+
+export const deleteResearchBoard = async (boardId) => {
+    const response = await authFetch(`${API_URL}/boards/${boardId}`, { method: 'DELETE' });
+    return unwrap(response, 'Error deleting research board');
+};
+
+export const getResearchBoardItems = async (boardId) => {
+    const response = await authFetch(`${API_URL}/boards/${boardId}/items`);
+    return unwrap(response, 'Error fetching research board items');
+};
+
+export const addResearchBoardItem = async (boardId, scrapedAdId) => {
+    const response = await authFetch(`${API_URL}/boards/${boardId}/items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scraped_ad_id: scrapedAdId }),
+    });
+    return unwrap(response, 'Error adding ad to research board');
+};
+
+export const deleteResearchBoardItem = async (boardId, itemId) => {
+    const response = await authFetch(`${API_URL}/boards/${boardId}/items/${itemId}`, { method: 'DELETE' });
+    return unwrap(response, 'Error removing ad from research board');
+};
+
 export const getSavedSearches = async () => {
     const response = await authFetch(`${API_URL}/saved-searches`);
     return unwrap(response, 'Error fetching saved searches');

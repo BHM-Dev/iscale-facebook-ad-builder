@@ -3,6 +3,14 @@ import { Ban, FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, 
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import {
+  addResearchBoardItem,
+  createResearchBoard,
+  deleteResearchBoard,
+  deleteResearchBoardItem,
+  getResearchBoardItems,
+  getResearchBoards,
+} from '../api/research';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -21,6 +29,12 @@ const ANGLE_LABELS = {
   fear: 'Fear', social_proof: 'Social Proof', urgency: 'Urgency',
   savings: 'Savings', authority: 'Authority', story: 'Story', curiosity: 'Curiosity',
 };
+
+const QUERY_PRESETS = [
+  'Auto insurance — cheap quote',
+  'Commercial insurance — niche/industry',
+  'Reverse mortgage — homeowner benefit',
+];
 
 const normalizeAdLibraryDate = (value) => {
   if (!value) return '';
@@ -195,7 +209,85 @@ function SaveButton({ ad, isSaved, onSave, onUnsave, angleTags }) {
 }
 
 // ── Ad Card ─────────────────────────────────────────────────────
-function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage, angleTags }) {
+function BoardSaveButton({ ad, boards, onAdd, onCreate }) {
+  const [open, setOpen] = useState(false);
+  const [newBoardName, setNewBoardName] = useState('');
+  const [creating, setCreating] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const handleCreate = async () => {
+    if (!newBoardName.trim() || creating) return;
+    setCreating(true);
+    try {
+      await onCreate(newBoardName.trim(), ad);
+      setNewBoardName('');
+      setOpen(false);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="w-full inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors"
+        aria-expanded={open}
+      >
+        <Star size={11} />
+        Save to board
+        <ChevronDown size={10} />
+      </button>
+      {open && (
+        <div className="absolute left-0 right-0 bottom-9 z-20 bg-white border border-gray-200 rounded-xl shadow-lg p-2 min-w-[210px]">
+          <p className="text-xs text-gray-400 px-2 py-1 mb-1">Choose a shared board</p>
+          {boards.map(board => (
+            <button
+              key={board.id}
+              type="button"
+              onClick={async () => { await onAdd(board.id, ad); setOpen(false); }}
+              className="w-full flex items-center justify-between gap-2 text-left px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-50 rounded-lg"
+            >
+              <span className="truncate">{board.name}</span>
+              <span className="text-gray-400">{board.item_count}</span>
+            </button>
+          ))}
+          <div className="border-t border-gray-100 mt-2 pt-2">
+            <p className="text-xs text-gray-400 px-2 mb-1">New board</p>
+            <div className="flex gap-1">
+              <input
+                type="text"
+                value={newBoardName}
+                onChange={e => setNewBoardName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }}
+                placeholder="Board name"
+                className="min-w-0 flex-1 rounded-md border border-gray-200 px-2 py-1.5 text-xs focus:ring-1 focus:ring-indigo-400"
+              />
+              <button
+                type="button"
+                onClick={handleCreate}
+                disabled={creating || !newBoardName.trim()}
+                className="rounded-md bg-indigo-600 px-2 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+              >
+                {creating ? '…' : 'Add'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage, angleTags, boards, onAddToBoard, onCreateBoard, onRemoveFromBoard }) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-sm transition-shadow flex flex-col gap-3">
       {/* Facebook CDN media URLs are temporary; hide expired thumbnails without disrupting the card. */}
@@ -287,6 +379,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
             angleTags={angleTags}
           />
         </div>
+        <BoardSaveButton ad={ad} boards={boards} onAdd={onAddToBoard} onCreate={onCreateBoard} />
         {/* Secondary row */}
         <div className="flex items-center gap-2">
           <a
@@ -299,6 +392,16 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
             <ExternalLink size={11} />
             View all ads
           </a>
+          {onRemoveFromBoard && (
+            <button
+              type="button"
+              onClick={() => onRemoveFromBoard(ad)}
+              className="inline-flex items-center justify-center gap-1 px-2 py-1 rounded-md border border-gray-200 text-xs font-medium text-gray-500 hover:text-red-500 hover:border-red-200 transition-colors"
+            >
+              <X size={11} />
+              Remove
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onBlockPage(ad)}
@@ -315,7 +418,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
 }
 
 // ── Saved panel card (compact) ───────────────────────────────────
-function SavedCard({ ad, onUnsave, onUseAsInspiration }) {
+function SavedCard({ ad, onUnsave, onUseAsInspiration, boards, onAddToBoard, onCreateBoard }) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-col gap-2">
       <div className="flex items-start justify-between gap-2">
@@ -355,6 +458,7 @@ function SavedCard({ ad, onUnsave, onUseAsInspiration }) {
         <Zap size={11} />
         Build from this ad
       </button>
+      <BoardSaveButton ad={ad} boards={boards} onAdd={onAddToBoard} onCreate={onCreateBoard} />
     </div>
   );
 }
@@ -458,6 +562,14 @@ export default function Research() {
   const [browseAds, setBrowseAds] = useState([]);
   const [savedAds, setSavedAds] = useState([]);
   const [savedAdIds, setSavedAdIds] = useState(new Set());
+  const [query, setQuery] = useState('');
+  const [queryLoading, setQueryLoading] = useState(false);
+  const [boards, setBoards] = useState([]);
+  const [activeBoardId, setActiveBoardId] = useState(null);
+  const [boardAds, setBoardAds] = useState([]);
+  const [boardsLoading, setBoardsLoading] = useState(false);
+  const [newBoardName, setNewBoardName] = useState('');
+  const [creatingBoard, setCreatingBoard] = useState(false);
   const [browseLoading, setBrowseLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [browseError, setBrowseError] = useState('');
@@ -475,7 +587,16 @@ export default function Research() {
   // ── Boot ─────────────────────────────────────────────────────
   useEffect(() => {
     loadConfig();
+    loadBoards();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (activeBoardId) {
+      loadBoardItems(activeBoardId);
+    } else {
+      setBoardAds([]);
+    }
+  }, [activeBoardId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!verticalConfig) return;
@@ -536,6 +657,116 @@ export default function Research() {
       setSavedAds(all);
       setSavedAdIds(new Set(all.map(a => a.id)));
     } catch (e) { /* non-blocking */ }
+  };
+
+  const loadBoards = async () => {
+    setBoardsLoading(true);
+    try {
+      const result = await getResearchBoards();
+      setBoards(result);
+    } catch (e) {
+      showError(e.message || 'Failed to load research boards');
+    } finally {
+      setBoardsLoading(false);
+    }
+  };
+
+  const loadBoardItems = async (boardId) => {
+    try {
+      setBoardAds(await getResearchBoardItems(boardId));
+    } catch (e) {
+      showError(e.message || 'Failed to load board ads');
+      setBoardAds([]);
+    }
+  };
+
+  const handleCreateBoard = async (name = newBoardName, firstAd = null) => {
+    const trimmedName = name.trim();
+    if (!trimmedName || creatingBoard) return null;
+    setCreatingBoard(true);
+    try {
+      const board = await createResearchBoard(trimmedName, activeVertical);
+      setBoards(prev => [board, ...prev]);
+      setNewBoardName('');
+      setActiveBoardId(board.id);
+      if (firstAd) {
+        await addResearchBoardItem(board.id, firstAd.id);
+        setBoardAds([firstAd]);
+        setBoards(prev => prev.map(item => item.id === board.id ? { ...item, item_count: 1 } : item));
+      }
+      showSuccess(`Board “${board.name}” created`);
+      return board;
+    } catch (e) {
+      showError(e.message || 'Failed to create research board');
+      return null;
+    } finally {
+      setCreatingBoard(false);
+    }
+  };
+
+  const handleAddToBoard = async (boardId, ad) => {
+    try {
+      await addResearchBoardItem(boardId, ad.id);
+      if (activeBoardId === boardId && !boardAds.some(item => item.id === ad.id)) {
+        setBoardAds(prev => [ad, ...prev]);
+      }
+      loadBoards();
+      showSuccess('Ad added to board');
+    } catch (e) {
+      showError(e.message || 'Failed to add ad to board');
+    }
+  };
+
+  const handleRemoveFromBoard = async (item) => {
+    if (!activeBoardId || !item.board_item_id) return;
+    try {
+      await deleteResearchBoardItem(activeBoardId, item.board_item_id);
+      setBoardAds(prev => prev.filter(ad => ad.id !== item.id));
+      setBoards(prev => prev.map(board => board.id === activeBoardId ? { ...board, item_count: Math.max(0, (board.item_count || 0) - 1) } : board));
+    } catch (e) {
+      showError(e.message || 'Failed to remove ad from board');
+    }
+  };
+
+  const handleDeleteBoard = async (board) => {
+    try {
+      await deleteResearchBoard(board.id);
+      setBoards(prev => prev.filter(item => item.id !== board.id));
+      if (activeBoardId === board.id) setActiveBoardId(null);
+      showSuccess(`Board “${board.name}” deleted`);
+    } catch (e) {
+      showError(e.message || 'Failed to delete research board');
+    }
+  };
+
+  const handleQuerySearch = async (event) => {
+    event.preventDefault();
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery || queryLoading) return;
+    setQueryLoading(true);
+    try {
+      const res = await authFetch(`${API_URL}/research/search-and-save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: trimmedQuery, platform: 'facebook', limit: 30, country: 'US', search_type: 'one_time' }),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(result.detail || 'Search failed');
+      const filtered = (result.ads || []).filter(ad => (
+        (!angleFilter || ad.angle_tag === angleFilter) &&
+        (!advertiserFilter.trim() || (ad.brand_name || '').toLowerCase().includes(advertiserFilter.trim().toLowerCase())) &&
+        (!activeOnly || (ad.last_seen && (Date.now() - new Date(ad.last_seen).getTime()) <= 30 * 24 * 60 * 60 * 1000))
+      ));
+      setBrowseAds(filtered);
+      showSuccess(`Search saved — ${filtered.length} ads ready to organize`);
+      loadBoards();
+      loadSavedAds();
+    } catch (e) {
+      setBrowseError(e.message || 'Search failed');
+      showError(e.message || 'Search failed');
+    } finally {
+      setQueryLoading(false);
+    }
   };
 
   // Re-run browse when filters change (with debounce on advertiser text)
@@ -751,6 +982,8 @@ export default function Research() {
     return config[activeVertical]?.label || activeVertical;
   }, [activeVertical, activeSubVertical, config, subVerticals]);
 
+  const visibleSavedAds = activeBoardId ? boardAds : savedAds;
+
   // ── Render ────────────────────────────────────────────────────
     return (
     <div className="max-w-7xl mx-auto space-y-5">
@@ -920,6 +1153,39 @@ export default function Research() {
       <div className="flex gap-5 items-start">
         {/* Browse panel — 70% */}
         <div className="flex-[7] min-w-0 space-y-4">
+          <form onSubmit={handleQuerySearch} className="bg-white rounded-xl border border-indigo-200 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <input
+                type="search"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Ask a research question or search the Ad Library…"
+                className="min-w-0 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                aria-label="Research query"
+              />
+              <button
+                type="submit"
+                disabled={queryLoading || !query.trim()}
+                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <RefreshCw size={14} className={queryLoading ? 'animate-spin' : ''} />
+                {queryLoading ? 'Searching…' : 'Search'}
+              </button>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <span className="mr-1 text-xs text-gray-400">Try:</span>
+              {QUERY_PRESETS.map(preset => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setQuery(preset)}
+                  className="rounded-full border border-gray-200 px-2.5 py-1 text-xs text-gray-600 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
+          </form>
           {/* Filter bar */}
           <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -1013,37 +1279,110 @@ export default function Research() {
                   onUseAsInspiration={handleUseAsInspiration}
                   onBlockPage={handleBlockPage}
                   angleTags={angleTags}
+                  boards={boards}
+                  onAddToBoard={handleAddToBoard}
+                  onCreateBoard={handleCreateBoard}
                 />
               ))}
             </div>
           )}
         </div>
 
-        {/* Saved panel — 30% */}
+        {/* Research boards panel — 30% */}
         <div className="flex-[3] min-w-0 space-y-3 sticky top-6">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-              SAVED
-              <span className="ml-1 font-normal text-gray-400">({savedAds.length})</span>
+              RESEARCH BOARDS
             </span>
-            <span className="text-xs text-gray-400">All verticals</span>
+            <span className="text-xs text-gray-400">Shared workspace</span>
           </div>
 
-          {savedAds.length === 0 ? (
+          <div className="bg-white rounded-xl border border-gray-200 p-3 space-y-1">
+            <button
+              type="button"
+              onClick={() => setActiveBoardId(null)}
+              className={`w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs ${!activeBoardId ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}
+            >
+              <span>Saved library</span>
+              <span className="text-gray-400">{savedAds.length}</span>
+            </button>
+            {boardsLoading ? (
+              <p className="px-3 py-2 text-xs text-gray-400">Loading boards…</p>
+            ) : boards.map(board => (
+              <div key={board.id} className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setActiveBoardId(board.id)}
+                  className={`min-w-0 flex-1 flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs ${activeBoardId === board.id ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}
+                >
+                  <span className="truncate">{board.name}</span>
+                  <span className="text-gray-400">{board.item_count}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteBoard(board)}
+                  className="rounded p-1 text-gray-300 hover:bg-red-50 hover:text-red-500"
+                  aria-label={`Delete ${board.name} board`}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            ))}
+            <div className="border-t border-gray-100 pt-2 mt-2">
+              <div className="flex gap-1">
+                <input
+                  type="text"
+                  value={newBoardName}
+                  onChange={e => setNewBoardName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleCreateBoard(); } }}
+                  placeholder="New board name"
+                  className="min-w-0 flex-1 rounded-md border border-gray-200 px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-indigo-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleCreateBoard()}
+                  disabled={creatingBoard || !newBoardName.trim()}
+                  className="rounded-md bg-indigo-600 px-2.5 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                >
+                  {creatingBoard ? '…' : '+ New'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {visibleSavedAds.length === 0 ? (
             <div className="bg-white rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center">
               <Star size={20} className="mx-auto text-gray-300 mb-2" />
               <p className="text-xs text-gray-400 leading-relaxed">
-                Save competitor ads you want to reference. They'll appear here for quick inspiration.
+                {activeBoardId ? 'This board is empty. Add ads from the research cards.' : 'Save competitor ads you want to reference. They’ll appear in the saved library.'}
               </p>
             </div>
           ) : (
             <div className="space-y-2 max-h-[calc(100vh-220px)] overflow-y-auto pr-1">
-              {savedAds.map(ad => (
+              {activeBoardId ? visibleSavedAds.map(ad => (
+                <AdCard
+                  key={ad.id}
+                  ad={ad}
+                  isSaved={savedAdIds.has(ad.id)}
+                  onSave={handleSave}
+                  onUnsave={handleUnsave}
+                  onUseAsInspiration={handleUseAsInspiration}
+                  onBlockPage={handleBlockPage}
+                  angleTags={angleTags}
+                  boards={boards}
+                  onAddToBoard={handleAddToBoard}
+                  onCreateBoard={handleCreateBoard}
+                  onRemoveFromBoard={handleRemoveFromBoard}
+                />
+              )) : visibleSavedAds.map(ad => (
                 <SavedCard
                   key={ad.id}
                   ad={ad}
                   onUnsave={handleUnsave}
                   onUseAsInspiration={handleUseAsInspiration}
+                  boards={boards}
+                  onAddToBoard={handleAddToBoard}
+                  onCreateBoard={handleCreateBoard}
                 />
               ))}
             </div>

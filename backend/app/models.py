@@ -57,6 +57,7 @@ class User(Base):
     roles = relationship("Role", secondary=user_roles, back_populates="users")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     ad_accounts = relationship("UserAdAccount", back_populates="user", cascade="all, delete-orphan")
+    created_research_boards = relationship("ResearchBoard", back_populates="creator")
 
     def allowed_account_ids(self):
         """Meta ad accounts this user may see/act on.
@@ -602,6 +603,40 @@ class ScrapedAd(Base):
 
     saved_search = relationship("SavedSearch", back_populates="ads")
     facebook_page = relationship("FacebookPage", back_populates="ads")
+    research_board_items = relationship("ResearchBoardItem", back_populates="scraped_ad")
+
+
+class ResearchBoard(Base):
+    """Workspace-shared collection of saved research ads."""
+    __tablename__ = "research_boards"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    name = Column(String, nullable=False)
+    vertical_id = Column(String, nullable=True)
+    created_by = Column(String, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    creator = relationship("User", back_populates="created_research_boards")
+    items = relationship("ResearchBoardItem", back_populates="board", cascade="all, delete-orphan")
+
+
+class ResearchBoardItem(Base):
+    """Many-to-many join between a research board and a scraped ad."""
+    __tablename__ = "research_board_items"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    board_id = Column(String, ForeignKey('research_boards.id', ondelete='CASCADE'), nullable=False)
+    scraped_ad_id = Column(String, ForeignKey('scraped_ads.id', ondelete='CASCADE'), nullable=False)
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    board = relationship("ResearchBoard", back_populates="items")
+    scraped_ad = relationship("ScrapedAd", back_populates="research_board_items")
+
+    __table_args__ = (
+        UniqueConstraint('board_id', 'scraped_ad_id', name='uq_research_board_item'),
+    )
 
 class Prompt(Base):
     __tablename__ = "prompts"

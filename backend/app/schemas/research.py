@@ -43,6 +43,29 @@ class ScrapedAdCreate(ScrapedAdBase):
 class ScrapedAdSearchResult(ScrapedAdBase):
     pass
 
+
+class ResearchBoardCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    vertical_id: Optional[str] = Field(default=None, max_length=200)
+
+
+class ResearchBoardItemCreate(BaseModel):
+    scraped_ad_id: str = Field(min_length=1, max_length=200)
+
+
+class ResearchBoardResponse(BaseModel):
+    id: str
+    name: str
+    vertical_id: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    item_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
 class ScrapedAdResponse(ScrapedAdBase):
     id: str
     search_id: Optional[str] = None
@@ -50,6 +73,10 @@ class ScrapedAdResponse(ScrapedAdBase):
 
     class Config:
         from_attributes = True
+
+
+class ResearchBoardItemResponse(ScrapedAdResponse):
+    board_item_id: str
 
 class SavedSearchBase(BaseModel):
     query: str
