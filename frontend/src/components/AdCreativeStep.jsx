@@ -2064,7 +2064,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             <X size={20} />
                         </button>
                     </div>
-                            <div className="flex-1 overflow-y-auto p-4">
+                    <div className="flex-1 overflow-y-auto p-4">
                         {libraryLoading ? (
                             <div className="flex items-center justify-center py-12 gap-2 text-gray-500">
                                 <Loader className="animate-spin" size={20} />
@@ -2072,7 +2072,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             </div>
                         ) : libraryAds.length === 0 ? (
                             <p className="text-center text-gray-500 py-12">No generated ads found. Create some in the Generated Ads section first.</p>
-                                ) : (
+                        ) : (
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                                 {libraryAds.map(ad => {
                                     const isSelected = selectedLibraryIds.has(ad.id);
@@ -2086,8 +2086,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             {isSelected && (
                                                 <div className="absolute top-2 right-2 bg-amber-500 rounded-full p-0.5">
                                                     <Check size={14} className="text-white" />
-                            </div>
-                                )}
+                                                </div>
+                                            )}
                                             {ad.headline && (
                                                 <div className="p-2 text-xs text-gray-600 truncate bg-white">{ad.headline}</div>
                                             )}

@@ -4,10 +4,15 @@ from alembic import op
 
 
 revision = 'a2b3c4d5e6f7'
-# The strategy-notes migration was introduced on a parallel branch after the
-# token migration. Merge both existing heads here so this deploy restores one
-# authoritative head without rewriting already-deployed revisions.
-down_revision = ('a1b2c3d4e5f6', 'z1a2b3c4d5e6')
+# The prior version of this migration merged down_revision with 'z1a2b3c4d5e6'
+# on the theory that it was a second, divergent head. It wasn't: z1a2b3c4d5e6
+# is an ANCESTOR several steps back in this same linear chain (via
+# f2g4h6i8j0k2 -> ... -> a1b2c3d4e5f6, confirmed by walking the full revision
+# graph and confirming exactly one file in this directory has
+# down_revision='z1a2b3c4d5e6' — the pre-existing f2g4h6i8j0k2, already
+# deployed long ago). There was never a real branch to merge; this is a plain
+# single-parent migration like every other one in this repo (pre-push review).
+down_revision = 'a1b2c3d4e5f6'
 branch_labels = None
 depends_on = None
 
