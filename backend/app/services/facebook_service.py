@@ -2809,7 +2809,7 @@ class FacebookService:
         logger.info("get_ad_insights_map: resolved %d/%d ads", len(out), len(ids))
         return out
 
-    def get_account_ads_with_creative(self, ad_account_id=None):
+    def get_account_ads_with_creative(self, ad_account_id=None, include_empty=False):
         """Bulk-fetch all ACTIVE/PAUSED ads with their creative text for the copy library.
 
         Uses a single paginated batch call with nested creative fields — much more
@@ -2889,8 +2889,10 @@ class FacebookService:
                 ((afs.get('bodies') or [{}])[0].get('text'))
             )
 
-            # Skip ads with no usable copy
-            if not headline and not body_text:
+            # The copy library skips ads with no usable copy. Callers that need
+            # an inventory of every ACTIVE/PAUSED ad (for example rule targets)
+            # can opt into retaining those rows.
+            if not include_empty and not headline and not body_text:
                 continue
 
             results.append({
