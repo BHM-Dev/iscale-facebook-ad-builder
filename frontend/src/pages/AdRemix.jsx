@@ -879,31 +879,6 @@ export default function AdRemix() {
                 </details>
             )}
 
-            {/* Research inspiration banner — shown when launched from Research section */}
-            {researchInspiration && (
-                <div className="mb-4 flex items-center justify-between gap-3 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-sm">
-                    <div className="flex items-start gap-2">
-                        <Zap size={15} className="text-blue-500 mt-0.5 flex-shrink-0" />
-                        <span className="text-blue-700">
-                            Inspired by{' '}
-                            <strong className="text-blue-800">{researchInspiration.advertiser}</strong>
-                            {researchInspiration.angle && (
-                                <> — <span className="capitalize">{researchInspiration.angle.replace('_', ' ')}</span> angle</>
-                            )}
-                            . Writing original copy for your brand.
-                        </span>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={clearResearchContext}
-                        className="flex-shrink-0 text-blue-400 hover:text-blue-600"
-                        aria-label="Dismiss inspiration context"
-                    >
-                        <X size={14} />
-                    </button>
-                </div>
-            )}
-
             {/* Uploaded inspiration banner — shown when Joel uploads an outside ad */}
             {uploadedInspiration && (
                 <div className="mb-4 flex items-center justify-between gap-3 bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3 text-sm">
@@ -1008,27 +983,6 @@ export default function AdRemix() {
                 {/* Step 2: Brand Selection */}
                 {currentStep === 2 && (
                     <div>
-                        {researchInspiration && (
-                            <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm">
-                                <div className="text-xs font-semibold text-blue-500 uppercase tracking-wide mb-1">Modeling competitor ad</div>
-                                <div className="font-medium text-gray-800 truncate">{researchInspiration.advertiser}</div>
-                                {researchInspiration.headline && (
-                                    <div className="text-gray-600 text-xs mt-0.5 line-clamp-2">"{researchInspiration.headline}"</div>
-                                )}
-                                {researchInspiration.mediaUrl ? (
-                                    <div className="mt-2 text-xs text-blue-600">Creative image will be used as remix reference when available.</div>
-                                ) : (
-                                    <div className="mt-2 text-xs text-blue-600">No image was stored for this ad, so the remix will use a generic direct-response layout.</div>
-                                )}
-                            </div>
-                        )}
-                        {uploadedInspiration && (
-                            <div className="mb-4 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm">
-                                <div className="text-xs font-semibold text-emerald-600 uppercase tracking-wide mb-1">Modeling uploaded ad</div>
-                                <div className="font-medium text-gray-800 truncate">{uploadedInspiration.fileName || 'Uploaded image'}</div>
-                                <div className="mt-2 text-xs text-emerald-700">Creative image will be used as remix reference.</div>
-                            </div>
-                        )}
                         <BrandSelectionStep
                             brands={brands}
                             selectedBrand={wizardData.brand}
@@ -1079,14 +1033,6 @@ export default function AdRemix() {
                         {prefillSource && (
                             <div className="mb-5 p-3 bg-purple-50 border border-purple-200 rounded-lg text-xs text-purple-700">
                                 <span className="font-semibold">Source ad:</span> {prefillSource.ad_name} — edit the fields below to remix with a new angle, or leave them to generate copy variations on the same hook.
-                            </div>
-                        )}
-
-                        {researchInspiration && (researchInspiration.headline || researchInspiration.body) && (
-                            <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-500">
-                                <div className="font-semibold text-gray-700 mb-1">Competitor reference — {researchInspiration.advertiser}</div>
-                                {researchInspiration.headline && <div className="font-medium text-gray-600">"{researchInspiration.headline}"</div>}
-                                {researchInspiration.body && <div className="mt-1 line-clamp-3 text-gray-500">{researchInspiration.body}</div>}
                             </div>
                         )}
 
