@@ -272,14 +272,19 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         cta: false,
         websiteUrl: false,
     });
+    // Wire key must be snake_case (`creative_enhancements`) to match what
+    // facebook_service.py reads off the request body — the backend never
+    // does camelCase->snake_case conversion, so a mismatch here silently
+    // no-ops the whole feature (caught in pre-push review, was `creativeEnhancements`).
     const [creativeEnhancements, setCreativeEnhancements] = useState(
-        () => creativeData.creativeEnhancements || {}
+        () => creativeData.creative_enhancements || {}
     );
+    const [isEnhancementsPanelOpen, setIsEnhancementsPanelOpen] = useState(false);
 
     const toggleCreativeEnhancement = (key) => {
         setCreativeEnhancements(prev => {
             const next = { ...prev, [key]: !prev[key] };
-            setCreativeData(current => ({ ...current, creativeEnhancements: next }));
+            setCreativeData(current => ({ ...current, creative_enhancements: next }));
             return next;
         });
     };
@@ -1758,13 +1763,25 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 overflow-hidden">
                     <button
                         type="button"
-                        onClick={() => setCreativeEnhancements(prev => ({ ...prev, _open: !prev._open }))}
+                        onClick={() => setIsEnhancementsPanelOpen(prev => !prev)}
                         className="w-full flex items-center justify-between px-4 py-3 text-left text-sm font-semibold text-gray-800 hover:bg-gray-100"
                     >
-                        <span>Creative Enhancements <span className="ml-1 text-xs font-normal text-gray-500">optional · default off</span></span>
-                        <span className="text-xs text-gray-500">{creativeEnhancements._open ? 'Hide' : 'Show'}</span>
+                        <span className="flex items-center gap-2">
+                            Creative Enhancements
+                            <span className="text-xs font-normal text-gray-500">optional · default off</span>
+                            {/* Collapsed-state visibility: Joel-perspective review flagged that
+                                once this panel is closed there was no way to tell what's enabled
+                                without reopening it. This badge is the fix — visible without
+                                expanding, and visible on every ad in a bulk batch. */}
+                            {Object.values(creativeEnhancements).some(Boolean) && (
+                                <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-medium">
+                                    {Object.values(creativeEnhancements).filter(Boolean).length} enabled
+                                </span>
+                            )}
+                        </span>
+                        <span className="text-xs text-gray-500">{isEnhancementsPanelOpen ? 'Hide' : 'Show'}</span>
                     </button>
-                    {creativeEnhancements._open && (
+                    {isEnhancementsPanelOpen && (
                         <div className="border-t border-gray-200 px-4 py-3 space-y-2">
                             <p className="text-xs text-gray-500 mb-3">Opt in per ad request. Nothing is sent to Meta unless you enable a toggle.</p>
                             {CREATIVE_ENHANCEMENT_OPTIONS.map(option => (

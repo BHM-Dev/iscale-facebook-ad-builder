@@ -456,7 +456,11 @@ export async function createFacebookAdSet(adsetData, campaignId, adAccountId, bu
 
 /**
  * Create Facebook Ad Creative (supports both image and video)
- * @param {Object} creativeData - Creative data including bodies, headlines, websiteUrl
+ * @param {Object} creativeData - Creative data including bodies, headlines, websiteUrl.
+ *   `creativeData.creative_enhancements` (optional dict of {flag: boolean}) is
+ *   forwarded to the backend as-is via the object spread below — there is no
+ *   separate parameter for it, so the key name here MUST stay snake_case to
+ *   match what `facebook_service.py.create_creative()` reads off the request body.
  * @param {string|null} imageHash - Image hash for image ads (null for video)
  * @param {string} pageId - Facebook page ID
  * @param {string} adAccountId - Facebook ad account ID
@@ -465,7 +469,6 @@ export async function createFacebookAdSet(adsetData, campaignId, adAccountId, bu
  *   asset (Bulk Match Import only). When provided alongside imageHash, the backend
  *   builds a dual-placement creative (Feed square + Stories/Reels vertical, same
  *   copy) instead of a single-image creative. Ignored for video ads.
- * @param {Object|null} creativeEnhancements - Optional per-ad opt-in feature flags.
  */
 export async function createFacebookCreative(creativeData, imageHash, pageId, adAccountId, videoData = null, secondaryImageHash = null) {
     try {
