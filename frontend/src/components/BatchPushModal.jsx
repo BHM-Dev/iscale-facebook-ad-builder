@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     Rocket, Loader, X, CheckCircle2, AlertCircle, ExternalLink,
     PlusCircle, ListFilter, ChevronDown, ChevronUp
@@ -81,9 +81,28 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     const doneItems = items.filter(it => pushStatuses[it.key] === 'done');
     const errorItems = items.filter(it => pushStatuses[it.key] === 'error');
 
+    // Ad Account is a free-text input whose onChange fires on every keystroke —
+    // a useEffect keyed on the raw `adAccountId` state (the prior version of
+    // this fix) resets on every keystroke too, silently wiping the selection
+    // one character at a time while Joel is still typing or correcting a
+    // digit. A prior fix attempt just moved this panel below the Ad Account
+    // field in the JSX, which has no effect on when a useEffect re-runs —
+    // confirmed still broken by re-review (code-auditor, BLOCKING). Reset
+    // only on blur, and only if the value actually changed since the last
+    // commit, mirroring the existing onBlur-driven loadCampaigns/loadPages
+    // pattern on this same field rather than reacting to every keystroke.
+    const committedAdAccountRef = useRef(adAccountId);
+    const resetEnhancementsIfAccountChanged = () => {
+        if (committedAdAccountRef.current !== adAccountId) {
+            committedAdAccountRef.current = adAccountId;
+            setCreativeEnhancements({});
+        }
+    };
+    // selectedCampaignId is set via a discrete dropdown/list selection, not
+    // free-typed — a plain effect here is safe, no keystroke-wipe risk.
     useEffect(() => {
         setCreativeEnhancements({});
-    }, [adAccountId, selectedCampaignId]);
+    }, [selectedCampaignId]);
 
     // Auto-load on mount — fetch ad account ID from backend config so Joel never has to type it
     useEffect(() => {
@@ -97,6 +116,18 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                     if (cfg?.ad_account_id) {
                         acctId = cfg.ad_account_id;
                         setAdAccountId(acctId);
+                        // Keep the "committed" ref in sync with THIS auto-fill —
+                        // it's the only place adAccountId is set outside the
+                        // field's own onBlur, and missing this left the ref
+                        // stuck at whatever it was at mount (often '' on a
+                        // fresh browser/cleared localStorage). The next blur
+                        // for ANY reason — even just tabbing through the form
+                        // with no edit — would then see a false "changed"
+                        // value and wipe creativeEnhancements with nothing
+                        // actually having changed (re-verification review,
+                        // HIGH — same silent-wipe class this fix round exists
+                        // to close, just relocated to the auto-fill path).
+                        committedAdAccountRef.current = acctId;
                         safeLocalStorageSet('fb_ad_account_id', acctId);
                     }
                 } catch (_) { /* fall through — user can type it */ }
@@ -412,7 +443,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                 setAdSets([]);
                                 setSelectedCampaignId('');
                             }}
-                            onBlur={() => { loadCampaigns(adAccountId); loadPages(adAccountId); }}
+                            onBlur={() => { resetEnhancementsIfAccountChanged(); loadCampaigns(adAccountId); loadPages(adAccountId); }}
                             className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 disabled:bg-gray-50 ${
                                 fieldErrors.adAccountId ? 'border-red-400 focus:ring-red-500' : 'border-gray-300 focus:ring-green-500'
                             }`}
@@ -469,14 +500,11 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                         )}
                     </div>
 
-                    {/* Placed after Ad Account/Campaign, not before: both fields'
-                        onChange fires on every keystroke, and the reset effect above
-                        depends on [adAccountId, selectedCampaignId] — a panel above
-                        those fields meant toggling enhancements first, then typing an
-                        account ID correction, silently wiped the selection one
-                        keystroke at a time (joel-perspective pre-push review, P1).
-                        This ordering also now matches PushToMetaModal, which already
-                        had it correctly sequenced. */}
+                    {/* Enhancements reset on blur (Ad Account) or on selection
+                        (Campaign) — not on every keystroke. See
+                        resetEnhancementsIfAccountChanged above for why a plain
+                        effect keyed on adAccountId doesn't work for a
+                        free-text field with an onChange-per-keystroke. */}
                     <CreativeEnhancementsPanel value={creativeEnhancements} onChange={setCreativeEnhancements} />
 
                     {/* Ad Set */}

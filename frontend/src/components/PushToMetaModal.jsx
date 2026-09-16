@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Rocket, Loader, X, CheckCircle2, ExternalLink, PlusCircle, ListFilter } from 'lucide-react';
 import { getAdAccounts, getCampaigns, getAdSets, getPages, createCompleteAd, createFacebookAdSet, authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
@@ -94,12 +94,29 @@ export default function PushToMetaModal({
         cta: initialCta || 'LEARN_MORE',
     });
 
+    // When accounts.length <= 1, the Ad Account field below falls back to a
+    // free-text input whose onChange fires on every keystroke — a plain
+    // effect keyed on the raw pushForm.adAccountId value resets on every
+    // keystroke too, silently wiping the enhancement selection one character
+    // at a time while still typing (same class of bug fixed in
+    // BatchPushModal.jsx; found here separately in review since this file's
+    // dropdown-vs-text-input split makes it easy to fix one path and miss
+    // the other — code-auditor pre-push review, HIGH). campaignId is set via
+    // a discrete list/select, so a plain effect on it alone is safe.
+    const committedAdAccountRef = useRef(pushForm.adAccountId);
+    const resetEnhancementsIfAccountChanged = (nextAdAccountId) => {
+        if (committedAdAccountRef.current !== nextAdAccountId) {
+            committedAdAccountRef.current = nextAdAccountId;
+            setCreativeEnhancements({});
+        }
+    };
     useEffect(() => {
         setCreativeEnhancements({});
-    }, [pushForm.adAccountId, pushForm.campaignId]);
+    }, [pushForm.campaignId]);
 
     const hydrateAccount = (adAccountId) => {
         if (!adAccountId) return;
+        resetEnhancementsIfAccountChanged(adAccountId);
         // pageId must reset too — it's scoped to the ad account, and a stale value from
         // a previous account would otherwise silently pass the "all filled" collapse check.
         setPushForm(p => ({ ...p, adAccountId, campaignId: '', adsetId: '', pageId: '' }));
@@ -530,6 +547,7 @@ export default function PushToMetaModal({
                                     setPushAdSets([]);
                                 }}
                                 onBlur={() => {
+                                    resetEnhancementsIfAccountChanged(pushForm.adAccountId);
                                     loadPushCampaigns(pushForm.adAccountId);
                                     loadPushPages(pushForm.adAccountId);
                                 }}
