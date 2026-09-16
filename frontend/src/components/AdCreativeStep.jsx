@@ -1,6 +1,6 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image, BookOpen, Check, Layers, FolderOpen, Search } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
@@ -299,6 +299,67 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             return sum + (wouldAutoDupe ? 2 : 1);
         }, 0);
     }, [selectedDriveAssetIds, driveGroupById, autoDupeStories]);
+
+    // Aggregate crop-batch state — drives the "cropping N of M" banner and the
+    // failed-crop count/retry-all control on the media grid. `cropping` is set
+    // true on a card the instant its placeholder is created (before the
+    // client-side concurrency queue in imageCrop.js even starts its network
+    // request), so the size of a just-started batch is fully visible in
+    // creativeData immediately — no separate bookkeeping needed at the
+    // trigger sites (bulk Drive add, auto-dupe on upload, manual duplicate).
+    const croppingCreatives = useMemo(
+        () => creativeData.creatives.filter(c => c.cropping),
+        [creativeData.creatives]
+    );
+    const cropFailedCreatives = useMemo(
+        () => creativeData.creatives.filter(c => c.cropFailed),
+        [creativeData.creatives]
+    );
+    const croppingCount = croppingCreatives.length;
+    const cropFailedCount = cropFailedCreatives.length;
+    // Tracks "N of M done" for the progress banner via an id-keyed set rather
+    // than a raw high-water mark on the in-flight count — a first version
+    // used `Math.max(prev, croppingCount)`, which silently broke on two real
+    // cases (code-auditor pre-push review, HIGH + MEDIUM): (1) if Joel adds
+    // more images while an earlier batch is still draining, the new arrivals
+    // got absorbed into the old peak instead of extending the total, so the
+    // banner understated both numbers; (2) removing a still-cropping card
+    // (the grid's Trash2 button isn't disabled mid-crop) never shrank the
+    // total, so M stayed permanently overstated until the whole batch
+    // happened to finish. Fixed by tracking the actual set of card ids that
+    // have been part of the CURRENT batch: an id joins when it starts
+    // cropping, leaves if its card is deleted entirely (shrinking the total),
+    // and the whole set clears once nothing is in flight so the next batch
+    // starts clean. Computed via useMemo (not useEffect+state) specifically
+    // so there's no one-frame render where a fresh batch's total hasn't
+    // caught up yet — the auditor also confirmed that lag was independently
+    // reachable and could flash a negative "done" count.
+    const cropBatchIdsRef = useRef(new Set());
+    const cropBatchProgress = useMemo(() => {
+        const currentIds = new Set(creativeData.creatives.map(c => c.id));
+        const stillCroppingIds = croppingCreatives.map(c => c.id);
+
+        if (stillCroppingIds.length === 0) {
+            cropBatchIdsRef.current = new Set();
+            return { total: 0, done: 0 };
+        }
+
+        const ids = cropBatchIdsRef.current;
+        stillCroppingIds.forEach(id => ids.add(id));
+        [...ids].forEach(id => {
+            if (!currentIds.has(id)) ids.delete(id);
+        });
+
+        return { total: ids.size, done: ids.size - stillCroppingIds.length };
+    }, [creativeData.creatives, croppingCreatives]);
+
+    // Re-runs every currently-failed crop from its own pristine source in one
+    // click, rather than making Joel hunt down and retry each red banner
+    // individually across a large bulk grid (joel-perspective follow-up,
+    // shipped 2026-09-15 alongside the rest of the smart-crop feature).
+    const retryAllFailedCrops = () => {
+        cropFailedCreatives.forEach(c => recropCreative(c.id, c.cropAnchor || 'center'));
+    };
 
     // Drops any selected id that narrowing the search/format filter has
     // scrolled out of driveAssetGroups — without this, a tile selected
@@ -1164,8 +1225,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             // image relabeled" problem this feature replaced — block launch
             // until Joel retries or removes it rather than letting a failed
             // card slip through unnoticed (joel-perspective pre-push review, P1).
-            if (creativeData.creatives.some(c => c.cropFailed)) {
-                showWarning('One or more Feed/Stories crops failed — retry or remove them before continuing.');
+            // Names a count rather than "one or more" — a follow-up from that
+            // same review: on a large bulk grid, a generic warning leaves him
+            // guessing how many red banners to go find.
+            if (cropFailedCount > 0) {
+                showWarning(
+                    `${cropFailedCount} Feed/Stories crop${cropFailedCount !== 1 ? 's' : ''} failed — retry or remove ${cropFailedCount !== 1 ? 'them' : 'it'} before continuing.`
+                );
                 return;
             }
 
@@ -1474,6 +1540,34 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     Remove all auto-added Stories/Feed duplicates
                                 </button>
                             )}
+                        </div>
+                    )}
+                    {/* Aggregate crop-batch banner — a dense bulk grid (e.g. a
+                        50-image Drive add) reads as a wall of per-card spinners
+                        with no way to tell "still working" from "stuck" at a
+                        glance; this gives the batch a single visible number.
+                        Progress-only while in flight; separately, a persistent
+                        failure summary + one-click retry-all once anything
+                        fails, so Joel isn't hunting red banners card by card
+                        (joel-perspective follow-up on the smart-crop feature). */}
+                    {croppingCount > 0 && (
+                        <div className="mb-3 px-3 py-2 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-800 flex items-center gap-2">
+                            <Loader className="animate-spin shrink-0" size={14} />
+                            Cropping Feed/Stories versions — {cropBatchProgress.done} of {cropBatchProgress.total} done
+                        </div>
+                    )}
+                    {cropFailedCount > 0 && (
+                        <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-800 flex items-center justify-between gap-3 flex-wrap">
+                            <span>
+                                <strong>{cropFailedCount}</strong> Feed/Stories crop{cropFailedCount !== 1 ? 's' : ''} failed — showing the uncropped image on those cards.
+                            </span>
+                            <button
+                                type="button"
+                                onClick={retryAllFailedCrops}
+                                className="shrink-0 text-xs font-semibold text-red-700 underline hover:text-red-900"
+                            >
+                                Retry all {cropFailedCount} failed crop{cropFailedCount !== 1 ? 's' : ''}
+                            </button>
                         </div>
                     )}
                     {creativeData.creatives && creativeData.creatives.length > 0 && (
