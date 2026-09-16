@@ -93,6 +93,18 @@ const BulkMatchImport = ({ onNext, onBack }) => {
     const [progress, setProgress] = useState({ current: 0, total: 0, status: '' });
     const [errors, setErrors] = useState([]);
     const [creativeEnhancements, setCreativeEnhancements] = useState({});
+    // Match Import reads selectedAdAccount/campaignData from shared wizard
+    // context rather than owning its own switcher — but the wizard can still
+    // navigate back and change either, and without this the enhancement
+    // selection from a stale account/campaign would silently carry into a
+    // new one with no on-screen indication either way (joel-perspective
+    // pre-push review, P2). Same reset precedent, and same cache-key
+    // derivation (prefers fbCampaignId, falls back to id then 'new'), that
+    // AdCreativeStep.jsx already applies for its own scope changes.
+    const campaignCacheId = campaignData?.fbCampaignId || campaignData?.id || 'new';
+    useEffect(() => {
+        setCreativeEnhancements({});
+    }, [selectedAdAccount, campaignCacheId]);
 
     // Inline edits made in the review table, keyed by adNumber. Kept separate
     // from csvRows so a typo fix never requires re-uploading the CSV — these

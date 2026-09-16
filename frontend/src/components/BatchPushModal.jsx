@@ -397,8 +397,6 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                         </div>
                     )}
 
-                    <CreativeEnhancementsPanel value={creativeEnhancements} onChange={setCreativeEnhancements} />
-
                     {/* Ad Account */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Ad Account ID *</label>
@@ -470,6 +468,16 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                             <p className="text-xs text-red-600 mt-1">{fieldErrors.campaign}</p>
                         )}
                     </div>
+
+                    {/* Placed after Ad Account/Campaign, not before: both fields'
+                        onChange fires on every keystroke, and the reset effect above
+                        depends on [adAccountId, selectedCampaignId] — a panel above
+                        those fields meant toggling enhancements first, then typing an
+                        account ID correction, silently wiped the selection one
+                        keystroke at a time (joel-perspective pre-push review, P1).
+                        This ordering also now matches PushToMetaModal, which already
+                        had it correctly sequenced. */}
+                    <CreativeEnhancementsPanel value={creativeEnhancements} onChange={setCreativeEnhancements} />
 
                     {/* Ad Set */}
                     {selectedCampaignId && (
