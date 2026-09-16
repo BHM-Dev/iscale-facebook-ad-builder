@@ -11,12 +11,10 @@ Supported presets: today, yesterday, last_3d, last_7d, last_14d, last_30d,
 """
 
 import logging
-import os
 import re
 from datetime import date, timedelta, datetime
 from typing import Optional, Dict
 
-import anthropic
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -26,9 +24,6 @@ from app.services.redtrack_service import RedTrackService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 
 _NON_NICHE_RE = re.compile(
     r'^(batch\s*\d+|v\d+|scale|retarget|broad|phase\s*\d+|test|duplicate|copy)$',
@@ -271,11 +266,32 @@ def _build_action_queue(rows: list) -> dict:
         -(r['spend'] or 0),
     ))
 
+    def action_item(row: dict) -> dict:
+        roi = f"{row['roi'] * 100:+.0f}%" if row.get('roi') is not None else "ROI unavailable"
+        spend = f"${row.get('spend', 0):,.0f}"
+        profit = f"${row.get('profit', 0):,.0f}"
+        confidence = row.get('confidence', 'unknown')
+        action = row.get('suggested_action', '')
+        if action in scale_actions:
+            reason = f"{roi} ROI on {spend} spend · {confidence} confidence"
+        elif action in cut_actions or action in watch_actions:
+            reason = f"{roi} ROI, {profit} profit · {confidence} confidence"
+        else:
+            status = (row.get('join_status') or 'tracking check').replace('_', ' ')
+            reason = f"{spend} spend · {status}"
+        if row.get('is_directional') and action in scale_actions | cut_actions | watch_actions:
+            reason = f"Directional · {reason}"
+        return {
+            "niche": row['niche'],
+            "action_label": row['suggested_action_label'],
+            "reason": reason,
+        }
+
     return {
-        "scale":          [f"{r['niche']} ({r['suggested_action_label']})" for r in scale_rows[:5]],
-        "cut_or_pause":   [f"{r['niche']} ({r['suggested_action_label']})" for r in cut_rows[:5]],
-        "watch":          [r['niche'] for r in watch_rows[:5]],
-        "tracking_check": [r['niche'] for r in track_rows[:5]],
+        "scale":          [action_item(r) for r in scale_rows[:5]],
+        "cut_or_pause":   [action_item(r) for r in cut_rows[:5]],
+        "watch":          [action_item(r) for r in watch_rows[:5]],
+        "tracking_check": [action_item(r) for r in track_rows[:5]],
     }
 
 
@@ -413,155 +429,27 @@ def _aggregate_by_niche(meta_data: dict, rt_data: dict, day_filter: str, budget_
     return sorted(rows, key=lambda r: r['spend'], reverse=True)
 
 
-def _generate_summary(rows: list, preset_label: str, date_from: str, date_to: str,
-                      day_filter: str, tracking_warning: dict, action_queue: dict) -> str:
-    if not _client:
-        return "AI summary unavailable — ANTHROPIC_API_KEY not configured."
+def _build_summary(action_queue: dict) -> str:
+    """Build one factual headline from the already-sorted action queue."""
+    lane_phrases = []
+    for key, phrase in (
+        ('scale', 'queued to scale'),
+        ('cut_or_pause', 'flagged for cut/pause review'),
+        ('watch', 'on watch'),
+        ('tracking_check', 'need tracking checks'),
+    ):
+        count = len(action_queue.get(key, []))
+        if count:
+            lane_phrases.append(f"{count} niche{'s' if count != 1 else ''} {phrase}")
 
-    rt_approximate = day_filter != "all"
+    if not lane_phrases:
+        return "No immediate niche actions are queued for this period."
 
-    table_rows = []
-    for r in rows:
-        roi_str = f"{r['roi']*100:+.0f}%" if r['roi'] is not None else "—"
-        cpl_str = f"${r['cpl']:.2f}" if r['cpl'] else "—"
-        table_rows.append(
-            f"{r['niche']} | ${r['spend']:.0f} | ${r['revenue']:.0f} | "
-            f"{'+'if r['profit']>=0 else ''}${r['profit']:.0f} | {roi_str} | {cpl_str} | "
-            f"{r['verdict']} | {r['confidence']} | {r['suggested_action_label']}"
-        )
-    table = (
-        "Niche | Spend | Revenue | Profit | ROI | CPL | Verdict | Confidence | Suggested Action\n"
-        + "\n".join(table_rows)
+    first_item = next(
+        item for key in ('scale', 'cut_or_pause', 'watch', 'tracking_check')
+        for item in action_queue.get(key, [])
     )
-
-    def _queue_section(label: str, items: list) -> str:
-        if not items:
-            return f"{label}:\n- None"
-        return f"{label}:\n" + "\n".join(f"- {item}" for item in items)
-
-    queue_block = "\n\n".join([
-        "DETERMINISTIC ACTION QUEUE (authoritative — do not contradict)",
-        _queue_section("AUTHORIZED SCALE ACTIONS", action_queue.get("scale", [])),
-        _queue_section("AUTHORIZED CUT/PAUSE ACTIONS", action_queue.get("cut_or_pause", [])),
-        _queue_section("AUTHORIZED WATCH ITEMS", action_queue.get("watch", [])),
-        _queue_section("AUTHORIZED TRACKING CHECKS", action_queue.get("tracking_check", [])),
-    ])
-
-    notes = []
-    if rt_approximate:
-        notes.append(
-            f"RedTrack revenue for this view ({preset_label}) covers the full date range, "
-            f"not filtered by {day_filter} only — ROI is approximate."
-        )
-    if tracking_warning.get("has_warning"):
-        notes.append(tracking_warning["message"])
-
-    prompt = (
-        f"You are an expert Meta Ads analyst. Period: {preset_label} ({date_from} to {date_to}"
-        + (f", {day_filter} days only" if day_filter != "all" else "")
-        + ").\n\n"
-        + table
-        + "\n\nVerdicts: scale=ROI≥25% & spend≥$50 | run=ROI≥0% | watch=0%>ROI>-25% | pause=ROI≤-25% | "
-        + "insufficient_data=spend<$50 | tracking_check=no RT revenue match\n\n"
-        + queue_block
-        + "\n\n"
-        + ("\n".join(notes) + "\n\n" if notes else "")
-        + "Write a 3–5 sentence plain-English executive summary. Lead with the biggest finding. "
-        + "Name specific niches with dollar amounts. "
-        + "You must not contradict the DETERMINISTIC ACTION QUEUE above. "
-        + "Only recommend scale actions for niches listed under AUTHORIZED SCALE ACTIONS. "
-        + "Only recommend review/cut/pause actions for niches listed under AUTHORIZED CUT/PAUSE ACTIONS. "
-        + "Only name watch items from AUTHORIZED WATCH ITEMS. "
-        + "Only name tracking-check niches from AUTHORIZED TRACKING CHECKS. "
-        + "If a niche appears in the table but not in an authorized action section, you may mention its metrics but must not recommend an action for it. "
-        + "Use exact niche names exactly as shown in the table or authorized queue; do not rewrite punctuation, symbols, emojis, capitalization, or ampersands. "
-        + "Do not infer tracking issues from ROI, CPL, spend, or join status unless the niche is listed under AUTHORIZED TRACKING CHECKS. "
-        + "Do not recommend a harder action than the action label shown in the authorized queue. "
-        + "Use the action label as shown: Pause means buyer should pause; Review pause means buyer should investigate before pausing; Potential cut means flag for budget review; Investigate means check ad set and landing page layers. "
-        + "Never say 'pause to save money' or imply an automated action; frame all cut/pause actions as buyer decisions that depend on context. "
-        + "For Directional scale, Directional hold, Directional watch, or Investigate, do not invent a percentage; use the word directional or recommend investigating. "
-        + "For directional rows, use cautious language and say directional. "
-        + "If the tracking warning applies, mention it but only name niches from AUTHORIZED TRACKING CHECKS. "
-        + "End with one concrete next action. Direct and specific. No padding. "
-        + "Output plain text only — no markdown, no bullet points, no headers, no bold."
-    )
-
-    try:
-        response = _client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=512,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        summary = "\n".join(b.text for b in response.content if hasattr(b, "text")).strip()
-        summary = _sanitize_summary_actions(summary, day_filter)
-        return _sanitize_summary_niche_names(summary, rows)
-    except Exception as e:
-        logger.error("Intelligence summary failed: %s", e)
-        return f"Summary unavailable: {e}"
-
-
-def _sanitize_summary_actions(summary: str, day_filter: str) -> str:
-    """Enforce deterministic action language after LLM generation."""
-    if day_filter == "all" or not summary:
-        return summary
-
-    # Day-filtered views use full-range RedTrack revenue, so UI actions are
-    # intentionally directional. Do not let the LLM turn them into hard budget
-    # percentages in the final prose.
-    cleaned = summary
-    action_percent_pattern = re.compile(
-        r'\b(increas(?:e|ing)?|rais(?:e|ing)?|boost(?:ing)?|expand(?:ing)?'
-        r'|scal(?:e|ing)?|cut(?:ting)?|reduc(?:e|ing)?|decreas(?:e|ing)?|lower(?:ing)?)\b'
-        r'([^.\n]{0,120}?)[ \t]+by[ \t]+'
-        r'\d+(?:[ \t]*(?:%|percent)|[ \t]*[-–—][ \t]*\d+[ \t]*(?:%|percent))',
-        flags=re.IGNORECASE,
-    )
-
-    def _directional_replacement(match: re.Match) -> str:
-        verb = match.group(1).lower()
-        target = match.group(2).strip()
-        return f"directionally {verb}" + (f" {target}" if target else "")
-
-    cleaned = action_percent_pattern.sub(_directional_replacement, cleaned)
-    return cleaned
-
-
-def _sanitize_summary_niche_names(summary: str, rows: list) -> str:
-    """Rewrite common LLM paraphrases back to exact table niche names."""
-    if not summary:
-        return summary
-
-    cleaned = summary
-    placeholders = {}
-    niche_names = sorted(
-        {str(r.get("niche") or "").strip() for r in rows if r.get("niche")},
-        key=len,
-        reverse=True,
-    )
-
-    for niche in niche_names:
-        placeholder = f"__NICHE_NAME_{len(placeholders)}__"
-        placeholders[placeholder] = niche
-        cleaned = cleaned.replace(niche, placeholder)
-        aliases = set()
-        without_leading_symbols = re.sub(r'^[^\w]+', '', niche).strip()
-        for candidate in {niche, without_leading_symbols}:
-            if not candidate:
-                continue
-            if '&' in candidate:
-                aliases.add(re.sub(r'\s*&\s*', ' and ', candidate).strip())
-            if candidate != niche:
-                aliases.add(candidate)
-
-        for alias in sorted(aliases, key=len, reverse=True):
-            if not alias or alias == niche:
-                continue
-            cleaned = re.sub(rf'\b{re.escape(alias)}\b', placeholder, cleaned, flags=re.IGNORECASE)
-
-    for placeholder, niche in placeholders.items():
-        cleaned = cleaned.replace(placeholder, niche)
-
-    return cleaned
+    return f"{'; '.join(lane_phrases)}; start with {first_item['niche']} ({first_item['action_label']})."
 
 
 @router.get("/niche-profitability")
@@ -598,7 +486,7 @@ def niche_profitability(
     rows = _aggregate_by_niche(meta_data, rt_data, day_filter, budget_map)
     action_queue     = _build_action_queue(rows)
     tracking_warning = _build_tracking_warning(rows)
-    summary = _generate_summary(rows, preset_label, resolved_from, resolved_to, day_filter, tracking_warning, action_queue)
+    summary = _build_summary(action_queue)
 
     return {
         "question_set":      "niche_profitability",

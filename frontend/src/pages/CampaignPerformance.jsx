@@ -31,29 +31,15 @@ const INTELLIGENCE_PRESETS = [
   { value: 'weekends_mtd', label: 'Weekends MTD' },
   { value: 'custom',       label: 'Custom' },
 ];
+const INTELLIGENCE_PRESET_VALUES = new Set(INTELLIGENCE_PRESETS.map(p => p.value));
+
+function resolveIntelligencePreset(pageDatePreset, explicitPreset) {
+  if (explicitPreset && INTELLIGENCE_PRESET_VALUES.has(explicitPreset)) return explicitPreset;
+  if (pageDatePreset && INTELLIGENCE_PRESET_VALUES.has(pageDatePreset)) return pageDatePreset;
+  return 'last_7d';
+}
 
 const normalizeStatus = (status) => (status || '').toString().toUpperCase();
-
-function renderMarkdownInline(text) {
-  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) => {
-    const bold = part.match(/^\*\*(.+)\*\*$/);
-    if (bold) return <strong key={i} className="font-semibold text-gray-900">{bold[1]}</strong>;
-    return part;
-  });
-}
-
-function MarkdownAnswer({ text }) {
-  if (!text) return null;
-  return (
-    <div className="space-y-1">
-      {text.split('\n').map((line, i) => (
-        line.trim()
-          ? <p key={i} className="text-sm leading-relaxed">{renderMarkdownInline(line)}</p>
-          : <div key={i} className="h-1" />
-      ))}
-    </div>
-  );
-}
 
 function formatMoney(value) {
   return value != null
@@ -61,12 +47,12 @@ function formatMoney(value) {
     : '—';
 }
 
-function CreativeCompass({ buckets, onOpenAdset }) {
+function CreativeCompass({ buckets, onOpenAdset, dateRangeLabel }) {
   return (
     <section className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-hidden">
       <div className="px-5 py-4 border-b border-indigo-100 bg-indigo-50/35">
         <h2 className="font-semibold text-gray-900 flex items-center gap-2"><Target size={16} className="text-indigo-600" /> Creative Compass</h2>
-        <p className="text-xs text-gray-500 mt-1">Rule-based starting points from the metrics already loaded below. Nothing here is an opaque score.</p>
+        <p className="text-xs text-gray-500 mt-1">Rule-based starting points from the ad-set metrics already loaded below · {dateRangeLabel} · grain: ad sets. Nothing here is an opaque score.</p>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 divide-y sm:divide-y-0 sm:divide-x divide-gray-100">
         {buckets.map(bucket => (
@@ -96,15 +82,17 @@ function CreativeCompass({ buckets, onOpenAdset }) {
   );
 }
 
-function CampaignIntelligencePanel({ adAccountId, initialOpen = false, initialPreset = 'last_7d' }) {
+function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, pageDateTo, initialOpen = false, initialPreset = null }) {
+  const resolvedInitialPreset = resolveIntelligencePreset(pageDatePreset, initialPreset);
   const [open, setOpen] = useState(initialOpen);
-  const [preset, setPreset] = useState(initialPreset || 'last_7d');
-  const [customFrom, setCustomFrom] = useState('');
-  const [customTo, setCustomTo] = useState('');
+  const [preset, setPreset] = useState(resolvedInitialPreset);
+  const [customFrom, setCustomFrom] = useState(resolvedInitialPreset === 'custom' ? (pageDateFrom || '') : '');
+  const [customTo, setCustomTo] = useState(resolvedInitialPreset === 'custom' ? (pageDateTo || '') : '');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const loadedPresetRef = useRef(null);
+  const userSelectedPresetRef = useRef(false);
 
   const loadIntelligence = useCallback(async (nextPreset = preset, nextFrom = customFrom, nextTo = customTo) => {
     setLoading(true);
@@ -143,15 +131,29 @@ function CampaignIntelligencePanel({ adAccountId, initialOpen = false, initialPr
   }, [preset, customFrom, customTo, loadIntelligence]);
 
   useEffect(() => {
+    if (userSelectedPresetRef.current) return;
+    const nextPreset = resolveIntelligencePreset(pageDatePreset, initialPreset);
+    setPreset(nextPreset);
+    if (nextPreset === 'custom') {
+      setCustomFrom(pageDateFrom || '');
+      setCustomTo(pageDateTo || '');
+    }
+  }, [pageDatePreset, pageDateFrom, pageDateTo, initialPreset]);
+
+  useEffect(() => {
     if (!initialOpen) return;
     setOpen(true);
-    setPreset(initialPreset || 'last_7d');
-    if (loadedPresetRef.current !== (initialPreset || 'last_7d')) {
-      loadIntelligence(initialPreset || 'last_7d', customFrom, customTo);
+    const nextPreset = resolveIntelligencePreset(pageDatePreset, initialPreset);
+    setPreset(nextPreset);
+    const nextFrom = nextPreset === 'custom' ? (customFrom || pageDateFrom || '') : '';
+    const nextTo = nextPreset === 'custom' ? (customTo || pageDateTo || '') : '';
+    if (loadedPresetRef.current !== (nextPreset === 'custom' ? `custom:${nextFrom}:${nextTo}` : nextPreset)) {
+      loadIntelligence(nextPreset, nextFrom, nextTo);
     }
-  }, [initialOpen, initialPreset, adAccountId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [initialOpen, initialPreset, pageDatePreset, pageDateFrom, pageDateTo, adAccountId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePreset = (nextPreset) => {
+    userSelectedPresetRef.current = true;
     setPreset(nextPreset);
     if (nextPreset === 'custom') {
       setCustomFrom('');
@@ -279,12 +281,13 @@ function CampaignIntelligencePanel({ adAccountId, initialOpen = false, initialPr
                 <div className="min-w-0">
                   <p className="text-xs font-semibold text-violet-800 mb-1">
                     {data.preset_label}
+                    <span className="ml-2 font-normal text-violet-500">· {data.date_from} to {data.date_to} · grain: niches</span>
                     {data.day_filter !== 'all' && (
-                      <span className="ml-2 font-normal text-violet-500">· {data.day_filter} days · {data.date_from} to {data.date_to}</span>
+                      <span className="ml-2 font-normal text-violet-500">· {data.day_filter} days only</span>
                     )}
                   </p>
                   <div className="text-violet-900">
-                    <MarkdownAnswer text={data.summary} />
+                    <p className="text-sm font-semibold leading-relaxed">{data.summary}</p>
                   </div>
                 </div>
               </div>
@@ -307,9 +310,17 @@ function CampaignIntelligencePanel({ adAccountId, initialOpen = false, initialPr
                             {lane.label}
                           </div>
                           <ul className="px-3 py-2 space-y-1">
-                            {items.map(item => (
-                              <li key={item} className="text-xs text-gray-700 truncate" title={item}>{item}</li>
-                            ))}
+                            {items.map(item => {
+                              const niche = typeof item === 'string' ? item : item.niche;
+                              const actionLabel = typeof item === 'string' ? '' : item.action_label;
+                              const reason = typeof item === 'string' ? '' : item.reason;
+                              return (
+                              <li key={`${niche}-${actionLabel}`} className="min-w-0" title={reason || `${niche}${actionLabel ? ` (${actionLabel})` : ''}`}>
+                                <div className="text-xs font-semibold text-gray-800 truncate">{niche}{actionLabel ? ` · ${actionLabel}` : ''}</div>
+                                {reason && <div className="text-[11px] text-gray-500 truncate">{reason}</div>}
+                              </li>
+                              );
+                            })}
                           </ul>
                         </div>
                       );
@@ -1016,6 +1027,12 @@ export default function CampaignPerformance() {
   });
   const [dateFrom, setDateFrom] = useState(() => searchParams.get('date_from') || '');
   const [dateTo, setDateTo] = useState(() => searchParams.get('date_to') || '');
+  const dateRangeLabel = useMemo(() => {
+    if (datePreset === 'custom') {
+      return dateFrom && dateTo ? `${dateFrom} to ${dateTo}` : 'Custom range';
+    }
+    return DATE_PRESETS.find(p => p.value === datePreset)?.label || datePreset;
+  }, [datePreset, dateFrom, dateTo]);
   const [loadingAdsets, setLoadingAdsets] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [statusFilter, setStatusFilter] = useState(() => {
@@ -1042,7 +1059,7 @@ export default function CampaignPerformance() {
   const dashboardView = searchParams.get('view'); // derived live from URL — never stale
   const targetAdsetId = searchParams.get('adsetId');
   const intelligencePanelOpen = searchParams.get('panel') === 'intelligence';
-  const intelligenceInitialPreset = searchParams.get('ciPreset') || 'last_7d';
+  const intelligenceInitialPreset = searchParams.get('ciPreset') || null;
 
   // Bulk insights state — one API call replaces N per-row calls
   const [bulkInsights, setBulkInsights]       = useState(null);
@@ -1489,7 +1506,7 @@ export default function CampaignPerformance() {
     const recent = active.filter(adset => adset.start_time && !Number.isNaN(Date.parse(adset.start_time)) && Date.parse(adset.start_time) >= cutoff).map(adset => ({ id: `recent-${adset.id}`, adset, detail: `Started ${new Date(adset.start_time).toLocaleDateString()}` }));
     const potential = active.map(adset => ({ adset, ins: bulkInsights?.[adset.fb_adset_id] })).filter(({ ins }) => ins?.ctr != null && ins.ctr > 2 && (ins.spend ?? 0) < 75).map(({ adset, ins }) => ({ id: `potential-${adset.id}`, adset, detail: `CTR ${Number(ins.ctr).toFixed(2)}% · ${formatMoney(ins.spend)} spend` }));
     return [
-      { key: 'attention', label: 'Needs attention', color: 'text-orange-700', rule: 'Frequency ≥3, zero leads after $50, RT ROAS <1, CPL >1.5x blended average, or an auto-pause rule triggered.', items: attention },
+      { key: 'attention', label: 'Ad sets that need attention', color: 'text-orange-700', rule: 'Frequency ≥3, zero leads after $50, RT ROAS <1, CPL >1.5x blended average, or an auto-pause rule triggered.', items: attention },
       { key: 'winners', label: 'Winners', color: 'text-green-700', rule: 'Active ad sets with RT ROAS >0 and at least $50 spend, sorted highest first.', items: winners },
       { key: 'recent', label: 'Launched recently', color: 'text-blue-700', rule: 'Active ad sets with Meta start_time inside the last 14 days.', items: recent },
       { key: 'potential', label: 'High potential', color: 'text-violet-700', rule: 'Active ad sets with CTR >2.0% and less than $75 spend — early signal, not a winner yet.', items: potential },
@@ -1740,6 +1757,9 @@ export default function CampaignPerformance() {
         <div className="flex items-center gap-3 flex-wrap">
           <CampaignIntelligencePanel
             adAccountId={adAccountId}
+            pageDatePreset={datePreset}
+            pageDateFrom={dateFrom}
+            pageDateTo={dateTo}
             initialOpen={intelligencePanelOpen}
             initialPreset={intelligenceInitialPreset}
           />
@@ -1826,7 +1846,7 @@ export default function CampaignPerformance() {
       )}
 
       <div className="px-5 pb-5 space-y-4 mt-1">
-      <CreativeCompass buckets={compassBuckets} onOpenAdset={openCompassAdset} />
+      <CreativeCompass buckets={compassBuckets} onOpenAdset={openCompassAdset} dateRangeLabel={dateRangeLabel} />
 
       {/* Ad Set Performance Table */}
       <div className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-clip">
