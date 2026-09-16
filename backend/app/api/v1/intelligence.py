@@ -234,11 +234,15 @@ def _build_action_queue(rows: list) -> dict:
     # Severity order for cut/review actions
     cut_rank = {"pause": 0, "review_pause": 1, "potential_cut": 2, "investigate": 3}
 
-    scale_rows = [r for r in rows if r['suggested_action'] in scale_actions]
-    cut_rows   = [r for r in rows if r['suggested_action'] in cut_actions]
-    watch_rows = [r for r in rows if r['suggested_action'] in watch_actions]
     track_rows = [r for r in rows if r['join_status'] in ("partial_redtrack", "missing_redtrack")
                                       or r['verdict'] == "tracking_check"]
+    # A niche with unreliable RedTrack data shouldn't also show a confident
+    # scale/pause/watch recommendation in a separate lane — that reads as the
+    # tool contradicting itself. Tracking check takes priority.
+    tracked_niches = {r['niche'] for r in track_rows}
+    scale_rows = [r for r in rows if r['suggested_action'] in scale_actions and r['niche'] not in tracked_niches]
+    cut_rows   = [r for r in rows if r['suggested_action'] in cut_actions and r['niche'] not in tracked_niches]
+    watch_rows = [r for r in rows if r['suggested_action'] in watch_actions and r['niche'] not in tracked_niches]
 
     # scale: highest profit first, then ROI, then confidence
     scale_rows.sort(key=lambda r: (
@@ -266,10 +270,14 @@ def _build_action_queue(rows: list) -> dict:
         -(r['spend'] or 0),
     ))
 
+    def _money(value: float) -> str:
+        value = value or 0
+        return f"-${abs(value):,.0f}" if value < 0 else f"${value:,.0f}"
+
     def action_item(row: dict) -> dict:
         roi = f"{row['roi'] * 100:+.0f}%" if row.get('roi') is not None else "ROI unavailable"
-        spend = f"${row.get('spend', 0):,.0f}"
-        profit = f"${row.get('profit', 0):,.0f}"
+        spend = _money(row.get('spend', 0))
+        profit = _money(row.get('profit', 0))
         confidence = row.get('confidence', 'unknown')
         action = row.get('suggested_action', '')
         if action in scale_actions:
@@ -277,7 +285,7 @@ def _build_action_queue(rows: list) -> dict:
         elif action in cut_actions or action in watch_actions:
             reason = f"{roi} ROI, {profit} profit · {confidence} confidence"
         else:
-            status = (row.get('join_status') or 'tracking check').replace('_', ' ')
+            status = (row.get('join_status') or 'tracking check').replace('_redtrack', ' RedTrack').replace('_', ' ')
             reason = f"{spend} spend · {status}"
         if row.get('is_directional') and action in scale_actions | cut_actions | watch_actions:
             reason = f"Directional · {reason}"
@@ -292,6 +300,15 @@ def _build_action_queue(rows: list) -> dict:
         "cut_or_pause":   [action_item(r) for r in cut_rows[:5]],
         "watch":          [action_item(r) for r in watch_rows[:5]],
         "tracking_check": [action_item(r) for r in track_rows[:5]],
+        # True counts before the display cap above — the summary headline
+        # must not report "5 niches queued to scale" as if that were the
+        # total when there are actually more past the display limit.
+        "counts": {
+            "scale":          len(scale_rows),
+            "cut_or_pause":   len(cut_rows),
+            "watch":          len(watch_rows),
+            "tracking_check": len(track_rows),
+        },
     }
 
 
@@ -438,7 +455,7 @@ def _build_summary(action_queue: dict) -> str:
         ('watch', 'on watch'),
         ('tracking_check', 'need tracking checks'),
     ):
-        count = len(action_queue.get(key, []))
+        count = action_queue.get('counts', {}).get(key, len(action_queue.get(key, [])))
         if count:
             lane_phrases.append(f"{count} niche{'s' if count != 1 else ''} {phrase}")
 

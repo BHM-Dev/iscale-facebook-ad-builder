@@ -131,26 +131,33 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
   }, [preset, customFrom, customTo, loadIntelligence]);
 
   useEffect(() => {
-    if (userSelectedPresetRef.current) return;
-    const nextPreset = resolveIntelligencePreset(pageDatePreset, initialPreset);
-    setPreset(nextPreset);
-    if (nextPreset === 'custom') {
-      setCustomFrom(pageDateFrom || '');
-      setCustomTo(pageDateTo || '');
-    }
-  }, [pageDatePreset, pageDateFrom, pageDateTo, initialPreset]);
-
-  useEffect(() => {
     if (!initialOpen) return;
     setOpen(true);
+  }, [initialOpen]);
+
+  // Single source of truth for syncing Intelligence's preset to the page's own
+  // date range. Always respects an explicit manual pick (userSelectedPresetRef),
+  // whether the sync was triggered by a deep link or by the page's own date
+  // dropdown changing — and always reloads when it's visible (or about to
+  // become visible via a deep link) so the displayed data never goes stale
+  // against the preset pill. Two separate effects with inconsistent guards
+  // previously let a manual pick get silently overridden, and let the pill
+  // update without the underlying data refreshing.
+  useEffect(() => {
+    if (userSelectedPresetRef.current) return;
     const nextPreset = resolveIntelligencePreset(pageDatePreset, initialPreset);
-    setPreset(nextPreset);
     const nextFrom = nextPreset === 'custom' ? (customFrom || pageDateFrom || '') : '';
     const nextTo = nextPreset === 'custom' ? (customTo || pageDateTo || '') : '';
-    if (loadedPresetRef.current !== (nextPreset === 'custom' ? `custom:${nextFrom}:${nextTo}` : nextPreset)) {
+    setPreset(nextPreset);
+    if (nextPreset === 'custom') {
+      setCustomFrom(nextFrom);
+      setCustomTo(nextTo);
+    }
+    const key = nextPreset === 'custom' ? `custom:${nextFrom}:${nextTo}` : nextPreset;
+    if ((open || initialOpen) && loadedPresetRef.current !== key) {
       loadIntelligence(nextPreset, nextFrom, nextTo);
     }
-  }, [initialOpen, initialPreset, pageDatePreset, pageDateFrom, pageDateTo, adAccountId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pageDatePreset, pageDateFrom, pageDateTo, initialPreset, open, initialOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePreset = (nextPreset) => {
     userSelectedPresetRef.current = true;
