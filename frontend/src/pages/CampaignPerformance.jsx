@@ -61,6 +61,41 @@ function formatMoney(value) {
     : '—';
 }
 
+function CreativeCompass({ buckets, onOpenAdset }) {
+  return (
+    <section className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b border-indigo-100 bg-indigo-50/35">
+        <h2 className="font-semibold text-gray-900 flex items-center gap-2"><Target size={16} className="text-indigo-600" /> Creative Compass</h2>
+        <p className="text-xs text-gray-500 mt-1">Rule-based starting points from the metrics already loaded below. Nothing here is an opaque score.</p>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 divide-y sm:divide-y-0 sm:divide-x divide-gray-100">
+        {buckets.map(bucket => (
+          <div key={bucket.key} className="p-4 min-w-0">
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <h3 className={`text-sm font-semibold ${bucket.color}`}>{bucket.label}</h3>
+              <span className="text-lg font-bold text-gray-900">{bucket.items.length}</span>
+            </div>
+            <p className="text-[11px] leading-snug text-gray-500 min-h-[32px]">{bucket.rule}</p>
+            {bucket.items.length === 0 ? (
+              <p className="text-xs text-gray-400 mt-3">{bucket.empty || 'Nothing here right now'}</p>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {bucket.items.slice(0, 3).map(item => (
+                  <button key={item.id} type="button" onClick={() => onOpenAdset(item.adset)} className="block w-full text-left rounded-lg border border-gray-100 px-2.5 py-2 hover:border-indigo-200 hover:bg-indigo-50/40 transition-colors">
+                    <span className="block text-xs font-medium text-gray-800 truncate">{item.adset.name}</span>
+                    <span className="block text-[11px] text-gray-500 truncate">{item.detail}</span>
+                  </button>
+                ))}
+                {bucket.items.length > 3 && <p className="text-[11px] text-gray-400">+{bucket.items.length - 3} more below</p>}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function CampaignIntelligencePanel({ adAccountId, initialOpen = false, initialPreset = 'last_7d' }) {
   const [open, setOpen] = useState(initialOpen);
   const [preset, setPreset] = useState(initialPreset || 'last_7d');
@@ -1413,20 +1448,40 @@ export default function CampaignPerformance() {
     return totalLeads > 0 ? totalSpend / totalLeads : null;
   }, [bulkInsights]);
 
-  // Helper: is this ad set flagged for attention?
-  // Criteria must stay in sync with Dashboard.jsx needsAttention logic.
-  const isFlagged = useCallback((a) => {
+  // Keep these reasons aligned with Dashboard.jsx's Needs Attention rules.
+  const getAttentionReasons = useCallback((a) => {
     const ins = bulkInsights?.[a.fb_adset_id];
-    if (!ins) return false;
-    if (ins.frequency >= 3) return true;
-    if (ins.spend > 50 && ins.leads === 0) return true;
-    if (rules.some(r => r.triggered_at && r.adset_id === a.id)) return true;
-    if (ins.redtrack?.roas != null && ins.redtrack.roas < 1 && ins.spend > 30) return true;
-    // CPL well above blended average (>1.5x) with meaningful spend — mirrors Dashboard
-    if (blendedCpl != null && ins.cpl != null && ins.cpl > blendedCpl * 1.5 && ins.spend > 30) return true;
-    return false;
+    if (!ins) return [];
+    const reasons = [];
+    if (ins.frequency >= 5) reasons.push(`Frequency ${ins.frequency.toFixed(1)} — fatigue risk`);
+    else if (ins.frequency >= 3) reasons.push(`Frequency ${ins.frequency.toFixed(1)} — monitor`);
+    if (ins.spend > 50 && ins.leads === 0) reasons.push(`${formatMoney(ins.spend)} spent, 0 leads`);
+    if (ins.redtrack?.roas != null && ins.redtrack.roas < 1 && ins.spend > 30) reasons.push(`RT ROAS ${ins.redtrack.roas.toFixed(2)}x — losing money`);
+    if (blendedCpl != null && ins.cpl != null && ins.cpl > blendedCpl * 1.5 && ins.spend > 30 && (ins.redtrack?.roas == null || ins.redtrack.roas < 1)) {
+      reasons.push(`CPL ${formatMoney(ins.cpl)} — above 1.5x blended average`);
+    }
+    if (rules.some(r => r.triggered_at && r.adset_id === a.id)) reasons.push('Auto-pause rule triggered');
+    return reasons;
   }, [bulkInsights, rules, blendedCpl]);
 
+  const isFlagged = useCallback((a) => getAttentionReasons(a).length > 0, [getAttentionReasons]);
+
+  const compassBuckets = useMemo(() => {
+    const active = adsets.filter(a => a.fb_adset_id && normalizeStatus(adsetStatusOverrides[a.fb_adset_id] ?? a.status) === 'ACTIVE' && (!a.campaign_status || normalizeStatus(a.campaign_status) === 'ACTIVE'));
+    const attention = active.map(adset => ({ adset, reasons: getAttentionReasons(adset) })).filter(item => item.reasons.length).map(item => ({ ...item, id: `attention-${item.adset.id}`, detail: item.reasons[0] }));
+    const withInsights = adsets.filter(a => a.fb_adset_id && bulkInsights?.[a.fb_adset_id]);
+    const winners = withInsights.map(adset => ({ adset, ins: bulkInsights[adset.fb_adset_id] })).filter(({ ins }) => (ins.spend ?? 0) >= 50 && ins.redtrack?.roas > 0).sort((a, b) => b.ins.redtrack.roas - a.ins.redtrack.roas).map(({ adset, ins }) => ({ id: `winner-${adset.id}`, adset, detail: `RT ROAS ${ins.redtrack.roas.toFixed(2)}x · ${formatMoney(ins.spend)} spend` }));
+    const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    const recent = active.filter(adset => adset.start_time && !Number.isNaN(Date.parse(adset.start_time)) && Date.parse(adset.start_time) >= cutoff).map(adset => ({ id: `recent-${adset.id}`, adset, detail: `Started ${new Date(adset.start_time).toLocaleDateString()}` }));
+    const potential = active.map(adset => ({ adset, ins: bulkInsights?.[adset.fb_adset_id] })).filter(({ ins }) => ins?.ctr != null && ins.ctr > 2 && (ins.spend ?? 0) < 75).map(({ adset, ins }) => ({ id: `potential-${adset.id}`, adset, detail: `CTR ${Number(ins.ctr).toFixed(2)}% · ${formatMoney(ins.spend)} spend` }));
+    return [
+      { key: 'attention', label: 'Needs attention', color: 'text-orange-700', rule: 'Frequency ≥3, zero leads after $50, RT ROAS <1, or CPL >1.5x blended average.', items: attention },
+      { key: 'winners', label: 'Winners', color: 'text-green-700', rule: 'RT ROAS >0 with at least $50 spend, sorted highest first.', items: winners },
+      { key: 'recent', label: 'Launched recently', color: 'text-blue-700', rule: 'Ad sets with Meta start_time inside the last 14 days.', items: recent },
+      { key: 'potential', label: 'High potential', color: 'text-violet-700', rule: 'CTR >2.0% with less than $75 spend — early signal, not a winner yet.', items: potential },
+      { key: 'scaling', label: 'Scaling', color: 'text-emerald-700', rule: 'Needs a clean prior-period spend comparison; no misleading day-over-day proxy is used.', items: [], empty: 'Needs prior-period data before this bucket can make a claim.' },
+    ];
+  }, [adsets, bulkInsights, getAttentionReasons, adsetStatusOverrides]);
   const getAdsetStatus = useCallback((adset) => (
     normalizeStatus(adsetStatusOverrides[adset.fb_adset_id] ?? adset.status)
   ), [adsetStatusOverrides]);
@@ -1637,6 +1692,15 @@ export default function CampaignPerformance() {
     profit == null ? 'text-gray-400' : profit < 0 ? 'text-red-600' : 'text-green-600'
   );
 
+  const openCompassAdset = useCallback((adset) => {
+    setHighlightedAdsetId(adset.fb_adset_id);
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.set('adsetId', adset.fb_adset_id);
+      return next;
+    });
+  }, [setSearchParams]);
+
   return (
     <>
     <div className="-m-5 space-y-0">
@@ -1735,6 +1799,7 @@ export default function CampaignPerformance() {
       )}
 
       <div className="px-5 pb-5 space-y-4 mt-1">
+      <CreativeCompass buckets={compassBuckets} onOpenAdset={openCompassAdset} />
       <CampaignIntelligencePanel
         adAccountId={adAccountId}
         initialOpen={intelligencePanelOpen}

@@ -230,6 +230,7 @@ class FacebookAdSet(Base):
     budget_schedule_type = Column(String, nullable=True, default='DAILY')  # 'DAILY' or 'LIFETIME'
     daily_budget = Column(Integer, nullable=True)
     lifetime_budget = Column(Integer, nullable=True)
+    start_time = Column(DateTime(timezone=True), nullable=True)
     end_time = Column(DateTime(timezone=True), nullable=True)
     bid_strategy = Column(String, nullable=True)
     bid_amount = Column(Integer, nullable=True)
