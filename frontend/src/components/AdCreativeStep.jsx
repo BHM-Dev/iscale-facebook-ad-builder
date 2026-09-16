@@ -219,6 +219,18 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
 
     const [manualPageEntry, setManualPageEntry] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
+    // Defaults ON per Joel's actual ask — he wants Feed (1:1) and Stories (9:16)
+    // launched together as the normal case, not something he has to remember to
+    // click "Dupe as Stories" for on every single image. Persisted across
+    // sessions like the other per-Joel creative preferences (overlayLogoUrl,
+    // overlayOfferLine) so it doesn't reset every time he opens the wizard.
+    const [autoDupeStories, setAutoDupeStories] = useState(
+        () => safeLocalStorageGet('autoDupeStoriesDefault') !== 'false'
+    );
+    const handleAutoDupeStoriesChange = (checked) => {
+        setAutoDupeStories(checked);
+        safeLocalStorageSet('autoDupeStoriesDefault', checked ? 'true' : 'false');
+    };
 
     // Generated Ads library modal
     const [showLibraryModal, setShowLibraryModal] = useState(false);
@@ -258,10 +270,34 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     }, [driveAssets, driveSearchTerm, driveFormatFilter]);
 
     const driveGroupById = useMemo(() => new Map(driveAssetGroups.map(group => [group.id, group])), [driveAssetGroups]);
+    // Raw file count — "N assets" in the footer label. Distinct from how many
+    // CREATIVE entries actually land in creativeData.creatives (a real tagged
+    // pair merges 2 assets into 1 creative; an auto-duped single expands 1
+    // asset into 2) — that count is driveSelectionMediaCount below.
     const driveSelectionAssetCount = useMemo(
         () => [...selectedDriveAssetIds].reduce((sum, id) => sum + (driveGroupById.get(id)?.isPair ? 2 : 1), 0),
         [selectedDriveAssetIds, driveGroupById]
     );
+    // Mirrors addDriveSelectionToCreatives's exact branching so the pre-add
+    // "N total ad combinations" preview can't drift from what actually lands
+    // in creativeData.creatives — pre-push review (code-auditor: HIGH) found
+    // the old shared driveSelectionAssetCount undercounted by up to 2x here
+    // once autoDupeStories could expand a single unpaired image into two.
+    const driveSelectionMediaCount = useMemo(() => {
+        return [...selectedDriveAssetIds].reduce((sum, id) => {
+            const group = driveGroupById.get(id);
+            if (!group) return sum;
+            const canMergeAsPair = group.isPair
+                && group.feedAsset?.format !== 'video'
+                && group.storiesAsset?.format !== 'video';
+            if (canMergeAsPair) return sum + 1; // one dualPlacement creative
+            if (group.isPair) return sum + 2; // video-fallback: two real distinct creatives already
+            const asset = group.displayAsset;
+            if (!asset) return sum;
+            const wouldAutoDupe = autoDupeStories && asset.format !== 'video';
+            return sum + (wouldAutoDupe ? 2 : 1);
+        }, 0);
+    }, [selectedDriveAssetIds, driveGroupById, autoDupeStories]);
 
     // Drops any selected id that narrowing the search/format filter has
     // scrolled out of driveAssetGroups — without this, a tile selected
@@ -405,8 +441,29 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 }];
             }
 
-            const assets = group.isPair ? [group.feedAsset, group.storiesAsset] : [group.displayAsset];
-            return assets.filter(Boolean).map(asset => ({
+            if (!group.isPair) {
+                // A truly single, unpaired asset — no real counterpart exists yet,
+                // so this is exactly the case applyAutoStoriesDupe is for.
+                const asset = group.displayAsset;
+                if (!asset) return [];
+                return applyAutoStoriesDupe({
+                    id: `drive_${asset.id}`,
+                    file: null,
+                    previewUrl: asset.r2_key,
+                    imageUrl: asset.format === 'video' ? undefined : asset.r2_key,
+                    videoUrl: asset.format === 'video' ? asset.r2_key : undefined,
+                    name: asset.file_name,
+                    mediaType: asset.format,
+                    format: driveAssetPlacement(asset),
+                    drivePairId: null
+                });
+            }
+
+            // group.isPair but couldn't merge into one dualPlacement creative above
+            // (one side is a video) — both real placements already exist as their
+            // own distinct assets here, so never auto-dupe this branch; that would
+            // add a redundant third entry rather than filling a real gap.
+            return [group.feedAsset, group.storiesAsset].filter(Boolean).map(asset => ({
                 id: `drive_${asset.id}`,
                 file: null,
                 previewUrl: asset.r2_key,
@@ -415,7 +472,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 name: asset.file_name,
                 mediaType: asset.format,
                 format: driveAssetPlacement(asset),
-                drivePairId: group.isPair ? group.id : null
+                drivePairId: group.id
             }));
         });
         const groupsWithCopy = selectedGroups.filter(group => hasCopyText(group.copy || {}));
@@ -550,16 +607,16 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             return;
         }
 
-        const newCreatives = mediaFiles.map(file => {
+        const newCreatives = mediaFiles.flatMap(file => {
             const isVideo = ALLOWED_VIDEO_TYPES.includes(file.type);
-            return {
+            return applyAutoStoriesDupe({
                 id: `creative_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                 file,
                 previewUrl: URL.createObjectURL(file),
                 name: file.name,
                 mediaType: isVideo ? 'video' : 'image',
                 format: 'feed'
-            };
+            });
         });
 
         setCreativeData(prev => ({
@@ -877,16 +934,16 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         const files = Array.from(e.target.files);
         if (files.length === 0) return;
 
-        const newCreatives = files.map(file => {
+        const newCreatives = files.flatMap(file => {
             const isVideo = ALLOWED_VIDEO_TYPES.includes(file.type);
-            return {
+            return applyAutoStoriesDupe({
                 id: `creative_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                 file,
                 previewUrl: URL.createObjectURL(file),
                 name: file.name,
                 mediaType: isVideo ? 'video' : 'image',
                 format: 'feed'
-            };
+            });
         });
 
         setCreativeData(prev => ({
@@ -902,6 +959,19 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         }));
     };
 
+    // Recovery path for "I bulk-added a batch with auto-dupe on and actually
+    // wanted Feed-only" — unchecking the toggle only stops FUTURE adds, it
+    // can't undo what's already in the grid, and removing N duplicates one at
+    // a time defeats the whole point of a bulk workflow (pre-push review,
+    // joel-perspective: P2). Only strips the auto-created half of each pair —
+    // the original upload/selection stays.
+    const removeAutoDupedCreatives = () => {
+        setCreativeData(prev => ({
+            ...prev,
+            creatives: prev.creatives.filter(c => !c.id.endsWith('_autodupe'))
+        }));
+    };
+
     const toggleCreativeFormat = (id) => {
         setCreativeData(prev => ({
             ...prev,
@@ -913,8 +983,52 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         }));
     };
 
+    // Applied at every point a new SINGLE-placement image creative is added
+    // (manual upload, drag-drop, a Drive selection that isn't already a real
+    // tagged pair) — when autoDupeStories is on, immediately gives it the
+    // opposite-placement duplicate this used to require a manual "Dupe as
+    // Stories" click for, one image at a time. Skips videos (dual-placement
+    // is image-only, per create_creative's own docstring) and anything
+    // already carrying both placements (dualPlacement: true — a real tagged
+    // Feed+Stories pair already covers both, duplicating it again would just
+    // create a redundant third entry).
+    // Shared by applyAutoStoriesDupe and duplicateCreative — strips any
+    // existing trailing " (Feed)"/" (Stories)" before appending the new one,
+    // so duplicating an already-duplicated card (manually copying an
+    // auto-duped half, or re-duplicating a manual duplicate) can't stack into
+    // "file.jpg (Stories) (Feed)". Verified reachable via the UI's own Copy
+    // button (pre-push review follow-up, code-auditor: LOW) since only the
+    // real merged Drive pair is excluded from it, not an auto-duped half.
+    const namePlacementSuffix = (name, format) => {
+        const base = (name || '').replace(/ \((Feed|Stories)\)$/, '');
+        return `${base} (${format === 'stories' ? 'Stories' : 'Feed'})`;
+    };
+
+    const applyAutoStoriesDupe = (creative) => {
+        if (!autoDupeStories || creative.mediaType === 'video' || creative.dualPlacement) {
+            return [creative];
+        }
+        const flippedFormat = (creative.format || 'feed') === 'stories' ? 'feed' : 'stories';
+        return [
+            creative,
+            {
+                ...creative,
+                id: `${creative.id}_autodupe`,
+                format: flippedFormat,
+                // Distinguishes the two in the ad name (media_name token) — without
+                // this both halves share the identical name and are only tellable
+                // apart by which ad set they land in (pre-push review, code-auditor:
+                // LOW, worth closing since auto-dupe makes this the default outcome
+                // for every upload instead of an occasional manual one).
+                name: namePlacementSuffix(creative.name, flippedFormat),
+            },
+        ];
+    };
+
     // Duplicate a creative and pre-toggle its format (feed → stories, stories → feed)
-    // so the common workflow of "same image in both placements" is one click
+    // so the common workflow of "same image in both placements" is one click —
+    // still here for the rare case Joel wants to add a dupe by hand (autoDupeStories
+    // off, or restoring one he removed).
     const duplicateCreative = (id) => {
         setCreativeData(prev => {
             const original = prev.creatives.find(c => c.id === id);
@@ -925,7 +1039,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 creatives: [...prev.creatives, {
                     ...original,
                     id: `creative_${Date.now()}_dup`,
-                    format: flippedFormat
+                    format: flippedFormat,
+                    // Same disambiguation as applyAutoStoriesDupe above — otherwise
+                    // this manual duplicate is only tellable apart from the original
+                    // by which ad set it lands in. namePlacementSuffix strips any
+                    // suffix already there first, so duplicating an auto-duped or
+                    // already-duplicated card can't stack into "(Stories) (Feed)".
+                    name: namePlacementSuffix(original.name, flippedFormat),
                 }]
             };
         });
@@ -1173,6 +1293,39 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         </div>
                     </div>
 
+                    {/* Defaults ON — Joel wants Feed + Stories launched together as the
+                        normal case, not an extra click per image. Applies to every new
+                        single-placement image from here on (upload, drag-drop, and a
+                        Drive pick that isn't already a real tagged pair) — including
+                        bulk adds, so selecting 50 unpaired Drive images with this on
+                        adds 100 media entries, not 50. Never touches images already
+                        added, a real Feed+Stories pair, or videos. Persists across
+                        sessions (see autoDupeStoriesDefault above) — the OFF-state
+                        notice right below exists specifically because of that: a state
+                        set once and forgotten needs to be at least as visible as the
+                        ON state, or it's a silent "why did Stories placements go quiet"
+                        surprise weeks later (pre-push review, joel-perspective: P1). */}
+                    <label className="flex items-center gap-2 mb-1 text-sm text-gray-600 cursor-pointer select-none">
+                        <input
+                            type="checkbox"
+                            checked={autoDupeStories}
+                            onChange={(e) => handleAutoDupeStoriesChange(e.target.checked)}
+                            className="rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                        />
+                        Automatically create the matching Stories (9:16) version for each new image
+                    </label>
+                    {autoDupeStories ? (
+                        <p className="mb-3 text-xs text-gray-400">
+                            Reuses the same image for both — a photo composed for square Feed may look cropped or
+                            stretched in the vertical Stories frame. Check the Stories card before launching, or
+                            remove it with its "x" if it doesn't work.
+                        </p>
+                    ) : (
+                        <p className="mb-3 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block">
+                            Off — new images will be Feed-only. Nothing launches to Instagram/Facebook Stories until you turn this back on or duplicate one by hand.
+                        </p>
+                    )}
+
                     {/* Upload Area */}
                     <div
                         className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors mb-4 ${isDragging ? 'border-amber-500 bg-amber-50' : 'border-gray-300 hover:border-amber-500'
@@ -1205,8 +1358,20 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
 
                     {/* Media Grid */}
                     {creativeData.creatives && creativeData.creatives.length > 0 && (
-                        <div className="mb-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800">
-                            <strong>Placement tag:</strong> Each image defaults to <span className="font-semibold text-blue-700">Feed (1:1)</span>. Click the pill on any card to switch it to <span className="font-semibold text-purple-700">Stories (9:16)</span>. Use the copy icon to duplicate an image for the opposite placement.
+                        <div className="mb-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800 flex items-center justify-between gap-3 flex-wrap">
+                            <span>
+                                <strong>Placement tag:</strong> Each image defaults to <span className="font-semibold text-blue-700">Feed (1:1)</span>. Click the pill on any card to switch it to <span className="font-semibold text-purple-700">Stories (9:16)</span>. Use the copy icon to duplicate an image for the opposite placement.
+                                {autoDupeStories && ' With auto-duplicate on above, new single images already come in as a Feed + Stories pair — remove either card if you only want one.'}
+                            </span>
+                            {creativeData.creatives.some(c => c.id.endsWith('_autodupe')) && (
+                                <button
+                                    type="button"
+                                    onClick={removeAutoDupedCreatives}
+                                    className="shrink-0 text-xs font-semibold text-blue-700 underline hover:text-blue-900"
+                                >
+                                    Remove all auto-added Stories/Feed duplicates
+                                </button>
+                            )}
                         </div>
                     )}
                     {creativeData.creatives && creativeData.creatives.length > 0 && (
@@ -1782,10 +1947,19 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 headlines/bodies doesn't create 50 ads, it multiplies (see
                                 countVariations above), and that math was previously only
                                 visible on the main step after closing this modal (pre-push
-                                review, joel-perspective: P1). */}
+                                review, joel-perspective: P1). Uses driveSelectionMediaCount,
+                                not driveSelectionAssetCount — a real tagged pair adds ONE
+                                creative (merged), while an auto-duped single adds TWO; using
+                                the raw asset count here under- or over-counted depending on
+                                the mix (pre-push review, code-auditor: HIGH). */}
                             {selectedDriveAssetIds.size > 0 && (variationCount.headlines > 1 || variationCount.bodies > 1) && (
                                 <span className="block text-xs text-amber-700 mt-0.5">
-                                    → {(variationCount.media + driveSelectionAssetCount) * Math.max(variationCount.headlines, 1) * Math.max(variationCount.bodies, 1)} total ad combinations after adding ({variationCount.media + driveSelectionAssetCount} media × {variationCount.headlines || 1} headline{variationCount.headlines !== 1 ? 's' : ''} × {variationCount.bodies || 1} bod{variationCount.bodies !== 1 ? 'ies' : 'y'})
+                                    → {(variationCount.media + driveSelectionMediaCount) * Math.max(variationCount.headlines, 1) * Math.max(variationCount.bodies, 1)} total ad combinations after adding ({variationCount.media + driveSelectionMediaCount} media × {variationCount.headlines || 1} headline{variationCount.headlines !== 1 ? 's' : ''} × {variationCount.bodies || 1} bod{variationCount.bodies !== 1 ? 'ies' : 'y'})
+                                </span>
+                            )}
+                            {selectedDriveAssetIds.size > 0 && autoDupeStories && (
+                                <span className="block text-[11px] text-gray-400 mt-0.5">
+                                    Auto-duplicate is on — unpaired single images above will add both a Feed and Stories version.
                                 </span>
                             )}
                         </span>

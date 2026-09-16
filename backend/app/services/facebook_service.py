@@ -1340,7 +1340,11 @@ class FacebookService:
             }
         elif secondary_image_hash:
             # Dual-placement image creative: Feed (square) + Stories/Reels
-            # (vertical), same copy across both — Bulk Match Import only.
+            # (vertical), same copy across both. Reachable from any frontend
+            # flow that passes secondaryImageUrl on the creative — not just
+            # Bulk Match Import; the standard "Generate All Combinations" path
+            # (AdCreativeStep.jsx's Feed+Stories Drive pairs) hits this too via
+            # the same createCompleteAd/createFacebookCreative call chain.
             # object_story_spec carries just page_id here; the rest lives in
             # asset_feed_spec, per Meta's asset-feed-spec contract.
             object_story_spec = {'page_id': page_id}
@@ -2104,9 +2108,10 @@ class FacebookService:
                 'creative{title,body,call_to_action,image_url,thumbnail_url,'
                 'object_story_spec{link_data{picture,message,name,link},'
                 'video_data{image_url,message,title}},'
-                # images/link_urls requested explicitly — the new Bulk Match Import
-                # dual-placement creatives (asset_feed_spec, no link_data at all)
-                # need these to resolve an image/link at all; titles/bodies were
+                # images/link_urls requested explicitly — dual-placement creatives
+                # (asset_feed_spec, no link_data at all — reachable from any flow
+                # that sets secondary_image_hash, not just Bulk Match Import) need
+                # these to resolve an image/link at all; titles/bodies were
                 # already covered above.
                 'asset_feed_spec{images,link_urls,titles,bodies}}',
             ])
