@@ -48,6 +48,7 @@ class DriveSyncService:
         self._path_cache: Dict[str, Optional[List[Dict[str, str]]]] = {}
         self._folder_metadata_cache: Dict[str, Dict[str, Any]] = {}
         self._package_folder_cache: Dict[str, Optional[str]] = {}
+        self._strategy_package_folder_cache: Dict[str, Optional[str]] = {}
 
     def sync_once(self) -> Dict[str, Any]:
         result = {
@@ -575,19 +576,37 @@ class DriveSyncService:
         return collected
 
     def _find_strategy_package_folder(self, file_meta: Dict[str, Any], max_depth: int = 4) -> Optional[str]:
-        """Find the nearest ancestor containing a strategy-copy markdown document."""
+        """Find the nearest ancestor containing a strategy-copy markdown document.
+
+        Mirrors `_find_package_folder`'s per-folder-id caching — without it,
+        this was doing a full recursive subtree listing PLUS downloading and
+        content-sniffing every text file at up to 4 ancestor levels, for
+        EVERY text file synced, on every 30-minute sync run, forever. That's
+        the majority-case path (most of Joel's Drive has no manifest at all,
+        confirmed by the docstring elsewhere in this file), so it's not an
+        edge case — a real batch of new files landing in one folder meant one
+        full 4-level walk PER FILE with zero reuse (code-auditor pre-push
+        review, BLOCKING). Caching every visited folder id to the same
+        resolved answer (same trick `_find_package_folder` already uses)
+        turns that into effectively one walk per folder, not per file.
+        """
         drive = self._client()
         parents = file_meta.get("parents") or []
         current = parents[0] if parents else None
         visited: List[str] = []
+        resolved: Optional[str] = None
         depth = 0
         while current and depth < max_depth:
+            if current in self._strategy_package_folder_cache:
+                resolved = self._strategy_package_folder_cache[current]
+                break
             visited.append(current)
             try:
                 folder_files = self._list_folder_subtree(current)
             except Exception as exc:
                 logger.warning("Could not inspect Drive folder %s for strategy copy docs: %s", current, exc)
                 break
+            found = False
             for item in folder_files:
                 if not self._is_text_file(item.get("mimeType") or "", item.get("name") or ""):
                     continue
@@ -596,7 +615,11 @@ class DriveSyncService:
                 except Exception:
                     continue
                 if self._looks_like_strategy_copy_doc(text_body):
-                    return current
+                    resolved = current
+                    found = True
+                    break
+            if found:
+                break
             try:
                 info = drive.files().get(fileId=current, fields="id,parents", supportsAllDrives=True).execute()
             except Exception as exc:
@@ -605,7 +628,9 @@ class DriveSyncService:
             parent_ids = info.get("parents") or []
             current = parent_ids[0] if parent_ids else None
             depth += 1
-        return None
+        for folder_id in visited:
+            self._strategy_package_folder_cache[folder_id] = resolved
+        return resolved
 
     def _folder_copy_metadata(self, folder_id: str, force: bool = False) -> Dict[str, Any]:
         if not force and folder_id in self._folder_metadata_cache:
@@ -720,7 +745,14 @@ class DriveSyncService:
         assets: Dict[str, Dict[str, Any]] = {}
         for item in media_by_name.values():
             file_name = item.get("name") or ""
-            aspect_match = re.search(r"(?:^|[-_ ])(1x1|9x16)(?=\.[^.]+$)", file_name, re.IGNORECASE)
+            # Tolerates a trailing revision token between the aspect and the
+            # extension (e.g. "...-1x1-v2.png", "...-1x1-final.png") — a real
+            # re-export naming pattern that the original lookahead (requiring
+            # the extension immediately after 1x1/9x16) silently missed,
+            # which meant that file got no soft_tags at all and quietly never
+            # merged/autofilled with no error anywhere (code-auditor pre-push
+            # review, MEDIUM).
+            aspect_match = re.search(r"(?:^|[-_ ])(1x1|9x16)(?:[-_][A-Za-z0-9]+)?(?=\.[^.]+$)", file_name, re.IGNORECASE)
             if not aspect_match:
                 continue
             code_match = re.match(r"^(AD-[A-Z0-9]+-\d{2})-", file_name, re.IGNORECASE)
@@ -746,10 +778,35 @@ class DriveSyncService:
         return {"assets": assets}
 
     def _parse_strategy_copy_doc(self, text_body: str) -> Dict[str, Dict[str, Any]]:
-        shared_cta = re.search(r"^\s*(?:\*\*)?(?:CTA|Call to action|Meta button)(?:\*\*)?\s*:\s*(.+?)\s*$", text_body, re.IGNORECASE | re.MULTILINE)
-        landing = re.search(r"^\s*(?:\*\*)?(?:Landing page|Landing URL|Destination URL)(?:\*\*)?\s*:\s*(\S+)\s*$", text_body, re.IGNORECASE | re.MULTILINE)
-        cta = self._normalize_cta(self._clean_markdown_value(shared_cta.group(1))) if shared_cta else None
-        landing_page = self._clean_markdown_value(landing.group(1)) if landing else None
+        # Verified against a real doc (Auto-Dealership-Two-Ad-Set-Winner-Expansion-
+        # Strategy-and-Copy-v2.md): the button label and destination URL live on ONE
+        # line — "**CTA:** **Get Quote** to `https://.../quote-v2`." — not on two
+        # separate "CTA:"/"Landing page:" lines. Try that combined shape first; a
+        # naive single-line CTA-only regex previously matched the WHOLE line
+        # including " to `url`." into the button label, producing a garbage CTA
+        # enum like "GET_QUOTE_TO_HTTPS_WWW_GETBUSINESSCOVERAGE_COM_QUOTE_V2" and
+        # never extracting a landing page at all — confirmed live by running this
+        # parser against the real file content before this fix.
+        # Note the closing "**" for the label sits AFTER the colon in the real
+        # doc ("**CTA:**", not "**CTA**:") — \*{0,2} on both sides of the colon
+        # handles that ordering; an earlier version of this regex assumed the
+        # closing ** came before the colon and silently never matched, leaving
+        # the old whole-line fallback below to swallow the URL into the CTA.
+        combined_cta = re.search(
+            r"^\s*\*{0,2}(?:CTA|Call to action|Meta button)\*{0,2}\s*:\s*\*{0,2}\s*\*{0,2}([^*`\n]+?)\*{0,2}\s+to\s+`([^`]+)`",
+            text_body,
+            re.IGNORECASE | re.MULTILINE,
+        )
+        if combined_cta:
+            cta = self._normalize_cta(combined_cta.group(1).strip())
+            landing_page = combined_cta.group(2).strip()
+        else:
+            # Fallback: separate "CTA:" / "Landing page:" lines, in case a future
+            # doc splits them instead of combining them on one line.
+            shared_cta = re.search(r"^\s*(?:\*\*)?(?:CTA|Call to action|Meta button)(?:\*\*)?\s*:\s*(.+?)\s*$", text_body, re.IGNORECASE | re.MULTILINE)
+            landing = re.search(r"^\s*(?:\*\*)?(?:Landing page|Landing URL|Destination URL)(?:\*\*)?\s*:\s*(\S+)\s*$", text_body, re.IGNORECASE | re.MULTILINE)
+            cta = self._normalize_cta(self._clean_markdown_value(shared_cta.group(1))) if shared_cta else None
+            landing_page = self._clean_markdown_value(landing.group(1)) if landing else None
         headings = list(re.finditer(r"^##\s+(AD-[A-Z0-9]+-\d{2})\b.*$", text_body, re.IGNORECASE | re.MULTILINE))
         blocks: Dict[str, Dict[str, Any]] = {}
         for index, heading in enumerate(headings):
@@ -846,11 +903,54 @@ class DriveSyncService:
         )
         return match.group(1).strip() if match else ""
 
+    # Meta's `call_to_action_types` enum has no server-side free-text fallback —
+    # an unrecognized value 400s the entire ad creation call. Naive
+    # uppercase-and-underscore normalization only coincidentally produces a
+    # valid enum for CTAs that already happen to be shaped like one ("Shop
+    # Now" -> SHOP_NOW). A human-written strategy doc is far more likely to
+    # phrase it loosely ("Get a Quote", "Get Your Free Quote") than the more
+    # controlled manifest format this function was originally built for
+    # (code-auditor pre-push review, HIGH — this fix also improves the
+    # pre-existing manifest path, not just the new strategy-doc one, since
+    # both funnel through here). Mirrors the CTA_OPTIONS whitelist in
+    # AdCreativeStep.jsx — keep the two in sync if either changes.
+    _CTA_PHRASE_MAP = {
+        'LEARN_MORE': 'LEARN_MORE', 'LEARN': 'LEARN_MORE',
+        'SHOP_NOW': 'SHOP_NOW', 'SHOP': 'SHOP_NOW',
+        'SIGN_UP': 'SIGN_UP',
+        'CONTACT_US': 'CONTACT_US', 'CONTACT': 'CONTACT_US',
+        'DOWNLOAD': 'DOWNLOAD',
+        'BOOK_NOW': 'BOOK_NOW', 'BOOK': 'BOOK_NOW',
+        'BUY_TICKETS': 'BUY_TICKETS',
+        'DONATE_NOW': 'DONATE_NOW', 'DONATE': 'DONATE_NOW',
+        # GET_QUOTE candidates — every phrasing here collapses to the one
+        # valid enum value rather than producing e.g. GET_A_QUOTE, GET_MY_
+        # QUOTE, or GET_YOUR_FREE_QUOTE, all of which would 400 at Meta.
+        'GET_QUOTE': 'GET_QUOTE', 'GET_A_QUOTE': 'GET_QUOTE',
+        'GET_MY_QUOTE': 'GET_QUOTE', 'GET_YOUR_QUOTE': 'GET_QUOTE',
+        'GET_YOUR_FREE_QUOTE': 'GET_QUOTE', 'GET_FREE_QUOTE': 'GET_QUOTE',
+        'REQUEST_QUOTE': 'GET_QUOTE', 'REQUEST_A_QUOTE': 'GET_QUOTE',
+    }
+
     def _normalize_cta(self, value: Optional[str]) -> Optional[str]:
         if not value:
             return None
         normalized = re.sub(r"[^A-Z0-9]+", "_", value.upper()).strip("_")
-        return normalized or None
+        if not normalized:
+            return None
+        mapped = self._CTA_PHRASE_MAP.get(normalized)
+        if mapped:
+            return mapped
+        # No known mapping — fall back to the naive normalization (unchanged
+        # prior behavior) but log so an unrecognized real-world phrasing
+        # surfaces during sync instead of only failing silently at launch
+        # time inside a Meta 400 several steps later.
+        logger.warning(
+            "CTA phrase %r normalized to %r, which isn't a known Meta CTA enum value — "
+            "ad creation will likely 400 unless Joel overrides the CTA field manually.",
+            value, normalized,
+        )
+        return normalized
 
     def _parse_drive_time(self, value: Optional[str]) -> datetime:
         if not value:
