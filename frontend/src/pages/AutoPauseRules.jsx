@@ -810,7 +810,18 @@ export default function AutoPauseRules() {
     Promise.all([loadRules(), loadAdsets()]).finally(() => setLoading(false));
   }, [loadRules, loadAdsets]);
 
-  useEffect(() => { if (adsets.length) loadAds(); }, [adsets, loadAds]);
+  // Lazy — only when the Add Rule modal is actually opened, and only once per
+  // session (ads.length gate). `include_all=true` makes this call a full
+  // account-wide ACTIVE/PAUSED-ads-with-creative fetch (get_account_ads_with_
+  // creative), the same heavier call the Copy Library page only runs from a
+  // manual "Sync" button — firing it unconditionally on every page mount
+  // (the prior version of this effect) turns a rarely-used, deliberately
+  // manual operation into an automatic one on every visit to this page,
+  // which is exactly the kind of avoidable Meta API volume this repo has a
+  // documented incident from (project_adbuilder_meta_app_review_rejection).
+  useEffect(() => {
+    if (showAddRule && adsets.length && ads.length === 0) loadAds();
+  }, [showAddRule, adsets, ads.length, loadAds]);
 
   const deleteRule = async (ruleId) => {
     if (!window.confirm('Delete this auto-pause rule? This cannot be undone.')) return;
