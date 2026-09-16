@@ -51,6 +51,8 @@ def _serialize_scraped_ad(ad, board_item_id=None):
         "promise": ad.promise,
         "proof_type": ad.proof_type,
         "funnel_stage": ad.funnel_stage,
+        "pacing": ad.pacing,
+        "numbers_used": ad.numbers_used,
         "is_saved": ad.is_saved,
         "created_at": ad.created_at.isoformat() if ad.created_at else None,
         "last_seen": ad.last_seen.isoformat() if ad.last_seen else None,
@@ -1052,7 +1054,7 @@ def update_strategy_notes(
 ):
     """Partially update the free-text strategy notes for a scraped ad."""
     from app.models import ScrapedAd
-    allowed = {'hook_type', 'persona', 'promise', 'proof_type', 'funnel_stage'}
+    allowed = {'hook_type', 'persona', 'promise', 'proof_type', 'funnel_stage', 'pacing', 'numbers_used'}
     unknown = set(notes) - allowed
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown strategy note field(s): {sorted(unknown)}")
@@ -1206,6 +1208,8 @@ def get_vertical_browse_ads(
             "promise": ad.promise,
             "proof_type": ad.proof_type,
             "funnel_stage": ad.funnel_stage,
+            "pacing": ad.pacing,
+            "numbers_used": ad.numbers_used,
             "is_saved": ad.is_saved,
             "last_seen": ad.last_seen.isoformat() if ad.last_seen else None,
         })

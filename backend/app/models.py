@@ -604,6 +604,8 @@ class ScrapedAd(Base):
     promise = Column(Text, nullable=True)
     proof_type = Column(String, nullable=True)
     funnel_stage = Column(String, nullable=True)
+    pacing = Column(String, nullable=True)
+    numbers_used = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     saved_search = relationship("SavedSearch", back_populates="ads")

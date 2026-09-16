@@ -283,6 +283,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     }, [driveAssets, driveSearchTerm, driveFormatFilter]);
 
     const driveGroupById = useMemo(() => new Map(driveAssetGroups.map(group => [group.id, group])), [driveAssetGroups]);
+    const mixedDriveCopyMatches = useMemo(() => {
+        const matchedPairs = driveAssetGroups.filter(group => group.isPair && hasCopyText(group.copy || {})).length;
+        const unmatchedPairs = driveAssetGroups.filter(group => group.isPair && !hasCopyText(group.copy || {})).length;
+        return matchedPairs > 0 && unmatchedPairs > 0
+            ? { matchedPairs, unmatchedPairs }
+            : null;
+    }, [driveAssetGroups]);
     // Raw file count — "N assets" in the footer label. Distinct from how many
     // CREATIVE entries actually land in creativeData.creatives (a real tagged
     // pair merges 2 assets into 1 creative; an auto-duped single expands 1
@@ -2057,7 +2064,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             <X size={20} />
                         </button>
                     </div>
-                    <div className="flex-1 overflow-y-auto p-4">
+                            <div className="flex-1 overflow-y-auto p-4">
                         {libraryLoading ? (
                             <div className="flex items-center justify-center py-12 gap-2 text-gray-500">
                                 <Loader className="animate-spin" size={20} />
@@ -2065,7 +2072,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             </div>
                         ) : libraryAds.length === 0 ? (
                             <p className="text-center text-gray-500 py-12">No generated ads found. Create some in the Generated Ads section first.</p>
-                        ) : (
+                                ) : (
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                                 {libraryAds.map(ad => {
                                     const isSelected = selectedLibraryIds.has(ad.id);
@@ -2079,8 +2086,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             {isSelected && (
                                                 <div className="absolute top-2 right-2 bg-amber-500 rounded-full p-0.5">
                                                     <Check size={14} className="text-white" />
-                                                </div>
-                                            )}
+                            </div>
+                                )}
                                             {ad.headline && (
                                                 <div className="p-2 text-xs text-gray-600 truncate bg-white">{ad.headline}</div>
                                             )}
@@ -2200,6 +2207,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         ) : driveAssetGroups.length === 0 ? (
                             <p className="text-center text-gray-500 py-12">No Drive assets match that search.</p>
                         ) : (
+                            <>
+                            {mixedDriveCopyMatches && (
+                                <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                                    {mixedDriveCopyMatches.matchedPairs} pair{mixedDriveCopyMatches.matchedPairs !== 1 ? 's' : ''} matched copy from a strategy doc; {mixedDriveCopyMatches.unmatchedPairs} pair{mixedDriveCopyMatches.unmatchedPairs !== 1 ? 's' : ''} did not. Check those filenames against the doc.
+                                </div>
+                            )}
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                                 {driveAssetGroups.map(group => {
                                     const asset = group.displayAsset;
@@ -2257,6 +2270,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     );
                                 })}
                             </div>
+                            </>
                         )}
                     </div>
                     <div className="p-4 border-t flex items-center justify-between gap-3 flex-wrap">

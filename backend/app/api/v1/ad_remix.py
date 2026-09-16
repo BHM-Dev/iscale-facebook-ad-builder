@@ -53,6 +53,8 @@ def _format_research_context(research_inspiration: dict | None) -> str:
         "Promise": research_inspiration.get("promise"),
         "Proof type": research_inspiration.get("proof_type"),
         "Funnel stage": research_inspiration.get("funnel_stage"),
+        "Pacing": research_inspiration.get("pacing"),
+        "Numbers/dollar values used": research_inspiration.get("numbers_used"),
     }
 
     lines = [

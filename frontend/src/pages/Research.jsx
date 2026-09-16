@@ -421,7 +421,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
 // ── Saved panel card (compact) ───────────────────────────────────
 function SavedCard({ ad, onUnsave, onUseAsInspiration, boards, onAddToBoard, onCreateBoard, onNotesSaved }) {
   const [editingNotes, setEditingNotes] = useState(false);
-  const [notes, setNotes] = useState({ hook_type: ad.hook_type || '', persona: ad.persona || '', promise: ad.promise || '', proof_type: ad.proof_type || '', funnel_stage: ad.funnel_stage || '' });
+  const [notes, setNotes] = useState({ hook_type: ad.hook_type || '', persona: ad.persona || '', promise: ad.promise || '', proof_type: ad.proof_type || '', funnel_stage: ad.funnel_stage || '', pacing: ad.pacing || '', numbers_used: ad.numbers_used || '' });
   const [savingNotes, setSavingNotes] = useState(false);
   const { showSuccess, showError } = useToast();
   // authFetch is a hook value (useAuth()), not a module-level import — every
@@ -497,7 +497,7 @@ function SavedCard({ ad, onUnsave, onUseAsInspiration, boards, onAddToBoard, onC
       {editingNotes && (
         <div className="space-y-2 rounded-lg border border-indigo-100 bg-indigo-50/40 p-2">
           {[
-            ['hook_type', 'Hook type'], ['persona', 'Persona'], ['proof_type', 'Proof type'], ['funnel_stage', 'Funnel stage'],
+            ['hook_type', 'Hook type'], ['persona', 'Persona'], ['proof_type', 'Proof type'], ['funnel_stage', 'Funnel stage'], ['pacing', 'Pacing'], ['numbers_used', 'Numbers/$ used'],
           ].map(([key, label]) => (
             <input key={key} value={notes[key]} onChange={event => setNotes(prev => ({ ...prev, [key]: event.target.value }))} placeholder={label} className="w-full rounded border border-gray-200 bg-white px-2 py-1.5 text-xs focus:border-indigo-400 focus:outline-none" />
           ))}
@@ -1025,6 +1025,8 @@ export default function Research() {
       promise: ad.promise,
       proof_type: ad.proof_type,
       funnel_stage: ad.funnel_stage,
+      pacing: ad.pacing,
+      numbers_used: ad.numbers_used,
       source: 'research',
     }));
     navigate('/ad-remix');

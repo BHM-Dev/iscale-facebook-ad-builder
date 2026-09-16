@@ -27,6 +27,8 @@ function SourceAdReferenceCard({ researchInspiration, uploadedInspiration, onDis
         ['Promise', source.promise],
         ['Proof', source.proof_type],
         ['Funnel', source.funnel_stage],
+        ['Pacing', source.pacing],
+        ['Numbers/$', source.numbers_used],
     ].filter(([, value]) => value);
     return (
         <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-3 space-y-3">
