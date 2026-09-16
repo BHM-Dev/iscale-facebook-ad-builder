@@ -419,7 +419,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
 }
 
 // ── Saved panel card (compact) ───────────────────────────────────
-function SavedCard({ ad, onUnsave, onUseAsInspiration, boards, onAddToBoard, onCreateBoard }) {
+function SavedCard({ ad, onUnsave, onUseAsInspiration, boards, onAddToBoard, onCreateBoard, onNotesSaved }) {
   const [editingNotes, setEditingNotes] = useState(false);
   const [notes, setNotes] = useState({ hook_type: ad.hook_type || '', persona: ad.persona || '', promise: ad.promise || '', proof_type: ad.proof_type || '', funnel_stage: ad.funnel_stage || '' });
   const [savingNotes, setSavingNotes] = useState(false);
@@ -431,7 +431,14 @@ function SavedCard({ ad, onUnsave, onUseAsInspiration, boards, onAddToBoard, onC
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(notes),
       });
       if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.detail || 'Failed to save strategy notes'); }
-      Object.assign(ad, notes);
+      // Update via the parent's state setter, not a direct prop mutation —
+      // `ad` here and the `browseAds` copy of the same underlying row are
+      // separate object instances from separate fetches. Mutating `ad` in
+      // place only updated this card's own render; clicking "Build from
+      // this ad" on the Browse panel's copy of the same ad afterward would
+      // silently carry stale (pre-edit) strategy fields into the AI prompt
+      // (code-auditor pre-push review, MEDIUM).
+      onNotesSaved(ad.id, notes);
       setEditingNotes(false);
       showSuccess('Strategy notes saved');
     } catch (error) { showError(error.message); } finally { setSavingNotes(false); }
@@ -482,10 +489,21 @@ function SavedCard({ ad, onUnsave, onUseAsInspiration, boards, onAddToBoard, onC
       {editingNotes && (
         <div className="space-y-2 rounded-lg border border-indigo-100 bg-indigo-50/40 p-2">
           {[
-            ['hook_type', 'Hook type'], ['persona', 'Persona'], ['promise', 'Promise'], ['proof_type', 'Proof type'], ['funnel_stage', 'Funnel stage'],
+            ['hook_type', 'Hook type'], ['persona', 'Persona'], ['proof_type', 'Proof type'], ['funnel_stage', 'Funnel stage'],
           ].map(([key, label]) => (
             <input key={key} value={notes[key]} onChange={event => setNotes(prev => ({ ...prev, [key]: event.target.value }))} placeholder={label} className="w-full rounded border border-gray-200 bg-white px-2 py-1.5 text-xs focus:border-indigo-400 focus:outline-none" />
           ))}
+          {/* Textarea, not a single-line input — `promise` is a Text column
+              meant for a real sentence, not a short label like the other
+              four fields (joel-perspective pre-push review, P2: a cramped
+              one-line box discouraged actually writing anything useful here). */}
+          <textarea
+            value={notes.promise}
+            onChange={event => setNotes(prev => ({ ...prev, promise: event.target.value }))}
+            placeholder="Promise"
+            rows={2}
+            className="w-full rounded border border-gray-200 bg-white px-2 py-1.5 text-xs focus:border-indigo-400 focus:outline-none resize-y"
+          />
           <button type="button" onClick={saveNotes} disabled={savingNotes} className="rounded bg-indigo-600 px-2.5 py-1.5 text-xs font-medium text-white disabled:opacity-50">{savingNotes ? 'Saving…' : 'Save notes'}</button>
         </div>
       )}
@@ -688,6 +706,18 @@ export default function Research() {
       setSavedAds(all);
       setSavedAdIds(new Set(all.map(a => a.id)));
     } catch (e) { /* non-blocking */ }
+  };
+
+  // Updates the SAME underlying ad's strategy-note fields wherever it
+  // currently sits in local state — savedAds and browseAds are populated by
+  // two separate fetches and hold separate object instances for the same
+  // scraped_ads row, so a card in one array being edited must not leave the
+  // other array's copy stale (code-auditor pre-push review, MEDIUM — a stale
+  // browseAds copy silently carried old strategy fields into the AI prompt
+  // via "Build from this ad" until the next full reload).
+  const handleStrategyNotesSaved = (adId, notes) => {
+    setSavedAds(prev => prev.map(a => (a.id === adId ? { ...a, ...notes } : a)));
+    setBrowseAds(prev => prev.map(a => (a.id === adId ? { ...a, ...notes } : a)));
   };
 
   const loadBoards = async () => {
@@ -1428,6 +1458,7 @@ export default function Research() {
                   boards={boards}
                   onAddToBoard={handleAddToBoard}
                   onCreateBoard={handleCreateBoard}
+                  onNotesSaved={handleStrategyNotesSaved}
                 />
               ))}
             </div>

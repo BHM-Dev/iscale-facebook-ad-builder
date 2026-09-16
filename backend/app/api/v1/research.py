@@ -1056,6 +1056,12 @@ def update_strategy_notes(
     unknown = set(notes) - allowed
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown strategy note field(s): {sorted(unknown)}")
+    # A non-string, non-null value (e.g. {"hook_type": 123}) would otherwise
+    # silently coerce to None below instead of erroring — cheap hardening,
+    # not currently reachable from the UI (code-auditor pre-push review, LOW).
+    invalid = {k: v for k, v in notes.items() if v is not None and not isinstance(v, str)}
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Strategy note fields must be strings or null: {sorted(invalid)}")
     ad = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
     if not ad:
         raise HTTPException(status_code=404, detail="Ad not found")

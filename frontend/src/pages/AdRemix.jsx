@@ -17,7 +17,7 @@ const formatResearchAngle = (angle) => {
         .replace(/\b\w/g, char => char.toUpperCase());
 };
 
-function SourceAdReferenceCard({ researchInspiration, uploadedInspiration }) {
+function SourceAdReferenceCard({ researchInspiration, uploadedInspiration, onDismiss }) {
     const source = researchInspiration || uploadedInspiration;
     if (!source) return null;
     const imageUrl = source.mediaUrl || source.thumbnailUrl || source.imageUrl;
@@ -32,7 +32,25 @@ function SourceAdReferenceCard({ researchInspiration, uploadedInspiration }) {
         <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-3 space-y-3">
             <div className="flex items-center justify-between gap-2">
                 <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Source ad</div>
-                {source.adLink && <a href={source.adLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800" title="Open original ad"><ExternalLink size={11} />Open</a>}
+                <div className="flex items-center gap-2">
+                    {source.adLink && <a href={source.adLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800" title="Open original ad"><ExternalLink size={11} />Open</a>}
+                    {/* Only dismiss/clear control for this card — the old
+                        per-source top banners each had their own X button;
+                        removing them (see comment above the render site) left
+                        the research path with no way to clear the reference
+                        mid-build except a full wizard reset (joel-perspective
+                        pre-push review, P1). This restores that, in one place
+                        for both sources. */}
+                    <button
+                        type="button"
+                        onClick={onDismiss}
+                        className="text-indigo-400 hover:text-indigo-600"
+                        aria-label="Dismiss source ad reference"
+                        title="Dismiss reference"
+                    >
+                        <X size={13} />
+                    </button>
+                </div>
             </div>
             {imageUrl ? <img src={imageUrl} alt="Competitor source ad" className="w-full max-h-56 rounded-lg bg-gray-100 object-contain" /> : <div className="rounded-lg border border-dashed border-indigo-200 bg-white px-3 py-5 text-center text-xs text-gray-400">No source image stored</div>}
             <div>
@@ -879,26 +897,19 @@ export default function AdRemix() {
                 </details>
             )}
 
-            {/* Uploaded inspiration banner — shown when Joel uploads an outside ad */}
-            {uploadedInspiration && (
-                <div className="mb-4 flex items-center justify-between gap-3 bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3 text-sm">
-                    <div className="flex items-start gap-2">
-                        <Upload size={15} className="text-emerald-600 mt-0.5 flex-shrink-0" />
-                        <span className="text-emerald-800">
-                            Starting from uploaded ad: <strong>{uploadedInspiration.fileName || 'Uploaded image'}</strong>.
-                            The image will drive the reconstruction structure after you pick the brand and audience.
-                        </span>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={clearUploadedContext}
-                        className="flex-shrink-0 text-emerald-500 hover:text-emerald-700"
-                        aria-label="Dismiss uploaded inspiration context"
-                    >
-                        <X size={14} />
-                    </button>
-                </div>
-            )}
+            {/* The old always-shown uploaded-inspiration top banner was removed
+                here — it duplicated the persistent SourceAdReferenceCard now in
+                the sidebar (both showing "here's your source ad" on every step
+                at once), while the research path had no equivalent banner left
+                after the same cleanup, leaving no dismiss control anywhere for
+                that path (code-auditor + joel-perspective pre-push review,
+                MEDIUM/P1). The card below now owns both display and dismiss
+                for both sources — see clearResearchContext/clearUploadedContext
+                wired into its own dismiss button. Step 1 still shows its own
+                inline confirmation text for whichever source is active
+                (search "is saved as inspiration" / "saved as angle context"
+                above) so nothing is lost on the step where the sidebar card
+                isn't rendered yet. */}
 
             {/* Step Content */}
             <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
@@ -1181,7 +1192,11 @@ export default function AdRemix() {
 
             {currentStep >= 2 && currentStep <= 6 && (
                 <aside className="hidden lg:block sticky top-6 space-y-3">
-                    <SourceAdReferenceCard researchInspiration={researchInspiration} uploadedInspiration={uploadedInspiration} />
+                    <SourceAdReferenceCard
+                        researchInspiration={researchInspiration}
+                        uploadedInspiration={uploadedInspiration}
+                        onDismiss={researchInspiration ? clearResearchContext : clearUploadedContext}
+                    />
                     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-3">
                     <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
                         <div className="w-7 h-7 rounded-lg bg-purple-100 flex items-center justify-center">
