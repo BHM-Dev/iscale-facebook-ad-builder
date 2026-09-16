@@ -761,15 +761,6 @@ def save_campaign_locally(
             except Exception:
                 end_time = None
 
-        start_time = None
-        start_time_raw = campaign_data.get('startTime') or campaign_data.get('start_time')
-        if start_time_raw:
-            try:
-                from datetime import datetime as _dt
-                start_time = _dt.fromisoformat(str(start_time_raw).replace('Z', '+00:00'))
-            except Exception:
-                start_time = None
-
         special_ad_categories = campaign_data.get('specialAdCategories') or []
         if isinstance(special_ad_categories, str):
             special_ad_categories = [special_ad_categories] if special_ad_categories else []
@@ -782,7 +773,6 @@ def save_campaign_locally(
             budget_schedule_type=campaign_data.get('budgetScheduleType', 'DAILY'),
             daily_budget=daily_budget,
             lifetime_budget=lifetime_budget,
-            start_time=start_time,
             end_time=end_time,
             bid_strategy=campaign_data.get('bidStrategy'),
             special_ad_categories=special_ad_categories,
