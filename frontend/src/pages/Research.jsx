@@ -424,6 +424,14 @@ function SavedCard({ ad, onUnsave, onUseAsInspiration, boards, onAddToBoard, onC
   const [notes, setNotes] = useState({ hook_type: ad.hook_type || '', persona: ad.persona || '', promise: ad.promise || '', proof_type: ad.proof_type || '', funnel_stage: ad.funnel_stage || '' });
   const [savingNotes, setSavingNotes] = useState(false);
   const { showSuccess, showError } = useToast();
+  // authFetch is a hook value (useAuth()), not a module-level import — every
+  // other call site in this file is inside the main Research() component,
+  // where it's already destructured (search "const { authFetch } = useAuth()"
+  // below). SavedCard is a separate component and never had it in scope,
+  // so clicking "Save notes" threw "authFetch is not defined" at runtime —
+  // missed by static review since the diff itself compiles fine; caught by
+  // actually clicking it live in production.
+  const { authFetch } = useAuth();
   const saveNotes = async () => {
     setSavingNotes(true);
     try {
