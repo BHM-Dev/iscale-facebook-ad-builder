@@ -293,6 +293,11 @@ class AutoPauseRule(Base):
     # in this metadata, so a fresh dev DB built from migrations silently
     # diverged from what the ORM believed the schema was.
     adset_id = Column(String, ForeignKey("facebook_adsets.id", ondelete="CASCADE"), nullable=False, index=True)
+    # 'adset' preserves all existing rules; 'ad' scopes evaluation/action to one
+    # Meta ad while retaining the parent ad set for account resolution/display.
+    scope = Column(String, nullable=False, default='adset')
+    fb_ad_id = Column(String, nullable=True, index=True)
+    ad_name = Column(String, nullable=True)
     # metric: 'cpl' | 'cpa' | 'ctr'
     metric = Column(String, nullable=False)
     # operator: 'greater_than' | 'less_than'

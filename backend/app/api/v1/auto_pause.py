@@ -64,6 +64,9 @@ DUPLICATE_REPEAT_COOLDOWN = timedelta(hours=DUPLICATE_REPEAT_COOLDOWN_HOURS)
 
 class RuleCreate(BaseModel):
     adset_id: str                          # internal DB id
+    scope: str = 'adset'                   # 'adset' | 'ad'
+    fb_ad_id: Optional[str] = None        # raw Meta ad id when scope == 'ad'
+    ad_name: Optional[str] = None
     metric: str = 'cpl'                    # 'cpl' | 'cpa' | 'ctr'
     operator: str = 'greater_than'         # 'greater_than' | 'less_than'
     threshold: int                         # e.g. 50 for $50 CPL
@@ -85,6 +88,9 @@ class BulkRuleCreate(BaseModel):
     filter/query model to invent) while giving the frontend a Birch-style
     "applies to N ad sets" bulk-create flow."""
     adset_ids: List[str]
+    scope: str = 'adset'
+    fb_ad_id: Optional[str] = None
+    ad_name: Optional[str] = None
     metric: str = 'cpl'
     operator: str = 'greater_than'
     threshold: int
@@ -110,6 +116,9 @@ class RulePatch(BaseModel):
     duplicate_append_number: Optional[bool] = None
     duplicate_pause_original: Optional[bool] = None
     duplicate_repeat: Optional[bool] = None
+    scope: Optional[str] = None
+    fb_ad_id: Optional[str] = None
+    ad_name: Optional[str] = None
 
 
 # Server-side ceiling on budget_adjust_pct — the frontend's max="100" is a UI-only
@@ -119,9 +128,13 @@ class RulePatch(BaseModel):
 MAX_BUDGET_ADJUST_PCT = 100
 
 
-def _validate_action(action: str, budget_adjust_pct: Optional[int]) -> None:
+def _validate_action(action: str, budget_adjust_pct: Optional[int], scope: str = 'adset') -> None:
+    if scope not in {'adset', 'ad'}:
+        raise HTTPException(400, "scope must be 'adset' or 'ad'")
     if action not in VALID_ACTIONS:
         raise HTTPException(400, f"action must be one of {sorted(VALID_ACTIONS)}")
+    if scope == 'ad' and action not in {'pause', 'notify'}:
+        raise HTTPException(400, "ad-scoped rules only support pause or notify actions")
     if action in PERCENT_ACTIONS:
         if not budget_adjust_pct or budget_adjust_pct <= 0:
             raise HTTPException(400, "budget_adjust_pct must be a positive integer (e.g. 20 for 20%) for budget/bid actions")
@@ -177,6 +190,9 @@ def list_rules(
             "adset_id": r.adset_id,
             "adset_name": r.adset.name if r.adset else None,
             "fb_adset_id": r.adset.fb_adset_id if r.adset else None,
+            "scope": r.scope or 'adset',
+            "fb_ad_id": r.fb_ad_id,
+            "ad_name": r.ad_name,
             "metric": r.metric,
             "operator": r.operator,
             "threshold": r.threshold,
@@ -214,7 +230,9 @@ def create_rule(
     current_user=Depends(get_current_user),
 ):
     _validate_metric_operator(body.metric, body.operator)
-    _validate_action(body.action, body.budget_adjust_pct)
+    _validate_action(body.action, body.budget_adjust_pct, body.scope)
+    if body.scope == 'ad' and not body.fb_ad_id:
+        raise HTTPException(400, "fb_ad_id is required for ad-scoped rules")
 
     # Verify adset exists
     adset = db.query(FacebookAdSet).filter(FacebookAdSet.id == body.adset_id).first()
@@ -225,6 +243,9 @@ def create_rule(
 
     rule = AutoPauseRule(
         adset_id=body.adset_id,
+        scope=body.scope,
+        fb_ad_id=body.fb_ad_id if body.scope == 'ad' else None,
+        ad_name=body.ad_name if body.scope == 'ad' else None,
         metric=body.metric,
         operator=body.operator,
         threshold=body.threshold,
@@ -254,10 +275,12 @@ def create_rules_bulk(
     unknown/disallowed ad set id fails the whole batch before any row is written,
     rather than silently creating rules for a partial list."""
     _validate_metric_operator(body.metric, body.operator)
-    _validate_action(body.action, body.budget_adjust_pct)
+    _validate_action(body.action, body.budget_adjust_pct, body.scope)
 
     if not body.adset_ids:
         raise HTTPException(400, "adset_ids must contain at least one ad set")
+    if body.scope == 'ad':
+        raise HTTPException(400, "bulk creation is only supported for ad-set-scoped rules")
 
     adsets = db.query(FacebookAdSet).filter(FacebookAdSet.id.in_(body.adset_ids)).all()
     found_ids = {a.id for a in adsets}
@@ -272,6 +295,7 @@ def create_rules_bulk(
     for adset_id in body.adset_ids:
         rule = AutoPauseRule(
             adset_id=adset_id,
+            scope='adset',
             metric=body.metric,
             operator=body.operator,
             threshold=body.threshold,
@@ -365,11 +389,28 @@ def update_rule(
         body.duplicate_all_ads, body.duplicate_name_suffix,
         body.duplicate_append_number, body.duplicate_pause_original, body.duplicate_repeat,
     ))
+    if body.scope is not None and not (body.action is not None or body.budget_adjust_pct is not None or duplicate_fields_touched):
+        _validate_action(rule.action, rule.budget_adjust_pct, body.scope)
+        if body.scope == 'ad' and not (body.fb_ad_id or rule.fb_ad_id):
+            raise HTTPException(400, "fb_ad_id is required for ad-scoped rules")
+        rule.scope = body.scope
+        if body.fb_ad_id is not None:
+            rule.fb_ad_id = body.fb_ad_id
+        if body.ad_name is not None:
+            rule.ad_name = body.ad_name
     if body.action is not None or body.budget_adjust_pct is not None or duplicate_fields_touched:
         new_action = body.action if body.action is not None else rule.action
         new_pct = body.budget_adjust_pct if body.budget_adjust_pct is not None else rule.budget_adjust_pct
-        _validate_action(new_action, new_pct)
+        new_scope = body.scope if body.scope is not None else (rule.scope or 'adset')
+        _validate_action(new_action, new_pct, new_scope)
+        if new_scope == 'ad' and not (body.fb_ad_id or rule.fb_ad_id):
+            raise HTTPException(400, "fb_ad_id is required for ad-scoped rules")
         rule.action = new_action
+        rule.scope = new_scope
+        if body.fb_ad_id is not None:
+            rule.fb_ad_id = body.fb_ad_id
+        if body.ad_name is not None:
+            rule.ad_name = body.ad_name
         rule.budget_adjust_pct = new_pct if new_action in PERCENT_ACTIONS else None
         if new_action == 'duplicate':
             rule.duplicate_all_ads = body.duplicate_all_ads if body.duplicate_all_ads is not None else (rule.duplicate_all_ads if rule.duplicate_all_ads is not None else True)
@@ -740,13 +781,29 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
             target_accounts = [None]
 
     bulk_insights = {}
+    bulk_ads_insights = {}
     failed_accounts = set()
+    failed_ads_accounts = set()
     for account in target_accounts:
         try:
             bulk_insights.update(svc.get_account_insights_bulk(ad_account_id=account))
         except Exception as e:
             logger.error("Bulk insights fetch failed for account %s: %s", account or "(default)", e)
             failed_accounts.add(account)
+    ad_rule_accounts = sorted({
+        rule.adset.fb_account_id
+        for rule in rules
+        if (rule.scope or 'adset') == 'ad' and rule.adset and rule.adset.fb_account_id
+    }) if not ad_account_id else [ad_account_id]
+    if any((rule.scope or 'adset') == 'ad' and rule.adset and not rule.adset.fb_account_id for rule in rules):
+        ad_rule_accounts.append(None)
+    if ad_rule_accounts:
+        for account in ad_rule_accounts:
+            try:
+                bulk_ads_insights.update(svc.get_account_ads_insights_bulk(ad_account_id=account))
+            except Exception as e:
+                logger.error("Bulk ad insights fetch failed for account %s: %s", account or "(default)", e)
+                failed_ads_accounts.add(account)
 
     for rule in rules:
         adset = rule.adset
@@ -754,7 +811,18 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
             skipped.append({"rule_id": rule.id, "reason": "no fb_adset_id"})
             continue
 
-        # Skip if already paused locally
+        rule_scope = rule.scope or 'adset'
+
+        if rule_scope == 'ad' and rule.action not in {'pause', 'notify'}:
+            msg = f"Action {rule.action!r} is not supported for ad-scoped rules"
+            rule.is_active = False
+            rule.trigger_reason = f"Disabled — {msg}"
+            errors.append({"rule_id": rule.id, "adset": adset.name, "ad": rule.ad_name or rule.fb_ad_id, "error": msg})
+            db.commit()
+            continue
+
+        # Skip if already paused locally. Pausing the parent makes an ad-level
+        # rule non-actionable too, and avoids an unnecessary Meta call.
         if adset.status == 'PAUSED':
             rule.last_checked_at = now
             skipped.append({"rule_id": rule.id, "adset": adset.name, "reason": "already paused"})
@@ -762,7 +830,15 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
 
         rule_account = adset.fb_account_id or None
         try:
-            insights = bulk_insights.get(adset.fb_adset_id)
+            if rule_scope == 'ad':
+                ad_matches = bulk_ads_insights.get(adset.fb_adset_id, [])
+                insights = next((item for item in ad_matches if item.get('ad_id') == rule.fb_ad_id), None)
+                if insights is None:
+                    reason = "ad insights unavailable" if rule_account in failed_ads_accounts else "ad not in bulk results"
+                    skipped.append({"rule_id": rule.id, "adset": adset.name, "ad": rule.ad_name or rule.fb_ad_id, "reason": reason})
+                    continue
+            else:
+                insights = bulk_insights.get(adset.fb_adset_id)
             if insights is None:
                 if rule_account in failed_accounts:
                     # That account's bulk fetch failed outright — fall back to
@@ -828,15 +904,20 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
 
             if rule.action == 'pause':
                 try:
-                    svc.update_adset_status(adset.fb_adset_id, 'PAUSED')
-                    adset.status = 'PAUSED'
+                    if rule_scope == 'ad':
+                        svc.update_ad_status(rule.fb_ad_id, 'PAUSED')
+                        detail = f"Ad paused ({rule.ad_name or rule.fb_ad_id})"
+                    else:
+                        svc.update_adset_status(adset.fb_adset_id, 'PAUSED')
+                        adset.status = 'PAUSED'
+                        detail = 'Ad set paused'
                     rule.triggered_at = now
                     rule.trigger_reason = reason
                     rule.is_active = False   # disable rule after firing (prevent re-fire)
-                    _log('success', 'Ad set paused')
+                    _log('success', detail)
                     db.commit()
-                    paused.append({"adset": adset.name, "fb_adset_id": adset.fb_adset_id, "reason": reason})
-                    logger.info("AUTO-PAUSED adset %s — %s", adset.name, reason)
+                    paused.append({"adset": adset.name, "ad": rule.ad_name or rule.fb_ad_id if rule_scope == 'ad' else None, "fb_adset_id": adset.fb_adset_id, "fb_ad_id": rule.fb_ad_id if rule_scope == 'ad' else None, "scope": rule_scope, "reason": reason})
+                    logger.info("AUTO-PAUSED %s %s — %s", 'ad' if rule_scope == 'ad' else 'adset', rule.fb_ad_id if rule_scope == 'ad' else adset.fb_adset_id, reason)
                     send_rule_action_alert(action='pause', adset_name=adset.name, fb_adset_id=adset.fb_adset_id, reason=reason)
                 except Exception as e:
                     _log('error', str(e))
@@ -859,7 +940,7 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
                     rule.trigger_reason = reason
                     _log('success', 'Notification sent')
                     db.commit()
-                    notified.append({"adset": adset.name, "fb_adset_id": adset.fb_adset_id, "reason": reason})
+                    notified.append({"adset": adset.name, "ad": rule.ad_name or rule.fb_ad_id if rule_scope == 'ad' else None, "fb_adset_id": adset.fb_adset_id, "fb_ad_id": rule.fb_ad_id if rule_scope == 'ad' else None, "scope": rule_scope, "reason": reason})
                     logger.info("NOTIFY rule fired for adset %s — %s", adset.name, reason)
                     send_rule_action_alert(action='notify', adset_name=adset.name, fb_adset_id=adset.fb_adset_id, reason=reason)
                 else:

@@ -9,7 +9,7 @@ const METRIC_LABELS = { cpl: 'Cost Per Lead', cpa: 'Cost Per Action', ctr: 'CTR'
 const METRIC_UNITS  = { cpl: '$', cpa: '$', ctr: '%', roas: 'x' };
 
 const ACTION_OPTIONS = [
-  { value: 'pause', label: 'Pause the ad set', icon: PauseCircle, color: 'text-red-500' },
+  { value: 'pause', label: 'Pause the target', icon: PauseCircle, color: 'text-red-500' },
   { value: 'notify', label: 'Notify (Slack only, no change on Meta)', icon: Bell, color: 'text-blue-500' },
   { value: 'increase_budget', label: 'Increase budget', icon: TrendingUp, color: 'text-emerald-600' },
   { value: 'decrease_budget', label: 'Decrease budget', icon: TrendingDown, color: 'text-amber-600' },
@@ -69,11 +69,12 @@ const currentBudgetCents = (adset) => {
 };
 
 // ── Add-rule modal ─────────────────────────────────────────────────────────────
-function AddRuleModal({ adsets, onClose, onCreated }) {
+function AddRuleModal({ adsets, ads, onClose, onCreated }) {
   const { showSuccess, showError } = useToast();
   const [selectedIds, setSelectedIds] = useState(() => new Set(adsets[0] ? [adsets[0].id] : []));
   const [search, setSearch] = useState('');
   const [form, setForm] = useState({
+    scope: 'adset',
     metric: 'cpl',
     operator: 'greater_than',
     threshold: 50,
@@ -93,11 +94,12 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
   // pause/notify skip straight to save() since neither does either.
   const [step, setStep] = useState('form');
 
-  const filteredAdsets = useMemo(() => {
+  const targets = form.scope === 'ad' ? ads : adsets;
+  const filteredTargets = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return adsets;
-    return adsets.filter(a => a.name?.toLowerCase().includes(q));
-  }, [adsets, search]);
+    if (!q) return targets;
+    return targets.filter(a => a.name?.toLowerCase().includes(q));
+  }, [targets, search]);
 
   const toggleAdset = (id) => {
     setSelectedIds(prev => {
@@ -109,21 +111,22 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
 
   const toggleAll = () => {
     setSelectedIds(prev => {
-      const allFilteredSelected = filteredAdsets.length > 0 && filteredAdsets.every(a => prev.has(a.id));
+      const allFilteredSelected = filteredTargets.length > 0 && filteredTargets.every(a => prev.has(a.id));
       if (allFilteredSelected) {
         // Deselect just the currently-visible (filtered) set, keep any other selections intact
         const next = new Set(prev);
-        filteredAdsets.forEach(a => next.delete(a.id));
+        filteredTargets.forEach(a => next.delete(a.id));
         return next;
       }
       const next = new Set(prev);
-      filteredAdsets.forEach(a => next.add(a.id));
+      filteredTargets.forEach(a => next.add(a.id));
       return next;
     });
   };
 
   const validateBeforeContinue = () => {
-    if (selectedIds.size === 0) { showError('Select at least one ad set'); return false; }
+    if (selectedIds.size === 0) { showError(`Select at least one ${form.scope === 'ad' ? 'ad' : 'ad set'}`); return false; }
+    if (form.scope === 'ad' && selectedIds.size > 1) { showError('Select one ad for an ad-scoped rule'); return false; }
     if (PERCENT_ACTIONS.has(form.action) && (!form.budget_adjust_pct || form.budget_adjust_pct <= 0)) {
       showError('Enter an adjustment percentage greater than 0');
       return false;
@@ -153,11 +156,22 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
     setSaving(true);
     try {
       const isDuplicate = form.action === DUPLICATE_ACTION;
-      const res = await authFetch(`${API_BASE}/auto-pause/rules/bulk`, {
+      const selected = targets.filter(t => selectedIds.has(t.id));
+      const isAd = form.scope === 'ad';
+      const payload = isAd ? {
+        adset_id: selected[0].adset_id,
+        scope: 'ad',
+        fb_ad_id: selected[0].fb_ad_id,
+        ad_name: selected[0].name,
+      } : {
+        adset_ids: Array.from(selectedIds),
+        scope: 'adset',
+      };
+      const res = await authFetch(`${API_BASE}/auto-pause/rules${isAd ? '' : '/bulk'}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          adset_ids: Array.from(selectedIds),
+          ...payload,
           metric: form.metric,
           operator: form.operator,
           threshold: form.threshold,
@@ -180,7 +194,7 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
     finally { setSaving(false); }
   };
 
-  const allFilteredSelected = filteredAdsets.length > 0 && filteredAdsets.every(a => selectedIds.has(a.id));
+  const allFilteredSelected = filteredTargets.length > 0 && filteredTargets.every(a => selectedIds.has(a.id));
   const selectedAdsets = adsets.filter(a => selectedIds.has(a.id));
 
   // ── Confirm step (budget/bid actions, and duplicate) — every matched ad set
@@ -203,7 +217,7 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
           </p>
 
           <div className="border border-gray-200 rounded-lg divide-y divide-gray-50 max-h-64 overflow-y-auto mb-4">
-            {selectedAdsets.map(a => {
+            {(form.scope === 'ad' ? ads.filter(a => selectedIds.has(a.id)) : selectedAdsets).map(a => {
               if (isDuplicate) {
                 return (
                   <div key={a.id} className="px-3 py-2 text-sm">
@@ -269,10 +283,17 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
         </h2>
 
         <div className="space-y-4">
-          <Field label="Ad Set(s)">
-            {adsets.length === 0 ? (
+          <Field label={form.scope === 'ad' ? 'Ad' : 'Ad Set(s)'}>
+            <div className="flex gap-2 mb-2">
+              {['adset', 'ad'].map(scope => (
+                <button key={scope} type="button" onClick={() => { setForm({...form, scope, action: scope === 'ad' && !['pause', 'notify'].includes(form.action) ? 'pause' : form.action}); setSelectedIds(new Set()); setSearch(''); }} className={`px-3 py-1.5 rounded-lg text-xs font-medium border ${form.scope === scope ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-600 border-gray-200'}`}>
+                  {scope === 'ad' ? 'Ad' : 'Ad Set'}
+                </button>
+              ))}
+            </div>
+            {targets.length === 0 ? (
               <div className="px-3 py-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg">
-                No tracked ad sets found. Add ad sets in Campaign Performance first.
+                No {form.scope === 'ad' ? 'tracked ads' : 'tracked ad sets'} found. Sync them in Campaign Performance first.
               </div>
             ) : (
               <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -280,7 +301,7 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
                   <Search size={13} className="text-gray-400 flex-shrink-0" />
                   <input
                     type="text"
-                    placeholder="Search ad sets..."
+                    placeholder={`Search ${form.scope === 'ad' ? 'ads' : 'ad sets'}...`}
                     value={search}
                     onChange={e => setSearch(e.target.value)}
                     className="flex-1 min-w-0 text-sm bg-transparent outline-none"
@@ -290,11 +311,11 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
                   </button>
                 </div>
                 <div className="max-h-40 overflow-y-auto divide-y divide-gray-50">
-                  {filteredAdsets.length === 0 ? (
-                    <div className="px-3 py-3 text-xs text-gray-400 text-center">No matching ad sets</div>
-                  ) : filteredAdsets.map(a => (
+                  {filteredTargets.length === 0 ? (
+                    <div className="px-3 py-3 text-xs text-gray-400 text-center">No matching {form.scope === 'ad' ? 'ads' : 'ad sets'}</div>
+                  ) : filteredTargets.map(a => (
                     <label key={a.id} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer">
-                      <input type="checkbox" checked={selectedIds.has(a.id)} onChange={() => toggleAdset(a.id)} />
+                      <input type={form.scope === 'ad' ? 'radio' : 'checkbox'} checked={selectedIds.has(a.id)} onChange={() => form.scope === 'ad' ? setSelectedIds(new Set([a.id])) : toggleAdset(a.id)} />
                       <span className="truncate">{a.name}</span>
                     </label>
                   ))}
@@ -305,13 +326,13 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
                 Automated Rules builder ("Estimated match: N ad sets"): see it before you
                 commit, not after. */}
             <p className="text-xs mt-1.5 font-medium text-gray-600">
-              Applies to <span className="text-gray-900">{selectedIds.size}</span> ad set{selectedIds.size !== 1 ? 's' : ''}
+              Applies to <span className="text-gray-900">{selectedIds.size}</span> {form.scope === 'ad' ? 'ad' : `ad set${selectedIds.size !== 1 ? 's' : ''}`}
             </p>
           </Field>
 
           <Field label="Action">
             <select className="input-base" value={form.action} onChange={e => setForm({...form, action: e.target.value})}>
-              {ACTION_OPTIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+              {ACTION_OPTIONS.filter(a => form.scope === 'ad' ? ['pause', 'notify'].includes(a.value) : true).map(a => <option key={a.value} value={a.value}>{form.scope === 'ad' && a.value === 'pause' ? 'Pause the ad' : form.scope === 'ad' && a.value === 'notify' ? 'Notify (Slack only, no change on Meta)' : a.label}</option>)}
             </select>
           </Field>
 
@@ -535,7 +556,7 @@ function EditRuleModal({ rule, onClose, onSaved }) {
         <div className="space-y-4">
           <Field label="Action">
             <select className="input-base" value={form.action} onChange={e => setForm({...form, action: e.target.value})}>
-              {ACTION_OPTIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+              {ACTION_OPTIONS.filter(a => rule.scope === 'ad' ? ['pause', 'notify'].includes(a.value) : true).map(a => <option key={a.value} value={a.value}>{rule.scope === 'ad' && a.value === 'pause' ? 'Pause the ad' : a.label}</option>)}
             </select>
           </Field>
 
@@ -742,6 +763,7 @@ export default function AutoPauseRules() {
   const { showSuccess, showError, showInfo } = useToast();
   const [rules, setRules]     = useState([]);
   const [adsets, setAdsets]   = useState([]);
+  const [ads, setAds]         = useState([]);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   const [showAddRule, setShowAddRule] = useState(false);
@@ -762,12 +784,27 @@ export default function AutoPauseRules() {
       if (!res.ok) throw new Error('Failed to load ad sets');
       const data = await res.json();
       setAdsets(Array.isArray(data) ? data : data.adsets || []);
-    } catch (_) { /* non-fatal — adsets only needed for rule creation */ }
+    } catch (error) { void error; /* non-fatal — adsets only needed for rule creation */ }
   }, []);
+
+  const loadAds = useCallback(async () => {
+    try {
+      const res = await authFetch(`${API_BASE}/auto-pause/ads-bulk`);
+      if (!res.ok) throw new Error('Failed to load ads');
+      const data = await res.json();
+      const byFbAdset = new Map(adsets.map(a => [String(a.fb_adset_id), a]));
+      setAds(Object.entries(data || {}).flatMap(([fbAdsetId, rows]) => (rows || []).map(row => {
+        const parent = byFbAdset.get(String(fbAdsetId));
+        return parent ? { id: row.ad_id, fb_ad_id: row.ad_id, name: row.ad_name || row.ad_id, adset_id: parent.id, adset_name: parent.name, fb_adset_id: fbAdsetId } : null;
+      }).filter(Boolean)));
+    } catch (error) { void error; /* non-fatal — ads only needed for ad-scoped rule creation */ }
+  }, [adsets]);
 
   useEffect(() => {
     Promise.all([loadRules(), loadAdsets()]).finally(() => setLoading(false));
   }, [loadRules, loadAdsets]);
+
+  useEffect(() => { if (adsets.length) loadAds(); }, [adsets, loadAds]);
 
   const deleteRule = async (ruleId) => {
     if (!window.confirm('Delete this auto-pause rule? This cannot be undone.')) return;
@@ -975,9 +1012,12 @@ export default function AutoPauseRules() {
                 <div className="px-6 py-4 flex items-center justify-between gap-4">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-gray-900 text-sm truncate">{rule.adset_name || rule.adset_id}</span>
+                      <span className="font-medium text-gray-900 text-sm truncate">{rule.scope === 'ad' ? (rule.ad_name || rule.fb_ad_id) : (rule.adset_name || rule.adset_id)}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${rule.scope === 'ad' ? 'bg-violet-50 text-violet-700' : 'bg-gray-100 text-gray-600'}`}>
+                        {rule.scope === 'ad' ? 'Ad' : 'Ad Set'}
+                      </span>
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ACTION_BADGE_CLS[rule.action] || 'bg-gray-100 text-gray-700'}`}>
-                        {ACTION_LABELS[rule.action] || rule.action}
+                        {rule.scope === 'ad' && rule.action === 'pause' ? 'Pause the ad' : ACTION_LABELS[rule.action] || rule.action}
                       </span>
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                         rule.triggered_at
@@ -998,7 +1038,7 @@ export default function AutoPauseRules() {
                     </div>
 
                     <p className="text-xs text-gray-500 mt-1">
-                      {ACTION_LABELS[rule.action] || rule.action}
+                      {rule.scope === 'ad' && rule.action === 'pause' ? 'Pause the ad' : ACTION_LABELS[rule.action] || rule.action}
                       {PERCENT_ACTIONS.has(rule.action) && rule.budget_adjust_pct ? ` by ${rule.budget_adjust_pct}%` : ''}
                       {' '}if {METRIC_LABELS[rule.metric]} {rule.operator === 'greater_than' ? '>' : '<'} {METRIC_UNITS[rule.metric]}{rule.threshold}
                       {' '}after ${rule.min_spend} spend
@@ -1087,6 +1127,7 @@ export default function AutoPauseRules() {
       {showAddRule && (
         <AddRuleModal
           adsets={adsets}
+          ads={ads}
           onClose={() => setShowAddRule(false)}
           onCreated={loadRules}
         />
