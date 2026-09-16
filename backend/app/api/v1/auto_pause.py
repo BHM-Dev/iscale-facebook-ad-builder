@@ -338,6 +338,9 @@ def get_rule_logs(
     return [
         {
             "id": l.id,
+            "scope": rule.scope or 'adset',
+            "fb_ad_id": rule.fb_ad_id,
+            "ad_name": rule.ad_name,
             "action": l.action,
             "metric": l.metric,
             "metric_value": float(l.metric_value) if l.metric_value is not None else None,
@@ -389,11 +392,21 @@ def update_rule(
         body.duplicate_all_ads, body.duplicate_name_suffix,
         body.duplicate_append_number, body.duplicate_pause_original, body.duplicate_repeat,
     ))
-    if body.scope is not None and not (body.action is not None or body.budget_adjust_pct is not None or duplicate_fields_touched):
-        _validate_action(rule.action, rule.budget_adjust_pct, body.scope)
-        if body.scope == 'ad' and not (body.fb_ad_id or rule.fb_ad_id):
+    # Gate on scope OR fb_ad_id/ad_name alone, not just scope — a PATCH that only
+    # retargets an existing ad-scoped rule to a different ad (fb_ad_id changed,
+    # scope unchanged) previously matched neither this branch nor the
+    # action/budget/duplicate branch below, so the API returned 200 while
+    # rule.fb_ad_id silently kept its old value — the next _run_check would
+    # evaluate/pause the WRONG ad while the operator believed they'd
+    # retargeted it (pre-push review, HIGH — real spend-risk bug, not a
+    # hypothetical, since it doesn't need scope to also change to trigger).
+    scope_or_target_touched = body.scope is not None or body.fb_ad_id is not None or body.ad_name is not None
+    if scope_or_target_touched and not (body.action is not None or body.budget_adjust_pct is not None or duplicate_fields_touched):
+        new_scope = body.scope if body.scope is not None else (rule.scope or 'adset')
+        _validate_action(rule.action, rule.budget_adjust_pct, new_scope)
+        if new_scope == 'ad' and not (body.fb_ad_id or rule.fb_ad_id):
             raise HTTPException(400, "fb_ad_id is required for ad-scoped rules")
-        rule.scope = body.scope
+        rule.scope = new_scope
         if body.fb_ad_id is not None:
             rule.fb_ad_id = body.fb_ad_id
         if body.ad_name is not None:
@@ -644,6 +657,7 @@ def get_ads_bulk(
     date_preset: str = Query("last_7d"),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
+    include_all: bool = Query(False),
     current_user=Depends(get_current_user),
 ):
     """Fetch Meta Insights for ALL ads in a single API call.
@@ -655,12 +669,40 @@ def get_ads_bulk(
     ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     svc = FacebookService()
     try:
-        return svc.get_account_ads_insights_bulk(
+        result = svc.get_account_ads_insights_bulk(
             ad_account_id=ad_account_id,
             date_preset=date_preset,
             date_from=date_from,
             date_to=date_to,
         )
+        if include_all:
+            # Insights omits ads with no delivery in the requested period. Add
+            # the ACTIVE/PAUSED inventory so a paused or zero-spend ad can still
+            # be selected as a rule target; its metrics remain zero/null until it
+            # has delivery. This is one account-level metadata call, not one call
+            # per ad or ad set.
+            for ad in svc.get_account_ads_with_creative(ad_account_id=ad_account_id, include_empty=True):
+                adset_id = ad.get('fb_adset_id')
+                ad_id = ad.get('fb_ad_id')
+                if not adset_id or not ad_id:
+                    continue
+                rows = result.setdefault(adset_id, [])
+                if any(row.get('ad_id') == ad_id for row in rows):
+                    continue
+                rows.append({
+                    'ad_id': ad_id,
+                    'ad_name': ad.get('ad_name') or ad_id,
+                    'spend': 0,
+                    'leads': 0,
+                    'cpl': None,
+                    'impressions': 0,
+                    'clicks': 0,
+                    'ctr': 0,
+                    'roas': None,
+                })
+            for rows in result.values():
+                rows.sort(key=lambda row: row.get('spend', 0), reverse=True)
+        return result
     except RuntimeError as e:
         raise HTTPException(400, str(e))
 
@@ -790,12 +832,24 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
         except Exception as e:
             logger.error("Bulk insights fetch failed for account %s: %s", account or "(default)", e)
             failed_accounts.add(account)
-    ad_rule_accounts = sorted({
-        rule.adset.fb_account_id
-        for rule in rules
-        if (rule.scope or 'adset') == 'ad' and rule.adset and rule.adset.fb_account_id
-    }) if not ad_account_id else [ad_account_id]
-    if any((rule.scope or 'adset') == 'ad' and rule.adset and not rule.adset.fb_account_id for rule in rules):
+    # `rules` is already filtered to `ad_account_id`'s own rules when that param
+    # is given (see rules_query above), so checking it directly here — rather
+    # than unconditionally using [ad_account_id] — is enough to tell whether
+    # this account actually has any ad-scoped rules at all. The prior version
+    # fired a full extra get_account_ads_insights_bulk call on every
+    # per-account check regardless, which is exactly the kind of avoidable API
+    # volume that caused the 09-13 Marketing API Access Tier rejection
+    # (project_adbuilder_meta_app_review_rejection) — pre-push review, MEDIUM.
+    has_ad_scoped_rule = any((rule.scope or 'adset') == 'ad' for rule in rules)
+    ad_rule_accounts = (
+        sorted({
+            rule.adset.fb_account_id
+            for rule in rules
+            if (rule.scope or 'adset') == 'ad' and rule.adset and rule.adset.fb_account_id
+        }) if not ad_account_id
+        else ([ad_account_id] if has_ad_scoped_rule else [])
+    )
+    if has_ad_scoped_rule and any((rule.scope or 'adset') == 'ad' and rule.adset and not rule.adset.fb_account_id for rule in rules):
         ad_rule_accounts.append(None)
     if ad_rule_accounts:
         for account in ad_rule_accounts:
@@ -918,7 +972,11 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
                     db.commit()
                     paused.append({"adset": adset.name, "ad": rule.ad_name or rule.fb_ad_id if rule_scope == 'ad' else None, "fb_adset_id": adset.fb_adset_id, "fb_ad_id": rule.fb_ad_id if rule_scope == 'ad' else None, "scope": rule_scope, "reason": reason})
                     logger.info("AUTO-PAUSED %s %s — %s", 'ad' if rule_scope == 'ad' else 'adset', rule.fb_ad_id if rule_scope == 'ad' else adset.fb_adset_id, reason)
-                    send_rule_action_alert(action='pause', adset_name=adset.name, fb_adset_id=adset.fb_adset_id, reason=reason)
+                    # detail (computed above) distinguishes "Ad paused (name)" from
+                    # "Ad set paused" — omitting it here meant every ad-scoped pause
+                    # alert read as a generic ad-set pause with no way to tell Joel
+                    # actually paused one ad, not the whole set (pre-push review, HIGH).
+                    send_rule_action_alert(action='pause', adset_name=adset.name, fb_adset_id=adset.fb_adset_id, reason=reason, detail=detail)
                 except Exception as e:
                     _log('error', str(e))
                     db.commit()
@@ -938,11 +996,14 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
                 if cooled_down:
                     rule.triggered_at = now
                     rule.trigger_reason = reason
+                    # Same reasoning as the pause branch above — without this, an
+                    # ad-scoped notify alert is indistinguishable from an ad-set one.
+                    notify_detail = f"Ad: {rule.ad_name or rule.fb_ad_id}" if rule_scope == 'ad' else None
                     _log('success', 'Notification sent')
                     db.commit()
                     notified.append({"adset": adset.name, "ad": rule.ad_name or rule.fb_ad_id if rule_scope == 'ad' else None, "fb_adset_id": adset.fb_adset_id, "fb_ad_id": rule.fb_ad_id if rule_scope == 'ad' else None, "scope": rule_scope, "reason": reason})
                     logger.info("NOTIFY rule fired for adset %s — %s", adset.name, reason)
-                    send_rule_action_alert(action='notify', adset_name=adset.name, fb_adset_id=adset.fb_adset_id, reason=reason)
+                    send_rule_action_alert(action='notify', adset_name=adset.name, fb_adset_id=adset.fb_adset_id, reason=reason, detail=notify_detail)
                 else:
                     skipped.append({
                         "rule_id": rule.id, "adset": adset.name,

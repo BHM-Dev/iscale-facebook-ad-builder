@@ -306,9 +306,11 @@ function AddRuleModal({ adsets, ads, onClose, onCreated }) {
                     onChange={e => setSearch(e.target.value)}
                     className="flex-1 min-w-0 text-sm bg-transparent outline-none"
                   />
-                  <button type="button" onClick={toggleAll} className="text-xs font-medium text-blue-600 hover:text-blue-800 flex-shrink-0">
-                    {allFilteredSelected ? 'Deselect all' : 'Select all'}
-                  </button>
+                  {form.scope !== 'ad' && (
+                    <button type="button" onClick={toggleAll} className="text-xs font-medium text-blue-600 hover:text-blue-800 flex-shrink-0">
+                      {allFilteredSelected ? 'Deselect all' : 'Select all'}
+                    </button>
+                  )}
                 </div>
                 <div className="max-h-40 overflow-y-auto divide-y divide-gray-50">
                   {filteredTargets.length === 0 ? (
@@ -316,7 +318,7 @@ function AddRuleModal({ adsets, ads, onClose, onCreated }) {
                   ) : filteredTargets.map(a => (
                     <label key={a.id} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer">
                       <input type={form.scope === 'ad' ? 'radio' : 'checkbox'} checked={selectedIds.has(a.id)} onChange={() => form.scope === 'ad' ? setSelectedIds(new Set([a.id])) : toggleAdset(a.id)} />
-                      <span className="truncate">{a.name}</span>
+                      <span className="truncate">{a.name}{form.scope === 'ad' && a.adset_name ? ` · ${a.adset_name}` : ''}</span>
                     </label>
                   ))}
                 </div>
@@ -745,6 +747,7 @@ function RuleHistoryToggle({ rule }) {
                     <span className="text-gray-400 flex-shrink-0">{new Date(l.created_at).toLocaleString()}</span>
                   </div>
                   {l.detail && <div className="text-gray-500 mt-0.5">{l.detail}</div>}
+                  {l.scope === 'ad' && <div className="text-violet-600 mt-0.5">Ad: {l.ad_name || l.fb_ad_id}</div>}
                   <div className="text-gray-400 mt-0.5">
                     {METRIC_LABELS[l.metric] || l.metric} {l.metric_value != null ? `$${l.metric_value}` : ''} vs threshold {l.threshold}
                   </div>
@@ -789,7 +792,10 @@ export default function AutoPauseRules() {
 
   const loadAds = useCallback(async () => {
     try {
-      const res = await authFetch(`${API_BASE}/auto-pause/ads-bulk`);
+      const adAccountId = localStorage.getItem('fb_ad_account_id') || '';
+      const params = new URLSearchParams({ include_all: 'true' });
+      if (adAccountId) params.set('ad_account_id', adAccountId);
+      const res = await authFetch(`${API_BASE}/auto-pause/ads-bulk?${params.toString()}`);
       if (!res.ok) throw new Error('Failed to load ads');
       const data = await res.json();
       const byFbAdset = new Map(adsets.map(a => [String(a.fb_adset_id), a]));
@@ -1036,6 +1042,17 @@ export default function AutoPauseRules() {
                         {rule.triggered_at ? triggeredLabel : rule.is_active ? 'Active' : 'Disabled'}
                       </span>
                     </div>
+
+                    {/* Ad names are commonly reused across ad sets (creative-testing
+                        naming conventions) — without the parent ad set shown, Joel
+                        can't tell at a glance which campaign/budget an ad-scoped rule
+                        actually governs on a tool that pauses live spend (pre-push
+                        review, MEDIUM). adset_name is already in the API payload. */}
+                    {rule.scope === 'ad' && (
+                      <p className="text-xs text-gray-400 mt-0.5 truncate">
+                        in {rule.adset_name || rule.adset_id}
+                      </p>
+                    )}
 
                     <p className="text-xs text-gray-500 mt-1">
                       {rule.scope === 'ad' && rule.action === 'pause' ? 'Pause the ad' : ACTION_LABELS[rule.action] || rule.action}

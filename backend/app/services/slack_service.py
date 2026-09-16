@@ -48,7 +48,12 @@ def send_rule_action_alert(
     copy = {
         'pause': (
             ":pause_button: *Auto-paused:*",
-            "Rule fired and ad set has been paused on Meta. Re-enable the rule in the Ad Builder after reviewing.",
+            # Scope-agnostic on purpose — this alert now also fires for ad-level
+            # rules, which pause a single ad, not the whole ad set. The Detail
+            # line (built by the caller) says which one actually happened; this
+            # footer used to hardcode "ad set has been paused" unconditionally,
+            # which was simply wrong for an ad-scoped pause (pre-push review, HIGH).
+            "Rule fired and the target has been paused on Meta — see Detail below for what. Re-enable the rule in the Ad Builder after reviewing.",
         ),
         'notify': (
             ":bell: *Rule triggered:*",
