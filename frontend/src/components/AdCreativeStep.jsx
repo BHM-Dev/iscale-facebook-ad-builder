@@ -5,6 +5,7 @@ import { ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image, BookOpen, C
 import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
+import { cropImageToAspect } from '../lib/imageCrop';
 import { useBrands } from '../context/BrandContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -983,15 +984,6 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         }));
     };
 
-    // Applied at every point a new SINGLE-placement image creative is added
-    // (manual upload, drag-drop, a Drive selection that isn't already a real
-    // tagged pair) — when autoDupeStories is on, immediately gives it the
-    // opposite-placement duplicate this used to require a manual "Dupe as
-    // Stories" click for, one image at a time. Skips videos (dual-placement
-    // is image-only, per create_creative's own docstring) and anything
-    // already carrying both placements (dualPlacement: true — a real tagged
-    // Feed+Stories pair already covers both, duplicating it again would just
-    // create a redundant third entry).
     // Shared by applyAutoStoriesDupe and duplicateCreative — strips any
     // existing trailing " (Feed)"/" (Stories)" before appending the new one,
     // so duplicating an already-duplicated card (manually copying an
@@ -1004,51 +996,142 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         return `${base} (${format === 'stories' ? 'Stories' : 'Feed'})`;
     };
 
+    // Kicks off the real server-side crop (backend/app/services/image_crop_service.py)
+    // for a duplicate card and writes the result back onto that exact card by id
+    // once it resolves. Runs against the ORIGINAL source's own file/URL (passed in
+    // separately, never the duplicate's own in-flight previewUrl) so re-cropping
+    // with a different anchor later always starts from the pristine source, not
+    // an already-cropped result. On failure, falls back to the uncropped source
+    // image (already showing, since the placeholder card was seeded from it) and
+    // flags cropFailed so Joel can see it and retry or remove it — never blocks or
+    // silently ships a broken card.
+    const requestSmartCrop = async (dupeId, source, format, anchor) => {
+        const targetRatio = format === 'stories' ? '9:16' : '1:1';
+        try {
+            const { url, crop_axis: cropAxis } = await cropImageToAspect({
+                file: source.file || undefined,
+                sourceUrl: source.file ? undefined : source.url,
+                targetRatio,
+                anchor,
+            });
+            setCreativeData(prev => ({
+                ...prev,
+                creatives: prev.creatives.map(c => (
+                    c.id === dupeId
+                        ? { ...c, previewUrl: url, imageUrl: url, file: null, cropping: false, cropFailed: false, cropAnchor: anchor, cropAxis }
+                        : c
+                )),
+            }));
+        } catch (error) {
+            console.error('Smart-crop failed:', error);
+            setCreativeData(prev => ({
+                ...prev,
+                creatives: prev.creatives.map(c => (
+                    c.id === dupeId ? { ...c, cropping: false, cropFailed: true } : c
+                )),
+            }));
+        }
+    };
+
+    // Applied at every point a new SINGLE-placement image creative is added
+    // (manual upload, drag-drop, a Drive selection that isn't already a real
+    // tagged pair) — when autoDupeStories is on, immediately gives it the
+    // opposite-placement duplicate this used to require a manual "Dupe as
+    // Stories" click for, one image at a time. Skips videos (dual-placement
+    // is image-only, per create_creative's own docstring) and anything
+    // already carrying both placements (dualPlacement: true — a real tagged
+    // Feed+Stories pair already covers both, duplicating it again would just
+    // create a redundant third entry).
+    //
+    // The duplicate is added immediately with the uncropped source image as a
+    // placeholder (cropping: true) so the grid never blocks on the network
+    // round-trip — requestSmartCrop swaps in the real cropped result in place
+    // moments later. Steve's own call: reusing the same image untouched (the
+    // original version of this feature) wasn't good enough — a photo composed
+    // for square Feed can look cropped/stretched wrong in a 9:16 frame with no
+    // real crop applied, so this always produces an actual correctly-cropped
+    // image server-side rather than just relabeling the source.
     const applyAutoStoriesDupe = (creative) => {
         if (!autoDupeStories || creative.mediaType === 'video' || creative.dualPlacement) {
             return [creative];
         }
         const flippedFormat = (creative.format || 'feed') === 'stories' ? 'feed' : 'stories';
-        return [
-            creative,
-            {
-                ...creative,
-                id: `${creative.id}_autodupe`,
-                format: flippedFormat,
-                // Distinguishes the two in the ad name (media_name token) — without
-                // this both halves share the identical name and are only tellable
-                // apart by which ad set they land in (pre-push review, code-auditor:
-                // LOW, worth closing since auto-dupe makes this the default outcome
-                // for every upload instead of an occasional manual one).
-                name: namePlacementSuffix(creative.name, flippedFormat),
-            },
-        ];
+        const dupeId = `${creative.id}_autodupe`;
+        const duplicate = {
+            ...creative,
+            id: dupeId,
+            format: flippedFormat,
+            name: namePlacementSuffix(creative.name, flippedFormat),
+            cropping: true,
+            cropFailed: false,
+            cropAnchor: 'center',
+            cropSourceFile: creative.file || null,
+            cropSourceUrl: creative.file ? null : (creative.imageUrl || creative.previewUrl),
+        };
+        requestSmartCrop(dupeId, { file: creative.file, url: duplicate.cropSourceUrl }, flippedFormat, 'center');
+        return [creative, duplicate];
     };
 
     // Duplicate a creative and pre-toggle its format (feed → stories, stories → feed)
-    // so the common workflow of "same image in both placements" is one click —
-    // still here for the rare case Joel wants to add a dupe by hand (autoDupeStories
-    // off, or restoring one he removed).
+    // — the manual "Copy" button, still here for autoDupeStories-off batches or
+    // adding an extra placement by hand. Goes through the same real smart-crop as
+    // the automatic path (see applyAutoStoriesDupe above) rather than the plain
+    // image-reuse this used to do.
     const duplicateCreative = (id) => {
-        setCreativeData(prev => {
-            const original = prev.creatives.find(c => c.id === id);
-            if (!original) return prev;
-            const flippedFormat = (original.format || 'feed') === 'stories' ? 'feed' : 'stories';
-            return {
-                ...prev,
-                creatives: [...prev.creatives, {
-                    ...original,
-                    id: `creative_${Date.now()}_dup`,
-                    format: flippedFormat,
-                    // Same disambiguation as applyAutoStoriesDupe above — otherwise
-                    // this manual duplicate is only tellable apart from the original
-                    // by which ad set it lands in. namePlacementSuffix strips any
-                    // suffix already there first, so duplicating an auto-duped or
-                    // already-duplicated card can't stack into "(Stories) (Feed)".
-                    name: namePlacementSuffix(original.name, flippedFormat),
-                }]
-            };
-        });
+        const original = creativeData.creatives.find(c => c.id === id);
+        if (!original) return;
+        const flippedFormat = (original.format || 'feed') === 'stories' ? 'feed' : 'stories';
+        const dupeId = `creative_${Date.now()}_dup`;
+        // Prefer the ORIGINAL's own pristine cropSourceFile/cropSourceUrl (set
+        // once when it was itself created) over its current file/imageUrl.
+        // Once a card's own smart-crop resolves, requestSmartCrop clears
+        // `file` and points imageUrl/previewUrl at the CROPPED result — so
+        // duplicating an already-cropped card without this fallback would
+        // crop-from-a-crop instead of the true source, silently reintroducing
+        // exactly the "badly cropped" problem this feature exists to fix
+        // (code-auditor pre-push review, HIGH).
+        const cropSourceFile = original.cropSourceFile || original.file || null;
+        const cropSourceUrl = cropSourceFile
+            ? null
+            : (original.cropSourceUrl || original.imageUrl || original.previewUrl);
+        const duplicate = {
+            ...original,
+            id: dupeId,
+            format: flippedFormat,
+            // Same disambiguation as applyAutoStoriesDupe above — otherwise
+            // this manual duplicate is only tellable apart from the original
+            // by which ad set it lands in. namePlacementSuffix strips any
+            // suffix already there first, so duplicating an auto-duped or
+            // already-duplicated card can't stack into "(Stories) (Feed)".
+            name: namePlacementSuffix(original.name, flippedFormat),
+            cropping: original.mediaType !== 'video',
+            cropFailed: false,
+            // Only set for images — a video isn't cropped at all (see below),
+            // and cropAnchor being present is what the anchor-picker UI keys
+            // off to decide whether to render itself on a card.
+            cropAnchor: original.mediaType !== 'video' ? 'center' : undefined,
+            cropSourceFile,
+            cropSourceUrl,
+        };
+        setCreativeData(prev => ({ ...prev, creatives: [...prev.creatives, duplicate] }));
+        if (original.mediaType !== 'video') {
+            requestSmartCrop(dupeId, { file: cropSourceFile, url: cropSourceUrl }, flippedFormat, 'center');
+        }
+    };
+
+    // Re-crops an existing card in place with a different anchor — the small
+    // Left/Center/Right (or Top/Center/Bottom) control on any smart-cropped
+    // card. Always re-runs from the stable cropSourceFile/cropSourceUrl saved
+    // at duplicate-creation time, never from the card's own current (already
+    // cropped) previewUrl, so repeated anchor changes don't compound crops.
+    const recropCreative = (id, anchor) => {
+        const creative = creativeData.creatives.find(c => c.id === id);
+        if (!creative) return;
+        setCreativeData(prev => ({
+            ...prev,
+            creatives: prev.creatives.map(c => (c.id === id ? { ...c, cropping: true, cropFailed: false } : c)),
+        }));
+        requestSmartCrop(id, { file: creative.cropSourceFile, url: creative.cropSourceUrl }, creative.format, anchor);
     };
 
     const handleNext = () => {
@@ -1064,6 +1147,25 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         if (!isMatchImport) {
             if (!creativeData.creatives || creativeData.creatives.length === 0) {
                 showWarning('Please upload at least one image or video');
+                return;
+            }
+
+            // Crops normally resolve in a second or two, but block proceeding
+            // while any is still in flight rather than letting Joel launch
+            // whatever the placeholder (uncropped source) image happened to
+            // be at that instant.
+            if (creativeData.creatives.some(c => c.cropping)) {
+                showWarning('Still cropping the Feed/Stories versions — give it a moment and try again.');
+                return;
+            }
+
+            // A failed crop falls back to showing the uncropped source (never
+            // silently ships nothing), but that fallback is exactly the "same
+            // image relabeled" problem this feature replaced — block launch
+            // until Joel retries or removes it rather than letting a failed
+            // card slip through unnoticed (joel-perspective pre-push review, P1).
+            if (creativeData.creatives.some(c => c.cropFailed)) {
+                showWarning('One or more Feed/Stories crops failed — retry or remove them before continuing.');
                 return;
             }
 
@@ -1394,6 +1496,28 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             className="w-full h-full object-cover"
                                         />
                                     )}
+                                    {/* In-flight state for the real server-side crop
+                                        (requestSmartCrop) — the card already shows the
+                                        uncropped source as a placeholder underneath, this
+                                        overlay just makes clear it's not final yet. */}
+                                    {creative.cropping && (
+                                        <div className="absolute inset-0 bg-black bg-opacity-50 flex flex-col items-center justify-center gap-1.5 text-white text-xs">
+                                            <Loader className="animate-spin" size={20} />
+                                            Cropping for {(creative.format || 'feed') === 'stories' ? 'Stories' : 'Feed'}...
+                                        </div>
+                                    )}
+                                    {creative.cropFailed && (
+                                        <div className="absolute inset-x-0 top-0 bg-red-600 text-white text-[11px] px-2 py-1 flex items-center justify-between gap-2">
+                                            <span>Crop failed — showing uncropped image</span>
+                                            <button
+                                                type="button"
+                                                onClick={(e) => { e.stopPropagation(); recropCreative(creative.id, creative.cropAnchor); }}
+                                                className="underline font-semibold shrink-0"
+                                            >
+                                                Retry
+                                            </button>
+                                        </div>
+                                    )}
                                     {/* Media type badge */}
                                     <div className="absolute top-2 left-2">
                                         {creative.mediaType === 'video' ? (
@@ -1434,6 +1558,46 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             <Trash2 size={16} />
                                         </button>
                                     </div>
+                                    {/* Reposition the smart-crop when the default center cut
+                                        removes something important — re-crops from the original
+                                        source (cropSourceFile/cropSourceUrl), never the current
+                                        already-cropped result, so this never compounds. Labels use
+                                        cropAxis returned by the backend (which axis it ACTUALLY
+                                        trimmed, from the real source dimensions vs. target ratio)
+                                        rather than guessing from the Feed/Stories format label — a
+                                        landscape photo duped to square Feed still trims WIDTH, so
+                                        format alone doesn't reliably predict the axis
+                                        (code-auditor pre-push review, MEDIUM). Always visible
+                                        (not hover-only) since a bulk grid makes a hover-only
+                                        control easy to never discover (joel-perspective, P1). */}
+                                    {creative.cropAnchor && creative.cropAxis && creative.cropAxis !== 'none' && !creative.cropping && !creative.cropFailed && (
+                                        <div
+                                            className="absolute bottom-6 left-0 right-0 flex items-center justify-center gap-1 px-1.5 py-1"
+                                            onClick={(e) => e.stopPropagation()}
+                                        >
+                                            {['start', 'center', 'end'].map(anchor => {
+                                                const isVertical = creative.cropAxis === 'height';
+                                                const labels = isVertical
+                                                    ? { start: 'Top', center: 'Mid', end: 'Bot' }
+                                                    : { start: 'Left', center: 'Ctr', end: 'Right' };
+                                                return (
+                                                    <button
+                                                        key={anchor}
+                                                        type="button"
+                                                        onClick={() => recropCreative(creative.id, anchor)}
+                                                        className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shadow-sm ${
+                                                            creative.cropAnchor === anchor
+                                                                ? 'bg-amber-500 text-white'
+                                                                : 'bg-white/70 text-gray-700 hover:bg-white'
+                                                        }`}
+                                                        title={`Re-crop anchored to ${labels[anchor]}`}
+                                                    >
+                                                        {labels[anchor]}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
                                     <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 text-white text-xs flex items-center gap-1 px-1.5 py-1">
                                         <span className="truncate flex-1 min-w-0">{creative.name}</span>
                                         {creative.dualPlacement ? (

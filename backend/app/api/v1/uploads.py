@@ -1,11 +1,13 @@
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 import os
 import uuid
-from typing import Dict
+from typing import Dict, Optional
 from pathlib import Path
+from starlette.concurrency import run_in_threadpool
 from app.core.config import settings
 from app.core.deps import get_current_active_user
 from app.models import User
+from app.services.image_crop_service import crop_to_aspect
 
 router = APIRouter()
 
@@ -39,17 +41,24 @@ def get_s3_client():
 
 
 async def upload_to_r2(file_content: bytes, filename: str, content_type: str) -> str:
-    """Upload file to Cloudflare R2 and return public URL"""
+    """Upload file to Cloudflare R2 and return public URL.
+
+    boto3's put_object is blocking network I/O — this backend runs a single
+    uvicorn worker with no --workers flag, so a naive `async def` here would
+    hold the one event loop hostage for every upload (documented root cause
+    of the 2026-08-28 login-slowdown incident). run_in_threadpool offloads it.
+    """
     client = get_s3_client()
     if not client:
         raise HTTPException(status_code=500, detail="R2 storage not configured")
 
     try:
-        client.put_object(
+        await run_in_threadpool(
+            client.put_object,
             Bucket=settings.R2_BUCKET_NAME,
             Key=filename,
             Body=file_content,
-            ContentType=content_type
+            ContentType=content_type,
         )
         return f"{settings.R2_PUBLIC_URL}/{filename}"
     except Exception as e:
@@ -59,8 +68,12 @@ async def upload_to_r2(file_content: bytes, filename: str, content_type: str) ->
 async def upload_to_local(file_content: bytes, filename: str) -> str:
     """Upload file to local filesystem and return relative URL"""
     file_path = UPLOAD_DIR / filename
-    with open(file_path, "wb") as buffer:
-        buffer.write(file_content)
+
+    def _write():
+        with open(file_path, "wb") as buffer:
+            buffer.write(file_content)
+
+    await run_in_threadpool(_write)
     return f"/uploads/{filename}"
 
 
@@ -108,3 +121,82 @@ async def upload_file(file: UploadFile = File(...), current_user: User = Depends
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not upload file: {str(e)}")
+
+
+# 1080px matches Meta's own recommended minimum for both formats — high enough
+# quality, small enough to crop/resize/upload fast for an interactive control.
+_CROP_TARGET_DIMENSIONS = {
+    '1:1': (1080, 1080),
+    '9:16': (1080, 1920),
+}
+_CROP_ANCHORS = {'start', 'center', 'end'}
+
+
+@router.post("/crop-to-aspect", response_model=Dict[str, str])
+async def crop_image_to_aspect(
+    target_ratio: str = Form(...),
+    anchor: str = Form('center'),
+    file: Optional[UploadFile] = File(None),
+    source_url: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Crop (never stretch) an image to Feed (1:1) or Stories (9:16), from
+    either a freshly uploaded file or an existing hosted image URL (e.g. a
+    Drive-synced asset already on R2) — used to turn a single Feed/Stories
+    duplicate into a real, correctly-cropped image instead of the raw source
+    reused untouched at the wrong aspect ratio.
+
+    Fetches source_url server-side (same pattern already used in
+    facebook_service.py's upload_image) rather than in the browser, so this
+    works regardless of whether the source host sets CORS headers permissive
+    enough for a client-side canvas to read the pixels back out.
+    """
+    if target_ratio not in _CROP_TARGET_DIMENSIONS:
+        raise HTTPException(status_code=400, detail="target_ratio must be '1:1' or '9:16'")
+    if anchor not in _CROP_ANCHORS:
+        raise HTTPException(status_code=400, detail=f"anchor must be one of {sorted(_CROP_ANCHORS)}")
+
+    if file is not None:
+        file_content = await file.read()
+        if len(file_content) > MAX_IMAGE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File too large. Maximum size: {MAX_IMAGE_SIZE / (1024 * 1024)}MB"
+            )
+    elif source_url:
+        import requests
+
+        def _fetch():
+            resp = requests.get(source_url, timeout=30, stream=True)
+            resp.raise_for_status()
+            content = resp.raw.read(MAX_IMAGE_SIZE + 1, decode_content=True)
+            if len(content) > MAX_IMAGE_SIZE:
+                raise ValueError(f"source_url image exceeds {MAX_IMAGE_SIZE / (1024 * 1024)}MB limit")
+            return content
+
+        try:
+            # Blocking network call — run_in_threadpool keeps it off the single
+            # event loop (see upload_to_r2 above for why that matters here).
+            file_content = await run_in_threadpool(_fetch)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not fetch source_url: {e}")
+    else:
+        raise HTTPException(status_code=400, detail="Provide either 'file' or 'source_url'")
+
+    target_w, target_h = _CROP_TARGET_DIMENSIONS[target_ratio]
+    try:
+        # Pillow crop/resize is CPU-bound — also threadpooled so a bulk-add of
+        # many images can't stall every other request on this worker.
+        cropped_bytes, crop_axis = await run_in_threadpool(
+            crop_to_aspect, file_content, target_w, target_h, anchor
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not process image: {e}")
+
+    filename = f"{uuid.uuid4()}.jpg"
+    if settings.r2_enabled:
+        url = await upload_to_r2(cropped_bytes, filename, 'image/jpeg')
+    else:
+        url = await upload_to_local(cropped_bytes, filename)
+
+    return {"url": url, "media_type": "image", "crop_axis": crop_axis}
