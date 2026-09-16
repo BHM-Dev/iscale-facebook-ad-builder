@@ -751,11 +751,21 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             }
         });
 
+        // Creative Enhancement toggles are session/scope state, not per-ad —
+        // clear them alongside `creatives` on a genuine campaign/account
+        // switch. Without this, a flag enabled while building one campaign
+        // silently carried into the next campaign built in the same tab
+        // (joel-perspective pre-push review, P1) — the "N enabled" badge is
+        // the only visible trace, easy to miss on a page Joel moves through
+        // fast, and by the time an ad's crop/CTA looks unexpectedly
+        // different there's no record connecting it back to a stale toggle.
         setCreativeData(prev => ({
             ...prev,
             creatives: [],
+            creative_enhancements: {},
             creativesScopeId: scopeId
         }));
+        setCreativeEnhancements({});
     }, [selectedAdAccount, campaignCacheId]);
 
     // Auto-load images queued from the Generated Ads library ("Use in Campaign Builder" flow)
@@ -1756,9 +1766,15 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         </div>
                 )}
 
-                {/* Meta creative enhancement opt-ins — intentionally per-ad and
-                    default-off. Empty state omits degrees_of_freedom_spec so the
-                    existing create behavior remains unchanged. */}
+                {/* Meta creative enhancement opt-ins — default-off, and scoped to
+                    this Creative-step session (applied identically to every ad
+                    built from it), NOT independently settable per individual ad —
+                    matches how Joel already thinks about a batch (one Creative
+                    step = one set of choices applied across variations). Empty
+                    state omits degrees_of_freedom_spec so the existing create
+                    behavior remains unchanged. Cleared on a genuine campaign/
+                    account switch by the scope-reset effect above, alongside
+                    `creatives`. */}
                 {!isMatchImport && (
                 <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 overflow-hidden">
                     <button

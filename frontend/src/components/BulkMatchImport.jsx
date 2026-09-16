@@ -462,7 +462,16 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                         videoUrl: undefined,
                         headlines: [row.headline],
                         bodies: [row.primaryText],
-                        cta: row.cta
+                        cta: row.cta,
+                        // Match Import has no Creative Enhancements UI (the panel and
+                        // its "N enabled" badge are only rendered in AdCreativeStep's
+                        // Combinations mode), so shared creativeData can carry a stale
+                        // creative_enhancements dict left over from a Combinations
+                        // session in the same tab — silently applying it here with no
+                        // visible control would violate this feature's own opt-in
+                        // premise (code-auditor pre-push review, HIGH). Explicitly
+                        // excluded until Match Import gets its own toggle UI.
+                        creative_enhancements: undefined
                     };
 
                     const adData = {
