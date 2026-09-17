@@ -302,7 +302,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
               {data.action_queue && (
                 <div className="mb-4">
                   <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Action Queue</div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                     {[
                       { key: 'scale', label: 'Scale', hdrBg: 'bg-green-50', border: 'border-green-200', text: 'text-green-800' },
                       { key: 'cut_or_pause', label: 'Cut / Pause', hdrBg: 'bg-red-50', border: 'border-red-200', text: 'text-red-800' },
@@ -312,7 +312,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                       const items = data.action_queue[lane.key];
                       if (!items?.length) return null;
                       return (
-                        <div key={lane.key} className={`rounded-lg border ${lane.border} overflow-hidden bg-white`}>
+                        <div key={lane.key} className={`rounded-lg border ${lane.border} overflow-hidden bg-white ${lane.key === 'tracking_check' ? 'md:col-span-3' : ''}`}>
                           <div className={`${lane.hdrBg} px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide ${lane.text}`}>
                             {lane.label}
                           </div>
