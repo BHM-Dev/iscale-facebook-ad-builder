@@ -211,7 +211,15 @@ const countVariations = (creativeData) => {
     const media = creativeData?.creatives?.length || 0;
     const headlines = (creativeData?.headlines || []).filter(h => h && h.trim() !== '').length;
     const bodies = (creativeData?.bodies || []).filter(b => b && b.trim() !== '').length;
-    return { media, headlines, bodies, total: media * headlines * bodies };
+    const hasPerCreativeCopy = (creativeData?.creatives || []).some(c => c.source === 'drive' || c.headline || c.body);
+    const total = hasPerCreativeCopy
+        ? (creativeData.creatives || []).reduce((sum, creative) => {
+            const headlineCount = creative.source === 'drive' || creative.headline?.trim() ? 1 : headlines;
+            const bodyCount = creative.source === 'drive' || creative.body?.trim() ? 1 : bodies;
+            return sum + (headlineCount * bodyCount);
+        }, 0)
+        : media * headlines * bodies;
+    return { media, headlines, bodies, total, hasPerCreativeCopy };
 };
 
 const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
@@ -302,7 +310,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         return buildDriveAssetGroups(visibleAssets);
     }, [driveAssets, driveSearchTerm, driveFormatFilter]);
 
-    const driveGroupById = useMemo(() => new Map(driveAssetGroups.map(group => [group.id, group])), [driveAssetGroups]);
+    // Keep the full group index separate from the visible filtered list. A
+    // buyer can select Feed assets, switch to Stories, and continue selecting;
+    // filtering must not erase the earlier choices from the eventual payload.
+    const allDriveAssetGroups = useMemo(() => buildDriveAssetGroups(driveAssets), [driveAssets]);
+    const driveGroupById = useMemo(() => new Map(allDriveAssetGroups.map(group => [group.id, group])), [allDriveAssetGroups]);
     const mixedDriveCopyMatches = useMemo(() => {
         const matchedPairs = driveAssetGroups.filter(group => group.isPair && hasCompleteCopy(group.copy || {})).length;
         const unmatchedPairs = driveAssetGroups.filter(group => group.isPair && !hasCompleteCopy(group.copy || {})).length;
@@ -322,10 +334,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         const selectedGroups = [...selectedDriveAssetIds]
             .map(id => driveGroupById.get(id))
             .filter(Boolean);
-        const hasMatchedCopy = selectedGroups.some(group => hasCompleteCopy(group.copy || {}));
-        return hasMatchedCopy
-            ? selectedGroups.filter(group => hasCompleteCopy(group.copy || {})).length
-            : selectedGroups.length;
+        return selectedGroups.length;
     }, [selectedDriveAssetIds, driveGroupById]);
     // Mirrors addDriveSelectionToCreatives's exact branching so the pre-add
     // "N total ad combinations" preview can't drift from what actually lands
@@ -345,6 +354,18 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             if (!asset) return sum;
             const wouldAutoDupe = autoDupeStories && asset.format !== 'video';
             return sum + (wouldAutoDupe ? 2 : 1);
+        }, 0);
+    }, [selectedDriveAssetIds, driveGroupById, autoDupeStories]);
+    const driveSelectionProjectedAdCount = useMemo(() => {
+        const selectedGroups = [...selectedDriveAssetIds].map(id => driveGroupById.get(id)).filter(Boolean);
+        // Every selected group stays in the editor now, including unmatched
+        // groups which become explicit Needs copy cards. Drive assets are one
+        // ad per media group; their copy is fixed per card rather than
+        // multiplied by the shared variant fields.
+        return selectedGroups.reduce((sum, group) => {
+            const canMergeAsPair = group.isPair && group.feedAsset?.format !== 'video' && group.storiesAsset?.format !== 'video';
+            const mediaCount = canMergeAsPair ? 1 : group.isPair ? 2 : (autoDupeStories && group.displayAsset?.format !== 'video' ? 2 : 1);
+            return sum + mediaCount;
         }, 0);
     }, [selectedDriveAssetIds, driveGroupById, autoDupeStories]);
 
@@ -527,16 +548,16 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         // fall through onto an unmatched asset. Keep the all-unmatched flow
         // available for Joel's manual copy, but require every group to have a
         // matched copy set when any selected group already has one.
-        const unmatchedGroups = groupsWithCopy.length > 0
-            ? selectedGroups.filter(group => !hasCompleteCopy(group.copy || {}))
-            : [];
+        const unmatchedGroups = selectedGroups.filter(group => !hasCompleteCopy(group.copy || {}));
         const clearStaleGlobalCopy = selectedGroups.length > 0
             && groupsWithCopy.length === 0
             && !copyFieldsTouched.headlines
             && !copyFieldsTouched.bodies;
-        const groupsToAdd = unmatchedGroups.length > 0
-            ? selectedGroups.filter(group => hasCompleteCopy(group.copy || {}))
-            : selectedGroups;
+        // Keep unmatched selections in the editor as explicit "Needs copy"
+        // cards. Dropping them here made a restaurant/retail selection look
+        // successful while silently removing the restaurant ad; the per-card
+        // validator now blocks launch until Joel fills the missing card.
+        const groupsToAdd = selectedGroups;
         const newCreatives = groupsToAdd.flatMap(group => {
             const matchedCopy = hasCompleteCopy(group.copy || {}) ? group.copy : {};
             // A real pair (both an image feed asset AND an image stories asset —
@@ -562,10 +583,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     name: group.feedAsset.file_name,
                     mediaType: 'image',
                     format: 'feed',
+                    source: 'drive',
                     dualPlacement: true,
                     drivePairId: group.id,
                     headline: matchedCopy.headline || '',
                     body: matchedCopy.primary_text || '',
+                    description: matchedCopy.description || '',
                     cta: group.cta || '',
                     websiteUrl: group.landingPage || ''
                 }];
@@ -585,9 +608,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     name: asset.file_name,
                     mediaType: asset.format,
                     format: driveAssetPlacement(asset),
+                    source: 'drive',
                     drivePairId: null,
                     headline: matchedCopy.headline || '',
                     body: matchedCopy.primary_text || '',
+                    description: matchedCopy.description || '',
                     cta: group.cta || '',
                     websiteUrl: group.landingPage || ''
                 });
@@ -606,9 +631,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 name: asset.file_name,
                 mediaType: asset.format,
                 format: driveAssetPlacement(asset),
+                source: 'drive',
                 drivePairId: group.id,
                 headline: matchedCopy.headline || '',
                 body: matchedCopy.primary_text || '',
+                description: matchedCopy.description || '',
                 cta: group.cta || '',
                 websiteUrl: group.landingPage || ''
             }));
@@ -623,11 +650,15 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             const nextBodies = firstCopy.primary_text && !copyFieldsTouched.bodies
                 ? [firstCopy.primary_text]
                 : clearStaleGlobalCopy ? [''] : prev.bodies;
-            const nextDescription = firstCopy.description && !copyFieldsTouched.description ? firstCopy.description : prev.description;
-            const nextCta = firstWithCopy?.cta && !copyFieldsTouched.cta ? firstWithCopy.cta : (prev.cta || 'LEARN_MORE');
+            const nextDescription = firstCopy.description && !copyFieldsTouched.description
+                ? firstCopy.description
+                : clearStaleGlobalCopy && !copyFieldsTouched.description ? '' : prev.description;
+            const nextCta = firstWithCopy?.cta && !copyFieldsTouched.cta
+                ? firstWithCopy.cta
+                : clearStaleGlobalCopy && !copyFieldsTouched.cta ? 'LEARN_MORE' : (prev.cta || 'LEARN_MORE');
             const nextWebsiteUrl = (firstWithCopy?.landingPage || firstDefaultUrl) && !copyFieldsTouched.websiteUrl
                 ? (firstWithCopy?.landingPage || firstDefaultUrl)
-                : prev.websiteUrl;
+                : clearStaleGlobalCopy && !copyFieldsTouched.websiteUrl ? '' : prev.websiteUrl;
 
             if (selectedAdAccount) {
                 safeLocalStorageSet(`defaultHeadlines_${selectedAdAccount.id}_${campaignCacheId}`, JSON.stringify(nextHeadlines || ['']));
@@ -648,7 +679,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             };
         });
         if (unmatchedGroups.length > 0) {
-            showWarning(`Skipped ${unmatchedGroups.length} Drive creative${unmatchedGroups.length !== 1 ? 's' : ''} without matched copy. Select one category at a time or add its copy before launching.`);
+            showWarning(`Added ${unmatchedGroups.length} Drive creative${unmatchedGroups.length !== 1 ? 's' : ''} without matched copy as Needs copy cards. Fill those cards before launching.`);
         }
         if (newCreatives.length > 0) {
             const pairCount = selectedGroups.filter(group => group.isPair).length;
@@ -1113,6 +1144,18 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         }));
     };
 
+    // Drive creatives can carry their own matched copy. Keep edits on the
+    // creative itself so a restaurant card can never inherit retail's global
+    // headline/body when the batch is assembled in BulkAdCreation.
+    const updateCreativeCopy = (id, field, value) => {
+        setCreativeData(prev => ({
+            ...prev,
+            creatives: (prev.creatives || []).map(creative => (
+                creative.id === id ? { ...creative, [field]: value } : creative
+            ))
+        }));
+    };
+
     // Recovery path for "I bulk-added a batch with auto-dupe on and actually
     // wanted Feed-only" — unchecking the toggle only stops FUTURE adds, it
     // can't undo what's already in the grid, and removing N duplicates one at
@@ -1327,33 +1370,61 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 return;
             }
 
-            // Validate primary text
-            if (!creativeData.bodies[0] || !creativeData.bodies[0].trim()) {
-                showWarning('Please provide primary text');
-                return;
-            }
-
-            // Validate headline
-            if (!creativeData.headlines[0] || !creativeData.headlines[0].trim()) {
-                showWarning('Please provide a headline');
-                return;
+            // Drive selections may carry different copy per image/pair. In that
+            // mode validate each card instead of validating only the first
+            // global field (which could otherwise apply retail copy to a
+            // restaurant ad at launch).
+            const perCreativeCopyMode = creativeData.creatives.some(c => c.source === 'drive' || c.headline || c.body);
+            if (perCreativeCopyMode) {
+                const missingCopy = creativeData.creatives.filter(c => (
+                    c.source === 'drive'
+                        ? (!c.body?.trim() || !c.headline?.trim())
+                        : (!(c.body?.trim() || creativeData.bodies[0]?.trim()) ||
+                            !(c.headline?.trim() || creativeData.headlines[0]?.trim()))
+                ));
+                if (missingCopy.length > 0) {
+                    showWarning(`${missingCopy.length} selected ad${missingCopy.length !== 1 ? 's' : ''} still needs its own Primary Text and Headline. Edit the Ad pairs & copy cards before continuing.`);
+                    return;
+                }
+            } else {
+                if (!creativeData.bodies[0] || !creativeData.bodies[0].trim()) {
+                    showWarning('Please provide primary text');
+                    return;
+                }
+                if (!creativeData.headlines[0] || !creativeData.headlines[0].trim()) {
+                    showWarning('Please provide a headline');
+                    return;
+                }
             }
         }
 
-        if (!creativeData.websiteUrl) {
-            showWarning('Please enter a website URL');
+        const missingCreativeUrl = creativeData.creatives.find(c => (
+            c.source === 'drive' ? !c.websiteUrl?.trim() : !creativeData.websiteUrl?.trim() && !c.websiteUrl?.trim()
+        ));
+        if (missingCreativeUrl) {
+            showWarning(`The destination URL for ${missingCreativeUrl.name || 'one selected ad'} is missing. Add it before continuing.`);
             return;
         }
 
-        // Validate URL format
-        try {
-            const url = new URL(creativeData.websiteUrl);
-            if (!url.protocol.startsWith('http')) {
-                showWarning('Please enter a valid URL starting with http:// or https://');
+        // Validate the global URL when it is used by any non-Drive creative.
+        if (creativeData.websiteUrl) {
+            try {
+                const url = new URL(creativeData.websiteUrl);
+                if (!url.protocol.startsWith('http')) {
+                    showWarning('Please enter a valid URL starting with http:// or https://');
+                    return;
+                }
+            } catch (e) {
+                showWarning('Please enter a valid URL (e.g., https://example.com)');
                 return;
             }
-        } catch (e) {
-            showWarning('Please enter a valid URL (e.g., https://example.com)');
+        }
+
+        const invalidCreativeUrl = creativeData.creatives.find(c => c.websiteUrl && (() => {
+            try { return !new URL(c.websiteUrl).protocol.startsWith('http'); } catch { return true; }
+        })());
+        if (invalidCreativeUrl) {
+            showWarning(`The destination URL for ${invalidCreativeUrl.name || 'one selected ad'} is invalid. Fix it before continuing.`);
             return;
         }
 
@@ -1372,6 +1443,15 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             const overLimitBodies = creativeData.bodies.filter(b => b && b.length > BODY_LIMIT);
             if (overLimitBodies.length > 0) {
                 showWarning(`Primary text exceeds Facebook's ${BODY_LIMIT}-character limit. Please shorten it.`);
+                return;
+            }
+            const overLimitCreativeCopy = creativeData.creatives.some(c => (
+                (c.headline && c.headline.length > HEADLINE_LIMIT) ||
+                (c.body && c.body.length > BODY_LIMIT) ||
+                (c.description && c.description.length > DESC_LIMIT)
+            ));
+            if (overLimitCreativeCopy) {
+                showWarning('One of the selected ad cards exceeds a Meta copy limit. Please shorten it before continuing.');
                 return;
             }
             if (creativeData.description && creativeData.description.length > DESC_LIMIT) {
@@ -1663,7 +1743,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         </div>
                     )}
                     {creativeData.creatives && creativeData.creatives.length > 0 && (
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+                        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3 mb-4">
                             {creativeData.creatives.map((creative) => (
                                 <div key={creative.id} className="relative group border rounded-lg overflow-hidden aspect-square bg-gray-100">
                                     {creative.mediaType === 'video' ? (
@@ -1818,6 +1898,93 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         </div>
                 )}
 
+                    {/* Per-ad copy editor — Drive pairs and matched assets keep
+                        their own copy on the creative object. This is the primary
+                        editing surface whenever a batch contains more than one
+                        selected ad, so each image/pair is visibly tied to its own
+                        Primary Text and Headline instead of relying on the shared
+                        fields below. */}
+                    {!isMatchImport && creativeData.creatives?.length > 0 && (
+                        <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/50 p-4">
+                            <div className="flex items-start justify-between gap-3 mb-3">
+                                <div>
+                                    <h3 className="text-sm font-semibold text-gray-900">Ad pairs &amp; copy</h3>
+                                    <p className="text-xs text-gray-600 mt-0.5">
+                                        Copy is attached to each selected image pair. Edit it here before continuing.
+                                    </p>
+                                </div>
+                                <span className="shrink-0 rounded-full bg-white border border-indigo-200 px-2 py-1 text-[11px] font-semibold text-indigo-700">
+                                    {creativeData.creatives.length} ad{creativeData.creatives.length !== 1 ? 's' : ''}
+                                </span>
+                            </div>
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                                {creativeData.creatives.map((creative, index) => {
+                                    const headline = creative.headline || '';
+                                    const body = creative.body || '';
+                                    const hasOwnCopy = Boolean(headline.trim() && body.trim());
+                                    return (
+                                        <div key={`copy-${creative.id}`} className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+                                            <div className="flex gap-3">
+                                                <div className="flex w-20 h-20 shrink-0 gap-1 overflow-hidden rounded-md bg-gray-100">
+                                                    {creative.previewUrl && (creative.mediaType === 'video' ? (
+                                                        <video src={creative.previewUrl} className="h-full w-full object-cover" muted playsInline />
+                                                    ) : (
+                                                        <img src={creative.previewUrl} alt={creative.name} className="h-full w-full object-cover" />
+                                                    ))}
+                                                    {creative.dualPlacement && creative.secondaryImageUrl && (
+                                                        <div className="relative h-full w-1/2">
+                                                            <img src={creative.secondaryImageUrl} alt={`${creative.name} Stories`} className="h-full w-full object-cover" />
+                                                            <span className="absolute bottom-1 left-1 rounded bg-purple-600 px-1 py-0.5 text-[9px] font-semibold text-white">Stories 9:16</span>
+                                                        </div>
+                                                    )}
+                                                    {creative.dualPlacement && <span className="absolute bottom-1 left-1 rounded bg-blue-600 px-1 py-0.5 text-[9px] font-semibold text-white">Feed 1:1</span>}
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-xs font-semibold text-gray-900">Ad {index + 1}</span>
+                                                        {creative.dualPlacement && <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-semibold text-purple-700">Feed + Stories</span>}
+                                                        {hasOwnCopy ? <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">Copy matched</span> : <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Needs copy</span>}
+                                                    </div>
+                                                    <p className="truncate text-[11px] text-gray-500 mt-1" title={creative.name}>{creative.name}</p>
+                                                </div>
+                                            </div>
+                                            <label className="block text-[11px] font-semibold text-gray-600 mt-3 mb-1">Primary Text</label>
+                                            <textarea
+                                                value={body}
+                                                onChange={(e) => updateCreativeCopy(creative.id, 'body', e.target.value)}
+                                                rows={3}
+                                                placeholder="Primary text for this ad..."
+                                                className="w-full rounded-md border border-gray-300 px-2.5 py-2 text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                            />
+                                            <div className="flex justify-end mt-1">
+                                                <span className={`text-[10px] ${charCountClass(body.length, BODY_WARN, BODY_LIMIT)}`}>{body.length} / {BODY_LIMIT}</span>
+                                            </div>
+                                            <div className="flex items-center justify-between mt-1">
+                                                <label className="text-[11px] font-semibold text-gray-600">Headline</label>
+                                                <span className={`text-[10px] ${charCountClass(headline.length, HEADLINE_WARN, HEADLINE_LIMIT)}`}>{headline.length} / {HEADLINE_LIMIT}</span>
+                                            </div>
+                                            <input
+                                                type="text"
+                                                value={headline}
+                                                onChange={(e) => updateCreativeCopy(creative.id, 'headline', e.target.value)}
+                                                placeholder="Headline for this ad..."
+                                                className="w-full rounded-md border border-gray-300 px-2.5 py-2 text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                            />
+                                            <label className="block text-[11px] font-semibold text-gray-600 mt-2 mb-1">Description</label>
+                                            <input
+                                                type="text"
+                                                value={creative.description ?? ''}
+                                                onChange={(e) => updateCreativeCopy(creative.id, 'description', e.target.value)}
+                                                placeholder="Description for this ad..."
+                                                className="w-full rounded-md border border-gray-300 px-2.5 py-2 text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                            />
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+
                 {/* Meta creative enhancement opt-ins — default-off, and scoped to
                     this Creative-step session (applied identically to every ad
                     built from it), NOT independently settable per individual ad —
@@ -1872,7 +2039,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 <div>
                     <div className="flex items-center justify-between mb-2">
                         <label className="block text-sm font-medium text-gray-700">
-                            Primary Text *
+                            {creativeData.creatives?.some(c => c.source === 'drive' || c.headline || c.body) ? 'Shared fallback Primary Text' : 'Primary Text *'}
                         </label>
                         {creativeData.bodies.length < 3 && (
                             <button
@@ -1928,7 +2095,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 <div>
                     <div className="flex items-center justify-between mb-2">
                         <label className="block text-sm font-medium text-gray-700">
-                            Headline *
+                            {creativeData.creatives?.some(c => c.source === 'drive' || c.headline || c.body) ? 'Shared fallback Headline' : 'Headline *'}
                         </label>
                         {creativeData.headlines.length < 3 && (
                             <button
@@ -2011,7 +2178,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 {(() => {
                                     const validHeadlines = creativeData.headlines.filter(h => h && h.trim() !== '').length;
                                     const validBodies = creativeData.bodies.filter(b => b && b.trim() !== '').length;
-                                    const totalAds = creativeData.creatives.length * validHeadlines * validBodies;
+                                    const totalAds = variationCount.total;
                                     const imageCount = creativeData.creatives.filter(c => c.mediaType !== 'video').length;
                                     const videoCount = creativeData.creatives.filter(c => c.mediaType === 'video').length;
                                     const mediaDesc = [];
@@ -2021,7 +2188,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                         <>
                                             {totalAds} ad{totalAds !== 1 ? 's' : ''} will be created
                                             <span className="text-sm font-normal ml-2">
-                                                ({mediaDesc.join(' + ')} × {validHeadlines} headline{validHeadlines !== 1 ? 's' : ''} × {validBodies} bod{validBodies !== 1 ? 'ies' : 'y'})
+                                                ({variationCount.hasPerCreativeCopy ? 'per-ad copy' : `${mediaDesc.join(' + ')} × ${validHeadlines} headline${validHeadlines !== 1 ? 's' : ''} × ${validBodies} bod${validBodies !== 1 ? 'ies' : 'y'}`})
                                             </span>
                                         </>
                                     );
@@ -2340,7 +2507,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 the mix (pre-push review, code-auditor: HIGH). */}
                             {selectedDriveAssetIds.size > 0 && (variationCount.headlines > 1 || variationCount.bodies > 1) && (
                                 <span className="block text-xs text-amber-700 mt-0.5">
-                                    → {(variationCount.media + driveSelectionMediaCount) * Math.max(variationCount.headlines, 1) * Math.max(variationCount.bodies, 1)} total ad combinations after adding ({variationCount.media + driveSelectionMediaCount} media × {variationCount.headlines || 1} headline{variationCount.headlines !== 1 ? 's' : ''} × {variationCount.bodies || 1} bod{variationCount.bodies !== 1 ? 'ies' : 'y'})
+                                    → {variationCount.total + driveSelectionProjectedAdCount} total ads after adding ({variationCount.hasPerCreativeCopy ? 'existing per-ad copy' : `${variationCount.media} media × ${variationCount.headlines || 1} headline${variationCount.headlines !== 1 ? 's' : ''} × ${variationCount.bodies || 1} bod${variationCount.bodies !== 1 ? 'ies' : 'y'}`}; selected Drive assets use matched copy where available)
                                 </span>
                             )}
                             {selectedDriveAssetIds.size > 0 && autoDupeStories && (

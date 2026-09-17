@@ -144,10 +144,10 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             // Generate all permutations: media × headlines × bodies
             const permutations = [];
             creativeData.creatives.forEach((creative, creativeIndex) => {
-                const creativeHeadlines = creative.headline
+                const creativeHeadlines = creative.source === 'drive' || creative.headline
                     ? [{ index: null, override: creative.headline }]
                     : validHeadlines.map(({ index }) => ({ index }));
-                const creativeBodies = creative.body
+                const creativeBodies = creative.source === 'drive' || creative.body
                     ? [{ index: null, override: creative.body }]
                     : validBodies.map(({ index }) => ({ index }));
                 creativeHeadlines.forEach(({ index: hIndex, override: headlineOverride }) => {
@@ -166,6 +166,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             bodyIndex: bIndex,
                             headlineOverride,
                             bodyOverride,
+                            descriptionOverride: creative.description || '',
                             ctaOverride: creative.cta || '',
                             mediaType: creative.mediaType || 'image',
                             format: creative.format || 'feed',
@@ -315,6 +316,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         const storiesAdsToCreate = adsData.filter(ad => ad.format === 'stories');
         const isMixed      = feedAdsToCreate.length > 0 && storiesAdsToCreate.length > 0;
         const isAllStories = feedAdsToCreate.length === 0 && storiesAdsToCreate.length > 0;
+        const perMediaMode = adsetData.creationMode === 'per_media' && !adsetData.isExisting;
+        const hasLinkedPlacement = adsData.some(ad => ad.dualPlacement);
+        const hasIndependentPlacement = adsData.some(ad => !ad.dualPlacement);
+        if (!perMediaMode && hasLinkedPlacement && hasIndependentPlacement) {
+            setLoading(false);
+            showWarning('This batch mixes linked Feed + Stories pairs with independent placement ads. Separate them into their own launches until placement routing is configured for this combination.');
+            return;
+        }
 
         setProgress({ current: 0, total: adsData.length, status: 'Checking Meta rate limits...' });
 
@@ -453,8 +462,6 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             // the way there is for the single-ad-set mode below — a per-media ad set only
             // ever holds ads for one creative, which has exactly one format already.
             const perMediaAdsetMap = new Map();
-            const perMediaMode = adsetData.creationMode === 'per_media' && !adsetData.isExisting;
-
             if (perMediaMode) {
                 const distinctCreativeIds = [...new Set(adsData.map(ad => ad.creativeId))];
                 for (let m = 0; m < distinctCreativeIds.length; m++) {
@@ -697,10 +704,15 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         // asset_feed_spec dual-placement path (same mechanism Bulk Match Import
                         // ships). Never set for video creatives — that path is image-only.
                         secondaryImageUrl: !isVideo ? specificCreative?.secondaryImageUrl : undefined,
-                        headlines: [ad.headlineOverride || creativeData.headlines[ad.headlineIndex]],
-                        bodies: [ad.bodyOverride || creativeData.bodies[ad.bodyIndex]],
+                        headlines: [specificCreative?.source === 'drive' ? ad.headlineOverride : (ad.headlineOverride || creativeData.headlines[ad.headlineIndex])],
+                        bodies: [specificCreative?.source === 'drive' ? ad.bodyOverride : (ad.bodyOverride || creativeData.bodies[ad.bodyIndex])],
+                        description: specificCreative && Object.prototype.hasOwnProperty.call(specificCreative, 'description')
+                            ? specificCreative.description
+                            : creativeData.description,
                         cta: specificCreative?.cta || ad.ctaOverride || creativeData.cta,
-                        websiteUrl: specificCreative?.websiteUrl || creativeData.websiteUrl
+                        websiteUrl: specificCreative?.source === 'drive'
+                            ? specificCreative.websiteUrl
+                            : (specificCreative?.websiteUrl || creativeData.websiteUrl)
                     };
 
                     if (!creativeData.pageId) {
@@ -744,7 +756,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             // reads and Iterate show the first category's copy.
                             bodies: adSpecificCreativeData.bodies.filter(b => b && b.trim() !== ''),
                             headlines: adSpecificCreativeData.headlines.filter(h => h && h.trim() !== ''),
-                            description: creativeData.description,
+                            description: adSpecificCreativeData.description,
                             cta: adSpecificCreativeData.cta,
                             websiteUrl: adSpecificCreativeData.websiteUrl,
                             status: 'PAUSED',
@@ -878,6 +890,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         })()}
                     </div>
                     <div><strong>Total Ads to Create:</strong> {adsData.length} ({(() => {
+                        const hasPerCreativeCopy = creativeData.creatives?.some(c => c.headline || c.body);
+                        if (hasPerCreativeCopy) return 'per-ad copy assignments';
                         const images = creativeData.creatives?.filter(c => c.mediaType !== 'video').length || 0;
                         const videos = creativeData.creatives?.filter(c => c.mediaType === 'video').length || 0;
                         const media = images + videos;
@@ -1138,8 +1152,19 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                         against Meta on launch. Say that plainly instead of rendering
                                         a normal-looking card with a blank media area. */}
                                     {creative ? (
-                                        <div className={`bg-gray-200 relative ${ad.format === 'stories' ? 'aspect-[9/16]' : 'aspect-square'}`}>
-                                            {isVideo ? (
+                                        <div className={`bg-gray-200 relative ${ad.dualPlacement && creative.secondaryImageUrl ? 'flex aspect-[16/9]' : ad.format === 'stories' ? 'aspect-[9/16]' : 'aspect-square'}`}>
+                                            {ad.dualPlacement && creative.secondaryImageUrl ? (
+                                                <>
+                                                    <div className="relative w-1/2 border-r-2 border-white">
+                                                        <img src={creative.previewUrl} alt="Feed 1:1 preview" className="w-full h-full object-cover" />
+                                                        <span className="absolute bottom-2 left-2 rounded bg-blue-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">Feed 1:1</span>
+                                                    </div>
+                                                    <div className="relative w-1/2">
+                                                        <img src={creative.secondaryImageUrl} alt="Stories 9:16 preview" className="w-full h-full object-cover" />
+                                                        <span className="absolute bottom-2 left-2 rounded bg-purple-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">Stories 9:16</span>
+                                                    </div>
+                                                </>
+                                            ) : isVideo ? (
                                                 <>
                                                     <video src={creative.previewUrl} className="w-full h-full object-cover" muted />
                                                     <div className="absolute bottom-2 right-2 bg-purple-600 text-white p-1 rounded">
