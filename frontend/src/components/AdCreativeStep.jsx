@@ -24,6 +24,14 @@ const BODY_WARN = 125;
 export const BODY_LIMIT = 2200;
 const DESC_LIMIT = 255;
 
+// Commercial launches are always run from the DailyInsurance.news Page. The
+// generic "last used Page" fallback is unsafe here because this browser is
+// also used for Home Services, where Trusted Home Service is legitimate.
+const isCommercialAdAccount = (adAccount) => /commercial/i.test(adAccount?.name || '');
+const findCommercialDefaultPage = (pages) => pages.find(
+    page => String(page?.name || '').trim().toLowerCase() === 'dailyinsurance.news'
+);
+
 const charCountClass = (len, warn, limit) => {
     if (len > limit) return 'text-red-600 font-semibold';
     if (len > warn) return 'text-amber-600';
@@ -902,21 +910,6 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         }
     }, []);
 
-    // Load last used page ID on mount — scoped per ad account. This used to be
-    // a single flat global key, which meant switching ad accounts (different
-    // brands) could silently carry over a Page ID that belongs to a different
-    // brand entirely. Same leak class as the campaign-scoped caches below.
-    // pageId/instagramId are deliberately NOT cleared when the campaign changes
-    // (see the campaign-scoped cache effect below) — a brand's Page is stable
-    // across its niches/campaigns on the same ad account.
-    useEffect(() => {
-        if (!selectedAdAccount) return;
-        const lastUsedPageId = safeLocalStorageGet(`lastUsedPageId_${selectedAdAccount.id}`);
-        if (lastUsedPageId && !creativeData.pageId) {
-            handleInputChange('pageId', lastUsedPageId);
-        }
-    }, [selectedAdAccount]);
-
     // Load (or clear) campaign-scoped creative defaults — URL, headlines, bodies,
     // description, CTA — whenever the ad account or the effective campaign changes.
     //
@@ -990,10 +983,15 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             const fetchedPages = await getPages(selectedAdAccount.id);
             setPages(fetchedPages);
 
-            // If no page is selected and we have pages, select the first one (or the last used one if it exists in the list)
+            // DailyInsurance.news is the fixed default for Commercial accounts.
+            // Resolve it only after Pages load rather than restoring an arbitrary
+            // last-used Page ID — the latter allowed a prior Home Services launch
+            // to silently select Trusted Home Service for Commercial.
             if (fetchedPages.length > 0 && !creativeData.pageId) {
                 const lastUsedPageId = safeLocalStorageGet(`lastUsedPageId_${selectedAdAccount.id}`);
-                const pageToSelect = fetchedPages.find(p => p.id === lastUsedPageId) || fetchedPages[0];
+                const pageToSelect = (isCommercialAdAccount(selectedAdAccount) && findCommercialDefaultPage(fetchedPages))
+                    || fetchedPages.find(p => p.id === lastUsedPageId)
+                    || fetchedPages[0];
                 handlePageSelection(pageToSelect.id, fetchedPages);
             } else if (fetchedPages.length === 0) {
                 // If no pages found, default to manual entry so user isn't blocked

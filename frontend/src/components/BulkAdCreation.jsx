@@ -290,7 +290,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // mode doesn't actually use (and whose ABO ×2 math would be wrong once the real
     // multiplier is however many distinct media files there are).
     const perMediaModeActive = adsetData.creationMode === 'per_media' && !adsetData.isExisting;
-    const isDriveManifest = perMediaModeActive && creativeData.creatives?.some(creative => creative.source === 'drive');
+    // Drive selections use the compact row/rail review regardless of whether the
+    // destination ad set is new or existing. The Drive Launch shortcut deliberately
+    // forces "Use Existing" so it never sets perMediaModeActive, which previously
+    // made the row view impossible to reach in the exact multi-pair flow it was
+    // built for. Review layout and Meta ad-set creation mode are separate concerns.
+    const isDriveManifest = creativeData.creatives?.some(creative => creative.source === 'drive');
     const activeAds = adsData.filter(ad => !manifestExcludedAdIds.has(ad.id));
     const manifestRows = adsData.map((ad, index) => {
         const creative = creativeData.creatives?.find(item => item.id === ad.creativeId);
