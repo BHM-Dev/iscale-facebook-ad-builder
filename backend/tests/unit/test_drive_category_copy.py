@@ -64,3 +64,25 @@ Restaurant copy.
     assert tags["drive_file_id"] == "restaurant-b"
     assert result["assets_by_drive_id"]["restaurant-a"]["copy_id"] == "CATEGORY-04-EXTRA-1"
     assert result["assets_by_drive_id"]["restaurant-b"]["copy_id"] == "CATEGORY-04-EXTRA-2"
+
+
+def test_category_metadata_keeps_balanced_duplicate_pairs_separate():
+    service = DriveSyncService.__new__(DriveSyncService)
+    media = [
+        {"id": "feed-a", "name": "restaurant.png", "_parent_folder_name": "1x1"},
+        {"id": "feed-b", "name": "restaurant.png", "_parent_folder_name": "1x1"},
+        {"id": "stories-a", "name": "restaurant.png", "_parent_folder_name": "9x16"},
+        {"id": "stories-b", "name": "restaurant.png", "_parent_folder_name": "9x16"},
+    ]
+    document = """4. RESTAURANT AND FOOD SERVICE
+Headline: Cafe Owners: Compare Coverage Free
+Primary text:
+Restaurant copy.
+"""
+
+    result = service._category_folder_copy_metadata("package-id", media, document)
+
+    assert result["assets_by_drive_id"]["feed-a"]["copy_id"] == "CATEGORY-04"
+    assert result["assets_by_drive_id"]["stories-a"]["copy_id"] == "CATEGORY-04"
+    assert result["assets_by_drive_id"]["feed-b"]["copy_id"] == "CATEGORY-04-PAIR-2"
+    assert result["assets_by_drive_id"]["stories-b"]["copy_id"] == "CATEGORY-04-PAIR-2"

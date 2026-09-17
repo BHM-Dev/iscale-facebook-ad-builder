@@ -899,7 +899,9 @@ class DriveSyncService:
             for item, file_name, _, section, aspect in category_candidates:
                 same_aspect_index = (feed if aspect == "1x1" else stories).index((item, file_name, number, section, aspect))
                 copy_id = f"CATEGORY-{number:02d}"
-                if same_aspect_index >= pair_count:
+                if same_aspect_index < pair_count and same_aspect_index > 0:
+                    copy_id = f"{copy_id}-PAIR-{same_aspect_index + 1}"
+                elif same_aspect_index >= pair_count:
                     copy_id = f"{copy_id}-EXTRA-{same_aspect_index - pair_count + 1}"
                 metadata = {
                     "copy_id": copy_id,
