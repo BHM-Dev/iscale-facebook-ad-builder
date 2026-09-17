@@ -711,29 +711,25 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     // not best-effort. If Meta created the set but this fails,
                     // stop and reconcile rather than treating it as safely
                     // retryable and silently losing app-side management data.
-                    try {
-                        const saveAdsetRes = await authFetch(`${API_URL}/facebook/adsets/save`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                ...adsetData,
-                                id: localAdsetId,
-                                campaignId: campaignData.id,
-                                name: payload.name,
-                                fbAdsetId: newFbAdsetId,
-                                dailyBudget: adsetData.dailyBudget ? Number(adsetData.dailyBudget) : null,
-                                lifetimeBudget: adsetData.lifetimeBudget ? Number(adsetData.lifetimeBudget) : null,
-                                budgetScheduleType: adsetData.budgetScheduleType || 'DAILY',
-                                endTime: adsetData.endTime || null,
-                                bidAmount: adsetData.bidAmount ? Number(adsetData.bidAmount) : null
-                            })
-                        });
-                        if (!saveAdsetRes.ok) {
-                            const err = await saveAdsetRes.json().catch(() => ({}));
-                            throw new Error(`Meta created ad set "${payload.name}" (${newFbAdsetId}) but the local mirror failed: ${err.detail || err.message || saveAdsetRes.status}. Reconcile this ad set in Ads Manager before retrying.`);
-                        }
-                    } catch (err) {
-                        throw err;
+                    const saveAdsetRes = await authFetch(`${API_URL}/facebook/adsets/save`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            ...adsetData,
+                            id: localAdsetId,
+                            campaignId: campaignData.id,
+                            name: payload.name,
+                            fbAdsetId: newFbAdsetId,
+                            dailyBudget: adsetData.dailyBudget ? Number(adsetData.dailyBudget) : null,
+                            lifetimeBudget: adsetData.lifetimeBudget ? Number(adsetData.lifetimeBudget) : null,
+                            budgetScheduleType: adsetData.budgetScheduleType || 'DAILY',
+                            endTime: adsetData.endTime || null,
+                            bidAmount: adsetData.bidAmount ? Number(adsetData.bidAmount) : null
+                        })
+                    });
+                    if (!saveAdsetRes.ok) {
+                        const err = await saveAdsetRes.json().catch(() => ({}));
+                        throw new Error(`Meta created ad set "${payload.name}" (${newFbAdsetId}) but the local mirror failed: ${err.detail || err.message || saveAdsetRes.status}. Reconcile this ad set in Ads Manager before retrying.`);
                     }
                 }
             } else if (!adsetData.isExisting) {
@@ -854,6 +850,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             // ── Step 3: Ads ───────────────────────────────────────────────────────
             let failedCount = 0;
             let rateLimited = false;
+            let ambiguousStop = false;
             let attempted = 0;
             const createdIndexes = [];
             for (let i = 0; i < launchAds.length; i++) {
@@ -1054,10 +1051,16 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         })]);
                         break;
                     }
+                    if (error.metaMutationStarted) {
+                        ambiguousStop = true;
+                        setLaunchOutcome({ createdIndexes: [...createdIndexes], stoppedAtIndex: i });
+                        setErrors(prev => [...prev, `Meta may have created part of this ad. Reconcile ad ${ad.name} in Ads Manager before retrying.`]);
+                        break;
+                    }
                 }
             }
 
-            if (rateLimited) {
+            if (rateLimited || ambiguousStop) {
                 // Don't advance — the batch is incomplete by definition and Joel
                 // needs to see how far it got before deciding what to re-run.
                 setProgress({ current: attempted, total: launchAds.length, status: `Stopped — ${createdIndexes.length} of ${launchAds.length} ads created` });

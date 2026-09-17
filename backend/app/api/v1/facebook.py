@@ -795,15 +795,23 @@ def save_adset_locally(
     current_user: User = Depends(require_permission("campaigns:write"))
 ):
     try:
-        # Check if exists
+        campaign_ref = adset_data.get('campaignId')
+        if not campaign_ref:
+            raise HTTPException(status_code=400, detail="campaignId is required")
+        campaign = db.query(FacebookCampaign).filter(
+            (FacebookCampaign.id == campaign_ref) |
+            (FacebookCampaign.fb_campaign_id == str(campaign_ref))
+        ).first()
+        if not campaign:
+            raise HTTPException(status_code=409, detail="Campaign must be saved locally before saving its ad set")
         existing = db.query(FacebookAdSet).filter(FacebookAdSet.id == adset_data.get('id')).first()
+        if existing is None and adset_data.get('fbAdsetId'):
+            existing = db.query(FacebookAdSet).filter(FacebookAdSet.fb_adset_id == adset_data['fbAdsetId']).first()
         if existing:
             return {"message": "AdSet already exists", "id": existing.id}
             
         # Ensure campaign exists (FK check)
-        campaign_id = adset_data.get('campaignId')
-        if not campaign_id:
-             raise HTTPException(status_code=400, detail="campaignId is required")
+        campaign_id = campaign.id
              
         # We assume campaign is already saved by the frontend calling /campaigns/save first
 
@@ -859,6 +867,9 @@ def save_adset_locally(
         db.commit()
         db.refresh(new_adset)
         return {"message": "AdSet saved locally", "id": new_adset.id}
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         print(f"Error saving adset locally: {e}")
@@ -875,12 +886,14 @@ def save_ad_locally(
         # loses the local-save response. Replaying the save must update the same
         # local row rather than creating a second record. Prefer the client-side
         # id (stable across a retry), then fall back to Meta's ad id.
-        local_ad = None
-        if ad_data.get('id'):
-            local_ad = db.query(FacebookAd).filter(FacebookAd.id == ad_data['id']).first()
-        if local_ad is None and ad_data.get('fbAdId'):
-            local_ad = db.query(FacebookAd).filter(FacebookAd.fb_ad_id == ad_data['fbAdId']).first()
-
+        local_ad = db.query(FacebookAd).filter(FacebookAd.id == ad_data['id']).first() if ad_data.get('id') else None
+        by_fb_id = db.query(FacebookAd).filter(FacebookAd.fb_ad_id == ad_data['fbAdId']).first() if ad_data.get('fbAdId') else None
+        if local_ad and by_fb_id and local_ad.id != by_fb_id.id:
+            raise HTTPException(status_code=409, detail="Local ad ID and Meta ad ID refer to different ads")
+        if local_ad and local_ad.fb_ad_id and ad_data.get('fbAdId') and local_ad.fb_ad_id != ad_data['fbAdId']:
+            raise HTTPException(status_code=409, detail="Local ad is already linked to a different Meta ad")
+        if local_ad is None:
+            local_ad = by_fb_id
         if local_ad is None:
             local_ad = FacebookAd(id=ad_data.get('id'))
             db.add(local_ad)
@@ -914,6 +927,9 @@ def save_ad_locally(
         db.commit()
         db.refresh(local_ad)
         return {"message": "Ad saved locally", "id": local_ad.id}
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         print(f"Error saving ad locally: {e}")

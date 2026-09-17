@@ -140,7 +140,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                         committedAdAccountRef.current = acctId;
                         safeLocalStorageSet('fb_ad_account_id', acctId);
                     }
-                } catch (_) { /* fall through — user can type it */ }
+                } catch { /* fall through — user can type it */ }
             }
             if (acctId) {
                 loadPages(acctId);
@@ -329,6 +329,16 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
 
         // Push each item sequentially so Meta doesn't rate-limit
         const adsetObj = adSets.find(a => a.id === targetAdsetId) || {};
+        const localAdsetId = adsetObj.local_id || adsetObj.localId || `batch_adset_${targetAdsetId}`;
+        if (!adsetObj.local_id && !adsetObj.localId && !createdAdsetId) {
+            const mirrorRes = await authFetch(`${FB_API_BASE}/adsets/save`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: localAdsetId, campaignId: selectedCampaignId, name: targetAdsetName,
+                    targeting: adsetObj.targeting || {}, optimizationGoal: adsetObj.optimization_goal || 'LEAD_GENERATION',
+                    status: 'PAUSED', fbAdsetId: targetAdsetId }),
+            });
+            if (!mirrorRes.ok) { showError(`Ad set is in Meta but could not be linked locally (HTTP ${mirrorRes.status}).`); setPushing(false); return; }
+        }
         for (const item of pendingItems) {
             setPushStatuses(prev => ({ ...prev, [item.key]: 'pushing' }));
             const copy = itemCopy[item.key];
@@ -352,6 +362,15 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                     'ABO'
                 );
                 setPushResults(prev => ({ ...prev, [item.key]: { ...pushResult, adsetId: targetAdsetId } }));
+                const saveAdRes = await authFetch(`${FB_API_BASE}/ads/save`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: `batch_${item.key}`, adsetId: localAdsetId,
+                        name: copy.headline || item.headline || 'Batch Ad', creativeName: copy.headline || item.variantName || 'Batch Creative',
+                        mediaType: 'image', imageUrl: item.imageUrl, headlines: [copy.headline || item.headline].filter(Boolean),
+                        bodies: [copy.body || item.body].filter(Boolean), description: copy.description || item.description || '',
+                        cta: copy.cta || sharedCta, websiteUrl, status: 'PAUSED', fbAdId: pushResult.adId, fbCreativeId: pushResult.creativeId || null }),
+                });
+                if (!saveAdRes.ok) throw new Error(`Meta ad ${pushResult.adId} was created but local tracking could not be saved (HTTP ${saveAdRes.status}). Do not re-launch this item.`);
                 // Write back Meta IDs to the local GeneratedAd record. fb_ad_id is the
                 // primary RedTrack sub1 join key — a missing link means this creative can
                 // never be attributed, so surface (don't swallow) a failed write-back.
@@ -381,6 +400,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
             } catch (e) {
                 setPushStatuses(prev => ({ ...prev, [item.key]: 'error' }));
                 setPushErrors(prev => ({ ...prev, [item.key]: e.message }));
+                if (e.metaMutationStarted) { showError(`${e.message} Reconcile Meta before retrying.`); break; }
             }
         }
 

@@ -117,7 +117,8 @@ export async function getCampaigns(adAccountId) {
             createdTime: campaign.created_time,
             updatedTime: campaign.updated_time,
             isCBO: campaign.is_adset_budget_sharing_enabled,
-            specialAdCategories: campaign.special_ad_categories || []
+            specialAdCategories: campaign.special_ad_categories || [],
+            localId: campaign.local_id || null
         }));
     } catch (error) {
         console.error('Error fetching campaigns:', error);
@@ -581,6 +582,7 @@ export async function searchLocations(query, type = 'city', adAccountId) {
  *   their existing responsiveness.
  */
 export async function createCompleteAd(campaignId, adsetData, creativeData, adData, pageId, adAccountId, budgetType, pacing = null) {
+    let metaMutationStarted = false;
     try {
         let imageHash = null;
         let secondaryImageHash = null;
@@ -595,6 +597,7 @@ export async function createCompleteAd(campaignId, adsetData, creativeData, adDa
 
         if (isVideo) {
             // 1. Upload video
+            metaMutationStarted = true;
             const videoResult = await uploadVideoToFacebook(
                 creativeData.videoUrl,
                 adAccountId,
@@ -610,6 +613,7 @@ export async function createCompleteAd(campaignId, adsetData, creativeData, adDa
             // 1. Upload image(s). The 9x16 vertical (if present) is required
             // together with the 1x1 for the dual-placement path — both must
             // land on Meta before the creative is built.
+            metaMutationStarted = true;
             imageHash = await uploadImageToFacebook(creativeData.imageUrl, adAccountId);
             if (creativeData.secondaryImageUrl) {
                 await pauseBetweenWrites();
@@ -618,6 +622,7 @@ export async function createCompleteAd(campaignId, adsetData, creativeData, adDa
         }
 
         // 2. Create ad creative (supports both image and video)
+        metaMutationStarted = true;
         await pauseBetweenWrites();
         const creativeId = await createFacebookCreative(
             creativeData,
@@ -631,6 +636,7 @@ export async function createCompleteAd(campaignId, adsetData, creativeData, adDa
         // 3. Create ad. RedTrack macros are set on the creative's url_tags in step 2
         // (the backend derives them from websiteUrl) — nothing extra needed here.
         await pauseBetweenWrites();
+        metaMutationStarted = true;
         const adId = await createFacebookAd(adData, adsetData.fbAdsetId, creativeId, adAccountId);
 
         return {
@@ -643,6 +649,10 @@ export async function createCompleteAd(campaignId, adsetData, creativeData, adDa
         };
     } catch (error) {
         console.error('Error in complete ad creation:', error);
+        // A timeout/network failure after a Meta write begins is ambiguous: the
+        // object may exist even though the browser never received its ID. Tell
+        // queue callers to stop and reconcile instead of blindly retrying.
+        if (metaMutationStarted) error.metaMutationStarted = true;
         throw error;
     }
 }
