@@ -90,9 +90,11 @@ const driveAssetPlacement = (asset) => {
     const tags = parseDriveTags(asset);
     if (tags.aspect === '9x16') return 'stories';
     if (tags.aspect === '1x1') return 'feed';
+    const folderHint = folderPlacementHint(asset);
+    if (folderHint) return folderHint;
     const parsed = normalizeFilenameBase(asset.file_name || '');
     if (parsed) return parsed.aspect === '9x16' ? 'stories' : 'feed';
-    return folderPlacementHint(asset) || 'feed';
+    return 'feed';
 };
 
 const buildDriveAssetGroups = (assets) => {

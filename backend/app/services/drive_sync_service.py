@@ -208,6 +208,13 @@ class DriveSyncService:
         mime_type = file_meta.get("mimeType") or ""
         if not drive_file_id or not self._is_supported_media(mime_type, file_meta.get("name", "")):
             if drive_file_id and self._is_text_file(mime_type, file_meta.get("name", "")):
+                # A manifest/copy document can arrive after its media files.
+                # Do not let a cached "no package" answer hide the new metadata
+                # during this same incremental sync (the page token is committed
+                # after the whole batch is processed).
+                self._package_folder_cache.clear()
+                self._strategy_package_folder_cache.clear()
+                self._folder_metadata_cache.clear()
                 result["updated"] += self._refresh_folder_copy_metadata(file_meta)
             result["skipped"] += 1
             return
@@ -226,7 +233,7 @@ class DriveSyncService:
         existing = self.db.execute(
             text(
                 """
-                SELECT id, drive_modified_time
+                SELECT id, drive_modified_time, soft_tags
                 FROM drive_assets
                 WHERE drive_file_id = :drive_file_id
                 """
@@ -240,14 +247,23 @@ class DriveSyncService:
             # Refresh tags so existing rows can backfill placement/copy data.
             file_name = file_meta.get("name") or f"{drive_file_id}{mimetypes.guess_extension(mime_type) or ''}"
             soft_tags = self._metadata_for_media_file(file_meta, file_name)
-            self.db.execute(
-                text("""
-                    UPDATE drive_assets
-                    SET archived = FALSE, soft_tags = :soft_tags
-                    WHERE id = :id
-                """),
-                {"id": existing["id"], "soft_tags": json.dumps(soft_tags) if soft_tags else None},
-            )
+            if soft_tags:
+                self.db.execute(
+                    text("""
+                        UPDATE drive_assets
+                        SET archived = FALSE, soft_tags = :soft_tags, synced_at = NOW()
+                        WHERE id = :id
+                    """),
+                    {"id": existing["id"], "soft_tags": json.dumps(soft_tags)},
+                )
+            else:
+                # An empty result can mean "no metadata exists", but it can also
+                # mean Drive lookup/download failed. Preserve known tags rather
+                # than silently turning a previously paired asset into a single.
+                self.db.execute(
+                    text("UPDATE drive_assets SET archived = FALSE WHERE id = :id"),
+                    {"id": existing["id"]},
+                )
             result["skipped"] += 1
             return
 
