@@ -72,6 +72,7 @@ Description: Compare options for your restaurant.
 
     assert result["assets"]["restaurant.png"]["copy_id"] == "CATEGORY-04"
     assert result["assets"]["restaurant-9x16.png"]["aspect"] == "9x16"
+    assert result["assets"]["restaurant.png"]["category"] == "RESTAURANT AND FOOD SERVICE"
     assert result["assets"]["restaurant.png"]["copy"]["primary_text"] == "Restaurant copy."
     assert result["assets"]["restaurant.png"]["copy"]["description"] == "Compare options for your restaurant."
 

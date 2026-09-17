@@ -147,12 +147,19 @@ const buildDriveAssetGroups = (assets) => {
             copy: tags.copy || null,
             landingPage: tags.landing_page || null,
             cta: tags.cta || null,
+            // Category-copy documents already tag every matched asset with the
+            // category heading that supplied its copy. Preserve that semantic
+            // label separately from folder_path: the latter often ends in a
+            // layout folder such as "1x1 Images", which is useful for pairing
+            // but useless for organizing a 50-row launch manifest.
+            category: tags.category || null,
             sortClusterKey,
         };
         existing.assets.push(asset);
         existing.copy = existing.copy || tags.copy || null;
         existing.landingPage = existing.landingPage || tags.landing_page || null;
         existing.cta = existing.cta || tags.cta || null;
+        existing.category = existing.category || tags.category || null;
         grouped.set(key, existing);
     });
 
@@ -226,7 +233,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const isMatchImport = mode === 'match-import';
     const { showWarning, showError, showSuccess } = useToast();
     const { authFetch } = useAuth();
-    const { creativeData, setCreativeData, selectedAdAccount, adsetData, campaignData } = useCampaign();
+    const { creativeData, setCreativeData, selectedAdAccount, adsetData, setAdsetData, campaignData } = useCampaign();
     const { brands } = useBrands();
     // Cache keys for creative defaults (URL/headlines/bodies/description/CTA) are scoped
     // by ad account AND campaign — the same ad account can run multiple niches, each with
@@ -586,6 +593,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     source: 'drive',
                     dualPlacement: true,
                     drivePairId: group.id,
+                    category: group.category || group.feedAsset?.brand_name || 'Uncategorized',
                     headline: matchedCopy.headline || '',
                     body: matchedCopy.primary_text || '',
                     description: matchedCopy.description || '',
@@ -610,6 +618,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     format: driveAssetPlacement(asset),
                     source: 'drive',
                     drivePairId: null,
+                    category: group.category || asset.brand_name || 'Uncategorized',
                     headline: matchedCopy.headline || '',
                     body: matchedCopy.primary_text || '',
                     description: matchedCopy.description || '',
@@ -633,6 +642,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 format: driveAssetPlacement(asset),
                 source: 'drive',
                 drivePairId: group.id,
+                category: group.category || asset.brand_name || 'Uncategorized',
                 headline: matchedCopy.headline || '',
                 body: matchedCopy.primary_text || '',
                 description: matchedCopy.description || '',
@@ -688,6 +698,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 ? ` Applied Drive copy${groupsWithCopy.length > 1 ? ` from ${copySource}; ${groupsWithCopy.length - 1} other copy set${groupsWithCopy.length - 1 !== 1 ? 's were' : ' was'} not applied.` : copySource ? ` from ${copySource}.` : '.'}`
                 : '';
             showSuccess(`Added ${newCreatives.length} Drive asset${newCreatives.length !== 1 ? 's' : ''}${pairCount ? ` from ${pairCount} Feed + Stories pair${pairCount !== 1 ? 's' : ''}` : ''}.${copyNote}`);
+        }
+        // For a true Drive Feed + Stories pair, the confirmed launch model is
+        // one dual-placement creative in one dedicated ad set. Select that
+        // model automatically while still leaving the ad-set step editable if
+        // the buyer deliberately wants a different arrangement.
+        if (selectedGroups.some(group => group.isPair) && !adsetData.isExisting) {
+            setAdsetData(prev => ({ ...prev, creationMode: 'per_media' }));
         }
         setShowDriveLibraryModal(false);
     };

@@ -23,9 +23,18 @@ export const RATE_LIMIT_ERROR_CODES = new Set([
 
 // Unconditional spacing between per-item Meta calls so a large batch doesn't
 // fire back-to-back. Not real exponential backoff — just enough to keep a burst
-// from tripping the app-level limit. 350ms was already in production use in the
-// Bulk Match Import loop before this module existed.
-export const INTER_REQUEST_DELAY_MS = 350;
+// from tripping the app-level limit. The 500ms interval deliberately gives
+// Meta's per-account counters room to advance between queue items.
+export const INTER_REQUEST_DELAY_MS = 500;
+
+// A bulk Drive launch creates more than one write per item (ad set, image
+// upload, creative, then ad). Keep each account strictly serial and add a
+// visible breather after a bounded run of objects. This is intentionally
+// conservative: it avoids a client-side burst while remaining practical for a
+// 50–100-ad-set queue. The Marketing API's exact allowance is dynamic, so the
+// usage header and actual throttle responses remain the authority.
+export const BULK_LAUNCH_BATCH_SIZE = 10;
+export const BULK_LAUNCH_BATCH_COOLDOWN_MS = 15_000;
 
 // Above this percentage of any Meta usage metric we tell the user before they
 // start a batch, rather than letting them discover it partway through.

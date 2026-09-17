@@ -5,6 +5,7 @@
 // AuthContext. Re-exported here so the modules that already import it from this
 // file keep working unchanged.
 import { authFetch } from './authClient';
+import { delay } from './metaRateLimit';
 
 export { authFetch };
 
@@ -575,12 +576,18 @@ export async function searchLocations(query, type = 'city', adAccountId) {
  * @param {string} pageId - Facebook page ID
  * @param {string} adAccountId - Facebook ad account ID
  * @param {string} budgetType - Budget type (CBO or ABO)
+ * @param {{ betweenRequestMs?: number } | null} pacing - Optional client-side
+ *   spacing for a bulk queue. Left unset for one-off pushes so those flows keep
+ *   their existing responsiveness.
  */
-export async function createCompleteAd(campaignId, adsetData, creativeData, adData, pageId, adAccountId, budgetType) {
+export async function createCompleteAd(campaignId, adsetData, creativeData, adData, pageId, adAccountId, budgetType, pacing = null) {
     try {
         let imageHash = null;
         let secondaryImageHash = null;
         let videoData = null;
+        const pauseBetweenWrites = async () => {
+            if (pacing?.betweenRequestMs > 0) await delay(pacing.betweenRequestMs);
+        };
 
         // Determine if this is a video or image ad
         const isVideo = creativeData.mediaType === 'video' ||
@@ -605,11 +612,13 @@ export async function createCompleteAd(campaignId, adsetData, creativeData, adDa
             // land on Meta before the creative is built.
             imageHash = await uploadImageToFacebook(creativeData.imageUrl, adAccountId);
             if (creativeData.secondaryImageUrl) {
+                await pauseBetweenWrites();
                 secondaryImageHash = await uploadImageToFacebook(creativeData.secondaryImageUrl, adAccountId);
             }
         }
 
         // 2. Create ad creative (supports both image and video)
+        await pauseBetweenWrites();
         const creativeId = await createFacebookCreative(
             creativeData,
             imageHash,
@@ -621,6 +630,7 @@ export async function createCompleteAd(campaignId, adsetData, creativeData, adDa
 
         // 3. Create ad. RedTrack macros are set on the creative's url_tags in step 2
         // (the backend derives them from websiteUrl) — nothing extra needed here.
+        await pauseBetweenWrites();
         const adId = await createFacebookAd(adData, adsetData.fbAdsetId, creativeId, adAccountId);
 
         return {
