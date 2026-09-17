@@ -598,10 +598,10 @@ class DriveSyncService:
         """
         drive = self._client()
         collected: List[Dict[str, Any]] = []
-        queue = [(folder_id, "")]
+        queue = [(folder_id, [])]
         seen_folders = {folder_id}
         while queue and len(collected) < max_files:
-            current, current_name = queue.pop(0)
+            current, current_path = queue.pop(0)
             try:
                 response = drive.files().list(
                     q=f"'{current}' in parents and trashed = false",
@@ -617,12 +617,13 @@ class DriveSyncService:
                 if item.get("mimeType") == "application/vnd.google-apps.folder":
                     if item["id"] not in seen_folders:
                         seen_folders.add(item["id"])
-                        queue.append((item["id"], item.get("name") or ""))
+                        queue.append((item["id"], [*current_path, item.get("name") or ""]))
                 else:
                     # Preserve the immediate folder name for category-copy docs
                     # whose placement is encoded by the folder ("1x1"/"9x16")
                     # rather than repeated in every image filename.
-                    item["_parent_folder_name"] = current_name
+                    item["_parent_folder_name"] = current_path[-1] if current_path else ""
+                    item["_parent_folder_path"] = current_path
                     collected.append(item)
         return collected
 
@@ -867,10 +868,21 @@ class DriveSyncService:
             if aspect_match:
                 aspect = aspect_match.group(1).lower()
             else:
-                folder_aspect = re.match(
-                    r"^\s*(1x1|9x16)(?:\s+(?:images?|assets?|feed|stories|reels))?\s*$",
-                    item.get("_parent_folder_name") or "",
-                    re.IGNORECASE,
+                folder_aspect = next(
+                    (
+                        re.match(
+                            r"^\s*(1x1|9x16)(?:\s+(?:images?|assets?|feed|stories|reels))?\s*$",
+                            folder_name,
+                            re.IGNORECASE,
+                        )
+                        for folder_name in reversed(item.get("_parent_folder_path") or [item.get("_parent_folder_name") or ""])
+                        if re.match(
+                            r"^\s*(1x1|9x16)(?:\s+(?:images?|assets?|feed|stories|reels))?\s*$",
+                            folder_name,
+                            re.IGNORECASE,
+                        )
+                    ),
+                    None,
                 )
                 if not folder_aspect:
                     logger.info("Drive image %s has no placement size in filename or parent folder", file_name)

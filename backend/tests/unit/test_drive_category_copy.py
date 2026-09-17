@@ -86,3 +86,22 @@ Restaurant copy.
     assert result["assets_by_drive_id"]["stories-a"]["copy_id"] == "CATEGORY-04"
     assert result["assets_by_drive_id"]["feed-b"]["copy_id"] == "CATEGORY-04-PAIR-2"
     assert result["assets_by_drive_id"]["stories-b"]["copy_id"] == "CATEGORY-04-PAIR-2"
+
+
+def test_category_metadata_reads_placement_from_nested_ancestor_folder():
+    service = DriveSyncService.__new__(DriveSyncService)
+    media = [{
+        "id": "restaurant-feed",
+        "name": "restaurant.png",
+        "_parent_folder_name": "Restaurant",
+        "_parent_folder_path": ["1x1 Images", "Restaurant"],
+    }]
+    document = """4. RESTAURANT AND FOOD SERVICE
+Headline: Cafe Owners: Compare Coverage Free
+Primary text:
+Restaurant copy.
+"""
+
+    result = service._category_folder_copy_metadata("package-id", media, document)
+
+    assert result["assets_by_drive_id"]["restaurant-feed"]["aspect"] == "1x1"
