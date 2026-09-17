@@ -407,6 +407,7 @@ class GeneratedAd(Base):
     image_url = Column(String, nullable=True)  # Changed to nullable for video ads
     headline = Column(String, nullable=True)
     body = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
     cta = Column(String, nullable=True)
     size_name = Column(String, nullable=True)
     dimensions = Column(String, nullable=True)

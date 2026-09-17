@@ -126,6 +126,7 @@ class GeneratedAdCreate(BaseModel):
     imageUrl: Optional[str] = None  # Now optional for video ads
     headline: Optional[str] = None
     body: Optional[str] = None
+    description: Optional[str] = None
     cta: Optional[str] = None
     sizeName: Optional[str] = None
     dimensions: Optional[str] = None
@@ -1191,6 +1192,7 @@ def get_generated_ads(
         "image_url": ad.image_url,
         "headline": ad.headline,
         "body": ad.body,
+        "description": ad.description,
         "cta": ad.cta,
         "size_name": ad.size_name,
         "dimensions": ad.dimensions,
@@ -1312,6 +1314,7 @@ def batch_save_ads(
             image_url=ad_data.imageUrl,
             headline=ad_data.headline,
             body=ad_data.body,
+            description=ad_data.description,
             cta=ad_data.cta,
             size_name=ad_data.sizeName,
             dimensions=ad_data.dimensions,

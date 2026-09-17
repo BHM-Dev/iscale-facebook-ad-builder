@@ -1206,9 +1206,30 @@ def get_ad_creative(
             if local_ad.website_url:
                 creative["website_url"] = local_ad.website_url
                 creative["link_url"] = local_ad.website_url
-        # Enrich with overlay fields from local GeneratedAd record if one exists for this fb_ad_id.
+        # Enrich with the local GeneratedAd record as a fallback for creatives
+        # pushed through BatchPushModal. Those pushes intentionally link the
+        # generated asset instead of creating a FacebookAd row, so without this
+        # fallback Iterate would depend on Meta's reconstructed/representative
+        # copy even though the exact copy is already local.
         # This restores the offer line and logo URL on Iterate so Joel doesn't have to retype them.
         db_ad = db.query(GeneratedAd).filter(GeneratedAd.fb_ad_id == fb_ad_id).first()
+        if db_ad:
+            if not local_ad:
+                if db_ad.headline:
+                    creative["headline"] = db_ad.headline
+                    creative["headlines"] = [db_ad.headline]
+                if db_ad.body:
+                    creative["body"] = db_ad.body
+                    creative["bodies"] = [db_ad.body]
+                if db_ad.description is not None:
+                    creative["description"] = db_ad.description
+                if db_ad.cta:
+                    creative["cta"] = db_ad.cta
+                # Meta commonly returns a small thumbnail for this lookup. The
+                # local GeneratedAd image is the original full-resolution asset
+                # created by BatchGenerate, so prefer it whenever available.
+                if db_ad.image_url:
+                    creative["image_url"] = db_ad.image_url
         creative["overlay_offer_line"] = db_ad.overlay_offer_line if db_ad else None
         creative["overlay_logo_url"] = db_ad.overlay_logo_url if db_ad else None
         return creative

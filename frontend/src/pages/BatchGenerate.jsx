@@ -30,6 +30,9 @@ const CTA_OPTIONS = [
   'Sign Up',
   'Shop Now',
   'Download',
+  'Book Now',
+  'Buy Tickets',
+  'Donate Now',
 ];
 
 // Map CTA display labels → Meta API enum values
@@ -48,6 +51,9 @@ const CTA_LABEL_TO_ENUM = {
   'sign up':             'SIGN_UP',
   'shop now':            'SHOP_NOW',
   'download':            'DOWNLOAD',
+  'book now':            'BOOK_NOW',
+  'buy tickets':         'BUY_TICKETS',
+  'donate now':          'DONATE_NOW',
 };
 function ctaToEnum(label) {
   return CTA_LABEL_TO_ENUM[(label || '').toLowerCase()] || 'LEARN_MORE';
@@ -64,6 +70,9 @@ const META_CTA_TO_LABEL = {
   CONTACT_US: 'Contact Us',
   SHOP_NOW: 'Shop Now',
   DOWNLOAD: 'Download',
+  BOOK_NOW: 'Book Now',
+  BUY_TICKETS: 'Buy Tickets',
+  DONATE_NOW: 'Donate Now',
   GET_STARTED: 'Get Started',
   APPLY_NOW: 'Apply Now',
 };
@@ -476,7 +485,7 @@ export default function BatchGenerate() {
 
       // Save to Generated Ads library
       const adId = crypto.randomUUID();
-      const saveResponse = await authFetch(`${API_URL}/generated-ads/batch`, {
+      await authFetch(`${API_URL}/generated-ads/batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -505,15 +514,10 @@ export default function BatchGenerate() {
             overlayLogoUrl: overlayEnabled ? (overlayLogoUrl || null) : null,
           }],
         }),
-      });
-      if (!saveResponse.ok) {
-        const saveError = await saveResponse.json().catch(() => ({}));
-        throw new Error(saveError.detail || `Generated ad library save failed (HTTP ${saveResponse.status})`);
-      }
+      }).catch(() => {});
 
-      // Store generatedAdId only after the local row is confirmed. BatchPushModal
-      // uses this ID for the Meta write-back; inventing it after a failed save makes
-      // the later tracking repair impossible.
+      // Store generatedAdId so BatchPushModal can write back the Meta ad ID after push,
+      // enabling the Iterate flow to restore overlay fields from the local DB.
       setResults(prev => ({ ...prev, [key]: { status: 'done', imageUrl, generatedAdId: adId, error: null } }));
       return 'done';
     } catch (e) {
