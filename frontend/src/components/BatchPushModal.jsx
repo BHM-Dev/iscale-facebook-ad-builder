@@ -330,14 +330,27 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
         // Push each item sequentially so Meta doesn't rate-limit
         const adsetObj = adSets.find(a => a.id === targetAdsetId) || {};
         const localAdsetId = adsetObj.local_id || adsetObj.localId || `batch_adset_${targetAdsetId}`;
-        if (!adsetObj.local_id && !adsetObj.localId && !createdAdsetId) {
-            const mirrorRes = await authFetch(`${FB_API_BASE}/adsets/save`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: localAdsetId, campaignId: selectedCampaignId, name: targetAdsetName,
-                    targeting: adsetObj.targeting || {}, optimizationGoal: adsetObj.optimization_goal || 'LEAD_GENERATION',
-                    status: 'PAUSED', fbAdsetId: targetAdsetId }),
-            });
-            if (!mirrorRes.ok) { showError(`Ad set is in Meta but could not be linked locally (HTTP ${mirrorRes.status}).`); setPushing(false); return; }
+        if (!adsetObj.local_id && !adsetObj.localId) {
+            try {
+                const mirrorRes = await authFetch(`${FB_API_BASE}/adsets/save`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: localAdsetId, campaignId: selectedCampaignId, name: targetAdsetName,
+                        targeting: adsetObj.targeting || {}, optimizationGoal: adsetObj.optimization_goal || 'LEAD_GENERATION',
+                        status: 'PAUSED', fbAdsetId: targetAdsetId }),
+                });
+                if (!mirrorRes.ok) {
+                    const error = await mirrorRes.json().catch(() => ({}));
+                    throw new Error(error.detail || error.message || `HTTP ${mirrorRes.status}`);
+                }
+            } catch (mirrorErr) {
+                const message = `Meta ad set "${targetAdsetName}" (${targetAdsetId}) exists, but local tracking could not be saved: ${mirrorErr.message}. Do not re-launch; reconcile the ad set in Ads Manager first.`;
+                showError(message);
+                setPushStatuses(prev => ({ ...prev, ...Object.fromEntries(pendingItems.map(item => [item.key, 'error'])) }));
+                setPushErrors(prev => ({ ...prev, ...Object.fromEntries(pendingItems.map(item => [item.key, message])) }));
+                setPushing(false);
+                setIsDone(true);
+                return;
+            }
         }
         for (const item of pendingItems) {
             setPushStatuses(prev => ({ ...prev, [item.key]: 'pushing' }));
