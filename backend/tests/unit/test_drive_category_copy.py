@@ -21,6 +21,34 @@ Restaurant copy.
     assert not service._category_matches("restaurant-1x1.png", sections[1]["category"], 1)
 
 
+def test_category_copy_doc_extracts_optional_description_without_leaking_into_primary():
+    service = DriveSyncService.__new__(DriveSyncService)
+    document = """4. RESTAURANT AND FOOD SERVICE
+Headline: Coverage for Restaurant Owners
+Primary text:
+Restaurant primary text.
+Description: Compare options for your food-service business.
+Alt headlines:
+- A second headline
+"""
+
+    section = service._parse_category_copy_doc(document)[4]
+
+    assert section["primary_text"] == "Restaurant primary text."
+    assert section["description"] == "Compare options for your food-service business."
+
+
+def test_category_copy_doc_keeps_description_missing_as_none():
+    service = DriveSyncService.__new__(DriveSyncService)
+    document = """1. LANDSCAPING AND FIELD SERVICE
+Headline: Coverage for Landscapers
+Primary text:
+Landscaping primary text.
+"""
+
+    assert service._parse_category_copy_doc(document)[1]["description"] is None
+
+
 def test_native_google_doc_is_syncable_text():
     service = DriveSyncService.__new__(DriveSyncService)
 

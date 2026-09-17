@@ -895,7 +895,12 @@ class DriveSyncService:
             block = text_body[heading.end():headings[index + 1].start() if index + 1 < len(headings) else len(text_body)]
             headline = re.search(r"^\s*Headline\s*:\s*(.+?)\s*$", block, re.IGNORECASE | re.MULTILINE)
             primary = re.search(
-                r"^\s*Primary text\s*:\s*\r?\n?(.*?)(?=^\s*Alt headlines\s*:|\Z)",
+                r"^\s*Primary text\s*:\s*\r?\n?(.*?)(?=^\s*(?:Description|Alt headlines)\s*:|\Z)",
+                block,
+                re.IGNORECASE | re.MULTILINE | re.DOTALL,
+            )
+            description = re.search(
+                r"^\s*Description\s*:\s*\r?\n?(.*?)(?=^\s*Alt headlines\s*:|\Z)",
                 block,
                 re.IGNORECASE | re.MULTILINE | re.DOTALL,
             )
@@ -905,7 +910,7 @@ class DriveSyncService:
                 "category": heading.group(2).strip(),
                 "headline": self._clean_markdown_value(headline.group(1)),
                 "primary_text": self._clean_markdown_value(primary.group(1)),
-                "description": None,
+                "description": self._clean_markdown_value(description.group(1)) if description else None,
             }
         return sections
 
