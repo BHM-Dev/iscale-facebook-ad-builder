@@ -309,7 +309,7 @@ class TestCreateCreativeDualPlacement:
         assert rule_by_label["feed_image"]["instagram_positions"] == ["stream"]
         assert rule_by_label["feed_image"]["publisher_platforms"] == ["facebook", "instagram"]
         assert rule_by_label["story_image"]["facebook_positions"] == ["story"]
-        assert rule_by_label["story_image"]["instagram_positions"] == ["story"]
+        assert rule_by_label["story_image"]["instagram_positions"] == ["story", "reels"]
         assert rule_by_label["story_image"]["publisher_platforms"] == ["facebook", "instagram"]
 
     def test_create_creative_with_secondary_image_no_instagram_account_falls_back_to_facebook_only(self):

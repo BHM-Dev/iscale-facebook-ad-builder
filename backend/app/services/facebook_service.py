@@ -1259,11 +1259,10 @@ class FacebookService:
         (`secondary_image_hash`) — both placements live together with the
         same copy. The two `customization_spec` position values used
         (`facebook_positions`/`instagram_positions`: `feed`/`stream` and
-        `story`/`story`) are confirmed-documented values per Meta's
+        `story`/`story,reels`) are confirmed-documented values per Meta's
         asset-feed-spec + asset_customization_rules docs
         (developers.facebook.com/docs/marketing-api/reference/ad-asset-feed-spec/
-        and .../ad-asset-feed-spec-asset-customization-rule/) — Reels-specific
-        values are intentionally not included (see comment below). This is
+        and .../ad-asset-feed-spec-asset-customization-rule/). This is
         NOT a general dynamic-creative system — it always builds exactly
         the two rules below (Feed+Story), nothing else, and both
         images are required together when this path is used. When
@@ -1390,17 +1389,12 @@ class FacebookService:
                     {
                         'customization_spec': {
                             'publisher_platforms': ['facebook', 'instagram'] if has_instagram else ['facebook'],
-                            # 'facebook_reels' / 'reels' deliberately left out: they are
-                            # not documented values for customization_spec on this field
-                            # (developers.facebook.com/docs/marketing-api/reference/
-                            # ad-asset-feed-spec-asset-customization-rule/) — that Reels
-                            # position family belongs to the ad-set-level `targeting`
-                            # field instead, which has different accepted values. Add
-                            # Reels-specific targeting here only once a documented value
-                            # for this field is confirmed; this is a deliberate omission,
-                            # not an oversight.
+                            # Facebook Reels is not targeted by this dual-placement
+                            # configuration; only Facebook Feed and Story are included.
                             'facebook_positions': ['story'],
-                            **({'instagram_positions': ['story']} if has_instagram else {}),
+                            # Reels is a distinct Instagram placement even though
+                            # it shares the 9:16 creative family with Stories.
+                            **({'instagram_positions': ['story', 'reels']} if has_instagram else {}),
                         },
                         'image_label': {'name': 'story_image'},
                     },

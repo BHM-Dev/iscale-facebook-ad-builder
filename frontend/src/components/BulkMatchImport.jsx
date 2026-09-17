@@ -391,7 +391,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                 ...adsetData.targeting,
                 publisher_platforms: ['facebook', 'instagram'],
                 facebook_positions: ['feed', 'story'],
-                instagram_positions: ['stream', 'story']
+                instagram_positions: ['stream', 'story', 'reels']
             };
 
             let fbAdsetId = adsetData.fbAdsetId;
