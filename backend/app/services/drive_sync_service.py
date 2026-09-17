@@ -819,13 +819,13 @@ class DriveSyncService:
         )
 
     _CATEGORY_ALIASES = {
-        1: ("landscaping", "landscapers", "field service", "lawn care", "outdoor crew"),
+        1: ("landscaping", "landscaper", "landscapers", "field service", "lawn care", "outdoor crew"),
         2: ("retail", "shop owner", "shop owners", "boutique"),
         3: ("plumbing", "plumbers", "hvac", "home service", "plumber"),
         4: ("restaurant", "restaurants", "food service", "cafe", "cafes", "café"),
         5: ("auto repair", "auto repairs", "auto-repair", "auto shop", "auto-shop", "automotive repair"),
         6: ("contractor", "contractors", "construction", "trade contractor", "trade contractors"),
-        7: ("general", "protect what you built", "business owner", "business owners", "broad"),
+        7: ("general", "protect what you built", "protect what you ve built", "business owner", "business owners", "broad"),
     }
 
     def _parse_category_copy_doc(self, text_body: str) -> Dict[int, Dict[str, Any]]:

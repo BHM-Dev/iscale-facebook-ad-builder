@@ -105,3 +105,10 @@ Restaurant copy.
     result = service._category_folder_copy_metadata("package-id", media, document)
 
     assert result["assets_by_drive_id"]["restaurant-feed"]["aspect"] == "1x1"
+
+
+def test_category_aliases_cover_live_batch_labels():
+    service = DriveSyncService.__new__(DriveSyncService)
+
+    assert service._category_matches("landscaper.png", "LANDSCAPING AND FIELD SERVICE", 1)
+    assert service._category_matches("Protect What You’ve Built.png", "GENERAL, Protect What You’ve Built", 7)
