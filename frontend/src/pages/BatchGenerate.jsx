@@ -50,7 +50,24 @@ function ctaToEnum(label) {
 }
 
 function newVariant(index = 0) {
-  return { id: Date.now() + index, headline: '', body: '', cta: 'Get My Quote' };
+  return { id: Date.now() + index, headline: '', body: '', description: '', cta: 'Get My Quote' };
+}
+
+const META_CTA_TO_LABEL = {
+  LEARN_MORE: 'Learn More',
+  GET_QUOTE: 'Get My Quote',
+  SIGN_UP: 'Sign Up',
+  CONTACT_US: 'Contact Us',
+  SHOP_NOW: 'Get Started',
+  DOWNLOAD: 'Get Started',
+  GET_STARTED: 'Get Started',
+  APPLY_NOW: 'Apply Now',
+};
+
+function ctaLabelFromCreative(creative) {
+  const raw = creative?.cta || creative?.cta_label;
+  if (!raw) return 'Get My Quote';
+  return META_CTA_TO_LABEL[raw] || raw;
 }
 
 // ── Status badge ──────────────────────────────────────────────────────────────
@@ -240,13 +257,14 @@ export default function BatchGenerate() {
           ...newVariant(i),
           headline: copy.headline || '',
           body: copy.body || '',
+          description: copy.description || '',
           cta: copy.cta || 'Get My Quote',
         })));
       } else if (parsed && typeof parsed === 'object') {
         // Legacy single-copy format
         setVariants(prev => prev.map((v, i) =>
           i === 0
-            ? { ...v, headline: parsed.headline || '', body: parsed.body || '', cta: parsed.cta || v.cta }
+            ? { ...v, headline: parsed.headline || '', body: parsed.body || '', description: parsed.description || '', cta: parsed.cta || v.cta }
             : v
         ));
       }
@@ -285,7 +303,13 @@ export default function BatchGenerate() {
         if (!creative) return;
         setVariants(prev => prev.map((v, i) =>
           i === 0
-            ? { ...v, headline: creative.headline || '', body: creative.body || '' }
+            ? {
+                ...v,
+                headline: creative.headline || '',
+                body: creative.body || '',
+                description: creative.description || '',
+                cta: ctaLabelFromCreative(creative),
+              }
             : v
         ));
         if (creative.image_url) {
@@ -1082,6 +1106,17 @@ export default function BatchGenerate() {
                       <p className="text-xs text-gray-400 mt-1">Used as ad copy and guides the AI image generation</p>
                     </div>
                     <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Description <span className="text-gray-400 font-normal">· optional</span></label>
+                      <input
+                        type="text"
+                        placeholder="Compare options for your business."
+                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-gray-50 disabled:text-gray-500"
+                        value={variant.description || ''}
+                        onChange={e => updateVariant(variant.id, 'description', e.target.value)}
+                        disabled={running}
+                      />
+                    </div>
+                    <div>
                       <label className="block text-xs font-medium text-gray-500 mb-1">CTA</label>
                       <select
                         className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-gray-50"
@@ -1171,6 +1206,7 @@ export default function BatchGenerate() {
                   imageUrl: r.imageUrl,
                   headline: variant?.headline || '',
                   body: variant?.body || '',
+                  description: variant?.description || '',
                   cta: ctaToEnum(variant?.cta),
                   variantName: variant?.headline ? variant.headline.slice(0, 30) : `Variant ${variantId}`,
                   sizeLabel: sizeConfig?.label || sizeId,
@@ -1224,6 +1260,7 @@ export default function BatchGenerate() {
               generatedAdId: r.generatedAdId || null, // local DB id — written back after push to link fb_ad_id
               headline: variant?.headline || '',
               body: variant?.body || '',
+              description: variant?.description || '',
               cta: ctaToEnum(variant?.cta),
               variantName: variant?.headline ? variant.headline.slice(0, 30) : `Variant ${variantId}`,
               sizeLabel: sizeConfig?.label || sizeId,

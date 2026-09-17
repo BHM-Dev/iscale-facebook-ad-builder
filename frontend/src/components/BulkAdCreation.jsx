@@ -815,10 +815,13 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     throw err;
                 }
 
-                // Save stories ad set locally (non-fatal if it fails)
+                // Save the Stories ad set locally before creating any Stories ads.
+                // A live Meta ad set without a local row cannot be used as a valid
+                // FacebookAd foreign key, so continuing here would create an
+                // unreconcilable partial launch.
                 if (fbStoriesAdsetId && storiesAdsetLocalId) {
                     try {
-                        await authFetch(`${API_URL}/facebook/adsets/save`, {
+                        const saveStoriesAdSetRes = await authFetch(`${API_URL}/facebook/adsets/save`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
@@ -828,8 +831,17 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 fbAdsetId: fbStoriesAdsetId
                             })
                         });
+                        if (!saveStoriesAdSetRes.ok) {
+                            const err = await saveStoriesAdSetRes.json().catch(() => ({}));
+                            throw new Error(
+                                `Stories ad set ${fbStoriesAdsetId} was created on Meta but could not be saved locally: `
+                                + `${err.detail || err.message || saveStoriesAdSetRes.status}. `
+                                + `Do not re-launch — it already exists on the account.`
+                            );
+                        }
                     } catch (err) {
-                        console.warn('Could not save stories ad set locally — continuing:', err);
+                        console.error('Could not save Stories ad set locally:', err);
+                        throw err;
                     }
                 }
             }
@@ -886,6 +898,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     status: `Creating ${isStoriesAd ? 'Stories' : 'Feed'} ad ${i + 1} of ${launchAds.length}...`
                 });
 
+                let metaCreatedAdId = null;
                 try {
                     const specificCreative = creativeData.creatives?.find(c => c.id === ad.creativeId);
                     const isVideo = specificCreative?.mediaType === 'video';
@@ -944,8 +957,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         // short burst at every ad boundary.
                         { betweenRequestMs: INTER_REQUEST_DELAY_MS }
                     );
-
-                    createdIndexes.push(i);
+                    metaCreatedAdId = result.adId;
 
                     const saveAdRes = await authFetch(`${API_URL}/facebook/ads/save`, {
                         method: 'POST',
@@ -976,14 +988,32 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         })
                     });
                     if (!saveAdRes.ok) {
-                        const err = await saveAdRes.json();
-                        throw new Error(`Failed to save ad locally: ${err.detail || err.message}`);
+                        const err = await saveAdRes.json().catch(() => ({}));
+                        throw new Error(
+                            `Meta ad ${metaCreatedAdId} was created, but its local record failed to save: `
+                            + `${err.detail || err.message || saveAdRes.status}. Do not re-launch this batch.`
+                        );
                     }
+
+                    // Only count the ad as fully created after both Meta and the
+                    // local mirror have succeeded. This prevents a local-save
+                    // failure from looking like a completed row and discourages
+                    // blind relaunches that would duplicate the live Meta ad.
+                    createdIndexes.push(i);
 
                 } catch (error) {
                     console.error(`Error creating ad ${ad.name}:`, error);
                     setErrors(prev => [...prev, `Failed to create ${ad.name}: ${error.message}`]);
                     failedCount++;
+
+                    // A Meta ad exists but the local mirror failed. Stop the
+                    // queue and leave the current row visibly failed; continuing
+                    // would create more live objects while the first one is not
+                    // reconciled, and a blind retry could duplicate it.
+                    if (metaCreatedAdId) {
+                        setLaunchOutcome({ createdIndexes: [...createdIndexes], stoppedAtIndex: i });
+                        break;
+                    }
 
                     // Meta throttled the account. Stop now rather than grinding
                     // the remaining ads into a wall of identical errors — every

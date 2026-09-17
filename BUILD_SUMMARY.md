@@ -149,6 +149,13 @@ python init_db.py → alembic upgrade head → uvicorn
 
 ## Roadmap
 
+### Immediate: Bulk Launch Integrity Hardening *(P1 — in progress)*
+Protect the Meta launch path before adding more bulk-launch features. Make local ad
+persistence idempotent, gate Stories/Reels launches on a successful local ad-set save,
+and preserve each ad's exact headline, body, description, CTA, and destination URL
+through Iterate and Batch Push. Add regression coverage for partial Meta/local-save
+failures, retries, Drive mixed-copy launches, and dual-placement ads.
+
 ### Next: Slack Campaign Intelligence Bot *(specced in `SLACK_INTELLIGENCE_SPEC.md`)*
 Joel types `@AdBuilder update` in `#media-buying` and receives an AI-generated campaign snapshot: account scorecard, ad sets ranked SCALE / WATCH / CUT by ROAS and frequency, and 3–5 specific named recommendations from Gemini. Daily 9am ET proactive summary and threshold alerts (frequency >4, ROAS drop, MTD pacing off) also planned.
 

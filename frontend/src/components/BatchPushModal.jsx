@@ -25,7 +25,7 @@ const CTA_OPTIONS = [
  * BatchPushModal — push multiple generated images to Meta in one operation.
  *
  * Props:
- *   items                  {Array}   Each item: { key, imageUrl, headline, body, cta, variantName, sizeLabel }
+ *   items                  {Array}   Each item: { key, imageUrl, headline, body, description, cta, variantName, sizeLabel }
  *   onClose                {function}
  *   preselectedCampaignId  {string}  Meta campaign ID — auto-selects campaign, skips dropdown
  *   preselectedAdsetId     {string}  Meta adset ID — pre-fills "clone from" and defaults to "Create new"
@@ -67,7 +67,12 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
 
     // Per-item copy overrides (editable inline)
     const [itemCopy, setItemCopy] = useState(() =>
-        Object.fromEntries(items.map(it => [it.key, { headline: it.headline, body: it.body, cta: it.cta || 'LEARN_MORE' }]))
+        Object.fromEntries(items.map(it => [it.key, {
+            headline: it.headline,
+            body: it.body,
+            description: it.description || '',
+            cta: it.cta || 'LEARN_MORE'
+        }]))
     );
     const [expandedItem, setExpandedItem] = useState(null);
 
@@ -75,11 +80,13 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     const [pushing, setPushing] = useState(false);
     const [pushStatuses, setPushStatuses] = useState({}); // key → 'pending'|'pushing'|'done'|'error'
     const [pushErrors, setPushErrors] = useState({});     // key → error string
+    const [trackingFailures, setTrackingFailures] = useState({}); // key → Meta/local IDs for retry
     const [isDone, setIsDone] = useState(false);
 
     const isCBO = selectedCampaign?.isCBO === true;
     const doneItems = items.filter(it => pushStatuses[it.key] === 'done');
     const errorItems = items.filter(it => pushStatuses[it.key] === 'error');
+    const attentionItems = items.filter(it => pushStatuses[it.key] === 'attention');
 
     // Ad Account is a free-text input whose onChange fires on every keystroke —
     // a useEffect keyed on the raw `adAccountId` state (the prior version of
@@ -237,6 +244,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
         if (!validate()) return;
         setPushStatuses({});
         setPushErrors({});
+        setTrackingFailures({});
         setPushing(true);
         setIsDone(false);
 
@@ -287,6 +295,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                         imageUrl: item.imageUrl,
                         headlines: [copy.headline || item.headline],
                         bodies: [copy.body || item.body],
+                        description: copy.description || item.description || '',
                         cta: copy.cta || sharedCta,
                         websiteUrl,
                         creative_enhancements: creativeEnhancements,
@@ -313,8 +322,24 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                         });
                         if (!linkRes.ok) throw new Error(`link write-back HTTP ${linkRes.status}`);
                     } catch (linkErr) {
-                        // Ad pushed fine, but attribution link failed — warn without failing the push.
-                        showError(`Ad pushed but tracking link failed for "${copy.headline || item.headline || item.key}". Revenue attribution may be missing.`);
+                        // Ad pushed fine, but attribution link failed. Keep it out
+                        // of the fully-complete count and retain the IDs needed for
+                        // a targeted retry; rerunning the batch would duplicate the
+                        // live Meta ad.
+                        const trackingError = `Tracking link failed: ${linkErr.message}`;
+                        setTrackingFailures(prev => ({
+                            ...prev,
+                            [item.key]: {
+                                generatedAdId: item.generatedAdId,
+                                fbAdId: pushResult.adId,
+                                fbAdsetId: targetAdsetId,
+                                fbCampaignId: selectedCampaignId,
+                                fbCreativeId: pushResult.creativeId || null,
+                            },
+                        }));
+                        setPushErrors(prev => ({ ...prev, [item.key]: trackingError }));
+                        setPushStatuses(prev => ({ ...prev, [item.key]: 'attention' }));
+                        continue;
                     }
                 }
                 setPushStatuses(prev => ({ ...prev, [item.key]: 'done' }));
@@ -334,6 +359,40 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
         setIsDone(true);
     };
 
+    const retryTracking = async (item) => {
+        const failure = trackingFailures[item.key];
+        if (!failure?.generatedAdId || !failure.fbAdId) return;
+
+        setPushStatuses(prev => ({ ...prev, [item.key]: 'tracking' }));
+        try {
+            const linkRes = await authFetch(`${GEN_ADS_API_BASE}/${failure.generatedAdId}/fb-ad-id`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    fb_ad_id: failure.fbAdId,
+                    fb_adset_id: failure.fbAdsetId,
+                    fb_campaign_id: failure.fbCampaignId,
+                    fb_creative_id: failure.fbCreativeId,
+                }),
+            });
+            if (!linkRes.ok) throw new Error(`link write-back HTTP ${linkRes.status}`);
+            setTrackingFailures(prev => {
+                const next = { ...prev };
+                delete next[item.key];
+                return next;
+            });
+            setPushErrors(prev => {
+                const next = { ...prev };
+                delete next[item.key];
+                return next;
+            });
+            setPushStatuses(prev => ({ ...prev, [item.key]: 'done' }));
+        } catch (linkErr) {
+            setPushErrors(prev => ({ ...prev, [item.key]: `Tracking link failed: ${linkErr.message}` }));
+            setPushStatuses(prev => ({ ...prev, [item.key]: 'attention' }));
+        }
+    };
+
     const adsManagerUrl = adAccountId && selectedCampaignId
         ? `https://adsmanager.facebook.com/adsmanager/manage/ads?act=${adAccountId.replace('act_', '')}&selected_campaign_ids=${selectedCampaignId}`
         : 'https://adsmanager.facebook.com';
@@ -344,16 +403,18 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
         return (
             <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
                 <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-8 text-center" onClick={e => e.stopPropagation()}>
-                    <div className={`w-16 h-16 ${errorItems.length === 0 ? 'bg-green-100' : 'bg-amber-100'} rounded-full flex items-center justify-center mx-auto mb-4`}>
-                        {errorItems.length === 0
+                    <div className={`w-16 h-16 ${errorItems.length === 0 && attentionItems.length === 0 ? 'bg-green-100' : 'bg-amber-100'} rounded-full flex items-center justify-center mx-auto mb-4`}>
+                        {errorItems.length === 0 && attentionItems.length === 0
                             ? <CheckCircle2 size={36} className="text-green-600" />
                             : <AlertCircle size={36} className="text-amber-600" />}
                     </div>
                     <h3 className="text-xl font-bold text-gray-900 mb-1">
-                        {errorItems.length === 0 ? 'All Ads Pushed!' : `${doneItems.length} of ${items.length} Pushed`}
+                        {errorItems.length === 0 && attentionItems.length === 0 ? 'All Ads Pushed!' : `${doneItems.length} of ${items.length} fully linked`}
                     </h3>
                     <p className="text-gray-500 text-sm mb-6">
-                        {doneItems.length} succeeded{errorItems.length > 0 ? `, ${errorItems.length} failed` : ''}.
+                        {doneItems.length} succeeded
+                        {attentionItems.length > 0 ? `, ${attentionItems.length} need tracking retry` : ''}
+                        {errorItems.length > 0 ? `, ${errorItems.length} failed` : ''}.
                     </p>
 
                     {/* Per-item summary */}
@@ -362,10 +423,24 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                             <div key={item.key} className="flex items-center gap-2 text-sm">
                                 {pushStatuses[item.key] === 'done'
                                     ? <CheckCircle2 size={14} className="text-green-500 shrink-0" />
+                                    : pushStatuses[item.key] === 'attention' || pushStatuses[item.key] === 'tracking'
+                                        ? <AlertCircle size={14} className="text-amber-500 shrink-0" />
                                     : <AlertCircle size={14} className="text-red-500 shrink-0" />}
                                 <span className="text-gray-700 truncate flex-1">{item.variantName} · {item.sizeLabel}</span>
+                                {pushStatuses[item.key] === 'attention' && (
+                                    <button
+                                        type="button"
+                                        onClick={() => retryTracking(item)}
+                                        className="shrink-0 text-xs font-medium text-amber-700 hover:text-amber-900 underline"
+                                    >
+                                        Retry tracking
+                                    </button>
+                                )}
+                                {pushStatuses[item.key] === 'tracking' && (
+                                    <Loader size={13} className="shrink-0 animate-spin text-amber-500" />
+                                )}
                                 {pushErrors[item.key] && (
-                                    <span className="text-red-500 text-xs truncate max-w-[160px]" title={pushErrors[item.key]}>
+                                    <span className="text-amber-700 text-xs truncate max-w-[160px]" title={pushErrors[item.key]}>
                                         {pushErrors[item.key]}
                                     </span>
                                 )}
@@ -791,6 +866,15 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                                         rows={2}
                                                         value={copy.body}
                                                         onChange={e => setItemCopy(p => ({ ...p, [item.key]: { ...p[item.key], body: e.target.value } }))}
+                                                        className="w-full mt-1 px-2 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 bg-white"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs font-medium text-gray-600">Description</label>
+                                                    <input
+                                                        type="text"
+                                                        value={copy.description || ''}
+                                                        onChange={e => setItemCopy(p => ({ ...p, [item.key]: { ...p[item.key], description: e.target.value } }))}
                                                         className="w-full mt-1 px-2 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 bg-white"
                                                     />
                                                 </div>

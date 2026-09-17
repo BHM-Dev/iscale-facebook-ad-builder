@@ -2119,6 +2119,7 @@ class FacebookService:
             {
                 "headline": str | None,
                 "body": str | None,
+                "description": str | None,
                 "cta_label": str | None,   # e.g. "LEARN_MORE", "GET_QUOTE"
                 "image_url": str | None,
                 "ad_name": str | None,
@@ -2132,14 +2133,14 @@ class FacebookService:
             ad_data = ad.api_get(fields=[
                 Ad.Field.name,
                 'creative{title,body,call_to_action,image_url,thumbnail_url,'
-                'object_story_spec{link_data{picture,message,name,link},'
+                'object_story_spec{link_data{picture,message,name,link,description},'
                 'video_data{image_url,message,title}},'
                 # images/link_urls requested explicitly — dual-placement creatives
                 # (asset_feed_spec, no link_data at all — reachable from any flow
                 # that sets secondary_image_hash, not just Bulk Match Import) need
                 # these to resolve an image/link at all; titles/bodies were
                 # already covered above.
-                'asset_feed_spec{images,link_urls,titles,bodies}}',
+                'asset_feed_spec{images,link_urls,titles,bodies,descriptions,call_to_action_types}}',
             ])
 
             creative = ad_data.get('creative', {})
@@ -2167,6 +2168,15 @@ class FacebookService:
             if not body:
                 bodies = afs.get('bodies', [])
                 body = bodies[0].get('text') if bodies else None
+
+            # Description: link_data first, then the asset-feed equivalent used by
+            # dual-placement creatives. This is the Meta fallback for ads that were
+            # not launched by this app and therefore have no local FacebookAd row.
+            descriptions = afs.get('descriptions', []) or []
+            description = (
+                oss.get('link_data', {}).get('description') or
+                (descriptions[0].get('text') if descriptions else None)
+            )
 
             # CTA type
             cta_obj = creative.get('call_to_action', {})
@@ -2222,6 +2232,7 @@ class FacebookService:
             return {
                 "headline": headline,
                 "body": body,
+                "description": description,
                 "cta_label": cta_label,
                 "image_url": image_url,
                 "link_url": link_url,

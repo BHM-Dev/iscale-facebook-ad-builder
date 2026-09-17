@@ -871,42 +871,49 @@ def save_ad_locally(
     current_user: User = Depends(require_permission("campaigns:write"))
 ):
     try:
-        # Check if adset exists locally, if not we might need to create it or handle error
-        # For now, assuming adset exists or we just save the ID
+        # A Meta ad can be created successfully immediately before the client
+        # loses the local-save response. Replaying the save must update the same
+        # local row rather than creating a second record. Prefer the client-side
+        # id (stable across a retry), then fall back to Meta's ad id.
+        local_ad = None
+        if ad_data.get('id'):
+            local_ad = db.query(FacebookAd).filter(FacebookAd.id == ad_data['id']).first()
+        if local_ad is None and ad_data.get('fbAdId'):
+            local_ad = db.query(FacebookAd).filter(FacebookAd.fb_ad_id == ad_data['fbAdId']).first()
 
-        new_ad = FacebookAd(
-            id=ad_data.get('id'),
-            adset_id=ad_data.get('adsetId'),
-            name=ad_data.get('name'),
-            creative_name=ad_data.get('creativeName'),
-            image_url=ad_data.get('imageUrl'),
-            # Video support fields
-            media_type=ad_data.get('mediaType', 'image'),
-            video_url=ad_data.get('videoUrl'),
-            video_id=ad_data.get('videoId'),
-            thumbnail_url=ad_data.get('thumbnailUrl'),
-            bodies=ad_data.get('bodies'),
-            headlines=ad_data.get('headlines'),
-            description=ad_data.get('description'),
-            cta=ad_data.get('cta'),
-            website_url=ad_data.get('websiteUrl'),
-            status=ad_data.get('status'),
-            fb_ad_id=ad_data.get('fbAdId'),
-            fb_creative_id=ad_data.get('fbCreativeId'),
-            # Bulk Match Import fields. secondary_image_url is the durable URL
-            # of the 9x16 asset the frontend uploads to Meta via
-            # createCompleteAd/create_creative's asset_feed_spec path, for the
-            # Story placement — stored here for traceability. Not yet
-            # confirmed against a live Meta API response — pending live-test
-            # verification (see the url_tags comment in create_creative for
-            # the same caveat).
-            secondary_image_url=ad_data.get('secondaryImageUrl'),
-            ad_number=ad_data.get('adNumber')
-        )
-        db.add(new_ad)
+        if local_ad is None:
+            local_ad = FacebookAd(id=ad_data.get('id'))
+            db.add(local_ad)
+
+        local_ad.adset_id = ad_data.get('adsetId')
+        local_ad.name = ad_data.get('name')
+        local_ad.creative_name = ad_data.get('creativeName')
+        local_ad.image_url = ad_data.get('imageUrl')
+        # Video support fields
+        local_ad.media_type = ad_data.get('mediaType', 'image')
+        local_ad.video_url = ad_data.get('videoUrl')
+        local_ad.video_id = ad_data.get('videoId')
+        local_ad.thumbnail_url = ad_data.get('thumbnailUrl')
+        local_ad.bodies = ad_data.get('bodies')
+        local_ad.headlines = ad_data.get('headlines')
+        local_ad.description = ad_data.get('description')
+        local_ad.cta = ad_data.get('cta')
+        local_ad.website_url = ad_data.get('websiteUrl')
+        local_ad.status = ad_data.get('status')
+        local_ad.fb_ad_id = ad_data.get('fbAdId')
+        local_ad.fb_creative_id = ad_data.get('fbCreativeId')
+        # Bulk Match Import fields. secondary_image_url is the durable URL
+        # of the 9x16 asset the frontend uploads to Meta via
+        # createCompleteAd/create_creative's asset_feed_spec path, for the
+        # Story placement — stored here for traceability. Not yet
+        # confirmed against a live Meta API response — pending live-test
+        # verification (see the url_tags comment in create_creative for
+        # the same caveat).
+        local_ad.secondary_image_url = ad_data.get('secondaryImageUrl')
+        local_ad.ad_number = ad_data.get('adNumber')
         db.commit()
-        db.refresh(new_ad)
-        return {"message": "Ad saved locally", "id": new_ad.id}
+        db.refresh(local_ad)
+        return {"message": "Ad saved locally", "id": local_ad.id}
     except Exception as e:
         db.rollback()
         print(f"Error saving ad locally: {e}")
@@ -1160,6 +1167,29 @@ def get_ad_creative(
     _assert_ad_allowed(current_user, fb_ad_id, db, service)
     try:
         creative = service.get_ad_creative(fb_ad_id)
+        # Ads launched by Ad Builder have an exact per-ad copy record. Prefer it
+        # over Meta's reconstructed creative response: asset-feed creatives can
+        # expose only one representative title/body, while the local row retains
+        # the copy selected for this specific ad.
+        local_ad = db.query(FacebookAd).filter(FacebookAd.fb_ad_id == fb_ad_id).first()
+        if local_ad:
+            if local_ad.headlines:
+                creative["headlines"] = local_ad.headlines
+                creative["headline"] = local_ad.headlines[0]
+            elif creative.get("headline"):
+                creative["headlines"] = [creative["headline"]]
+            if local_ad.bodies:
+                creative["bodies"] = local_ad.bodies
+                creative["body"] = local_ad.bodies[0]
+            elif creative.get("body"):
+                creative["bodies"] = [creative["body"]]
+            if local_ad.description is not None:
+                creative["description"] = local_ad.description
+            if local_ad.cta:
+                creative["cta"] = local_ad.cta
+            if local_ad.website_url:
+                creative["website_url"] = local_ad.website_url
+                creative["link_url"] = local_ad.website_url
         # Enrich with overlay fields from local GeneratedAd record if one exists for this fb_ad_id.
         # This restores the offer line and logo URL on Iterate so Joel doesn't have to retype them.
         db_ad = db.query(GeneratedAd).filter(GeneratedAd.fb_ad_id == fb_ad_id).first()
