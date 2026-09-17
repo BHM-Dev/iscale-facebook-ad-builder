@@ -174,14 +174,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
 
   return (
     <>
-      <button
-        onClick={toggleOpen}
-        className="order-first flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100 transition-colors"
-        title="Campaign Intelligence — action queue, tracking checks, niche decisions"
-      >
-        <Sparkles size={14} />
-        Intelligence
-      </button>
+      {/* Temporarily hidden while the niche analysis is paused; the drawer remains reversible via its existing route state. */}
 
       {open && (
         // z-40, one below the Remix drawer's z-50 — if both are ever open at once,
