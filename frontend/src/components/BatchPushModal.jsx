@@ -73,12 +73,14 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
 
     // Push state
     const [pushing, setPushing] = useState(false);
-    const [pushStatuses, setPushStatuses] = useState({}); // key → 'pending'|'pushing'|'done'|'error'
+    const [pushStatuses, setPushStatuses] = useState({}); // key → 'pending'|'pushing'|'done'|'done_unlinked'|'error'
     const [pushErrors, setPushErrors] = useState({});     // key → error string
+    const [pushResults, setPushResults] = useState({});   // key → live Meta IDs for tracking-link repair
     const [isDone, setIsDone] = useState(false);
 
     const isCBO = selectedCampaign?.isCBO === true;
     const doneItems = items.filter(it => pushStatuses[it.key] === 'done');
+    const unlinkedItems = items.filter(it => pushStatuses[it.key] === 'done_unlinked');
     const errorItems = items.filter(it => pushStatuses[it.key] === 'error');
 
     // Ad Account is a free-text input whose onChange fires on every keystroke —
@@ -233,10 +235,38 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
         return Object.keys(errors).length === 0;
     };
 
+    const retryTrackingLink = async (item) => {
+        const result = pushResults[item.key];
+        if (!result?.adId || !item.generatedAdId) return;
+        try {
+            const response = await authFetch(`${GEN_ADS_API_BASE}/${item.generatedAdId}/fb-ad-id`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    fb_ad_id: result.adId,
+                    fb_adset_id: result.adsetId || null,
+                    fb_campaign_id: selectedCampaignId,
+                    fb_creative_id: result.creativeId || null,
+                }),
+            });
+            if (!response.ok) throw new Error(`link write-back HTTP ${response.status}`);
+            setPushStatuses(prev => ({ ...prev, [item.key]: 'done' }));
+            setPushErrors(prev => {
+                const next = { ...prev };
+                delete next[item.key];
+                return next;
+            });
+        } catch (error) {
+            setPushErrors(prev => ({ ...prev, [item.key]: error.message }));
+            showError(`Tracking link still failed for "${item.variantName || item.key}".`);
+        }
+    };
+
     const handlePushAll = async () => {
         if (!validate()) return;
         setPushStatuses({});
         setPushErrors({});
+        setPushResults({});
         setPushing(true);
         setIsDone(false);
 
@@ -296,6 +326,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                     adAccountId,
                     'ABO'
                 );
+                setPushResults(prev => ({ ...prev, [item.key]: { ...pushResult, adsetId: targetAdsetId } }));
                 // Write back Meta IDs to the local GeneratedAd record. fb_ad_id is the
                 // primary RedTrack sub1 join key — a missing link means this creative can
                 // never be attributed, so surface (don't swallow) a failed write-back.
@@ -313,8 +344,12 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                         });
                         if (!linkRes.ok) throw new Error(`link write-back HTTP ${linkRes.status}`);
                     } catch (linkErr) {
-                        // Ad pushed fine, but attribution link failed — warn without failing the push.
+                        // The ad is live, so do not classify this as a normal push
+                        // failure or encourage a full-batch retry that would duplicate it.
+                        setPushStatuses(prev => ({ ...prev, [item.key]: 'done_unlinked' }));
+                        setPushErrors(prev => ({ ...prev, [item.key]: linkErr.message }));
                         showError(`Ad pushed but tracking link failed for "${copy.headline || item.headline || item.key}". Revenue attribution may be missing.`);
+                        continue;
                     }
                 }
                 setPushStatuses(prev => ({ ...prev, [item.key]: 'done' }));
@@ -350,10 +385,10 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                             : <AlertCircle size={36} className="text-amber-600" />}
                     </div>
                     <h3 className="text-xl font-bold text-gray-900 mb-1">
-                        {errorItems.length === 0 ? 'All Ads Pushed!' : `${doneItems.length} of ${items.length} Pushed`}
+                        {errorItems.length === 0 && unlinkedItems.length === 0 ? 'All Ads Pushed!' : `${doneItems.length + unlinkedItems.length} of ${items.length} Pushed`}
                     </h3>
                     <p className="text-gray-500 text-sm mb-6">
-                        {doneItems.length} succeeded{errorItems.length > 0 ? `, ${errorItems.length} failed` : ''}.
+                        {doneItems.length + unlinkedItems.length} succeeded{unlinkedItems.length > 0 ? `, ${unlinkedItems.length} need tracking repair` : ''}{errorItems.length > 0 ? `, ${errorItems.length} failed` : ''}.
                     </p>
 
                     {/* Per-item summary */}
@@ -362,12 +397,23 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                             <div key={item.key} className="flex items-center gap-2 text-sm">
                                 {pushStatuses[item.key] === 'done'
                                     ? <CheckCircle2 size={14} className="text-green-500 shrink-0" />
+                                    : pushStatuses[item.key] === 'done_unlinked'
+                                        ? <AlertCircle size={14} className="text-amber-500 shrink-0" />
                                     : <AlertCircle size={14} className="text-red-500 shrink-0" />}
                                 <span className="text-gray-700 truncate flex-1">{item.variantName} · {item.sizeLabel}</span>
                                 {pushErrors[item.key] && (
                                     <span className="text-red-500 text-xs truncate max-w-[160px]" title={pushErrors[item.key]}>
                                         {pushErrors[item.key]}
                                     </span>
+                                )}
+                                {pushStatuses[item.key] === 'done_unlinked' && (
+                                    <button
+                                        type="button"
+                                        className="text-xs text-amber-700 underline shrink-0"
+                                        onClick={() => retryTrackingLink(item)}
+                                    >
+                                        Retry link
+                                    </button>
                                 )}
                             </div>
                         ))}
