@@ -312,7 +312,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                       const items = data.action_queue[lane.key];
                       if (!items?.length) return null;
                       return (
-                        <div key={lane.key} className={`rounded-lg border ${lane.border} overflow-hidden bg-white ${lane.key === 'tracking_check' ? 'md:col-span-3' : ''}`}>
+                        <div key={lane.key} className={`rounded-lg border ${lane.border} overflow-hidden bg-white ${lane.key === 'tracking_check' ? 'sm:col-span-2 md:col-span-3' : ''}`}>
                           <div className={`${lane.hdrBg} px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide ${lane.text}`}>
                             {lane.label}
                           </div>
