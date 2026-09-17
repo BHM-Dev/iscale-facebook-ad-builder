@@ -174,7 +174,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
 
   return (
     <>
-      {/* Temporarily hidden while the niche analysis is paused; the drawer remains reversible via its existing route state. */}
+      {/* Temporarily hidden while the niche analysis is paused; the drawer code remains available for reactivation. */}
 
       {open && (
         // z-40, one below the Remix drawer's z-50 — if both are ever open at once,
@@ -1058,8 +1058,6 @@ export default function CampaignPerformance() {
   const [metricFilter, setMetricFilter] = useState({ metric: 'cpl', operator: 'lt', value: '' });
   const dashboardView = searchParams.get('view'); // derived live from URL — never stale
   const targetAdsetId = searchParams.get('adsetId');
-  const intelligencePanelOpen = searchParams.get('panel') === 'intelligence';
-  const intelligenceInitialPreset = searchParams.get('ciPreset') || null;
 
   // Bulk insights state — one API call replaces N per-row calls
   const [bulkInsights, setBulkInsights]       = useState(null);
@@ -1755,14 +1753,6 @@ export default function CampaignPerformance() {
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          <CampaignIntelligencePanel
-            adAccountId={adAccountId}
-            pageDatePreset={datePreset}
-            pageDateFrom={dateFrom}
-            pageDateTo={dateTo}
-            initialOpen={intelligencePanelOpen}
-            initialPreset={intelligenceInitialPreset}
-          />
           <button
             onClick={() => setShowAddRuleModal(true)}
             className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-orange-200 text-orange-600 bg-orange-50 hover:bg-orange-100 transition-colors"
