@@ -122,6 +122,7 @@ export default function GeneratedAds() {
                         generatedAdId: ad.id, // local DB id — written back after push to link fb_ad_id
                         headline: ad.headline || '',
                         body: ad.body || '',
+                        description: ad.description || '',
                         cta: ad.cta || 'LEARN_MORE',
                         variantName: ad.headline ? ad.headline.slice(0, 30) : `Ad ${ad.id}`,
                         sizeLabel: ad.size_name || '—',
@@ -412,6 +413,7 @@ export default function GeneratedAds() {
                     name: ad.headline || `Library Ad ${ad.id}`,
                     headline: ad.headline || '',
                     body: ad.body || '',
+                    description: ad.description || '',
                     cta: ad.cta || 'LEARN_MORE'
                 });
             }

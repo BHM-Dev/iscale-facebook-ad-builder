@@ -2181,6 +2181,15 @@ class FacebookService:
             # CTA type
             cta_obj = creative.get('call_to_action', {})
             cta_label = cta_obj.get('type') if isinstance(cta_obj, dict) else None
+            if not cta_label:
+                cta_types = afs.get('call_to_action_types', []) or []
+                cta_label = cta_types[0] if cta_types else None
+
+            descriptions = afs.get('descriptions', []) or []
+            description = (
+                oss.get('link_data', {}).get('description') or
+                (descriptions[0].get('text') if descriptions else None)
+            )
 
             # asset_feed_spec fallback for the dual-placement (Bulk Match Import)
             # creative shape, which has NO object_story_spec.link_data at all.

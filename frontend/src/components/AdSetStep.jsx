@@ -384,6 +384,8 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
 
         setAdsetData({
             ...adset,
+            id: adset.local_id || adset.id,
+            localAdsetId: adset.local_id || null,
             // Map snake_case from API to camelCase for state
             optimizationGoal: adset.optimization_goal,
             dailyBudget: (adset.daily_budget || 0) / 100,
