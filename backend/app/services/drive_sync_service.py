@@ -506,14 +506,29 @@ class DriveSyncService:
         package_folder = self._find_package_folder(file_meta)
         if package_folder:
             folder_metadata = self._folder_copy_metadata(package_folder)
-            metadata = folder_metadata.get("assets", {}).get(file_name.lower(), {})
+            metadata = folder_metadata.get("assets_by_drive_id", {}).get(file_meta.get("id"))
+            metadata = metadata or folder_metadata.get("assets", {}).get(file_name.lower(), {})
             if metadata:
-                return metadata
+                return self._bind_media_metadata_to_file(metadata, file_meta.get("id"))
         strategy_folder = self._find_strategy_package_folder(file_meta)
         if not strategy_folder:
             return {}
         folder_metadata = self._folder_copy_metadata(strategy_folder)
-        return folder_metadata.get("assets", {}).get(file_name.lower(), {})
+        return self._bind_media_metadata_to_file(
+            folder_metadata.get("assets_by_drive_id", {}).get(file_meta.get("id"))
+            or folder_metadata.get("assets", {}).get(file_name.lower(), {}),
+            file_meta.get("id"),
+        )
+
+    def _bind_media_metadata_to_file(self, metadata: Dict[str, Any], drive_file_id: Optional[str]) -> Dict[str, Any]:
+        """Return copy tags without leaking a duplicate basename's sibling ID."""
+        if not metadata:
+            return {}
+        bound = dict(metadata)
+        sibling_ids = bound.pop("drive_file_ids", None)
+        if sibling_ids:
+            bound["drive_file_id"] = drive_file_id
+        return bound
 
     def _refresh_folder_copy_metadata(self, file_meta: Dict[str, Any]) -> int:
         parents = file_meta.get("parents") or []
@@ -535,9 +550,12 @@ class DriveSyncService:
                 return 0
             folder_metadata = self._folder_copy_metadata(strategy_folder, force=True)
         updated = 0
-        for file_name, soft_tags in folder_metadata.get("assets", {}).items():
-            drive_file_id = soft_tags.get("drive_file_id")
-            if not drive_file_id:
+        refresh_assets = folder_metadata.get("assets_by_drive_id") or folder_metadata.get("assets", {})
+        for file_name, soft_tags in refresh_assets.items():
+            if folder_metadata.get("assets_by_drive_id"):
+                file_name = soft_tags.get("file_name") or file_name
+            drive_file_ids = soft_tags.get("drive_file_ids") or ([soft_tags.get("drive_file_id")] if soft_tags.get("drive_file_id") else [])
+            if not drive_file_ids:
                 # A manifest names this file (via its 1x1:/9x16: entry) but no media
                 # file with that exact name was found in the same Drive listing pass
                 # — name mismatch, case/whitespace drift, or the file genuinely isn't
@@ -549,20 +567,21 @@ class DriveSyncService:
                     file_name,
                 )
                 continue
-            result = self.db.execute(
-                text(
-                    """
-                    UPDATE drive_assets
-                    SET soft_tags = :soft_tags, synced_at = NOW()
-                    WHERE drive_file_id = :drive_file_id
-                    """
-                ),
-                {
-                    "soft_tags": json.dumps(soft_tags),
-                    "drive_file_id": drive_file_id,
-                },
-            )
-            updated += result.rowcount or 0
+            for drive_file_id in drive_file_ids:
+                result = self.db.execute(
+                    text(
+                        """
+                        UPDATE drive_assets
+                        SET soft_tags = :soft_tags, synced_at = NOW()
+                        WHERE drive_file_id = :drive_file_id
+                        """
+                    ),
+                    {
+                        "soft_tags": json.dumps(self._bind_media_metadata_to_file(soft_tags, drive_file_id)),
+                        "drive_file_id": drive_file_id,
+                    },
+                )
+                updated += result.rowcount or 0
         return updated
 
     def _list_folder_subtree(self, folder_id: str, max_files: int = 2000) -> List[Dict[str, Any]]:
@@ -579,15 +598,15 @@ class DriveSyncService:
         """
         drive = self._client()
         collected: List[Dict[str, Any]] = []
-        queue = [folder_id]
+        queue = [(folder_id, "")]
         seen_folders = {folder_id}
         while queue and len(collected) < max_files:
-            current = queue.pop(0)
+            current, current_name = queue.pop(0)
             try:
                 response = drive.files().list(
                     q=f"'{current}' in parents and trashed = false",
                     spaces="drive",
-                    fields="files(id,name,mimeType,modifiedTime)",
+                fields="files(id,name,mimeType,modifiedTime)",
                     includeItemsFromAllDrives=True,
                     supportsAllDrives=True,
                 ).execute()
@@ -598,8 +617,12 @@ class DriveSyncService:
                 if item.get("mimeType") == "application/vnd.google-apps.folder":
                     if item["id"] not in seen_folders:
                         seen_folders.add(item["id"])
-                        queue.append(item["id"])
+                        queue.append((item["id"], item.get("name") or ""))
                 else:
+                    # Preserve the immediate folder name for category-copy docs
+                    # whose placement is encoded by the folder ("1x1"/"9x16")
+                    # rather than repeated in every image filename.
+                    item["_parent_folder_name"] = current_name
                     collected.append(item)
         return collected
 
@@ -635,6 +658,10 @@ class DriveSyncService:
                 logger.warning("Could not inspect Drive folder %s for strategy copy docs: %s", current, exc)
                 break
             found = False
+            has_media = any(
+                self._is_supported_media(item.get("mimeType") or "", item.get("name") or "")
+                for item in folder_files
+            )
             for item in folder_files:
                 if not self._is_text_file(item.get("mimeType") or "", item.get("name") or ""):
                     continue
@@ -642,7 +669,10 @@ class DriveSyncService:
                     text_body = self._download_text_file(item["id"])
                 except Exception:
                     continue
-                if self._looks_like_strategy_copy_doc(text_body) or self._looks_like_category_copy_doc(text_body):
+                if (
+                    has_media
+                    and (self._looks_like_strategy_copy_doc(text_body) or self._looks_like_category_copy_doc(text_body))
+                ):
                     resolved = current
                     found = True
                     break
@@ -707,7 +737,11 @@ class DriveSyncService:
             if self._looks_like_strategy_copy_doc(strategy_text):
                 metadata = self._strategy_folder_copy_metadata(folder_id, folder_files, media_by_name, strategy_text)
             else:
-                metadata = self._category_folder_copy_metadata(folder_id, media_by_name, strategy_text)
+                category_media = [
+                    item for item in folder_files
+                    if self._is_supported_media(item.get("mimeType") or "", item.get("name") or "")
+                ]
+                metadata = self._category_folder_copy_metadata(folder_id, category_media, strategy_text)
             self._folder_metadata_cache[folder_id] = metadata
             return metadata
 
@@ -788,7 +822,7 @@ class DriveSyncService:
         2: ("retail", "shop owner", "shop owners", "boutique"),
         3: ("plumbing", "plumbers", "hvac", "home service", "plumber"),
         4: ("restaurant", "restaurants", "food service", "cafe", "cafes", "café"),
-        5: ("auto repair", "auto repairs", "auto-repair", "automotive repair"),
+        5: ("auto repair", "auto repairs", "auto-repair", "auto shop", "auto-shop", "automotive repair"),
         6: ("contractor", "contractors", "construction", "trade contractor", "trade contractors"),
         7: ("general", "protect what you built", "business owner", "business owners", "broad"),
     }
@@ -822,13 +856,27 @@ class DriveSyncService:
         candidates = (normalized_category, *(self._normalize_name(alias) for alias in aliases))
         return any(candidate and candidate in normalized_file for candidate in candidates)
 
-    def _category_folder_copy_metadata(self, folder_id, media_by_name, text_body):
+    def _category_folder_copy_metadata(self, folder_id, media_files, text_body):
         sections = self._parse_category_copy_doc(text_body)
         assets: Dict[str, Dict[str, Any]] = {}
-        for item in media_by_name.values():
+        assets_by_drive_id: Dict[str, Dict[str, Any]] = {}
+        candidates = []
+        for item in media_files:
             file_name = item.get("name") or ""
             aspect_match = re.search(r"(?:^|[-_ ])(1x1|9x16)(?:[-_][A-Za-z0-9]+)?(?=\.[^.]+$)", file_name, re.IGNORECASE)
-            if not aspect_match:
+            if aspect_match:
+                aspect = aspect_match.group(1).lower()
+            else:
+                folder_aspect = re.match(
+                    r"^\s*(1x1|9x16)(?:\s+(?:images?|assets?|feed|stories|reels))?\s*$",
+                    item.get("_parent_folder_name") or "",
+                    re.IGNORECASE,
+                )
+                if not folder_aspect:
+                    logger.info("Drive image %s has no placement size in filename or parent folder", file_name)
+                    continue
+                aspect = folder_aspect.group(1).lower()
+            if not aspect:
                 continue
             matches = [number for number, section in sections.items() if self._category_matches(file_name, section["category"], number)]
             if len(matches) != 1:
@@ -839,17 +887,35 @@ class DriveSyncService:
                 continue
             number = matches[0]
             section = sections[number]
-            copy_id = f"CATEGORY-{number:02d}"
-            assets[file_name.lower()] = {
-                "copy_id": copy_id,
-                "category": section["category"],
-                "aspect": aspect_match.group(1).lower(),
-                "copy": {"headline": section["headline"], "primary_text": section["primary_text"], "description": None},
-                "source": "category_copy_doc",
-                "drive_file_id": item.get("id"),
-                "package_folder_id": folder_id,
-            }
-        return {"assets": assets}
+            candidates.append((item, file_name, number, section, aspect))
+
+        candidates_by_category: Dict[int, List[Any]] = {}
+        for candidate in candidates:
+            candidates_by_category.setdefault(candidate[2], []).append(candidate)
+        for number, category_candidates in candidates_by_category.items():
+            feed = [candidate for candidate in category_candidates if candidate[4] == "1x1"]
+            stories = [candidate for candidate in category_candidates if candidate[4] == "9x16"]
+            pair_count = min(len(feed), len(stories))
+            for item, file_name, _, section, aspect in category_candidates:
+                same_aspect_index = (feed if aspect == "1x1" else stories).index((item, file_name, number, section, aspect))
+                copy_id = f"CATEGORY-{number:02d}"
+                if same_aspect_index >= pair_count:
+                    copy_id = f"{copy_id}-EXTRA-{same_aspect_index - pair_count + 1}"
+                metadata = {
+                    "copy_id": copy_id,
+                    "category": section["category"],
+                    "aspect": aspect,
+                    "copy": {"headline": section["headline"], "primary_text": section["primary_text"], "description": None},
+                    "source": "category_copy_doc",
+                    "drive_file_id": item.get("id"),
+                    "package_folder_id": folder_id,
+                    "file_name": file_name,
+                }
+                assets_by_drive_id[item.get("id")] = metadata
+            # Keep a basename fallback for older callers, but use the exact Drive
+            # ID index whenever available so duplicate names remain distinct.
+                assets[file_name.lower()] = metadata
+        return {"assets": assets, "assets_by_drive_id": assets_by_drive_id}
 
     def _strategy_folder_copy_metadata(self, folder_id, folder_files, media_by_name, text_body):
         blocks = self._parse_strategy_copy_doc(text_body)

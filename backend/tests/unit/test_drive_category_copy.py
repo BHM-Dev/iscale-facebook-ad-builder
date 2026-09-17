@@ -34,13 +34,33 @@ Headline: Cafe Owners: Compare Coverage Free
 Primary text:
 Restaurant copy.
 """
-    media = {
-        "restaurant-1x1.png": {"id": "feed-id", "name": "restaurant-1x1.png"},
-        "restaurant-9x16.png": {"id": "stories-id", "name": "restaurant-9x16.png"},
-    }
+    media = [
+        {"id": "feed-id", "name": "restaurant.png", "_parent_folder_name": "1x1"},
+        {"id": "stories-id", "name": "restaurant-9x16.png", "_parent_folder_name": "9x16"},
+    ]
 
     result = service._category_folder_copy_metadata("package-id", media, document)
 
-    assert result["assets"]["restaurant-1x1.png"]["copy_id"] == "CATEGORY-04"
+    assert result["assets"]["restaurant.png"]["copy_id"] == "CATEGORY-04"
     assert result["assets"]["restaurant-9x16.png"]["aspect"] == "9x16"
-    assert result["assets"]["restaurant-1x1.png"]["copy"]["primary_text"] == "Restaurant copy."
+    assert result["assets"]["restaurant.png"]["copy"]["primary_text"] == "Restaurant copy."
+
+
+def test_category_metadata_keeps_duplicate_basenames_refreshable():
+    service = DriveSyncService.__new__(DriveSyncService)
+    media = [
+        {"id": "restaurant-a", "name": "restaurant.png", "_parent_folder_name": "1x1"},
+        {"id": "restaurant-b", "name": "restaurant.png", "_parent_folder_name": "1x1"},
+    ]
+    document = """4. RESTAURANT AND FOOD SERVICE
+Headline: Cafe Owners: Compare Coverage Free
+Primary text:
+Restaurant copy.
+"""
+
+    result = service._category_folder_copy_metadata("package-id", media, document)
+
+    tags = result["assets"]["restaurant.png"]
+    assert tags["drive_file_id"] == "restaurant-b"
+    assert result["assets_by_drive_id"]["restaurant-a"]["copy_id"] == "CATEGORY-04-EXTRA-1"
+    assert result["assets_by_drive_id"]["restaurant-b"]["copy_id"] == "CATEGORY-04-EXTRA-2"
