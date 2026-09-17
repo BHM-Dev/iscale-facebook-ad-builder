@@ -30,6 +30,7 @@ SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 STATE_KEY = "drive_changes_start_page_token"
 SUPPORTED_PREFIXES = ("image/", "video/")
 TEXT_PREFIXES = ("text/",)
+GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
 
 
 @dataclass
@@ -432,6 +433,8 @@ class DriveSyncService:
         return bool(guessed and guessed.startswith(SUPPORTED_PREFIXES))
 
     def _is_text_file(self, mime_type: str, file_name: str) -> bool:
+        if mime_type == GOOGLE_DOC_MIME:
+            return True
         if mime_type.startswith(TEXT_PREFIXES):
             return True
         guessed, _ = mimetypes.guess_type(file_name)
@@ -639,7 +642,7 @@ class DriveSyncService:
                     text_body = self._download_text_file(item["id"])
                 except Exception:
                     continue
-                if self._looks_like_strategy_copy_doc(text_body):
+                if self._looks_like_strategy_copy_doc(text_body) or self._looks_like_category_copy_doc(text_body):
                     resolved = current
                     found = True
                     break
@@ -692,18 +695,19 @@ class DriveSyncService:
             self._folder_metadata_cache[folder_id] = metadata
             return metadata
 
-        strategy_file = next(
-            (item for item in text_files if self._looks_like_strategy_copy_doc(self._safe_download_text_file(item["id"]))),
-            None,
-        )
+        strategy_file = None
+        strategy_text = ""
+        for item in text_files:
+            candidate_text = self._safe_download_text_file(item["id"])
+            if self._looks_like_strategy_copy_doc(candidate_text) or self._looks_like_category_copy_doc(candidate_text):
+                strategy_file = item
+                strategy_text = candidate_text
+                break
         if strategy_file:
-            try:
-                strategy_text = self._download_text_file(strategy_file["id"])
-            except Exception:
-                logger.warning("Could not read Drive strategy copy document %s", strategy_file.get("name"))
-                self._folder_metadata_cache[folder_id] = {"assets": {}}
-                return self._folder_metadata_cache[folder_id]
-            metadata = self._strategy_folder_copy_metadata(folder_id, folder_files, media_by_name, strategy_text)
+            if self._looks_like_strategy_copy_doc(strategy_text):
+                metadata = self._strategy_folder_copy_metadata(folder_id, folder_files, media_by_name, strategy_text)
+            else:
+                metadata = self._category_folder_copy_metadata(folder_id, media_by_name, strategy_text)
             self._folder_metadata_cache[folder_id] = metadata
             return metadata
 
@@ -764,6 +768,88 @@ class DriveSyncService:
 
     def _looks_like_strategy_copy_doc(self, text_body: str) -> bool:
         return bool(re.search(r"^##\s+AD-[A-Z0-9]+-\d{2}\b", text_body, re.IGNORECASE | re.MULTILINE))
+
+    def _looks_like_category_copy_doc(self, text_body: str) -> bool:
+        """Recognize a simple category-indexed copy doc used by mixed batches.
+
+        These docs intentionally do not use the structured `## AD-...` format.
+        Joel can name an image with its category and placement (for example
+        `restaurant-1x1.png`) and this parser can then join it to the uniquely
+        matching numbered section without inspecting image pixels.
+        """
+        return bool(
+            re.search(r"^\s*\d+\.\s+.+$", text_body, re.IGNORECASE | re.MULTILINE)
+            and re.search(r"^\s*Headline\s*:", text_body, re.IGNORECASE | re.MULTILINE)
+            and re.search(r"^\s*Primary text\s*:", text_body, re.IGNORECASE | re.MULTILINE)
+        )
+
+    _CATEGORY_ALIASES = {
+        1: ("landscaping", "landscapers", "field service", "lawn care", "outdoor crew"),
+        2: ("retail", "shop owner", "shop owners", "boutique"),
+        3: ("plumbing", "plumbers", "hvac", "home service", "plumber"),
+        4: ("restaurant", "restaurants", "food service", "cafe", "cafes", "café"),
+        5: ("auto repair", "auto repairs", "auto-repair", "automotive repair"),
+        6: ("contractor", "contractors", "construction", "trade contractor", "trade contractors"),
+        7: ("general", "protect what you built", "business owner", "business owners", "broad"),
+    }
+
+    def _parse_category_copy_doc(self, text_body: str) -> Dict[int, Dict[str, Any]]:
+        headings = list(re.finditer(r"^\s*(\d+)\.\s+(.+?)\s*$", text_body, re.MULTILINE))
+        sections: Dict[int, Dict[str, Any]] = {}
+        for index, heading in enumerate(headings):
+            number = int(heading.group(1))
+            block = text_body[heading.end():headings[index + 1].start() if index + 1 < len(headings) else len(text_body)]
+            headline = re.search(r"^\s*Headline\s*:\s*(.+?)\s*$", block, re.IGNORECASE | re.MULTILINE)
+            primary = re.search(
+                r"^\s*Primary text\s*:\s*\r?\n?(.*?)(?=^\s*Alt headlines\s*:|\Z)",
+                block,
+                re.IGNORECASE | re.MULTILINE | re.DOTALL,
+            )
+            if not headline or not primary:
+                continue
+            sections[number] = {
+                "category": heading.group(2).strip(),
+                "headline": self._clean_markdown_value(headline.group(1)),
+                "primary_text": self._clean_markdown_value(primary.group(1)),
+                "description": None,
+            }
+        return sections
+
+    def _category_matches(self, file_name: str, category: str, number: int) -> bool:
+        normalized_file = self._normalize_name(os.path.splitext(file_name)[0])
+        normalized_category = self._normalize_name(category)
+        aliases = self._CATEGORY_ALIASES.get(number, ())
+        candidates = (normalized_category, *(self._normalize_name(alias) for alias in aliases))
+        return any(candidate and candidate in normalized_file for candidate in candidates)
+
+    def _category_folder_copy_metadata(self, folder_id, media_by_name, text_body):
+        sections = self._parse_category_copy_doc(text_body)
+        assets: Dict[str, Dict[str, Any]] = {}
+        for item in media_by_name.values():
+            file_name = item.get("name") or ""
+            aspect_match = re.search(r"(?:^|[-_ ])(1x1|9x16)(?:[-_][A-Za-z0-9]+)?(?=\.[^.]+$)", file_name, re.IGNORECASE)
+            if not aspect_match:
+                continue
+            matches = [number for number, section in sections.items() if self._category_matches(file_name, section["category"], number)]
+            if len(matches) != 1:
+                if len(matches) > 1:
+                    logger.warning("Drive image %s matched multiple copy categories: %s", file_name, matches)
+                else:
+                    logger.info("Drive image %s has no unique category-copy match", file_name)
+                continue
+            number = matches[0]
+            section = sections[number]
+            copy_id = f"CATEGORY-{number:02d}"
+            assets[file_name.lower()] = {
+                "copy_id": copy_id,
+                "category": section["category"],
+                "aspect": aspect_match.group(1).lower(),
+                "copy": {"headline": section["headline"], "primary_text": section["primary_text"], "description": None},
+                "source": "category_copy_doc",
+                "drive_file_id": item.get("id"),
+                "package_folder_id": folder_id,
+            }
+        return {"assets": assets}
 
     def _strategy_folder_copy_metadata(self, folder_id, folder_files, media_by_name, text_body):
         blocks = self._parse_strategy_copy_doc(text_body)
@@ -872,6 +958,20 @@ class DriveSyncService:
         return re.sub(r"\*\*|`", "", (value or "")).strip()
 
     def _download_text_file(self, drive_file_id: str) -> str:
+        drive = self._client()
+        info = drive.files().get(
+            fileId=drive_file_id,
+            fields="mimeType",
+            supportsAllDrives=True,
+        ).execute()
+        if info.get("mimeType") == GOOGLE_DOC_MIME:
+            request = drive.files().export_media(fileId=drive_file_id, mimeType="text/plain")
+            buffer = io.BytesIO()
+            downloader = MediaIoBaseDownload(buffer, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+            return buffer.getvalue().decode("utf-8", errors="replace")
         return self._download_file(drive_file_id).decode("utf-8", errors="replace")
 
     def _parse_handoff_manifest(self, text_body: str) -> Dict[str, Any]:
