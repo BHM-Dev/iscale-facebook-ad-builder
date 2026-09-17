@@ -58,6 +58,9 @@ const hasCopyText = (copy = {}) => Boolean(
     copy.primary_text?.trim() ||
     copy.description?.trim()
 );
+const hasCompleteCopy = (copy = {}) => Boolean(
+    copy.headline?.trim() && copy.primary_text?.trim()
+);
 
 const normalizeFilenameBase = (fileName = '') => {
     const withoutExt = fileName.replace(/\.[^.]+$/, '');
@@ -301,8 +304,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
 
     const driveGroupById = useMemo(() => new Map(driveAssetGroups.map(group => [group.id, group])), [driveAssetGroups]);
     const mixedDriveCopyMatches = useMemo(() => {
-        const matchedPairs = driveAssetGroups.filter(group => group.isPair && hasCopyText(group.copy || {})).length;
-        const unmatchedPairs = driveAssetGroups.filter(group => group.isPair && !hasCopyText(group.copy || {})).length;
+        const matchedPairs = driveAssetGroups.filter(group => group.isPair && hasCompleteCopy(group.copy || {})).length;
+        const unmatchedPairs = driveAssetGroups.filter(group => group.isPair && !hasCompleteCopy(group.copy || {})).length;
         return matchedPairs > 0 && unmatchedPairs > 0
             ? { matchedPairs, unmatchedPairs }
             : null;
@@ -315,6 +318,15 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         () => [...selectedDriveAssetIds].reduce((sum, id) => sum + (driveGroupById.get(id)?.isPair ? 2 : 1), 0),
         [selectedDriveAssetIds, driveGroupById]
     );
+    const driveSelectionMatchedGroupCount = useMemo(() => {
+        const selectedGroups = [...selectedDriveAssetIds]
+            .map(id => driveGroupById.get(id))
+            .filter(Boolean);
+        const hasMatchedCopy = selectedGroups.some(group => hasCompleteCopy(group.copy || {}));
+        return hasMatchedCopy
+            ? selectedGroups.filter(group => hasCompleteCopy(group.copy || {})).length
+            : selectedGroups.length;
+    }, [selectedDriveAssetIds, driveGroupById]);
     // Mirrors addDriveSelectionToCreatives's exact branching so the pre-add
     // "N total ad combinations" preview can't drift from what actually lands
     // in creativeData.creatives — pre-push review (code-auditor: HIGH) found
@@ -510,7 +522,23 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         const selectedGroups = [...selectedDriveAssetIds]
             .map(id => driveGroupById.get(id))
             .filter(Boolean);
-        const newCreatives = selectedGroups.flatMap(group => {
+        const groupsWithCopy = selectedGroups.filter(group => hasCompleteCopy(group.copy || {}));
+        // A mixed selection must never let a matched category's global copy
+        // fall through onto an unmatched asset. Keep the all-unmatched flow
+        // available for Joel's manual copy, but require every group to have a
+        // matched copy set when any selected group already has one.
+        const unmatchedGroups = groupsWithCopy.length > 0
+            ? selectedGroups.filter(group => !hasCompleteCopy(group.copy || {}))
+            : [];
+        const clearStaleGlobalCopy = selectedGroups.length > 0
+            && groupsWithCopy.length === 0
+            && !copyFieldsTouched.headlines
+            && !copyFieldsTouched.bodies;
+        const groupsToAdd = unmatchedGroups.length > 0
+            ? selectedGroups.filter(group => hasCompleteCopy(group.copy || {}))
+            : selectedGroups;
+        const newCreatives = groupsToAdd.flatMap(group => {
+            const matchedCopy = hasCompleteCopy(group.copy || {}) ? group.copy : {};
             // A real pair (both an image feed asset AND an image stories asset —
             // create_creative's dual-placement path is image-only, never video,
             // per its own docstring) becomes ONE creative carrying both URLs, so
@@ -536,8 +564,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     format: 'feed',
                     dualPlacement: true,
                     drivePairId: group.id,
-                    headline: group.copy?.headline || '',
-                    body: group.copy?.primary_text || '',
+                    headline: matchedCopy.headline || '',
+                    body: matchedCopy.primary_text || '',
                     cta: group.cta || '',
                     websiteUrl: group.landingPage || ''
                 }];
@@ -558,8 +586,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     mediaType: asset.format,
                     format: driveAssetPlacement(asset),
                     drivePairId: null,
-                    headline: group.copy?.headline || '',
-                    body: group.copy?.primary_text || '',
+                    headline: matchedCopy.headline || '',
+                    body: matchedCopy.primary_text || '',
                     cta: group.cta || '',
                     websiteUrl: group.landingPage || ''
                 });
@@ -579,19 +607,22 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 mediaType: asset.format,
                 format: driveAssetPlacement(asset),
                 drivePairId: group.id,
-                headline: group.copy?.headline || '',
-                body: group.copy?.primary_text || '',
+                headline: matchedCopy.headline || '',
+                body: matchedCopy.primary_text || '',
                 cta: group.cta || '',
                 websiteUrl: group.landingPage || ''
             }));
         });
-        const groupsWithCopy = selectedGroups.filter(group => hasCopyText(group.copy || {}));
         const firstWithCopy = groupsWithCopy[0] || selectedGroups.find(group => group.landingPage || group.cta);
         const firstCopy = firstWithCopy?.copy || {};
         const firstDefaultUrl = selectedGroups.map(defaultUrlForDriveGroup).find(Boolean) || '';
         setCreativeData(prev => {
-            const nextHeadlines = firstCopy.headline && !copyFieldsTouched.headlines ? [firstCopy.headline] : prev.headlines;
-            const nextBodies = firstCopy.primary_text && !copyFieldsTouched.bodies ? [firstCopy.primary_text] : prev.bodies;
+            const nextHeadlines = firstCopy.headline && !copyFieldsTouched.headlines
+                ? [firstCopy.headline]
+                : clearStaleGlobalCopy ? [''] : prev.headlines;
+            const nextBodies = firstCopy.primary_text && !copyFieldsTouched.bodies
+                ? [firstCopy.primary_text]
+                : clearStaleGlobalCopy ? [''] : prev.bodies;
             const nextDescription = firstCopy.description && !copyFieldsTouched.description ? firstCopy.description : prev.description;
             const nextCta = firstWithCopy?.cta && !copyFieldsTouched.cta ? firstWithCopy.cta : (prev.cta || 'LEARN_MORE');
             const nextWebsiteUrl = (firstWithCopy?.landingPage || firstDefaultUrl) && !copyFieldsTouched.websiteUrl
@@ -616,6 +647,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 websiteUrl: nextWebsiteUrl
             };
         });
+        if (unmatchedGroups.length > 0) {
+            showWarning(`Skipped ${unmatchedGroups.length} Drive creative${unmatchedGroups.length !== 1 ? 's' : ''} without matched copy. Select one category at a time or add its copy before launching.`);
+        }
         if (newCreatives.length > 0) {
             const pairCount = selectedGroups.filter(group => group.isPair).length;
             const copySource = firstWithCopy?.displayAsset?.folder_path || firstWithCopy?.displayAsset?.file_name;
@@ -2324,7 +2358,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 disabled={selectedDriveAssetIds.size === 0}
                                 className="px-4 py-2 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                             >
-                                Add {selectedDriveAssetIds.size > 0 ? selectedDriveAssetIds.size : ''} to Campaign
+                                Add {driveSelectionMatchedGroupCount > 0 ? driveSelectionMatchedGroupCount : ''} to Campaign
                             </button>
                         </div>
                     </div>

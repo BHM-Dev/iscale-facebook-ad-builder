@@ -738,8 +738,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             videoUrl: adSpecificCreativeData.videoUrl,
                             videoId: result.videoId,
                             thumbnailUrl: result.thumbnailUrl,
-                            bodies: creativeData.bodies.filter(b => b.trim() !== ''),
-                            headlines: creativeData.headlines.filter(h => h.trim() !== ''),
+                            // Persist the exact per-ad copy used for this creative.
+                            // Drive selections can carry different matched copy per
+                            // image/pair; saving the global arrays here made later
+                            // reads and Iterate show the first category's copy.
+                            bodies: adSpecificCreativeData.bodies.filter(b => b && b.trim() !== ''),
+                            headlines: adSpecificCreativeData.headlines.filter(h => h && h.trim() !== ''),
                             description: creativeData.description,
                             cta: adSpecificCreativeData.cta,
                             websiteUrl: adSpecificCreativeData.websiteUrl,

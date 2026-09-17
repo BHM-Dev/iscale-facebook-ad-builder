@@ -82,11 +82,12 @@ def list_drive_assets(
 
 @router.post("/sync-now", response_model=DriveSyncResult)
 def sync_drive_assets_now(
+    backfill: bool = Query(default=False),
     db: Session = Depends(get_db),
     _current_user: User = Depends(get_current_active_user),
 ):
     try:
-        return DriveSyncService(db).sync_once()
+        return DriveSyncService(db).sync_once(backfill=backfill)
     except HTTPException:
         raise
     except Exception as exc:

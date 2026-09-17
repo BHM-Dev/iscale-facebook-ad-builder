@@ -51,7 +51,7 @@ class DriveSyncService:
         self._package_folder_cache: Dict[str, Optional[str]] = {}
         self._strategy_package_folder_cache: Dict[str, Optional[str]] = {}
 
-    def sync_once(self) -> Dict[str, Any]:
+    def sync_once(self, backfill: bool = False) -> Dict[str, Any]:
         result = {
             "processed": 0,
             "created": 0,
@@ -65,16 +65,54 @@ class DriveSyncService:
 
         try:
             self._validate_tables()
+            # Keep a manual backfill and the scheduler from racing the same
+            # Drive checkpoint or uploading the same newly-seen media twice.
+            self.db.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+                {"lock_key": "drive_asset_sync"},
+            )
             drive = self._client()
             page_token = self._get_state_token()
 
-            if not page_token:
-                files = self._initial_folder_walk(drive)
+            if backfill or not page_token:
                 start_token = self._get_start_page_token(drive)
+                files = self._initial_folder_walk(drive)
                 for file_meta in files:
                     self._process_file(file_meta, result)
-                self._set_state_token(start_token)
-                result["next_page_token_saved"] = True
+                result["processed"] += len(files)
+                # A backfill re-reads current metadata, but it must not advance
+                # past change events (especially deletions) that occurred after
+                # the existing checkpoint. The next ordinary sync replays them.
+                # On a genuinely new installation there is no checkpoint yet,
+                # so the walk's start token is safe to save.
+                if not page_token:
+                    # Replay changes that happened during the walk before
+                    # saving the post-walk checkpoint. This closes the race
+                    # where a newly added or deleted file would otherwise be
+                    # permanently hidden behind the initial token.
+                    replay_token = start_token
+                    final_token = start_token
+                    while replay_token:
+                        response = drive.changes().list(
+                            pageToken=replay_token,
+                            spaces="drive",
+                            fields=(
+                                "nextPageToken,newStartPageToken,"
+                                "changes(removed,fileId,file(id,name,mimeType,parents,modifiedTime,trashed,size,webViewLink))"
+                            ),
+                            includeItemsFromAllDrives=True,
+                            supportsAllDrives=True,
+                        ).execute()
+                        for change in response.get("changes", []):
+                            result["processed"] += 1
+                            if change.get("removed"):
+                                result["archived"] += self._archive_by_drive_id(change.get("fileId"))
+                            elif change.get("file"):
+                                self._process_file(change["file"], result)
+                        replay_token = response.get("nextPageToken")
+                        final_token = response.get("newStartPageToken") or final_token
+                    self._set_state_token(final_token)
+                    result["next_page_token_saved"] = True
                 self.db.commit()
                 return result
 
@@ -249,13 +287,19 @@ class DriveSyncService:
             file_name = file_meta.get("name") or f"{drive_file_id}{mimetypes.guess_extension(mime_type) or ''}"
             soft_tags = self._metadata_for_media_file(file_meta, file_name)
             if soft_tags:
+                try:
+                    parsed_tags = json.loads(existing["soft_tags"] or "{}")
+                    existing_tags = parsed_tags if isinstance(parsed_tags, dict) else {}
+                except (TypeError, json.JSONDecodeError):
+                    existing_tags = {}
+                merged_tags = {**existing_tags, **soft_tags}
                 self.db.execute(
                     text("""
                         UPDATE drive_assets
                         SET archived = FALSE, soft_tags = :soft_tags, synced_at = NOW()
                         WHERE id = :id
                     """),
-                    {"id": existing["id"], "soft_tags": json.dumps(soft_tags)},
+                    {"id": existing["id"], "soft_tags": json.dumps(merged_tags)},
                 )
             else:
                 # An empty result can mean "no metadata exists", but it can also
@@ -472,19 +516,28 @@ class DriveSyncService:
                 break
             visited.append(current)
             try:
-                listing = drive.files().list(
-                    q=f"'{current}' in parents and trashed = false",
-                    spaces="drive",
-                    fields="files(name,mimeType)",
-                    includeItemsFromAllDrives=True,
-                    supportsAllDrives=True,
-                ).execute()
+                listing = None
+                folder_page_token = None
+                folder_items = []
+                while True:
+                    listing = drive.files().list(
+                        q=f"'{current}' in parents and trashed = false",
+                        spaces="drive",
+                        pageToken=folder_page_token,
+                        fields="nextPageToken,files(name,mimeType)",
+                        includeItemsFromAllDrives=True,
+                        supportsAllDrives=True,
+                    ).execute()
+                    folder_items.extend(listing.get("files", []))
+                    folder_page_token = listing.get("nextPageToken")
+                    if not folder_page_token:
+                        break
             except Exception as exc:
                 logger.warning("Could not check Drive folder %s for a handoff manifest: %s", current, exc)
                 break
             has_manifest = any(
                 "handoff" in (item.get("name") or "").lower() and "manifest" in (item.get("name") or "").lower()
-                for item in listing.get("files", [])
+                for item in folder_items
                 if item.get("mimeType") != "application/vnd.google-apps.folder"
             )
             if has_manifest:
@@ -602,29 +655,35 @@ class DriveSyncService:
         seen_folders = {folder_id}
         while queue and len(collected) < max_files:
             current, current_path = queue.pop(0)
-            try:
-                response = drive.files().list(
-                    q=f"'{current}' in parents and trashed = false",
-                    spaces="drive",
-                fields="files(id,name,mimeType,modifiedTime)",
-                    includeItemsFromAllDrives=True,
-                    supportsAllDrives=True,
-                ).execute()
-            except Exception as exc:
-                logger.warning("Could not list Drive folder %s while resolving package subtree: %s", current, exc)
-                continue
-            for item in response.get("files", []):
-                if item.get("mimeType") == "application/vnd.google-apps.folder":
-                    if item["id"] not in seen_folders:
-                        seen_folders.add(item["id"])
-                        queue.append((item["id"], [*current_path, item.get("name") or ""]))
-                else:
-                    # Preserve the immediate folder name for category-copy docs
-                    # whose placement is encoded by the folder ("1x1"/"9x16")
-                    # rather than repeated in every image filename.
-                    item["_parent_folder_name"] = current_path[-1] if current_path else ""
-                    item["_parent_folder_path"] = current_path
-                    collected.append(item)
+            page_token = None
+            while True:
+                try:
+                    response = drive.files().list(
+                        q=f"'{current}' in parents and trashed = false",
+                        spaces="drive",
+                        pageToken=page_token,
+                        fields="nextPageToken,files(id,name,mimeType,modifiedTime)",
+                        includeItemsFromAllDrives=True,
+                        supportsAllDrives=True,
+                    ).execute()
+                except Exception as exc:
+                    logger.warning("Could not list Drive folder %s while resolving package subtree: %s", current, exc)
+                    break
+                for item in response.get("files", []):
+                    if item.get("mimeType") == "application/vnd.google-apps.folder":
+                        if item["id"] not in seen_folders:
+                            seen_folders.add(item["id"])
+                            queue.append((item["id"], [*current_path, item.get("name") or ""]))
+                    else:
+                        # Preserve the immediate folder name for category-copy docs
+                        # whose placement is encoded by the folder ("1x1"/"9x16")
+                        # rather than repeated in every image filename.
+                        item["_parent_folder_name"] = current_path[-1] if current_path else ""
+                        item["_parent_folder_path"] = current_path
+                        collected.append(item)
+                page_token = response.get("nextPageToken")
+                if not page_token or len(collected) >= max_files:
+                    break
         return collected
 
     def _find_strategy_package_folder(self, file_meta: Dict[str, Any], max_depth: int = 4) -> Optional[str]:
