@@ -1926,18 +1926,29 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                         <div key={`copy-${creative.id}`} className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
                                             <div className="flex gap-3">
                                                 <div className="flex w-20 h-20 shrink-0 gap-1 overflow-hidden rounded-md bg-gray-100">
-                                                    {creative.previewUrl && (creative.mediaType === 'video' ? (
-                                                        <video src={creative.previewUrl} className="h-full w-full object-cover" muted playsInline />
-                                                    ) : (
-                                                        <img src={creative.previewUrl} alt={creative.name} className="h-full w-full object-cover" />
-                                                    ))}
+                                                    {creative.previewUrl && (
+                                                        <div className={`relative h-full ${creative.dualPlacement && creative.secondaryImageUrl ? 'w-1/2' : 'w-full'}`}>
+                                                            {creative.mediaType === 'video' ? (
+                                                                <video src={creative.previewUrl} className="h-full w-full object-cover" muted playsInline />
+                                                            ) : (
+                                                                <img src={creative.previewUrl} alt={creative.name} className="h-full w-full object-cover" />
+                                                            )}
+                                                            {/* Badge is a sibling of the two placement images now, not
+                                                                floating in the outer flex row — it was previously
+                                                                `absolute` with no positioned ancestor of its own,
+                                                                so it could render outside this 20x20 thumbnail
+                                                                entirely instead of pinned to the Feed image. */}
+                                                            {creative.dualPlacement && (
+                                                                <span className="absolute bottom-1 left-1 rounded bg-blue-600 px-1 py-0.5 text-[9px] font-semibold text-white">Feed 1:1</span>
+                                                            )}
+                                                        </div>
+                                                    )}
                                                     {creative.dualPlacement && creative.secondaryImageUrl && (
                                                         <div className="relative h-full w-1/2">
                                                             <img src={creative.secondaryImageUrl} alt={`${creative.name} Stories`} className="h-full w-full object-cover" />
                                                             <span className="absolute bottom-1 left-1 rounded bg-purple-600 px-1 py-0.5 text-[9px] font-semibold text-white">Stories 9:16</span>
                                                         </div>
                                                     )}
-                                                    {creative.dualPlacement && <span className="absolute bottom-1 left-1 rounded bg-blue-600 px-1 py-0.5 text-[9px] font-semibold text-white">Feed 1:1</span>}
                                                 </div>
                                                 <div className="min-w-0 flex-1">
                                                     <div className="flex items-center gap-2">
