@@ -235,9 +235,18 @@ class DriveSyncService:
         ).mappings().first()
         modified_time = self._parse_drive_time(file_meta.get("modifiedTime"))
         if existing and existing["drive_modified_time"] and existing["drive_modified_time"].replace(tzinfo=timezone.utc) == modified_time:
+            # Drive metadata can change without the binary changing (for
+            # example, a copy doc or manifest is added after image upload).
+            # Refresh tags so existing rows can backfill placement/copy data.
+            file_name = file_meta.get("name") or f"{drive_file_id}{mimetypes.guess_extension(mime_type) or ''}"
+            soft_tags = self._metadata_for_media_file(file_meta, file_name)
             self.db.execute(
-                text("UPDATE drive_assets SET archived = FALSE WHERE id = :id"),
-                {"id": existing["id"]},
+                text("""
+                    UPDATE drive_assets
+                    SET archived = FALSE, soft_tags = :soft_tags
+                    WHERE id = :id
+                """),
+                {"id": existing["id"], "soft_tags": json.dumps(soft_tags) if soft_tags else None},
             )
             result["skipped"] += 1
             return

@@ -72,12 +72,27 @@ const normalizeFilenameBase = (fileName = '') => {
     return { base, aspect };
 };
 
+// Drive packages commonly keep the same creative in sibling folders named
+// "1x1" and "9x16" while leaving the exported filenames generic. Use the
+// folder only as an aspect hint; it is not a pairing identity.
+const folderPlacementHint = (asset) => {
+    const pathParts = String(asset?.folder_path || '')
+        .split(/[\\/]/)
+        .map(part => part.trim().toLowerCase())
+        .filter(Boolean);
+    const aspectFolder = [...pathParts].reverse().find(part => /^(?:1x1|9x16)(?:\s+(?:images?|assets?))?$/.test(part));
+    if (aspectFolder?.startsWith('9x16')) return 'stories';
+    if (aspectFolder?.startsWith('1x1')) return 'feed';
+    return null;
+};
+
 const driveAssetPlacement = (asset) => {
     const tags = parseDriveTags(asset);
     if (tags.aspect === '9x16') return 'stories';
     if (tags.aspect === '1x1') return 'feed';
     const parsed = normalizeFilenameBase(asset.file_name || '');
-    return parsed?.aspect === '9x16' ? 'stories' : 'feed';
+    if (parsed) return parsed.aspect === '9x16' ? 'stories' : 'feed';
+    return folderPlacementHint(asset) || 'feed';
 };
 
 const buildDriveAssetGroups = (assets) => {
