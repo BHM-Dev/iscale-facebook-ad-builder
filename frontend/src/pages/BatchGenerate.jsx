@@ -28,6 +28,8 @@ const CTA_OPTIONS = [
   'Apply Now',
   'Contact Us',
   'Sign Up',
+  'Shop Now',
+  'Download',
 ];
 
 // Map CTA display labels → Meta API enum values
@@ -44,6 +46,8 @@ const CTA_LABEL_TO_ENUM = {
   'apply now':           'APPLY_NOW',
   'contact us':          'CONTACT_US',
   'sign up':             'SIGN_UP',
+  'shop now':            'SHOP_NOW',
+  'download':            'DOWNLOAD',
 };
 function ctaToEnum(label) {
   return CTA_LABEL_TO_ENUM[(label || '').toLowerCase()] || 'LEARN_MORE';
@@ -58,8 +62,8 @@ const META_CTA_TO_LABEL = {
   GET_QUOTE: 'Get My Quote',
   SIGN_UP: 'Sign Up',
   CONTACT_US: 'Contact Us',
-  SHOP_NOW: 'Get Started',
-  DOWNLOAD: 'Get Started',
+  SHOP_NOW: 'Shop Now',
+  DOWNLOAD: 'Download',
   GET_STARTED: 'Get Started',
   APPLY_NOW: 'Apply Now',
 };
@@ -472,7 +476,7 @@ export default function BatchGenerate() {
 
       // Save to Generated Ads library
       const adId = crypto.randomUUID();
-      await authFetch(`${API_URL}/generated-ads/batch`, {
+      const saveResponse = await authFetch(`${API_URL}/generated-ads/batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -481,6 +485,7 @@ export default function BatchGenerate() {
             imageUrl,
             headline: variant.headline,
             body: variant.body,
+            description: variant.description || '',
             cta: variant.cta,
             sizeName: sizeConfig.label,
             dimensions: `${sizeConfig.width}x${sizeConfig.height}`,
@@ -500,10 +505,15 @@ export default function BatchGenerate() {
             overlayLogoUrl: overlayEnabled ? (overlayLogoUrl || null) : null,
           }],
         }),
-      }).catch(() => {});
+      });
+      if (!saveResponse.ok) {
+        const saveError = await saveResponse.json().catch(() => ({}));
+        throw new Error(saveError.detail || `Generated ad library save failed (HTTP ${saveResponse.status})`);
+      }
 
-      // Store generatedAdId so BatchPushModal can write back the Meta ad ID after push,
-      // enabling the Iterate flow to restore overlay fields from the local DB.
+      // Store generatedAdId only after the local row is confirmed. BatchPushModal
+      // uses this ID for the Meta write-back; inventing it after a failed save makes
+      // the later tracking repair impossible.
       setResults(prev => ({ ...prev, [key]: { status: 'done', imageUrl, generatedAdId: adId, error: null } }));
       return 'done';
     } catch (e) {

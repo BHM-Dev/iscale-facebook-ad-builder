@@ -57,6 +57,9 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     // Ad set mode — always default to 'new' so Joel creates a fresh ad set each push
     const [adsetMode, setAdsetMode] = useState('new');
     const [sharedAdsetId, setSharedAdsetId] = useState('');
+    // Keep a newly-created target ad set across retries. Otherwise a partial
+    // push would create a second ad set before retrying the failed items.
+    const [createdAdsetId, setCreatedAdsetId] = useState('');
     const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     const suggestedAdsetName = niche
         ? `${today} - ${niche} - Testing`
@@ -242,20 +245,35 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
 
     const handlePushAll = async () => {
         if (!validate()) return;
-        setPushStatuses({});
-        setPushErrors({});
-        setTrackingFailures({});
+        // A retry must preserve completed and attribution-attention items.
+        // Re-running createCompleteAd for them would create duplicate Meta ads.
+        const pendingItems = items.filter(item =>
+            pushStatuses[item.key] !== 'done' && pushStatuses[item.key] !== 'attention'
+        );
+        if (pendingItems.length === 0) {
+            setIsDone(true);
+            return;
+        }
+        setPushErrors(prev => Object.fromEntries(
+            Object.entries(prev).filter(([key]) => !pendingItems.some(item => item.key === key))
+        ));
         setPushing(true);
         setIsDone(false);
 
-        // Initialise all items as pending
-        setPushStatuses(Object.fromEntries(items.map(it => [it.key, 'pending'])));
+        // Initialise only items that have not already completed.
+        setPushStatuses(prev => Object.fromEntries(items.map(it => [
+            it.key,
+            prev[it.key] === 'done' || prev[it.key] === 'attention' ? prev[it.key] : 'pending'
+        ])));
 
         // Create new ad set once if needed, then reuse the ID for all items
         let targetAdsetId = sharedAdsetId;
         let targetAdsetName = adSets.find(a => a.id === sharedAdsetId)?.name || sharedAdsetId;
 
-        if (adsetMode === 'new') {
+        if (adsetMode === 'new' && createdAdsetId) {
+            targetAdsetId = createdAdsetId;
+            targetAdsetName = newAdset.name.trim();
+        } else if (adsetMode === 'new') {
             const source = adSets.find(a => a.id === newAdset.cloneFromId);
             // Pass special_ad_categories from the parent campaign so the backend
             // can enforce HEC targeting restrictions (age/gender/geo).
@@ -273,6 +291,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
             };
             try {
                 targetAdsetId = await createFacebookAdSet(payload, selectedCampaignId, adAccountId, 'ABO');
+                setCreatedAdsetId(targetAdsetId);
                 targetAdsetName = newAdset.name.trim();
             } catch (e) {
                 showError(`Failed to create ad set: ${e.message}`);
@@ -283,7 +302,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
 
         // Push each item sequentially so Meta doesn't rate-limit
         const adsetObj = adSets.find(a => a.id === targetAdsetId) || {};
-        for (const item of items) {
+        for (const item of pendingItems) {
             setPushStatuses(prev => ({ ...prev, [item.key]: 'pushing' }));
             const copy = itemCopy[item.key];
             try {
