@@ -35,6 +35,11 @@ Facebook ad builder used daily by Joel Welch (media buyer). Connects to Meta Ads
 
 ---
 
+## Communication Permission
+
+- **Never send Slack messages, DMs, channel posts, deployment updates, review updates, or other team notifications without Steven's explicit approval first.** Approval must identify the exact recipient/channel and message purpose; when in doubt, do not send.
+- This rule overrides routine deployment/review communication defaults elsewhere in this file. Prepare the proposed message in chat and wait for approval instead.
+
 ## Infrastructure (Current — 2026-04-27 and later)
 
 - Env vars are set directly on the VPS by Golden. Never set them via Railway.
