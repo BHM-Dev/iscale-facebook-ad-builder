@@ -59,7 +59,7 @@ const hasCopyText = (copy = {}) => Boolean(
     copy.description?.trim()
 );
 const hasCompleteCopy = (copy = {}) => Boolean(
-    copy.headline?.trim() && copy.primary_text?.trim()
+    copy.headline?.trim() && copy.primary_text?.trim() && copy.description?.trim()
 );
 
 const normalizeFilenameBase = (fileName = '') => {
@@ -1378,12 +1378,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             if (perCreativeCopyMode) {
                 const missingCopy = creativeData.creatives.filter(c => (
                     c.source === 'drive'
-                        ? (!c.body?.trim() || !c.headline?.trim())
+                        ? (!c.body?.trim() || !c.headline?.trim() || !c.description?.trim())
                         : (!(c.body?.trim() || creativeData.bodies[0]?.trim()) ||
                             !(c.headline?.trim() || creativeData.headlines[0]?.trim()))
                 ));
                 if (missingCopy.length > 0) {
-                    showWarning(`${missingCopy.length} selected ad${missingCopy.length !== 1 ? 's' : ''} still needs its own Primary Text and Headline. Edit the Ad pairs & copy cards before continuing.`);
+                    showWarning(`${missingCopy.length} selected ad${missingCopy.length !== 1 ? 's' : ''} still needs its own Primary Text, Headline, and Description. Edit the Ad pairs & copy cards before continuing.`);
                     return;
                 }
             } else {
@@ -1921,7 +1921,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 {creativeData.creatives.map((creative, index) => {
                                     const headline = creative.headline || '';
                                     const body = creative.body || '';
-                                    const hasOwnCopy = Boolean(headline.trim() && body.trim());
+                                    const hasOwnCopy = Boolean(headline.trim() && body.trim() && creative.description?.trim());
                                     return (
                                         <div key={`copy-${creative.id}`} className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
                                             <div className="flex gap-3">
@@ -1981,7 +1981,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                 placeholder="Headline for this ad..."
                                                 className="w-full rounded-md border border-gray-300 px-2.5 py-2 text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                                             />
-                                            <label className="block text-[11px] font-semibold text-gray-600 mt-2 mb-1">Description</label>
+                                            <label className="block text-[11px] font-semibold text-gray-600 mt-2 mb-1">Description *</label>
                                             <input
                                                 type="text"
                                                 value={creative.description ?? ''}
@@ -2447,7 +2447,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     const asset = group.displayAsset;
                                     const isSelected = selectedDriveAssetIds.has(group.id);
                                     const tags = parseDriveTags(asset);
-                                    const copyMatched = hasCopyText(group.copy || {});
+                                    const copyMatched = hasCompleteCopy(group.copy || {});
                                     return (
                                         <div
                                             key={group.id}
@@ -2468,6 +2468,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                 <div className="w-1/2 p-2 bg-white text-[11px] text-gray-600 overflow-hidden">
                                                     <div className="font-semibold text-gray-800 line-clamp-3">{group.copy.headline}</div>
                                                     <div className="mt-1 line-clamp-6">{group.copy.primary_text}</div>
+                                                    {group.copy.description && <div className="mt-1 line-clamp-2 text-gray-500">{group.copy.description}</div>}
                                                     {group.cta && <div className="mt-2 font-medium text-emerald-700">{group.cta.replace(/_/g, ' ')}</div>}
                                                 </div>
                                             )}

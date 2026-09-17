@@ -1055,8 +1055,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         {adsData.map((ad, index) => {
                             const creative = creativeData.creatives?.find(c => c.id === ad.creativeId);
                             const isVideo = creative?.mediaType === 'video';
-                            const headline = ad.headlineOverride || creativeData.headlines?.[ad.headlineIndex];
-                            const body = ad.bodyOverride || creativeData.bodies?.[ad.bodyIndex];
+                                    const headline = ad.headlineOverride || creativeData.headlines?.[ad.headlineIndex];
+                                    const body = ad.bodyOverride || creativeData.bodies?.[ad.bodyIndex];
+                                    const description = creative?.description ?? creativeData.description;
                             // Distinct from a real confirmed name — never render the unconfirmed
                             // placeholder with the same confident styling as a real Page name.
                             // A stale-but-real-looking name (or a generic "Your Page" that reads
@@ -1213,7 +1214,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                                     {websiteUrl && (
                                                         <div className="text-[11px] uppercase text-gray-400 truncate">{displayDomain(websiteUrl)}</div>
                                                     )}
-                                                    <div className="text-sm font-semibold text-gray-900 truncate">{headline || '—'}</div>
+                                            <div className="text-sm font-semibold text-gray-900 truncate">{headline || '—'}</div>
+                                            {description && <div className="text-[11px] text-gray-500 truncate">{description}</div>}
                                                 </div>
                                                 <span className="flex-shrink-0 text-xs font-medium px-3 py-1.5 rounded bg-gray-200 text-gray-700">
                                                     {formatCtaLabel(cta)}

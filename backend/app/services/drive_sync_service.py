@@ -983,7 +983,11 @@ class DriveSyncService:
                     "copy_id": copy_id,
                     "category": section["category"],
                     "aspect": aspect,
-                    "copy": {"headline": section["headline"], "primary_text": section["primary_text"], "description": None},
+                    "copy": {
+                        "headline": section["headline"],
+                        "primary_text": section["primary_text"],
+                        "description": section.get("description"),
+                    },
                     "source": "category_copy_doc",
                     "drive_file_id": item.get("id"),
                     "package_folder_id": folder_id,

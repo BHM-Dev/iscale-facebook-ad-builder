@@ -61,6 +61,7 @@ def test_category_metadata_tags_both_placements_with_same_copy_id():
 Headline: Cafe Owners: Compare Coverage Free
 Primary text:
 Restaurant copy.
+Description: Compare options for your restaurant.
 """
     media = [
         {"id": "feed-id", "name": "restaurant.png", "_parent_folder_name": "1x1"},
@@ -72,6 +73,7 @@ Restaurant copy.
     assert result["assets"]["restaurant.png"]["copy_id"] == "CATEGORY-04"
     assert result["assets"]["restaurant-9x16.png"]["aspect"] == "9x16"
     assert result["assets"]["restaurant.png"]["copy"]["primary_text"] == "Restaurant copy."
+    assert result["assets"]["restaurant.png"]["copy"]["description"] == "Compare options for your restaurant."
 
 
 def test_category_metadata_keeps_duplicate_basenames_refreshable():
