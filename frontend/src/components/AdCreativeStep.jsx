@@ -418,12 +418,6 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         () => [...selectedDriveAssetIds].reduce((sum, id) => sum + (driveGroupById.get(id)?.isPair ? 2 : 1), 0),
         [selectedDriveAssetIds, driveGroupById]
     );
-    const driveSelectionMatchedGroupCount = useMemo(() => {
-        const selectedGroups = [...selectedDriveAssetIds]
-            .map(id => driveGroupById.get(id))
-            .filter(Boolean);
-        return selectedGroups.length;
-    }, [selectedDriveAssetIds, driveGroupById]);
     // Mirrors addDriveSelectionToCreatives's exact branching so the pre-add
     // "N total ad combinations" preview can't drift from what actually lands
     // in creativeData.creatives — pre-push review (code-auditor: HIGH) found
@@ -2162,9 +2156,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             const displayHeadline = creative.headline || (!creative.source || creative.source !== 'drive' ? creativeData.headlines?.[0] || '' : '');
                                             return (
                                                 <button ref={(element) => { copyRowRefs.current[creative.id] = element; }} key={`copy-row-${creative.id}`} type="button" onClick={() => setSelectedCopyCreativeId(creative.id)} className={`grid w-full grid-cols-[62px_minmax(0,1fr)] gap-3 border-b border-gray-100 px-4 py-3 text-left transition-colors md:grid-cols-[76px_minmax(0,1fr)_110px] ${selected ? 'bg-amber-50 shadow-[inset_3px_0_0_0_#d97706]' : 'hover:bg-gray-50'}`}>
-                                                    <div className="flex h-12 w-[62px] gap-0.5 overflow-hidden rounded-md border border-gray-200 bg-gray-100">
-                                                        {creative.previewUrl && <img src={creative.previewUrl} alt="Feed creative" className={creative.dualPlacement && creative.secondaryImageUrl ? 'w-1/2 object-cover' : 'w-full object-cover'} />}
-                                                        {creative.dualPlacement && creative.secondaryImageUrl && <img src={creative.secondaryImageUrl} alt="Stories creative" className="w-1/2 object-cover" />}
+                                                    <div className="flex h-14 w-[72px] gap-0.5 overflow-hidden rounded-md border border-gray-200 bg-gray-100 p-0.5">
+                                                        {creative.previewUrl && <img src={creative.previewUrl} alt="Feed creative" className={creative.dualPlacement && creative.secondaryImageUrl ? 'w-1/2 object-contain' : 'w-full object-contain'} />}
+                                                        {creative.dualPlacement && creative.secondaryImageUrl && <img src={creative.secondaryImageUrl} alt="Stories creative" className="w-1/2 object-contain" />}
                                                     </div>
                                                     <div className="min-w-0">
                                                         <div className="truncate text-sm font-semibold text-gray-900">Ad {index + 1} · {creative.name || 'Untitled creative'}</div>
@@ -2180,9 +2174,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h4 className="truncate text-sm font-bold text-gray-900">Ad {selectedIndex + 1} · {selectedCreative.name || 'Untitled creative'}</h4><p className="mt-0.5 text-xs text-gray-500">{selectedCreative.dualPlacement ? 'Feed + Stories pair' : 'Single placement'}</p>{!selectedCopyReady && <p className="mt-1 text-xs font-medium text-amber-800">Needs: {selectedIssues.join(', ')}</p>}</div><span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${selectedCopyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{selectedCopyReady ? 'Ready' : 'Needs attention'}</span></div>
                                         </div>
                                         <div className="max-h-[610px] space-y-3 overflow-y-auto p-4">
-                                            <div className="flex h-32 gap-1 overflow-hidden rounded-lg bg-gray-100">
-                                                {selectedCreative.previewUrl && <img src={selectedCreative.previewUrl} alt="Feed preview" className={selectedCreative.dualPlacement && selectedCreative.secondaryImageUrl ? 'w-1/2 object-cover' : 'w-full object-cover'} />}
-                                                {selectedCreative.dualPlacement && selectedCreative.secondaryImageUrl && <img src={selectedCreative.secondaryImageUrl} alt="Stories preview" className="w-1/2 object-cover" />}
+                                            <div className="flex h-52 gap-2 overflow-hidden rounded-lg bg-gray-100 p-2">
+                                                {selectedCreative.previewUrl && <img src={selectedCreative.previewUrl} alt="Feed preview" className={selectedCreative.dualPlacement && selectedCreative.secondaryImageUrl ? 'w-1/2 object-contain' : 'w-full object-contain'} />}
+                                                {selectedCreative.dualPlacement && selectedCreative.secondaryImageUrl && <img src={selectedCreative.secondaryImageUrl} alt="Stories preview" className="w-1/2 object-contain" />}
                                             </div>
                                             {!selectedIsDrive && (!selectedCreative.body || !selectedCreative.headline || !selectedCreative.description || !selectedCreative.cta || !selectedCreative.websiteUrl) && <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-800">Showing shared fallback values for this non-Drive row. Editing any field makes this row independent.</p>}
                                             {selectedCreative.driveCopyIntegrityIssue && <button type="button" onClick={() => { setSelectedDriveAssetIds(new Set()); setDriveSearchTerm(''); setDriveRepairPairId(selectedCreative.drivePairId || null); setDriveFormatFilter(''); setShowDriveLibraryModal(true); }} className="w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-left text-xs font-semibold text-amber-900 hover:bg-amber-100">Open Drive to repair this pair</button>}
@@ -2717,7 +2711,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         {/* Drive Creative Library Modal */}
         {showDriveLibraryModal && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[80vh] flex flex-col">
+                <div className="bg-white rounded-xl shadow-xl w-full max-w-7xl h-[88vh] flex flex-col">
                     <div className="flex items-center justify-between p-4 border-b">
                         <h3 className="text-lg font-semibold">Select from Drive Creative Library</h3>
                         <button onClick={() => setShowDriveLibraryModal(false)} className="text-gray-500 hover:text-gray-700">
@@ -2803,7 +2797,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             </div>
                         </div>
                     </div>
-                    <div className="flex-1 overflow-y-auto p-4">
+                    <div className="flex-1 min-h-0 overflow-y-auto p-4">
                         {driveLibraryLoading ? (
                             <div className="flex items-center justify-center py-12 gap-2 text-gray-500">
                                 <Loader className="animate-spin" size={20} />
@@ -2822,7 +2816,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     {mixedDriveCopyMatches.matchedPairs} pair{mixedDriveCopyMatches.matchedPairs !== 1 ? 's' : ''} matched copy from a strategy doc; {mixedDriveCopyMatches.unmatchedPairs} pair{mixedDriveCopyMatches.unmatchedPairs !== 1 ? 's' : ''} did not. Check the source files, then use Refresh copy from Drive.
                                 </div>
                             )}
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
                                 {driveAssetGroups.map(group => {
                                     const asset = group.displayAsset;
                                     const isSelected = selectedDriveAssetIds.has(group.id);
@@ -2832,26 +2826,18 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                         <div
                                             key={group.id}
                                             onClick={() => toggleDriveAssetSelection(group.id)}
-                                            className={`relative cursor-pointer rounded-lg overflow-hidden border-2 transition-all ${group.isPair && copyMatched ? 'flex items-stretch' : ''} ${isSelected ? 'border-amber-500 ring-2 ring-amber-200' : 'border-gray-200 hover:border-amber-300'}`}
+                                            className={`relative cursor-pointer rounded-xl overflow-hidden border-2 bg-white transition-all ${isSelected ? 'border-amber-500 ring-2 ring-amber-200' : 'border-gray-200 hover:border-amber-300'}`}
                                         >
-                                            <div className={group.isPair && copyMatched ? 'w-1/2 shrink-0' : 'w-full'}>
+                                            <div className={`flex h-44 gap-2 bg-gray-100 p-2 ${group.isPair && group.storiesAsset ? 'items-stretch' : 'items-center justify-center'}`}>
+                                                <div className={group.isPair && group.storiesAsset ? 'w-1/2 min-w-0' : 'h-full w-full'}>
                                                 {asset.format === 'video' ? (
-                                                    <video src={asset.r2_key} className="w-full aspect-square object-cover" muted />
+                                                    <video src={asset.r2_key} className="h-full w-full object-contain" muted />
                                                 ) : (
-                                                    <img src={asset.r2_key} alt={asset.file_name} className="w-full aspect-square object-cover" />
+                                                    <img src={asset.r2_key} alt={asset.file_name} className="h-full w-full object-contain" />
                                                 )}
-                                                {group.isPair && group.storiesAsset && (
-                                                    <img src={group.storiesAsset.r2_key} alt={group.storiesAsset.file_name} className="w-full aspect-[9/16] object-cover border-t border-white" />
-                                                )}
-                                            </div>
-                                            {group.isPair && copyMatched && (
-                                                <div className="w-1/2 p-2 bg-white text-[11px] text-gray-600 overflow-hidden">
-                                                    <div className="font-semibold text-gray-800 line-clamp-3">{group.copy.headline}</div>
-                                                    <div className="mt-1 line-clamp-6">{group.copy.primary_text}</div>
-                                                    {group.copy.description && <div className="mt-1 line-clamp-2 text-gray-500">{group.copy.description}</div>}
-                                                    {group.cta && <div className="mt-2 font-medium text-emerald-700">{group.cta.replace(/_/g, ' ')}</div>}
                                                 </div>
-                                            )}
+                                                {group.isPair && group.storiesAsset && <div className="w-1/2 min-w-0"><img src={group.storiesAsset.r2_key} alt={group.storiesAsset.file_name} className="h-full w-full object-contain" /></div>}
+                                            </div>
                                             {isSelected && (
                                                 <div className="absolute top-2 right-2 bg-amber-500 rounded-full p-0.5">
                                                     <Check size={14} className="text-white" />
@@ -2863,16 +2849,17 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                 </div>
                                             )}
                                             {group.copyIntegrityIssue || group.copyRefreshUnverified ? (
-                                                <div className="absolute bottom-[54px] left-2 bg-red-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
+                                                <div className="absolute bottom-10 left-2 bg-red-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
                                                     {group.copyRefreshUnverified ? 'Drive source needs repair — refresh Drive' : 'Pair data mismatch — refresh Drive'}
                                                 </div>
                                             ) : (copyMatched || group.landingPage || group.cta || tags.copy_id) && (
-                                                <div className="absolute bottom-[54px] left-2 bg-emerald-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
+                                                <div className="absolute bottom-10 left-2 bg-emerald-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
                                                     {copyMatched ? 'Copy matched' : 'URL matched'}
                                                 </div>
                                             )}
                                             <div className="p-2 text-xs text-gray-600 bg-white">
                                                 <div className="truncate font-medium">{asset.brand_name || 'Unknown brand'}</div>
+                                                {copyMatched && <div className="mt-0.5 truncate text-gray-700">{group.copy.headline}</div>}
                                                 <div className="truncate text-gray-400">{asset.folder_path || asset.file_name}</div>
                                                 {group.isPair && (
                                                     <div className="mt-1 text-[11px] text-purple-700">
@@ -2887,32 +2874,20 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             </>
                         )}
                     </div>
-                    <div className="p-4 border-t flex items-center justify-between gap-3 flex-wrap">
-                        <span className="text-sm text-gray-500">
-                            {selectedDriveAssetIds.size} selected
-                            {selectedDriveAssetIds.size > 0 && `, ${driveSelectionAssetCount} asset${driveSelectionAssetCount !== 1 ? 's' : ''}`}
-                            {/* Surfaces the permutation multiplication BEFORE the click that
-                                commits it — bulk-selecting 50 assets against several queued
-                                headlines/bodies doesn't create 50 ads, it multiplies (see
-                                countVariations above), and that math was previously only
-                                visible on the main step after closing this modal (pre-push
-                                review, joel-perspective: P1). Uses driveSelectionMediaCount,
-                                not driveSelectionAssetCount — a real tagged pair adds ONE
-                                creative (merged), while an auto-duped single adds TWO; using
-                                the raw asset count here under- or over-counted depending on
-                                the mix (pre-push review, code-auditor: HIGH). */}
-                            {selectedDriveAssetIds.size > 0 && (variationCount.headlines > 1 || variationCount.bodies > 1) && (
-                                <span className="block text-xs text-amber-700 mt-0.5">
-                                    → {variationCount.total + driveSelectionProjectedAdCount} total ads after adding ({variationCount.hasPerCreativeCopy ? 'existing per-ad copy' : `${variationCount.media} media × ${variationCount.headlines || 1} headline${variationCount.headlines !== 1 ? 's' : ''} × ${variationCount.bodies || 1} bod${variationCount.bodies !== 1 ? 'ies' : 'y'}`}; selected Drive assets use matched copy where available)
-                                </span>
+                    <div className="h-[68px] p-3 border-t flex items-center justify-between gap-3">
+                        <div className="min-w-0 text-sm text-gray-600" aria-live="polite">
+                            <span className="font-medium">{selectedDriveAssetIds.size} selected</span>
+                            {selectedDriveAssetIds.size > 0 ? (
+                                <>
+                                    <span> · {driveSelectionAssetCount} source asset{driveSelectionAssetCount !== 1 ? 's' : ''}</span>
+                                    <span className="font-semibold text-gray-900"> · {driveSelectionProjectedAdCount} creative{driveSelectionProjectedAdCount !== 1 ? 's' : ''} will be added</span>
+                                    <span className="block text-[11px] text-gray-500">→ {variationCount.total + driveSelectionProjectedAdCount} ads total after adding{autoDupeStories ? ' · unpaired images may add both Feed and Stories versions' : ''}</span>
+                                </>
+                            ) : (
+                                <span className="text-gray-400"> · Select assets to add</span>
                             )}
-                            {selectedDriveAssetIds.size > 0 && autoDupeStories && (
-                                <span className="block text-[11px] text-gray-400 mt-0.5">
-                                    Auto-duplicate is on — unpaired single images above will add both a Feed and Stories version.
-                                </span>
-                            )}
-                        </span>
-                        <div className="flex gap-3">
+                        </div>
+                        <div className="flex shrink-0 gap-3">
                             <button onClick={() => setShowDriveLibraryModal(false)} className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">
                                 Cancel
                             </button>
@@ -2921,7 +2896,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 disabled={selectedDriveAssetIds.size === 0}
                                 className="px-4 py-2 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                             >
-                                Add {driveSelectionMatchedGroupCount > 0 ? driveSelectionMatchedGroupCount : ''} to Campaign
+                                Add {driveSelectionProjectedAdCount > 0 ? driveSelectionProjectedAdCount : ''} Creative{driveSelectionProjectedAdCount !== 1 ? 's' : ''}
                             </button>
                         </div>
                     </div>
