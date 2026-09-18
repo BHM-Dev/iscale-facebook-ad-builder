@@ -1,7 +1,7 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useState } from 'react';
-import { ChevronRight, Loader, Film, Image, X, Pencil } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader, Film, Image, X, Pencil } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { createCompleteAd, createFacebookCampaign, createFacebookAdSet, getRateLimitUsage } from '../lib/facebookApi';
 import {
@@ -185,6 +185,22 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // from the standard preview grid too, and without permanently occupying a
     // column the way the old always-open rail did.
     const [editDrawerOpen, setEditDrawerOpen] = useState(false);
+    const editDrawerCloseButtonRef = React.useRef(null);
+    const editDrawerPanelRef = React.useRef(null);
+    React.useEffect(() => {
+        if (!editDrawerOpen) return undefined;
+        const returnFocusTarget = document.activeElement;
+        const handleDrawerKeyDown = (event) => {
+            if (event.key === 'Escape') setEditDrawerOpen(false);
+        };
+        document.addEventListener('keydown', handleDrawerKeyDown);
+        const focusFrame = requestAnimationFrame(() => editDrawerCloseButtonRef.current?.focus());
+        return () => {
+            document.removeEventListener('keydown', handleDrawerKeyDown);
+            cancelAnimationFrame(focusFrame);
+            if (returnFocusTarget instanceof HTMLElement && returnFocusTarget.isConnected) returnFocusTarget.focus();
+        };
+    }, [editDrawerOpen]);
     // Was read-only from localStorage with no in-app control — Joel could only
     // change it by hand-editing browser storage. NamingTemplateField below
     // gives it the same Templates UI Campaign/Ad Set naming already has
@@ -403,12 +419,18 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         const description = Object.prototype.hasOwnProperty.call(ad, 'descriptionOverride')
             ? ad.descriptionOverride || ''
             : creative?.description ?? creativeData.description ?? '';
-        const websiteUrl = creative?.source === 'drive'
-            ? (Object.prototype.hasOwnProperty.call(ad, 'websiteUrlOverride') ? ad.websiteUrlOverride || '' : creative.websiteUrl || '')
-            : creative?.websiteUrl || creativeData.websiteUrl || '';
-        const cta = creative?.source === 'drive'
-            ? (ad.ctaOverride || creative.cta || '')
-            : creative?.cta || ad.ctaOverride || creativeData.cta || '';
+        const websiteUrl = Object.prototype.hasOwnProperty.call(ad, 'websiteUrlOverride')
+            ? ad.websiteUrlOverride || ''
+            : creative?.source === 'drive'
+                ? creative.websiteUrl || ''
+                : creative?.websiteUrl || creativeData.websiteUrl || '';
+        const ctaOverrideIsAuthoritative = Object.prototype.hasOwnProperty.call(ad, 'ctaOverride')
+            && (isDriveManifest || Boolean(ad.ctaOverride));
+        const cta = ctaOverrideIsAuthoritative
+            ? ad.ctaOverride || ''
+            : creative?.source === 'drive'
+                ? creative.cta || ''
+                : creative?.cta || creativeData.cta || '';
         const category = creative?.category || creative?.brandName || 'Uncategorized';
         const requiresAssignedCopy = isDriveManifest;
         const copyReady = !requiresAssignedCopy || Boolean(
@@ -433,10 +455,29 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // The rail must honor the active filter. Leaving a previously selected
     // Retail row editable while the table is filtered to Restaurant is exactly
     // how copy gets changed on the wrong pair in a 100-row batch.
-    const selectedManifestRow = visibleManifestRows.find(row => row.ad.id === selectedManifestAdId)
+    const selectedManifestRow = (editDrawerOpen
+        ? manifestRows.find(row => row.ad.id === selectedManifestAdId)
+        : visibleManifestRows.find(row => row.ad.id === selectedManifestAdId))
         || visibleManifestRows.find(row => !manifestExcludedAdIds.has(row.ad.id))
         || visibleManifestRows[0]
         || null;
+    const includedDrawerRows = visibleManifestRows.filter(row => !manifestExcludedAdIds.has(row.ad.id));
+    const drawerRows = selectedManifestRow && (
+        manifestExcludedAdIds.has(selectedManifestRow.ad.id)
+        || !includedDrawerRows.some(row => row.ad.id === selectedManifestRow.ad.id)
+    )
+        ? [selectedManifestRow, ...includedDrawerRows]
+        : includedDrawerRows;
+    const selectedManifestIndex = selectedManifestRow
+        ? drawerRows.findIndex(row => row.ad.id === selectedManifestRow.ad.id)
+        : -1;
+    React.useEffect(() => {
+        if (!editDrawerOpen || !selectedManifestAdId) return;
+        if (!visibleManifestRows.some(row => row.ad.id === selectedManifestAdId)) {
+            setEditDrawerOpen(false);
+            setSelectedManifestAdId(null);
+        }
+    }, [editDrawerOpen, selectedManifestAdId, visibleManifestRows]);
     const manifestReadyCount = activeAds.filter(ad => manifestRows.find(row => row.ad.id === ad.id)?.copyReady).length;
 
     // Feeds the launcher shell's Launch Plan rail — same ready/excluded math this
@@ -472,6 +513,18 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         });
     };
 
+    // The open drawer sits above the manifest and its backdrop intentionally
+    // intercepts row clicks. Keep switching explicit and safe with in-drawer
+    // navigation rather than making Joel close and reopen for every ad. Edits
+    // are already persisted on change, so moving between rows cannot discard a
+    // draft or silently replace unsaved content.
+    const moveManifestDrawer = (offset) => {
+        if (selectedManifestIndex < 0) return;
+        const nextRow = drawerRows[selectedManifestIndex + offset];
+        if (!nextRow) return;
+        setSelectedManifestAdId(nextRow.ad.id);
+    };
+
     const setVisibleManifestSelection = (selected) => {
         setManifestExcludedAdIds(prev => {
             const next = new Set(prev);
@@ -486,7 +539,10 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const updateManifestField = (row, field, value) => {
         if (!row) return;
         if (field === 'name') {
-            updateAdName(row.index, value);
+            setAdsData(prev => prev.map(ad => ad.id === row.ad.id
+                ? { ...ad, name: value, nameManuallyEdited: true }
+                : ad
+            ));
             return;
         }
         setAdsData(prev => prev.map(ad => {
@@ -596,11 +652,25 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             const websiteUrl = (Object.prototype.hasOwnProperty.call(ad, 'websiteUrlOverride')
                 ? ad.websiteUrlOverride
                 : creative?.websiteUrl) || '';
-            const cta = ad.ctaOverride || creative?.cta || '';
+            const cta = Object.prototype.hasOwnProperty.call(ad, 'ctaOverride') && (isDriveManifest || Boolean(ad.ctaOverride))
+                ? ad.ctaOverride
+                : creative?.cta || '';
             return !headline || !body || !isValidDestinationUrl(websiteUrl) || !isValidMetaCta(cta);
         }) : [];
         if (incompleteManifestRows.length > 0) {
             showWarning(`${incompleteManifestRows.length} selected ad pair${incompleteManifestRows.length !== 1 ? 's are' : ' is'} missing a valid Primary Text, Headline, Meta CTA, or http(s) destination URL. Open the affected row and complete it before launch.`);
+            return;
+        }
+        const incompleteStandardRows = !isDriveManifest ? launchAds.filter(ad => {
+            const row = manifestRows.find(item => item.ad.id === ad.id);
+            return !row
+                || !row.headline.trim()
+                || !row.body.trim()
+                || !isValidDestinationUrl(row.websiteUrl)
+                || !isValidMetaCta(row.cta);
+        }) : [];
+        if (incompleteStandardRows.length > 0) {
+            showWarning(`${incompleteStandardRows.length} selected ad${incompleteStandardRows.length !== 1 ? 's are' : ' is'} missing a valid Primary Text, Headline, Meta CTA, or http(s) destination URL. Open the affected row and complete it before launch.`);
             return;
         }
 
@@ -1094,10 +1164,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             : specificCreative && Object.prototype.hasOwnProperty.call(specificCreative, 'description')
                                 ? specificCreative.description
                             : creativeData.description,
-                        cta: ad.ctaOverride || specificCreative?.cta || creativeData.cta,
-                        websiteUrl: isDriveManifest || specificCreative?.source === 'drive'
-                            ? (Object.prototype.hasOwnProperty.call(ad, 'websiteUrlOverride') ? ad.websiteUrlOverride : specificCreative?.websiteUrl)
-                            : (specificCreative?.websiteUrl || creativeData.websiteUrl)
+                        cta: Object.prototype.hasOwnProperty.call(ad, 'ctaOverride') && (isDriveManifest || Boolean(ad.ctaOverride))
+                            ? ad.ctaOverride
+                            : (specificCreative?.cta || creativeData.cta),
+                        websiteUrl: Object.prototype.hasOwnProperty.call(ad, 'websiteUrlOverride')
+                            ? ad.websiteUrlOverride
+                            : (isDriveManifest || specificCreative?.source === 'drive'
+                                ? specificCreative?.websiteUrl
+                                : (specificCreative?.websiteUrl || creativeData.websiteUrl))
                     };
 
                     if (!creativeData.pageId) {
@@ -1246,7 +1320,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     persistReconciliationBlock('This batch partially completed. Reconcile the created rows before starting another batch.');
                 }
                 // Partial failure — stay on screen so Joel can see what failed
-                setProgress({ current: launchAds.length, total: launchAds.length, status: `${createdIndexes.length} of ${launchAds.length} ads created` });
+                setProgress({ current: createdIndexes.length, total: launchAds.length, status: `${createdIndexes.length} of ${launchAds.length} ads created` });
                 setLoading(false);
             }
 
@@ -1524,10 +1598,10 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                             {manifestCategories.map(category => <option key={category} value={category}>{category}</option>)}
                                         </select>
                                         <button type="button" onClick={() => setVisibleManifestSelection(true)} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">
-                                            Select visible
+                                            Include {visibleManifestRows.length} visible
                                         </button>
                                         <button type="button" onClick={() => setVisibleManifestSelection(false)} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">
-                                            Deselect visible
+                                            Exclude {visibleManifestRows.length} visible
                                         </button>
                                     </div>
                                     <div className="hidden grid-cols-[28px_minmax(220px,1.7fr)_minmax(100px,.8fr)_96px_80px] gap-3 bg-gray-50 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500 md:grid">
@@ -1549,7 +1623,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                                     role="button"
                                                     tabIndex={0}
                                                     onClick={() => { setSelectedManifestAdId(row.ad.id); setEditDrawerOpen(true); }}
-                                                    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { setSelectedManifestAdId(row.ad.id); setEditDrawerOpen(true); } }}
+                                                    onKeyDown={(event) => {
+                                                        if (event.target instanceof HTMLInputElement) return;
+                                                        if (event.key === 'Enter' || event.key === ' ') {
+                                                            event.preventDefault();
+                                                            setSelectedManifestAdId(row.ad.id);
+                                                            setEditDrawerOpen(true);
+                                                        }
+                                                    }}
                                                     className={`grid cursor-pointer grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-3 border-t border-gray-100 px-4 py-3 transition-colors md:grid-cols-[28px_minmax(220px,1.7fr)_minmax(100px,.8fr)_96px_80px] ${selected ? 'bg-amber-50 shadow-[inset_3px_0_0_0_#d97706]' : included ? 'hover:bg-gray-50' : 'bg-gray-50 opacity-60'}`}
                                                 >
                                                     <input
@@ -1766,8 +1847,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                         // (~line 680) — matching it exactly, not just the
                                         // two-tier headline/body shape, since cta has its own
                                         // separate ad.ctaOverride tier the others don't.
-                                        const websiteUrl = creative?.websiteUrl || creativeData.websiteUrl;
-                                        const cta = creative?.cta || ad.ctaOverride || creativeData.cta;
+                                        const websiteUrl = Object.prototype.hasOwnProperty.call(ad, 'websiteUrlOverride')
+                                            ? ad.websiteUrlOverride
+                                            : creative?.websiteUrl || creativeData.websiteUrl;
+                                        const cta = Object.prototype.hasOwnProperty.call(ad, 'ctaOverride') && (isDriveManifest || Boolean(ad.ctaOverride))
+                                            ? ad.ctaOverride
+                                            : creative?.cta || creativeData.cta;
                                         return (
                                             <div className="flex items-center justify-between gap-2 px-3 py-2 bg-gray-50 border-t border-gray-200">
                                                 <div className="min-w-0">
@@ -1912,7 +1997,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             >
                                 {isDriveManifest && driveManifestCreatesSeparateAdsets
                                     ? `Create ${activeAds.length} paused ad${activeAds.length !== 1 ? 's' : ''} in ${activeAds.length} new ad set${activeAds.length !== 1 ? 's' : ''} on Facebook`
-                                    : `Create ${activeAds.length} ${isDriveManifest ? 'paused ad' : 'Ad'}${activeAds.length !== 1 ? 's' : ''} on Facebook`}
+                                    : `Create ${activeAds.length} paused ad${activeAds.length !== 1 ? 's' : ''} on Facebook`}
                             </button>
                         )}
                     </div>
@@ -1960,22 +2045,69 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         standard or Drive) so a standard-mode "Edit" click and a manifest row
                         click land on identical, already-tested behavior. */}
                     {editDrawerOpen && selectedManifestRow && (
-                        <div className="fixed inset-0 z-50 flex justify-end">
+                        <div
+                            className="fixed inset-0 z-50 flex justify-end"
+                            role="dialog"
+                            aria-modal="true"
+                            aria-labelledby="edit-drawer-title"
+                        >
                             <div
                                 className="absolute inset-0 bg-black/40"
                                 onClick={() => setEditDrawerOpen(false)}
                             />
-                            <div className="relative h-full w-full max-w-md overflow-hidden bg-white shadow-2xl flex flex-col">
+                            <div
+                                ref={editDrawerPanelRef}
+                                className="relative h-full w-full max-w-md overflow-hidden bg-white shadow-2xl flex flex-col"
+                                onKeyDown={(event) => {
+                                    if (event.key !== 'Tab') return;
+                                    const focusable = editDrawerPanelRef.current?.querySelectorAll('button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])');
+                                    if (!focusable?.length) return;
+                                    const first = focusable[0];
+                                    const last = focusable[focusable.length - 1];
+                                    if (event.shiftKey && document.activeElement === first) {
+                                        event.preventDefault();
+                                        last.focus();
+                                    } else if (!event.shiftKey && document.activeElement === last) {
+                                        event.preventDefault();
+                                        first.focus();
+                                    }
+                                }}
+                            >
                                 <div className="flex items-start justify-between gap-3 border-b border-gray-200 px-4 py-3">
                                     <div className="min-w-0">
-                                        <h3 className="truncate text-sm font-bold text-gray-900">{selectedManifestRow.adsetName}</h3>
+                                        <h3 id="edit-drawer-title" className="truncate text-sm font-bold text-gray-900">{selectedManifestRow.adsetName}</h3>
                                         <p className="mt-0.5 text-xs text-gray-500">Ad: {selectedManifestRow.ad.name} · {selectedManifestRow.category} · {selectedManifestRow.ad.dualPlacement ? 'Feed + Stories pair' : 'Single placement'}</p>
                                         <p className="mt-0.5 truncate text-[11px] text-gray-500">Identity: {creativeData.pageName || creativeData.pageId || 'Page not confirmed'} · Instagram {creativeData.instagramId || 'not linked'} · Feed + Stories/Reels</p>
                                     </div>
-                                    <div className="flex shrink-0 items-center gap-2">
-                                        <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${selectedManifestRow.copyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{selectedManifestRow.copyReady ? 'Ready' : 'Needs copy'}</span>
+                                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                                        <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${manifestExcludedAdIds.has(selectedManifestRow.ad.id) ? 'bg-gray-100 text-gray-600' : selectedManifestRow.copyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{manifestExcludedAdIds.has(selectedManifestRow.ad.id) ? 'Excluded' : selectedManifestRow.copyReady ? 'Ready' : 'Needs copy'}</span>
                                         {selectedManifestRow.outcome && <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${selectedManifestRow.outcome.cls}`}>{selectedManifestRow.outcome.label}</span>}
-                                        <button type="button" onClick={() => setEditDrawerOpen(false)} className="text-gray-400 hover:text-gray-700" aria-label="Close edit drawer">
+                                        <div className="flex items-center rounded-md border border-gray-200 bg-gray-50">
+                                            <button
+                                                type="button"
+                                                onClick={() => moveManifestDrawer(-1)}
+                                                disabled={selectedManifestIndex <= 0}
+                                                className="min-h-11 min-w-11 rounded-l-md p-2.5 text-gray-600 hover:bg-white hover:text-gray-900 disabled:cursor-not-allowed disabled:text-gray-300"
+                                                aria-label="Previous ad"
+                                                title="Previous ad"
+                                            >
+                                                <ChevronLeft size={15} />
+                                            </button>
+                                            <span className="border-x border-gray-200 px-1.5 text-[10px] font-medium tabular-nums text-gray-500" aria-live="polite">
+                                                Ad {selectedManifestIndex + 1}/{drawerRows.length} filtered · {activeAds.length} total included
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => moveManifestDrawer(1)}
+                                                disabled={selectedManifestIndex < 0 || selectedManifestIndex >= drawerRows.length - 1}
+                                                className="min-h-11 min-w-11 rounded-r-md p-2.5 text-gray-600 hover:bg-white hover:text-gray-900 disabled:cursor-not-allowed disabled:text-gray-300"
+                                                aria-label="Next ad"
+                                                title="Next ad"
+                                            >
+                                                <ChevronRight size={15} />
+                                            </button>
+                                        </div>
+                                        <button ref={editDrawerCloseButtonRef} type="button" onClick={() => setEditDrawerOpen(false)} className="min-h-11 min-w-11 text-gray-400 hover:text-gray-700" aria-label="Close edit drawer">
                                             <X size={18} />
                                         </button>
                                     </div>

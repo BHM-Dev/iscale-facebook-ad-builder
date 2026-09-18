@@ -156,6 +156,16 @@ and preserve each ad's exact headline, body, description, CTA, and destination U
 through Iterate and Batch Push. Add regression coverage for partial Meta/local-save
 failures, retries, Drive mixed-copy launches, and dual-placement ads.
 
+### Next: Prebuilt Ad Package Import *(P2 — forecast after Launcher UX Phase 1B)*
+Give the existing “Match by Naming Convention” flow a proper import experience for
+prebuilt ad packages. Rename/reframe it so Joel understands that it joins a copy CSV
+to Feed + Stories image files by ad number, rather than implying a normal ad-naming
+setting. Add a downloadable CSV template, filename examples, an upfront preflight
+summary (CSV rows vs. complete image pairs vs. blocked rows), clear 50-ad batch-split
+guidance, and the same Launch Plan/review-drawer/sticky-action treatment used by the
+standard launcher. Preserve the existing safe behavior: only Ready rows launch,
+both placements remain explicit, and partial failures remain resumable/reconcilable.
+
 ### Next: Slack Campaign Intelligence Bot *(specced in `SLACK_INTELLIGENCE_SPEC.md`)*
 Joel types `@AdBuilder update` in `#media-buying` and receives an AI-generated campaign snapshot: account scorecard, ad sets ranked SCALE / WATCH / CUT by ROAS and frequency, and 3–5 specific named recommendations from Gemini. Daily 9am ET proactive summary and threshold alerts (frequency >4, ROAS drop, MTD pacing off) also planned.
 
