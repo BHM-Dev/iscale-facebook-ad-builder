@@ -2964,16 +2964,20 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 </div>
                                 {/* Shows exactly what "Go" will select before Joel commits — the
                                     scope (newest-first, filtered to eligible/matching assets only)
-                                    and the exact resulting range, so "first N" is never a black box. */}
+                                    and the exact resulting range, so "first N" is never a black box.
+                                    The number that actually matters (what he'll get) leads in bold;
+                                    everything else is de-emphasized so this scans in one glance
+                                    instead of reading as a full sentence (joel-perspective review). */}
                                 {driveSelectCount && driveAssetGroups.length > 0 && (() => {
                                     const n = parseInt(driveSelectCount, 10);
                                     if (!Number.isFinite(n) || n <= 0) return null;
                                     const eligible = driveAssetGroups.filter(group => !isDriveGroupSelectionBlocked(group));
                                     const willSelect = eligible.slice(0, n);
+                                    const blockedInScope = driveAssetGroups.length - eligible.length;
                                     return (
                                         <span className="text-[11px] text-gray-500">
-                                            Will select the {willSelect.length} newest of {driveAssetGroups.length} matching asset{driveAssetGroups.length !== 1 ? 's' : ''}
-                                            {eligible.length !== driveAssetGroups.length ? ` (${driveAssetGroups.length - eligible.length} blocked, skipped)` : ''}.
+                                            Will select <strong className="text-gray-900 font-semibold">{willSelect.length}</strong> of {driveAssetGroups.length} matching
+                                            {blockedInScope > 0 ? <span className="text-amber-700"> ({blockedInScope} blocked)</span> : null}
                                         </span>
                                     );
                                 })()}
@@ -3062,8 +3066,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white">Stories</span>
                                                 </div>}
                                             </div>
+                                            {/* Outlined/muted, not a solid fill — this is FYI, not a status
+                                                that changes what Joel should do. The solid emerald/red/amber
+                                                pills below (copy matched / mismatched / needs repair) are the
+                                                ones that actually gate launch readiness, so they keep the
+                                                stronger treatment; "Already added" must read as secondary,
+                                                even when both appear on the same card. */}
                                             {alreadyAdded && (
-                                                <div className="absolute left-2 top-2 bg-blue-600 text-white text-[10px] font-semibold px-1.5 py-0.5 rounded-full shadow-sm">
+                                                <div className="absolute left-2 top-2 bg-blue-50 text-blue-700 border border-blue-300 text-[10px] font-medium px-1.5 py-0.5 rounded-full shadow-sm">
                                                     Already added
                                                 </div>
                                             )}
