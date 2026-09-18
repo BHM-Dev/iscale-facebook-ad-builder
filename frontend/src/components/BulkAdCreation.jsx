@@ -1153,13 +1153,20 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         // asset_feed_spec dual-placement path (same mechanism Bulk Match Import
                         // ships). Never set for video creatives — that path is image-only.
                         secondaryImageUrl: !isVideo ? specificCreative?.secondaryImageUrl : undefined,
-                        headlines: [isDriveManifest || specificCreative?.source === 'drive'
+                        // Gated on THIS ad's own creative source, never the batch-wide
+                        // isDriveManifest flag — a mixed batch (some drive, some not)
+                        // would otherwise strip a non-drive ad's creativeData.* fallback
+                        // just because some OTHER creative in the same batch is Drive-
+                        // sourced, sending Meta a blank field the review card (which
+                        // already only gates per-ad, see manifestRows above) showed as
+                        // filled in. Caught in retroactive review of c254cee.
+                        headlines: [specificCreative?.source === 'drive'
                             ? ad.headlineOverride
                             : (ad.headlineOverride || creativeData.headlines[ad.headlineIndex])],
-                        bodies: [isDriveManifest || specificCreative?.source === 'drive'
+                        bodies: [specificCreative?.source === 'drive'
                             ? ad.bodyOverride
                             : (ad.bodyOverride || creativeData.bodies[ad.bodyIndex])],
-                        description: (isDriveManifest || Object.prototype.hasOwnProperty.call(ad, 'descriptionOverride'))
+                        description: Object.prototype.hasOwnProperty.call(ad, 'descriptionOverride')
                             ? ad.descriptionOverride
                             : specificCreative && Object.prototype.hasOwnProperty.call(specificCreative, 'description')
                                 ? specificCreative.description
@@ -1169,7 +1176,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             : (specificCreative?.cta || creativeData.cta),
                         websiteUrl: Object.prototype.hasOwnProperty.call(ad, 'websiteUrlOverride')
                             ? ad.websiteUrlOverride
-                            : (isDriveManifest || specificCreative?.source === 'drive'
+                            : (specificCreative?.source === 'drive'
                                 ? specificCreative?.websiteUrl
                                 : (specificCreative?.websiteUrl || creativeData.websiteUrl))
                     };
