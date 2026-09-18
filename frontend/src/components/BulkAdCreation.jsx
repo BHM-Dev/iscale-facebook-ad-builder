@@ -32,6 +32,18 @@ const displayDomain = (url) => {
     }
 };
 
+// The API only accepts absolute http(s) destinations. Validate this in the
+// Review step too: a row's URL can be edited after the Creative-step check,
+// and image upload must never be the first time an invalid URL is discovered.
+const isValidDestinationUrl = (value) => {
+    try {
+        const parsed = new URL(String(value || '').trim());
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+        return false;
+    }
+};
+
 const formatNamingDate = () => new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
 // 'LEARN_MORE' -> 'Learn More' — same values BulkAdCreation already sends to Meta
@@ -311,7 +323,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         const category = creative?.category || creative?.brandName || 'Uncategorized';
         const requiresAssignedCopy = isDriveManifest;
         const copyReady = !requiresAssignedCopy || Boolean(
-            headline.trim() && body.trim() && description.trim() && websiteUrl.trim()
+            headline.trim() && body.trim() && isValidDestinationUrl(websiteUrl)
         );
         const adsetName = isDriveManifest
             ? buildPerMediaAdsetName(adsetData.name, creative, creativeIndex >= 0 ? creativeIndex : index)
@@ -458,22 +470,19 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         // Drive copy is intentionally not allowed to inherit a neighboring
         // pair's shared fields. A category selection can contain Retail and
         // Restaurant in the same launch, so every Drive row must carry its own
-        // primary text, headline, description, and destination at the exact
-        // moment we send it to Meta.
+        // primary text, headline, and destination at the exact moment we send
+        // it to Meta. Meta descriptions are optional for link creatives.
         const incompleteManifestRows = isDriveManifest ? launchAds.filter(ad => {
             const creative = creativeData.creatives?.find(item => item.id === ad.creativeId);
             const headline = (ad.headlineOverride || '').trim();
             const body = (ad.bodyOverride || '').trim();
-            const description = (Object.prototype.hasOwnProperty.call(ad, 'descriptionOverride')
-                ? ad.descriptionOverride
-                : creative?.description) || '';
             const websiteUrl = (Object.prototype.hasOwnProperty.call(ad, 'websiteUrlOverride')
                 ? ad.websiteUrlOverride
                 : creative?.websiteUrl) || '';
-            return !headline || !body || !description.trim() || !websiteUrl.trim();
+            return !headline || !body || !isValidDestinationUrl(websiteUrl);
         }) : [];
         if (incompleteManifestRows.length > 0) {
-            showWarning(`${incompleteManifestRows.length} selected ad pair${incompleteManifestRows.length !== 1 ? 's are' : ' is'} missing designated Primary Text, Headline, Description, or destination URL. Open the affected row and complete it before launch.`);
+            showWarning(`${incompleteManifestRows.length} selected ad pair${incompleteManifestRows.length !== 1 ? 's are' : ' is'} missing a valid Primary Text, Headline, or http(s) destination URL. Open the affected row and complete it before launch.`);
             return;
         }
 
@@ -1404,10 +1413,10 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                                     {selectedManifestRow.creative?.previewUrl && <div className="relative w-1/2"><img src={selectedManifestRow.creative.previewUrl} alt="Feed 1:1 preview" className="h-full w-full object-cover" /><span className="absolute bottom-1 left-1 rounded bg-blue-600 px-1 py-0.5 text-[9px] font-semibold text-white">Feed 1:1</span></div>}
                                                     {selectedManifestRow.creative?.secondaryImageUrl && <div className="relative w-1/2"><img src={selectedManifestRow.creative.secondaryImageUrl} alt="Stories 9:16 preview" className="h-full w-full object-cover" /><span className="absolute bottom-1 left-1 rounded bg-purple-600 px-1 py-0.5 text-[9px] font-semibold text-white">Stories 9:16</span></div>}
                                                 </div>
-                                                <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">This copy belongs only to this ad pair. Shared fallback copy is disabled for Drive selections.</p>
+                                                <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">This copy belongs only to this ad pair. A Meta description is optional.</p>
                                                 <label className="block text-xs font-semibold text-gray-700">Primary text *<textarea rows="4" value={selectedManifestRow.body} onChange={(event) => updateManifestField(selectedManifestRow, 'body', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
                                                 <label className="block text-xs font-semibold text-gray-700">Headline *<input value={selectedManifestRow.headline} onChange={(event) => updateManifestField(selectedManifestRow, 'headline', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
-                                                <label className="block text-xs font-semibold text-gray-700">Description *<input value={selectedManifestRow.description} onChange={(event) => updateManifestField(selectedManifestRow, 'description', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
+                                                <label className="block text-xs font-semibold text-gray-700">Description <span className="font-normal text-gray-400">(optional)</span><input value={selectedManifestRow.description} onChange={(event) => updateManifestField(selectedManifestRow, 'description', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
                                                 <label className="block text-xs font-semibold text-gray-700">Destination URL *<input value={selectedManifestRow.websiteUrl} onChange={(event) => updateManifestField(selectedManifestRow, 'websiteUrl', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
                                                 <label className="block text-xs font-semibold text-gray-700">Ad name<input value={selectedManifestRow.ad.name} onChange={(event) => updateManifestField(selectedManifestRow, 'name', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
                                             </div>

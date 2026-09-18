@@ -66,8 +66,12 @@ const hasCopyText = (copy = {}) => Boolean(
     copy.primary_text?.trim() ||
     copy.description?.trim()
 );
+// Meta's link-ad description is optional. Strategy documents reliably supply
+// the two fields that define an ad's message (headline + primary text), but
+// commonly omit a description; treating that optional field as a failed match
+// discarded otherwise-valid Drive copy and blocked the row review entirely.
 const hasCompleteCopy = (copy = {}) => Boolean(
-    copy.headline?.trim() && copy.primary_text?.trim() && copy.description?.trim()
+    copy.headline?.trim() && copy.primary_text?.trim()
 );
 
 const normalizeFilenameBase = (fileName = '') => {
@@ -1424,12 +1428,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             if (perCreativeCopyMode) {
                 const missingCopy = creativeData.creatives.filter(c => (
                     c.source === 'drive'
-                        ? (!c.body?.trim() || !c.headline?.trim() || !c.description?.trim())
+                        ? (!c.body?.trim() || !c.headline?.trim())
                         : (!(c.body?.trim() || creativeData.bodies[0]?.trim()) ||
                             !(c.headline?.trim() || creativeData.headlines[0]?.trim()))
                 ));
                 if (missingCopy.length > 0) {
-                    showWarning(`${missingCopy.length} selected ad${missingCopy.length !== 1 ? 's' : ''} still needs its own Primary Text, Headline, and Description. Edit the Ad pairs & copy cards before continuing.`);
+                    showWarning(`${missingCopy.length} selected ad${missingCopy.length !== 1 ? 's' : ''} still needs its own Primary Text and Headline. Edit the Ad pairs & copy cards before continuing.`);
                     return;
                 }
             } else {
@@ -2027,7 +2031,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                 placeholder="Headline for this ad..."
                                                 className="w-full rounded-md border border-gray-300 px-2.5 py-2 text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                                             />
-                                            <label className="block text-[11px] font-semibold text-gray-600 mt-2 mb-1">Description *</label>
+                                            <label className="block text-[11px] font-semibold text-gray-600 mt-2 mb-1">Description <span className="font-normal text-gray-400">(optional)</span></label>
                                             <input
                                                 type="text"
                                                 value={creative.description ?? ''}
