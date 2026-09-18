@@ -170,6 +170,7 @@ const buildDriveAssetGroups = (assets) => {
             // layout folder such as "1x1 Images", which is useful for pairing
             // but useless for organizing a 50-row launch manifest.
             category: tags.category || null,
+            copyPairingAmbiguous: tags.copy_pairing_status === 'ambiguous',
             sortClusterKey,
         };
         existing.assets.push(asset);
@@ -177,6 +178,7 @@ const buildDriveAssetGroups = (assets) => {
         existing.landingPage = existing.landingPage || tags.landing_page || null;
         existing.cta = existing.cta || tags.cta || null;
         existing.category = existing.category || tags.category || null;
+        existing.copyPairingAmbiguous = existing.copyPairingAmbiguous || tags.copy_pairing_status === 'ambiguous';
         grouped.set(key, existing);
     });
 
@@ -231,6 +233,7 @@ const buildDriveAssetGroups = (assets) => {
             cta: pairCopyIntegrityOk ? group.cta : null,
             copyIntegrityIssue: isPair && !pairCopyIntegrityOk,
             copyRefreshUnverified: pairedMetadata.some(metadata => metadata.refreshStatus === 'unverified'),
+            copyPairingAmbiguous: group.copyPairingAmbiguous,
             syncedAt: latestSyncedAt(group),
         };
     });
@@ -262,6 +265,10 @@ const buildDriveAssetGroups = (assets) => {
         })
         .map(({ group }) => group);
 };
+
+const isDriveGroupSelectionBlocked = (group) => Boolean(
+    group?.copyPairingAmbiguous || group?.copyRefreshUnverified || group?.copyIntegrityIssue
+);
 
 // Live permutation count for the sticky counter below — mirrors BulkAdCreation.jsx's
 // own useEffect (media.length × valid-headlines × valid-bodies) exactly, so the number
@@ -572,7 +579,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // was enabled off the raw Set size rather than what's actually resolvable.
     useEffect(() => {
         setSelectedDriveAssetIds(prev => {
-            const next = new Set([...prev].filter(id => driveGroupById.has(id)));
+            const next = new Set([...prev].filter(id => {
+                const group = driveGroupById.get(id);
+                return group && !isDriveGroupSelectionBlocked(group);
+            }));
             return next.size === prev.size ? prev : next;
         });
     }, [driveGroupById]);
@@ -637,16 +647,24 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             const refreshedAssets = await fetchDriveAssets({ throwOnError: true });
             const refreshedGroups = buildDriveAssetGroups(refreshedAssets || []);
             const refreshedGroupById = new Map(refreshedGroups.map(group => [group.id, group]));
+            const refreshedGroupByAssetId = new Map(
+                refreshedGroups.flatMap(group => group.assets.map(asset => [asset.id, group]))
+            );
             setCreativeData(prev => ({
                 ...prev,
                 creatives: (prev.creatives || []).map(creative => {
-                    if (creative.source !== 'drive' || !creative.drivePairId) return creative;
-                    const group = refreshedGroupById.get(creative.drivePairId);
-                    if (!group) return creative;
+                    if (creative.source !== 'drive') return creative;
+                    const group = creative.drivePairId
+                        ? refreshedGroupById.get(creative.drivePairId)
+                        : (creative.driveAssetIds || []).map(id => refreshedGroupByAssetId.get(id)).find(Boolean);
+                    if (!group) return {
+                        ...creative,
+                        driveCopyIntegrityIssue: true,
+                    };
                     const matchedCopy = hasCompleteCopy(group.copy || {}) ? group.copy : {};
                     return {
                         ...creative,
-                        driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || false,
+                        driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || group.copyPairingAmbiguous || false,
                         category: group.category || creative.category,
                         headline: matchedCopy.headline || '',
                         body: matchedCopy.primary_text || '',
@@ -688,6 +706,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     };
 
     const toggleDriveAssetSelection = (assetId) => {
+        const group = driveGroupById.get(assetId);
+        if (isDriveGroupSelectionBlocked(group)) {
+            showWarning(group?.copyRefreshUnverified
+                ? 'This Drive copy source needs repair. Refresh after fixing the source document before selecting it.'
+                : 'This ad number has multiple or incomplete placements in Drive. Rename or resolve the source files, then refresh copy before selecting it.');
+            return;
+        }
         setSelectedDriveAssetIds(prev => {
             const next = new Set(prev);
             next.has(assetId) ? next.delete(assetId) : next.add(assetId);
@@ -706,9 +731,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // picks could be silently wiped by a later "Select first N," with no
     // warning. "Clear selection" is the one explicit way to actually reset.
     const selectAllVisibleDriveAssets = () => {
+        const blockedCount = driveAssetGroups.filter(isDriveGroupSelectionBlocked).length;
+        if (blockedCount) {
+            showWarning(String(blockedCount) + ' Drive creative' + (blockedCount !== 1 ? 's were' : ' was') + ' skipped because their pair or copy source needs repair.');
+        }
         setSelectedDriveAssetIds(prev => {
             const next = new Set(prev);
-            driveAssetGroups.forEach(group => next.add(group.id));
+            driveAssetGroups.filter(group => !isDriveGroupSelectionBlocked(group)).forEach(group => next.add(group.id));
             return next;
         });
     };
@@ -720,9 +749,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const selectFirstNDriveAssets = () => {
         const n = parseInt(driveSelectCount, 10);
         if (!Number.isFinite(n) || n <= 0) return;
+        const blockedCount = driveAssetGroups.filter(isDriveGroupSelectionBlocked).length;
+        if (blockedCount) {
+            showWarning(String(blockedCount) + ' Drive creative' + (blockedCount !== 1 ? 's were' : ' was') + ' skipped. Resolve the source in Drive, then refresh.');
+        }
         setSelectedDriveAssetIds(prev => {
             const next = new Set(prev);
-            driveAssetGroups.slice(0, n).forEach(group => next.add(group.id));
+            driveAssetGroups.filter(group => !isDriveGroupSelectionBlocked(group)).slice(0, n).forEach(group => next.add(group.id));
             return next;
         });
     };
@@ -731,6 +764,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         const selectedGroups = [...selectedDriveAssetIds]
             .map(id => driveGroupById.get(id))
             .filter(Boolean);
+        const blockedGroups = selectedGroups.filter(isDriveGroupSelectionBlocked);
+        if (blockedGroups.length > 0) {
+            showWarning('Resolve the Drive copy or placement issue before adding these creatives.');
+            return;
+        }
         const groupsWithCopy = selectedGroups.filter(group => hasCompleteCopy(group.copy || {}) && !group.copyRefreshUnverified);
         // A mixed selection must never let a matched category's global copy
         // fall through onto an unmatched asset. Keep the all-unmatched flow
@@ -780,7 +818,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     source: 'drive',
                     dualPlacement: true,
                     drivePairId: group.id,
-                    driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || false,
+                    driveAssetIds: [group.feedAsset.id, group.storiesAsset.id],
+                    driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || group.copyPairingAmbiguous || false,
                     category: group.category || group.feedAsset?.brand_name || 'Uncategorized',
                     headline: matchedCopy.headline || '',
                     body: matchedCopy.primary_text || '',
@@ -807,6 +846,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     format: driveAssetPlacement(asset),
                     source: 'drive',
                     drivePairId: null,
+                    driveAssetIds: [asset.id],
+                    driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || group.copyPairingAmbiguous || false,
                     category: group.category || asset.brand_name || 'Uncategorized',
                     headline: matchedCopy.headline || '',
                     body: matchedCopy.primary_text || '',
@@ -832,7 +873,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 format: driveAssetPlacement(asset),
                 source: 'drive',
                 drivePairId: group.id,
-                driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || false,
+                driveAssetIds: [asset.id],
+                driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || group.copyPairingAmbiguous || false,
                 category: group.category || asset.brand_name || 'Uncategorized',
                 headline: matchedCopy.headline || '',
                 body: matchedCopy.primary_text || '',
@@ -2886,11 +2928,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     const isSelected = selectedDriveAssetIds.has(group.id);
                                     const tags = parseDriveTags(asset);
                                     const copyMatched = hasCompleteCopy(group.copy || {});
+                                    const selectionBlocked = isDriveGroupSelectionBlocked(group);
                                     return (
                                         <div
                                             key={group.id}
                                             onClick={() => toggleDriveAssetSelection(group.id)}
-                                            className={`relative cursor-pointer rounded-xl overflow-hidden border-2 bg-white transition-all ${isSelected ? 'border-amber-500 ring-2 ring-amber-200' : 'border-gray-200 hover:border-amber-300'}`}
+                                            aria-disabled={selectionBlocked}
+                                            title={selectionBlocked ? (group.copyRefreshUnverified ? 'The Drive copy source needs repair. Refresh after fixing it before launch.' : 'Multiple or incomplete placements use this ad number. Resolve them in Drive before launch.') : undefined}
+                                            className={`relative rounded-xl overflow-hidden border-2 bg-white transition-all ${selectionBlocked ? 'cursor-not-allowed border-red-300 opacity-70' : 'cursor-pointer'} ${isSelected ? 'border-amber-500 ring-2 ring-amber-200' : selectionBlocked ? '' : 'border-gray-200 hover:border-amber-300'}`}
                                         >
                                             <div className={`flex h-[120px] gap-2 bg-gray-100 p-1.5 ${group.isPair && group.storiesAsset ? 'items-stretch' : 'items-center justify-center'}`}>
                                                 <div className={`relative ${group.isPair && group.storiesAsset ? 'w-1/2 min-w-0' : 'h-full w-full'}`}>
@@ -2924,7 +2969,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     <Check size={14} className="text-white" />
                                                 </div>
                                             )}
-                                            {group.copyIntegrityIssue || group.copyRefreshUnverified ? (
+                                            {group.copyPairingAmbiguous ? (
+                                                <div className="absolute bottom-10 left-2 bg-red-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
+                                                    {group.category || 'AD'} needs 1 Feed + 1 Stories source
+                                                </div>
+                                            ) : group.copyIntegrityIssue || group.copyRefreshUnverified ? (
                                                 <div className="absolute bottom-10 left-2 bg-red-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
                                                     {group.copyRefreshUnverified ? 'Drive source needs repair — refresh Drive' : 'Pair data mismatch — refresh Drive'}
                                                 </div>

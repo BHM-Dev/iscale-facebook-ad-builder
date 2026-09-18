@@ -188,6 +188,16 @@ class DriveSyncService:
                     detail="A Drive sync is already running. Wait for it to finish, then refresh copy matches again.",
                 )
             drive = self._client()
+            # Treat the source tree as authoritative. A document may have been
+            # deleted or changed into an unsupported draft since the previous
+            # run; it will no longer appear as a recognized document below, so
+            # there is no individual file we can safely use to revoke its old
+            # match. Mark every existing Drive-derived match unverified first.
+            # Each source that still parses successfully overwrites its package
+            # with fresh verified tags during this same transaction.
+            self._mark_all_copy_assets_unverified(
+                "No current recognized Drive copy source was found during refresh"
+            )
             for file_meta in self._initial_folder_walk(drive):
                 if not self._is_text_file(file_meta.get("mimeType") or "", file_meta.get("name", "")):
                     continue
@@ -203,6 +213,7 @@ class DriveSyncService:
                 if not (
                     self._looks_like_strategy_copy_doc(text_body)
                     or self._looks_like_category_copy_doc(text_body)
+                    or self._looks_like_ad_copy_doc(text_body)
                     or is_handoff_manifest
                 ):
                     continue
@@ -328,7 +339,16 @@ class DriveSyncService:
                 self._package_folder_cache.clear()
                 self._strategy_package_folder_cache.clear()
                 self._folder_metadata_cache.clear()
-                result["updated"] += self._refresh_folder_copy_metadata(file_meta)
+                try:
+                    result["updated"] += self._refresh_folder_copy_metadata(file_meta)
+                except Exception as exc:
+                    # The scheduled incremental sync must fail closed per package
+                    # too. A malformed or duplicate AD document cannot leave the
+                    # previous copy launchable just because a later file change
+                    # causes the outer transaction to roll back.
+                    result["errors"] += 1
+                    logger.warning("Could not refresh Drive copy metadata for %s: %s", file_meta.get("name"), exc)
+                    self._mark_package_copy_unverified(file_meta, str(exc))
             result["skipped"] += 1
             return
 
@@ -464,6 +484,13 @@ class DriveSyncService:
     def _archive_by_drive_id(self, drive_file_id: Optional[str]) -> int:
         if not drive_file_id:
             return 0
+        # Copy documents are not themselves stored as Drive assets. The source
+        # document ID is written onto every media tag it verified, which lets a
+        # normal incremental Drive deletion revoke those media rows immediately.
+        self._mark_copy_source_unverified(
+            drive_file_id,
+            "The Drive copy source was deleted or moved",
+        )
         result = self.db.execute(
             text(
                 """
@@ -636,16 +663,22 @@ class DriveSyncService:
             metadata = folder_metadata.get("assets_by_drive_id", {}).get(file_meta.get("id"))
             metadata = metadata or folder_metadata.get("assets", {}).get(file_name.lower(), {})
             if metadata:
-                return self._bind_media_metadata_to_file(metadata, file_meta.get("id"))
+                bound = self._bind_media_metadata_to_file(metadata, file_meta.get("id"))
+                if folder_metadata.get("_copy_source_drive_file_id"):
+                    bound["copy_source_drive_file_id"] = folder_metadata["_copy_source_drive_file_id"]
+                return bound
         strategy_folder = self._find_strategy_package_folder(file_meta)
         if not strategy_folder:
             return {}
         folder_metadata = self._folder_copy_metadata(strategy_folder)
-        return self._bind_media_metadata_to_file(
+        bound = self._bind_media_metadata_to_file(
             folder_metadata.get("assets_by_drive_id", {}).get(file_meta.get("id"))
             or folder_metadata.get("assets", {}).get(file_name.lower(), {}),
             file_meta.get("id"),
         )
+        if bound and folder_metadata.get("_copy_source_drive_file_id"):
+            bound["copy_source_drive_file_id"] = folder_metadata["_copy_source_drive_file_id"]
+        return bound
 
     def _bind_media_metadata_to_file(self, metadata: Dict[str, Any], drive_file_id: Optional[str]) -> Dict[str, Any]:
         """Return copy tags without leaking a duplicate basename's sibling ID."""
@@ -699,6 +732,10 @@ class DriveSyncService:
                 continue
             for drive_file_id in drive_file_ids:
                 matched_media_ids.add(drive_file_id)
+                refreshed_tags = self._bind_media_metadata_to_file(soft_tags, drive_file_id)
+                refreshed_tags["copy_source_drive_file_id"] = (
+                    folder_metadata.get("_copy_source_drive_file_id") or file_meta.get("id")
+                )
                 result = self.db.execute(
                     text(
                         """
@@ -708,7 +745,7 @@ class DriveSyncService:
                         """
                     ),
                     {
-                        "soft_tags": json.dumps(self._bind_media_metadata_to_file(soft_tags, drive_file_id)),
+                        "soft_tags": json.dumps(refreshed_tags),
                         "drive_file_id": drive_file_id,
                     },
                 )
@@ -740,7 +777,7 @@ class DriveSyncService:
                 )::text,
                 synced_at = NOW()
                 WHERE COALESCE(NULLIF(soft_tags, '')::jsonb ->> 'package_folder_id', '') = :package_folder
-                  AND COALESCE(NULLIF(soft_tags, '')::jsonb ->> 'source', '') IN ('category_copy_doc', 'strategy_copy_doc', 'handoff_manifest')
+                  AND COALESCE(NULLIF(soft_tags, '')::jsonb ->> 'source', '') IN ('category_copy_doc', 'strategy_copy_doc', 'ad_numbered_copy_doc', 'handoff_manifest')
                   AND NOT (drive_file_id = ANY(CAST(:matched_media_ids AS text[])))
                 """
             ),
@@ -751,6 +788,48 @@ class DriveSyncService:
                 "Marked %s Drive asset(s) unverified because they are absent from current package copy metadata %s",
                 result.rowcount,
                 package_folder,
+            )
+
+    def _mark_all_copy_assets_unverified(self, reason: str) -> None:
+        """Fail closed when a full source refresh cannot rediscover a package."""
+        self.db.execute(
+            text(
+                """
+                UPDATE drive_assets
+                SET soft_tags = jsonb_set(
+                    jsonb_set(COALESCE(NULLIF(soft_tags, '')::jsonb, '{}'::jsonb), '{copy_refresh_status}', '\"unverified\"'::jsonb, true),
+                    '{copy_refresh_error}', to_jsonb(CAST(:reason AS text)), true
+                )::text,
+                synced_at = NOW()
+                WHERE archived = FALSE
+                  AND COALESCE(NULLIF(soft_tags, '')::jsonb ->> 'source', '') IN ('category_copy_doc', 'strategy_copy_doc', 'ad_numbered_copy_doc', 'handoff_manifest')
+                """
+            ),
+            {"reason": str(reason)[:500]},
+        )
+
+    def _mark_copy_source_unverified(self, source_drive_file_id: str, reason: str) -> None:
+        """Revoke media tags attributed to a deleted/moved copy document."""
+        result = self.db.execute(
+            text(
+                """
+                UPDATE drive_assets
+                SET soft_tags = jsonb_set(
+                    jsonb_set(COALESCE(NULLIF(soft_tags, '')::jsonb, '{}'::jsonb), '{copy_refresh_status}', '\"unverified\"'::jsonb, true),
+                    '{copy_refresh_error}', to_jsonb(CAST(:reason AS text)), true
+                )::text,
+                synced_at = NOW()
+                WHERE archived = FALSE
+                  AND COALESCE(NULLIF(soft_tags, '')::jsonb ->> 'copy_source_drive_file_id', '') = :source_drive_file_id
+                """
+            ),
+            {"source_drive_file_id": source_drive_file_id, "reason": str(reason)[:500]},
+        )
+        if result.rowcount:
+            logger.warning(
+                "Marked %s Drive asset(s) unverified because copy source %s was removed",
+                result.rowcount,
+                source_drive_file_id,
             )
 
     def _mark_package_copy_unverified(self, file_meta: Dict[str, Any], reason: str) -> None:
@@ -884,12 +963,23 @@ class DriveSyncService:
                     continue
                 if (
                     has_media
-                    and (self._looks_like_strategy_copy_doc(text_body) or self._looks_like_category_copy_doc(text_body))
+                    and (
+                        self._looks_like_strategy_copy_doc(text_body)
+                        or self._looks_like_category_copy_doc(text_body)
+                        or self._looks_like_ad_copy_doc(text_body)
+                    )
                 ):
                     resolved = current
                     found = True
                     break
             if found:
+                break
+            if has_media and depth >= 1:
+                # The first media ancestor is normally the 1x1/9x16 placement
+                # folder; its parent is the package root. If that package has
+                # media but no recognized copy source, climbing into a brand
+                # root could borrow a sibling package's AD 1 copy. Stop here
+                # rather than manufacture a valid-looking cross-package pair.
                 break
             try:
                 info = drive.files().get(fileId=current, fields="id,parents", supportsAllDrives=True).execute()
@@ -937,6 +1027,7 @@ class DriveSyncService:
                 raise RuntimeError(f"Could not read Drive handoff manifest {manifest.get('name')}") from exc
 
             metadata = self._handoff_folder_copy_metadata(folder_id, folder_files, text_files, media_by_name, manifest_text)
+            metadata["_copy_source_drive_file_id"] = manifest.get("id")
             self._folder_metadata_cache[folder_id] = metadata
             return metadata
 
@@ -949,19 +1040,30 @@ class DriveSyncService:
             except Exception:
                 unreadable_text_files.append(item.get("name") or item.get("id"))
                 continue
-            if self._looks_like_strategy_copy_doc(candidate_text) or self._looks_like_category_copy_doc(candidate_text):
+            if (
+                self._looks_like_strategy_copy_doc(candidate_text)
+                or self._looks_like_category_copy_doc(candidate_text)
+                or self._looks_like_ad_copy_doc(candidate_text)
+            ):
                 strategy_file = item
                 strategy_text = candidate_text
                 break
         if strategy_file:
             if self._looks_like_strategy_copy_doc(strategy_text):
                 metadata = self._strategy_folder_copy_metadata(folder_id, folder_files, media_by_name, strategy_text)
-            else:
+            elif self._looks_like_category_copy_doc(strategy_text):
                 category_media = [
                     item for item in folder_files
                     if self._is_supported_media(item.get("mimeType") or "", item.get("name") or "")
                 ]
                 metadata = self._category_folder_copy_metadata(folder_id, category_media, strategy_text)
+            else:
+                ad_media = [
+                    item for item in folder_files
+                    if self._is_supported_media(item.get("mimeType") or "", item.get("name") or "")
+                ]
+                metadata = self._ad_numbered_folder_copy_metadata(folder_id, ad_media, strategy_text)
+            metadata["_copy_source_drive_file_id"] = strategy_file.get("id")
             self._folder_metadata_cache[folder_id] = metadata
             return metadata
 
@@ -1070,6 +1172,25 @@ class DriveSyncService:
             and re.search(r"^\s*Primary text\s*:", text_body, re.IGNORECASE | re.MULTILINE)
         )
 
+    def _looks_like_ad_copy_doc(self, text_body: str) -> bool:
+        """Recognize Joel's package-level AD 1 through AD 5 copy documents.
+
+        These are the established contractor-package format. They use either
+        META HEADLINE / PRIMARY TEXT labels or a compact Headline: plus prose
+        layout, rather than the category-doc fields above.
+        """
+        return bool(
+            re.search(r"^\s*AD\s+\d+\b", text_body, re.IGNORECASE | re.MULTILINE)
+            and (
+                re.search(r"^\s*META\s+HEADLINE\s*:?\s*$", text_body, re.IGNORECASE | re.MULTILINE)
+                or re.search(r"^\s*Headline\s*:", text_body, re.IGNORECASE | re.MULTILINE)
+            )
+            and (
+                re.search(r"^\s*PRIMARY\s+TEXT\s*:?\s*$", text_body, re.IGNORECASE | re.MULTILINE)
+                or re.search(r"^\s*={10,}\s*$", text_body, re.MULTILINE)
+            )
+        )
+
     _CATEGORY_ALIASES = {
         1: ("landscaping", "landscaper", "landscapers", "field service", "lawn care", "outdoor crew"),
         2: ("retail", "shop owner", "shop owners", "boutique"),
@@ -1079,6 +1200,21 @@ class DriveSyncService:
         6: ("contractor", "contractors", "construction", "trade contractor", "trade contractors"),
         7: ("general", "protect what you built", "protect what you ve built", "business owner", "business owners", "broad"),
     }
+
+    # Drive packages created before the naming convention was formalized use
+    # short folder/file labels. Keep those abbreviations explicit. A generic
+    # one-section copy package may use them safely because there is no second
+    # copy block that could receive the asset by mistake.
+    _CATEGORY_KEYWORD_ALIASES = (
+        (
+            ("landscaping", "landscape", "landscaper", "landscapers", "lawn care", "field service", "outdoor crew", "land", "lnd"),
+            ("land", "lnd"),
+        ),
+        (
+            ("florist", "florists", "floral", "flower shop", "flower store", "flor", "flr"),
+            ("flor", "flr"),
+        ),
+    )
 
     def _parse_category_copy_doc(self, text_body: str) -> Dict[int, Dict[str, Any]]:
         headings = list(re.finditer(r"^\s*(\d+)\.\s+(.+?)\s*$", text_body, re.MULTILINE))
@@ -1110,11 +1246,79 @@ class DriveSyncService:
     def _category_matches(self, file_name: str, category: str, number: int) -> bool:
         normalized_file = self._normalize_name(os.path.splitext(file_name)[0])
         normalized_category = self._normalize_name(category)
-        aliases = self._CATEGORY_ALIASES.get(number, ())
-        candidates = (normalized_category, *(self._normalize_name(alias) for alias in aliases))
-        return any(candidate and candidate in normalized_file for candidate in candidates)
+        legacy_aliases = self._CATEGORY_ALIASES.get(number, ())
+        semantic_aliases = []
+        for keywords, keyword_aliases in self._CATEGORY_KEYWORD_ALIASES:
+            if any(
+                self._name_contains_phrase(normalized_category, self._normalize_name(keyword))
+                for keyword in keywords
+            ):
+                # A known heading uses a semantic group, so `Florist`, `FLR`,
+                # and `FLOR` are equivalent. Do not inherit unrelated aliases
+                # merely because this section happens to be number 1.
+                semantic_aliases.extend((*keywords, *keyword_aliases))
 
-    def _category_pair_key(self, file_name: str) -> str:
+        # Legacy docs can use generic headings and depend on the original
+        # numbered fallback. Preserve it when no explicit vertical is present.
+        aliases = semantic_aliases or list(legacy_aliases)
+
+        candidates = (normalized_category, *(self._normalize_name(alias) for alias in aliases))
+        return any(
+            candidate and self._category_candidate_matches_filename(normalized_file, candidate)
+            for candidate in candidates
+        )
+
+    @staticmethod
+    def _name_contains_phrase(normalized_value: str, normalized_phrase: str) -> bool:
+        """Match normalized filename tokens without short-code false positives."""
+        return f" {normalized_phrase} " in f" {normalized_value} "
+
+    def _category_candidate_matches_filename(self, normalized_file: str, normalized_candidate: str) -> bool:
+        """Keep legacy compact-name support while making abbreviations exact tokens."""
+        short_aliases = {
+            self._normalize_name(alias)
+            for _, aliases in self._CATEGORY_KEYWORD_ALIASES
+            for alias in aliases
+        }
+        if normalized_candidate in short_aliases:
+            return self._name_contains_phrase(normalized_file, normalized_candidate)
+        return normalized_candidate in normalized_file
+
+    def _category_alias_replacements(
+        self,
+        category: str,
+        allow_single_section_short_codes: bool = False,
+    ) -> Dict[str, str]:
+        """Return the short naming aliases that are valid for this copy section."""
+        normalized_category = self._normalize_name(category)
+        replacements: Dict[str, str] = {}
+        for keywords, keyword_aliases in self._CATEGORY_KEYWORD_ALIASES:
+            normalized_keywords = tuple(self._normalize_name(keyword) for keyword in keywords)
+            category_identifies_vertical = any(
+                self._name_contains_phrase(normalized_category, keyword)
+                for keyword in normalized_keywords
+            )
+            if not (category_identifies_vertical or allow_single_section_short_codes):
+                continue
+            canonical = normalized_keywords[0]
+            for variant in (*normalized_keywords, *(self._normalize_name(alias) for alias in keyword_aliases)):
+                replacements[variant] = canonical
+        return replacements
+
+    def _matches_known_category_short_code(self, file_name: str) -> bool:
+        normalized_file = self._normalize_name(os.path.splitext(file_name)[0])
+        return any(
+            self._name_contains_phrase(normalized_file, self._normalize_name(alias))
+            for _, short_aliases in self._CATEGORY_KEYWORD_ALIASES
+            for alias in short_aliases
+        )
+
+    def _category_pair_key(
+        self,
+        file_name: str,
+        category: str = "",
+        allow_single_section_short_codes: bool = False,
+    ) -> str:
         """Stable identity for a category-copy Feed/Stories export.
 
         Category docs share one copy block across multiple images, so their
@@ -1126,7 +1330,162 @@ class DriveSyncService:
         """
         stem = os.path.splitext(file_name or "")[0].lower()
         stem = re.sub(r"(?:^|[-_ ])(?:1x1|9x16)(?=$|[-_ ])", " ", stem, flags=re.IGNORECASE)
-        return re.sub(r"[-_\s]+", " ", stem).strip()
+        normalized_stem = re.sub(r"[-_\s]+", " ", stem).strip()
+        for alias, canonical in self._category_alias_replacements(category, allow_single_section_short_codes).items():
+            normalized_stem = re.sub(
+                rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])",
+                canonical,
+                normalized_stem,
+            )
+        return normalized_stem
+
+    def _parse_ad_copy_doc(self, text_body: str) -> Dict[int, Dict[str, Any]]:
+        """Parse package copy where each creative is introduced by an AD number.
+
+        The parser supports the two Drive formats presently in use:
+        META HEADLINE / PRIMARY TEXT documents and newer compact Headline:
+        documents whose body follows a long equals-rule. A block without both
+        headline and body is omitted, so a draft can never produce a misleading
+        Copy matched tag.
+        """
+        headings = list(re.finditer(r"^\s*AD\s+(\d+)\b.*$", text_body, re.IGNORECASE | re.MULTILINE))
+        sections: Dict[int, Dict[str, Any]] = {}
+        seen_numbers = set()
+        landing_match = re.search(r"^\s*Lander\s*:\s*(\S+)", text_body, re.IGNORECASE | re.MULTILINE)
+        landing_page = landing_match.group(1).strip() if landing_match else None
+
+        for index, heading in enumerate(headings):
+            number = int(heading.group(1))
+            if number in seen_numbers:
+                # Two unrelated versions of AD 1 in one package are ambiguous;
+                # fail closed instead of attaching one version arbitrarily.
+                return {}
+            seen_numbers.add(number)
+            block = text_body[heading.end():headings[index + 1].start() if index + 1 < len(headings) else len(text_body)]
+
+            headline_match = re.search(
+                r"^\s*META\s+HEADLINE\s*:?\s*\r?\n\s*(.+?)\s*$",
+                block,
+                re.IGNORECASE | re.MULTILINE,
+            ) or re.search(
+                r"^\s*Headline\s*:\s*(.+?)\s*$",
+                block,
+                re.IGNORECASE | re.MULTILINE,
+            )
+            headline = self._clean_markdown_value(headline_match.group(1)) if headline_match else ""
+
+            description_match = re.search(
+                r"^\s*Description\s*:\s*(.+?)\s*$",
+                block,
+                re.IGNORECASE | re.MULTILINE,
+            )
+            description = self._clean_markdown_value(description_match.group(1)) if description_match else None
+
+            primary_label = re.search(r"^\s*PRIMARY\s+TEXT\s*:?\s*$", block, re.IGNORECASE | re.MULTILINE)
+            if primary_label:
+                primary_body = block[primary_label.end():]
+                primary_body = re.split(r"^\s*(?:CTA|IMAGE)\s*:", primary_body, maxsplit=1, flags=re.IGNORECASE | re.MULTILINE)[0]
+            else:
+                dividers = list(re.finditer(r"^\s*={10,}\s*$", block, re.MULTILINE))
+                primary_body = block[dividers[0].end():dividers[1].start() if len(dividers) > 1 else len(block)] if dividers else ""
+            primary_text = self._clean_markdown_value(primary_body)
+
+            cta_match = re.search(r"^\s*CTA\s*:\s*(.+?)\s*$", block, re.IGNORECASE | re.MULTILINE)
+            sections[number] = {
+                "headline": headline,
+                "primary_text": primary_text,
+                "description": description,
+                "landing_page": landing_page,
+                "cta": self._normalize_cta(cta_match.group(1)) if cta_match else None,
+            }
+        return {
+            number: section
+            for number, section in sections.items()
+            if section["headline"] and section["primary_text"]
+        }
+
+    def _media_aspect(self, item: Dict[str, Any]) -> Optional[str]:
+        file_name = item.get("name") or ""
+        aspect_match = re.search(r"(?:^|[-_ ])(1x1|9x16)(?:[-_][A-Za-z0-9]+)?(?=\.[^.]+$)", file_name, re.IGNORECASE)
+        if aspect_match:
+            return aspect_match.group(1).lower()
+        for folder_name in reversed(item.get("_parent_folder_path") or [item.get("_parent_folder_name") or ""]):
+            folder_aspect = re.match(
+                r"^\s*(1x1|9x16)(?:\s+(?:images?|assets?|feed|stories|reels))?\s*$",
+                folder_name,
+                re.IGNORECASE,
+            )
+            if folder_aspect:
+                return folder_aspect.group(1).lower()
+        return None
+
+    def _ad_number_from_file_name(self, file_name: str) -> Optional[int]:
+        stem = os.path.splitext(file_name or "")[0]
+        match = re.search(r"(?:^|[-_ ])AD\s*0?(\d{1,2})(?=$|[-_ ])", stem, re.IGNORECASE)
+        return int(match.group(1)) if match else None
+
+    def _ad_numbered_folder_copy_metadata(self, folder_id, media_files, text_body):
+        sections = self._parse_ad_copy_doc(text_body)
+        if not sections:
+            raise RuntimeError("Drive AD-numbered copy document contained no complete copy sections")
+
+        candidates_by_ad: Dict[int, List[Any]] = {}
+        for item in media_files:
+            file_name = item.get("name") or ""
+            ad_number = self._ad_number_from_file_name(file_name)
+            aspect = self._media_aspect(item)
+            if ad_number not in sections:
+                continue
+            candidates_by_ad.setdefault(ad_number, []).append((item, file_name, aspect or "unknown"))
+
+        assets: Dict[str, Dict[str, Any]] = {}
+        assets_by_drive_id: Dict[str, Dict[str, Any]] = {}
+        for ad_number, candidates in candidates_by_ad.items():
+            by_aspect: Dict[str, List[Any]] = {"1x1": [], "9x16": [], "unknown": []}
+            for candidate in candidates:
+                by_aspect[candidate[2]].append(candidate)
+            # A stray export with no known placement makes the AD number
+            # ambiguous too. Treating the known 1x1/9x16 files as a valid
+            # pair while indexing that third file would both conceal the
+            # ambiguity and attempt to assign it a missing paired copy ID.
+            paired = (
+                len(by_aspect["1x1"]) == 1
+                and len(by_aspect["9x16"]) == 1
+                and not by_aspect["unknown"]
+            )
+            copy_ids_by_drive_id = {}
+            if paired:
+                for candidate in (*by_aspect["1x1"], *by_aspect["9x16"]):
+                    copy_ids_by_drive_id[candidate[0].get("id")] = f"AD-{ad_number:02d}"
+            else:
+                for extra_index, candidate in enumerate(sorted(candidates, key=lambda entry: (
+                    entry[2], entry[1].lower(), str(entry[0].get("id") or "")
+                )), start=1):
+                    copy_ids_by_drive_id[candidate[0].get("id")] = f"AD-{ad_number:02d}-EXTRA-{extra_index}"
+
+            section = sections[ad_number]
+            pairing_status = "paired" if paired else "ambiguous"
+            for item, file_name, aspect in candidates:
+                metadata = {
+                    "copy_id": copy_ids_by_drive_id[item.get("id")],
+                    "category": f"AD {ad_number}",
+                    "aspect": aspect,
+                    "copy": {
+                        "headline": section["headline"],
+                        "primary_text": section["primary_text"],
+                        "description": section["description"],
+                    },
+                    "landing_page": section["landing_page"],
+                    "cta": section["cta"],
+                    "source": "ad_numbered_copy_doc",
+                    "copy_pairing_status": pairing_status,
+                    "drive_file_id": item.get("id"),
+                    "package_folder_id": folder_id,
+                    "file_name": file_name,
+                }
+                assets_by_drive_id[item.get("id")] = metadata
+                assets[file_name.lower()] = metadata
+        return {"assets": assets, "assets_by_drive_id": assets_by_drive_id}
 
     def _category_folder_copy_metadata(self, folder_id, media_files, text_body):
         sections = self._parse_category_copy_doc(text_body)
@@ -1163,7 +1522,17 @@ class DriveSyncService:
                 aspect = folder_aspect.group(1).lower()
             if not aspect:
                 continue
-            matches = [number for number, section in sections.items() if self._category_matches(file_name, section["category"], number)]
+            matches = [
+                number
+                for number, section in sections.items()
+                if self._category_matches(file_name, section["category"], number)
+            ]
+            if not matches and len(sections) == 1 and self._matches_known_category_short_code(file_name):
+                # A legacy one-copy package can have a generic heading such as
+                # "Local Business Coverage." With only one complete copy block
+                # there is no competing category to misroute, so accept the
+                # explicit short label and pair its Feed/Stories exports.
+                matches = [next(iter(sections))]
             if len(matches) != 1:
                 if len(matches) > 1:
                     logger.warning("Drive image %s matched multiple copy categories: %s", file_name, matches)
@@ -1180,7 +1549,11 @@ class DriveSyncService:
         for number, category_candidates in candidates_by_category.items():
             by_identity: Dict[str, Dict[str, List[Any]]] = {}
             for candidate in category_candidates:
-                identity = self._category_pair_key(candidate[1])
+                identity = self._category_pair_key(
+                    candidate[1],
+                    category_candidates[0][3]["category"],
+                    allow_single_section_short_codes=len(sections) == 1,
+                )
                 by_identity.setdefault(identity, {"1x1": [], "9x16": []})[candidate[4]].append(candidate)
 
             # Only a one-to-one filename identity is a trustworthy pair. A
@@ -1202,7 +1575,15 @@ class DriveSyncService:
                 candidate for candidate in category_candidates
                 if candidate[0].get("id") not in copy_ids_by_drive_id
             ]
-            for extra_index, candidate in enumerate(sorted(unpaired, key=lambda entry: (self._category_pair_key(entry[1]), entry[1].lower(), str(entry[0].get("id") or ""))), start=1):
+            for extra_index, candidate in enumerate(sorted(unpaired, key=lambda entry: (
+                self._category_pair_key(
+                    entry[1],
+                    entry[3]["category"],
+                    allow_single_section_short_codes=len(sections) == 1,
+                ),
+                entry[1].lower(),
+                str(entry[0].get("id") or ""),
+            )), start=1):
                 copy_ids_by_drive_id[candidate[0].get("id")] = f"CATEGORY-{number:02d}-EXTRA-{extra_index}"
 
             for item, file_name, _, section, aspect in category_candidates:
@@ -1457,6 +1838,7 @@ class DriveSyncService:
         'GET_MY_QUOTE': 'GET_QUOTE', 'GET_YOUR_QUOTE': 'GET_QUOTE',
         'GET_YOUR_FREE_QUOTE': 'GET_QUOTE', 'GET_FREE_QUOTE': 'GET_QUOTE',
         'REQUEST_QUOTE': 'GET_QUOTE', 'REQUEST_A_QUOTE': 'GET_QUOTE',
+        'GET_RATE_NOW': 'GET_QUOTE', 'GET_MY_RATE_NOW': 'GET_QUOTE',
     }
 
     def _normalize_cta(self, value: Optional[str]) -> Optional[str]:

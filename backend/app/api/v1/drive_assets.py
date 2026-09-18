@@ -99,9 +99,17 @@ def refresh_drive_copy_metadata(
     db: Session = Depends(get_db),
     _current_user: User = Depends(get_current_active_user),
 ):
-    """Re-match imported media to the Drive strategy/copy documents."""
+    """Sync Drive changes, then re-match imported media to active copy sources."""
     try:
-        return DriveSyncService(db).refresh_copy_metadata()
+        service = DriveSyncService(db)
+        sync_result = service.sync_once()
+        refresh_result = service.refresh_copy_metadata()
+        for key in ("processed", "created", "updated", "skipped", "archived", "unmatched_brand", "errors"):
+            refresh_result[key] = (refresh_result.get(key) or 0) + (sync_result.get(key) or 0)
+        refresh_result["next_page_token_saved"] = bool(
+            refresh_result.get("next_page_token_saved") or sync_result.get("next_page_token_saved")
+        )
+        return refresh_result
     except HTTPException:
         raise
     except Exception as exc:
