@@ -482,6 +482,23 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             ? { matchedPairs, unmatchedPairs }
             : null;
     }, [driveAssetGroups]);
+    // Purely informational — which Drive asset ids are already sitting in
+    // creativeData.creatives from an earlier add. Never gates selection or
+    // toggling (that stays exactly as it was); it only lets the grid show an
+    // "Already added" badge so Joel can tell without opening each card.
+    const existingDriveAssetIds = useMemo(() => {
+        const ids = new Set();
+        (creativeData?.creatives || []).forEach(creative => {
+            if (creative.source !== 'drive') return;
+            (creative.driveAssetIds || []).forEach(id => ids.add(id));
+        });
+        return ids;
+    }, [creativeData?.creatives]);
+    const isDriveGroupAlreadyAdded = (group) => Boolean(
+        group && [group.feedAsset?.id, group.storiesAsset?.id, group.displayAsset?.id]
+            .some(id => id && existingDriveAssetIds.has(id))
+    );
+
     // Raw file count — "N assets" in the footer label. Distinct from how many
     // CREATIVE entries actually land in creativeData.creatives (a real tagged
     // pair merges 2 assets into 1 creative; an auto-duped single expands 1
@@ -2921,24 +2938,42 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             >
                                 Clear selection
                             </button>
-                            <div className="flex items-center gap-1.5">
-                                <span className="text-xs text-gray-500">Select newest</span>
-                                <input
-                                    type="number"
-                                    min="1"
-                                    value={driveSelectCount}
-                                    onChange={(e) => setDriveSelectCount(e.target.value)}
-                                    placeholder="e.g. 50"
-                                    className="w-16 rounded-lg border border-gray-300 py-1 px-2 text-xs focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                                />
-                                <button
-                                    type="button"
-                                    onClick={selectFirstNDriveAssets}
-                                    disabled={!driveSelectCount || driveAssetGroups.length === 0}
-                                    className="px-3 py-1 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                                >
-                                    Go
-                                </button>
+                            <div className="flex flex-col gap-0.5">
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-xs text-gray-500">Select first</span>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        value={driveSelectCount}
+                                        onChange={(e) => setDriveSelectCount(e.target.value)}
+                                        placeholder="e.g. 50"
+                                        className="w-16 rounded-lg border border-gray-300 py-1 px-2 text-xs focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                                    />
+                                    <span className="text-xs text-gray-500">matching assets</span>
+                                    <button
+                                        type="button"
+                                        onClick={selectFirstNDriveAssets}
+                                        disabled={!driveSelectCount || driveAssetGroups.length === 0}
+                                        className="px-3 py-1 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    >
+                                        Go
+                                    </button>
+                                </div>
+                                {/* Shows exactly what "Go" will select before Joel commits — the
+                                    scope (newest-first, filtered to eligible/matching assets only)
+                                    and the exact resulting range, so "first N" is never a black box. */}
+                                {driveSelectCount && driveAssetGroups.length > 0 && (() => {
+                                    const n = parseInt(driveSelectCount, 10);
+                                    if (!Number.isFinite(n) || n <= 0) return null;
+                                    const eligible = driveAssetGroups.filter(group => !isDriveGroupSelectionBlocked(group));
+                                    const willSelect = eligible.slice(0, n);
+                                    return (
+                                        <span className="text-[11px] text-gray-500">
+                                            Will select the {willSelect.length} newest of {driveAssetGroups.length} matching asset{driveAssetGroups.length !== 1 ? 's' : ''}
+                                            {eligible.length !== driveAssetGroups.length ? ` (${driveAssetGroups.length - eligible.length} blocked, skipped)` : ''}.
+                                        </span>
+                                    );
+                                })()}
                             </div>
                         </div>
                     </div>
@@ -2977,13 +3012,34 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     const tags = parseDriveTags(asset);
                                     const copyMatched = hasCompleteCopy(group.copy || {});
                                     const selectionBlocked = isDriveGroupSelectionBlocked(group);
+                                    // "Needs repair" (an unverified copy source — a Drive-side fix, not a
+                                    // pairing problem) gets its own amber border so it reads as a
+                                    // different kind of blocked than an ambiguous/mismatched pairing —
+                                    // Joel shouldn't have to read the badge text to tell them apart.
+                                    // Mirrors the existing badge-text priority below exactly: ambiguous
+                                    // pairing always reads as mismatched/red; otherwise copyRefreshUnverified
+                                    // decides "needs repair" vs "mismatch," regardless of copyIntegrityIssue
+                                    // (for a pair, an unverified refresh ALSO sets copyIntegrityIssue, so
+                                    // excluding that case here would make amber almost never fire).
+                                    const needsRepair = selectionBlocked && !group.copyPairingAmbiguous && group.copyRefreshUnverified;
+                                    // Suppressed while selected — a card that's both currently chosen and
+                                    // already in a prior batch doesn't need a second badge competing with
+                                    // the selected ring for attention.
+                                    const alreadyAdded = !selectionBlocked && !isSelected && isDriveGroupAlreadyAdded(group);
+                                    const borderClass = selectionBlocked
+                                        ? (needsRepair ? 'border-amber-400' : 'border-red-300')
+                                        : isSelected
+                                            ? 'border-amber-500 ring-2 ring-amber-200'
+                                            : alreadyAdded
+                                                ? 'border-blue-300'
+                                                : 'border-gray-200 hover:border-amber-300';
                                     return (
                                         <div
                                             key={group.id}
                                             onClick={() => toggleDriveAssetSelection(group.id)}
                                             aria-disabled={selectionBlocked}
-                                            title={selectionBlocked ? (group.copyRefreshUnverified ? 'The Drive copy source needs repair. Refresh after fixing it before launch.' : 'Multiple or incomplete placements use this ad number. Resolve them in Drive before launch.') : undefined}
-                                            className={`relative rounded-xl overflow-hidden border-2 bg-white transition-all ${selectionBlocked ? 'cursor-not-allowed border-red-300 opacity-70' : 'cursor-pointer'} ${isSelected ? 'border-amber-500 ring-2 ring-amber-200' : selectionBlocked ? '' : 'border-gray-200 hover:border-amber-300'}`}
+                                            title={selectionBlocked ? (needsRepair ? 'The Drive copy source needs repair. Refresh after fixing it before launch.' : 'Multiple or incomplete placements use this ad number. Resolve them in Drive before launch.') : undefined}
+                                            className={`relative rounded-xl overflow-hidden border-2 bg-white transition-all ${selectionBlocked ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'} ${borderClass}`}
                                         >
                                             <div className={`flex h-[120px] gap-2 bg-gray-100 p-1.5 ${group.isPair && group.storiesAsset ? 'items-stretch' : 'items-center justify-center'}`}>
                                                 <div className={`relative ${group.isPair && group.storiesAsset ? 'w-1/2 min-w-0' : 'h-full w-full'}`}>
@@ -3003,6 +3059,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white">Stories</span>
                                                 </div>}
                                             </div>
+                                            {alreadyAdded && (
+                                                <div className="absolute left-2 top-2 bg-blue-600 text-white text-[10px] font-semibold px-1.5 py-0.5 rounded-full shadow-sm">
+                                                    Already added
+                                                </div>
+                                            )}
                                             <button
                                                 type="button"
                                                 onClick={(event) => { event.stopPropagation(); drivePreviewTriggerRef.current = event.currentTarget; setDrivePreviewGroup(group); }}
