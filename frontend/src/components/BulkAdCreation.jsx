@@ -53,6 +53,50 @@ const formatCtaLabel = (cta) => (cta || 'LEARN_MORE')
     .map(word => word.charAt(0) + word.slice(1).toLowerCase())
     .join(' ');
 
+// Keep the final review gate aligned with the Creative step. Drive metadata is
+// external input, so a row cannot be "Ready" just because its body/headline/
+// URL are present while its CTA would be rejected (or silently defaulted) by
+// Meta at creation time.
+const META_CTA_OPTIONS = new Set([
+    'LEARN_MORE',
+    'SHOP_NOW',
+    'SIGN_UP',
+    'CONTACT_US',
+    'DOWNLOAD',
+    'BOOK_NOW',
+    'BUY_TICKETS',
+    'GET_QUOTE',
+    'GET_STARTED',
+    'APPLY_NOW',
+    'DONATE_NOW',
+]);
+
+const isValidMetaCta = (value) => META_CTA_OPTIONS.has(String(value || '').trim());
+
+// A dual-placement creative has only two supplied image variants. When it is
+// added to an existing ad set, Meta will retain that ad set's targeting; we
+// cannot safely assume Stories/Reels are enabled or that unsupported placements
+// are excluded. New ad sets are placement-locked at creation time below, while
+// existing ad sets must prove the same contract before this launch proceeds.
+const existingDualPlacementStatus = (targeting = {}, instagramUserId = null) => {
+    const platforms = Array.isArray(targeting.publisher_platforms) ? targeting.publisher_platforms : [];
+    const facebookPositions = Array.isArray(targeting.facebook_positions) ? targeting.facebook_positions : [];
+    const instagramPositions = Array.isArray(targeting.instagram_positions) ? targeting.instagram_positions : [];
+    const hasFacebook = platforms.includes('facebook');
+    const hasInstagram = platforms.includes('instagram');
+    const facebookOnly = hasFacebook && !hasInstagram && platforms.length === 1;
+    const exactFacebook = facebookPositions.length === 2
+        && facebookPositions.includes('feed')
+        && facebookPositions.includes('story');
+    const exactInstagram = instagramPositions.length === 3
+        && instagramPositions.includes('stream')
+        && instagramPositions.includes('story')
+        && instagramPositions.includes('reels');
+    if (facebookOnly && exactFacebook && instagramPositions.length === 0) return 'verified-facebook-only';
+    if (hasFacebook && hasInstagram && platforms.length === 2 && exactFacebook && exactInstagram && instagramUserId) return 'verified';
+    return 'unverified';
+};
+
 // Matches the live commercial convention already in Ads Manager:
 // `RHO v2 - BARBER SHOPS | FRESH CREATIVE - CAPI`. Keep an existing `- CAPI`
 // trailer at the end, and insert the Drive category before the creative label
@@ -91,6 +135,24 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // with no indication of which ones actually made it, leaving the user to
     // reconcile against Ads Manager by hand.
     const [launchOutcome, setLaunchOutcome] = useState(null);
+    const reconciliationScope = campaignData?.isExisting ? (campaignData?.fbCampaignId || campaignData?.id) : 'new';
+    const reconciliationStorageKey = `bulk-creation-reconciliation:${selectedAdAccount?.accountId || selectedAdAccount?.id || 'none'}:${reconciliationScope}`;
+    const [requiresReconciliation, setRequiresReconciliation] = useState(false);
+    const persistReconciliationBlock = (message) => {
+        setRequiresReconciliation(true);
+        try {
+            localStorage.setItem(reconciliationStorageKey, JSON.stringify({ message, recordedAt: new Date().toISOString() }));
+        } catch (storageError) {
+            console.warn('Could not persist reconciliation block:', storageError);
+        }
+    };
+    React.useEffect(() => {
+        try {
+            setRequiresReconciliation(Boolean(localStorage.getItem(reconciliationStorageKey)));
+        } catch (storageError) {
+            console.warn('Could not restore reconciliation block:', storageError);
+        }
+    }, [reconciliationStorageKey]);
     // Recently-excluded ads (most recent last), so the exclude ("✕") button on a
     // dense multi-column grid — a smaller, closer-together target than the old
     // isolated row button — has an undo path. Flagged in pre-push review: no
@@ -251,6 +313,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 ? creative.websiteUrl || ''
                                 : creative.websiteUrl || creativeData.websiteUrl || '',
                             ctaOverride: creative.cta || '',
+                            ctaSource: creative.ctaSource || '',
                             mediaType: creative.mediaType || 'image',
                             format: creative.format || 'feed',
                             dualPlacement: creative.dualPlacement || false,
@@ -309,6 +372,20 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // built for. Review layout and Meta ad-set creation mode are separate concerns.
     const isDriveManifest = creativeData.creatives?.some(creative => creative.source === 'drive');
     const activeAds = adsData.filter(ad => !manifestExcludedAdIds.has(ad.id));
+    const driveManifestUsesExistingAdset = Boolean(isDriveManifest && adsetData.isExisting);
+    const driveManifestCreatesSeparateAdsets = Boolean(isDriveManifest && perMediaModeActive);
+    const driveManifestHasDualPlacement = Boolean(isDriveManifest && activeAds.some(ad => ad.dualPlacement));
+    const existingPlacementStatus = driveManifestUsesExistingAdset && driveManifestHasDualPlacement
+        ? existingDualPlacementStatus(adsetData.targeting, creativeData.instagramId)
+        : null;
+    const manifestLaunchOutcome = (ad) => {
+        if (!launchOutcome) return null;
+        if (launchOutcome.createdAdIds?.includes(ad.id)) return { label: 'Created', cls: 'bg-emerald-100 text-emerald-700' };
+        if (launchOutcome.createdButUnmirroredAdIds?.includes(ad.id)) return { label: 'Created in Meta — reconcile', cls: 'bg-amber-100 text-amber-900' };
+        if (launchOutcome.uncertainAdIds?.includes(ad.id)) return { label: 'Needs reconciliation', cls: 'bg-amber-100 text-amber-900' };
+        if (launchOutcome.attemptedAdIds && !launchOutcome.attemptedAdIds.includes(ad.id)) return { label: 'Not attempted', cls: 'bg-amber-100 text-amber-800' };
+        return { label: 'Failed', cls: 'bg-red-100 text-red-700' };
+    };
     const manifestRows = adsData.map((ad, index) => {
         const creative = creativeData.creatives?.find(item => item.id === ad.creativeId);
         const creativeIndex = creativeData.creatives?.findIndex(item => item.id === ad.creativeId) ?? index;
@@ -320,15 +397,23 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         const websiteUrl = creative?.source === 'drive'
             ? (Object.prototype.hasOwnProperty.call(ad, 'websiteUrlOverride') ? ad.websiteUrlOverride || '' : creative.websiteUrl || '')
             : creative?.websiteUrl || creativeData.websiteUrl || '';
+        const cta = creative?.source === 'drive'
+            ? (ad.ctaOverride || creative.cta || '')
+            : creative?.cta || ad.ctaOverride || creativeData.cta || '';
         const category = creative?.category || creative?.brandName || 'Uncategorized';
         const requiresAssignedCopy = isDriveManifest;
         const copyReady = !requiresAssignedCopy || Boolean(
-            headline.trim() && body.trim() && isValidDestinationUrl(websiteUrl)
+            headline.trim() && body.trim() && isValidDestinationUrl(websiteUrl) && isValidMetaCta(cta)
         );
-        const adsetName = isDriveManifest
+        const adsetName = driveManifestCreatesSeparateAdsets
             ? buildPerMediaAdsetName(adsetData.name, creative, creativeIndex >= 0 ? creativeIndex : index)
             : adsetData.name;
-        return { ad, index, creative, headline, body, description, websiteUrl, category, copyReady, adsetName };
+        const destinationLabel = driveManifestCreatesSeparateAdsets
+            ? '1 new ad set'
+            : driveManifestUsesExistingAdset
+                ? 'selected existing ad set'
+                : '1 shared new ad set';
+        return { ad, index, creative, headline, body, description, websiteUrl, cta, ctaSource: ad.ctaSource || creative?.ctaSource || 'Creative card', category, copyReady, adsetName, destinationLabel, outcome: manifestLaunchOutcome(ad) };
     });
     const manifestCategories = [...new Set(manifestRows.map(row => row.category))].sort((a, b) => a.localeCompare(b));
     const visibleManifestRows = manifestRows.filter(row => {
@@ -388,6 +473,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             if (field === 'body') return { ...ad, bodyOverride: value };
             if (field === 'description') return { ...ad, descriptionOverride: value };
             if (field === 'websiteUrl') return { ...ad, websiteUrlOverride: value };
+            if (field === 'cta') return { ...ad, ctaOverride: value, ctaSource: 'Manual row edit' };
             return ad;
         }));
     };
@@ -461,6 +547,15 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     };
 
     const handleSubmit = async () => {
+        try {
+            if (localStorage.getItem(reconciliationStorageKey)) {
+                setRequiresReconciliation(true);
+                showError('This batch has an unresolved Meta write. Reconcile it in Ads Manager before creating anything else.');
+                return;
+            }
+        } catch (storageError) {
+            console.warn('Could not read reconciliation block:', storageError);
+        }
         const launchAds = adsData.filter(ad => !manifestExcludedAdIds.has(ad.id));
         if (launchAds.length === 0) {
             showWarning('Select at least one ad pair to launch');
@@ -479,10 +574,32 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             const websiteUrl = (Object.prototype.hasOwnProperty.call(ad, 'websiteUrlOverride')
                 ? ad.websiteUrlOverride
                 : creative?.websiteUrl) || '';
-            return !headline || !body || !isValidDestinationUrl(websiteUrl);
+            const cta = ad.ctaOverride || creative?.cta || '';
+            return !headline || !body || !isValidDestinationUrl(websiteUrl) || !isValidMetaCta(cta);
         }) : [];
         if (incompleteManifestRows.length > 0) {
-            showWarning(`${incompleteManifestRows.length} selected ad pair${incompleteManifestRows.length !== 1 ? 's are' : ' is'} missing a valid Primary Text, Headline, or http(s) destination URL. Open the affected row and complete it before launch.`);
+            showWarning(`${incompleteManifestRows.length} selected ad pair${incompleteManifestRows.length !== 1 ? 's are' : ' is'} missing a valid Primary Text, Headline, Meta CTA, or http(s) destination URL. Open the affected row and complete it before launch.`);
+            return;
+        }
+
+        // The existing ad set keeps its own targeting. A post-submit toast is
+        // too late: it would warn Joel only after ads had begun creating with
+        // unverified Feed/Stories delivery. Require the exact placement contract
+        // before any Meta mutation, or have him use a placement-compatible ad set.
+        const existingTargetStatus = isDriveManifest && adsetData.isExisting && launchAds.some(ad => ad.dualPlacement)
+            ? existingDualPlacementStatus(adsetData.targeting, creativeData.instagramId)
+            : null;
+        if (existingTargetStatus === 'unverified') {
+            showWarning('This existing ad set is not verified for exactly Facebook Feed + Stories (and Instagram Stream, Stories, and Reels when Instagram is enabled). Go back and choose a placement-compatible ad set before launching these paired creatives.');
+            return;
+        }
+
+        // New paired rows are explicitly targeted to Instagram as well as
+        // Facebook below. Do not let Meta create a Facebook-only creative and
+        // silently omit the supplied Stories/Reels image when the selected
+        // Page has no linked Instagram identity.
+        if (isDriveManifest && !adsetData.isExisting && launchAds.some(ad => ad.dualPlacement) && !creativeData.instagramId) {
+            showWarning('The selected Facebook Page has no linked Instagram identity available. Choose a Page connected to Instagram before launching Feed + Stories pairs, or use a Facebook-only workflow.');
             return;
         }
 
@@ -572,6 +689,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 }
             } catch (err) {
                 console.error('Error saving campaign locally:', err);
+                err.metaMutationStarted = true;
                 throw err;
             }
             // ── Step 2: Ad Set(s) ─────────────────────────────────────────────────
@@ -633,6 +751,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
 
             let fbFeedAdsetId    = adsetData.fbAdsetId; // used for feed ads (or all ads if single-format)
             let fbStoriesAdsetId = null;                // used for stories ads (mixed only)
+            let feedAdsetLocalId = adsetData.id;
             let storiesAdsetLocalId = null;
             // creativeId -> { fbAdsetId, localAdsetId } — only populated in per-media mode
             // (Birch Stage's "Duplicate ad set for each media"). Each distinct creative
@@ -710,11 +829,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         );
                         wrapped.metaErrorCode = err.metaErrorCode;
                         wrapped.metaErrorSubcode = err.metaErrorSubcode;
+                        wrapped.metaMutationStarted = Boolean(err.metaMutationStarted || perMediaAdsetMap.size > 0);
                         throw wrapped;
                     }
-
-                    const localAdsetId = `adset_media_${creativeId}_${Date.now()}`;
-                    perMediaAdsetMap.set(creativeId, { fbAdsetId: newFbAdsetId, localAdsetId });
 
                     // The local mirror is part of a resumable launch's integrity,
                     // not best-effort. If Meta created the set but this fails,
@@ -725,7 +842,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             ...adsetData,
-                            id: localAdsetId,
+                            // A per-media launch creates a distinct local row
+                            // for each newly-created Meta ad set. Do not carry
+                            // the wizard's selected/local id into every save,
+                            // or the backend will return the first mirror and
+                            // attach all later ads to the wrong ad set.
+                            id: undefined,
                             campaignId: campaignData.id,
                             name: payload.name,
                             fbAdsetId: newFbAdsetId,
@@ -738,8 +860,17 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     });
                     if (!saveAdsetRes.ok) {
                         const err = await saveAdsetRes.json().catch(() => ({}));
-                        throw new Error(`Meta created ad set "${payload.name}" (${newFbAdsetId}) but the local mirror failed: ${err.detail || err.message || saveAdsetRes.status}. Reconcile this ad set in Ads Manager before retrying.`);
+                        const saveError = new Error(`Meta created ad set "${payload.name}" (${newFbAdsetId}) but the local mirror failed: ${err.detail || err.message || saveAdsetRes.status}. Reconcile this ad set in Ads Manager before retrying.`);
+                        saveError.metaMutationStarted = true;
+                        throw saveError;
                     }
+                    const savedAdset = await saveAdsetRes.json().catch(() => ({}));
+                    if (!savedAdset.id) {
+                        const saveError = new Error(`Meta created ad set "${payload.name}" (${newFbAdsetId}) but the local mirror returned no UUID. Reconcile this ad set in Ads Manager before retrying.`);
+                        saveError.metaMutationStarted = true;
+                        throw saveError;
+                    }
+                    perMediaAdsetMap.set(creativeId, { fbAdsetId: newFbAdsetId, localAdsetId: savedAdset.id });
                 }
             } else if (!adsetData.isExisting) {
                 setProgress(prev => ({ ...prev, status: 'Creating ad set on Facebook...' }));
@@ -782,13 +913,6 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 };
                 fbStoriesAdsetId = await createFacebookAdSet(storiesPayload, fbCampaignId, selectedAdAccount.accountId, campaignData.budgetType);
                 storiesAdsetLocalId = `adset_stories_${Date.now()}`;
-            } else if (hasDualPlacementAds) {
-                // Reusing an existing ad set — we can't retroactively confirm or
-                // change its own targeting from here, so warn rather than assume
-                // it already includes Story placement. If it doesn't, Meta may
-                // simply never deliver into Stories for these creatives (safe
-                // failure — no wrong-image risk — but worth Abel/Joel knowing).
-                showWarning('This ad set was created before dual-placement — confirm its targeting includes Stories/Reels placement, or the linked creative may only ever deliver to Feed.');
             }
 
             // Save feed (or sole) ad set locally — per-media mode already saved each of
@@ -820,8 +944,15 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             + `Do not re-launch — it already exists on the account.`
                         );
                     }
+                    const savedAdset = await saveAdSetRes.json().catch(() => ({}));
+                    // Existing selections carry Meta's ID in `adsetData.id`,
+                    // but `/ads/save` needs the local FacebookAdSet UUID FK.
+                    // The save endpoint resolves/returns that UUID for both
+                    // existing and new ad sets; retain it for every ad below.
+                    feedAdsetLocalId = savedAdset.id || feedAdsetLocalId;
                 } catch (err) {
                     console.error('Error saving ad set locally:', err);
+                    err.metaMutationStarted = true;
                     throw err;
                 }
 
@@ -849,8 +980,11 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 + `Do not re-launch — it already exists on the account.`
                             );
                         }
+                        const savedStoriesAdset = await saveStoriesAdSetRes.json().catch(() => ({}));
+                        storiesAdsetLocalId = savedStoriesAdset.id || storiesAdsetLocalId;
                     } catch (err) {
                         console.error('Could not save Stories ad set locally:', err);
+                        err.metaMutationStarted = true;
                         throw err;
                     }
                 }
@@ -862,6 +996,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             let ambiguousStop = false;
             let attempted = 0;
             const createdIndexes = [];
+            const createdAdIds = [];
             for (let i = 0; i < launchAds.length; i++) {
                 // Space out the per-ad Meta calls. Each iteration below is
                 // several writes (image upload + creative + ad), so a large
@@ -890,7 +1025,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     adLocalAdsetId = entry?.localAdsetId;
                 } else {
                     adFbAdsetId = isStoriesAd && fbStoriesAdsetId ? fbStoriesAdsetId : fbFeedAdsetId;
-                    adLocalAdsetId = isStoriesAd && storiesAdsetLocalId ? storiesAdsetLocalId : adsetData.id;
+                    adLocalAdsetId = isStoriesAd && storiesAdsetLocalId ? storiesAdsetLocalId : feedAdsetLocalId;
                 }
 
                 if (perMediaMode && !adFbAdsetId) {
@@ -937,7 +1072,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             : specificCreative && Object.prototype.hasOwnProperty.call(specificCreative, 'description')
                                 ? specificCreative.description
                             : creativeData.description,
-                        cta: specificCreative?.cta || ad.ctaOverride || creativeData.cta,
+                        cta: ad.ctaOverride || specificCreative?.cta || creativeData.cta,
                         websiteUrl: isDriveManifest || specificCreative?.source === 'drive'
                             ? (Object.prototype.hasOwnProperty.call(ad, 'websiteUrlOverride') ? ad.websiteUrlOverride : specificCreative?.websiteUrl)
                             : (specificCreative?.websiteUrl || creativeData.websiteUrl)
@@ -1011,6 +1146,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     // failure from looking like a completed row and discourages
                     // blind relaunches that would duplicate the live Meta ad.
                     createdIndexes.push(i);
+                    createdAdIds.push(ad.id);
 
                 } catch (error) {
                     console.error(`Error creating ad ${ad.name}:`, error);
@@ -1018,11 +1154,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     failedCount++;
 
                     // A Meta ad exists but the local mirror failed. Stop the
-                    // queue and leave the current row visibly failed; continuing
-                    // would create more live objects while the first one is not
-                    // reconciled, and a blind retry could duplicate it.
+                    // queue and label the row as created-but-unreconciled;
+                    // continuing would create more live objects while the first
+                    // one is not reconciled, and a blind retry could duplicate it.
                     if (metaCreatedAdId) {
-                        setLaunchOutcome({ createdIndexes: [...createdIndexes], stoppedAtIndex: i });
+                        persistReconciliationBlock(error.message);
+                        setLaunchOutcome({ createdIndexes: [...createdIndexes], createdAdIds: [...createdAdIds], createdButUnmirroredAdIds: [ad.id], attemptedAdIds: launchAds.slice(0, i + 1).map(item => item.id), stoppedAtIndex: i });
                         break;
                     }
 
@@ -1032,7 +1169,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     // account deeper into the limit.
                     if (isRateLimitError(error)) {
                         rateLimited = true;
-                        setLaunchOutcome({ createdIndexes: [...createdIndexes], stoppedAtIndex: i });
+                        setLaunchOutcome({ createdIndexes: [...createdIndexes], createdAdIds: [...createdAdIds], attemptedAdIds: launchAds.slice(0, i + 1).map(item => item.id), stoppedAtIndex: i });
 
                         // Read the wait estimate NOW, not from the pre-flight
                         // check. That reading was taken before the batch started
@@ -1062,7 +1199,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     }
                     if (error.metaMutationStarted) {
                         ambiguousStop = true;
-                        setLaunchOutcome({ createdIndexes: [...createdIndexes], stoppedAtIndex: i });
+                        persistReconciliationBlock(error.message);
+                        setLaunchOutcome({ createdIndexes: [...createdIndexes], createdAdIds: [...createdAdIds], uncertainAdIds: [ad.id], attemptedAdIds: launchAds.slice(0, i + 1).map(item => item.id), stoppedAtIndex: i });
                         setErrors(prev => [...prev, `Meta may have created part of this ad. Reconcile ad ${ad.name} in Ads Manager before retrying.`]);
                         break;
                     }
@@ -1070,6 +1208,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             }
 
             if (rateLimited || ambiguousStop) {
+                if (createdAdIds.length > 0 || !campaignData.isExisting || !adsetData.isExisting) {
+                    persistReconciliationBlock('This batch stopped after one or more ads were created. Reconcile the created rows before starting another batch.');
+                }
                 // Don't advance — the batch is incomplete by definition and Joel
                 // needs to see how far it got before deciding what to re-run.
                 setProgress({ current: attempted, total: launchAds.length, status: `Stopped — ${createdIndexes.length} of ${launchAds.length} ads created` });
@@ -1079,6 +1220,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 setProgress({ current: launchAds.length, total: launchAds.length, status: 'Complete!' });
                 setTimeout(() => { onNext(); }, 1500);
             } else {
+                if (createdAdIds.length > 0 || !campaignData.isExisting || !adsetData.isExisting) {
+                    persistReconciliationBlock('This batch partially completed. Reconcile the created rows before starting another batch.');
+                }
                 // Partial failure — stay on screen so Joel can see what failed
                 setProgress({ current: launchAds.length, total: launchAds.length, status: `${createdIndexes.length} of ${launchAds.length} ads created` });
                 setLoading(false);
@@ -1095,6 +1239,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             // the same persistent red panel every other partial-failure path here
             // already uses, not just a toast. Caught in pre-push review.
             showError(`Error: ${error.message}`);
+            if (error.metaMutationStarted || !campaignData.isExisting || !adsetData.isExisting) {
+                persistReconciliationBlock(error.message);
+            }
             setErrors(prev => [...prev, error.message]);
             setLoading(false);
         }
@@ -1102,10 +1249,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
 
     return (
         <div>
-            <h2 className="text-2xl font-bold mb-2">{isDriveManifest ? 'Review bulk ad sets' : 'Review & Launch Ads'}</h2>
+            <h2 className="text-2xl font-bold mb-2">{isDriveManifest ? (driveManifestCreatesSeparateAdsets ? 'Review bulk ad sets' : 'Review bulk ads') : 'Review & Launch Ads'}</h2>
             <p className="text-gray-600 mb-6">
                 {isDriveManifest
-                    ? 'Each selected Feed + Stories pair becomes one paused ad set. Use the compact manifest to organize, inspect, and select pairs without reviewing a wall of full-size ad previews.'
+                    ? driveManifestCreatesSeparateAdsets
+                        ? 'Each selected Feed + Stories pair becomes one paused ad in its own new ad set. Use the compact manifest to organize, inspect, and select pairs without reviewing a wall of full-size ad previews.'
+                        : driveManifestUsesExistingAdset
+                            ? 'Each selected Feed + Stories pair becomes one paused ad in the selected existing ad set. Use the compact manifest to organize, inspect, and select pairs without reviewing a wall of full-size ad previews.'
+                            : 'Each selected Feed + Stories pair becomes one paused ad in the new shared ad set. Use the compact manifest to organize, inspect, and select pairs without reviewing a wall of full-size ad previews.'
                     : 'The app has automatically generated one ad for every combination of your images, headlines, and body copy. Each row below is one ad that will be created on Facebook.'}
             </p>
 
@@ -1139,7 +1290,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             return parts.join(', ') || '0 files';
                         })()}
                     </div>
-                    <div><strong>{isDriveManifest ? 'Selected pairs / ad sets' : 'Total Ads to Create'}:</strong> {isDriveManifest ? `${activeAds.length} / ${adsData.length}` : adsData.length} ({(() => {
+                    <div><strong>{isDriveManifest ? (driveManifestCreatesSeparateAdsets ? 'Selected pairs / new ad sets' : 'Selected pairs / ads') : 'Total Ads to Create'}:</strong> {isDriveManifest ? `${activeAds.length} / ${adsData.length}` : adsData.length} ({(() => {
                         const hasPerCreativeCopy = creativeData.creatives?.some(c => c.headline || c.body);
                         if (hasPerCreativeCopy) return 'per-ad copy assignments';
                         const images = creativeData.creatives?.filter(c => c.mediaType !== 'video').length || 0;
@@ -1149,6 +1300,15 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         const bodies = creativeData.bodies?.filter(b => b && b.trim()).length || 0;
                         return `${media} media × ${headlines} headline${headlines !== 1 ? 's' : ''} × ${bodies} body`;
                     })()})</div>
+                    {driveManifestUsesExistingAdset && driveManifestHasDualPlacement && (
+                        <div className={`mt-2 rounded px-2 py-1.5 text-xs font-medium ${existingPlacementStatus === 'unverified' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-800'}`}>
+                            {existingPlacementStatus === 'unverified'
+                                ? 'Placement contract not verified — launch is blocked until this existing ad set is limited to the supplied Feed + Stories placements.'
+                                : existingPlacementStatus === 'verified-facebook-only'
+                                    ? 'Placement verified: Facebook Feed + Stories only. Instagram is not enabled on this existing ad set.'
+                                    : 'Placement verified: Facebook Feed + Stories and Instagram Stream, Stories, and Reels.'}
+                        </div>
+                    )}
                     {/* Per-media mode creates its OWN ad-set breakdown below — the
                         feed/stories "2 ad sets" banner describes a model that isn't
                         actually in use here (per-media can create many more than 2,
@@ -1301,7 +1461,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         <div className="mb-5">
                             <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
                                 <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
-                                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Selected ad sets</div>
+                                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{driveManifestCreatesSeparateAdsets ? 'Selected new ad sets' : 'Selected ads'}</div>
                                     <div className="mt-0.5 text-xl font-bold text-gray-900">{activeAds.length} <span className="text-sm font-medium text-gray-500">/ {adsData.length}</span></div>
                                 </div>
                                 <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
@@ -1309,12 +1469,16 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                     <div className="mt-0.5 text-xl font-bold text-gray-900">{activeAds.filter(ad => ad.dualPlacement).length}</div>
                                 </div>
                                 <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
-                                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Designated copy</div>
+                                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Copy ready</div>
                                     <div className={`mt-0.5 text-xl font-bold ${manifestReadyCount === activeAds.length ? 'text-emerald-700' : 'text-amber-700'}`}>{manifestReadyCount} / {activeAds.length}</div>
                                 </div>
                                 <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
                                     <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Facebook page</div>
                                     <div className="mt-1 truncate text-sm font-semibold text-gray-900">{creativeData.pageName || 'Page not confirmed'}</div>
+                                    <div className={`mt-0.5 truncate text-[11px] ${creativeData.instagramId ? 'text-emerald-700' : 'text-amber-700'}`}>
+                                        Instagram: {creativeData.instagramId ? `linked (${creativeData.instagramId})` : 'not linked'}
+                                    </div>
+                                    <div className="text-[11px] text-gray-500">Feed + Stories/Reels placement</div>
                                 </div>
                             </div>
 
@@ -1384,10 +1548,11 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                                     </div>
                                                     <div className="hidden min-w-0 md:block">
                                                         <div className="truncate text-sm text-gray-700">{row.category}</div>
-                                                        <div className="text-xs text-gray-400">1 ad set</div>
+                                                        <div className="text-xs text-gray-400">{row.destinationLabel}</div>
                                                     </div>
                                                     <div className="hidden md:block">
                                                         <span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${row.copyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{row.copyReady ? 'Ready' : 'Needs copy'}</span>
+                                                        {row.outcome && <span className={`mt-1 inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${row.outcome.cls}`}>{row.outcome.label}</span>}
                                                     </div>
                                                     <button type="button" onClick={(event) => { event.stopPropagation(); setSelectedManifestAdId(row.ad.id); }} className="text-right text-xs font-semibold text-amber-700 hover:text-amber-900">Open →</button>
                                                 </div>
@@ -1404,8 +1569,10 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                                     <div className="min-w-0">
                                                         <h3 className="truncate text-sm font-bold text-gray-900">{selectedManifestRow.adsetName}</h3>
                                                         <p className="mt-0.5 text-xs text-gray-500">Ad: {selectedManifestRow.ad.name} · {selectedManifestRow.category} · {selectedManifestRow.ad.dualPlacement ? 'Feed + Stories pair' : 'Single placement'}</p>
+                                                        <p className="mt-0.5 truncate text-[11px] text-gray-500">Identity: {creativeData.pageName || creativeData.pageId || 'Page not confirmed'} · Instagram {creativeData.instagramId || 'not linked'} · Feed + Stories/Reels</p>
                                                     </div>
                                                     <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${selectedManifestRow.copyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{selectedManifestRow.copyReady ? 'Ready' : 'Needs copy'}</span>
+                                                    {selectedManifestRow.outcome && <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${selectedManifestRow.outcome.cls}`}>{selectedManifestRow.outcome.label}</span>}
                                                 </div>
                                             </div>
                                             <div className="max-h-[610px] space-y-3 overflow-y-auto p-4">
@@ -1418,6 +1585,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                                 <label className="block text-xs font-semibold text-gray-700">Headline *<input value={selectedManifestRow.headline} onChange={(event) => updateManifestField(selectedManifestRow, 'headline', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
                                                 <label className="block text-xs font-semibold text-gray-700">Description <span className="font-normal text-gray-400">(optional)</span><input value={selectedManifestRow.description} onChange={(event) => updateManifestField(selectedManifestRow, 'description', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
                                                 <label className="block text-xs font-semibold text-gray-700">Destination URL *<input value={selectedManifestRow.websiteUrl} onChange={(event) => updateManifestField(selectedManifestRow, 'websiteUrl', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
+                                                <label className="block text-xs font-semibold text-gray-700">Meta CTA * <span className="font-normal text-gray-400">({selectedManifestRow.ctaSource})</span><select value={selectedManifestRow.cta} onChange={(event) => updateManifestField(selectedManifestRow, 'cta', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100"><option value="">Select a CTA...</option>{[...META_CTA_OPTIONS].map(cta => <option key={cta} value={cta}>{formatCtaLabel(cta)}</option>)}</select></label>
                                                 <label className="block text-xs font-semibold text-gray-700">Ad name<input value={selectedManifestRow.ad.name} onChange={(event) => updateManifestField(selectedManifestRow, 'name', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
                                             </div>
                                         </>
@@ -1454,9 +1622,17 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             // ads still missing from Meta.
                             let outcome = null;
                             if (launchOutcome) {
-                                if (launchOutcome.createdIndexes.includes(index)) {
+                                if (launchOutcome.createdAdIds?.includes(ad.id) || launchOutcome.createdIndexes?.includes(index)) {
                                     outcome = { label: 'Created', cls: 'bg-emerald-100 text-emerald-700' };
+                                } else if (launchOutcome.createdButUnmirroredAdIds?.includes(ad.id)) {
+                                    outcome = { label: 'Created in Meta — reconcile', cls: 'bg-amber-100 text-amber-900' };
+                                } else if (launchOutcome.uncertainAdIds?.includes(ad.id)) {
+                                    outcome = { label: 'Needs reconciliation', cls: 'bg-amber-100 text-amber-900' };
+                                } else if (launchOutcome.attemptedAdIds && !launchOutcome.attemptedAdIds.includes(ad.id)) {
+                                    outcome = { label: 'Not attempted', cls: 'bg-amber-100 text-amber-800' };
                                 } else if (index > launchOutcome.stoppedAtIndex) {
+                                    // Backward-compatible fallback for an outcome recorded
+                                    // before IDs were tracked.
                                     outcome = { label: 'Not attempted', cls: 'bg-amber-100 text-amber-800' };
                                 } else {
                                     outcome = { label: 'Failed', cls: 'bg-red-100 text-red-700' };
@@ -1695,20 +1871,15 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         >
                             Back
                         </button>
-                        {errors.length > 0 ? (
+                        {requiresReconciliation ? (
+                            <span className="max-w-xl text-right text-sm font-medium text-amber-800">This partial batch is locked after Meta writes. Reconcile it in Ads Manager, then start a fresh batch for any remaining rows.</span>
+                        ) : errors.length > 0 ? (
                             <div className="flex items-center gap-3">
                                 {isDriveManifest ? (
                                     <span className="max-w-md text-sm text-amber-800">
                                         Launch outcome is not safe to replay automatically. Reconcile the named campaign/ad sets in Ads Manager before starting another launch.
                                     </span>
-                                ) : (
-                                    <button
-                                        onClick={onNext}
-                                        className="flex items-center gap-2 px-6 py-3 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700"
-                                    >
-                                        Continue Anyway
-                                    </button>
-                                )}
+                                ) : <span className="max-w-md text-sm text-amber-800">Review the failures in Ads Manager before starting another batch. This launcher will not replay a partial batch automatically.</span>}
                             </div>
                         ) : (
                                 <button
@@ -1724,7 +1895,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 disabled={activeAds.length === 0}
                                 className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                             >
-                                Create {activeAds.length} {isDriveManifest ? 'paused ad set' : 'Ad'}{activeAds.length !== 1 ? 's' : ''} on Facebook
+                                {isDriveManifest && driveManifestCreatesSeparateAdsets
+                                    ? `Create ${activeAds.length} paused ad${activeAds.length !== 1 ? 's' : ''} in ${activeAds.length} new ad set${activeAds.length !== 1 ? 's' : ''} on Facebook`
+                                    : `Create ${activeAds.length} ${isDriveManifest ? 'paused ad' : 'Ad'}${activeAds.length !== 1 ? 's' : ''} on Facebook`}
                             </button>
                         )}
                     </div>

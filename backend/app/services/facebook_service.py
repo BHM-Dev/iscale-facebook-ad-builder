@@ -18,6 +18,17 @@ env_path = Path(__file__).resolve().parent.parent.parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
 
+# The UI exposes this same current subset of Meta CTA enums. Validate again at
+# the service boundary because Drive metadata and direct API callers bypass the
+# browser's select control; silently substituting LEARN_MORE changes an approved
+# ad rather than failing it safely.
+SUPPORTED_LINK_CTAS = {
+    'LEARN_MORE', 'SHOP_NOW', 'SIGN_UP', 'CONTACT_US', 'DOWNLOAD',
+    'BOOK_NOW', 'BUY_TICKETS', 'GET_QUOTE', 'DONATE_NOW', 'GET_STARTED',
+    'APPLY_NOW',
+}
+
+
 class FacebookAPIError(RuntimeError):
     """Raised when Meta's Graph API rejects a call. Carries the numeric error
     code/subcode through to the HTTP layer so callers (e.g. the Bulk Match
@@ -505,6 +516,7 @@ class FacebookService:
                 Page.Field.id,
                 Page.Field.name,
                 Page.Field.category,
+                'instagram_business_account',
             ])]
         except Exception as e:
             # A transient permissions/token response must not prevent the
@@ -542,8 +554,13 @@ class FacebookService:
                     derived.append(known_page)
                     continue
                 try:
-                    pg = dict(Page(pid).api_get(fields=['id', 'name']))
-                    derived.append({'id': pg.get('id', pid), 'name': pg.get('name', f'Page {pid}'), 'category': None})
+                    pg = dict(Page(pid).api_get(fields=['id', 'name', 'instagram_business_account']))
+                    derived.append({
+                        'id': pg.get('id', pid),
+                        'name': pg.get('name', f'Page {pid}'),
+                        'category': None,
+                        'instagram_business_account': pg.get('instagram_business_account'),
+                    })
                 except Exception:
                     derived.append({'id': pid, 'name': f'Page {pid}', 'category': None})
             # Pages in an ad account's existing creatives are the strongest
@@ -1322,7 +1339,11 @@ class FacebookService:
 
         primary_text = creative_data.get('primary_text') or creative_data.get('message') or ''
         headline = creative_data.get('headline') or creative_data.get('name') or 'Ad'
-        cta = creative_data.get('cta') or 'LEARN_MORE'
+        cta = creative_data.get('cta')
+        if not cta:
+            raise ValueError('cta is required to create an ad creative')
+        if cta not in SUPPORTED_LINK_CTAS:
+            raise ValueError(f'Unsupported Meta CTA: {cta}. Choose one of: {", ".join(sorted(SUPPORTED_LINK_CTAS))}')
         creative_name = creative_data.get('creative_name') or creative_data.get('creativeName') or f'Creative {headline[:30]}'
         lead_gen_form_id = creative_data.get('lead_gen_form_id')
 
@@ -1394,6 +1415,7 @@ class FacebookService:
             instagram_user_id = (
                 creative_data.get('instagram_user_id')
                 or creative_data.get('instagramUserId')
+                or creative_data.get('instagramId')
                 or creative_data.get('instagram_actor_id')
                 or self._get_page_instagram_user_id(page_id)
             )
@@ -1458,6 +1480,7 @@ class FacebookService:
         instagram_user_id = (
             creative_data.get('instagram_user_id')
             or creative_data.get('instagramUserId')
+            or creative_data.get('instagramId')
             or creative_data.get('instagram_actor_id')
         )
         if instagram_user_id and 'instagram_user_id' not in object_story_spec:

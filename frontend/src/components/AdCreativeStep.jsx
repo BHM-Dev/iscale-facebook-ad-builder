@@ -48,6 +48,8 @@ export const CTA_OPTIONS = [
     'BOOK_NOW',
     'BUY_TICKETS',
     'GET_QUOTE',
+    'GET_STARTED',
+    'APPLY_NOW',
     'DONATE_NOW',
 ];
 
@@ -191,6 +193,7 @@ const buildDriveAssetGroups = (assets) => {
                 copy: tags.copy || {},
                 landingPage: tags.landing_page || '',
                 cta: tags.cta || '',
+                refreshStatus: tags.copy_refresh_status || 'verified',
             };
         });
         // A Meta description is optional. Drive may represent its absence as
@@ -210,6 +213,7 @@ const buildDriveAssetGroups = (assets) => {
         // first define a launch row for a partially refreshed pair.
         const pairCopyIntegrityOk = !isPair || (
             pairedMetadata.every(metadata => hasCompleteCopy(metadata.copy))
+            && pairedMetadata.every(metadata => metadata.refreshStatus !== 'unverified')
             && metadataFingerprints.size === 1
         );
         return {
@@ -223,6 +227,7 @@ const buildDriveAssetGroups = (assets) => {
             landingPage: pairCopyIntegrityOk ? group.landingPage : null,
             cta: pairCopyIntegrityOk ? group.cta : null,
             copyIntegrityIssue: isPair && !pairCopyIntegrityOk,
+            copyRefreshUnverified: pairedMetadata.some(metadata => metadata.refreshStatus === 'unverified'),
             syncedAt: latestSyncedAt(group),
         };
     });
@@ -278,7 +283,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const isMatchImport = mode === 'match-import';
     const { showWarning, showError, showSuccess } = useToast();
     const { authFetch } = useAuth();
-    const { creativeData, setCreativeData, selectedAdAccount, adsetData, setAdsetData, campaignData } = useCampaign();
+    const { creativeData, setCreativeData, selectedAdAccount, adsetData, campaignData } = useCampaign();
     const { brands } = useBrands();
     // Cache keys for creative defaults (URL/headlines/bodies/description/CTA) are scoped
     // by ad account AND campaign — the same ad account can run multiple niches, each with
@@ -551,7 +556,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.detail || 'Could not refresh Drive copy');
             const refreshMessage = data.errors
-                ? `Copy refresh completed with ${data.errors} unreadable source file${data.errors === 1 ? '' : 's'}. Existing matched copy was kept.`
+                ? `Copy refresh completed with ${data.errors} source file${data.errors === 1 ? '' : 's'} requiring repair. Those packages are blocked until their current Drive copy refreshes successfully.`
                 : `Drive copy refreshed for ${data.updated || 0} asset${data.updated === 1 ? '' : 's'} and synchronized with active Drive rows.`;
             if (data.errors) {
                 showWarning(refreshMessage);
@@ -568,7 +573,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     const matchedCopy = hasCompleteCopy(group.copy || {}) ? group.copy : {};
                     return {
                         ...creative,
-                        driveCopyIntegrityIssue: group.copyIntegrityIssue || false,
+                        driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || false,
                         category: group.category || creative.category,
                         headline: matchedCopy.headline || '',
                         body: matchedCopy.primary_text || '',
@@ -651,12 +656,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         const selectedGroups = [...selectedDriveAssetIds]
             .map(id => driveGroupById.get(id))
             .filter(Boolean);
-        const groupsWithCopy = selectedGroups.filter(group => hasCompleteCopy(group.copy || {}));
+        const groupsWithCopy = selectedGroups.filter(group => hasCompleteCopy(group.copy || {}) && !group.copyRefreshUnverified);
         // A mixed selection must never let a matched category's global copy
         // fall through onto an unmatched asset. Keep the all-unmatched flow
         // available for Joel's manual copy, but require every group to have a
         // matched copy set when any selected group already has one.
-        const unmatchedGroups = selectedGroups.filter(group => !hasCompleteCopy(group.copy || {}));
+        const unmatchedGroups = selectedGroups.filter(group => !hasCompleteCopy(group.copy || {}) || group.copyRefreshUnverified);
         const clearStaleGlobalCopy = selectedGroups.length > 0
             && groupsWithCopy.length === 0
             && !copyFieldsTouched.headlines
@@ -667,7 +672,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         // validator now blocks launch until Joel fills the missing card.
         const groupsToAdd = selectedGroups;
         const newCreatives = groupsToAdd.flatMap(group => {
-            const matchedCopy = hasCompleteCopy(group.copy || {}) ? group.copy : {};
+            const matchedCopy = hasCompleteCopy(group.copy || {}) && !group.copyRefreshUnverified ? group.copy : {};
+            // Category copy docs often intentionally contain only the message
+            // fields. Assign the explicit Creative-step CTA and brand's single
+            // default URL to that individual row at add time (never as a hidden
+            // Bulk fallback), so it remains visible/editable and can advance.
+            const groupCta = group.cta || creativeData.cta || '';
+            const groupWebsiteUrl = group.landingPage || defaultUrlForDriveGroup(group) || creativeData.websiteUrl || '';
             // A real pair (both an image feed asset AND an image stories asset —
             // create_creative's dual-placement path is image-only, never video,
             // per its own docstring) becomes ONE creative carrying both URLs, so
@@ -694,13 +705,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     source: 'drive',
                     dualPlacement: true,
                     drivePairId: group.id,
-                    driveCopyIntegrityIssue: group.copyIntegrityIssue || false,
+                    driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || false,
                     category: group.category || group.feedAsset?.brand_name || 'Uncategorized',
                     headline: matchedCopy.headline || '',
                     body: matchedCopy.primary_text || '',
                     description: matchedCopy.description || '',
-                    cta: group.cta || '',
-                    websiteUrl: group.landingPage || ''
+                    cta: groupCta,
+                    ctaSource: group.cta ? 'Drive' : groupCta ? 'Creative default' : '',
+                    websiteUrl: groupWebsiteUrl
                 }];
             }
 
@@ -724,8 +736,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     headline: matchedCopy.headline || '',
                     body: matchedCopy.primary_text || '',
                     description: matchedCopy.description || '',
-                    cta: group.cta || '',
-                    websiteUrl: group.landingPage || ''
+                    cta: groupCta,
+                    ctaSource: group.cta ? 'Drive' : groupCta ? 'Creative default' : '',
+                    websiteUrl: groupWebsiteUrl
                 });
             }
 
@@ -744,13 +757,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 format: driveAssetPlacement(asset),
                 source: 'drive',
                 drivePairId: group.id,
-                driveCopyIntegrityIssue: group.copyIntegrityIssue || false,
+                driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || false,
                 category: group.category || asset.brand_name || 'Uncategorized',
                 headline: matchedCopy.headline || '',
                 body: matchedCopy.primary_text || '',
                 description: matchedCopy.description || '',
-                cta: group.cta || '',
-                websiteUrl: group.landingPage || ''
+                cta: groupCta,
+                ctaSource: group.cta ? 'Drive' : groupCta ? 'Creative default' : '',
+                websiteUrl: groupWebsiteUrl
             }));
         });
         const firstWithCopy = groupsWithCopy[0] || selectedGroups.find(group => group.landingPage || group.cta);
@@ -792,7 +806,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             };
         });
         if (unmatchedGroups.length > 0) {
-            const pairMismatchCount = unmatchedGroups.filter(group => group.copyIntegrityIssue).length;
+            const pairMismatchCount = unmatchedGroups.filter(group => group.copyIntegrityIssue || group.copyRefreshUnverified).length;
             const missingCopyCount = unmatchedGroups.length - pairMismatchCount;
             const notices = [];
             if (pairMismatchCount > 0) {
@@ -811,13 +825,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 : '';
             showSuccess(`Added ${newCreatives.length} Drive asset${newCreatives.length !== 1 ? 's' : ''}${pairCount ? ` from ${pairCount} Feed + Stories pair${pairCount !== 1 ? 's' : ''}` : ''}.${copyNote}`);
         }
-        // For a true Drive Feed + Stories pair, the confirmed launch model is
-        // one dual-placement creative in one dedicated ad set. Select that
-        // model automatically while still leaving the ad-set step editable if
-        // the buyer deliberately wants a different arrangement.
-        if (selectedGroups.some(group => group.isPair) && !adsetData.isExisting) {
-            setAdsetData(prev => ({ ...prev, creationMode: 'per_media' }));
-        }
+        // Drive selection must not silently change the structure chosen in the
+        // Ad Set step. A paired creative can be launched into an existing ad
+        // set, one shared new ad set, or one new ad set per pair; the buyer's
+        // explicit creationMode remains the source of truth for that choice.
         setShowDriveLibraryModal(false);
     };
 
@@ -2095,7 +2106,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     // the same required fields as the Next-step validator; otherwise
                                     // a fully populated Drive pair is misleadingly labelled "Needs
                                     // copy" solely because its strategy document omitted a description.
-                                    const hasOwnCopy = hasCompleteCopy({ headline, primary_text: body }) || (
+                                    // Coerce the editable values to strings here. A legacy Drive
+                                    // record can hydrate a textarea with a string-like value while
+                                    // still failing the helper's optional-chain check, which made a
+                                    // visibly populated pair read "Needs copy" until the next step.
+                                    const hasOwnCopy = Boolean(String(headline || '').trim() && String(body || '').trim()) || (
                                         creative.source !== 'drive'
                                         && hasCompleteCopy({
                                             headline: creativeData.headlines?.[0],
@@ -2172,7 +2187,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                                 ? 'Open Drive to repair this pair'
                                                                 : invalidDriveCta
                                                                     ? `Open Drive to repair unsupported CTA: ${creative.cta}`
-                                                                : `Open Drive to refresh ${missingDriveFields.join(' + ')}`}
+                                                                : `Edit the ${missingDriveFields.join(' + ')} below, or refresh from Drive`}
                                                         </button>
                                                     )}
                                                 </div>
@@ -2205,6 +2220,23 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                 value={creative.description ?? ''}
                                                 onChange={(e) => updateCreativeCopy(creative.id, 'description', e.target.value)}
                                                 placeholder="Description for this ad..."
+                                                className="w-full rounded-md border border-gray-300 px-2.5 py-2 text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                            />
+                                            <label className="block text-[11px] font-semibold text-gray-600 mt-2 mb-1">Meta CTA *</label>
+                                            <select
+                                                value={creative.cta || ''}
+                                                onChange={(e) => updateCreativeCopy(creative.id, 'cta', e.target.value)}
+                                                className="w-full rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                            >
+                                                <option value="">Select a CTA...</option>
+                                                {CTA_OPTIONS.map(option => <option key={option} value={option}>{option.replace(/_/g, ' ')}</option>)}
+                                            </select>
+                                            <label className="block text-[11px] font-semibold text-gray-600 mt-2 mb-1">Destination URL *</label>
+                                            <input
+                                                type="url"
+                                                value={creative.websiteUrl ?? ''}
+                                                onChange={(e) => updateCreativeCopy(creative.id, 'websiteUrl', e.target.value)}
+                                                placeholder="https://example.com/landing-page"
                                                 className="w-full rounded-md border border-gray-300 px-2.5 py-2 text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                                             />
                                         </div>
@@ -2711,9 +2743,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     Feed + Stories pair
                                                 </div>
                                             )}
-                                            {group.copyIntegrityIssue ? (
+                                            {group.copyIntegrityIssue || group.copyRefreshUnverified ? (
                                                 <div className="absolute bottom-[54px] left-2 bg-red-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
-                                                    Pair data mismatch — refresh Drive
+                                                    {group.copyRefreshUnverified ? 'Drive source needs repair — refresh Drive' : 'Pair data mismatch — refresh Drive'}
                                                 </div>
                                             ) : (copyMatched || group.landingPage || group.cta || tags.copy_id) && (
                                                 <div className="absolute bottom-[54px] left-2 bg-emerald-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">

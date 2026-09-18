@@ -25,9 +25,12 @@ function buildFacebookApiError(errorBody, fallbackMessage) {
         const err = new Error(detail.message || fallbackMessage);
         err.metaErrorCode = detail.code;
         err.metaErrorSubcode = detail.subcode;
+        err.responseReceived = true;
         return err;
     }
-    return new Error(detail || fallbackMessage);
+    const err = new Error(detail || fallbackMessage);
+    err.responseReceived = true;
+    return err;
 }
 
 /**
@@ -168,7 +171,8 @@ export async function getPages(adAccountId) {
             id: page.id,
             name: page.name,
             accessToken: page.access_token,
-            category: page.category
+            category: page.category,
+            instagramId: page.instagram_business_account?.id || page.instagram_business_account || null,
         }));
     } catch (error) {
         console.error('Error fetching pages:', error);
@@ -266,7 +270,9 @@ export async function uploadVideoToFacebook(videoUrl, adAccountId, waitForReady 
             const error = await response.json();
             // Structured so a Meta throttle during video upload carries its
             // numeric code to the bulk launch loop, matching the image path.
-            throw buildFacebookApiError(error, 'Failed to upload video to Facebook');
+            const apiError = buildFacebookApiError(error, 'Failed to upload video to Facebook');
+            if (response.status >= 500 && apiError.metaErrorCode == null) apiError.metaMutationStarted = true;
+            throw apiError;
         }
 
         return await response.json();
@@ -364,7 +370,9 @@ export async function uploadImageToFacebook(imageUrl, adAccountId) {
             const error = await response.json();
             // Structured so a Meta throttle during upload carries its numeric
             // code up to the bulk launch loop, which stops the batch on it.
-            throw buildFacebookApiError(error, 'Failed to upload image to Facebook');
+            const apiError = buildFacebookApiError(error, 'Failed to upload image to Facebook');
+            if (response.status >= 500 && apiError.metaErrorCode == null) apiError.metaMutationStarted = true;
+            throw apiError;
         }
 
         const data = await response.json();
@@ -379,7 +387,9 @@ export async function uploadImageToFacebook(imageUrl, adAccountId) {
  * Create Facebook Campaign
  */
 export async function createFacebookCampaign(campaignData, adAccountId) {
+    let writeRequested = false;
     try {
+        writeRequested = true;
         const response = await authFetch(`${API_BASE_URL}/campaigns?ad_account_id=${adAccountId}`, {
             method: 'POST',
             headers: {
@@ -395,13 +405,22 @@ export async function createFacebookCampaign(campaignData, adAccountId) {
             // isRateLimitError() downstream (BulkAdCreation.jsx) can never actually
             // detect a Meta throttle here, silently disabling the "wait before
             // retrying" guidance. Caught in Codex's review of the redesign work.
-            throw buildFacebookApiError(error, 'Failed to create campaign');
+            const apiError = buildFacebookApiError(error, 'Failed to create campaign');
+            // A 5xx means the VPS failed after receiving our POST. It may have
+            // lost Meta's response after Meta committed the campaign, so the
+            // browser must treat it as an ambiguous write rather than retry.
+            if (response.status >= 500 && apiError.metaErrorCode == null) apiError.metaMutationStarted = true;
+            throw apiError;
         }
 
         const data = await response.json();
         return data.id;
     } catch (error) {
         console.error('Error creating campaign:', error);
+        // A transport loss after a POST leaves Meta's result unknowable. A
+        // received error response is safe to correct/retry; a lost response
+        // is not, because Meta may already have created the campaign.
+        if (writeRequested && (!error.responseReceived || error.metaMutationStarted)) error.metaMutationStarted = true;
         throw error;
     }
 }
@@ -410,6 +429,7 @@ export async function createFacebookCampaign(campaignData, adAccountId) {
  * Create Facebook Ad Set
  */
 export async function createFacebookAdSet(adsetData, campaignId, adAccountId, budgetType, opts = {}) {
+    let writeRequested = false;
     try {
         // Prepare payload for backend
         const payload = {
@@ -426,6 +446,7 @@ export async function createFacebookAdSet(adsetData, campaignId, adAccountId, bu
             targeting: adsetData.targeting
         };
 
+        writeRequested = true;
         const response = await authFetch(`${API_BASE_URL}/adsets?ad_account_id=${adAccountId}`, {
             method: 'POST',
             headers: {
@@ -441,7 +462,9 @@ export async function createFacebookAdSet(adsetData, campaignId, adAccountId, bu
             // handling around this call, which was silently never able to fire because
             // this function only ever threw a plain Error with no metaErrorCode
             // attached. Caught in Codex's review.
-            throw buildFacebookApiError(error, 'Failed to create ad set');
+            const apiError = buildFacebookApiError(error, 'Failed to create ad set');
+            if (response.status >= 500 && apiError.metaErrorCode == null) apiError.metaMutationStarted = true;
+            throw apiError;
         }
 
         const data = await response.json();
@@ -453,6 +476,7 @@ export async function createFacebookAdSet(adsetData, campaignId, adAccountId, bu
         return data.id;
     } catch (error) {
         console.error('Error creating ad set:', error);
+        if (writeRequested && (!error.responseReceived || error.metaMutationStarted)) error.metaMutationStarted = true;
         throw error;
     }
 }
@@ -474,13 +498,19 @@ export async function createFacebookAdSet(adsetData, campaignId, adAccountId, bu
  *   copy) instead of a single-image creative. Ignored for video ads.
  */
 export async function createFacebookCreative(creativeData, imageHash, pageId, adAccountId, videoData = null, secondaryImageHash = null) {
+    let writeRequested = false;
     try {
         const payload = {
             ...creativeData,
             page_id: pageId,
             primary_text: creativeData.bodies[0],
             headline: creativeData.headlines[0],
-            website_url: creativeData.websiteUrl
+            website_url: creativeData.websiteUrl,
+            // CampaignContext stores the Page lookup's current Instagram
+            // identity as instagramId. The service expects the Graph field
+            // name, so map it explicitly rather than relying on a later
+            // best-effort Page lookup for a dual-placement creative.
+            instagram_user_id: creativeData.instagram_user_id || creativeData.instagramUserId || creativeData.instagramId || undefined,
         };
 
         // Add image or video data
@@ -496,6 +526,7 @@ export async function createFacebookCreative(creativeData, imageHash, pageId, ad
             }
         }
 
+        writeRequested = true;
         const response = await authFetch(`${API_BASE_URL}/creatives?ad_account_id=${adAccountId}`, {
             method: 'POST',
             headers: {
@@ -506,13 +537,16 @@ export async function createFacebookCreative(creativeData, imageHash, pageId, ad
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({}));
-            throw buildFacebookApiError(error, 'Failed to create creative');
+            const apiError = buildFacebookApiError(error, 'Failed to create creative');
+            if (response.status >= 500 && apiError.metaErrorCode == null) apiError.metaMutationStarted = true;
+            throw apiError;
         }
 
         const data = await response.json();
         return data.id;
     } catch (error) {
         console.error('Error creating creative:', error);
+        if (writeRequested && (!error.responseReceived || error.metaMutationStarted)) error.metaMutationStarted = true;
         throw error;
     }
 }
@@ -521,6 +555,7 @@ export async function createFacebookCreative(creativeData, imageHash, pageId, ad
  * Create Facebook Ad
  */
 export async function createFacebookAd(adData, adsetId, creativeId, adAccountId) {
+    let writeRequested = false;
     try {
         const payload = {
             ...adData,
@@ -528,6 +563,7 @@ export async function createFacebookAd(adData, adsetId, creativeId, adAccountId)
             creative_id: creativeId
         };
 
+        writeRequested = true;
         const response = await authFetch(`${API_BASE_URL}/ads?ad_account_id=${adAccountId}`, {
             method: 'POST',
             headers: {
@@ -538,13 +574,16 @@ export async function createFacebookAd(adData, adsetId, creativeId, adAccountId)
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({}));
-            throw buildFacebookApiError(error, 'Failed to create ad');
+            const apiError = buildFacebookApiError(error, 'Failed to create ad');
+            if (response.status >= 500 && apiError.metaErrorCode == null) apiError.metaMutationStarted = true;
+            throw apiError;
         }
 
         const data = await response.json();
         return data.id;
     } catch (error) {
         console.error('Error creating ad:', error);
+        if (writeRequested && (!error.responseReceived || error.metaMutationStarted)) error.metaMutationStarted = true;
         throw error;
     }
 }
@@ -653,7 +692,12 @@ export async function createCompleteAd(campaignId, adsetData, creativeData, adDa
         // A timeout/network failure after a Meta write begins is ambiguous: the
         // object may exist even though the browser never received its ID. Tell
         // queue callers to stop and reconcile instead of blindly retrying.
-        if (metaMutationStarted) error.metaMutationStarted = true;
+        // Deterministic Meta rejections (4xx returned to the browser) are
+        // safe to correct or wait out. Only a lost/5xx response from a write
+        // leaves object creation ambiguous and requires reconciliation.
+        if (metaMutationStarted && (!error.responseReceived || error.metaMutationStarted)) {
+            error.metaMutationStarted = true;
+        }
         throw error;
     }
 }

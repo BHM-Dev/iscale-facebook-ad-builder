@@ -29,6 +29,24 @@ const MAX_ADS_PER_ADSET = 50;
 // — deliberate, not drift.
 const INTER_ROW_DELAY_MS = INTER_REQUEST_DELAY_MS;
 
+// Match Import also creates dual-placement asset-feed-spec creatives. Reusing
+// an existing ad set must meet the same explicit placement contract as the
+// Drive manifest path; otherwise Meta can serve the supplied two images into
+// placements neither version was made for.
+const existingDualPlacementStatus = (targeting = {}, instagramUserId = null) => {
+    const platforms = Array.isArray(targeting.publisher_platforms) ? targeting.publisher_platforms : [];
+    const facebookPositions = Array.isArray(targeting.facebook_positions) ? targeting.facebook_positions : [];
+    const instagramPositions = Array.isArray(targeting.instagram_positions) ? targeting.instagram_positions : [];
+    const hasFacebook = platforms.includes('facebook');
+    const hasInstagram = platforms.includes('instagram');
+    const exactFacebook = facebookPositions.length === 2 && facebookPositions.includes('feed') && facebookPositions.includes('story');
+    const exactInstagram = instagramPositions.length === 3 && instagramPositions.includes('stream') && instagramPositions.includes('story') && instagramPositions.includes('reels');
+    return (hasFacebook && !hasInstagram && platforms.length === 1 && exactFacebook && instagramPositions.length === 0)
+        || (hasFacebook && hasInstagram && platforms.length === 2 && exactFacebook && exactInstagram && instagramUserId)
+        ? 'verified'
+        : 'unverified';
+};
+
 // Extracts the digits from any ad-number format ("12", "AD 12", "ad-12",
 // "012") and drops leading zeros, so both sides of the CSV/filename join
 // resolve to the same key regardless of how the number was typed/named.
@@ -92,6 +110,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState({ current: 0, total: 0, status: '' });
     const [errors, setErrors] = useState([]);
+    const [requiresReconciliation, setRequiresReconciliation] = useState(false);
     const [creativeEnhancements, setCreativeEnhancements] = useState({});
     // Match Import reads selectedAdAccount/campaignData from shared wizard
     // context rather than owning its own switcher — but the wizard can still
@@ -102,9 +121,30 @@ const BulkMatchImport = ({ onNext, onBack }) => {
     // derivation (prefers fbCampaignId, falls back to id then 'new'), that
     // AdCreativeStep.jsx already applies for its own scope changes.
     const campaignCacheId = campaignData?.fbCampaignId || campaignData?.id || 'new';
+    // A client-side ID for a brand-new campaign is regenerated on reload, so
+    // it cannot protect a partial launch. Until the campaign is selected from
+    // Meta as an existing object, scope the durable lock to this account's
+    // new-campaign lane instead.
+    const reconciliationScope = campaignData?.isExisting ? (campaignData?.fbCampaignId || campaignData?.id) : 'new';
+    const reconciliationStorageKey = `bulk-match-reconciliation:${selectedAdAccount?.accountId || selectedAdAccount?.id || 'none'}:${reconciliationScope}`;
+    const setPersistentReconciliationBlock = (message) => {
+        setRequiresReconciliation(true);
+        try {
+            localStorage.setItem(reconciliationStorageKey, JSON.stringify({ message, recordedAt: new Date().toISOString() }));
+        } catch (storageError) {
+            console.warn('Could not persist reconciliation block:', storageError);
+        }
+    };
     useEffect(() => {
         setCreativeEnhancements({});
     }, [selectedAdAccount, campaignCacheId]);
+    useEffect(() => {
+        try {
+            setRequiresReconciliation(Boolean(localStorage.getItem(reconciliationStorageKey)));
+        } catch (storageError) {
+            console.warn('Could not restore reconciliation block:', storageError);
+        }
+    }, [reconciliationStorageKey]);
 
     // Inline edits made in the review table, keyed by adNumber. Kept separate
     // from csvRows so a typo fix never requires re-uploading the CSV — these
@@ -321,6 +361,15 @@ const BulkMatchImport = ({ onNext, onBack }) => {
     const overLimitRows = matchedRows.filter((r) => r.status === 'over_limit');
 
     const handleSubmit = async () => {
+        try {
+            if (localStorage.getItem(reconciliationStorageKey)) {
+                setRequiresReconciliation(true);
+                showError('This batch has an unresolved Meta write. Reconcile it in Ads Manager before creating anything else.');
+                return;
+            }
+        } catch (storageError) {
+            console.warn('Could not read reconciliation block:', storageError);
+        }
         if (readyRows.length === 0) {
             showWarning('No rows are ready to create — match each CSV row to BOTH a 1x1 and a 9x16 image (both placements are required)');
             return;
@@ -337,9 +386,21 @@ const BulkMatchImport = ({ onNext, onBack }) => {
             showError('Page ID is missing. Go back to the Creative step and select a Facebook Page.');
             return;
         }
+        // This importer always creates Feed + Stories/Instagram placement
+        // targeting. Stop before the first Meta write if the Page cannot
+        // supply the Instagram identity required by object_story_spec.
+        if (!creativeData.instagramId) {
+            showError('The selected Facebook Page has no linked Instagram identity available. Choose a Page connected to Instagram before launching paired creatives.');
+            return;
+        }
+        if (adsetData.isExisting && existingDualPlacementStatus(adsetData.targeting, creativeData.instagramId) === 'unverified') {
+            showError('This existing ad set is not verified for exactly Facebook Feed + Stories (and Instagram Stream, Stories, and Reels when Instagram is enabled). Go back and choose a placement-compatible ad set before launching paired creatives.');
+            return;
+        }
 
         setLoading(true);
         setErrors([]);
+        setRequiresReconciliation(false);
         setProgress({ current: 0, total: readyRows.length, status: 'Starting...' });
 
         try {
@@ -373,6 +434,10 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                 }
             } catch (err) {
                 console.error('Error saving campaign locally:', err);
+                // A failed local mirror makes the launch state incomplete even
+                // when the campaign was selected rather than newly created.
+                // Stop for reconciliation; never expose a blind retry.
+                err.metaMutationStarted = true;
                 throw err;
             }
 
@@ -395,6 +460,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
             };
 
             let fbAdsetId = adsetData.fbAdsetId;
+            let localAdsetId = adsetData.id;
             if (!adsetData.isExisting) {
                 setProgress((prev) => ({ ...prev, status: 'Creating ad set on Facebook...' }));
                 const adsetPayload = {
@@ -433,8 +499,13 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                         + `Do not re-launch — it already exists on the account.`
                     );
                 }
+                const savedAdset = await saveAdSetRes.json().catch(() => ({}));
+                // Existing selections use the Meta ID in wizard state, while
+                // the local ad mirror requires the FacebookAdSet UUID FK.
+                localAdsetId = savedAdset.id || localAdsetId;
             } catch (err) {
                 console.error('Error saving ad set locally:', err);
+                err.metaMutationStarted = true;
                 throw err;
             }
 
@@ -442,6 +513,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
             const createdAds = [];
             let failedCount = 0;
             let rateLimited = false;
+            let reconciliationStop = false;
             for (let i = 0; i < readyRows.length; i++) {
                 if (i > 0) await delay(INTER_ROW_DELAY_MS); // unconditional spacing between Meta calls
 
@@ -452,6 +524,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                     status: `Creating AD ${row.adNumber} (${i + 1} of ${readyRows.length})...`
                 });
 
+                let metaCreatedAdId = null;
                 try {
                     // Upload the primary 1x1 to get a durable, server-reachable URL
                     // BEFORE creating the ad — never persist a blob: URL, which dies
@@ -495,13 +568,14 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                         selectedAdAccount.accountId,
                         campaignData.budgetType
                     );
+                    metaCreatedAdId = result.adId;
 
                     const saveAdRes = await authFetch(`${API_URL}/facebook/ads/save`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             id: adData.id,
-                            adsetId: adsetData.id,
+                            adsetId: localAdsetId,
                             name: adData.name,
                             creativeName: creativeData.creativeName,
                             mediaType: 'image',
@@ -526,8 +600,28 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                     createdAds.push({ ...row, fbAdId: result.adId, fbCreativeId: result.creativeId });
                 } catch (error) {
                     console.error(`Error creating AD ${row.adNumber}:`, error);
-                    setErrors((prev) => [...prev, `Failed to create AD ${row.adNumber}: ${error.message}`]);
                     failedCount++;
+
+                    if (metaCreatedAdId) {
+                        reconciliationStop = true;
+                        setPersistentReconciliationBlock(error.message);
+                        setErrors((prev) => [...prev, `AD ${row.adNumber} was created in Meta as ${metaCreatedAdId}, but its local record failed to save: ${error.message}. Do not retry this batch; reconcile the ad in Ads Manager first.`]);
+                        break;
+                    }
+
+                    // The client marks errors after a Meta mutation (for
+                    // example a timeout after create-ad) so this row may
+                    // already exist even without an ID response. Continuing
+                    // would make a retryable-looking partial batch that can
+                    // duplicate an ad. Stop and require reconciliation.
+                    if (error.metaMutationStarted) {
+                        reconciliationStop = true;
+                        setPersistentReconciliationBlock(error.message);
+                        setErrors((prev) => [...prev, `Meta may have created AD ${row.adNumber}, but its result could not be confirmed: ${error.message}. Do not retry this batch; reconcile in Ads Manager first.`]);
+                        break;
+                    }
+
+                    setErrors((prev) => [...prev, `Failed to create AD ${row.adNumber}: ${error.message}`]);
 
                     if (isRateLimitError(error)) {
                         rateLimited = true;
@@ -542,17 +636,29 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                 setProgress({ current: readyRows.length, total: readyRows.length, status: 'Complete!' });
                 setTimeout(() => { onNext(); }, 1500);
             } else {
+                if (createdAds.length > 0 || !campaignData.isExisting || !adsetData.isExisting) {
+                    setPersistentReconciliationBlock('This batch partially completed. Reconcile the created rows before starting another batch.');
+                }
                 setProgress({
                     current: readyRows.length,
                     total: readyRows.length,
                     status: rateLimited
                         ? `Stopped — Meta rate-limited this account (${createdAds.length} of ${readyRows.length} created)`
+                        : reconciliationStop
+                            ? `Stopped — ${createdAds.length} fully saved; one Meta ad needs local reconciliation`
                         : `${createdAds.length} of ${readyRows.length} ads created`
                 });
                 setLoading(false);
             }
         } catch (error) {
             console.error('Error in bulk match import:', error);
+            if (error.metaMutationStarted || !campaignData.isExisting || !adsetData.isExisting) {
+                setPersistentReconciliationBlock(error.message);
+                setErrors((prev) => [...prev, `Meta may have created a campaign or ad set, but its result could not be confirmed: ${error.message}. Do not retry this batch; reconcile in Ads Manager first.`]);
+                setProgress((prev) => ({ ...prev, status: 'Stopped — Meta objects need reconciliation' }));
+                setLoading(false);
+                return;
+            }
             showError(`Error: ${error.message}`);
             setLoading(false);
         }
@@ -845,13 +951,10 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                         <button onClick={onBack} className="px-6 py-3 text-gray-600 hover:text-gray-800 font-medium">
                             Back
                         </button>
-                        {errors.length > 0 ? (
-                            <button
-                                onClick={onNext}
-                                className="flex items-center gap-2 px-6 py-3 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700"
-                            >
-                                Continue Anyway
-                            </button>
+                        {requiresReconciliation ? (
+                            <span className="max-w-md text-right text-sm font-medium text-amber-800">This partial batch is locked after Meta writes. Reconcile it in Ads Manager, then start a fresh batch for any remaining rows.</span>
+                        ) : errors.length > 0 ? (
+                            <span className="max-w-md text-right text-sm font-medium text-amber-800">Review the failed rows in Ads Manager before starting another batch. This importer will not advance a partial batch to the success screen.</span>
                         ) : (
                             <button
                                 onClick={handleSubmit}

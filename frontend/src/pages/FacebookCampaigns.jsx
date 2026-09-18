@@ -491,9 +491,9 @@ const FacebookCampaignWizardInner = () => {
                     {currentStep === 6 && (
                         <div className="text-center py-12">
                             <CheckCircle2 className="mx-auto mb-4 text-amber-500" size={64} />
-                            <h2 className="text-3xl font-bold mb-4">Campaign Ready to Launch!</h2>
+                            <h2 className="text-3xl font-bold mb-4">Ads Created as Paused</h2>
                             <p className="text-gray-600 mb-8">
-                                Review your settings and launch your Facebook ad campaign.
+                                Your ads were created in Meta with delivery paused. In Ads Manager, activate the campaign, the applicable ad set, and the new ads; if this batch used an already-active ad set, activate only the new ads.
                             </p>
                         </div>
                     )}

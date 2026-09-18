@@ -197,6 +197,7 @@ class DriveSyncService:
                 except Exception as exc:
                     result["errors"] += 1
                     logger.warning("Could not read Drive text file %s during copy refresh: %s", file_meta.get("name"), exc)
+                    self._mark_package_copy_unverified(file_meta, str(exc))
                     continue
                 is_handoff_manifest = all(token in (file_meta.get("name") or "").lower() for token in ("handoff", "manifest"))
                 if not (
@@ -208,12 +209,17 @@ class DriveSyncService:
                 self._package_folder_cache.clear()
                 self._strategy_package_folder_cache.clear()
                 self._folder_metadata_cache.clear()
-                result["updated"] += self._refresh_folder_copy_metadata(file_meta)
-            if result["errors"]:
-                raise RuntimeError(
-                    f"Drive copy refresh stopped because {result['errors']} source file"
-                    f"{' was' if result['errors'] == 1 else 's were'} unreadable. Existing matches were preserved."
-                )
+                try:
+                    result["updated"] += self._refresh_folder_copy_metadata(file_meta)
+                except Exception as exc:
+                    # Do not roll the whole refresh back and keep last week's
+                    # copy silently launchable. Mark only this package's prior
+                    # tags unverified; unaffected packages can still refresh,
+                    # while this one fails closed in the Creative step until its
+                    # source document parses again.
+                    result["errors"] += 1
+                    logger.warning("Could not refresh Drive copy metadata for %s: %s", file_meta.get("name"), exc)
+                    self._mark_package_copy_unverified(file_meta, str(exc))
             self.db.commit()
             return result
         except Exception as exc:
@@ -710,7 +716,76 @@ class DriveSyncService:
 
         if not matched_media_ids:
             raise RuntimeError("Drive copy document did not resolve to any matching media files")
+        self._mark_unmatched_package_assets_unverified(metadata_folder, matched_media_ids)
         return updated
+
+    def _mark_unmatched_package_assets_unverified(self, package_folder: str, matched_media_ids: set[str]) -> None:
+        """Block previously tagged package assets absent from the current source.
+
+        A partially parseable category document used to refresh the sections it
+        still understood and leave deleted/malformed sections with last run's
+        valid-looking tags. The current resolved package metadata is the source
+        of truth: any formerly tagged media it does not name must be reviewed
+        before it can launch again.
+        """
+        if not matched_media_ids:
+            return
+        result = self.db.execute(
+            text(
+                """
+                UPDATE drive_assets
+                SET soft_tags = jsonb_set(
+                    jsonb_set(COALESCE(NULLIF(soft_tags, '')::jsonb, '{}'::jsonb), '{copy_refresh_status}', '"unverified"'::jsonb, true),
+                    '{copy_refresh_error}', '"No matching entry in the current Drive copy source"'::jsonb, true
+                )::text,
+                synced_at = NOW()
+                WHERE COALESCE(NULLIF(soft_tags, '')::jsonb ->> 'package_folder_id', '') = :package_folder
+                  AND COALESCE(NULLIF(soft_tags, '')::jsonb ->> 'source', '') IN ('category_copy_doc', 'strategy_copy_doc', 'handoff_manifest')
+                  AND NOT (drive_file_id = ANY(CAST(:matched_media_ids AS text[])))
+                """
+            ),
+            {"package_folder": package_folder, "matched_media_ids": list(matched_media_ids)},
+        )
+        if result.rowcount:
+            logger.warning(
+                "Marked %s Drive asset(s) unverified because they are absent from current package copy metadata %s",
+                result.rowcount,
+                package_folder,
+            )
+
+    def _mark_package_copy_unverified(self, file_meta: Dict[str, Any], reason: str) -> None:
+        """Fail closed for a package whose current copy source cannot be verified.
+
+        A refresh used to roll back on a malformed or unreadable source file,
+        leaving old `soft_tags` indistinguishable from current approved copy.
+        The paired-launch UI would then call those rows matched and launch stale
+        copy. Preserve the last parsed fields for inspection, but flag the whole
+        package so the UI blocks it until a successful refresh replaces the tags.
+        """
+        package_folder = self._find_package_folder(file_meta) or self._find_strategy_package_folder(file_meta)
+        if not package_folder:
+            logger.warning("Could not resolve package folder while marking stale Drive copy for %s", file_meta.get("name"))
+            return
+        safe_reason = str(reason or "Could not verify current Drive copy")[:500]
+        result = self.db.execute(
+            text(
+                """
+                UPDATE drive_assets
+                SET soft_tags = jsonb_set(
+                    jsonb_set(COALESCE(NULLIF(soft_tags, '')::jsonb, '{}'::jsonb), '{copy_refresh_status}', '"unverified"'::jsonb, true),
+                    '{copy_refresh_error}', to_jsonb(CAST(:reason AS text)), true
+                )::text,
+                synced_at = NOW()
+                WHERE COALESCE(NULLIF(soft_tags, '')::jsonb ->> 'package_folder_id', '') = :package_folder
+                """
+            ),
+            {"package_folder": package_folder, "reason": safe_reason},
+        )
+        logger.warning(
+            "Marked %s Drive asset(s) unverified after copy refresh failure in package %s",
+            result.rowcount or 0,
+            package_folder,
+        )
 
     def _list_folder_subtree(self, folder_id: str, max_files: int = 2000) -> List[Dict[str, Any]]:
         """List every non-folder file anywhere under folder_id, recursively.
@@ -1039,6 +1114,20 @@ class DriveSyncService:
         candidates = (normalized_category, *(self._normalize_name(alias) for alias in aliases))
         return any(candidate and candidate in normalized_file for candidate in candidates)
 
+    def _category_pair_key(self, file_name: str) -> str:
+        """Stable identity for a category-copy Feed/Stories export.
+
+        Category docs share one copy block across multiple images, so their
+        category alone is not enough to join the N square files to N vertical
+        files. Strip only the placement token while preserving revision suffixes
+        from the filename. We pair a key only when it is unique on both sides;
+        duplicate/generic names stay singles rather than being paired by Drive's
+        arbitrary listing order.
+        """
+        stem = os.path.splitext(file_name or "")[0].lower()
+        stem = re.sub(r"(?:^|[-_ ])(?:1x1|9x16)(?=$|[-_ ])", " ", stem, flags=re.IGNORECASE)
+        return re.sub(r"[-_\s]+", " ", stem).strip()
+
     def _category_folder_copy_metadata(self, folder_id, media_files, text_body):
         sections = self._parse_category_copy_doc(text_body)
         if not sections:
@@ -1089,16 +1178,35 @@ class DriveSyncService:
         for candidate in candidates:
             candidates_by_category.setdefault(candidate[2], []).append(candidate)
         for number, category_candidates in candidates_by_category.items():
-            feed = [candidate for candidate in category_candidates if candidate[4] == "1x1"]
-            stories = [candidate for candidate in category_candidates if candidate[4] == "9x16"]
-            pair_count = min(len(feed), len(stories))
+            by_identity: Dict[str, Dict[str, List[Any]]] = {}
+            for candidate in category_candidates:
+                identity = self._category_pair_key(candidate[1])
+                by_identity.setdefault(identity, {"1x1": [], "9x16": []})[candidate[4]].append(candidate)
+
+            # Only a one-to-one filename identity is a trustworthy pair. A
+            # listing-order zip can make feed A + story B look fully matched
+            # because both legitimately share category copy, while serving the
+            # wrong visual in Stories. Ambiguous duplicates intentionally become
+            # separate entries for an explicit human review instead.
+            pair_keys = sorted(
+                key for key, placements in by_identity.items()
+                if key and len(placements["1x1"]) == 1 and len(placements["9x16"]) == 1
+            )
+            copy_ids_by_drive_id: Dict[str, str] = {}
+            for pair_index, key in enumerate(pair_keys, start=1):
+                copy_id = f"CATEGORY-{number:02d}" if pair_index == 1 else f"CATEGORY-{number:02d}-PAIR-{pair_index}"
+                for candidate in (*by_identity[key]["1x1"], *by_identity[key]["9x16"]):
+                    copy_ids_by_drive_id[candidate[0].get("id")] = copy_id
+
+            unpaired = [
+                candidate for candidate in category_candidates
+                if candidate[0].get("id") not in copy_ids_by_drive_id
+            ]
+            for extra_index, candidate in enumerate(sorted(unpaired, key=lambda entry: (self._category_pair_key(entry[1]), entry[1].lower(), str(entry[0].get("id") or ""))), start=1):
+                copy_ids_by_drive_id[candidate[0].get("id")] = f"CATEGORY-{number:02d}-EXTRA-{extra_index}"
+
             for item, file_name, _, section, aspect in category_candidates:
-                same_aspect_index = (feed if aspect == "1x1" else stories).index((item, file_name, number, section, aspect))
-                copy_id = f"CATEGORY-{number:02d}"
-                if same_aspect_index < pair_count and same_aspect_index > 0:
-                    copy_id = f"{copy_id}-PAIR-{same_aspect_index + 1}"
-                elif same_aspect_index >= pair_count:
-                    copy_id = f"{copy_id}-EXTRA-{same_aspect_index - pair_count + 1}"
+                copy_id = copy_ids_by_drive_id[item.get("id")]
                 metadata = {
                     "copy_id": copy_id,
                     "category": section["category"],
@@ -1339,6 +1447,8 @@ class DriveSyncService:
         'DOWNLOAD': 'DOWNLOAD',
         'BOOK_NOW': 'BOOK_NOW', 'BOOK': 'BOOK_NOW',
         'BUY_TICKETS': 'BUY_TICKETS',
+        'GET_STARTED': 'GET_STARTED', 'START': 'GET_STARTED',
+        'APPLY_NOW': 'APPLY_NOW', 'APPLY': 'APPLY_NOW',
         'DONATE_NOW': 'DONATE_NOW', 'DONATE': 'DONATE_NOW',
         # GET_QUOTE candidates — every phrasing here collapses to the one
         # valid enum value rather than producing e.g. GET_A_QUOTE, GET_MY_

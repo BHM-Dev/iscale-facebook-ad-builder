@@ -97,7 +97,7 @@ Restaurant copy.
     assert result["assets_by_drive_id"]["restaurant-b"]["copy_id"] == "CATEGORY-04-EXTRA-2"
 
 
-def test_category_metadata_keeps_balanced_duplicate_pairs_separate():
+def test_category_metadata_leaves_ambiguous_duplicate_names_unpaired():
     service = DriveSyncService.__new__(DriveSyncService)
     media = [
         {"id": "feed-a", "name": "restaurant.png", "_parent_folder_name": "1x1"},
@@ -113,10 +113,60 @@ Restaurant copy.
 
     result = service._category_folder_copy_metadata("package-id", media, document)
 
-    assert result["assets_by_drive_id"]["feed-a"]["copy_id"] == "CATEGORY-04"
-    assert result["assets_by_drive_id"]["stories-a"]["copy_id"] == "CATEGORY-04"
-    assert result["assets_by_drive_id"]["feed-b"]["copy_id"] == "CATEGORY-04-PAIR-2"
-    assert result["assets_by_drive_id"]["stories-b"]["copy_id"] == "CATEGORY-04-PAIR-2"
+    # The Drive list order is not an identity. A generic duplicate filename
+    # must not silently pair feed-a with stories-b and send the wrong vertical
+    # visual to Meta; each remains an explicit single until named uniquely.
+    copy_ids = {
+        result["assets_by_drive_id"]["feed-a"]["copy_id"],
+        result["assets_by_drive_id"]["stories-a"]["copy_id"],
+        result["assets_by_drive_id"]["feed-b"]["copy_id"],
+        result["assets_by_drive_id"]["stories-b"]["copy_id"],
+    }
+    assert copy_ids == {
+        "CATEGORY-04-EXTRA-1",
+        "CATEGORY-04-EXTRA-2",
+        "CATEGORY-04-EXTRA-3",
+        "CATEGORY-04-EXTRA-4",
+    }
+
+
+def test_category_metadata_pairs_unique_matching_filename_identities():
+    service = DriveSyncService.__new__(DriveSyncService)
+    media = [
+        {"id": "feed-a", "name": "restaurant-lunch-rush-1x1.png", "_parent_folder_name": "1x1"},
+        {"id": "stories-a", "name": "restaurant-lunch-rush-9x16.png", "_parent_folder_name": "9x16"},
+        {"id": "feed-b", "name": "restaurant-kitchen-slip-1x1.png", "_parent_folder_name": "1x1"},
+        {"id": "stories-b", "name": "restaurant-kitchen-slip-9x16.png", "_parent_folder_name": "9x16"},
+    ]
+    document = """4. RESTAURANT AND FOOD SERVICE
+Headline: Cafe Owners: Compare Coverage Free
+Primary text:
+Restaurant copy.
+"""
+
+    result = service._category_folder_copy_metadata("package-id", media, document)
+
+    assert result["assets_by_drive_id"]["feed-b"]["copy_id"] == result["assets_by_drive_id"]["stories-b"]["copy_id"]
+    assert result["assets_by_drive_id"]["feed-a"]["copy_id"] == result["assets_by_drive_id"]["stories-a"]["copy_id"]
+    assert result["assets_by_drive_id"]["feed-a"]["copy_id"] != result["assets_by_drive_id"]["feed-b"]["copy_id"]
+
+
+def test_category_metadata_does_not_pair_different_export_revisions():
+    service = DriveSyncService.__new__(DriveSyncService)
+    media = [
+        {"id": "feed", "name": "restaurant-lunch-rush-1x1-v1.png", "_parent_folder_name": "1x1"},
+        {"id": "stories", "name": "restaurant-lunch-rush-9x16-v2.png", "_parent_folder_name": "9x16"},
+    ]
+    document = """4. RESTAURANT AND FOOD SERVICE
+Headline: Cafe Owners: Compare Coverage Free
+Primary text:
+Restaurant copy.
+"""
+
+    result = service._category_folder_copy_metadata("package-id", media, document)
+
+    assert result["assets_by_drive_id"]["feed"]["copy_id"] == "CATEGORY-04-EXTRA-1"
+    assert result["assets_by_drive_id"]["stories"]["copy_id"] == "CATEGORY-04-EXTRA-2"
 
 
 def test_category_metadata_reads_placement_from_nested_ancestor_folder():
