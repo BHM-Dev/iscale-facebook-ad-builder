@@ -67,10 +67,15 @@ class DriveSyncService:
             self._validate_tables()
             # Keep a manual backfill and the scheduler from racing the same
             # Drive checkpoint or uploading the same newly-seen media twice.
-            self.db.execute(
-                text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+            acquired = self.db.execute(
+                text("SELECT pg_try_advisory_xact_lock(hashtext(:lock_key))"),
                 {"lock_key": "drive_asset_sync"},
-            )
+            ).scalar()
+            if not acquired:
+                raise HTTPException(
+                    status_code=409,
+                    detail="A Drive sync is already running. Wait for it to finish, then refresh copy matches again.",
+                )
             drive = self._client()
             page_token = self._get_state_token()
 
@@ -151,6 +156,69 @@ class DriveSyncService:
             self.db.rollback()
             logger.exception("Drive creative sync failed")
             slack_service.send_drive_sync_alert(type(exc).__name__, str(exc))
+            raise
+
+    def refresh_copy_metadata(self) -> Dict[str, Any]:
+        """Refresh copy tags without reprocessing every Drive media binary.
+
+        A full backfill is intentionally comprehensive, but it is unsuitable for
+        repairing a strategy document: it can hold the request open for minutes
+        while walking every image. This path lists the tree once, inspects text
+        files only, and refreshes packages with supported copy structures.
+        """
+        result = {
+            "processed": 0,
+            "created": 0,
+            "updated": 0,
+            "skipped": 0,
+            "archived": 0,
+            "unmatched_brand": 0,
+            "errors": 0,
+            "next_page_token_saved": False,
+        }
+        try:
+            self._validate_tables()
+            acquired = self.db.execute(
+                text("SELECT pg_try_advisory_xact_lock(hashtext(:lock_key))"),
+                {"lock_key": "drive_asset_sync"},
+            ).scalar()
+            if not acquired:
+                raise HTTPException(
+                    status_code=409,
+                    detail="A Drive sync is already running. Wait for it to finish, then refresh copy matches again.",
+                )
+            drive = self._client()
+            for file_meta in self._initial_folder_walk(drive):
+                if not self._is_text_file(file_meta.get("mimeType") or "", file_meta.get("name", "")):
+                    continue
+                result["processed"] += 1
+                try:
+                    text_body = self._download_text_file(file_meta["id"])
+                except Exception as exc:
+                    result["errors"] += 1
+                    logger.warning("Could not read Drive text file %s during copy refresh: %s", file_meta.get("name"), exc)
+                    continue
+                is_handoff_manifest = all(token in (file_meta.get("name") or "").lower() for token in ("handoff", "manifest"))
+                if not (
+                    self._looks_like_strategy_copy_doc(text_body)
+                    or self._looks_like_category_copy_doc(text_body)
+                    or is_handoff_manifest
+                ):
+                    continue
+                self._package_folder_cache.clear()
+                self._strategy_package_folder_cache.clear()
+                self._folder_metadata_cache.clear()
+                result["updated"] += self._refresh_folder_copy_metadata(file_meta)
+            if result["errors"]:
+                raise RuntimeError(
+                    f"Drive copy refresh stopped because {result['errors']} source file"
+                    f"{' was' if result['errors'] == 1 else 's were'} unreadable. Existing matches were preserved."
+                )
+            self.db.commit()
+            return result
+        except Exception as exc:
+            self.db.rollback()
+            logger.exception("Drive copy metadata refresh failed")
             raise
 
     def _client(self):
@@ -596,14 +664,17 @@ class DriveSyncService:
 
         package_folder = self._find_package_folder(file_meta)
         if package_folder:
-            folder_metadata = self._folder_copy_metadata(package_folder, force=True)
+            metadata_folder = package_folder
+            folder_metadata = self._folder_copy_metadata(metadata_folder, force=True)
         else:
             strategy_folder = self._find_strategy_package_folder(file_meta)
             if not strategy_folder:
                 return 0
-            folder_metadata = self._folder_copy_metadata(strategy_folder, force=True)
+            metadata_folder = strategy_folder
+            folder_metadata = self._folder_copy_metadata(metadata_folder, force=True)
         updated = 0
         refresh_assets = folder_metadata.get("assets_by_drive_id") or folder_metadata.get("assets", {})
+        matched_media_ids = set()
         for file_name, soft_tags in refresh_assets.items():
             if folder_metadata.get("assets_by_drive_id"):
                 file_name = soft_tags.get("file_name") or file_name
@@ -621,6 +692,7 @@ class DriveSyncService:
                 )
                 continue
             for drive_file_id in drive_file_ids:
+                matched_media_ids.add(drive_file_id)
                 result = self.db.execute(
                     text(
                         """
@@ -635,6 +707,9 @@ class DriveSyncService:
                     },
                 )
                 updated += result.rowcount or 0
+
+        if not matched_media_ids:
+            raise RuntimeError("Drive copy document did not resolve to any matching media files")
         return updated
 
     def _list_folder_subtree(self, folder_id: str, max_files: int = 2000) -> List[Dict[str, Any]]:
@@ -667,8 +742,9 @@ class DriveSyncService:
                         supportsAllDrives=True,
                     ).execute()
                 except Exception as exc:
-                    logger.warning("Could not list Drive folder %s while resolving package subtree: %s", current, exc)
-                    break
+                    raise RuntimeError(
+                        f"Could not list Drive folder {current} while resolving package subtree"
+                    ) from exc
                 for item in response.get("files", []):
                     if item.get("mimeType") == "application/vnd.google-apps.folder":
                         if item["id"] not in seen_folders:
@@ -684,6 +760,8 @@ class DriveSyncService:
                 page_token = response.get("nextPageToken")
                 if not page_token or len(collected) >= max_files:
                     break
+        if queue or len(collected) >= max_files:
+            raise RuntimeError(f"Drive package subtree exceeded the safe {max_files}-file inspection limit")
         return collected
 
     def _find_strategy_package_folder(self, file_meta: Dict[str, Any], max_depth: int = 4) -> Optional[str]:
@@ -757,13 +835,15 @@ class DriveSyncService:
         try:
             folder_files = self._list_folder_subtree(folder_id)
         except Exception as exc:
-            logger.warning("Could not list Drive folder metadata %s: %s", folder_id, exc)
-            self._folder_metadata_cache[folder_id] = {"assets": {}}
-            return self._folder_metadata_cache[folder_id]
-        text_files = [
-            item for item in folder_files
-            if self._is_text_file(item.get("mimeType") or "", item.get("name") or "")
-        ]
+            raise RuntimeError(f"Could not list Drive folder metadata {folder_id}") from exc
+        text_files = sorted(
+            (
+                item for item in folder_files
+                if self._is_text_file(item.get("mimeType") or "", item.get("name") or "")
+            ),
+            key=lambda item: item.get("modifiedTime") or "",
+            reverse=True,
+        )
         media_by_name = {
             (item.get("name") or "").lower(): item
             for item in folder_files
@@ -776,10 +856,10 @@ class DriveSyncService:
         if manifest:
             try:
                 manifest_text = self._download_text_file(manifest["id"])
-            except Exception:
-                logger.warning("Could not read Drive handoff manifest %s", manifest.get("name"))
-                self._folder_metadata_cache[folder_id] = {"assets": {}}
-                return self._folder_metadata_cache[folder_id]
+            except Exception as exc:
+                # A refresh must fail closed: returning an empty mapping here
+                # would make the caller clear otherwise-valid matched tags.
+                raise RuntimeError(f"Could not read Drive handoff manifest {manifest.get('name')}") from exc
 
             metadata = self._handoff_folder_copy_metadata(folder_id, folder_files, text_files, media_by_name, manifest_text)
             self._folder_metadata_cache[folder_id] = metadata
@@ -787,8 +867,13 @@ class DriveSyncService:
 
         strategy_file = None
         strategy_text = ""
+        unreadable_text_files = []
         for item in text_files:
-            candidate_text = self._safe_download_text_file(item["id"])
+            try:
+                candidate_text = self._download_text_file(item["id"])
+            except Exception:
+                unreadable_text_files.append(item.get("name") or item.get("id"))
+                continue
             if self._looks_like_strategy_copy_doc(candidate_text) or self._looks_like_category_copy_doc(candidate_text):
                 strategy_file = item
                 strategy_text = candidate_text
@@ -805,30 +890,63 @@ class DriveSyncService:
             self._folder_metadata_cache[folder_id] = metadata
             return metadata
 
+        if unreadable_text_files:
+            # We cannot distinguish a harmless unreadable note from the only
+            # strategy document without risking removal of current copy tags.
+            raise RuntimeError(
+                "Could not verify Drive copy metadata because text file(s) were unreadable: "
+                + ", ".join(unreadable_text_files)
+            )
+
         self._folder_metadata_cache[folder_id] = {"assets": {}}
         return self._folder_metadata_cache[folder_id]
-
-    def _safe_download_text_file(self, drive_file_id: str) -> str:
-        try:
-            return self._download_text_file(drive_file_id)
-        except Exception:
-            return ""
 
     def _handoff_folder_copy_metadata(self, folder_id, folder_files, text_files, media_by_name, manifest_text):
 
         manifest_data = self._parse_handoff_manifest(manifest_text)
+        entries = manifest_data.get("entries") or {}
+        if not entries:
+            raise RuntimeError("Drive handoff manifest contained no copy entries")
+        incomplete_entries = [
+            copy_id for copy_id, entry in entries.items()
+            if not entry.get("1x1") or not entry.get("9x16") or not entry.get("copy_file")
+        ]
+        if incomplete_entries:
+            raise RuntimeError(
+                "Drive handoff manifest has incomplete entries: "
+                + ", ".join(sorted(incomplete_entries))
+            )
         copy_file_names = {entry.get("copy_file", "").lower() for entry in manifest_data.get("entries", {}).values() if entry.get("copy_file")}
         copy_files = [
             item for item in text_files
             if item.get("name", "").lower() in copy_file_names
-            or ("copy" in item.get("name", "").lower() and "manifest" not in item.get("name", "").lower())
         ]
+        available_copy_names = {item.get("name", "").lower() for item in copy_files}
+        missing_copy_files = copy_file_names - available_copy_names
+        if missing_copy_files:
+            raise RuntimeError(
+                "Handoff manifest references missing copy file(s): "
+                + ", ".join(sorted(missing_copy_files))
+            )
         copy_blocks: Dict[str, Dict[str, str]] = {}
         for copy_file in copy_files:
             try:
                 copy_blocks.update(self._parse_copy_file(self._download_text_file(copy_file["id"])))
-            except Exception:
-                logger.warning("Could not parse Drive copy file %s", copy_file.get("name"))
+            except Exception as exc:
+                # Never overwrite previously valid tags with empty copy data
+                # when Drive briefly fails to serve a referenced copy file.
+                raise RuntimeError(f"Could not parse Drive copy file {copy_file.get('name')}") from exc
+
+        invalid_copy_blocks = [
+            copy_id for copy_id in entries
+            if not copy_blocks.get(copy_id.lower(), {}).get("headline", "").strip()
+            or not copy_blocks.get(copy_id.lower(), {}).get("primary_text", "").strip()
+        ]
+        if invalid_copy_blocks:
+            raise RuntimeError(
+                "Drive copy file has missing headline or primary text for: "
+                + ", ".join(sorted(invalid_copy_blocks))
+            )
 
         assets: Dict[str, Dict[str, Any]] = {}
         for copy_id, entry in manifest_data.get("entries", {}).items():
@@ -923,6 +1041,8 @@ class DriveSyncService:
 
     def _category_folder_copy_metadata(self, folder_id, media_files, text_body):
         sections = self._parse_category_copy_doc(text_body)
+        if not sections:
+            raise RuntimeError("Drive category copy document contained no complete copy sections")
         assets: Dict[str, Dict[str, Any]] = {}
         assets_by_drive_id: Dict[str, Dict[str, Any]] = {}
         candidates = []
@@ -1001,6 +1121,15 @@ class DriveSyncService:
 
     def _strategy_folder_copy_metadata(self, folder_id, folder_files, media_by_name, text_body):
         blocks = self._parse_strategy_copy_doc(text_body)
+        invalid_blocks = [
+            copy_id for copy_id, block in blocks.items()
+            if not block.get("headline", "").strip() or not block.get("primary_text", "").strip()
+        ]
+        if not blocks or invalid_blocks:
+            raise RuntimeError(
+                "Drive strategy document has missing headline or primary text"
+                + (f" for: {', '.join(sorted(invalid_blocks))}" if invalid_blocks else "")
+            )
         assets: Dict[str, Dict[str, Any]] = {}
         for item in media_by_name.values():
             file_name = item.get("name") or ""

@@ -183,13 +183,35 @@ const buildDriveAssetGroups = (assets) => {
     const groups = Array.from(grouped.values()).map(group => {
         const feedAsset = group.assets.find(asset => driveAssetPlacement(asset) === 'feed') || group.assets[0];
         const storiesAsset = group.assets.find(asset => driveAssetPlacement(asset) === 'stories');
+        const isPair = Boolean(feedAsset && storiesAsset && feedAsset.id !== storiesAsset.id);
+        const pairedAssets = isPair ? [feedAsset, storiesAsset] : [feedAsset];
+        const pairedMetadata = pairedAssets.map(asset => {
+            const tags = parseDriveTags(asset);
+            return {
+                copy: tags.copy || {},
+                landingPage: tags.landing_page || '',
+                cta: tags.cta || '',
+            };
+        });
+        const metadataFingerprints = new Set(pairedMetadata.map(metadata => JSON.stringify(metadata)));
+        // A Feed/Stories pair must carry the exact same source copy and link
+        // data on both files. Never let whichever asset happened to arrive
+        // first define a launch row for a partially refreshed pair.
+        const pairCopyIntegrityOk = !isPair || (
+            pairedMetadata.every(metadata => hasCompleteCopy(metadata.copy))
+            && metadataFingerprints.size === 1
+        );
         return {
             ...group,
             id: group.key,
             displayAsset: feedAsset,
             feedAsset,
             storiesAsset,
-            isPair: Boolean(feedAsset && storiesAsset && feedAsset.id !== storiesAsset.id),
+            isPair,
+            copy: pairCopyIntegrityOk ? group.copy : null,
+            landingPage: pairCopyIntegrityOk ? group.landingPage : null,
+            cta: pairCopyIntegrityOk ? group.cta : null,
+            copyIntegrityIssue: isPair && !pairCopyIntegrityOk,
             syncedAt: latestSyncedAt(group),
         };
     });
@@ -294,6 +316,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const [driveAssets, setDriveAssets] = useState([]);
     const [driveLibraryLoading, setDriveLibraryLoading] = useState(false);
     const [driveLibraryError, setDriveLibraryError] = useState(null);
+    const [refreshingDriveCopy, setRefreshingDriveCopy] = useState(false);
     const [selectedDriveAssetIds, setSelectedDriveAssetIds] = useState(new Set());
     const [driveSearchTerm, setDriveSearchTerm] = useState('');
     const [driveFormatFilter, setDriveFormatFilter] = useState('');
@@ -496,6 +519,25 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             setDriveLibraryError(err.message || 'Failed to load Drive Creative Library');
         } finally {
             setDriveLibraryLoading(false);
+        }
+    };
+
+    const refreshDriveCopyMatches = async () => {
+        setRefreshingDriveCopy(true);
+        try {
+            const res = await authFetch(`${API_URL}/drive-assets/refresh-copy-metadata`, { method: 'POST' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || 'Could not refresh Drive copy');
+            if (data.errors) {
+                showWarning(`Copy refresh completed with ${data.errors} unreadable source file${data.errors === 1 ? '' : 's'}. Existing matched copy was kept.`);
+            } else {
+                showSuccess(`Drive copy refreshed for ${data.updated || 0} asset${data.updated === 1 ? '' : 's'}.`);
+            }
+            await fetchDriveAssets();
+        } catch (err) {
+            showError(err.message || 'Could not refresh Drive copy');
+        } finally {
+            setRefreshingDriveCopy(false);
         }
     };
 
@@ -2406,6 +2448,17 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         </button>
                     </div>
                     <div className="p-4 border-b space-y-3">
+                        <div className="flex items-center justify-between gap-3 rounded-lg bg-indigo-50 px-3 py-2">
+                            <p className="text-xs text-indigo-900">Pull the latest approved headline, body, CTA, and URL from the paired Drive strategy document.</p>
+                            <button
+                                type="button"
+                                onClick={refreshDriveCopyMatches}
+                                disabled={refreshingDriveCopy || driveLibraryLoading}
+                                className="shrink-0 rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                {refreshingDriveCopy ? 'Refreshing…' : 'Refresh copy from Drive'}
+                            </button>
+                        </div>
                         <label className="relative block">
                             <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
                             <input
@@ -2532,7 +2585,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     Feed + Stories pair
                                                 </div>
                                             )}
-                                            {(copyMatched || group.landingPage || group.cta || tags.copy_id) && (
+                                            {group.copyIntegrityIssue ? (
+                                                <div className="absolute bottom-[54px] left-2 bg-red-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
+                                                    Pair copy mismatch
+                                                </div>
+                                            ) : (copyMatched || group.landingPage || group.cta || tags.copy_id) && (
                                                 <div className="absolute bottom-[54px] left-2 bg-emerald-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
                                                     {copyMatched ? 'Copy matched' : 'URL matched'}
                                                 </div>

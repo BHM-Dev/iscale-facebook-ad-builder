@@ -92,3 +92,17 @@ def sync_drive_assets_now(
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/refresh-copy-metadata", response_model=DriveSyncResult)
+def refresh_drive_copy_metadata(
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_active_user),
+):
+    """Re-match imported media to the Drive strategy/copy documents."""
+    try:
+        return DriveSyncService(db).refresh_copy_metadata()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))

@@ -42,6 +42,7 @@ export default function CreativeLibrary() {
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [refreshingCopy, setRefreshingCopy] = useState(false);
   const [selectedBrand, setSelectedBrand] = useState('');
   const [format, setFormat] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -91,6 +92,23 @@ export default function CreativeLibrary() {
     }
   };
 
+  const refreshCopyMatches = async () => {
+    setRefreshingCopy(true);
+    try {
+      const res = await authFetch(`${API_URL}/drive-assets/refresh-copy-metadata`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Copy metadata refresh failed');
+      }
+      showSuccess(`Copy matches refreshed: ${data.updated || 0} assets updated`);
+      await fetchAssets();
+    } catch (error) {
+      showError(error.message || 'Copy metadata refresh failed');
+    } finally {
+      setRefreshingCopy(false);
+    }
+  };
+
   const filteredAssets = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
     if (!query) return assets;
@@ -132,15 +150,25 @@ export default function CreativeLibrary() {
                 </div>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={syncNow}
-              disabled={syncing}
-              className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
-              {syncing ? 'Syncing' : 'Sync now'}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={syncNow}
+                disabled={syncing || refreshingCopy}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
+                {syncing ? 'Syncing' : 'Sync now'}
+              </button>
+              <button
+                type="button"
+                onClick={refreshCopyMatches}
+                disabled={syncing || refreshingCopy}
+                className="inline-flex items-center justify-center rounded-lg border border-indigo-200 bg-white px-4 py-2 text-sm font-semibold text-indigo-700 shadow-sm transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {refreshingCopy ? 'Refreshing copy…' : 'Refresh copy matches'}
+              </button>
+            </div>
           </div>
 
           <div className="mt-6 grid gap-3 lg:grid-cols-[1fr_220px_220px]">
