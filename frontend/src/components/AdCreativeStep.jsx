@@ -10,6 +10,9 @@ import { useBrands } from '../context/BrandContext';
 import CreativeEnhancementsPanel from './CreativeEnhancementsPanel';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+// Kept solely as an emergency rollback switch while the row-and-rail editor
+// proves itself in production. It is off unless explicitly enabled at build time.
+const LEGACY_CREATIVE_EDITOR_ENABLED = import.meta.env.VITE_ENABLE_LEGACY_CREATIVE_EDITOR === 'true';
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
 const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm'];
@@ -347,6 +350,28 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         cta: false,
         websiteUrl: false,
     });
+    // A 50-ad Drive import must not become 50 full copy cards. Keep the same
+    // selection/inspection pattern as the final Review step: compact rows on
+    // the left, with one focused editable record in the rail on the right.
+    const [selectedCopyCreativeId, setSelectedCopyCreativeId] = useState(null);
+    const copyEditorRef = useRef(null);
+    const copyRowRefs = useRef({});
+    useEffect(() => {
+        const creatives = creativeData.creatives || [];
+        if (!creatives.some(creative => creative.id === selectedCopyCreativeId)) {
+            setSelectedCopyCreativeId(creatives[0]?.id || null);
+        }
+    }, [creativeData.creatives, selectedCopyCreativeId]);
+
+    // Validation can identify an individual bad row. Bring that row and the
+    // edit rail into view instead of leaving the operator to hunt a 50-row list.
+    const focusCopyCreative = (creativeId) => {
+        setSelectedCopyCreativeId(creativeId);
+        requestAnimationFrame(() => {
+            copyEditorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            copyRowRefs.current[creativeId]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        });
+    };
     // Wire key must be snake_case (`creative_enhancements`) to match what
     // facebook_service.py reads off the request body — the backend never
     // does camelCase->snake_case conversion, so a mismatch here silently
@@ -1542,6 +1567,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         .map(c => c.drivePairId || c.id)
                 );
                 if (pairMetadataMismatchIds.size > 0) {
+                    focusCopyCreative(creativeData.creatives.find(c => c.driveCopyIntegrityIssue)?.id || null);
                     showWarning(`${pairMetadataMismatchIds.size} Feed + Stories pair${pairMetadataMismatchIds.size !== 1 ? 's have' : ' has'} mismatched Drive copy, CTA, or destination data. Return to the Drive picker and refresh the paired source files before continuing.`);
                     return;
                 }
@@ -1552,11 +1578,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             !(c.headline?.trim() || creativeData.headlines[0]?.trim()))
                 ));
                 if (missingCopy.length > 0) {
-                    showWarning(`${missingCopy.length} selected ad${missingCopy.length !== 1 ? 's' : ''} still needs its own Primary Text and Headline. Edit the Ad pairs & copy cards before continuing.`);
+                    focusCopyCreative(missingCopy[0].id);
+                    showWarning(`${missingCopy.length} selected ad${missingCopy.length !== 1 ? 's' : ''} still needs its own Primary Text and Headline. Edit the Ad pairs & copy rows before continuing.`);
                     return;
                 }
                 const missingDriveCta = creativeData.creatives.find(c => c.source === 'drive' && !c.cta?.trim());
                 if (missingDriveCta) {
+                    focusCopyCreative(missingDriveCta.id);
                     showWarning(`The Drive CTA for ${missingDriveCta.name || 'one selected ad'} is missing. Refresh its Drive pair before continuing.`);
                     return;
                 }
@@ -1564,6 +1592,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     c.source === 'drive' && c.cta?.trim() && !CTA_OPTIONS.includes(c.cta.trim())
                 ));
                 if (invalidDriveCta) {
+                    focusCopyCreative(invalidDriveCta.id);
                     showWarning(`The Drive CTA for ${invalidDriveCta.name || 'one selected ad'} is not a Meta-supported CTA. Correct it in Drive, then refresh the pair before continuing.`);
                     return;
                 }
@@ -1583,6 +1612,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             c.source === 'drive' ? !c.websiteUrl?.trim() : !creativeData.websiteUrl?.trim() && !c.websiteUrl?.trim()
         ));
         if (missingCreativeUrl) {
+            focusCopyCreative(missingCreativeUrl.id);
             showWarning(`The destination URL for ${missingCreativeUrl.name || 'one selected ad'} is missing. Add it before continuing.`);
             return;
         }
@@ -1605,6 +1635,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             try { return !new URL(c.websiteUrl).protocol.startsWith('http'); } catch { return true; }
         })());
         if (invalidCreativeUrl) {
+            focusCopyCreative(invalidCreativeUrl.id);
             showWarning(`The destination URL for ${invalidCreativeUrl.name || 'one selected ad'} is invalid. Fix it before continuing.`);
             return;
         }
@@ -1626,12 +1657,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 showWarning(`Primary text exceeds Facebook's ${BODY_LIMIT}-character limit. Please shorten it.`);
                 return;
             }
-            const overLimitCreativeCopy = creativeData.creatives.some(c => (
+            const overLimitCreativeCopy = creativeData.creatives.find(c => (
                 (c.headline && c.headline.length > HEADLINE_LIMIT) ||
                 (c.body && c.body.length > BODY_LIMIT) ||
                 (c.description && c.description.length > DESC_LIMIT)
             ));
             if (overLimitCreativeCopy) {
+                focusCopyCreative(overLimitCreativeCopy.id);
                 showWarning('One of the selected ad cards exceeds a Meta copy limit. Please shorten it before continuing.');
                 return;
             }
@@ -2079,13 +2111,94 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         </div>
                 )}
 
-                    {/* Per-ad copy editor — Drive pairs and matched assets keep
-                        their own copy on the creative object. This is the primary
-                        editing surface whenever a batch contains more than one
-                        selected ad, so each image/pair is visibly tied to its own
-                        Primary Text and Headline instead of relying on the shared
-                        fields below. */}
-                    {!isMatchImport && creativeData.creatives?.length > 0 && (
+                    {!isMatchImport && creativeData.creatives?.length > 0 && (() => {
+                        const selectedCreative = creativeData.creatives.find(creative => creative.id === selectedCopyCreativeId)
+                            || creativeData.creatives[0];
+                        const selectedIndex = creativeData.creatives.findIndex(creative => creative.id === selectedCreative.id);
+                        const selectedIsDrive = selectedCreative.source === 'drive';
+                        const selectedBody = selectedCreative.body || (!selectedIsDrive ? creativeData.bodies?.[0] || '' : '');
+                        const selectedHeadline = selectedCreative.headline || (!selectedIsDrive ? creativeData.headlines?.[0] || '' : '');
+                        const selectedDescription = selectedCreative.description || (!selectedIsDrive ? creativeData.description || '' : '');
+                        const selectedCta = selectedCreative.cta || (!selectedIsDrive ? creativeData.cta || '' : '');
+                        const selectedUrl = selectedCreative.websiteUrl || (!selectedIsDrive ? creativeData.websiteUrl || '' : '');
+                        const rowIssues = (creative) => {
+                            const isDrive = creative.source === 'drive';
+                            const headline = (creative.headline || (!isDrive && creativeData.headlines?.[0]) || '').trim();
+                            const body = (creative.body || (!isDrive && creativeData.bodies?.[0]) || '').trim();
+                            const cta = (creative.cta || (!isDrive && creativeData.cta) || '').trim();
+                            const url = creative.websiteUrl || (!isDrive && creativeData.websiteUrl) || '';
+                            const description = creative.description || (!isDrive && creativeData.description) || '';
+                            const issues = [];
+                            if (!body) issues.push('Primary text');
+                            if (!headline) issues.push('Headline');
+                            if (!CTA_OPTIONS.includes(cta)) issues.push('CTA');
+                            try { if (!new URL(url).protocol.startsWith('http')) issues.push('URL'); } catch { issues.push('URL'); }
+                            if (creative.driveCopyIntegrityIssue) issues.push('Drive pair');
+                            if (body.length > BODY_LIMIT) issues.push('Primary text length');
+                            if (headline.length > HEADLINE_LIMIT) issues.push('Headline length');
+                            if (description.length > DESC_LIMIT) issues.push('Description length');
+                            return issues;
+                        };
+                        const selectedIssues = rowIssues(selectedCreative);
+                        const selectedCopyReady = selectedIssues.length === 0;
+                        return (
+                            <section ref={copyEditorRef} className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/50 p-4">
+                                <div className="mb-3 flex items-start justify-between gap-3">
+                                    <div>
+                                        <h3 className="text-sm font-semibold text-gray-900">Ad pairs &amp; copy</h3>
+                                        <p className="mt-0.5 text-xs text-gray-600">Select a row to edit its own copy. The shared fallback fields are minimized below.</p>
+                                    </div>
+                                    <span className="shrink-0 rounded-full border border-indigo-200 bg-white px-2 py-1 text-[11px] font-semibold text-indigo-700">{creativeData.creatives.length} ads</span>
+                                </div>
+                                <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+                                    <div className="max-h-[660px] overflow-y-auto rounded-xl border border-gray-200 bg-white">
+                                        <div className="hidden grid-cols-[76px_minmax(0,1fr)_110px] gap-3 border-b border-gray-200 bg-gray-50 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500 md:grid">
+                                            <span>Creative</span><span>Ad / copy</span><span className="text-right">Status</span>
+                                        </div>
+                                        {creativeData.creatives.map((creative, index) => {
+                                            const selected = creative.id === selectedCreative.id;
+                                            const issues = rowIssues(creative);
+                                            const copyReady = issues.length === 0;
+                                            const displayHeadline = creative.headline || (!creative.source || creative.source !== 'drive' ? creativeData.headlines?.[0] || '' : '');
+                                            return (
+                                                <button ref={(element) => { copyRowRefs.current[creative.id] = element; }} key={`copy-row-${creative.id}`} type="button" onClick={() => setSelectedCopyCreativeId(creative.id)} className={`grid w-full grid-cols-[62px_minmax(0,1fr)] gap-3 border-b border-gray-100 px-4 py-3 text-left transition-colors md:grid-cols-[76px_minmax(0,1fr)_110px] ${selected ? 'bg-amber-50 shadow-[inset_3px_0_0_0_#d97706]' : 'hover:bg-gray-50'}`}>
+                                                    <div className="flex h-12 w-[62px] gap-0.5 overflow-hidden rounded-md border border-gray-200 bg-gray-100">
+                                                        {creative.previewUrl && <img src={creative.previewUrl} alt="Feed creative" className={creative.dualPlacement && creative.secondaryImageUrl ? 'w-1/2 object-cover' : 'w-full object-cover'} />}
+                                                        {creative.dualPlacement && creative.secondaryImageUrl && <img src={creative.secondaryImageUrl} alt="Stories creative" className="w-1/2 object-cover" />}
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <div className="truncate text-sm font-semibold text-gray-900">Ad {index + 1} · {creative.name || 'Untitled creative'}</div>
+                                                        <div className="mt-0.5 truncate text-xs text-gray-500">{creative.dualPlacement ? 'Feed + Stories pair' : (creative.format || 'feed') === 'stories' ? 'Stories & Reels' : 'Feed'} · {displayHeadline || 'No headline yet'}</div>
+                                                    </div>
+                                                    <div className="hidden text-right md:block"><span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${copyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{copyReady ? 'Ready' : `Needs ${issues[0]}`}</span></div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                    <aside className="sticky top-4 overflow-hidden rounded-xl border border-gray-200 bg-white">
+                                        <div className="border-b border-gray-200 px-4 py-3">
+                                            <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h4 className="truncate text-sm font-bold text-gray-900">Ad {selectedIndex + 1} · {selectedCreative.name || 'Untitled creative'}</h4><p className="mt-0.5 text-xs text-gray-500">{selectedCreative.dualPlacement ? 'Feed + Stories pair' : 'Single placement'}</p>{!selectedCopyReady && <p className="mt-1 text-xs font-medium text-amber-800">Needs: {selectedIssues.join(', ')}</p>}</div><span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${selectedCopyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{selectedCopyReady ? 'Ready' : 'Needs attention'}</span></div>
+                                        </div>
+                                        <div className="max-h-[610px] space-y-3 overflow-y-auto p-4">
+                                            <div className="flex h-32 gap-1 overflow-hidden rounded-lg bg-gray-100">
+                                                {selectedCreative.previewUrl && <img src={selectedCreative.previewUrl} alt="Feed preview" className={selectedCreative.dualPlacement && selectedCreative.secondaryImageUrl ? 'w-1/2 object-cover' : 'w-full object-cover'} />}
+                                                {selectedCreative.dualPlacement && selectedCreative.secondaryImageUrl && <img src={selectedCreative.secondaryImageUrl} alt="Stories preview" className="w-1/2 object-cover" />}
+                                            </div>
+                                            {!selectedIsDrive && (!selectedCreative.body || !selectedCreative.headline || !selectedCreative.description || !selectedCreative.cta || !selectedCreative.websiteUrl) && <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-800">Showing shared fallback values for this non-Drive row. Editing any field makes this row independent.</p>}
+                                            {selectedCreative.driveCopyIntegrityIssue && <button type="button" onClick={() => { setSelectedDriveAssetIds(new Set()); setDriveSearchTerm(''); setDriveRepairPairId(selectedCreative.drivePairId || null); setDriveFormatFilter(''); setShowDriveLibraryModal(true); }} className="w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-left text-xs font-semibold text-amber-900 hover:bg-amber-100">Open Drive to repair this pair</button>}
+                                            <label className="block text-xs font-semibold text-gray-700">Primary text *<textarea rows="5" value={selectedBody} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'body', event.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100 ${selectedBody.length > BODY_LIMIT ? 'border-red-400' : 'border-gray-300'}`} /><span className={`mt-1 block text-right text-[11px] ${charCountClass(selectedBody.length, BODY_WARN, BODY_LIMIT)}`}>{selectedBody.length} / {BODY_LIMIT}</span></label>
+                                            <label className="block text-xs font-semibold text-gray-700">Headline *<input value={selectedHeadline} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'headline', event.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100 ${selectedHeadline.length > HEADLINE_LIMIT ? 'border-red-400' : 'border-gray-300'}`} /><span className={`mt-1 block text-right text-[11px] ${charCountClass(selectedHeadline.length, HEADLINE_WARN, HEADLINE_LIMIT)}`}>{selectedHeadline.length} / {HEADLINE_LIMIT}</span></label>
+                                            <label className="block text-xs font-semibold text-gray-700">Description <span className="font-normal text-gray-400">(optional)</span><input value={selectedDescription} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'description', event.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100 ${selectedDescription.length > DESC_LIMIT ? 'border-red-400' : 'border-gray-300'}`} /><span className={`mt-1 block text-right text-[11px] ${charCountClass(selectedDescription.length, DESC_LIMIT, DESC_LIMIT)}`}>{selectedDescription.length} / {DESC_LIMIT}</span></label>
+                                            <label className="block text-xs font-semibold text-gray-700">Meta CTA *<select value={selectedCta} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'cta', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100"><option value="">Select a CTA...</option>{CTA_OPTIONS.map(option => <option key={option} value={option}>{option.replace(/_/g, ' ')}</option>)}</select></label>
+                                            <label className="block text-xs font-semibold text-gray-700">Destination URL *<input type="url" value={selectedUrl} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'websiteUrl', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
+                                        </div>
+                                    </aside>
+                                </div>
+                            </section>
+                        );
+                    })()}
+
+                    {LEGACY_CREATIVE_EDITOR_ENABLED && !isMatchImport && creativeData.creatives?.length > 0 && (
                         <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/50 p-4">
                             <div className="flex items-start justify-between gap-3 mb-3">
                                 <div>
@@ -2297,7 +2410,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
 
                 {/* Body Text */}
                 {!isMatchImport && (
-                <div>
+                <details className="rounded-lg border border-gray-200 bg-gray-50/70 p-3" open={!creativeData.creatives?.some(c => c.source === 'drive' || c.headline || c.body)}>
+                    <summary className="cursor-pointer text-sm font-semibold text-gray-700">Shared fallback Primary Text <span className="font-normal text-gray-400">(rarely needed)</span></summary>
+                    <p className="mt-1 text-xs text-gray-500">Used only for non-Drive creatives that do not have per-ad copy.</p>
                     <div className="flex items-center justify-between mb-2">
                         <label className="block text-sm font-medium text-gray-700">
                             {creativeData.creatives?.some(c => c.source === 'drive' || c.headline || c.body) ? 'Shared fallback Primary Text' : 'Primary Text *'}
@@ -2348,12 +2463,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             </div>
                         ))}
                     </div>
-                </div>
+                </details>
                 )}
 
                 {/* Headline */}
                 {!isMatchImport && (
-                <div>
+                <details className="rounded-lg border border-gray-200 bg-gray-50/70 p-3" open={!creativeData.creatives?.some(c => c.source === 'drive' || c.headline || c.body)}>
+                    <summary className="cursor-pointer text-sm font-semibold text-gray-700">Shared fallback Headline <span className="font-normal text-gray-400">(rarely needed)</span></summary>
+                    <p className="mt-1 text-xs text-gray-500">Used only for non-Drive creatives that do not have per-ad copy.</p>
                     <div className="flex items-center justify-between mb-2">
                         <label className="block text-sm font-medium text-gray-700">
                             {creativeData.creatives?.some(c => c.source === 'drive' || c.headline || c.body) ? 'Shared fallback Headline' : 'Headline *'}
@@ -2404,7 +2521,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             </div>
                         ))}
                     </div>
-                </div>
+                </details>
                 )}
 
                 {/* Description */}
@@ -2481,7 +2598,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 {!isMatchImport && (
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Call to Action *
+                        {creativeData.creatives?.some(c => c.source === 'drive' || c.cta) ? 'Shared fallback Call to Action' : 'Call to Action *'}
                     </label>
                     <select
                         value={creativeData.cta}
@@ -2492,13 +2609,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             <option key={cta} value={cta}>{cta.replace(/_/g, ' ')}</option>
                         ))}
                     </select>
+                    {creativeData.creatives?.some(c => c.source === 'drive' || c.cta) && <p className="mt-1 text-xs text-gray-500">Applies only to non-Drive rows without their own CTA.</p>}
                 </div>
                 )}
 
                 {/* Website URL */}
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Website URL (Landing Page) *
+                        {creativeData.creatives?.some(c => c.source === 'drive' || c.websiteUrl) ? 'Shared fallback Website URL' : 'Website URL (Landing Page) *'}
                     </label>
                     <input
                         type="url"
@@ -2507,6 +2625,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         placeholder="https://yourwebsite.com/landing"
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                     />
+                    {creativeData.creatives?.some(c => c.source === 'drive' || c.websiteUrl) && <p className="mt-1 text-xs text-gray-500">Applies only to non-Drive rows without their own destination URL.</p>}
                 </div>
 
                 {isMatchImport && (
