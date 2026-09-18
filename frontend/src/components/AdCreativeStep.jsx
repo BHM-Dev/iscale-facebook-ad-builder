@@ -2711,15 +2711,15 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         {/* Drive Creative Library Modal */}
         {showDriveLibraryModal && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-xl shadow-xl w-full max-w-7xl h-[88vh] flex flex-col">
-                    <div className="flex items-center justify-between p-4 border-b">
+                <div className="bg-white rounded-xl shadow-xl w-full max-w-7xl h-[calc(100dvh-2rem)] flex flex-col">
+                    <div className="flex items-center justify-between p-3 border-b">
                         <h3 className="text-lg font-semibold">Select from Drive Creative Library</h3>
                         <button onClick={() => setShowDriveLibraryModal(false)} className="text-gray-500 hover:text-gray-700">
                             <X size={20} />
                         </button>
                     </div>
-                    <div className="p-4 border-b space-y-3">
-                        <div className="flex items-center justify-between gap-3 rounded-lg bg-indigo-50 px-3 py-2">
+                    <div className="p-3 border-b space-y-2">
+                        <div className="flex items-center justify-between gap-3 rounded-lg bg-indigo-50 px-3 py-1.5">
                             <p className="text-xs text-indigo-900">Pull the latest approved headline, body, CTA, and URL from the paired Drive strategy document.</p>
                             <button
                                 type="button"
@@ -2736,30 +2736,30 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 value={driveSearchTerm}
                                 onChange={(e) => setDriveSearchTerm(e.target.value)}
                                 placeholder="Search filenames, folders, or brands"
-                                className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                                className="w-full rounded-lg border border-gray-300 bg-white py-1.5 pl-9 pr-3 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
                             />
                         </label>
-                        <div className="inline-flex overflow-hidden rounded-lg border border-gray-300 bg-white">
-                            {[
-                                { value: '', label: `All ${driveCounts.total}` },
-                                { value: 'image', label: `Images ${driveCounts.image || 0}` },
-                                { value: 'video', label: `Videos ${driveCounts.video || 0}` },
-                            ].map(option => (
-                                <button
-                                    key={option.value || 'all'}
-                                    type="button"
-                                    onClick={() => setDriveFormatFilter(option.value)}
-                                    className={`px-3 py-1.5 text-xs font-semibold transition-colors ${
-                                        driveFormatFilter === option.value
-                                            ? 'bg-gray-900 text-white'
-                                            : 'text-gray-600 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    {option.label}
-                                </button>
-                            ))}
-                        </div>
                         <div className="flex flex-wrap items-center gap-2">
+                            <div className="inline-flex overflow-hidden rounded-lg border border-gray-300 bg-white">
+                                {[
+                                    { value: '', label: `All ${driveCounts.total}` },
+                                    { value: 'image', label: `Images ${driveCounts.image || 0}` },
+                                    { value: 'video', label: `Videos ${driveCounts.video || 0}` },
+                                ].map(option => (
+                                    <button
+                                        key={option.value || 'all'}
+                                        type="button"
+                                        onClick={() => setDriveFormatFilter(option.value)}
+                                        className={`px-3 py-1.5 text-xs font-semibold transition-colors ${
+                                            driveFormatFilter === option.value
+                                                ? 'bg-gray-900 text-white'
+                                                : 'text-gray-600 hover:bg-gray-50'
+                                        }`}
+                                    >
+                                        {option.label}
+                                    </button>
+                                ))}
+                            </div>
                             <button
                                 type="button"
                                 onClick={selectAllVisibleDriveAssets}
@@ -2797,7 +2797,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             </div>
                         </div>
                     </div>
-                    <div className="flex-1 min-h-0 overflow-y-auto p-4">
+                    <div className="flex-1 min-h-0 overflow-y-auto p-3">
                         {driveLibraryLoading ? (
                             <div className="flex items-center justify-center py-12 gap-2 text-gray-500">
                                 <Loader className="animate-spin" size={20} />
@@ -2816,7 +2816,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     {mixedDriveCopyMatches.matchedPairs} pair{mixedDriveCopyMatches.matchedPairs !== 1 ? 's' : ''} matched copy from a strategy doc; {mixedDriveCopyMatches.unmatchedPairs} pair{mixedDriveCopyMatches.unmatchedPairs !== 1 ? 's' : ''} did not. Check the source files, then use Refresh copy from Drive.
                                 </div>
                             )}
-                            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
                                 {driveAssetGroups.map(group => {
                                     const asset = group.displayAsset;
                                     const isSelected = selectedDriveAssetIds.has(group.id);
@@ -2828,7 +2828,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             onClick={() => toggleDriveAssetSelection(group.id)}
                                             className={`relative cursor-pointer rounded-xl overflow-hidden border-2 bg-white transition-all ${isSelected ? 'border-amber-500 ring-2 ring-amber-200' : 'border-gray-200 hover:border-amber-300'}`}
                                         >
-                                            <div className={`flex h-44 gap-2 bg-gray-100 p-2 ${group.isPair && group.storiesAsset ? 'items-stretch' : 'items-center justify-center'}`}>
+                                            <div className={`flex h-[120px] gap-2 bg-gray-100 p-1.5 ${group.isPair && group.storiesAsset ? 'items-stretch' : 'items-center justify-center'}`}>
                                                 <div className={group.isPair && group.storiesAsset ? 'w-1/2 min-w-0' : 'h-full w-full'}>
                                                 {asset.format === 'video' ? (
                                                     <video src={asset.r2_key} className="h-full w-full object-contain" muted />
@@ -2836,7 +2836,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     <img src={asset.r2_key} alt={asset.file_name} className="h-full w-full object-contain" />
                                                 )}
                                                 </div>
-                                                {group.isPair && group.storiesAsset && <div className="w-1/2 min-w-0"><img src={group.storiesAsset.r2_key} alt={group.storiesAsset.file_name} className="h-full w-full object-contain" /></div>}
+                                                {group.isPair && group.storiesAsset && <div className="w-1/2 min-w-0">
+                                                    {group.storiesAsset.format === 'video' ? (
+                                                        <video src={group.storiesAsset.r2_key} className="h-full w-full object-contain" muted />
+                                                    ) : (
+                                                        <img src={group.storiesAsset.r2_key} alt={group.storiesAsset.file_name} className="h-full w-full object-contain" />
+                                                    )}
+                                                </div>}
                                             </div>
                                             {isSelected && (
                                                 <div className="absolute top-2 right-2 bg-amber-500 rounded-full p-0.5">
@@ -2857,15 +2863,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     {copyMatched ? 'Copy matched' : 'URL matched'}
                                                 </div>
                                             )}
-                                            <div className="p-2 text-xs text-gray-600 bg-white">
+                                            <div className="p-1.5 text-xs text-gray-600 bg-white">
                                                 <div className="truncate font-medium">{asset.brand_name || 'Unknown brand'}</div>
-                                                {copyMatched && <div className="mt-0.5 truncate text-gray-700">{group.copy.headline}</div>}
-                                                <div className="truncate text-gray-400">{asset.folder_path || asset.file_name}</div>
-                                                {group.isPair && (
-                                                    <div className="mt-1 text-[11px] text-purple-700">
-                                                        {group.feedAsset?.file_name} + {group.storiesAsset?.file_name}
-                                                    </div>
-                                                )}
+                                                <div className="truncate text-gray-400">{copyMatched ? group.copy.headline : asset.folder_path || asset.file_name}</div>
+                                                {group.isPair && <div className="truncate text-[11px] text-purple-700">Feed: {group.feedAsset?.file_name} · Stories: {group.storiesAsset?.file_name}</div>}
                                             </div>
                                         </div>
                                     );
