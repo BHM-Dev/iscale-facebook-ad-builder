@@ -293,7 +293,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const isMatchImport = mode === 'match-import';
     const { showWarning, showError, showSuccess } = useToast();
     const { authFetch } = useAuth();
-    const { creativeData, setCreativeData, selectedAdAccount, adsetData, campaignData } = useCampaign();
+    const { creativeData, setCreativeData, selectedAdAccount, adsetData, campaignData, setLaunchSummary } = useCampaign();
     const { brands } = useBrands();
     // Cache keys for creative defaults (URL/headlines/bodies/description/CTA) are scoped
     // by ad account AND campaign — the same ad account can run multiple niches, each with
@@ -311,6 +311,20 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // keystroke/upload, and the computation itself is three array lengths, not worth
     // the staleness risk of a memo dependency list drifting from the real fields.
     const variationCount = countVariations(creativeData);
+
+    // Feeds the launcher shell's Launch Plan rail — this step owns the creative/
+    // headline/body/total-ad counts, so it pushes them up rather than the shell
+    // re-deriving them from creativeData and risking a second, drifting formula.
+    useEffect(() => {
+        setLaunchSummary(prev => ({
+            ...prev,
+            creativeCount: variationCount.media,
+            headlineCount: variationCount.headlines,
+            bodyCount: variationCount.bodies,
+            totalAds: variationCount.total,
+        }));
+    }, [variationCount.media, variationCount.headlines, variationCount.bodies, variationCount.total, setLaunchSummary]);
+
     const [pages, setPages] = useState([]);
     const [loadingPages, setLoadingPages] = useState(false);
     const pageFetchRequestRef = useRef(0);
@@ -1897,45 +1911,80 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 {/* Media Upload (Images + Videos) — Match Import gets these per-row from the CSV/image folder */}
                 {!isMatchImport && (
                 <div>
-                    <div className="flex items-center justify-between mb-2">
-                        <label className="block text-sm font-medium text-gray-700">
-                            Ad Media (Images or Videos) *
-                        </label>
-                        <div className="flex items-center gap-4">
+                    {/* Creative source chooser — Drive is the primary bulk-launch workflow so it
+                        gets top billing; Generated Ads and Upload/manual stay first-class, not
+                        buried. Hierarchy change only: every source below still does exactly what
+                        it did before (same modals, same upload input). */}
+                    <div className="mb-4">
+                        <h3 className="text-base font-semibold text-gray-900">Choose your creative source</h3>
+                        <p className="text-sm text-gray-500 mb-3">Select from an existing library, upload new media, or build the combinations manually.</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div className="relative">
-                            {showDriveLibraryHint && (
-                                <div className="absolute right-0 bottom-full z-10 mb-2 w-64 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-left text-xs text-indigo-900 shadow-md">
-                                    <button
-                                        type="button"
-                                        onClick={dismissDriveLibraryHint}
-                                        className="absolute right-2 top-1 text-indigo-400 hover:text-indigo-700"
-                                        aria-label="Dismiss Drive library hint"
-                                    >
-                                        ×
-                                    </button>
-                                    <strong className="block pr-3">New: browse your synced Drive assets here</strong>
-                                    <span className="block mt-1">Your shared creative library is ready for bulk ad launches.</span>
-                                </div>
-                            )}
-                            <button
-                                type="button"
-                                onClick={() => { dismissDriveLibraryHint(); openDriveLibraryModal(); }}
-                                className="flex items-center gap-1.5 text-sm text-indigo-700 font-semibold hover:text-indigo-900"
-                            >
-                                <FolderOpen size={16} />
-                                Browse Drive Creative Library ({driveAssets.length})
-                            </button>
+                                {showDriveLibraryHint && (
+                                    <div className="absolute left-0 bottom-full z-10 mb-2 w-64 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-left text-xs text-indigo-900 shadow-md">
+                                        <button
+                                            type="button"
+                                            onClick={dismissDriveLibraryHint}
+                                            className="absolute right-2 top-1 text-indigo-400 hover:text-indigo-700"
+                                            aria-label="Dismiss Drive library hint"
+                                        >
+                                            ×
+                                        </button>
+                                        <strong className="block pr-3">New: browse your synced Drive assets here</strong>
+                                        <span className="block mt-1">Your shared creative library is ready for bulk ad launches.</span>
+                                    </div>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => { dismissDriveLibraryHint(); openDriveLibraryModal(); }}
+                                    className="w-full h-full text-left rounded-xl border-2 border-indigo-200 bg-indigo-50 hover:border-indigo-400 hover:bg-indigo-100 transition-colors p-4"
+                                >
+                                    <div className="flex items-center gap-2 text-indigo-700 font-semibold">
+                                        <FolderOpen size={18} />
+                                        Drive Creative Library
+                                    </div>
+                                    <p className="text-xs text-indigo-600 mt-1 mb-3">Use synced Feed and Stories assets</p>
+                                    <span className="inline-flex items-center text-sm font-semibold text-indigo-800 bg-white rounded-md px-2.5 py-1 border border-indigo-200">
+                                        Browse Drive Library · {driveAssets.length} asset{driveAssets.length !== 1 ? 's' : ''}
+                                    </span>
+                                </button>
                             </div>
+
                             <button
                                 type="button"
                                 onClick={openLibraryModal}
-                                className="flex items-center gap-1.5 text-sm text-amber-600 font-medium hover:text-amber-800"
+                                className="text-left rounded-xl border-2 border-gray-200 bg-white hover:border-amber-300 hover:bg-amber-50 transition-colors p-4"
                             >
-                                <BookOpen size={16} />
-                                Browse Generated Ads Library
+                                <div className="flex items-center gap-2 text-amber-700 font-semibold">
+                                    <BookOpen size={18} />
+                                    Generated Ads
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1 mb-3">Reuse images already generated in Ad Builder</p>
+                                <span className="inline-flex items-center text-sm font-semibold text-amber-700 bg-amber-50 rounded-md px-2.5 py-1 border border-amber-200">
+                                    Browse Generated Ads
+                                </span>
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => document.getElementById('ad-media-upload')?.click()}
+                                className="text-left rounded-xl border-2 border-gray-200 bg-white hover:border-amber-300 hover:bg-amber-50 transition-colors p-4"
+                            >
+                                <div className="flex items-center gap-2 text-gray-700 font-semibold">
+                                    <Image size={18} />
+                                    Upload or build manually
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1 mb-3">Add new media and enter copy yourself</p>
+                                <span className="inline-flex items-center text-sm font-semibold text-gray-700 bg-gray-50 rounded-md px-2.5 py-1 border border-gray-200">
+                                    Upload media
+                                </span>
                             </button>
                         </div>
                     </div>
+
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Ad Media (Images or Videos) *
+                    </label>
 
                     {/* Defaults ON — Joel wants Feed + Stories launched together as the
                         normal case, not an extra click per image. Applies to every new

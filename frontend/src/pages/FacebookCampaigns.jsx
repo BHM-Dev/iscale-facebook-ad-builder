@@ -42,6 +42,75 @@ const BatchModeToggle = ({ batchMode, setBatchMode }) => (
     </div>
 );
 
+// Right-column summary rail — renders only from CampaignContext + the launchSummary
+// snapshot each step pushes into it (see CampaignContext.jsx). Never re-derives a
+// count itself, so it can't drift from what the step that owns that number shows.
+const SummaryRow = ({ label, value }) => (
+    <div className="flex items-baseline justify-between gap-3 text-sm py-1">
+        <span className="text-gray-500">{label}</span>
+        <span className={`text-right font-medium ${value ? 'text-gray-900' : 'text-gray-400'}`}>
+            {value || 'Not selected'}
+        </span>
+    </div>
+);
+
+const LaunchSummaryPanel = ({ currentStep, selectedAdAccount, campaignData, adsetData, creativeData, launchSummary }) => {
+    const creativeSource = creativeData?.creatives?.length
+        ? (creativeData.creatives.some(c => c.source === 'drive') ? 'Drive Creative Library' : 'Upload / Generated Ads')
+        : null;
+
+    return (
+        <div>
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Launch Plan</div>
+            <div className="divide-y divide-gray-100">
+                <SummaryRow label="Account" value={selectedAdAccount?.name} />
+                <SummaryRow label="Campaign" value={campaignData?.name} />
+                <SummaryRow label="Ad set" value={adsetData?.name} />
+                <SummaryRow label="Facebook Page" value={creativeData?.pageId} />
+                <SummaryRow label="Creative source" value={creativeSource} />
+            </div>
+            <div className="mt-3 pt-3 border-t border-gray-100 divide-y divide-gray-100">
+                <div className="flex items-baseline justify-between gap-3 text-sm py-1">
+                    <span className="text-gray-500">Creatives</span>
+                    <span className="text-right font-medium text-gray-900">{launchSummary.creativeCount ?? '—'}</span>
+                </div>
+                <div className="flex items-baseline justify-between gap-3 text-sm py-1">
+                    <span className="text-gray-500">Headlines</span>
+                    <span className="text-right font-medium text-gray-900">{launchSummary.headlineCount ?? '—'}</span>
+                </div>
+                <div className="flex items-baseline justify-between gap-3 text-sm py-1">
+                    <span className="text-gray-500">Bodies</span>
+                    <span className="text-right font-medium text-gray-900">{launchSummary.bodyCount ?? '—'}</span>
+                </div>
+                <div className="flex items-baseline justify-between gap-3 text-sm py-1.5">
+                    <span className="text-gray-700 font-semibold">Total ads</span>
+                    <span className="text-right font-bold text-amber-700">{launchSummary.totalAds ?? '—'}</span>
+                </div>
+                {launchSummary.excludedCount > 0 && (
+                    <div className="flex items-baseline justify-between gap-3 text-sm py-1">
+                        <span className="text-gray-500">Excluded</span>
+                        <span className="text-right font-medium text-gray-900">{launchSummary.excludedCount}</span>
+                    </div>
+                )}
+                <div className="flex items-baseline justify-between gap-3 text-sm py-1">
+                    <span className="text-gray-500">Warnings</span>
+                    <span className={`text-right font-medium ${launchSummary.warningCount ? 'text-amber-700' : 'text-gray-900'}`}>
+                        {launchSummary.warningCount ?? '—'}
+                    </span>
+                </div>
+            </div>
+            <div className="mt-3 pt-3 border-t border-gray-100">
+                <div className="flex items-baseline justify-between gap-3 text-sm py-1">
+                    <span className="text-gray-500">Status</span>
+                    <span className={`text-right font-semibold ${currentStep >= 6 ? 'text-emerald-700' : 'text-gray-700'}`}>
+                        {currentStep >= 6 ? 'Launched (paused)' : 'Not launched'}
+                    </span>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const FacebookCampaignWizardInner = () => {
     const [currentStep, setCurrentStep] = useState(1);
     const [batchMode, setBatchMode] = useState('combinations'); // 'combinations' | 'match-import'
@@ -64,7 +133,7 @@ const FacebookCampaignWizardInner = () => {
     // the intended target — so Joel never has to search for or click any of them,
     // he just watches it land on Creative.
     const { showWarning } = useToast();
-    const { selectedAdAccount, campaignData, adsetData } = useCampaign();
+    const { selectedAdAccount, campaignData, adsetData, creativeData, launchSummary } = useCampaign();
     const [quickAdTarget, setQuickAdTarget] = useState(null);
     // Persists past quickAdTarget being cleared — this is what actually answers
     // pre-push review's P0 (joel-perspective): "which account/campaign/ad set did
@@ -236,12 +305,12 @@ const FacebookCampaignWizardInner = () => {
     }, [driveLaunchActive, currentStep, selectedAdAccount, campaignData, adsetData]);
 
     const steps = [
-        { id: 1, label: 'Ad Account', icon: CreditCard },
-        { id: 2, label: 'Campaign', icon: Target },
-        { id: 3, label: 'Ad Set', icon: Users },
-        { id: 4, label: 'Creative', icon: ImageIcon },
-        { id: 5, label: 'Bulk Ads', icon: Megaphone },
-        { id: 6, label: 'Review & Launch', icon: CheckCircle2 },
+        { id: 1, label: 'Account', icon: CreditCard, description: 'Choose which Meta ad account to build in.' },
+        { id: 2, label: 'Campaign', icon: Target, description: 'Pick an existing campaign or create a new one.' },
+        { id: 3, label: 'Ad Set', icon: Users, description: 'Pick an existing ad set or create a new one.' },
+        { id: 4, label: 'Creative', icon: ImageIcon, description: 'Add media, copy, and destination details.' },
+        { id: 5, label: 'Review', icon: Megaphone, description: 'Check every ad before it reaches Meta.' },
+        { id: 6, label: 'Launch', icon: CheckCircle2, description: 'Ads are created as paused, ready to activate.' },
     ];
 
     // Manual navigation always wins over the auto-advance chain — the instant Joel
@@ -281,32 +350,54 @@ const FacebookCampaignWizardInner = () => {
     };
 
     return (
-        <div className="max-w-6xl mx-auto space-y-8">
-            {/* Header */}
-            <div className="flex items-start justify-between gap-4 flex-wrap">
-                <div>
-                    <h1 className="text-3xl font-bold text-gray-900 mb-2 flex items-center gap-3">
-                        <Megaphone size={32} className="text-amber-600" />
-                        Facebook Campaigns
-                    </h1>
+        <div className="max-w-[1400px] mx-auto space-y-6">
+            {/* Context header — title stays put, but the breadcrumb below it is what
+                keeps account/campaign/ad set visible for the rest of the flow instead of
+                only during Step 1. Each crumb only appears once its step is behind us
+                (isCompleted), and clicking one jumps back via the existing goToStep. */}
+            <div>
+                <h1 className="text-3xl font-bold text-gray-900 mb-2 flex items-center gap-3">
+                    <Megaphone size={32} className="text-amber-600" />
+                    Launch Ads
+                </h1>
+                {(selectedAdAccount || campaignData?.name || adsetData?.name) && currentStep > 1 ? (
+                    <div className="flex items-center gap-1.5 text-sm flex-wrap">
+                        {selectedAdAccount && (
+                            <button
+                                type="button"
+                                onClick={() => goToStep(1)}
+                                className="rounded-md px-1.5 py-0.5 font-medium text-gray-700 hover:bg-amber-50 hover:text-amber-800 transition-colors"
+                            >
+                                {selectedAdAccount.name}
+                            </button>
+                        )}
+                        {currentStep > 2 && campaignData?.name && (
+                            <>
+                                <span className="text-gray-300">/</span>
+                                <button
+                                    type="button"
+                                    onClick={() => goToStep(2)}
+                                    className="rounded-md px-1.5 py-0.5 font-medium text-gray-700 hover:bg-amber-50 hover:text-amber-800 transition-colors"
+                                >
+                                    {campaignData.name}
+                                </button>
+                            </>
+                        )}
+                        {currentStep > 3 && adsetData?.name && (
+                            <>
+                                <span className="text-gray-300">/</span>
+                                <button
+                                    type="button"
+                                    onClick={() => goToStep(3)}
+                                    className="rounded-md px-1.5 py-0.5 font-medium text-gray-700 hover:bg-amber-50 hover:text-amber-800 transition-colors"
+                                >
+                                    {adsetData.name}
+                                </button>
+                            </>
+                        )}
+                    </div>
+                ) : (
                     <p className="text-gray-600">Create and manage your Facebook ad campaigns</p>
-                </div>
-                {/* Always-visible ad account indicator once one is picked — this page's
-                    own account selection (Step 1) is a completely separate thing from
-                    the "Meta account" banner Layout.jsx hides here (see that file's
-                    comment), so without this there was no way to see which account
-                    you're building against past Step 1 short of jumping back to check.
-                    Clicking it jumps straight back to Ad Account via goToStep. */}
-                {selectedAdAccount && currentStep > 1 && (
-                    <button
-                        type="button"
-                        onClick={() => goToStep(1)}
-                        className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm hover:border-amber-300 hover:bg-amber-50 transition-colors"
-                    >
-                        <CreditCard size={15} className="text-gray-400" />
-                        <span className="text-gray-500">Ad Account:</span>
-                        <span className="font-semibold text-gray-900">{selectedAdAccount.name}</span>
-                    </button>
                 )}
             </div>
 
@@ -383,53 +474,95 @@ const FacebookCampaignWizardInner = () => {
                 </div>
             )}
 
-            {/* Wizard Steps */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <div className="flex justify-between items-center mb-8 relative">
-                    {/* Progress Bar Background */}
-                    <div className="absolute top-1/2 left-0 w-full h-1 bg-gray-100 -z-10 rounded-full" />
-
-                    {/* Progress Bar Fill */}
-                    <div
-                        className="absolute top-1/2 left-0 h-1 bg-amber-600 -z-10 rounded-full transition-all duration-500 ease-in-out"
-                        style={{ width: `${((currentStep - 1) / (steps.length - 1)) * 100}%` }}
-                    />
-
-                    {steps.map((step) => {
-                        const isCompleted = step.id < currentStep;
-                        const isCurrent = step.id === currentStep;
-
-                        return (
-                            <button
-                                key={step.id}
-                                type="button"
-                                onClick={() => goToStep(step.id)}
-                                disabled={!isCompleted}
-                                className={`flex flex-col items-center gap-2 bg-white px-2 ${isCompleted ? 'cursor-pointer' : 'cursor-default'}`}
-                            >
-                                <div
-                                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${isCompleted || isCurrent
-                                        ? 'bg-amber-600 text-white shadow-md scale-110'
-                                        : 'bg-gray-100 text-gray-400'
-                                        } ${isCompleted ? 'hover:scale-125' : ''}`}
-                                >
-                                    {isCompleted ? (
-                                        <CheckCircle2 size={20} />
-                                    ) : (
-                                        <step.icon size={20} />
-                                    )}
-                                </div>
-                                <span
-                                    className={`text-sm font-medium transition-colors duration-300 ${isCurrent ? 'text-amber-900' : 'text-gray-500'
-                                        }`}
-                                >
-                                    {step.label}
-                                </span>
-                            </button>
-                        );
-                    })}
+            {/* Launcher shell — three regions: step rail (left, desktop only — mobile
+                keeps the horizontal progress bar below since a vertical rail doesn't
+                fit a narrow screen), current workspace (center, unchanged step
+                components), launch summary rail (right). Full responsive collapse of
+                the summary rail into a mobile drawer is Phase 1B — for now it just
+                stacks full-width under the workspace, which keeps every screen size
+                free of horizontal overflow. */}
+            <div className="grid grid-cols-1 lg:grid-cols-[190px_1fr_240px] gap-5 items-start">
+                {/* Desktop step rail */}
+                <div className="hidden lg:block bg-white rounded-xl shadow-sm border border-gray-200 p-4 lg:sticky lg:top-4">
+                    <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Launch Steps</div>
+                    <ol className="space-y-1">
+                        {steps.map((step) => {
+                            const isCompleted = step.id < currentStep;
+                            const isCurrent = step.id === currentStep;
+                            const isBlocked = step.id > currentStep;
+                            return (
+                                <li key={step.id}>
+                                    <button
+                                        type="button"
+                                        onClick={() => goToStep(step.id)}
+                                        disabled={!isCompleted}
+                                        title={isBlocked ? 'Complete the steps above first' : undefined}
+                                        className={`w-full flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${isCurrent ? 'bg-amber-50 border border-amber-200' : isCompleted ? 'hover:bg-gray-50 cursor-pointer' : 'cursor-default'}`}
+                                    >
+                                        <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${isCompleted || isCurrent ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                                            {isCompleted ? <Check size={14} /> : <step.icon size={13} />}
+                                        </span>
+                                        <span className="min-w-0">
+                                            <span className={`block text-sm font-medium ${isCurrent ? 'text-amber-900' : isCompleted ? 'text-gray-700' : 'text-gray-400'}`}>
+                                                {step.label}
+                                            </span>
+                                            {isCurrent && (
+                                                <span className="block text-xs text-amber-700 mt-0.5">{step.description}</span>
+                                            )}
+                                        </span>
+                                    </button>
+                                </li>
+                            );
+                        })}
+                    </ol>
                 </div>
 
+                {/* Mobile compact progress bar — same step data, horizontal layout,
+                    the only form that fits a narrow screen without a redesign. */}
+                <div className="lg:hidden bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+                    <div className="flex justify-between items-center relative">
+                        <div className="absolute top-1/2 left-0 w-full h-1 bg-gray-100 -z-10 rounded-full" />
+                        <div
+                            className="absolute top-1/2 left-0 h-1 bg-amber-600 -z-10 rounded-full transition-all duration-500 ease-in-out"
+                            style={{ width: `${((currentStep - 1) / (steps.length - 1)) * 100}%` }}
+                        />
+                        {steps.map((step) => {
+                            const isCompleted = step.id < currentStep;
+                            const isCurrent = step.id === currentStep;
+                            return (
+                                <button
+                                    key={step.id}
+                                    type="button"
+                                    onClick={() => goToStep(step.id)}
+                                    disabled={!isCompleted}
+                                    className={`flex flex-col items-center gap-2 bg-white px-2 ${isCompleted ? 'cursor-pointer' : 'cursor-default'}`}
+                                >
+                                    <div
+                                        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${isCompleted || isCurrent
+                                            ? 'bg-amber-600 text-white shadow-md scale-110'
+                                            : 'bg-gray-100 text-gray-400'
+                                            } ${isCompleted ? 'hover:scale-125' : ''}`}
+                                    >
+                                        {isCompleted ? (
+                                            <CheckCircle2 size={20} />
+                                        ) : (
+                                            <step.icon size={20} />
+                                        )}
+                                    </div>
+                                    <span
+                                        className={`text-sm font-medium transition-colors duration-300 ${isCurrent ? 'text-amber-900' : 'text-gray-500'
+                                            }`}
+                                    >
+                                        {step.label}
+                                    </span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* Center: current workspace — unchanged step components, just wrapped */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 {/* Step Content */}
                 <div className="min-h-[400px]">
                     {currentStep === 1 && (
@@ -498,8 +631,19 @@ const FacebookCampaignWizardInner = () => {
                         </div>
                     )}
                 </div>
+                </div>
 
-
+                {/* Launch Plan summary rail */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 lg:sticky lg:top-4">
+                    <LaunchSummaryPanel
+                        currentStep={currentStep}
+                        selectedAdAccount={selectedAdAccount}
+                        campaignData={campaignData}
+                        adsetData={adsetData}
+                        creativeData={creativeData}
+                        launchSummary={launchSummary}
+                    />
+                </div>
             </div>
         </div>
     );

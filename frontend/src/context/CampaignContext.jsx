@@ -129,6 +129,21 @@ export const CampaignProvider = ({ children }) => {
 
     const [adsData, setAdsData] = useState([]);
 
+    // Read-only snapshot the launcher shell's summary rail renders from — each step
+    // that already computes these numbers for its own UI (AdCreativeStep's variation
+    // counter, BulkAdCreation's review header) pushes its own values here rather than
+    // the shell re-deriving them, so the two can never drift apart. Cleared on step
+    // change isn't needed: each producer overwrites the fields it owns every render.
+    const [launchSummary, setLaunchSummary] = useState({
+        creativeCount: null,
+        headlineCount: null,
+        bodyCount: null,
+        totalAds: null,
+        warningCount: null,
+        readyCount: null,
+        excludedCount: null,
+    });
+
     const [selectedAdAccount, setSelectedAdAccount] = useState(null);
 
     const normalizeAccountId = useCallback((rawId) => {
@@ -209,6 +224,8 @@ export const CampaignProvider = ({ children }) => {
         setCreativeData,
         adsData,
         setAdsData,
+        launchSummary,
+        setLaunchSummary,
         selectedAdAccount,
         setSelectedAdAccount,
         activeAccountId,

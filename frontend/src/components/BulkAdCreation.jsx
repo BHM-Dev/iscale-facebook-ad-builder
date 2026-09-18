@@ -117,7 +117,7 @@ const buildPerMediaAdsetName = (baseName, creative, index) => {
 const BulkAdCreation = ({ onNext, onBack }) => {
     const { showWarning, showError, showSuccess } = useToast();
     const { authFetch } = useAuth();
-    const { campaignData, adsetData, creativeData, adsData, setAdsData, selectedAdAccount } = useCampaign();
+    const { campaignData, adsetData, creativeData, adsData, setAdsData, selectedAdAccount, setLaunchSummary } = useCampaign();
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState({ current: 0, total: 0, status: '' });
     const [errors, setErrors] = useState([]);
@@ -429,6 +429,19 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         || visibleManifestRows[0]
         || null;
     const manifestReadyCount = activeAds.filter(ad => manifestRows.find(row => row.ad.id === ad.id)?.copyReady).length;
+
+    // Feeds the launcher shell's Launch Plan rail — same ready/excluded math this
+    // step's own review header already renders, pushed up so the shell never
+    // computes a second, potentially-drifting copy of it.
+    React.useEffect(() => {
+        setLaunchSummary(prev => ({
+            ...prev,
+            totalAds: activeAds.length,
+            readyCount: manifestReadyCount,
+            warningCount: Math.max(activeAds.length - manifestReadyCount, 0),
+            excludedCount: manifestExcludedAdIds.size,
+        }));
+    }, [activeAds.length, manifestReadyCount, manifestExcludedAdIds, setLaunchSummary]);
 
     React.useEffect(() => {
         // Drop exclusions for ads that were permanently removed through the
@@ -1300,6 +1313,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         const bodies = creativeData.bodies?.filter(b => b && b.trim()).length || 0;
                         return `${media} media × ${headlines} headline${headlines !== 1 ? 's' : ''} × ${bodies} body`;
                     })()})</div>
+                    {manifestExcludedAdIds.size > 0 && (
+                        <div><strong>Excluded:</strong> {manifestExcludedAdIds.size} ad{manifestExcludedAdIds.size !== 1 ? 's' : ''} removed from this batch</div>
+                    )}
                     {driveManifestUsesExistingAdset && driveManifestHasDualPlacement && (
                         <div className={`mt-2 rounded px-2 py-1.5 text-xs font-medium ${existingPlacementStatus === 'unverified' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-800'}`}>
                             {existingPlacementStatus === 'unverified'
