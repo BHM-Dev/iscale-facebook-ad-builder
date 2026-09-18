@@ -2792,8 +2792,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 )}
             </div>
 
-            {/* Navigation */}
-            <div className="mt-8 flex justify-between">
+            {/* Navigation — sticky to the viewport bottom, same reasoning as
+                BulkAdCreation's nav bar: this step's form is long, and "Next Step"
+                shouldn't require scrolling all the way down to find, especially on
+                mobile. -mx-6/px-6 cancels the parent workspace card's own p-6. */}
+            <div className="mt-10 flex justify-between items-center sticky bottom-0 -mx-6 bg-white border-t border-gray-200 px-6 py-4 shadow-[0_-4px_12px_-4px_rgba(0,0,0,0.08)]">
                 <button
                     onClick={onBack}
                     className="px-6 py-3 text-gray-600 hover:text-gray-800 font-medium"
@@ -3005,7 +3008,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     {mixedDriveCopyMatches.matchedPairs} pair{mixedDriveCopyMatches.matchedPairs !== 1 ? 's' : ''} matched copy from a strategy doc; {mixedDriveCopyMatches.unmatchedPairs} pair{mixedDriveCopyMatches.unmatchedPairs !== 1 ? 's' : ''} did not. Check the source files, then use Refresh copy from Drive.
                                 </div>
                             )}
-                            <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
                                 {driveAssetGroups.map(group => {
                                     const asset = group.displayAsset;
                                     const isSelected = selectedDriveAssetIds.has(group.id);
@@ -3041,7 +3044,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             title={selectionBlocked ? (needsRepair ? 'The Drive copy source needs repair. Refresh after fixing it before launch.' : 'Multiple or incomplete placements use this ad number. Resolve them in Drive before launch.') : undefined}
                                             className={`relative rounded-xl overflow-hidden border-2 bg-white transition-all ${selectionBlocked ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'} ${borderClass}`}
                                         >
-                                            <div className={`flex h-[120px] gap-2 bg-gray-100 p-1.5 ${group.isPair && group.storiesAsset ? 'items-stretch' : 'items-center justify-center'}`}>
+                                            <div className={`flex h-[96px] gap-1.5 bg-gray-100 p-1 ${group.isPair && group.storiesAsset ? 'items-stretch' : 'items-center justify-center'}`}>
                                                 <div className={`relative ${group.isPair && group.storiesAsset ? 'w-1/2 min-w-0' : 'h-full w-full'}`}>
                                                 {asset.format === 'video' ? (
                                                     <video src={asset.r2_key} className="h-full w-full object-contain" muted />

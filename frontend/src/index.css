@@ -73,3 +73,14 @@
 .animate-slide-in {
   animation: slide-in 0.3s ease-out;
 }
+
+/* Edit drawer content swap — a visible cue that the drawer just switched to a
+   different ad, not just the small header text change. */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.15s ease-in;
+}

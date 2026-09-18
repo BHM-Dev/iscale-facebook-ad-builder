@@ -1,7 +1,7 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useState } from 'react';
-import { ChevronRight, Loader, Film, Image, X } from 'lucide-react';
+import { ChevronRight, Loader, Film, Image, X, Pencil } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { createCompleteAd, createFacebookCampaign, createFacebookAdSet, getRateLimitUsage } from '../lib/facebookApi';
 import {
@@ -176,6 +176,15 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const [manifestCategory, setManifestCategory] = useState('all');
     const [manifestExcludedAdIds, setManifestExcludedAdIds] = useState(new Set());
     const [selectedManifestAdId, setSelectedManifestAdId] = useState(null);
+    // Gates the shared edit drawer's visibility only — selectedManifestAdId/
+    // selectedManifestRow keep their existing fallback-to-first-row semantics
+    // for the manifest table's own highlighting, untouched by this. The drawer
+    // itself is new UI surface over the existing updateManifestField/override
+    // fields (already wired end-to-end into the launch payload for every ad,
+    // not just Drive-manifest ones) — no new capability, just a way to reach it
+    // from the standard preview grid too, and without permanently occupying a
+    // column the way the old always-open rail did.
+    const [editDrawerOpen, setEditDrawerOpen] = useState(false);
     // Was read-only from localStorage with no in-app control — Joel could only
     // change it by hand-editing browser storage. NamingTemplateField below
     // gives it the same Templates UI Campaign/Ad Set naming already has
@@ -1498,7 +1507,6 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 </div>
                             </div>
 
-                            <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
                                 <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
                                     <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 p-3">
                                         <input
@@ -1540,8 +1548,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                                     key={row.ad.id}
                                                     role="button"
                                                     tabIndex={0}
-                                                    onClick={() => setSelectedManifestAdId(row.ad.id)}
-                                                    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') setSelectedManifestAdId(row.ad.id); }}
+                                                    onClick={() => { setSelectedManifestAdId(row.ad.id); setEditDrawerOpen(true); }}
+                                                    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { setSelectedManifestAdId(row.ad.id); setEditDrawerOpen(true); } }}
                                                     className={`grid cursor-pointer grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-3 border-t border-gray-100 px-4 py-3 transition-colors md:grid-cols-[28px_minmax(220px,1.7fr)_minmax(100px,.8fr)_96px_80px] ${selected ? 'bg-amber-50 shadow-[inset_3px_0_0_0_#d97706]' : included ? 'hover:bg-gray-50' : 'bg-gray-50 opacity-60'}`}
                                                 >
                                                     <input
@@ -1570,44 +1578,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                                         <span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${row.copyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{row.copyReady ? 'Ready' : 'Needs copy'}</span>
                                                         {row.outcome && <span className={`mt-1 inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${row.outcome.cls}`}>{row.outcome.label}</span>}
                                                     </div>
-                                                    <button type="button" onClick={(event) => { event.stopPropagation(); setSelectedManifestAdId(row.ad.id); }} className="text-right text-xs font-semibold text-amber-700 hover:text-amber-900">Open →</button>
+                                                    <button type="button" onClick={(event) => { event.stopPropagation(); setSelectedManifestAdId(row.ad.id); setEditDrawerOpen(true); }} className="text-right text-xs font-semibold text-amber-700 hover:text-amber-900">Open →</button>
                                                 </div>
                                             );
                                         })}
                                     </div>
                                 </section>
-
-                                <aside className="sticky top-4 overflow-hidden rounded-xl border border-gray-200 bg-white">
-                                    {selectedManifestRow ? (
-                                        <>
-                                            <div className="border-b border-gray-200 px-4 py-3">
-                                                <div className="flex items-start justify-between gap-3">
-                                                    <div className="min-w-0">
-                                                        <h3 className="truncate text-sm font-bold text-gray-900">{selectedManifestRow.adsetName}</h3>
-                                                        <p className="mt-0.5 text-xs text-gray-500">Ad: {selectedManifestRow.ad.name} · {selectedManifestRow.category} · {selectedManifestRow.ad.dualPlacement ? 'Feed + Stories pair' : 'Single placement'}</p>
-                                                        <p className="mt-0.5 truncate text-[11px] text-gray-500">Identity: {creativeData.pageName || creativeData.pageId || 'Page not confirmed'} · Instagram {creativeData.instagramId || 'not linked'} · Feed + Stories/Reels</p>
-                                                    </div>
-                                                    <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${selectedManifestRow.copyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{selectedManifestRow.copyReady ? 'Ready' : 'Needs copy'}</span>
-                                                    {selectedManifestRow.outcome && <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${selectedManifestRow.outcome.cls}`}>{selectedManifestRow.outcome.label}</span>}
-                                                </div>
-                                            </div>
-                                            <div className="max-h-[610px] space-y-3 overflow-y-auto p-4">
-                                                <div className="flex h-32 gap-1 overflow-hidden rounded-lg bg-gray-100">
-                                                    {selectedManifestRow.creative?.previewUrl && <div className="relative w-1/2"><img src={selectedManifestRow.creative.previewUrl} alt="Feed 1:1 preview" className="h-full w-full object-cover" /><span className="absolute bottom-1 left-1 rounded bg-blue-600 px-1 py-0.5 text-[9px] font-semibold text-white">Feed 1:1</span></div>}
-                                                    {selectedManifestRow.creative?.secondaryImageUrl && <div className="relative w-1/2"><img src={selectedManifestRow.creative.secondaryImageUrl} alt="Stories 9:16 preview" className="h-full w-full object-cover" /><span className="absolute bottom-1 left-1 rounded bg-purple-600 px-1 py-0.5 text-[9px] font-semibold text-white">Stories 9:16</span></div>}
-                                                </div>
-                                                <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">This copy belongs only to this ad pair. A Meta description is optional.</p>
-                                                <label className="block text-xs font-semibold text-gray-700">Primary text *<textarea rows="4" value={selectedManifestRow.body} onChange={(event) => updateManifestField(selectedManifestRow, 'body', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
-                                                <label className="block text-xs font-semibold text-gray-700">Headline *<input value={selectedManifestRow.headline} onChange={(event) => updateManifestField(selectedManifestRow, 'headline', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
-                                                <label className="block text-xs font-semibold text-gray-700">Description <span className="font-normal text-gray-400">(optional)</span><input value={selectedManifestRow.description} onChange={(event) => updateManifestField(selectedManifestRow, 'description', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
-                                                <label className="block text-xs font-semibold text-gray-700">Destination URL *<input value={selectedManifestRow.websiteUrl} onChange={(event) => updateManifestField(selectedManifestRow, 'websiteUrl', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
-                                                <label className="block text-xs font-semibold text-gray-700">Meta CTA * <span className="font-normal text-gray-400">({selectedManifestRow.ctaSource})</span><select value={selectedManifestRow.cta} onChange={(event) => updateManifestField(selectedManifestRow, 'cta', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100"><option value="">Select a CTA...</option>{[...META_CTA_OPTIONS].map(cta => <option key={cta} value={cta}>{formatCtaLabel(cta)}</option>)}</select></label>
-                                                <label className="block text-xs font-semibold text-gray-700">Ad name<input value={selectedManifestRow.ad.name} onChange={(event) => updateManifestField(selectedManifestRow, 'name', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
-                                            </div>
-                                        </>
-                                    ) : <p className="p-8 text-center text-sm text-gray-500">Select an ad pair to inspect its copy.</p>}
-                                </aside>
-                            </div>
                         </div>
                     ) : (
                     /* Ads Preview Grid — one native-style Facebook feed-preview card per
@@ -1663,13 +1639,26 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                     {/* Exclude-before-launch — same removeAd used by the old row list,
                                         just relocated onto the card corner (AdEspresso's "✕" on its
                                         preview grid). */}
-                                    <button
-                                        onClick={() => removeAd(index)}
-                                        title="Exclude this ad from the launch"
-                                        className="absolute top-2 right-2 z-10 p-1 rounded-full bg-white/90 text-red-500 hover:text-red-700 hover:bg-white shadow-sm transition-colors"
-                                    >
-                                        <X size={14} />
-                                    </button>
+                                    {/* Distinct at-rest colors (blue vs. red), not just hover state,
+                                        plus a wider gap than a single icon's width apart — a fast
+                                        click-through of a dense grid must not confuse "edit" with
+                                        the destructive "exclude" action (joel-perspective review). */}
+                                    <div className="absolute top-2 right-2 z-10 flex gap-2">
+                                        <button
+                                            onClick={() => { setSelectedManifestAdId(ad.id); setEditDrawerOpen(true); }}
+                                            title="Edit this ad's copy"
+                                            className="p-1 rounded-full bg-blue-50 text-blue-600 hover:text-blue-800 hover:bg-blue-100 shadow-sm transition-colors"
+                                        >
+                                            <Pencil size={13} />
+                                        </button>
+                                        <button
+                                            onClick={() => removeAd(index)}
+                                            title="Exclude this ad from the launch"
+                                            className="p-1 rounded-full bg-white/90 text-red-500 hover:text-red-700 hover:bg-white shadow-sm transition-colors"
+                                        >
+                                            <X size={14} />
+                                        </button>
+                                    </div>
 
                                     {/* Status strip: launch outcome + format, top of card */}
                                     <div className="flex items-center gap-2 px-3 pt-3">
@@ -1863,6 +1852,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     {/* Errors — partial launch failure */}
                     {errors.length > 0 && (
                         <div className="mt-6 space-y-3">
+                            {launchOutcome && (
+                                <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 text-sm text-gray-700">
+                                    Launch stopped after {launchOutcome.createdAdIds?.length ?? 0} of {activeAds.length} ads.
+                                    {' '}{launchOutcome.createdAdIds?.length ?? 0} ad{(launchOutcome.createdAdIds?.length ?? 0) !== 1 ? 's were' : ' was'} created; the rest failed or were not attempted — see below.
+                                </div>
+                            )}
                             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                                 <h3 className="font-semibold text-red-900 mb-2">
                                     {errors.length} ad{errors.length !== 1 ? 's' : ''} failed to create
@@ -1879,8 +1874,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         </div>
                     )}
 
-                    {/* Navigation */}
-                    <div className="mt-8 flex justify-between">
+                    {/* Navigation — sticky to the viewport bottom so the primary action
+                        stays reachable while scrolling a long review grid, especially on
+                        mobile where "scroll all the way down to launch" was the complaint.
+                        -mx-6/px-6 cancels the parent workspace card's own p-6 so this bar
+                        bleeds to the card's edges instead of floating with a gap on each side. */}
+                    <div className="mt-10 flex justify-between items-center sticky bottom-0 -mx-6 bg-white border-t border-gray-200 px-6 py-4 shadow-[0_-4px_12px_-4px_rgba(0,0,0,0.08)]">
                         <button
                             onClick={onBack}
                             className="px-6 py-3 text-gray-600 hover:text-gray-800 font-medium"
@@ -1954,6 +1953,63 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             </div>
                         );
                     })()}
+
+                    {/* Shared edit drawer — replaces the old always-open manifest rail with
+                        an on-demand panel, and reuses the exact same updateManifestField
+                        writes (already flowing into the real launch payload for every ad,
+                        standard or Drive) so a standard-mode "Edit" click and a manifest row
+                        click land on identical, already-tested behavior. */}
+                    {editDrawerOpen && selectedManifestRow && (
+                        <div className="fixed inset-0 z-50 flex justify-end">
+                            <div
+                                className="absolute inset-0 bg-black/40"
+                                onClick={() => setEditDrawerOpen(false)}
+                            />
+                            <div className="relative h-full w-full max-w-md overflow-hidden bg-white shadow-2xl flex flex-col">
+                                <div className="flex items-start justify-between gap-3 border-b border-gray-200 px-4 py-3">
+                                    <div className="min-w-0">
+                                        <h3 className="truncate text-sm font-bold text-gray-900">{selectedManifestRow.adsetName}</h3>
+                                        <p className="mt-0.5 text-xs text-gray-500">Ad: {selectedManifestRow.ad.name} · {selectedManifestRow.category} · {selectedManifestRow.ad.dualPlacement ? 'Feed + Stories pair' : 'Single placement'}</p>
+                                        <p className="mt-0.5 truncate text-[11px] text-gray-500">Identity: {creativeData.pageName || creativeData.pageId || 'Page not confirmed'} · Instagram {creativeData.instagramId || 'not linked'} · Feed + Stories/Reels</p>
+                                    </div>
+                                    <div className="flex shrink-0 items-center gap-2">
+                                        <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${selectedManifestRow.copyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{selectedManifestRow.copyReady ? 'Ready' : 'Needs copy'}</span>
+                                        {selectedManifestRow.outcome && <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${selectedManifestRow.outcome.cls}`}>{selectedManifestRow.outcome.label}</span>}
+                                        <button type="button" onClick={() => setEditDrawerOpen(false)} className="text-gray-400 hover:text-gray-700" aria-label="Close edit drawer">
+                                            <X size={18} />
+                                        </button>
+                                    </div>
+                                </div>
+                                {/* key forces a remount + fade on every ad switch — a fast click
+                                    from one card's pencil to another's must not let the header
+                                    text be the only signal that the drawer's content just swapped
+                                    to a different ad (joel-perspective review). */}
+                                <div key={selectedManifestRow.ad.id} className="flex-1 space-y-3 overflow-y-auto p-4 animate-fade-in">
+                                    <div className="flex h-32 gap-1 overflow-hidden rounded-lg bg-gray-100">
+                                        {selectedManifestRow.creative?.previewUrl && <div className="relative w-1/2"><img src={selectedManifestRow.creative.previewUrl} alt="Feed 1:1 preview" className="h-full w-full object-cover" /><span className="absolute bottom-1 left-1 rounded bg-blue-600 px-1 py-0.5 text-[9px] font-semibold text-white">Feed 1:1</span></div>}
+                                        {selectedManifestRow.creative?.secondaryImageUrl && <div className="relative w-1/2"><img src={selectedManifestRow.creative.secondaryImageUrl} alt="Stories 9:16 preview" className="h-full w-full object-cover" /><span className="absolute bottom-1 left-1 rounded bg-purple-600 px-1 py-0.5 text-[9px] font-semibold text-white">Stories 9:16</span></div>}
+                                    </div>
+                                    <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">This copy belongs only to this ad. A Meta description is optional.</p>
+                                    <label className="block text-xs font-semibold text-gray-700">Primary text *<textarea rows="4" value={selectedManifestRow.body} onChange={(event) => updateManifestField(selectedManifestRow, 'body', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
+                                    <label className="block text-xs font-semibold text-gray-700">Headline *<input value={selectedManifestRow.headline} onChange={(event) => updateManifestField(selectedManifestRow, 'headline', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
+                                    <label className="block text-xs font-semibold text-gray-700">Description <span className="font-normal text-gray-400">(optional)</span><input value={selectedManifestRow.description} onChange={(event) => updateManifestField(selectedManifestRow, 'description', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
+                                    <label className="block text-xs font-semibold text-gray-700">Destination URL *<input value={selectedManifestRow.websiteUrl} onChange={(event) => updateManifestField(selectedManifestRow, 'websiteUrl', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
+                                    <label className="block text-xs font-semibold text-gray-700">Meta CTA * <span className="font-normal text-gray-400">({selectedManifestRow.ctaSource})</span><select value={selectedManifestRow.cta} onChange={(event) => updateManifestField(selectedManifestRow, 'cta', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100"><option value="">Select a CTA...</option>{[...META_CTA_OPTIONS].map(cta => <option key={cta} value={cta}>{formatCtaLabel(cta)}</option>)}</select></label>
+                                    <label className="block text-xs font-semibold text-gray-700">Ad name<input value={selectedManifestRow.ad.name} onChange={(event) => updateManifestField(selectedManifestRow, 'name', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
+                                </div>
+                                <div className="border-t border-gray-200 p-4">
+                                    <p className="mb-2 text-center text-[11px] text-gray-400">Changes save automatically as you type — closing is always safe.</p>
+                                    <button
+                                        type="button"
+                                        onClick={() => setEditDrawerOpen(false)}
+                                        className="w-full rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-gray-800"
+                                    >
+                                        Done
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </>
             ) : (
                 <>
@@ -1974,9 +2030,13 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         <p className="text-gray-600">
                             {progress.current} of {progress.total} ads created
                         </p>
-                        {progress.status === 'Complete!' && (
+                        {progress.status === 'Complete!' ? (
                             <p className="text-sm text-amber-700 mt-3 font-medium">
                                 All ads are <strong>PAUSED</strong> in Meta — go to Ads Manager to activate them when ready.
+                            </p>
+                        ) : (
+                            <p className="text-sm text-gray-500 mt-3">
+                                Meta is processing the remaining creatives. Keep this tab open.
                             </p>
                         )}
                     </div>

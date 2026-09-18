@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { Check, Target, Users, Image as ImageIcon, CreditCard, Megaphone, CheckCircle2, RefreshCw } from 'lucide-react';
 import { CampaignProvider, useCampaign } from '../context/CampaignContext';
 import { useToast } from '../context/ToastContext';
@@ -628,6 +629,12 @@ const FacebookCampaignWizardInner = () => {
                             <p className="text-gray-600 mb-8">
                                 Your ads were created in Meta with delivery paused. In Ads Manager, activate the campaign, the applicable ad set, and the new ads; if this batch used an already-active ad set, activate only the new ads.
                             </p>
+                            <Link
+                                to="/campaign-performance"
+                                className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-amber-700"
+                            >
+                                Open Campaign Performance
+                            </Link>
                         </div>
                     )}
                 </div>
