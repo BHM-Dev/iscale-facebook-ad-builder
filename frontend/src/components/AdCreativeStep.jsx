@@ -193,7 +193,18 @@ const buildDriveAssetGroups = (assets) => {
                 cta: tags.cta || '',
             };
         });
-        const metadataFingerprints = new Set(pairedMetadata.map(metadata => JSON.stringify(metadata)));
+        // A Meta description is optional. Drive may represent its absence as
+        // either an omitted key or an empty string on the companion asset;
+        // canonicalize that one optional field before comparing a pair so a
+        // valid Feed/Stories pair is not falsely rejected as mismatched.
+        const metadataFingerprints = new Set(pairedMetadata.map(metadata => JSON.stringify({
+            ...metadata,
+            copy: {
+                headline: metadata.copy?.headline || '',
+                primary_text: metadata.copy?.primary_text || '',
+                description: metadata.copy?.description?.trim() || '',
+            },
+        })));
         // A Feed/Stories pair must carry the exact same source copy and link
         // data on both files. Never let whichever asset happened to arrive
         // first define a launch row for a partially refreshed pair.
@@ -319,6 +330,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const [refreshingDriveCopy, setRefreshingDriveCopy] = useState(false);
     const [selectedDriveAssetIds, setSelectedDriveAssetIds] = useState(new Set());
     const [driveSearchTerm, setDriveSearchTerm] = useState('');
+    const [driveRepairPairId, setDriveRepairPairId] = useState(null);
     const [driveFormatFilter, setDriveFormatFilter] = useState('');
     const [showDriveLibraryHint, setShowDriveLibraryHint] = useState(
         () => safeLocalStorageGet('driveLibraryHintSeen') !== 'true'
@@ -343,6 +355,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     };
 
     const driveAssetGroups = useMemo(() => {
+        if (driveRepairPairId) {
+            return buildDriveAssetGroups(driveAssets).filter(group => group.id === driveRepairPairId);
+        }
         const query = driveSearchTerm.trim().toLowerCase();
         const visibleAssets = driveAssets.filter(asset => {
             if (driveFormatFilter && asset.format !== driveFormatFilter) return false;
@@ -351,7 +366,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             return haystack.includes(query);
         });
         return buildDriveAssetGroups(visibleAssets);
-    }, [driveAssets, driveSearchTerm, driveFormatFilter]);
+    }, [driveAssets, driveSearchTerm, driveFormatFilter, driveRepairPairId]);
 
     // Keep the full group index separate from the visible filtered list. A
     // buyer can select Feed assets, switch to Stories, and continue selecting;
@@ -502,7 +517,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         return productsWithUrl.length === 1 ? productsWithUrl[0].default_url : '';
     };
 
-    const fetchDriveAssets = async () => {
+    const fetchDriveAssets = async ({ throwOnError = false } = {}) => {
         setDriveLibraryLoading(true);
         setDriveLibraryError(null);
         try {
@@ -514,9 +529,16 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 throw new Error(err.detail || `HTTP ${res.status}`);
             }
             const data = await res.json();
-            setDriveAssets(Array.isArray(data) ? data : []);
+            if (!Array.isArray(data)) {
+                throw new Error('Drive library returned an invalid response');
+            }
+            const assets = data;
+            setDriveAssets(assets);
+            return assets;
         } catch (err) {
             setDriveLibraryError(err.message || 'Failed to load Drive Creative Library');
+            if (throwOnError) throw err;
+            return [];
         } finally {
             setDriveLibraryLoading(false);
         }
@@ -528,12 +550,35 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             const res = await authFetch(`${API_URL}/drive-assets/refresh-copy-metadata`, { method: 'POST' });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.detail || 'Could not refresh Drive copy');
+            const refreshMessage = data.errors
+                ? `Copy refresh completed with ${data.errors} unreadable source file${data.errors === 1 ? '' : 's'}. Existing matched copy was kept.`
+                : `Drive copy refreshed for ${data.updated || 0} asset${data.updated === 1 ? '' : 's'} and synchronized with active Drive rows.`;
             if (data.errors) {
-                showWarning(`Copy refresh completed with ${data.errors} unreadable source file${data.errors === 1 ? '' : 's'}. Existing matched copy was kept.`);
-            } else {
-                showSuccess(`Drive copy refreshed for ${data.updated || 0} asset${data.updated === 1 ? '' : 's'}.`);
+                showWarning(refreshMessage);
             }
-            await fetchDriveAssets();
+            const refreshedAssets = await fetchDriveAssets({ throwOnError: true });
+            const refreshedGroups = buildDriveAssetGroups(refreshedAssets || []);
+            const refreshedGroupById = new Map(refreshedGroups.map(group => [group.id, group]));
+            setCreativeData(prev => ({
+                ...prev,
+                creatives: (prev.creatives || []).map(creative => {
+                    if (creative.source !== 'drive' || !creative.drivePairId) return creative;
+                    const group = refreshedGroupById.get(creative.drivePairId);
+                    if (!group) return creative;
+                    const matchedCopy = hasCompleteCopy(group.copy || {}) ? group.copy : {};
+                    return {
+                        ...creative,
+                        driveCopyIntegrityIssue: group.copyIntegrityIssue || false,
+                        category: group.category || creative.category,
+                        headline: matchedCopy.headline || '',
+                        body: matchedCopy.primary_text || '',
+                        description: matchedCopy.description || '',
+                        cta: group.cta || '',
+                        websiteUrl: group.landingPage || '',
+                    };
+                }),
+            }));
+            if (!data.errors) showSuccess(refreshMessage);
         } catch (err) {
             showError(err.message || 'Could not refresh Drive copy');
         } finally {
@@ -555,6 +600,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const openDriveLibraryModal = () => {
         setSelectedDriveAssetIds(new Set());
         setDriveSearchTerm('');
+        setDriveRepairPairId(null);
         setDriveFormatFilter('');
         // Step-mount already fetches this for the button's live count — avoid a
         // second, redundant request (and a loading-state flicker) on every open.
@@ -648,6 +694,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     source: 'drive',
                     dualPlacement: true,
                     drivePairId: group.id,
+                    driveCopyIntegrityIssue: group.copyIntegrityIssue || false,
                     category: group.category || group.feedAsset?.brand_name || 'Uncategorized',
                     headline: matchedCopy.headline || '',
                     body: matchedCopy.primary_text || '',
@@ -697,6 +744,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 format: driveAssetPlacement(asset),
                 source: 'drive',
                 drivePairId: group.id,
+                driveCopyIntegrityIssue: group.copyIntegrityIssue || false,
                 category: group.category || asset.brand_name || 'Uncategorized',
                 headline: matchedCopy.headline || '',
                 body: matchedCopy.primary_text || '',
@@ -744,7 +792,16 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             };
         });
         if (unmatchedGroups.length > 0) {
-            showWarning(`Added ${unmatchedGroups.length} Drive creative${unmatchedGroups.length !== 1 ? 's' : ''} without matched copy as Needs copy cards. Fill those cards before launching.`);
+            const pairMismatchCount = unmatchedGroups.filter(group => group.copyIntegrityIssue).length;
+            const missingCopyCount = unmatchedGroups.length - pairMismatchCount;
+            const notices = [];
+            if (pairMismatchCount > 0) {
+                notices.push(`${pairMismatchCount} Feed + Stories pair${pairMismatchCount !== 1 ? 's have' : ' has'} mismatched Drive data. Use Refresh copy from Drive before continuing.`);
+            }
+            if (missingCopyCount > 0) {
+                notices.push(`${missingCopyCount} Drive creative${missingCopyCount !== 1 ? 's are' : ' is'} missing a matched headline or primary text. Fill those cards before launching.`);
+            }
+            showWarning(notices.join(' '));
         }
         if (newCreatives.length > 0) {
             const pairCount = selectedGroups.filter(group => group.isPair).length;
@@ -1468,6 +1525,15 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             // restaurant ad at launch).
             const perCreativeCopyMode = creativeData.creatives.some(c => c.source === 'drive' || c.headline || c.body);
             if (perCreativeCopyMode) {
+                const pairMetadataMismatchIds = new Set(
+                    creativeData.creatives
+                        .filter(c => c.driveCopyIntegrityIssue)
+                        .map(c => c.drivePairId || c.id)
+                );
+                if (pairMetadataMismatchIds.size > 0) {
+                    showWarning(`${pairMetadataMismatchIds.size} Feed + Stories pair${pairMetadataMismatchIds.size !== 1 ? 's have' : ' has'} mismatched Drive copy, CTA, or destination data. Return to the Drive picker and refresh the paired source files before continuing.`);
+                    return;
+                }
                 const missingCopy = creativeData.creatives.filter(c => (
                     c.source === 'drive'
                         ? (!c.body?.trim() || !c.headline?.trim())
@@ -1476,6 +1542,18 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 ));
                 if (missingCopy.length > 0) {
                     showWarning(`${missingCopy.length} selected ad${missingCopy.length !== 1 ? 's' : ''} still needs its own Primary Text and Headline. Edit the Ad pairs & copy cards before continuing.`);
+                    return;
+                }
+                const missingDriveCta = creativeData.creatives.find(c => c.source === 'drive' && !c.cta?.trim());
+                if (missingDriveCta) {
+                    showWarning(`The Drive CTA for ${missingDriveCta.name || 'one selected ad'} is missing. Refresh its Drive pair before continuing.`);
+                    return;
+                }
+                const invalidDriveCta = creativeData.creatives.find(c => (
+                    c.source === 'drive' && c.cta?.trim() && !CTA_OPTIONS.includes(c.cta.trim())
+                ));
+                if (invalidDriveCta) {
+                    showWarning(`The Drive CTA for ${invalidDriveCta.name || 'one selected ad'} is not a Meta-supported CTA. Correct it in Drive, then refresh the pair before continuing.`);
                     return;
                 }
             } else {
@@ -2013,7 +2091,26 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 {creativeData.creatives.map((creative, index) => {
                                     const headline = creative.headline || '';
                                     const body = creative.body || '';
-                                    const hasOwnCopy = Boolean(headline.trim() && body.trim() && creative.description?.trim());
+                                    // Meta link-ad descriptions are optional. This badge must use
+                                    // the same required fields as the Next-step validator; otherwise
+                                    // a fully populated Drive pair is misleadingly labelled "Needs
+                                    // copy" solely because its strategy document omitted a description.
+                                    const hasOwnCopy = hasCompleteCopy({ headline, primary_text: body }) || (
+                                        creative.source !== 'drive'
+                                        && hasCompleteCopy({
+                                            headline: creativeData.headlines?.[0],
+                                            primary_text: creativeData.bodies?.[0],
+                                        })
+                                    );
+                                    const missingDriveCta = creative.source === 'drive' && !creative.cta?.trim();
+                                    const missingDriveUrl = creative.source === 'drive' && !creative.websiteUrl?.trim();
+                                    const missingDriveFields = [
+                                        missingDriveCta && 'CTA',
+                                        missingDriveUrl && 'URL',
+                                    ].filter(Boolean);
+                                    const invalidDriveCta = creative.source === 'drive'
+                                        && creative.cta?.trim()
+                                        && !CTA_OPTIONS.includes(creative.cta.trim());
                                     return (
                                         <div key={`copy-${creative.id}`} className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
                                             <div className="flex gap-3">
@@ -2046,9 +2143,38 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     <div className="flex items-center gap-2">
                                                         <span className="text-xs font-semibold text-gray-900">Ad {index + 1}</span>
                                                         {creative.dualPlacement && <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-semibold text-purple-700">Feed + Stories</span>}
-                                                        {hasOwnCopy ? <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">Copy matched</span> : <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Needs copy</span>}
+                                                        {creative.driveCopyIntegrityIssue ? (
+                                                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Pair data mismatch</span>
+                                                        ) : invalidDriveCta ? (
+                                                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Unsupported CTA</span>
+                                                        ) : missingDriveFields.length > 0 ? (
+                                                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Needs {missingDriveFields.join(' + ')}</span>
+                                                        ) : hasOwnCopy ? (
+                                                            <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">Copy matched</span>
+                                                        ) : (
+                                                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Needs copy</span>
+                                                        )}
                                                     </div>
                                                     <p className="truncate text-[11px] text-gray-500 mt-1" title={creative.name}>{creative.name}</p>
+                                                    {(creative.driveCopyIntegrityIssue || invalidDriveCta || missingDriveFields.length > 0) && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setSelectedDriveAssetIds(new Set());
+                                                                setDriveSearchTerm('');
+                                                                setDriveRepairPairId(creative.drivePairId || null);
+                                                                setDriveFormatFilter('');
+                                                                setShowDriveLibraryModal(true);
+                                                            }}
+                                                            className="mt-1 text-[11px] font-semibold text-indigo-700 hover:text-indigo-900"
+                                                        >
+                                                            {creative.driveCopyIntegrityIssue
+                                                                ? 'Open Drive to repair this pair'
+                                                                : invalidDriveCta
+                                                                    ? `Open Drive to repair unsupported CTA: ${creative.cta}`
+                                                                : `Open Drive to refresh ${missingDriveFields.join(' + ')}`}
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </div>
                                             <label className="block text-[11px] font-semibold text-gray-600 mt-3 mb-1">Primary Text</label>
@@ -2542,7 +2668,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             <>
                             {mixedDriveCopyMatches && (
                                 <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                                    {mixedDriveCopyMatches.matchedPairs} pair{mixedDriveCopyMatches.matchedPairs !== 1 ? 's' : ''} matched copy from a strategy doc; {mixedDriveCopyMatches.unmatchedPairs} pair{mixedDriveCopyMatches.unmatchedPairs !== 1 ? 's' : ''} did not. Check those filenames against the doc.
+                                    {mixedDriveCopyMatches.matchedPairs} pair{mixedDriveCopyMatches.matchedPairs !== 1 ? 's' : ''} matched copy from a strategy doc; {mixedDriveCopyMatches.unmatchedPairs} pair{mixedDriveCopyMatches.unmatchedPairs !== 1 ? 's' : ''} did not. Check the source files, then use Refresh copy from Drive.
                                 </div>
                             )}
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -2587,7 +2713,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             )}
                                             {group.copyIntegrityIssue ? (
                                                 <div className="absolute bottom-[54px] left-2 bg-red-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
-                                                    Pair copy mismatch
+                                                    Pair data mismatch — refresh Drive
                                                 </div>
                                             ) : (copyMatched || group.landingPage || group.cta || tags.copy_id) && (
                                                 <div className="absolute bottom-[54px] left-2 bg-emerald-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
