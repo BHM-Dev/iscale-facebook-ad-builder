@@ -654,9 +654,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 ...prev,
                 creatives: (prev.creatives || []).map(creative => {
                     if (creative.source !== 'drive') return creative;
-                    const group = creative.drivePairId
-                        ? refreshedGroupById.get(creative.drivePairId)
-                        : (creative.driveAssetIds || []).map(id => refreshedGroupByAssetId.get(id)).find(Boolean);
+                    const group = (creative.drivePairId && refreshedGroupById.get(creative.drivePairId))
+                        || (creative.driveAssetIds || []).map(id => refreshedGroupByAssetId.get(id)).find(Boolean);
                     if (!group) return {
                         ...creative,
                         driveCopyIntegrityIssue: true,
