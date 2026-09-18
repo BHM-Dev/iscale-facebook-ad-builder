@@ -1,7 +1,7 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image, BookOpen, Check, Layers, FolderOpen, Search } from 'lucide-react';
+import { ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image, BookOpen, Check, Layers, FolderOpen, Maximize2, Search } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
@@ -337,12 +337,63 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const [driveLibraryError, setDriveLibraryError] = useState(null);
     const [refreshingDriveCopy, setRefreshingDriveCopy] = useState(false);
     const [selectedDriveAssetIds, setSelectedDriveAssetIds] = useState(new Set());
+    const [drivePreviewGroup, setDrivePreviewGroup] = useState(null);
+    const drivePreviewDialogRef = useRef(null);
+    const drivePreviewTriggerRef = useRef(null);
+    const driveFetchRequestRef = useRef(0);
     const [driveSearchTerm, setDriveSearchTerm] = useState('');
     const [driveRepairPairId, setDriveRepairPairId] = useState(null);
     const [driveFormatFilter, setDriveFormatFilter] = useState('');
     const [showDriveLibraryHint, setShowDriveLibraryHint] = useState(
         () => safeLocalStorageGet('driveLibraryHintSeen') !== 'true'
     );
+
+    const closeDrivePreview = () => {
+        const trigger = drivePreviewTriggerRef.current;
+        setDrivePreviewGroup(null);
+        window.setTimeout(() => trigger?.focus(), 0);
+    };
+
+    useEffect(() => {
+        if (!drivePreviewGroup) return undefined;
+
+        const trapFocus = (event) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                closeDrivePreview();
+                return;
+            }
+            if (event.key !== 'Tab') return;
+
+            const focusable = drivePreviewDialogRef.current?.querySelectorAll(
+                'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), video[controls], [tabindex]:not([tabindex="-1"])'
+            );
+            if (!focusable?.length) return;
+            const items = Array.from(focusable);
+            const first = items[0];
+            const last = items[items.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        };
+
+        document.addEventListener('keydown', trapFocus);
+        const focusTimer = window.setTimeout(() => {
+            drivePreviewDialogRef.current?.querySelector('button')?.focus();
+        }, 0);
+        return () => {
+            window.clearTimeout(focusTimer);
+            document.removeEventListener('keydown', trapFocus);
+        };
+    }, [drivePreviewGroup]);
+
+    useEffect(() => {
+        if (!showDriveLibraryModal && drivePreviewGroup) setDrivePreviewGroup(null);
+    }, [showDriveLibraryModal, drivePreviewGroup]);
     const [copyFieldsTouched, setCopyFieldsTouched] = useState({
         headlines: false,
         bodies: false,
@@ -542,6 +593,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     };
 
     const fetchDriveAssets = async ({ throwOnError = false } = {}) => {
+        const requestId = ++driveFetchRequestRef.current;
         setDriveLibraryLoading(true);
         setDriveLibraryError(null);
         try {
@@ -556,15 +608,17 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             if (!Array.isArray(data)) {
                 throw new Error('Drive library returned an invalid response');
             }
+            if (requestId !== driveFetchRequestRef.current) return [];
             const assets = data;
             setDriveAssets(assets);
             return assets;
         } catch (err) {
+            if (requestId !== driveFetchRequestRef.current) return [];
             setDriveLibraryError(err.message || 'Failed to load Drive Creative Library');
             if (throwOnError) throw err;
             return [];
         } finally {
-            setDriveLibraryLoading(false);
+            if (requestId === driveFetchRequestRef.current) setDriveLibraryLoading(false);
         }
     };
 
@@ -626,8 +680,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         setDriveSearchTerm('');
         setDriveRepairPairId(null);
         setDriveFormatFilter('');
-        // Step-mount already fetches this for the button's live count — avoid a
-        // second, redundant request (and a loading-state flicker) on every open.
+        // Step-mount supplies the live count, but a transient deploy/network
+        // failure must be recoverable by reopening the picker rather than
+        // requiring a wizard remount.
+        if ((driveAssets.length === 0 || driveLibraryError) && !driveLibraryLoading) fetchDriveAssets();
         setShowDriveLibraryModal(true);
     };
 
@@ -2710,36 +2766,35 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
 
         {/* Drive Creative Library Modal */}
         {showDriveLibraryModal && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-xl shadow-xl w-full max-w-7xl h-[calc(100dvh-2rem)] flex flex-col">
-                    <div className="flex items-center justify-between p-3 border-b">
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2">
+                <div className="bg-white rounded-xl shadow-xl w-full max-w-7xl h-[calc(100dvh-1rem)] flex flex-col">
+                    <div className="flex items-center justify-between p-2 border-b">
                         <h3 className="text-lg font-semibold">Select from Drive Creative Library</h3>
-                        <button onClick={() => setShowDriveLibraryModal(false)} className="text-gray-500 hover:text-gray-700">
-                            <X size={20} />
-                        </button>
-                    </div>
-                    <div className="p-3 border-b space-y-2">
-                        <div className="flex items-center justify-between gap-3 rounded-lg bg-indigo-50 px-3 py-1.5">
-                            <p className="text-xs text-indigo-900">Pull the latest approved headline, body, CTA, and URL from the paired Drive strategy document.</p>
+                        <div className="flex items-center gap-2">
                             <button
                                 type="button"
                                 onClick={refreshDriveCopyMatches}
                                 disabled={refreshingDriveCopy || driveLibraryLoading}
-                                className="shrink-0 rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                className="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
                             >
-                                {refreshingDriveCopy ? 'Refreshing…' : 'Refresh copy from Drive'}
+                                {refreshingDriveCopy ? 'Refreshing…' : 'Refresh copy'}
+                            </button>
+                            <button onClick={() => setShowDriveLibraryModal(false)} className="text-gray-500 hover:text-gray-700" aria-label="Close Drive creative library">
+                                <X size={20} />
                             </button>
                         </div>
-                        <label className="relative block">
+                    </div>
+                    <div className="flex flex-col gap-2 border-b p-2 lg:flex-row lg:items-center">
+                        <label className="relative block lg:flex-1 lg:min-w-0">
                             <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
                             <input
                                 value={driveSearchTerm}
                                 onChange={(e) => setDriveSearchTerm(e.target.value)}
                                 placeholder="Search filenames, folders, or brands"
-                                className="w-full rounded-lg border border-gray-300 bg-white py-1.5 pl-9 pr-3 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                                className="w-full rounded-lg border border-gray-300 bg-white py-1 pl-9 pr-3 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
                             />
                         </label>
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap lg:shrink-0">
                             <div className="inline-flex overflow-hidden rounded-lg border border-gray-300 bg-white">
                                 {[
                                     { value: '', label: `All ${driveCounts.total}` },
@@ -2750,7 +2805,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                         key={option.value || 'all'}
                                         type="button"
                                         onClick={() => setDriveFormatFilter(option.value)}
-                                        className={`px-3 py-1.5 text-xs font-semibold transition-colors ${
+                                        className={`px-3 py-1 text-xs font-semibold transition-colors ${
                                             driveFormatFilter === option.value
                                                 ? 'bg-gray-900 text-white'
                                                 : 'text-gray-600 hover:bg-gray-50'
@@ -2764,7 +2819,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 type="button"
                                 onClick={selectAllVisibleDriveAssets}
                                 disabled={driveAssetGroups.length === 0}
-                                className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                className="px-3 py-1 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
                             >
                                 Select all {driveAssetGroups.length > 0 ? `(${driveAssetGroups.length})` : ''}
                             </button>
@@ -2772,39 +2827,48 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 type="button"
                                 onClick={clearDriveAssetSelection}
                                 disabled={selectedDriveAssetIds.size === 0}
-                                className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                className="px-3 py-1 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
                             >
                                 Clear selection
                             </button>
                             <div className="flex items-center gap-1.5">
-                                <span className="text-xs text-gray-500">Select first (most recent)</span>
+                                <span className="text-xs text-gray-500">Select newest</span>
                                 <input
                                     type="number"
                                     min="1"
                                     value={driveSelectCount}
                                     onChange={(e) => setDriveSelectCount(e.target.value)}
                                     placeholder="e.g. 50"
-                                    className="w-20 rounded-lg border border-gray-300 py-1.5 px-2 text-xs focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                                    className="w-16 rounded-lg border border-gray-300 py-1 px-2 text-xs focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
                                 />
                                 <button
                                     type="button"
                                     onClick={selectFirstNDriveAssets}
                                     disabled={!driveSelectCount || driveAssetGroups.length === 0}
-                                    className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    className="px-3 py-1 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
                                 >
                                     Go
                                 </button>
                             </div>
                         </div>
                     </div>
-                    <div className="flex-1 min-h-0 overflow-y-auto p-3">
+                    <div className="flex-1 min-h-0 overflow-y-auto p-2">
                         {driveLibraryLoading ? (
                             <div className="flex items-center justify-center py-12 gap-2 text-gray-500">
                                 <Loader className="animate-spin" size={20} />
                                 <span>Loading Drive library...</span>
                             </div>
                         ) : driveLibraryError ? (
-                            <p className="text-center text-red-600 py-12">{driveLibraryError}</p>
+                            <div className="flex flex-col items-center gap-3 py-12 text-center">
+                                <p className="text-red-600">{driveLibraryError}</p>
+                                <button
+                                    type="button"
+                                    onClick={() => fetchDriveAssets()}
+                                    className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-semibold text-amber-800 hover:bg-amber-100"
+                                >
+                                    Retry loading Drive library
+                                </button>
+                            </div>
                         ) : driveAssets.length === 0 ? (
                             <p className="text-center text-gray-500 py-12">No synced Drive creative yet. It appears here once the Drive sync job (or a manual sync) has run.</p>
                         ) : driveAssetGroups.length === 0 ? (
@@ -2816,7 +2880,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     {mixedDriveCopyMatches.matchedPairs} pair{mixedDriveCopyMatches.matchedPairs !== 1 ? 's' : ''} matched copy from a strategy doc; {mixedDriveCopyMatches.unmatchedPairs} pair{mixedDriveCopyMatches.unmatchedPairs !== 1 ? 's' : ''} did not. Check the source files, then use Refresh copy from Drive.
                                 </div>
                             )}
-                            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                            <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
                                 {driveAssetGroups.map(group => {
                                     const asset = group.displayAsset;
                                     const isSelected = selectedDriveAssetIds.has(group.id);
@@ -2829,29 +2893,35 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             className={`relative cursor-pointer rounded-xl overflow-hidden border-2 bg-white transition-all ${isSelected ? 'border-amber-500 ring-2 ring-amber-200' : 'border-gray-200 hover:border-amber-300'}`}
                                         >
                                             <div className={`flex h-[120px] gap-2 bg-gray-100 p-1.5 ${group.isPair && group.storiesAsset ? 'items-stretch' : 'items-center justify-center'}`}>
-                                                <div className={group.isPair && group.storiesAsset ? 'w-1/2 min-w-0' : 'h-full w-full'}>
+                                                <div className={`relative ${group.isPair && group.storiesAsset ? 'w-1/2 min-w-0' : 'h-full w-full'}`}>
                                                 {asset.format === 'video' ? (
                                                     <video src={asset.r2_key} className="h-full w-full object-contain" muted />
                                                 ) : (
                                                     <img src={asset.r2_key} alt={asset.file_name} className="h-full w-full object-contain" />
                                                 )}
                                                 </div>
-                                                {group.isPair && group.storiesAsset && <div className="w-1/2 min-w-0">
+                                                {group.isPair && <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white">Feed</span>}
+                                                {group.isPair && group.storiesAsset && <div className="relative w-1/2 min-w-0">
                                                     {group.storiesAsset.format === 'video' ? (
                                                         <video src={group.storiesAsset.r2_key} className="h-full w-full object-contain" muted />
                                                     ) : (
                                                         <img src={group.storiesAsset.r2_key} alt={group.storiesAsset.file_name} className="h-full w-full object-contain" />
                                                     )}
+                                                    <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white">Stories</span>
                                                 </div>}
                                             </div>
+                                            <button
+                                                type="button"
+                                                onClick={(event) => { event.stopPropagation(); drivePreviewTriggerRef.current = event.currentTarget; setDrivePreviewGroup(group); }}
+                                                className="absolute right-2 top-2 rounded-md bg-white/95 p-1 text-gray-700 shadow-sm hover:bg-white"
+                                                aria-label={`Preview ${asset.file_name}`}
+                                                title="Preview full creative"
+                                            >
+                                                <Maximize2 size={14} />
+                                            </button>
                                             {isSelected && (
-                                                <div className="absolute top-2 right-2 bg-amber-500 rounded-full p-0.5">
+                                                <div className="absolute top-9 right-2 bg-amber-500 rounded-full p-0.5">
                                                     <Check size={14} className="text-white" />
-                                                </div>
-                                            )}
-                                            {group.isPair && (
-                                                <div className="absolute top-2 left-2 bg-purple-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
-                                                    Feed + Stories pair
                                                 </div>
                                             )}
                                             {group.copyIntegrityIssue || group.copyRefreshUnverified ? (
@@ -2863,10 +2933,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     {copyMatched ? 'Copy matched' : 'URL matched'}
                                                 </div>
                                             )}
-                                            <div className="p-1.5 text-xs text-gray-600 bg-white">
-                                                <div className="truncate font-medium">{asset.brand_name || 'Unknown brand'}</div>
-                                                <div className="truncate text-gray-400">{copyMatched ? group.copy.headline : asset.folder_path || asset.file_name}</div>
-                                                {group.isPair && <div className="truncate text-[11px] text-purple-700">Feed: {group.feedAsset?.file_name} · Stories: {group.storiesAsset?.file_name}</div>}
+                                            <div className="p-1 text-xs text-gray-600 bg-white" title={group.isPair ? `Feed: ${group.feedAsset?.file_name} · Stories: ${group.storiesAsset?.file_name}` : asset.file_name}>
+                                                <div className="truncate font-medium">{copyMatched ? group.copy.headline : asset.file_name}</div>
+                                                <div className="truncate text-gray-400">{asset.brand_name || asset.folder_path || 'Uncategorized asset'}</div>
                                             </div>
                                         </div>
                                     );
@@ -2900,6 +2969,48 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 Add {driveSelectionProjectedAdCount > 0 ? driveSelectionProjectedAdCount : ''} Creative{driveSelectionProjectedAdCount !== 1 ? 's' : ''}
                             </button>
                         </div>
+                    </div>
+                </div>
+            </div>
+        )}
+        {drivePreviewGroup && (
+            <div className="fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/70 p-2 sm:p-4" onClick={closeDrivePreview}>
+                <div
+                    ref={drivePreviewDialogRef}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="Creative preview"
+                    tabIndex={-1}
+                    className="my-auto w-full max-w-5xl overflow-y-auto overscroll-contain rounded-xl bg-white p-4 shadow-2xl"
+                    style={{ maxHeight: 'calc(100dvh - 1rem)' }}
+                    onClick={(event) => event.stopPropagation()}
+                >
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                        <div>
+                            <h4 className="font-semibold text-gray-900">Creative preview</h4>
+                            <p className="text-xs text-gray-500">Preview only — use the card itself to select this creative.</p>
+                        </div>
+                        <button type="button" onClick={closeDrivePreview} className="text-gray-500 hover:text-gray-700" aria-label="Close creative preview">
+                            <X size={20} />
+                        </button>
+                    </div>
+                    <div className={`grid gap-4 ${drivePreviewGroup.isPair && drivePreviewGroup.storiesAsset ? 'md:grid-cols-2' : 'grid-cols-1'}`}>
+                        {[
+                            { label: drivePreviewGroup.isPair ? 'Feed (1:1)' : 'Creative', asset: drivePreviewGroup.displayAsset },
+                            ...(drivePreviewGroup.isPair && drivePreviewGroup.storiesAsset ? [{ label: 'Stories (9:16)', asset: drivePreviewGroup.storiesAsset }] : []),
+                        ].map(({ label, asset: previewAsset }) => (
+                            <div key={`${label}-${previewAsset.id}`} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                <div className="mb-2 text-sm font-semibold text-gray-800">{label}</div>
+                                <div className="flex h-[40vh] items-center justify-center rounded bg-white p-2 md:h-[58vh]">
+                                    {previewAsset.format === 'video' ? (
+                                        <video src={previewAsset.r2_key} className="h-full w-full object-contain" controls />
+                                    ) : (
+                                        <img src={previewAsset.r2_key} alt={previewAsset.file_name} className="h-full w-full object-contain" />
+                                    )}
+                                </div>
+                                <p className="mt-2 truncate text-xs text-gray-500" title={previewAsset.file_name}>{previewAsset.file_name}</p>
+                            </div>
+                        ))}
                     </div>
                 </div>
             </div>
