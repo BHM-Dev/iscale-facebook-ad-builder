@@ -487,31 +487,31 @@ class FacebookService:
         return [dict(pixel) for pixel in pixels]
 
     def get_pages(self, ad_account_id=None):
-        """Fetch Pages that Meta allows the specified ad account to promote.
+        """Fetch Pages visible to the authenticated business user.
 
-        ``/me/accounts`` answers a different question: Pages visible to the
-        token.  A Page can be visible there but not be an identity that the
-        selected ad account is allowed to use.  Returning that broader list
-        made it possible to launch an otherwise-valid creative under the
-        wrong brand after switching accounts.
+        Meta's ``promote_pages`` edge is not consistently populated for the
+        system-user token used by the VPS: it returned an empty result for an
+        account that is actively running ads from BHM Pages. ``/me/accounts``
+        is the reliable identity source in this integration. Meta remains the
+        final authority when it creates the creative for the selected account.
         """
-        account = self._get_account(ad_account_id)
         from facebook_business.adobjects.page import Page
-        from facebook_business.api import FacebookRequest
-        from facebook_business.objectparser import ObjectParser
-        from facebook_business.typechecker import TypeChecker
-        # `promote_pages` is documented by Meta but not generated as a helper
-        # in every supported SDK release. Use the SDK's generic request class
-        # so the account-scoped edge works across the allowed version range.
-        request = FacebookRequest(
-            node_id=account.get_id_assured(), method='GET', endpoint='/promote_pages', api=self.api,
-            param_checker=TypeChecker({}, {}), target_class=Page,
-            api_type='EDGE', response_parser=ObjectParser(target_class=Page, api=self.api),
-        )
-        request.add_fields([Page.Field.id, Page.Field.name, Page.Field.category])
-        result = [dict(page) for page in request.execute()]
-        if result:
-            return result
+        from facebook_business.adobjects.user import User
+
+        user_pages = []
+        try:
+            me = User(fbid='me', api=self.api)
+            user_pages = [dict(page) for page in me.get_accounts(fields=[
+                Page.Field.id,
+                Page.Field.name,
+                Page.Field.category,
+            ])]
+        except Exception as e:
+            # A transient permissions/token response must not prevent the
+            # account-specific creative history fallback below from working.
+            print(f"⚠️  get_pages /me/accounts failed: {e}")
+
+        account = self._get_account(ad_account_id)
 
         # Fallback: personal tokens without pages_show_list return an empty
         # me/accounts even though the token can still USE pages in creatives.
@@ -530,17 +530,30 @@ class FacebookService:
                     page_ids.append(pid)
                 if scanned >= 200 or len(page_ids) >= 5:
                     break
+            names_by_id = {
+                str(page.get('id')): page
+                for page in user_pages
+                if page.get('id')
+            }
             derived = []
             for pid in page_ids:
+                known_page = names_by_id.get(pid)
+                if known_page:
+                    derived.append(known_page)
+                    continue
                 try:
                     pg = dict(Page(pid).api_get(fields=['id', 'name']))
                     derived.append({'id': pg.get('id', pid), 'name': pg.get('name', f'Page {pid}'), 'category': None})
                 except Exception:
                     derived.append({'id': pid, 'name': f'Page {pid}', 'category': None})
-            return derived
+            # Pages in an ad account's existing creatives are the strongest
+            # account-specific signal. Use the user-managed Page list only
+            # when the account has no usable creative history.
+            if derived:
+                return derived
         except Exception as e:
             print(f"⚠️  get_pages fallback (derive from creatives) failed: {e}")
-            return []
+        return user_pages
 
     def is_page_promotable(self, page_id, ad_account_id=None):
         """Check Page visibility to the token before Meta validates the account pairing."""
