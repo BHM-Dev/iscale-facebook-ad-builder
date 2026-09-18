@@ -56,7 +56,12 @@ const CTA_LABEL_TO_ENUM = {
   'donate now':          'DONATE_NOW',
 };
 function ctaToEnum(label) {
-  return CTA_LABEL_TO_ENUM[(label || '').toLowerCase()] || 'LEARN_MORE';
+  const raw = String(label || '').trim();
+  const mapped = CTA_LABEL_TO_ENUM[raw.toLowerCase()];
+  if (mapped) return mapped;
+  // Iterated Meta creatives may already carry an enum. Preserve only known
+  // values; an unknown CTA must be chosen deliberately in the push modal.
+  return Object.values(CTA_LABEL_TO_ENUM).includes(raw.toUpperCase()) ? raw.toUpperCase() : '';
 }
 
 function newVariant(index = 0) {
@@ -88,12 +93,13 @@ function StatusBadge({ status }) {
   if (status === 'idle')       return <span className="text-xs text-gray-400 flex items-center gap-1"><Clock size={11} /> Waiting</span>;
   if (status === 'generating') return <span className="text-xs text-indigo-600 flex items-center gap-1 animate-pulse"><RefreshCw size={11} className="animate-spin" /> Generating…</span>;
   if (status === 'done')       return <span className="text-xs text-green-600 flex items-center gap-1"><CheckCircle size={11} /> Saved to library</span>;
+  if (status === 'save_pending') return <span className="text-xs text-amber-600 flex items-center gap-1"><AlertCircle size={11} /> Image ready — save pending</span>;
   if (status === 'failed')     return <span className="text-xs text-red-500 flex items-center gap-1"><AlertCircle size={11} /> Failed</span>;
   return null;
 }
 
 // ── Result card ───────────────────────────────────────────────────────────────
-function ResultCard({ variant, sizeLabel, result, resultKey, onRetry }) {
+function ResultCard({ variant, sizeLabel, result, resultKey, onRetry, onRetrySave }) {
   const { status, imageUrl, error } = result;
   const [elapsed, setElapsed] = React.useState(0);
 
@@ -111,12 +117,13 @@ function ResultCard({ variant, sizeLabel, result, resultKey, onRetry }) {
     <div className={`bg-white rounded-xl border overflow-hidden transition-shadow ${
       status === 'done' ? 'border-green-200 shadow-sm' :
       status === 'failed' ? 'border-red-200' :
+      status === 'save_pending' ? 'border-amber-200' :
       status === 'generating' ? 'border-indigo-200 shadow-md' :
       'border-gray-200'
     }`}>
       {/* Image area */}
       <div className="aspect-square bg-gray-50 relative overflow-hidden">
-        {status === 'done' && imageUrl ? (
+        {(status === 'done' || status === 'save_pending') && imageUrl ? (
           <img src={imageUrl} alt={variant.headline} className="w-full h-full object-cover" />
         ) : status === 'generating' ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
@@ -134,6 +141,11 @@ function ResultCard({ variant, sizeLabel, result, resultKey, onRetry }) {
             >
               Retry
             </button>
+          </div>
+        ) : status === 'save_pending' ? (
+          <div className="absolute inset-x-2 bottom-2 flex items-center justify-between gap-2 px-2 py-1.5 bg-amber-50/95 border border-amber-200 rounded text-xs text-amber-800">
+            <span>Generated, but not saved.</span>
+            <button onClick={() => onRetrySave(resultKey)} className="font-medium underline">Retry save</button>
           </div>
         ) : (
           <div className="absolute inset-0 flex items-center justify-center">
@@ -463,6 +475,18 @@ export default function BatchGenerate() {
     reviewedPrompt,
   }), [niche, refImageUrl, overlayEnabled, overlayNicheLine, overlayOfferLine, overlayLogoUrl, styleSettings]);
 
+  const saveGeneratedAd = useCallback(async (libraryAd) => {
+    const saveResponse = await authFetch(`${API_URL}/generated-ads/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ads: [libraryAd] }),
+    });
+    if (!saveResponse.ok) {
+      const saveError = await saveResponse.json().catch(() => ({}));
+      throw new Error(saveError.detail || `Generated ad library save failed (HTTP ${saveResponse.status})`);
+    }
+  }, []);
+
   const generateOne = useCallback(async (variant, sizeConfig, reviewedPrompt = null) => {
     const key = `${variant.id}-${sizeConfig.id}`;
     setResults(prev => ({ ...prev, [key]: { status: 'generating', imageUrl: null, error: null } }));
@@ -485,11 +509,7 @@ export default function BatchGenerate() {
 
       // Save to Generated Ads library
       const adId = crypto.randomUUID();
-      await authFetch(`${API_URL}/generated-ads/batch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ads: [{
+      const libraryAd = {
             id: adId,
             imageUrl,
             headline: variant.headline,
@@ -512,9 +532,19 @@ export default function BatchGenerate() {
             overlayOfferLine: overlayEnabled ? overlayOfferLine : null,
             overlayCta: overlayEnabled ? (variant.cta || null) : null,
             overlayLogoUrl: overlayEnabled ? (overlayLogoUrl || null) : null,
-          }],
-        }),
-      }).catch(() => {});
+      };
+      try {
+        await saveGeneratedAd(libraryAd);
+      } catch (saveError) {
+        // Keep the generated asset and its UUID.  Retrying the exact same
+        // batch request is idempotent server-side, while regenerating here
+        // would spend another kie.ai credit and can create duplicate library ads.
+        setResults(prev => ({ ...prev, [key]: {
+          status: 'save_pending', imageUrl, generatedAdId: adId,
+          libraryAd, error: saveError.message,
+        } }));
+        return 'save_pending';
+      }
 
       // Store generatedAdId so BatchPushModal can write back the Meta ad ID after push,
       // enabling the Iterate flow to restore overlay fields from the local DB.
@@ -525,7 +555,7 @@ export default function BatchGenerate() {
       setResults(prev => ({ ...prev, [key]: { status: 'failed', imageUrl: null, error: msg } }));
       return 'failed';
     }
-  }, [niche, overlayEnabled, overlayNicheLine, overlayOfferLine, overlayLogoUrl, buildGenerationPayload]);
+  }, [niche, overlayEnabled, overlayNicheLine, overlayOfferLine, overlayLogoUrl, buildGenerationPayload, saveGeneratedAd]);
 
   // When overlay is on, headline is optional — the niche label + offer line carry the messaging.
   // When overlay is off, headline is required as the primary ad copy.
@@ -630,6 +660,18 @@ export default function BatchGenerate() {
     if (!variant || !sizeConfig) return;
     await generateOne(variant, sizeConfig);
   }, [variants, generateOne]);
+
+  const handleRetrySave = useCallback(async (resultKey) => {
+    const result = results[resultKey];
+    if (!result?.libraryAd || !result.imageUrl) return;
+    setResults(prev => ({ ...prev, [resultKey]: { ...prev[resultKey], status: 'generating', error: null } }));
+    try {
+      await saveGeneratedAd(result.libraryAd);
+      setResults(prev => ({ ...prev, [resultKey]: { ...prev[resultKey], status: 'done', error: null } }));
+    } catch (error) {
+      setResults(prev => ({ ...prev, [resultKey]: { ...prev[resultKey], status: 'save_pending', error: error.message } }));
+    }
+  }, [results, saveGeneratedAd]);
 
   // Generate 3 AI copy variants from Variant 1 using the remix-variations endpoint
   const generateAIVariants = useCallback(async () => {
@@ -1201,6 +1243,7 @@ export default function BatchGenerate() {
                   result={result}
                   resultKey={key}
                   onRetry={handleRetry}
+                  onRetrySave={handleRetrySave}
                 />
               );
             })}

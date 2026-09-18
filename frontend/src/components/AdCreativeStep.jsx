@@ -261,6 +261,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const variationCount = countVariations(creativeData);
     const [pages, setPages] = useState([]);
     const [loadingPages, setLoadingPages] = useState(false);
+    const pageFetchRequestRef = useRef(0);
 
     const [manualPageEntry, setManualPageEntry] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
@@ -973,36 +974,61 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // Fetch pages when ad account is selected
     useEffect(() => {
         if (selectedAdAccount) {
-            fetchPages();
+            const requestId = ++pageFetchRequestRef.current;
+            fetchPages(selectedAdAccount, requestId);
+        } else {
+            pageFetchRequestRef.current += 1;
+            setPages([]);
         }
     }, [selectedAdAccount]);
 
-    const fetchPages = async () => {
+    const fetchPages = async (account, requestId) => {
         setLoadingPages(true);
         try {
-            const fetchedPages = await getPages(selectedAdAccount.id);
+            const fetchedPages = await getPages(account.id);
+            if (requestId !== pageFetchRequestRef.current) return;
             setPages(fetchedPages);
+
+            // Page IDs are account-scoped state. A populated ID is not proof it
+            // belongs to the account that is active now: CampaignContext survives
+            // navigation back to Step 1, while the selected account can change.
+            // Treat an unscoped/mismatched page as empty and resolve a fresh
+            // account-specific default instead of allowing the old page to pass
+            // the truthy-only validation in handleNext.
+            const pageBelongsToActiveAccount = creativeData.pageAccountId === account.id;
+            const selectedPageIsAvailable = pageBelongsToActiveAccount
+                && fetchedPages.some(page => page.id === creativeData.pageId);
 
             // DailyInsurance.news is the fixed default for Commercial accounts.
             // Resolve it only after Pages load rather than restoring an arbitrary
             // last-used Page ID — the latter allowed a prior Home Services launch
             // to silently select Trusted Home Service for Commercial.
-            if (fetchedPages.length > 0 && !creativeData.pageId) {
-                const lastUsedPageId = safeLocalStorageGet(`lastUsedPageId_${selectedAdAccount.id}`);
-                const pageToSelect = (isCommercialAdAccount(selectedAdAccount) && findCommercialDefaultPage(fetchedPages))
+            if (fetchedPages.length > 0 && !selectedPageIsAvailable) {
+                const lastUsedPageId = safeLocalStorageGet(`lastUsedPageId_${account.id}`);
+                const pageToSelect = (isCommercialAdAccount(account) && findCommercialDefaultPage(fetchedPages))
                     || fetchedPages.find(p => p.id === lastUsedPageId)
                     || fetchedPages[0];
                 handlePageSelection(pageToSelect.id, fetchedPages);
             } else if (fetchedPages.length === 0) {
+                if (!pageBelongsToActiveAccount) {
+                    setCreativeData(prev => ({
+                        ...prev,
+                        pageId: '',
+                        pageName: null,
+                        pageAccountId: account.id,
+                        instagramId: null,
+                    }));
+                }
                 // If no pages found, default to manual entry so user isn't blocked
                 setManualPageEntry(true);
             }
         } catch (error) {
+            if (requestId !== pageFetchRequestRef.current) return;
             console.error('Error fetching pages:', error);
             showError('Failed to load Facebook Pages. You can enter Page ID manually.');
             setManualPageEntry(true); // Auto-switch to manual entry
         } finally {
-            setLoadingPages(false);
+            if (requestId === pageFetchRequestRef.current) setLoadingPages(false);
         }
     };
 
@@ -1015,6 +1041,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             // can show the actual Page name instead of a generic placeholder — getPages()
             // already fetches this, it just wasn't being persisted onto creativeData before.
             pageName: selectedPage ? selectedPage.name : prev.pageName,
+            pageAccountId: selectedAdAccount?.id || null,
             instagramId: selectedPage ? selectedPage.instagramId : null
         }));
         if (selectedAdAccount) {
@@ -1034,7 +1061,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             // keeps showing the PREVIOUS dropdown-selected page's real name next to a Page ID
             // that no longer matches it. A stale-but-real-looking name is worse than no name:
             // it reads as a confirmed preview when it isn't. Caught in pre-push review.
-            ...(field === 'pageId' ? { instagramId: null, pageName: null } : {})
+            ...(field === 'pageId' ? {
+                instagramId: null,
+                pageName: null,
+                pageAccountId: selectedAdAccount?.id || null,
+            } : {})
         }));
 
         // Persist page ID

@@ -27,6 +27,25 @@ const CTA_OPTIONS = [
 ];
 
 const CTA_LABEL_TO_ENUM = Object.fromEntries(CTA_OPTIONS.map(([value, label]) => [label.toLowerCase(), value]));
+const KNOWN_CTA_VALUES = new Set(CTA_OPTIONS.map(([value]) => value));
+const pageStorageKey = (adAccountId) => adAccountId ? `lastUsedPageId_${adAccountId}` : null;
+const PENDING_LINKS_KEY = 'pendingGeneratedAdMetaLinks';
+const readPendingLinks = () => {
+    try {
+        const parsed = JSON.parse(safeLocalStorageGet(PENDING_LINKS_KEY) || '[]');
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+};
+const savePendingLinks = (links) => safeLocalStorageSet(PENDING_LINKS_KEY, JSON.stringify(links));
+const rememberPendingLink = (link) => {
+    const others = readPendingLinks().filter(existing => existing.generatedAdId !== link.generatedAdId);
+    savePendingLinks([...others, link]);
+};
+const clearPendingLink = (generatedAdId) => {
+    savePendingLinks(readPendingLinks().filter(link => link.generatedAdId !== generatedAdId));
+};
 const normalizeCta = (value) => {
     const key = (value || '').toLowerCase();
     return ({
@@ -57,14 +76,18 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     const [selectedCampaign, setSelectedCampaign] = useState(null);
     const [adSets, setAdSets] = useState([]);
     const [pages, setPages] = useState([]);
-    const [pageId, setPageId] = useState(safeLocalStorageGet('lastUsedPageId') || '');
+    const [pageId, setPageId] = useState(() => {
+        const key = pageStorageKey(adAccountId);
+        return key ? safeLocalStorageGet(key) || '' : '';
+    });
     const [websiteUrl, setWebsiteUrl] = useState(preselectedWebsiteUrl || safeLocalStorageGet('lastUsedWebsiteUrl') || '');
     const [fieldErrors, setFieldErrors] = useState({});
     const [sharedCta, setSharedCta] = useState(() => {
         // Default to the most common CTA across items so the dropdown reflects what Joel already chose
         if (!items.length) return 'LEARN_MORE';
+        if (items.some(it => !KNOWN_CTA_VALUES.has(it.cta))) return '';
         const counts = {};
-        items.forEach(it => { const c = it.cta || 'LEARN_MORE'; counts[c] = (counts[c] || 0) + 1; });
+        items.forEach(it => { const c = it.cta; counts[c] = (counts[c] || 0) + 1; });
         return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
     });
     const [loading, setLoading] = useState(false);
@@ -87,7 +110,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
             headline: it.headline,
             body: it.body,
             description: it.description || '',
-            cta: it.cta || 'LEARN_MORE'
+            cta: it.cta || ''
         }]))
     );
     const [expandedItem, setExpandedItem] = useState(null);
@@ -102,11 +125,17 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     const [pushedResults, setPushedResults] = useState({}); // key → createCompleteAd result
     const [pushedAdsetId, setPushedAdsetId] = useState(null);
     const [localAdsetId, setLocalAdsetId] = useState(null);
+    // Meta and our local mirror are two commits. Keep a failed mirror durable
+    // in this modal's retry state and never create another Meta ad set while
+    // that first one is awaiting its local record.
+    const [pendingAdsetMirror, setPendingAdsetMirror] = useState(null);
 
     const isCBO = selectedCampaign?.isCBO === true;
     const doneItems = items.filter(it => pushStatuses[it.key] === 'done');
-    const errorItems = items.filter(it => pushStatuses[it.key] === 'error');
-    const retryableItems = items.filter(it => !['done'].includes(pushStatuses[it.key]));
+    const errorItems = items.filter(it => ['error', 'reconcile'].includes(pushStatuses[it.key]));
+    // A timeout after Meta starts mutating is not safely retryable.  Retrying
+    // could create a duplicate paused ad, so force an Ads Manager reconciliation.
+    const retryableItems = items.filter(it => !['done', 'reconcile'].includes(pushStatuses[it.key]));
 
     // Ad Account is a free-text input whose onChange fires on every keystroke —
     // a useEffect keyed on the raw `adAccountId` state (the prior version of
@@ -119,11 +148,23 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     // commit, mirroring the existing onBlur-driven loadCampaigns/loadPages
     // pattern on this same field rather than reacting to every keystroke.
     const committedAdAccountRef = useRef(adAccountId);
+    const pagesAccountRef = useRef(adAccountId);
+    const campaignsRequestRef = useRef(0);
+    const pagesRequestRef = useRef(0);
     const resetEnhancementsIfAccountChanged = () => {
         if (committedAdAccountRef.current !== adAccountId) {
             committedAdAccountRef.current = adAccountId;
             setCreativeEnhancements({});
+            // Do not let the old account's page list or selected ID appear valid
+            // while the new account is loading.
+            pagesAccountRef.current = '';
+            campaignsRequestRef.current += 1;
+            pagesRequestRef.current += 1;
+            setPages([]);
+            setPageId('');
+            return true;
         }
+        return false;
     };
     // selectedCampaignId is set via a discrete dropdown/list selection, not
     // free-typed — a plain effect here is safe, no keystroke-wipe risk.
@@ -183,17 +224,20 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
 
     const loadCampaigns = async (acctId) => {
         if (!acctId) return [];
+        const requestId = ++campaignsRequestRef.current;
         setLoading(true);
         try {
             const data = await getCampaigns(acctId);
             const list = Array.isArray(data) ? data : [];
+            if (requestId !== campaignsRequestRef.current) return [];
             setCampaigns(list);
             return list;
         } catch {
+            if (requestId !== campaignsRequestRef.current) return [];
             showError('Failed to load campaigns');
             return [];
         } finally {
-            setLoading(false);
+            if (requestId === campaignsRequestRef.current) setLoading(false);
         }
     };
 
@@ -232,12 +276,27 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
         }
     };
 
-    const loadPages = async (acctId) => {
-        if (!acctId || pages.length > 0) return;
+    const loadPages = async (acctId, force = false) => {
+        if (!acctId || (!force && pages.length > 0 && pagesAccountRef.current === acctId)) return;
+        const requestId = ++pagesRequestRef.current;
         try {
             const data = await getPages(acctId);
-            setPages(Array.isArray(data) ? data : []);
-        } catch { /* non-blocking */ }
+            const list = Array.isArray(data) ? data : [];
+            if (requestId !== pagesRequestRef.current) return;
+            const wasSameAccount = pagesAccountRef.current === acctId;
+            const savedPageId = safeLocalStorageGet(pageStorageKey(acctId));
+            setPages(list);
+            setPageId(previousPageId => {
+                const candidate = wasSameAccount ? previousPageId : savedPageId;
+                return list.some(page => page.id === candidate) ? candidate : '';
+            });
+            pagesAccountRef.current = acctId;
+        } catch {
+            if (requestId !== pagesRequestRef.current) return;
+            setPages([]);
+            setPageId('');
+            pagesAccountRef.current = acctId;
+        }
     };
 
     const validate = () => {
@@ -246,10 +305,13 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
         if (!selectedCampaignId) errors.campaign = 'Select a campaign';
         if (!pageId) errors.page = 'Select a Facebook page';
         if (!websiteUrl.trim()) errors.websiteUrl = 'Destination URL is required';
+        if (Object.values(itemCopy).some(copy => !KNOWN_CTA_VALUES.has(copy.cta))) {
+            errors.cta = 'Choose a supported CTA for every ad before pushing';
+        }
         if (adsetMode === 'existing' && !sharedAdsetId) errors.adset = 'Select an ad set';
         if (adsetMode === 'new') {
             if (!newAdset.name.trim()) errors.adsetName = 'Ad set name is required';
-            if (!newAdset.dailyBudget || isNaN(newAdset.dailyBudget) || Number(newAdset.dailyBudget) < 1) {
+            if (!isCBO && (!newAdset.dailyBudget || isNaN(newAdset.dailyBudget) || Number(newAdset.dailyBudget) < 1)) {
                 errors.dailyBudget = 'Daily budget must be at least $1';
             }
             if (!newAdset.cloneFromId && adSets.length > 0) {
@@ -268,13 +330,37 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
         setPushing(true);
         setIsDone(false);
 
+        // A Meta ad can be created even if its local GeneratedAd write-back
+        // times out. Persisted links survive a modal close/reload; resolve
+        // them first so a reopened modal never creates a duplicate ad.
+        let itemsToPush = [...retryableItems];
+        for (const item of retryableItems) {
+            const pendingLink = readPendingLinks().find(link => link.generatedAdId === item.generatedAdId);
+            if (!pendingLink) continue;
+            try {
+                const linkRes = await authFetch(`${GEN_ADS_API_BASE}/${item.generatedAdId}/fb-ad-id`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(pendingLink.payload),
+                });
+                if (!linkRes.ok) throw new Error(`link write-back HTTP ${linkRes.status}`);
+                clearPendingLink(item.generatedAdId);
+                setPushStatuses(prev => ({ ...prev, [item.key]: 'done' }));
+                itemsToPush = itemsToPush.filter(candidate => candidate.key !== item.key);
+            } catch (error) {
+                setPushStatuses(prev => ({ ...prev, [item.key]: 'error' }));
+                setPushErrors(prev => ({ ...prev, [item.key]: `Ad already exists; retry its tracking link: ${error.message}` }));
+                itemsToPush = itemsToPush.filter(candidate => candidate.key !== item.key);
+            }
+        }
+
         // Keep completed items intact on retry so a transient failure never
         // creates duplicate Meta ads. Only retry items that are not done.
         setPushStatuses(prev => ({
             ...prev,
-            ...Object.fromEntries(retryableItems.map(it => [it.key, 'pending'])),
+            ...Object.fromEntries(itemsToPush.map(it => [it.key, 'pending'])),
         }));
-        if (retryableItems.length === 0) {
+        if (itemsToPush.length === 0) {
             setPushing(false);
             setIsDone(true);
             return;
@@ -292,39 +378,52 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
             const campaignSpecialCats = selectedCampaign?.specialAdCategories || [];
             const payload = {
                 name: newAdset.name.trim(),
-                dailyBudget: Number(newAdset.dailyBudget),
+                ...(isCBO ? {} : { dailyBudget: Number(newAdset.dailyBudget) }),
                 targeting: source?.targeting || {},
                 optimizationGoal: source?.optimization_goal || 'LEAD_GENERATION',
                 billingEvent: source?.billing_event || 'IMPRESSIONS',
-                bidAmount: source?.bid_amount || null,
+                ...(isCBO ? {} : { bidAmount: source?.bid_amount || null }),
                 status: 'PAUSED',
                 specialAdCategories: campaignSpecialCats,
             };
             try {
-                targetAdsetId = await createFacebookAdSet(payload, selectedCampaignId, adAccountId, 'ABO');
-                setPushedAdsetId(targetAdsetId);
-                const mirrorId = localAdsetId || `batch_adset_${targetAdsetId}`;
-                setLocalAdsetId(mirrorId);
+                const pendingMirror = pendingAdsetMirror || (() => {
+                    const fbAdsetId = targetAdsetId || null;
+                    return {
+                        fbAdsetId,
+                        mirrorId: localAdsetId || (fbAdsetId ? `batch_adset_${fbAdsetId}` : null),
+                        payload,
+                    };
+                })();
+                if (!pendingMirror.fbAdsetId) {
+                    pendingMirror.fbAdsetId = await createFacebookAdSet(payload, selectedCampaignId, adAccountId, isCBO ? 'CBO' : 'ABO');
+                    pendingMirror.mirrorId = `batch_adset_${pendingMirror.fbAdsetId}`;
+                    setPendingAdsetMirror(pendingMirror);
+                }
+                targetAdsetId = pendingMirror.fbAdsetId;
+                setLocalAdsetId(pendingMirror.mirrorId);
                 const saveAdsetRes = await authFetch(`${FB_API_BASE}/adsets/save`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        id: mirrorId,
+                        id: pendingMirror.mirrorId,
                         campaignId: selectedCampaignId,
-                        name: newAdset.name.trim(),
+                        name: pendingMirror.payload.name,
                         fbAdsetId: targetAdsetId,
-                        optimizationGoal: payload.optimizationGoal,
-                        dailyBudget: payload.dailyBudget,
-                        bidAmount: payload.bidAmount,
-                        targeting: payload.targeting,
-                        status: payload.status,
+                        optimizationGoal: pendingMirror.payload.optimizationGoal,
+                        dailyBudget: pendingMirror.payload.dailyBudget,
+                        bidAmount: pendingMirror.payload.bidAmount,
+                        targeting: pendingMirror.payload.targeting,
+                        status: pendingMirror.payload.status,
                     }),
                 });
                 if (!saveAdsetRes.ok) {
                     const err = await saveAdsetRes.json().catch(() => ({}));
-                    throw new Error(`Meta created ad set ${targetAdsetId}, but local save failed: ${err.detail || saveAdsetRes.status}. Reconcile before retrying.`);
+                    throw new Error(`Meta created ad set ${targetAdsetId}, but its local mirror failed: ${err.detail || saveAdsetRes.status}. Retry to save the mirror; do not create another ad set.`);
                 }
-                targetAdsetName = newAdset.name.trim();
+                setPushedAdsetId(targetAdsetId);
+                setPendingAdsetMirror(null);
+                targetAdsetName = pendingMirror.payload.name;
             } catch (e) {
                 showError(`Failed to create ad set: ${e.message}`);
                 setPushing(false);
@@ -334,7 +433,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
 
         // Push each item sequentially so Meta doesn't rate-limit
         const adsetObj = adSets.find(a => a.id === targetAdsetId) || {};
-        for (const item of retryableItems) {
+        for (const item of itemsToPush) {
             setPushStatuses(prev => ({ ...prev, [item.key]: 'pushing' }));
             const copy = itemCopy[item.key];
             try {
@@ -344,6 +443,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                     {
                         mediaType: 'image',
                         imageUrl: item.imageUrl,
+                        secondaryImageUrl: item.secondaryImageUrl || null,
                         headlines: [copy.headline || item.headline],
                         bodies: [copy.body || item.body],
                         description: copy.description ?? item.description ?? '',
@@ -354,7 +454,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                     { id: `batch_${item.key}_${Date.now()}`, name: copy.headline || item.headline || 'Batch Ad' },
                     pageId,
                     adAccountId,
-                    'ABO'
+                    isCBO ? 'CBO' : 'ABO'
                 );
                 if (!pushedResults[item.key]) {
                     setPushedResults(prev => ({ ...prev, [item.key]: pushResult }));
@@ -375,7 +475,16 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                             }),
                         });
                         if (!linkRes.ok) throw new Error(`link write-back HTTP ${linkRes.status}`);
-                    } catch (linkErr) {
+                    } catch {
+                        rememberPendingLink({
+                            generatedAdId: item.generatedAdId,
+                            payload: {
+                                fb_ad_id: pushResult.adId,
+                                fb_adset_id: targetAdsetId,
+                                fb_campaign_id: selectedCampaignId,
+                                fb_creative_id: pushResult.creativeId || null,
+                            },
+                        });
                         // The Meta ad is cached above, so retrying this item will
                         // only retry the bookkeeping link and cannot duplicate the ad.
                         throw new Error(`Ad was pushed, but its tracking link failed for "${copy.headline || item.headline || item.key}". Retry the failed item before closing.`);
@@ -387,13 +496,22 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                 }
                 setPushStatuses(prev => ({ ...prev, [item.key]: 'done' }));
             } catch (e) {
+                if (e.metaMutationStarted) {
+                    setPushStatuses(prev => ({ ...prev, [item.key]: 'reconcile' }));
+                    setPushErrors(prev => ({
+                        ...prev,
+                        [item.key]: `${e.message}. Meta may have created this ad. Verify it in Ads Manager before retrying.`,
+                    }));
+                    break;
+                }
                 setPushStatuses(prev => ({ ...prev, [item.key]: 'error' }));
                 setPushErrors(prev => ({ ...prev, [item.key]: e.message }));
             }
         }
 
         // Persist for next time
-        if (pageId) safeLocalStorageSet('lastUsedPageId', pageId);
+        const pageKey = pageStorageKey(adAccountId);
+        if (pageId && pageKey) safeLocalStorageSet(pageKey, pageId);
         if (adAccountId) safeLocalStorageSet('fb_ad_account_id', adAccountId);
         if (websiteUrl) safeLocalStorageSet('lastUsedWebsiteUrl', websiteUrl);
         if (selectedCampaignId) sessionStorage.setItem('lastUsedCampaignId', selectedCampaignId);
@@ -514,12 +632,18 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                             disabled={pushing}
                             onChange={e => {
                                 setAdAccountId(e.target.value);
+                                campaignsRequestRef.current += 1;
+                                pagesRequestRef.current += 1;
                                 setFieldErrors(p => ({ ...p, adAccountId: undefined }));
                                 setCampaigns([]);
                                 setAdSets([]);
                                 setSelectedCampaignId('');
                             }}
-                            onBlur={() => { resetEnhancementsIfAccountChanged(); loadCampaigns(adAccountId); loadPages(adAccountId); }}
+                            onBlur={() => {
+                                const accountChanged = resetEnhancementsIfAccountChanged();
+                                loadCampaigns(adAccountId);
+                                loadPages(adAccountId, accountChanged);
+                            }}
                             className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 disabled:bg-gray-50 ${
                                 fieldErrors.adAccountId ? 'border-red-400 focus:ring-red-500' : 'border-gray-300 focus:ring-green-500'
                             }`}
@@ -650,7 +774,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                     {isCBO && (
                                         <div className="flex items-start gap-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
                                             <span className="mt-0.5 shrink-0">⚠️</span>
-                                            <span>CBO campaign — budget is managed at campaign level. Daily budget below may be ignored by Meta.</span>
+                                            <span>CBO campaign — budget is managed at campaign level. This new ad set will not send an ad-set budget or bid strategy.</span>
                                         </div>
                                     )}
                                     <div>
@@ -672,7 +796,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                             <p className="text-xs text-red-600 mt-1">{fieldErrors.adsetName}</p>
                                         )}
                                     </div>
-                                    <div>
+                                    {!isCBO && <div>
                                         <label className="block text-xs font-medium text-gray-600 mb-1">Daily Budget (USD) *</label>
                                         <div className="relative">
                                             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
@@ -692,7 +816,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                         {fieldErrors.dailyBudget && (
                                             <p className="text-xs text-red-600 mt-1">{fieldErrors.dailyBudget}</p>
                                         )}
-                                    </div>
+                                    </div>}
                                     <div>
                                         <label className="block text-xs font-medium text-gray-600 mb-1">Clone targeting from *</label>
                                         <select
@@ -732,6 +856,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                     disabled={pushing}
                                     onChange={e => {
                                         setPageId(e.target.value);
+                                        pagesAccountRef.current = adAccountId;
                                         setFieldErrors(p => ({ ...p, page: undefined }));
                                     }}
                                     className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 disabled:bg-gray-50 ${
@@ -748,6 +873,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                     disabled={pushing}
                                     onChange={e => {
                                         setPageId(e.target.value);
+                                        pagesAccountRef.current = adAccountId;
                                         setFieldErrors(p => ({ ...p, page: undefined }));
                                     }}
                                     className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 disabled:bg-gray-50 ${
@@ -797,6 +923,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                             }}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 disabled:bg-gray-50"
                         >
+                            <option value="">Choose a CTA...</option>
                             {CTA_OPTIONS.map(([val, label]) => (
                                 <option key={val} value={val}>{label}</option>
                             ))}

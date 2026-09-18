@@ -12,7 +12,7 @@ except ImportError:
     FacebookBadObjectError = Exception  # fallback so catch still works
 
 logger = logging.getLogger(__name__)
-from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, User, Brand, GeneratedAd, normalize_account_id
+from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, User, Brand, GeneratedAd, MetaLaunchRequest, normalize_account_id
 from app.database import get_db
 from app.core.deps import get_current_active_user, require_permission
 from sqlalchemy.orm import Session
@@ -283,11 +283,14 @@ def get_rate_limit_usage(
 
 @router.get("/pages")
 def read_pages(
+    ad_account_id: Optional[str] = None,
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(get_current_active_user)
 ):
+    _assert_account_allowed(current_user, ad_account_id)
+    ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     try:
-        pages = service.get_pages()
+        pages = service.get_pages(ad_account_id)
         # Strip page access_token — sensitive credential, never send it to the browser.
         return [{k: v for k, v in p.items() if k != 'access_token'} for p in pages]
     except Exception as e:
@@ -654,6 +657,24 @@ def read_adsets(
         return [dict(a) for a in adsets]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/adsets/{fb_adset_id}/pages")
+def read_adset_pages(
+    fb_adset_id: str,
+    service: FacebookService = Depends(get_facebook_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return Pages while resolving the account from the selected ad set."""
+    _assert_adset_allowed(current_user, fb_adset_id, db, service)
+    ad_account_id = _resolve_account_for_adset(fb_adset_id, db, service)
+    if not ad_account_id:
+        raise HTTPException(status_code=400, detail="Can't resolve this ad set's account. Re-sync and retry.")
+    try:
+        return [{k: v for k, v in page.items() if k != 'access_token'} for page in service.get_pages(ad_account_id)]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 @router.post("/adsets")
 def create_adset(
@@ -1317,12 +1338,35 @@ def push_to_meta(
     image_url     = body.get("image_url", "")
     ad_name       = body.get("ad_name") or headline[:40] or "Remix Ad"
     status        = body.get("status", "PAUSED")
+    request_id    = (body.get("request_id") or "").strip()
 
     if not adset_id:
         raise HTTPException(status_code=400, detail="adset_id is required")
+    if not request_id:
+        raise HTTPException(status_code=400, detail="request_id is required")
+    prior = db.query(MetaLaunchRequest).filter(MetaLaunchRequest.id == request_id).first()
+    if prior:
+        if prior.status == "completed":
+            return {
+                "success": True, "replayed": True, "ad_id": prior.fb_ad_id,
+                "creative_id": prior.fb_creative_id, "generated_ad_id": prior.generated_ad_id,
+                "attribution_linked": prior.generated_ad_id is not None,
+            }
+        if prior.status == "started":
+            raise HTTPException(status_code=409, detail="This push may already have reached Meta. Reconcile it in Ads Manager before trying a new request.")
+        # A prior request died before creating the Meta Ad. Removing it is
+        # safe: a retry may create a duplicate image/creative, never spend.
+        db.delete(prior)
+        db.commit()
     # Highest-consequence endpoint (creates a live ad) — enforce that a scoped
     # user can only push into an ad set within their assigned accounts.
     _assert_adset_allowed(current_user, adset_id, db, service)
+    # The ad set is the authoritative scope for this one-click flow.  Never
+    # use the server's default account just because the browser omitted it:
+    # that can upload/create against a different account than the selected ad set.
+    ad_account_id = _resolve_account_for_adset(adset_id, db, service)
+    if not ad_account_id:
+        raise HTTPException(status_code=400, detail="Can't resolve the selected ad set's ad account. Re-sync and retry.")
     if not page_id:
         raise HTTPException(status_code=400, detail="page_id is required")
     if not image_url:
@@ -1335,9 +1379,15 @@ def push_to_meta(
     if not lead_form_id and (not website_url or not website_url.startswith("http")):
         raise HTTPException(status_code=400, detail="website_url is required for non-lead-gen campaigns")
 
+    # Create a durable request record before work begins.  It remains safely
+    # retryable while preparing; it becomes a reconciliation guard immediately
+    # before the final ad-create write.
+    db.add(MetaLaunchRequest(id=request_id, status="preparing"))
+    db.commit()
+
     try:
         # Step 1: Upload image → get image hash
-        image_hash = service.upload_image(image_url)
+        image_hash = service.upload_image(image_url, ad_account_id)
 
         # Step 2: Create ad creative (lead gen or standard link-click)
         creative_payload = {
@@ -1353,8 +1403,15 @@ def push_to_meta(
         else:
             creative_payload["website_url"] = website_url
 
-        creative = service.create_creative(creative_payload)
+        creative = service.create_creative(creative_payload, ad_account_id)
         creative_id = creative.get_id_assured()
+
+        # From this point forward an ad-create response can be ambiguous.
+        # Persist the guard immediately before that final spend-bearing write.
+        launch = db.query(MetaLaunchRequest).filter(MetaLaunchRequest.id == request_id).first()
+        launch.status = "started"
+        launch.fb_creative_id = creative_id
+        db.commit()
 
         # Step 3: Create ad (PAUSED by default — Joel activates in Meta after review).
         # RedTrack macros are already set on the creative's url_tags (Step 2).
@@ -1363,10 +1420,10 @@ def push_to_meta(
             "creative_id": creative_id,
             "name": ad_name,
             "status": status,
-        })
+        }, ad_account_id)
 
         ad_id = ad.get_id_assured()
-        account_id_clean = service.ad_account_id.replace('act_', '') if service.ad_account_id else ''
+        account_id_clean = ad_account_id.replace('act_', '')
 
         # Persist + link a GeneratedAd so this remix creative can be attributed to revenue.
         # fb_ad_id is the primary RedTrack sub1 join key. Never let a bookkeeping failure
@@ -1387,7 +1444,7 @@ def push_to_meta(
                 source_ad_id=body.get("source_ad_id") or None,
                 fb_ad_id=ad_id,
                 fb_adset_id=adset_id,
-                fb_campaign_id=body.get("campaign_id") or None,
+                fb_campaign_id=(AdSet(adset_id, api=service.api).api_get(fields=['campaign_id']).get('campaign_id') or body.get("campaign_id") or None),
                 fb_creative_id=creative_id,
             )
             db.add(ga)
@@ -1396,6 +1453,13 @@ def push_to_meta(
         except Exception as link_err:
             db.rollback()
             logging.warning("push-to-meta: ad %s created on Meta but GeneratedAd link failed: %s", ad_id, link_err)
+
+        launch = db.query(MetaLaunchRequest).filter(MetaLaunchRequest.id == request_id).first()
+        launch.status = "completed"
+        launch.fb_ad_id = ad_id
+        launch.fb_creative_id = creative_id
+        launch.generated_ad_id = generated_ad_id
+        db.commit()
 
         return {
             "success": True,

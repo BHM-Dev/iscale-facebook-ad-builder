@@ -156,7 +156,8 @@ export async function getPixels(adAccountId) {
  */
 export async function getPages(adAccountId) {
     try {
-        const response = await authFetch(`${API_BASE_URL}/pages`);
+        if (!adAccountId) throw new Error('An ad account is required to load promotable Pages');
+        const response = await authFetch(`${API_BASE_URL}/pages?ad_account_id=${encodeURIComponent(adAccountId)}`);
         if (!response.ok) {
             const error = await response.json();
             throw new Error(error.detail || 'Failed to fetch pages');

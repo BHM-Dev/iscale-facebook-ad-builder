@@ -109,28 +109,30 @@ export default function GeneratedAds() {
 
     // Build BatchPushModal items from currently selected bundles
     const buildBulkPushItems = () => {
-        const seen = new Set();
-        return ads
-            .filter(ad => selectedBundles.has(ad.ad_bundle_id || `legacy_${ad.id}`) && ad.image_url)
-            .reduce((acc, ad) => {
-                const bundleId = ad.ad_bundle_id || `legacy_${ad.id}`;
-                if (!seen.has(bundleId)) {
-                    seen.add(bundleId);
-                    acc.push({
-                        key: `lib_${ad.id}`,
-                        imageUrl: ad.image_url,
-                        generatedAdId: ad.id, // local DB id — written back after push to link fb_ad_id
-                        headline: ad.headline || '',
-                        body: ad.body || '',
-                        description: ad.description ?? '',
-                        cta: ad.cta || 'LEARN_MORE',
-                        variantName: ad.headline ? ad.headline.slice(0, 30) : `Ad ${ad.id}`,
-                        sizeLabel: ad.size_name || '—',
-                        niche: ad.niche || ad.overlay_niche_line || '',
-                    });
-                }
-                return acc;
-            }, []);
+        const selected = ads.filter(ad => selectedBundles.has(ad.ad_bundle_id || `legacy_${ad.id}`) && ad.image_url);
+        const bundles = new Map();
+        selected.forEach(ad => {
+            const key = ad.ad_bundle_id || `legacy_${ad.id}`;
+            bundles.set(key, [...(bundles.get(key) || []), ad]);
+        });
+        return [...bundles.values()].map(bundle => {
+            const isStory = ad => /9:16|story/i.test(`${ad.dimensions || ''} ${ad.size_name || ''}`);
+            const primary = bundle.find(ad => !isStory(ad)) || bundle[0];
+            const story = bundle.find(ad => ad.id !== primary.id && isStory(ad));
+            return {
+                key: `lib_${primary.id}`,
+                imageUrl: primary.image_url,
+                // A verified 1:1 + 9:16 pair becomes one asset-customized
+                // creative; it does not split budget into two all-placement ads.
+                secondaryImageUrl: story?.image_url || null,
+                generatedAdId: primary.id,
+                headline: primary.headline || '', body: primary.body || '',
+                description: primary.description ?? '', cta: primary.cta || 'LEARN_MORE',
+                variantName: primary.headline ? primary.headline.slice(0, 30) : `Ad ${primary.id}`,
+                sizeLabel: story ? `${primary.size_name || 'Feed'} + ${story.size_name || 'Stories'}` : (primary.size_name || '—'),
+                niche: primary.niche || primary.overlay_niche_line || '',
+            };
+        });
     };
 
     // Extract the dominant niche from bulk push items (first non-empty value)

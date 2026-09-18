@@ -120,6 +120,10 @@ export const CampaignProvider = ({ children }) => {
         cta: 'LEARN_MORE',
         websiteUrl: '',
         pageId: '',
+        // A Page belongs to an ad account. Keeping the owner alongside the ID
+        // prevents a Page picked for one brand/account from being reused after
+        // the buyer switches accounts and returns to the Creative step.
+        pageAccountId: null,
         instagramId: null
     });
 

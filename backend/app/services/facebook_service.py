@@ -487,22 +487,29 @@ class FacebookService:
         return [dict(pixel) for pixel in pixels]
 
     def get_pages(self, ad_account_id=None):
-        """Fetch all Facebook Pages accessible to the user."""
+        """Fetch Pages that Meta allows the specified ad account to promote.
+
+        ``/me/accounts`` answers a different question: Pages visible to the
+        token.  A Page can be visible there but not be an identity that the
+        selected ad account is allowed to use.  Returning that broader list
+        made it possible to launch an otherwise-valid creative under the
+        wrong brand after switching accounts.
+        """
+        account = self._get_account(ad_account_id)
         from facebook_business.adobjects.page import Page
-        from facebook_business.adobjects.user import User
-        
-        # Fetch pages for the current user (not ad account specific)
-        me = User(fbid='me', api=self.api)
-        
-        fields = [
-            Page.Field.id,
-            Page.Field.name,
-            Page.Field.access_token,
-            Page.Field.category,
-        ]
-        
-        pages = me.get_accounts(fields=fields)
-        result = [dict(page) for page in pages]
+        from facebook_business.api import FacebookRequest
+        from facebook_business.objectparser import ObjectParser
+        from facebook_business.typechecker import TypeChecker
+        # `promote_pages` is documented by Meta but not generated as a helper
+        # in every supported SDK release. Use the SDK's generic request class
+        # so the account-scoped edge works across the allowed version range.
+        request = FacebookRequest(
+            node_id=account.get_id_assured(), method='GET', endpoint='/promote_pages', api=self.api,
+            param_checker=TypeChecker({}, {}), target_class=Page,
+            api_type='EDGE', response_parser=ObjectParser(target_class=Page, api=self.api),
+        )
+        request.add_fields([Page.Field.id, Page.Field.name, Page.Field.category])
+        result = [dict(page) for page in request.execute()]
         if result:
             return result
 
@@ -513,7 +520,6 @@ class FacebookService:
         # Without this the Push modal's page dropdown is empty and users type
         # the page's public-profile ID, which Meta rejects (error 1443121).
         try:
-            account = self._get_account(ad_account_id)
             page_ids = []
             scanned = 0
             for ad in account.get_ads(fields=['creative{object_story_spec}'], params={'limit': 100}):
@@ -535,6 +541,20 @@ class FacebookService:
         except Exception as e:
             print(f"⚠️  get_pages fallback (derive from creatives) failed: {e}")
             return []
+
+    def is_page_promotable(self, page_id, ad_account_id=None):
+        """Check Page visibility to the token before Meta validates the account pairing."""
+        return any(str(page.get('id')) == str(page_id) for page in self.get_user_pages_with_access_tokens())
+
+    def get_user_pages_with_access_tokens(self):
+        """Fetch the user-managed Page tokens required only for lead forms."""
+        from facebook_business.adobjects.page import Page
+        from facebook_business.adobjects.user import User
+        me = User(fbid='me', api=self.api)
+        return [dict(page) for page in me.get_accounts(fields=[
+            Page.Field.id,
+            Page.Field.access_token,
+        ])]
 
     def get_adsets(self, ad_account_id=None, campaign_id=None):
         """Fetch all ad sets and enrich each with parent campaign objective + name.
@@ -746,7 +766,7 @@ class FacebookService:
             ) from e
 
         # Get the page access token — leadgen_forms requires a page-scoped token
-        pages = self.get_pages()
+        pages = self.get_user_pages_with_access_tokens()
         page_data = next((p for p in pages if p.get('id') == page_id), None)
         page_token = page_data.get('access_token') if page_data else None
 
@@ -931,7 +951,7 @@ class FacebookService:
         bid_amount = adset_data.get('bid_amount') or adset_data.get('bidAmount')
         bid_strategy = adset_data.get('bid_strategy') or adset_data.get('bidStrategy')
 
-        if bid_amount:
+        if bid_amount and budget_type != 'CBO':
             params[AdSet.Field.bid_amount] = int(float(bid_amount) * 100)
             if bid_strategy:
                 params[AdSet.Field.bid_strategy] = bid_strategy
@@ -1281,6 +1301,11 @@ class FacebookService:
             raise ValueError('page_id is required to create an ad creative')
         if not image_hash and not video_id:
             raise ValueError('Either image_hash or video_id is required')
+        # The supported /me/accounts lookup cannot prove an account/Page
+        # pairing.  The creative write below is made against this exact ad
+        # account, and Meta is the authoritative validator for that pairing.
+        # Do not reject a Page derived from this account's existing creatives
+        # merely because a restricted token cannot enumerate /me/accounts.
 
         primary_text = creative_data.get('primary_text') or creative_data.get('message') or ''
         headline = creative_data.get('headline') or creative_data.get('name') or 'Ad'

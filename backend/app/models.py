@@ -444,6 +444,19 @@ class GeneratedAd(Base):
     brand = relationship("Brand", back_populates="generated_ads")
     template = relationship("WinningAd", back_populates="generated_ads")
 
+
+class MetaLaunchRequest(Base):
+    """Durable idempotency/reconciliation record for direct Meta pushes."""
+    __tablename__ = "meta_launch_requests"
+
+    id = Column(String, primary_key=True)
+    status = Column(String, nullable=False, default="started")
+    fb_ad_id = Column(String, nullable=True)
+    fb_creative_id = Column(String, nullable=True)
+    generated_ad_id = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
 class Vertical(Base):
     __tablename__ = "verticals"
 

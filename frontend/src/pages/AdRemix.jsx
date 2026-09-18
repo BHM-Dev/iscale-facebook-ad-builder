@@ -118,7 +118,8 @@ export default function AdRemix() {
     const fileInputRef = useRef(null);
     // Push to Meta modal state
     const [pushModal, setPushModal] = useState(null);    // null | concept object
-    const [pushForm, setPushForm] = useState({ adset_id: '', page_id: '', website_url: '', lead_form_id: '', image_url: '', status: 'PAUSED' });
+    const [pushForm, setPushForm] = useState({ adset_id: '', page_id: '', website_url: '', lead_form_id: '', image_url: '', status: 'PAUSED', request_id: '' });
+    const pageRequestRef = useRef(0);
     const [pushLoading, setPushLoading] = useState(false);
     const [pushResult, setPushResult] = useState(null);
     const [adSets, setAdSets] = useState([]);
@@ -500,7 +501,7 @@ export default function AdRemix() {
     const resetPushModal = () => {
         setPushModal(null);
         setPushResult(null);
-        setPushForm({ adset_id: '', page_id: '', website_url: '', lead_form_id: '', image_url: '', status: 'PAUSED' });
+        setPushForm({ adset_id: '', page_id: '', website_url: '', lead_form_id: '', image_url: '', status: 'PAUSED', request_id: '' });
         setAdSets([]);
         setPages([]);
         setLeadForms([]);
@@ -535,37 +536,42 @@ export default function AdRemix() {
             // Winning/template images can prefill; reference images must generate or paste an owned image.
             image_url: isReferenceTemplate ? '' : (wizardData.template?.image_url || ''),
             status: savedForm.status || 'PAUSED',
+            // Stable for this open/retry cycle; a lost response replays the
+            // completed launch instead of creating a duplicate ad.
+            request_id: crypto.randomUUID(),
         });
         setAdSets([]);
         setPages([]);
         setAdSetsLoading(true);
         try {
-            const [adSetsRes, pagesRes] = await Promise.all([
-                authFetch(`${API_URL}/facebook/adsets`),
-                authFetch(`${API_URL}/facebook/pages`),
-            ]);
+            const adSetsRes = await authFetch(`${API_URL}/facebook/adsets`);
             // Surface HTTP errors explicitly — don't swallow them
             if (!adSetsRes.ok) {
                 const err = await adSetsRes.json().catch(() => ({}));
                 throw new Error(`Ad sets failed (${adSetsRes.status}): ${err.detail || adSetsRes.statusText}`);
             }
-            if (!pagesRes.ok) {
-                const err = await pagesRes.json().catch(() => ({}));
-                throw new Error(`Pages failed (${pagesRes.status}): ${err.detail || pagesRes.statusText}`);
-            }
             const adSetsData = await adSetsRes.json();
             const loadedAdSets = Array.isArray(adSetsData) ? adSetsData : (adSetsData.adsets || []);
             setAdSets(loadedAdSets);
-            const pagesData = await pagesRes.json();
-            setPages(Array.isArray(pagesData) ? pagesData : []);
 
             // Auto-select the source adset when coming from Campaign Performance "Remix" flow.
             // If the user already made a selection this session, keep it.
-            if (!savedForm.adset_id && remixFbAdsetId && loadedAdSets.length > 0) {
+            let activeAdsetId = savedForm.adset_id || '';
+            if (!activeAdsetId && remixFbAdsetId && loadedAdSets.length > 0) {
                 const byFbId = loadedAdSets.find(a => a.id === remixFbAdsetId || a.fb_adset_id === remixFbAdsetId);
                 if (byFbId) {
                     setPushForm(f => ({ ...f, adset_id: byFbId.id }));
+                    activeAdsetId = byFbId.id;
                 }
+            }
+
+            if (activeAdsetId) {
+                const pagesRes = await authFetch(`${API_URL}/facebook/adsets/${encodeURIComponent(activeAdsetId)}/pages`);
+                if (!pagesRes.ok) throw new Error('Pages failed for the selected ad set');
+                const pagesData = await pagesRes.json();
+                const scopedPages = Array.isArray(pagesData) ? pagesData : [];
+                setPages(scopedPages);
+                setPushForm(f => ({ ...f, page_id: scopedPages.some(p => p.id === f.page_id) ? f.page_id : '', lead_form_id: '' }));
             }
 
             // If the restored adset is a lead gen campaign and we have a page, fetch lead forms
@@ -664,6 +670,7 @@ export default function AdRemix() {
                     niche: pendingNiche || null,
                     source_ad_id: remixSourceAdId || null,
                     campaign_id: remixFbCampaignId || null,
+                    request_id: pushForm.request_id,
                 }),
             });
             if (!res.ok) {
@@ -1375,6 +1382,19 @@ export default function AdRemix() {
                                                 const newAdset = adSets.find(a => a.id === newId);
                                                 const newIsLeadGen = newAdset?.campaign?.objective === 'OUTCOME_LEADS';
                                                 setPushForm(f => ({ ...f, adset_id: newId, lead_form_id: '', website_url: f.website_url || '' }));
+                                                setPages([]);
+                                                const requestId = ++pageRequestRef.current;
+                                                authFetch(`${API_URL}/facebook/adsets/${encodeURIComponent(newId)}/pages`)
+                                                    .then(res => res.ok ? res.json() : Promise.reject(new Error('Pages failed for selected ad set')))
+                                                    .then(scopedPages => {
+                                                        if (requestId !== pageRequestRef.current) return;
+                                                        const list = Array.isArray(scopedPages) ? scopedPages : [];
+                                                        setPages(list);
+                                                        setPushForm(f => ({ ...f, page_id: list.some(p => p.id === f.page_id) ? f.page_id : '', lead_form_id: '' }));
+                                                    })
+                                                    .catch(error => {
+                                                        if (requestId === pageRequestRef.current) setAdSetsError(error.message);
+                                                    });
                                                 if (newIsLeadGen && pushForm.page_id) fetchLeadForms(pushForm.page_id);
                                                 if (!newIsLeadGen) setLeadForms([]);
                                             }}
