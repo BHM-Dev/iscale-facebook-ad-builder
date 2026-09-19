@@ -690,9 +690,13 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const isDriveManifest = creativeData.creatives?.some(creative => creative.source === 'drive');
     const protectedReconciliationIdSet = new Set(reconciliationProtectedIds);
     const protectedReconciliationNumberSet = new Set(reconciliationProtectedAdNumbers.map(String));
+    // The persisted record falls back to ad.name when adNumber is missing
+    // (see readyAdNumbers: ad.adNumber || ad.name at persist time) — match
+    // that fallback here too, or an ad without an adNumber would be recorded
+    // as protected but never actually excluded from relaunch.
     const activeAds = adsData.filter(ad => !manifestExcludedAdIds.has(ad.id)
         && !protectedReconciliationIdSet.has(ad.id)
-        && !protectedReconciliationNumberSet.has(String(ad.adNumber)));
+        && !protectedReconciliationNumberSet.has(String(ad.adNumber || ad.name)));
     const excludedAdIds = new Set([...manifestExcludedAdIds, ...reconciliationProtectedIds]);
     const drawerExistingTargetStatus = adsetData.isExisting
         ? allStoriesFormat
@@ -2484,9 +2488,17 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         // nothing concrete to cross-reference against Ads Manager, so the
                         // confirm step risks becoming a reflexive click-through instead of
                         // an actual check (joel-perspective review).
-                        const protectedNames = [...protectedIdSet]
+                        // adsData holds this session's live rows, which are empty/regenerated
+                        // after a refresh — exactly the case where the "could not confirm"
+                        // warning above fires. Fall back to the persisted record's own
+                        // AD numbers so the list below isn't silently empty right when the
+                        // warning tells Joel to check it.
+                        const liveProtectedNames = [...protectedIdSet]
                             .map(id => adsData.find(ad => ad.id === id)?.name)
                             .filter(Boolean);
+                        const protectedNames = liveProtectedNames.length > 0
+                            ? liveProtectedNames
+                            : (reconciliationResolvedRecord?.readyAdNumbers || []).map(num => `AD ${num}`);
                         return (
                         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="reconciliation-confirm-title">
                             <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
