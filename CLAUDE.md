@@ -661,7 +661,7 @@ Confirmed by Steve as noticeably faster after the fix.
 - [x] Template-first Quick Generate — shipped. "Quick Generate" (`Zap` icon) on Campaign Performance ad rows and Dashboard Top Performers, both resolving a real winning `ad_id` and landing in BatchGenerate fully pre-filled + auto-generating. CLAUDE.md was stale; code confirmed live 2026-07-31.
 - [ ] Slack Campaign Intelligence Bot — spec at `SLACK_INTELLIGENCE_SPEC.md`
 - [ ] Auto-pause scaling rules (increase budget when CPL drops below threshold)
-- [ ] Ad-level pausing (pause individual ads, not just ad sets)
+- [ ] **Ad-level pausing** — code shipped and live on `develop`/production (`60b728f`, `9601f59`, `01be50c` — schema, `_run_check` ad-scope branch, `update_ad_status` pause path, action-validation guard, rules-list UI). Pre-push review already ran (see `9601f59`/`01be50c` commit messages). **Not marked done** — the one remaining acceptance check (create a real ad-level rule against a low-spend test ad, force a breach, confirm via SSH+docker that the specific ad flips to PAUSED and siblings don't) hasn't been run live yet. Keep this item open until that live test happens.
 - [ ] Rule audit log (persistent trigger history with metric values)
 - [ ] Time-window restrictions on auto-pause rules
 - [ ] CI `alembic-round-trip` test fix — pre-existing failure
