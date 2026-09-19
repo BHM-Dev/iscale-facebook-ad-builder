@@ -9,14 +9,15 @@ export const CREATIVE_ENHANCEMENT_OPTIONS = [
     { key: 'image_touchups', label: 'Image Touchups', description: 'Allow Meta to apply eligible image touchups.' },
     { key: 'image_uncrop', label: 'Image Uncrop', description: 'Allow Meta to expand an image for placement fit.' },
     { key: 'site_extensions', label: 'Site Extensions', description: 'Allow eligible site extension treatments.' },
-    { key: 'standard_enhancements', label: 'Standard Enhancements', description: 'Opt into Meta’s standard enhancement bundle.' },
     { key: 'text_generation', label: 'Text Generation', description: 'Allow Meta to generate eligible text variations.' },
     { key: 'text_optimizations', label: 'Text Optimizations', description: 'Allow Meta to optimize eligible text variations.' },
 ];
 
 export default function CreativeEnhancementsPanel({ value = {}, onChange, className = '' }) {
     const [isOpen, setIsOpen] = useState(false);
-    const enabledCount = Object.values(value).filter(Boolean).length;
+    // Count only options that this current panel can actually render. This keeps
+    // an older tab's removed/deprecated key from showing a misleading badge.
+    const enabledCount = CREATIVE_ENHANCEMENT_OPTIONS.filter(option => value[option.key] === true).length;
     const toggle = (key) => onChange({ ...value, [key]: !value[key] });
 
     return (

@@ -1503,7 +1503,6 @@ class FacebookService:
             'image_touchups',
             'image_uncrop',
             'site_extensions',
-            'standard_enhancements',
             'text_generation',
             'text_optimizations',
         }
