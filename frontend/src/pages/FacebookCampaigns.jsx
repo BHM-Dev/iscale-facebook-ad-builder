@@ -55,8 +55,10 @@ const SummaryRow = ({ label, value }) => (
     </div>
 );
 
-const LaunchSummaryPanel = ({ currentStep, selectedAdAccount, campaignData, adsetData, creativeData, launchSummary }) => {
-    const creativeSource = creativeData?.creatives?.length
+const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaignData, adsetData, creativeData, launchSummary }) => {
+    const creativeSource = batchMode === 'match-import'
+        ? 'Naming Convention Import'
+        : creativeData?.creatives?.length
         ? (creativeData.creatives.some(c => c.source === 'drive') ? 'Drive Creative Library' : 'Upload / Generated Ads')
         : null;
 
@@ -134,7 +136,25 @@ const FacebookCampaignWizardInner = () => {
     // the intended target — so Joel never has to search for or click any of them,
     // he just watches it land on Creative.
     const { showWarning } = useToast();
-    const { selectedAdAccount, campaignData, adsetData, creativeData, launchSummary } = useCampaign();
+    const { selectedAdAccount, campaignData, adsetData, creativeData, launchSummary, setLaunchSummary } = useCampaign();
+
+    // Switching between standard combinations and naming-convention import is a
+    // different build path. Clear the previous path's counts before the new
+    // step mounts and recalculates them, so the summary rail never displays
+    // stale totals during the transition.
+    const handleBatchModeChange = (nextMode) => {
+        setLaunchSummary(prev => ({
+            ...prev,
+            creativeCount: null,
+            headlineCount: null,
+            bodyCount: null,
+            totalAds: null,
+            warningCount: null,
+            readyCount: null,
+            excludedCount: null,
+        }));
+        setBatchMode(nextMode);
+    };
     const [quickAdTarget, setQuickAdTarget] = useState(null);
     // Persists past quickAdTarget being cleared — this is what actually answers
     // pre-push review's P0 (joel-perspective): "which account/campaign/ad set did
@@ -596,7 +616,7 @@ const FacebookCampaignWizardInner = () => {
                     )}
                     {currentStep === 4 && (
                         <div>
-                            <BatchModeToggle batchMode={batchMode} setBatchMode={setBatchMode} />
+                            <BatchModeToggle batchMode={batchMode} setBatchMode={handleBatchModeChange} />
                             <AdCreativeStep
                                 adAccountId={formData.adAccountId}
                                 selectedCreative={formData.creativeId}
@@ -644,6 +664,7 @@ const FacebookCampaignWizardInner = () => {
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 lg:sticky lg:top-4">
                     <LaunchSummaryPanel
                         currentStep={currentStep}
+                        batchMode={batchMode}
                         selectedAdAccount={selectedAdAccount}
                         campaignData={campaignData}
                         adsetData={adsetData}

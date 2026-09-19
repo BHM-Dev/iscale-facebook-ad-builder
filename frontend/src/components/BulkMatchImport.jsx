@@ -119,7 +119,7 @@ function toAbsoluteUploadUrl(url) {
 const BulkMatchImport = ({ onNext, onBack }) => {
     const { showWarning, showError } = useToast();
     const { authFetch } = useAuth();
-    const { campaignData, adsetData, creativeData, selectedAdAccount } = useCampaign();
+    const { campaignData, adsetData, creativeData, selectedAdAccount, setLaunchSummary } = useCampaign();
 
     const [csvRows, setCsvRows] = useState([]); // [{ adNumber, headline, primaryText, cta }]
     const [csvError, setCsvError] = useState('');
@@ -394,6 +394,30 @@ const BulkMatchImport = ({ onNext, onBack }) => {
     const invalidCtaRows = matchedRows.filter((r) => r.status === 'invalid_cta');
     const missingCtaRows = matchedRows.filter((r) => r.status === 'missing_cta');
     const overLimitRows = matchedRows.filter((r) => r.status === 'over_limit');
+
+    // Match Import owns a different set of counts from standard combinations:
+    // image/copy readiness comes from the CSV + filename join, not the shared
+    // creative arrays used by AdCreativeStep. Publish those counts to the
+    // persistent rail so it cannot retain standard-mode values after switching
+    // modes or navigating Back/Next.
+    useEffect(() => {
+        // Combos mode uses "Warnings" for ads that still launch with a caveat,
+        // and "Excluded" for ads that won't be submitted. Non-ready rows here
+        // never reach handleSubmit (only readyRows do), so by that same
+        // vocabulary they're excluded, not warned — labeling them as warnings
+        // would read to Joel as "still launches" when it won't.
+        const excludedCount = matchedRows.filter(row => row.status !== 'ready').length;
+        setLaunchSummary(prev => ({
+            ...prev,
+            creativeCount: Object.keys(imageGroups).length,
+            headlineCount: matchedRows.filter(row => row.headline.trim()).length,
+            bodyCount: matchedRows.filter(row => row.primaryText.trim()).length,
+            totalAds: readyRows.length,
+            warningCount: 0,
+            readyCount: readyRows.length,
+            excludedCount,
+        }));
+    }, [imageGroups, matchedRows, readyRows.length, setLaunchSummary]);
 
     const handleSubmit = async () => {
         try {

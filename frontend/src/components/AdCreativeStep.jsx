@@ -279,6 +279,21 @@ const countVariations = (creativeData) => {
     const headlines = (creativeData?.headlines || []).filter(h => h && h.trim() !== '').length;
     const bodies = (creativeData?.bodies || []).filter(b => b && b.trim() !== '').length;
     const hasPerCreativeCopy = (creativeData?.creatives || []).some(c => c.source === 'drive' || c.headline || c.body);
+    // The Launch Plan rail needs counts that describe the copy actually
+    // assigned to each ad, not only the shared fallback fields. In standard
+    // mode a row can be Ready with per-ad headline/body overrides while the
+    // shared arrays remain empty; reporting those arrays alone made the rail
+    // say "Headlines 0 / Bodies 0" beside a Ready ad.
+    const assignedHeadlineCount = hasPerCreativeCopy
+        ? (creativeData.creatives || []).reduce((sum, creative) => (
+            sum + (creative.source === 'drive' || creative.headline?.trim() ? 1 : headlines)
+        ), 0)
+        : headlines;
+    const assignedBodyCount = hasPerCreativeCopy
+        ? (creativeData.creatives || []).reduce((sum, creative) => (
+            sum + (creative.source === 'drive' || creative.body?.trim() ? 1 : bodies)
+        ), 0)
+        : bodies;
     const total = hasPerCreativeCopy
         ? (creativeData.creatives || []).reduce((sum, creative) => {
             const headlineCount = creative.source === 'drive' || creative.headline?.trim() ? 1 : headlines;
@@ -286,7 +301,7 @@ const countVariations = (creativeData) => {
             return sum + (headlineCount * bodyCount);
         }, 0)
         : media * headlines * bodies;
-    return { media, headlines, bodies, total, hasPerCreativeCopy };
+    return { media, headlines: assignedHeadlineCount, bodies: assignedBodyCount, total, hasPerCreativeCopy };
 };
 
 const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
@@ -323,7 +338,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             bodyCount: variationCount.bodies,
             totalAds: variationCount.total,
         }));
-    }, [variationCount.media, variationCount.headlines, variationCount.bodies, variationCount.total, setLaunchSummary]);
+        // `mode` is included so a Match-Import -> Standard round trip always
+        // re-pushes these counts even when the derived numbers happen to be
+        // identical to what was last published — otherwise handleBatchModeChange's
+        // null-out is never overwritten and the rail shows stale dashes.
+    }, [mode, variationCount.media, variationCount.headlines, variationCount.bodies, variationCount.total, setLaunchSummary]);
 
     const [pages, setPages] = useState([]);
     const [loadingPages, setLoadingPages] = useState(false);
