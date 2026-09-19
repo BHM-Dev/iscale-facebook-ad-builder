@@ -8,6 +8,13 @@ import { createCompleteAd, createFacebookCampaign, createFacebookAdSet } from '.
 import { CTA_OPTIONS, HEADLINE_LIMIT, BODY_LIMIT } from './AdCreativeStep';
 import { INTER_REQUEST_DELAY_MS, delay, isRateLimitError } from '../lib/metaRateLimit';
 import CreativeEnhancementsPanel from './CreativeEnhancementsPanel';
+import {
+    buildReconciliationRecord,
+    buildReconciliationScope,
+    buildReconciliationStorageKey,
+    getOrCreateReconciliationLaunchId,
+    fingerprintReconciliationPackage,
+} from '../lib/reconciliationScope';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -128,6 +135,12 @@ const BulkMatchImport = ({ onNext, onBack }) => {
     const [progress, setProgress] = useState({ current: 0, total: 0, status: '' });
     const [errors, setErrors] = useState([]);
     const [requiresReconciliation, setRequiresReconciliation] = useState(false);
+    const [reconciliationRecord, setReconciliationRecord] = useState(null);
+    const [reconciliationExcludedAdNumbers, setReconciliationExcludedAdNumbers] = useState(() => new Set());
+    const [showReconciliationConfirm, setShowReconciliationConfirm] = useState(false);
+    const [reconciliationStorageUnavailable, setReconciliationStorageUnavailable] = useState(false);
+    const [reconciliationPendingRecords, setReconciliationPendingRecords] = useState([]);
+    const [reconciliationAmbiguousRecords, setReconciliationAmbiguousRecords] = useState([]);
     const [creativeEnhancements, setCreativeEnhancements] = useState({});
     // Match Import reads selectedAdAccount/campaignData from shared wizard
     // context rather than owning its own switcher — but the wizard can still
@@ -138,30 +151,9 @@ const BulkMatchImport = ({ onNext, onBack }) => {
     // derivation (prefers fbCampaignId, falls back to id then 'new'), that
     // AdCreativeStep.jsx already applies for its own scope changes.
     const campaignCacheId = campaignData?.fbCampaignId || campaignData?.id || 'new';
-    // A client-side ID for a brand-new campaign is regenerated on reload, so
-    // it cannot protect a partial launch. Until the campaign is selected from
-    // Meta as an existing object, scope the durable lock to this account's
-    // new-campaign lane instead.
-    const reconciliationScope = campaignData?.isExisting ? (campaignData?.fbCampaignId || campaignData?.id) : 'new';
-    const reconciliationStorageKey = `bulk-match-reconciliation:${selectedAdAccount?.accountId || selectedAdAccount?.id || 'none'}:${reconciliationScope}`;
-    const setPersistentReconciliationBlock = (message) => {
-        setRequiresReconciliation(true);
-        try {
-            localStorage.setItem(reconciliationStorageKey, JSON.stringify({ message, recordedAt: new Date().toISOString() }));
-        } catch (storageError) {
-            console.warn('Could not persist reconciliation block:', storageError);
-        }
-    };
     useEffect(() => {
         setCreativeEnhancements({});
     }, [selectedAdAccount, campaignCacheId]);
-    useEffect(() => {
-        try {
-            setRequiresReconciliation(Boolean(localStorage.getItem(reconciliationStorageKey)));
-        } catch (storageError) {
-            console.warn('Could not restore reconciliation block:', storageError);
-        }
-    }, [reconciliationStorageKey]);
 
     // Inline edits made in the review table, keyed by adNumber. Kept separate
     // from csvRows so a typo fix never requires re-uploading the CSV — these
@@ -387,6 +379,194 @@ const BulkMatchImport = ({ onNext, onBack }) => {
     }, [matchedRows]);
 
     const readyRows = matchedRows.filter((r) => r.status === 'ready');
+    const reconciliationDraftFingerprint = fingerprintReconciliationPackage({
+        campaign: campaignData,
+        adset: adsetData,
+        package: { readyRows: readyRows.map(row => row.adNumber), destination: creativeData.websiteUrl },
+    });
+    const reconciliationLaunchId = useMemo(() => getOrCreateReconciliationLaunchId(
+        selectedAdAccount?.accountId || selectedAdAccount?.id,
+        reconciliationDraftFingerprint,
+    ), [selectedAdAccount?.accountId, selectedAdAccount?.id, reconciliationDraftFingerprint]);
+    const reconciliationPackageFingerprint = fingerprintReconciliationPackage({
+        readyRows: readyRows.map(row => ({
+            adNumber: row.adNumber,
+            headline: row.headline,
+            primaryText: row.primaryText,
+            cta: row.cta,
+            oneByOne: row.oneByOne ? { name: row.oneByOne.name, size: row.oneByOne.size, lastModified: row.oneByOne.lastModified } : null,
+            nineBySixteen: row.nineBySixteen ? { name: row.nineBySixteen.name, size: row.nineBySixteen.size, lastModified: row.nineBySixteen.lastModified } : null,
+        })),
+        destination: creativeData.websiteUrl,
+        pageId: creativeData.pageId,
+        instagramId: creativeData.instagramId,
+        enhancements: creativeEnhancements,
+    });
+    const reconciliationScope = buildReconciliationScope({
+        campaignData,
+        adsetData,
+        launchId: reconciliationLaunchId,
+    });
+    const reconciliationStorageKey = buildReconciliationStorageKey('match', selectedAdAccount?.accountId || selectedAdAccount?.id, reconciliationScope);
+    const reconciliationAccountKey = `bulk-match-reconciliation-active:${selectedAdAccount?.accountId || selectedAdAccount?.id || 'none'}`;
+    const launchReadyRows = readyRows.filter(row => !reconciliationExcludedAdNumbers.has(row.adNumber));
+    const setPersistentReconciliationBlock = (message, createdMetaIds = [], affectedAdNumbers = readyRows.map(row => row.adNumber)) => {
+        const record = buildReconciliationRecord({
+            scope: reconciliationScope,
+            packageFingerprint: reconciliationPackageFingerprint,
+            readyAdNumbers: affectedAdNumbers,
+            createdMetaIds,
+            message,
+            campaignId: campaignData?.fbCampaignId || campaignData?.id || null,
+            adsetId: adsetData?.fbAdsetId || adsetData?.id || null,
+            campaignWasExisting: Boolean(campaignData?.isExisting),
+            adsetWasExisting: Boolean(adsetData?.isExisting),
+        });
+        setRequiresReconciliation(true);
+        setReconciliationRecord(record);
+        setReconciliationPendingRecords([record]);
+        setReconciliationAmbiguousRecords([]);
+        try {
+            localStorage.setItem(reconciliationStorageKey, JSON.stringify(record));
+            const activeRaw = localStorage.getItem(reconciliationAccountKey);
+            const active = activeRaw ? JSON.parse(activeRaw) : [];
+            const activeRecords = Array.isArray(active) ? active : active?.scope ? [active] : [];
+            localStorage.setItem(reconciliationAccountKey, JSON.stringify([
+                ...activeRecords.filter(item => item.scope !== reconciliationScope && item.blocked !== false),
+                record,
+            ]));
+        } catch (storageError) {
+            console.warn('Could not persist reconciliation block:', storageError);
+            setReconciliationStorageUnavailable(true);
+        }
+    };
+    const persistLaunchIntent = () => {
+        const record = buildReconciliationRecord({
+            scope: reconciliationScope,
+            packageFingerprint: reconciliationPackageFingerprint,
+            readyAdNumbers: launchReadyRows.map(row => row.adNumber),
+            message: 'Launch interrupted before completion. Reconcile this batch before retrying.',
+            campaignId: campaignData?.fbCampaignId || campaignData?.id || null,
+            adsetId: adsetData?.fbAdsetId || adsetData?.id || null,
+            campaignWasExisting: Boolean(campaignData?.isExisting),
+            adsetWasExisting: Boolean(adsetData?.isExisting),
+            phase: 'in_progress',
+        });
+        localStorage.setItem(reconciliationStorageKey, JSON.stringify(record));
+        const activeRaw = localStorage.getItem(reconciliationAccountKey);
+        const active = activeRaw ? JSON.parse(activeRaw) : [];
+        const activeRecords = Array.isArray(active) ? active : active?.scope ? [active] : [];
+        localStorage.setItem(reconciliationAccountKey, JSON.stringify([
+            ...activeRecords.filter(item => item.scope !== reconciliationScope && item.blocked !== false),
+            record,
+        ]));
+    };
+    const clearSuccessfulLaunchIntent = () => {
+        localStorage.removeItem(reconciliationStorageKey);
+        const activeRaw = localStorage.getItem(reconciliationAccountKey);
+        const active = activeRaw ? JSON.parse(activeRaw) : [];
+        const activeRecords = Array.isArray(active) ? active : active?.scope ? [active] : [];
+        const remaining = activeRecords.filter(item => item.blocked !== false && item.scope !== reconciliationScope);
+        if (remaining.length > 0) localStorage.setItem(reconciliationAccountKey, JSON.stringify(remaining));
+        else localStorage.removeItem(reconciliationAccountKey);
+    };
+    useEffect(() => {
+        try {
+            const stored = localStorage.getItem(reconciliationStorageKey);
+            const activeRaw = localStorage.getItem(reconciliationAccountKey);
+            const active = activeRaw ? JSON.parse(activeRaw) : [];
+            const activeRecords = Array.isArray(active) ? active : active?.scope ? [active] : [];
+            const parsedStored = stored ? JSON.parse(stored) : null;
+            const candidates = [...activeRecords, ...(parsedStored ? [parsedStored] : [])]
+                .filter(item => item && item.blocked !== false);
+            const pendingRecords = [...new Map(candidates.map(item => [item.scope, item])).values()];
+            const parsed = pendingRecords.length === 1 ? pendingRecords[0] : null;
+            setReconciliationRecord(parsed);
+            setReconciliationPendingRecords(pendingRecords);
+            setReconciliationAmbiguousRecords(pendingRecords.length > 1 ? pendingRecords : []);
+            setReconciliationStorageUnavailable(false);
+            setRequiresReconciliation(Boolean(parsed && parsed.blocked !== false));
+            setReconciliationExcludedAdNumbers(new Set());
+        } catch (storageError) {
+            console.warn('Could not restore reconciliation block:', storageError);
+            setRequiresReconciliation(true);
+            setReconciliationStorageUnavailable(true);
+            setReconciliationPendingRecords([]);
+            setReconciliationAmbiguousRecords([]);
+        }
+    }, [reconciliationAccountKey, reconciliationStorageKey]);
+
+    const clearReconciliationBlock = () => {
+        if (reconciliationAmbiguousRecords.length > 0 || !reconciliationRecord) {
+            showError('Multiple unresolved batches are locked for this ad account. Resolve each batch from the tab that created it; this screen will not guess which one to clear.');
+            setShowReconciliationConfirm(false);
+            return;
+        }
+        const protectedAdNumbers = reconciliationRecord?.readyAdNumbers || [];
+        const targetScope = reconciliationRecord?.scope || reconciliationScope;
+        const targetStorageKey = buildReconciliationStorageKey('match', selectedAdAccount?.accountId || selectedAdAccount?.id, targetScope);
+        const targetCampaignIsExisting = reconciliationRecord.campaignWasExisting ?? campaignData?.isExisting;
+        const targetAdsetIsExisting = reconciliationRecord.adsetWasExisting ?? adsetData?.isExisting;
+        if (!targetCampaignIsExisting || !targetAdsetIsExisting) {
+            setShowReconciliationConfirm(false);
+            showError('This partial launch created a new campaign or ad set. Reconcile it in Ads Manager, then start a fresh batch from the previous step.');
+            return;
+        }
+        if (protectedAdNumbers.length === 0) {
+            setShowReconciliationConfirm(false);
+            showError('No affected AD numbers were recorded. Reconcile this launch in Ads Manager, then start a fresh batch.');
+            return;
+        }
+        try {
+            const activeRaw = localStorage.getItem(reconciliationAccountKey);
+            const active = activeRaw ? JSON.parse(activeRaw) : [];
+            const activeRecords = Array.isArray(active) ? active : active?.scope ? [active] : [];
+            const cleared = { blocked: false, scope: targetScope, protectedAdNumbers, clearedAt: new Date().toISOString() };
+            localStorage.setItem(targetStorageKey, JSON.stringify(cleared));
+            const remaining = activeRecords.filter(item => item.blocked !== false && item.scope !== targetScope);
+            if (remaining.length > 0) localStorage.setItem(reconciliationAccountKey, JSON.stringify(remaining));
+            else localStorage.removeItem(reconciliationAccountKey);
+            setReconciliationExcludedAdNumbers(new Set(protectedAdNumbers));
+            setReconciliationRecord(cleared);
+            setReconciliationPendingRecords([]);
+            setReconciliationAmbiguousRecords([]);
+            setRequiresReconciliation(false);
+            setShowReconciliationConfirm(false);
+            setErrors([]);
+            showWarning(`Excluded ADs ${protectedAdNumbers.join(', ')} after reconciliation. The remaining rows are available to launch.`);
+        } catch (storageError) {
+            console.warn('Could not clear reconciliation block:', storageError);
+            setReconciliationStorageUnavailable(true);
+            setShowReconciliationConfirm(false);
+            showError('The reconciliation lock could not be cleared because browser storage is unavailable.');
+        }
+    };
+    const abandonReconciledFreshBatch = () => {
+        try {
+            if (reconciliationAmbiguousRecords.length > 0 || !reconciliationRecord) {
+                showError('Multiple unresolved batches are locked for this ad account. Resolve each batch from the tab that created it; this screen will not guess which one to clear.');
+                return;
+            }
+            const targetScope = reconciliationRecord?.scope || reconciliationScope;
+            const targetStorageKey = buildReconciliationStorageKey('match', selectedAdAccount?.accountId || selectedAdAccount?.id, targetScope);
+            localStorage.removeItem(targetStorageKey);
+            const activeRaw = localStorage.getItem(reconciliationAccountKey);
+            const active = activeRaw ? JSON.parse(activeRaw) : [];
+            const activeRecords = Array.isArray(active) ? active : active?.scope ? [active] : [];
+            const remaining = activeRecords.filter(item => item.blocked !== false && item.scope !== targetScope);
+            if (remaining.length > 0) localStorage.setItem(reconciliationAccountKey, JSON.stringify(remaining));
+            else localStorage.removeItem(reconciliationAccountKey);
+            setRequiresReconciliation(false);
+            setReconciliationRecord(null);
+            setReconciliationPendingRecords([]);
+            setReconciliationAmbiguousRecords([]);
+            setShowReconciliationConfirm(false);
+            onBack();
+        } catch (storageError) {
+            console.warn('Could not clear fresh-batch reconciliation lock:', storageError);
+            showError('The reconciliation lock could not be cleared because browser storage is unavailable.');
+        }
+    };
     const missing1x1Rows = matchedRows.filter((r) => r.status === 'missing_1x1');
     const missing9x16Rows = matchedRows.filter((r) => r.status === 'missing_9x16');
     const missingBothImagesRows = matchedRows.filter((r) => r.status === 'missing_both_images');
@@ -421,20 +601,25 @@ const BulkMatchImport = ({ onNext, onBack }) => {
 
     const handleSubmit = async () => {
         try {
-            if (localStorage.getItem(reconciliationStorageKey)) {
+            const stored = localStorage.getItem(reconciliationStorageKey);
+            const activeRaw = localStorage.getItem(reconciliationAccountKey);
+            const active = activeRaw ? JSON.parse(activeRaw) : [];
+            const activeRecords = Array.isArray(active) ? active : active?.scope ? [active] : [];
+            const parsedStored = stored ? JSON.parse(stored) : null;
+            if ((parsedStored && parsedStored.blocked !== false) || activeRecords.some(item => item.blocked !== false)) {
                 setRequiresReconciliation(true);
-                showError('This batch has an unresolved Meta write. Reconcile it in Ads Manager before creating anything else.');
+                showError('This ad account has an unresolved Meta write. Reconcile that account-wide lock in Ads Manager before creating anything else.');
                 return;
             }
         } catch (storageError) {
             console.warn('Could not read reconciliation block:', storageError);
         }
-        if (readyRows.length === 0) {
+        if (launchReadyRows.length === 0) {
             showWarning('No rows are ready to create — match each CSV row to BOTH a 1x1 and a 9x16 image (both placements are required)');
             return;
         }
-        if (readyRows.length > MAX_ADS_PER_ADSET) {
-            showError(`This batch has ${readyRows.length} ready ads — Meta limits a single ad set to ${MAX_ADS_PER_ADSET} ads. Split the batch into groups of ${MAX_ADS_PER_ADSET} or fewer (e.g. by AD # range) and run each separately.`);
+        if (launchReadyRows.length > MAX_ADS_PER_ADSET) {
+            showError(`This batch has ${launchReadyRows.length} launchable ads — Meta limits a single ad set to ${MAX_ADS_PER_ADSET} ads. Split the batch into groups of ${MAX_ADS_PER_ADSET} or fewer (e.g. by AD # range) and run each separately.`);
             return;
         }
         if (!creativeData.websiteUrl) {
@@ -457,10 +642,21 @@ const BulkMatchImport = ({ onNext, onBack }) => {
             return;
         }
 
+        try {
+            // Persist before the first Meta mutation. If the tab dies between
+            // the mutation and the error handler, the account fallback still
+            // blocks a blind replay after reload.
+            persistLaunchIntent();
+        } catch (storageError) {
+            console.warn('Could not persist launch intent:', storageError);
+            setReconciliationStorageUnavailable(true);
+            showError('Browser storage is unavailable, so this launch is locked for safety. Re-enable storage before continuing.');
+            return;
+        }
         setLoading(true);
         setErrors([]);
         setRequiresReconciliation(false);
-        setProgress({ current: 0, total: readyRows.length, status: 'Starting...' });
+        setProgress({ current: 0, total: launchReadyRows.length, status: 'Starting...' });
 
         try {
             // ── Step 1: Campaign ──────────────────────────────────────────────
@@ -573,14 +769,15 @@ const BulkMatchImport = ({ onNext, onBack }) => {
             let failedCount = 0;
             let rateLimited = false;
             let reconciliationStop = false;
-            for (let i = 0; i < readyRows.length; i++) {
+            const reconciledAdNumbers = [];
+            for (let i = 0; i < launchReadyRows.length; i++) {
                 if (i > 0) await delay(INTER_ROW_DELAY_MS); // unconditional spacing between Meta calls
 
-                const row = readyRows[i];
+                const row = launchReadyRows[i];
                 setProgress({
                     current: i + 1,
-                    total: readyRows.length,
-                    status: `Creating AD ${row.adNumber} (${i + 1} of ${readyRows.length})...`
+                    total: launchReadyRows.length,
+                    status: `Creating AD ${row.adNumber} (${i + 1} of ${launchReadyRows.length})...`
                 });
 
                 let metaCreatedAdId = null;
@@ -663,7 +860,8 @@ const BulkMatchImport = ({ onNext, onBack }) => {
 
                     if (metaCreatedAdId) {
                         reconciliationStop = true;
-                        setPersistentReconciliationBlock(error.message);
+                        reconciledAdNumbers.push(row.adNumber);
+                        setPersistentReconciliationBlock(error.message, [metaCreatedAdId], [row.adNumber]);
                         setErrors((prev) => [...prev, `AD ${row.adNumber} was created in Meta as ${metaCreatedAdId}, but its local record failed to save: ${error.message}. Do not retry this batch; reconcile the ad in Ads Manager first.`]);
                         break;
                     }
@@ -675,7 +873,8 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                     // duplicate an ad. Stop and require reconciliation.
                     if (error.metaMutationStarted) {
                         reconciliationStop = true;
-                        setPersistentReconciliationBlock(error.message);
+                        reconciledAdNumbers.push(row.adNumber);
+                        setPersistentReconciliationBlock(error.message, [], [row.adNumber]);
                         setErrors((prev) => [...prev, `Meta may have created AD ${row.adNumber}, but its result could not be confirmed: ${error.message}. Do not retry this batch; reconcile in Ads Manager first.`]);
                         break;
                     }
@@ -684,35 +883,40 @@ const BulkMatchImport = ({ onNext, onBack }) => {
 
                     if (isRateLimitError(error)) {
                         rateLimited = true;
-                        const remaining = readyRows.length - (i + 1);
-                        setErrors((prev) => [...prev, `Meta rate-limited this account — stopping batch. ${createdAds.length} of ${readyRows.length} ads created. ${remaining} row${remaining !== 1 ? 's' : ''} not attempted — wait a few minutes and retry.`]);
+                        const remaining = launchReadyRows.length - (i + 1);
+                        setErrors((prev) => [...prev, `Meta rate-limited this account — stopping batch. ${createdAds.length} of ${launchReadyRows.length} ads created. ${remaining} row${remaining !== 1 ? 's' : ''} not attempted — wait a few minutes and retry.`]);
                         break;
                     }
                 }
             }
 
             if (failedCount === 0) {
-                setProgress({ current: readyRows.length, total: readyRows.length, status: 'Complete!' });
+                clearSuccessfulLaunchIntent();
+                setProgress({ current: launchReadyRows.length, total: launchReadyRows.length, status: 'Complete!' });
                 setTimeout(() => { onNext(); }, 1500);
             } else {
                 if (createdAds.length > 0 || !campaignData.isExisting || !adsetData.isExisting) {
-                    setPersistentReconciliationBlock('This batch partially completed. Reconcile the created rows before starting another batch.');
+                    setPersistentReconciliationBlock(
+                        'This batch partially completed. Reconcile the created rows before starting another batch.',
+                        createdAds.map(ad => ad.fbAdId),
+                        [...new Set([...createdAds.map(ad => ad.adNumber), ...reconciledAdNumbers])],
+                    );
                 }
                 setProgress({
-                    current: readyRows.length,
-                    total: readyRows.length,
+                    current: launchReadyRows.length,
+                    total: launchReadyRows.length,
                     status: rateLimited
-                        ? `Stopped — Meta rate-limited this account (${createdAds.length} of ${readyRows.length} created)`
+                        ? `Stopped — Meta rate-limited this account (${createdAds.length} of ${launchReadyRows.length} created)`
                         : reconciliationStop
                             ? `Stopped — ${createdAds.length} fully saved; one Meta ad needs local reconciliation`
-                        : `${createdAds.length} of ${readyRows.length} ads created`
+                        : `${createdAds.length} of ${launchReadyRows.length} ads created`
                 });
                 setLoading(false);
             }
         } catch (error) {
             console.error('Error in bulk match import:', error);
             if (error.metaMutationStarted || !campaignData.isExisting || !adsetData.isExisting) {
-                setPersistentReconciliationBlock(error.message);
+                setPersistentReconciliationBlock(error.message, [], readyRows.map(row => row.adNumber));
                 setErrors((prev) => [...prev, `Meta may have created a campaign or ad set, but its result could not be confirmed: ${error.message}. Do not retry this batch; reconcile in Ads Manager first.`]);
                 setProgress((prev) => ({ ...prev, status: 'Stopped — Meta objects need reconciliation' }));
                 setLoading(false);
@@ -780,9 +984,28 @@ const BulkMatchImport = ({ onNext, onBack }) => {
         );
     };
 
+    const reconciliationPendingSummary = reconciliationPendingRecords.map(record => {
+        const ads = (record.readyAdNumbers || []).join(', ') || 'unknown ADs';
+        const meta = (record.createdMetaIds || []).join(', ') || 'Meta ID pending';
+        const scope = `${record.campaignId || 'campaign unknown'} / ${record.adsetId || 'ad set unknown'}`;
+        const when = record.recordedAt ? new Date(record.recordedAt).toLocaleString() : 'time unknown';
+        return `${ads} (Meta: ${meta}; ${scope}; ${when})`;
+    }).join(' • ');
+    const canResetReconciliation = reconciliationPendingRecords.length === 1
+        && reconciliationRecord
+        && (reconciliationRecord.campaignWasExisting ?? campaignData?.isExisting)
+        && (reconciliationRecord.adsetWasExisting ?? adsetData?.isExisting);
+
     return (
         <div>
             <h2 className="text-2xl font-bold mb-2">Match by Naming Convention</h2>
+            {reconciliationPendingRecords.length > 0 && (
+                <div className="mb-5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    <strong>This ad account has an unresolved launch.</strong> Reconcile it before creating new ads.
+                    <div className="mt-1 text-xs">Affected rows: {reconciliationPendingSummary}</div>
+                    {reconciliationAmbiguousRecords.length > 1 && <div className="mt-1 text-xs font-semibold">Multiple pending batches are present. Resolve each from the tab that created it; this screen will not guess.</div>}
+                </div>
+            )}
             <p className="text-gray-600 mb-6">
                 Upload a copy CSV and an image folder. Rows are matched by ad number (<code className="bg-gray-100 px-1 rounded">AD 1</code> ↔{' '}
                 <code className="bg-gray-100 px-1 rounded">ad1-slug-1x1.png</code>). Both a <strong>1x1</strong> (Feed) and a <strong>9x16</strong> (Story)
@@ -1042,16 +1265,31 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                             Back
                         </button>
                         {requiresReconciliation ? (
-                            <span className="max-w-md text-right text-sm font-medium text-amber-800">This partial batch is locked after Meta writes. Reconcile it in Ads Manager, then start a fresh batch for any remaining rows.</span>
+                            <div className="flex flex-wrap items-center justify-end gap-3 text-right">
+                                <span className="max-w-md text-sm font-medium text-amber-800">
+                                    {reconciliationAmbiguousRecords.length > 1
+                                        ? 'Multiple unresolved batches are locked for this ad account. Resolve each from the tab that created it.'
+                                        : `This partial batch is locked after Meta writes. Reconcile ${reconciliationPendingSummary || 'the affected rows'} in Ads Manager.`}
+                                </span>
+                                {canResetReconciliation ? (
+                                    <button type="button" onClick={() => setShowReconciliationConfirm(true)} className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100">
+                                        Reset and exclude affected ADs
+                                    </button>
+                                ) : reconciliationAmbiguousRecords.length === 0 && reconciliationRecord ? (
+                                    <button type="button" onClick={abandonReconciledFreshBatch} className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100">
+                                        Reconciled — start fresh batch
+                                    </button>
+                                ) : null}
+                            </div>
                         ) : errors.length > 0 ? (
                             <span className="max-w-md text-right text-sm font-medium text-amber-800">Review the failed rows in Ads Manager before starting another batch. This importer will not advance a partial batch to the success screen.</span>
                         ) : (
                             <button
                                 onClick={handleSubmit}
-                                disabled={readyRows.length === 0 || readyRows.length > MAX_ADS_PER_ADSET}
+                                disabled={launchReadyRows.length === 0 || launchReadyRows.length > MAX_ADS_PER_ADSET}
                                 className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                             >
-                                Create {readyRows.length} Ad{readyRows.length !== 1 ? 's' : ''} on Facebook
+                                Create {launchReadyRows.length} Ad{launchReadyRows.length !== 1 ? 's' : ''} on Facebook
                             </button>
                         )}
                     </div>
@@ -1076,6 +1314,21 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                             All ads are <strong>PAUSED</strong> in Meta — go to Ads Manager to activate them when ready.
                         </p>
                     )}
+                </div>
+            )}
+            {showReconciliationConfirm && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="match-reconciliation-confirm-title">
+                    <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+                        <h2 id="match-reconciliation-confirm-title" className="text-lg font-bold text-gray-900">Reset and exclude affected ADs?</h2>
+                        <p className="mt-2 text-sm leading-6 text-gray-600">Confirm that you checked Ads Manager. ADs {reconciliationRecord?.readyAdNumbers?.join(', ') || 'in this batch'} with Meta IDs {reconciliationRecord?.createdMetaIds?.join(', ') || 'not captured'} may already exist in Meta and will be excluded from the next launch. Double-check the campaign and ad set before excluding.</p>
+                        {reconciliationRecord?.scope !== reconciliationScope && (
+                            <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">We could not confirm this is the batch currently on screen after the refresh. Double-check the campaign, ad set, AD numbers, and Meta IDs in Ads Manager before excluding.</p>
+                        )}
+                        <div className="mt-5 flex gap-3">
+                            <button type="button" onClick={() => setShowReconciliationConfirm(false)} className="flex-1 rounded-lg border border-gray-200 px-4 py-2.5 font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
+                            <button type="button" onClick={clearReconciliationBlock} className="flex-1 rounded-lg bg-amber-600 px-4 py-2.5 font-semibold text-white hover:bg-amber-700">Reset and exclude</button>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>
