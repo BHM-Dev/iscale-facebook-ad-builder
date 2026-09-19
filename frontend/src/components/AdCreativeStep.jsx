@@ -1860,7 +1860,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         <div>
             {reconciliationPendingRecords.length > 0 && (
                 <div className="mb-5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                    <strong>This ad account has an unresolved launch.</strong> You can continue building this batch, but reconcile the pending launch before creating new ads.
+                    <strong>Heads up — a different batch on this ad account is stuck mid-launch.</strong> This batch is unaffected; keep building it. The other one will need to be reconciled in Ads Manager before it (or anything else on this account) can launch.
                     <div className="mt-1 text-xs">Affected rows: {formatReconciliationRecords(reconciliationPendingRecords)}</div>
                 </div>
             )}
