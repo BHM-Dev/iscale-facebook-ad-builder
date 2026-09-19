@@ -178,16 +178,38 @@ function AddRuleModal({ adsets, ads, onClose, onCreated }) {
           min_spend: form.min_spend,
           action: form.action,
           budget_adjust_pct: PERCENT_ACTIONS.has(form.action) ? form.budget_adjust_pct : null,
-          duplicate_all_ads: isDuplicate ? form.duplicate_all_ads : null,
-          duplicate_name_suffix: isDuplicate ? form.duplicate_name_suffix : null,
-          duplicate_append_number: isDuplicate ? form.duplicate_append_number : null,
-          duplicate_pause_original: isDuplicate ? form.duplicate_pause_original : null,
-          duplicate_repeat: isDuplicate ? form.duplicate_repeat : null,
+          // These fields are non-nullable in RuleCreate because they have
+          // defaults for Duplicate rules. Omitting them for every other action
+          // lets Pydantic apply those defaults; sending null causes five
+          // validation errors before an ordinary pause/notify rule can be
+          // created.
+          ...(isDuplicate ? {
+            duplicate_all_ads: form.duplicate_all_ads,
+            duplicate_name_suffix: form.duplicate_name_suffix,
+            duplicate_append_number: form.duplicate_append_number,
+            duplicate_pause_original: form.duplicate_pause_original,
+            duplicate_repeat: form.duplicate_repeat,
+          } : {}),
         }),
       });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
+      if (!res.ok) {
+        let e;
+        try {
+          e = await res.json();
+        } catch {
+          throw new Error('Couldn’t create the rule. The server returned an unreadable error; check your connection and retry.');
+        }
+        const detail = Array.isArray(e.detail)
+          ? e.detail.map(item => {
+              const location = Array.isArray(item?.loc) ? ` (${item.loc.slice(1).join('.')})` : '';
+              return `${item?.msg || item?.detail || JSON.stringify(item)}${location}`;
+            }).join('; ')
+          : e.detail;
+        throw new Error(detail || 'Failed to create rule');
+      }
       const data = await res.json();
-      showSuccess(`${data.created} rule${data.created !== 1 ? 's' : ''} created`);
+      const createdCount = data.created ?? 1;
+      showSuccess(`${createdCount} rule${createdCount !== 1 ? 's' : ''} created`);
       onCreated();
       onClose();
     } catch (e) { showError(e.message); }
@@ -912,6 +934,15 @@ export default function AutoPauseRules() {
         const duplicated = lastCheckResult.duplicated || [];
         const errors = lastCheckResult.errors || [];
         const firedCount = paused.length + notified.length + budgetAdjusted.length + bidAdjusted.length + duplicated.length;
+        const targetCount = (items) => {
+          const ads = items.filter(item => item.scope === 'ad').length;
+          const adsets = items.length - ads;
+          const parts = [];
+          if (adsets) parts.push(`${adsets} ad set${adsets !== 1 ? 's' : ''}`);
+          if (ads) parts.push(`${ads} ad${ads !== 1 ? 's' : ''}`);
+          return parts.join(' and ');
+        };
+        const targetName = (item) => item.ad ? `${item.adset} / ${item.ad}` : item.adset;
         // Errors can exist even when nothing fired (an insights fetch failure, or a
         // rule action that threw) — previously this branch only checked firedCount,
         // so a run with 0 fires but real errors silently rendered as "All clear"
@@ -937,20 +968,20 @@ export default function AutoPauseRules() {
                 {paused.length > 0 && (
                   <div>
                     <h3 className="font-semibold text-red-800 flex items-center gap-2 mb-1">
-                      <PauseCircle size={16} /> Paused {paused.length} ad set{paused.length !== 1 ? 's' : ''}
+                      <PauseCircle size={16} /> Paused {targetCount(paused)}
                     </h3>
                     {paused.map((p, i) => (
-                      <div key={i} className="text-sm text-red-700"><strong>{p.adset}</strong> — {p.reason}</div>
+                      <div key={i} className="text-sm text-red-700"><strong>{targetName(p)}</strong> — {p.reason}</div>
                     ))}
                   </div>
                 )}
                 {notified.length > 0 && (
                   <div>
                     <h3 className="font-semibold text-blue-800 flex items-center gap-2 mb-1">
-                      <Bell size={16} /> Notified for {notified.length} ad set{notified.length !== 1 ? 's' : ''}
+                      <Bell size={16} /> Notified for {targetCount(notified)}
                     </h3>
                     {notified.map((n, i) => (
-                      <div key={i} className="text-sm text-blue-700"><strong>{n.adset}</strong> — {n.reason}</div>
+                      <div key={i} className="text-sm text-blue-700"><strong>{targetName(n)}</strong> — {n.reason}</div>
                     ))}
                   </div>
                 )}
