@@ -64,6 +64,23 @@ function normalizeCta(raw) {
     return String(raw || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
 }
 
+function downloadCsvTemplate() {
+    const csv = [
+        'ad_number,headline,primary_text,cta',
+        '1,"Your headline here","Your primary text here",LEARN_MORE',
+        '2,"Another headline","Another primary text",GET_QUOTE'
+    ].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'ad-package-copy-template.csv';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+}
+
 /**
  * Uploads a raw File to our own server (same path used internally by
  * uploadImageToFacebook/uploadVideoToFacebook for blob URLs) and returns the
@@ -197,13 +214,25 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                     setCsvError(`CSV parse error: ${results.errors[0].message} (row ${results.errors[0].row})`);
                 }
 
+                const fields = results.meta?.fields || [];
+                if (!fields.includes('ad_number')) {
+                    setCsvRows([]);
+                    setRowEdits({});
+                    setCsvError('CSV must include an ad_number column. Download the template to see the required headers.');
+                    return;
+                }
+
                 const rows = [];
                 const seen = new Set();
                 const duplicateAdNumbers = new Set();
+                let droppedRows = 0;
 
                 for (const raw of results.data) {
                     const adNumber = normalizeAdNumber(raw.ad_number);
-                    if (adNumber === '') continue;
+                    if (adNumber === '') {
+                        droppedRows++;
+                        continue;
+                    }
 
                     if (seen.has(adNumber)) {
                         duplicateAdNumbers.add(adNumber);
@@ -229,6 +258,9 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                 if (duplicateAdNumbers.size > 0) {
                     const list = Array.from(duplicateAdNumbers).sort((a, b) => Number(a) - Number(b));
                     showWarning(`Duplicate CSV row${list.length !== 1 ? 's' : ''} for AD ${list.join(', AD ')} — only the first row for each was kept.`);
+                }
+                if (droppedRows > 0) {
+                    showWarning(`${droppedRows} CSV row${droppedRows !== 1 ? 's' : ''} skipped because ad_number was blank or invalid.`);
                 }
             },
             error: (err) => {
@@ -310,7 +342,8 @@ const BulkMatchImport = ({ onNext, onBack }) => {
             const overLimit = headline.length > HEADLINE_LIMIT || primaryText.length > BODY_LIMIT;
 
             const ctaRaw = edits.cta !== undefined ? edits.cta : (copy?.cta ?? '');
-            const normalizedCta = ctaRaw === '' ? 'LEARN_MORE' : normalizeCta(ctaRaw);
+            const normalizedCta = normalizeCta(ctaRaw);
+            const ctaMissing = normalizedCta === '';
             const ctaValid = CTA_OPTIONS.includes(normalizedCta);
 
             // Both placements (Feed 1x1 + Stories/Reels 9x16) are required
@@ -319,6 +352,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
             let status;
             if (!hasCopy) status = 'missing_copy'; // has image(s) but no/incomplete CSV row
             else if (overLimit) status = 'over_limit';
+            else if (ctaMissing) status = 'missing_cta';
             else if (!hasOneByOne && !hasNineBySixteen) status = 'missing_both_images';
             else if (!hasOneByOne) status = 'missing_1x1';
             else if (!hasNineBySixteen) status = 'missing_9x16';
@@ -358,6 +392,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
     const missingBothImagesRows = matchedRows.filter((r) => r.status === 'missing_both_images');
     const missingCopyRows = matchedRows.filter((r) => r.status === 'missing_copy');
     const invalidCtaRows = matchedRows.filter((r) => r.status === 'invalid_cta');
+    const missingCtaRows = matchedRows.filter((r) => r.status === 'missing_cta');
     const overLimitRows = matchedRows.filter((r) => r.status === 'over_limit');
 
     const handleSubmit = async () => {
@@ -700,6 +735,13 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                 </span>
             );
         }
+        if (status === 'missing_cta') {
+            return (
+                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">
+                    <AlertTriangle size={12} /> CTA required
+                </span>
+            );
+        }
         if (status === 'over_limit') {
             return (
                 <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700">
@@ -736,10 +778,20 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                             <p className="text-sm font-medium text-gray-700 mb-1">Ad Copy CSV</p>
                             <p className="text-xs text-gray-500 mb-3">columns: ad_number, headline, primary_text, cta</p>
                             <p className="text-xs text-gray-400 mb-3">cta must match: {CTA_OPTIONS.join(', ')}</p>
-                            <label className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer hover:bg-blue-700">
-                                <UploadCloud size={16} /> Choose CSV
-                                <input type="file" accept=".csv,text/csv" className="hidden" onChange={handleCsvUpload} />
-                            </label>
+                            <div className="flex flex-wrap items-center justify-center gap-2">
+                                <label className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer hover:bg-blue-700">
+                                    <UploadCloud size={16} /> Choose CSV
+                                    <input type="file" accept=".csv,text/csv" className="hidden" onChange={handleCsvUpload} />
+                                </label>
+                                <button
+                                    type="button"
+                                    onClick={downloadCsvTemplate}
+                                    className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50"
+                                >
+                                    <FileText size={16} /> Download template
+                                </button>
+                            </div>
+                            <p className="text-xs text-amber-700 mt-3">Maximum {MAX_ADS_PER_ADSET} ready ads per ad set.</p>
                             {csvRows.length > 0 && <p className="text-xs text-green-700 mt-2">{csvRows.length} row{csvRows.length !== 1 ? 's' : ''} loaded</p>}
                             {csvError && <p className="text-xs text-red-700 mt-2">{csvError}</p>}
                         </div>
@@ -753,7 +805,19 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                                 <input type="file" accept="image/png,image/jpeg" multiple className="hidden" onChange={handleImageUpload} />
                             </label>
                             {Object.keys(imageGroups).length > 0 && (
-                                <p className="text-xs text-green-700 mt-2">{Object.keys(imageGroups).length} ad number{Object.keys(imageGroups).length !== 1 ? 's' : ''} matched</p>
+                                <div className="mt-2 flex items-center justify-center gap-2">
+                                    <p className="text-xs text-green-700">{Object.keys(imageGroups).length} ad number{Object.keys(imageGroups).length !== 1 ? 's' : ''} matched</p>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setImageGroups({});
+                                            showWarning('Matched images cleared. Upload the intended image set before continuing.');
+                                        }}
+                                        className="text-xs text-gray-600 underline hover:text-gray-900"
+                                    >
+                                        Clear matches
+                                    </button>
+                                </div>
                             )}
                         </div>
                     </div>
@@ -870,6 +934,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                                                                 onBlur={cancelEditingCell}
                                                                 className="px-2 py-1 border border-blue-400 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
                                                             >
+                                                                <option value="">Select CTA</option>
                                                                 {CTA_OPTIONS.map((cta) => (
                                                                     <option key={cta} value={cta}>{cta.replace(/_/g, ' ')}</option>
                                                                 ))}
@@ -881,7 +946,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                                                                 className="flex items-center gap-1 hover:bg-blue-50 rounded px-1 -mx-1 border-b border-dotted border-gray-300"
                                                                 title="Click to change CTA"
                                                             >
-                                                                {row.cta.replace(/_/g, ' ')}
+                                                                {row.cta ? row.cta.replace(/_/g, ' ') : 'Select CTA'}
                                                                 <Pencil size={11} className="text-gray-400 shrink-0" />
                                                             </button>
                                                         )}
@@ -914,6 +979,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                                 {missing9x16Rows.length > 0 && <> — {missing9x16Rows.length} missing 9x16</>}
                                 {missingBothImagesRows.length > 0 && <> — {missingBothImagesRows.length} missing both images</>}
                                 {missingCopyRows.length > 0 && <> — {missingCopyRows.length} missing copy</>}
+                                {missingCtaRows.length > 0 && <> — {missingCtaRows.length} missing CTA</>}
                                 {invalidCtaRows.length > 0 && <> — {invalidCtaRows.length} invalid CTA</>}
                                 {overLimitRows.length > 0 && <> — {overLimitRows.length} over character limit</>}
                             </p>

@@ -1,7 +1,7 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useState } from 'react';
-import { ChevronLeft, ChevronRight, Loader, Film, Image, X, Pencil } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Loader, Film, Image, X, Pencil } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { createCompleteAd, createFacebookCampaign, createFacebookAdSet, getRateLimitUsage } from '../lib/facebookApi';
 import {
@@ -225,6 +225,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             return;
         }
         setManifestExcludedAdIds(prev => new Set([...prev, ...protectedIds]));
+        setAdsData(prev => prev.map(ad => protectedIds.includes(ad.id) ? { ...ad, excludedFromLaunch: true } : ad));
         setErrors([]);
         setRequiresReconciliation(false);
         setReconciliationConflictScope(null);
@@ -292,19 +293,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 setReconciliationHasUntrackedMetaMutation(false);
         }
     }, [reconciliationAccountKey, reconciliationScope, reconciliationStorageKey]);
-    // Recently-excluded ads (most recent last), so the exclude ("✕") button on a
-    // dense multi-column grid — a smaller, closer-together target than the old
-    // isolated row button — has an undo path. Flagged in pre-push review: no
-    // confirm and no undo meant an accidental exclude on a good combination
-    // silently dropped it with no recovery short of redoing the whole batch. A
-    // STACK, not a single slot — a second exclude within the window used to
-    // silently overwrite the first one's undo with no indication anything was
-    // lost, the realistic failure mode on a dense grid (rarely just one
-    // misclick). Capped so a rapid-fire clearing pass doesn't stack banners
-    // indefinitely. A shared-app-wide Toast redesign (action buttons inside a
-    // toast) would be a bigger, riskier change for what this needs —
-    // self-contained here instead.
-    const [removedStack, setRemovedStack] = useState([]);
+    // Standard and manifest exclusions share one Set so bulk selection,
+    // reconciliation protection, launch counts, and retry filtering cannot drift.
     // The normal preview grid is useful for a handful of hand-built variants.
     // A Drive launch of 50–100 Feed + Stories pairs needs a manifest instead:
     // one compact row per pair, category filters, and a single focused detail
@@ -313,8 +303,24 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // copy assignment or needing to rebuild the Drive selection.
     const [manifestSearch, setManifestSearch] = useState('');
     const [manifestCategory, setManifestCategory] = useState('all');
-    const [manifestExcludedAdIds, setManifestExcludedAdIds] = useState(new Set());
+    const [manifestExcludedAdIds, setManifestExcludedAdIds] = useState(() => new Set(
+        (adsData || []).filter(ad => ad.excludedFromLaunch).map(ad => ad.id)
+    ));
     const [selectedManifestAdId, setSelectedManifestAdId] = useState(null);
+    React.useEffect(() => {
+        // Keep the exclusion Set authoritative during the mounted review, while
+        // mirroring it onto adsData so Back/Next remounts restore the same state.
+        setAdsData(prev => {
+            let changed = false;
+            const next = prev.map(ad => {
+                const excluded = manifestExcludedAdIds.has(ad.id);
+                if (Boolean(ad.excludedFromLaunch) === excluded) return ad;
+                changed = true;
+                return { ...ad, excludedFromLaunch: excluded };
+            });
+            return changed ? next : prev;
+        });
+    }, [manifestExcludedAdIds, setAdsData]);
     // Gates the shared edit drawer's visibility only — selectedManifestAdId/
     // selectedManifestRow keep their existing fallback-to-first-row semantics
     // for the manifest table's own highlighting, untouched by this. The drawer
@@ -368,7 +374,6 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         { key: 'body_num', label: 'Body #' },
         { key: 'date', label: 'Date' },
     ];
-    const MAX_UNDO_STACK = 3;
 
     // Tracks whichever pattern is actually baked into the CURRENT adsData —
     // vs. adNamingPattern, which tracks whatever's live in the field right now.
@@ -402,6 +407,13 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // a bulk launch. Media/copy inputs still intentionally regenerate the
     // permutations because their actual payloads have changed.
     const permutationInputsRef = React.useRef(null);
+    // Invariant: this key must include every field whose change should force a
+    // fresh permutation set (and therefore fresh row ids, discarding
+    // exclusions/edits on purpose). If a future per-ad payload field is added
+    // that isn't sourced from one of these creativeData fields, add it here
+    // too — otherwise a real input change could be missed and a stale batch
+    // preserved across Back/Next instead of regenerating. Flagged in
+    // retroactive review as an implicit contract worth documenting explicitly.
     const permutationInputKey = JSON.stringify({
         creatives: creativeData.creatives,
         headlines: creativeData.headlines,
@@ -412,6 +424,32 @@ const BulkAdCreation = ({ onNext, onBack }) => {
 
     // Initialize ads based on creatives - generate all permutations
     React.useEffect(() => {
+        // Review is mounted/unmounted as Joel moves Back and Next through the
+        // wizard. If the campaign context already has a batch, preserve its
+        // stable row IDs, edits, and excludedFromLaunch flags instead of
+        // regenerating permutations from scratch on every return to Review.
+        // A non-null ref means this is a real input change within the mounted
+        // step, where regeneration is still intentional.
+        const batchMatchesCurrentInputs = adsData.length > 0
+            && adsData.every(ad => ad.permutationInputKey === permutationInputKey);
+        if (permutationInputsRef.current === null && batchMatchesCurrentInputs) {
+            permutationInputsRef.current = permutationInputKey;
+            // Silent when there's nothing to restore (a fresh, untouched batch) —
+            // only worth a toast when it actually saved him real work, otherwise
+            // this fires on every ordinary Back/Next and becomes noise. Added
+            // because the restore itself is otherwise invisible (joel-perspective
+            // review: he doesn't trust it happened, so he re-checks everything
+            // by hand anyway, undercutting the point of preserving it).
+            const preservedCount = adsData.filter(ad => ad.excludedFromLaunch || ad.nameManuallyEdited).length;
+            if (preservedCount > 0) {
+                showSuccess(`Restored your previous review — ${preservedCount} excluded or renamed ad${preservedCount !== 1 ? 's' : ''} kept as you left ${preservedCount !== 1 ? 'them' : 'it'}.`);
+            }
+            setAdsData(prev => prev.map(ad => ad.nameManuallyEdited
+                ? ad
+                : { ...ad, name: computeAdName(lastAppliedNamingPattern, ad) }
+            ));
+            return;
+        }
         const inputsChanged = permutationInputsRef.current !== permutationInputKey;
         if (!inputsChanged && adsData.length > 0) {
             setAdsData(prev => prev.map(ad => (
@@ -438,7 +476,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 .filter(b => b.text && b.text.trim() !== '');
 
             // Generate all permutations: media × headlines × bodies
-            const permutations = [];
+                        const permutations = [];
             creativeData.creatives.forEach((creative, creativeIndex) => {
                 const creativeHeadlines = creative.source === 'drive' || creative.headline
                     ? [{ index: null, override: creative.headline }]
@@ -481,7 +519,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             mediaType: creative.mediaType || 'image',
                             format: creative.format || 'feed',
                             dualPlacement: creative.dualPlacement || false,
-                            useDefaultCreative: true
+                            useDefaultCreative: true,
+                            permutationInputKey
                         });
                     });
                 });
@@ -599,8 +638,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 ? creative.cta || ''
                 : creative?.cta || creativeData.cta || '';
         const category = creative?.category || creative?.brandName || 'Uncategorized';
-        const requiresAssignedCopy = isDriveCreative;
-        const copyReady = !requiresAssignedCopy || Boolean(
+        const copyReady = Boolean(
             headline.trim() && body.trim() && isValidDestinationUrl(websiteUrl) && isValidMetaCta(cta)
         );
         const adsetName = driveManifestCreatesSeparateAdsets
@@ -619,6 +657,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         const searchText = `${row.ad.name} ${row.creative?.name || ''} ${row.category} ${row.headline} ${row.body} ${row.description}`.toLowerCase();
         return !manifestSearch.trim() || searchText.includes(manifestSearch.trim().toLowerCase());
     });
+    const visibleStandardRows = visibleManifestRows;
     // The rail must honor the active filter. Leaving a previously selected
     // Retail row editable while the table is filtered to Restaurant is exactly
     // how copy gets changed on the wrong pair in a 100-row batch.
@@ -712,6 +751,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     };
 
     const setVisibleManifestSelection = (selected) => {
+        const actionableRows = visibleManifestRows.filter(row => !protectedReconciliationIdSet.has(row.ad.id));
         setManifestExcludedAdIds(prev => {
             const next = new Set(prev);
             visibleManifestRows.forEach(row => {
@@ -720,6 +760,20 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             });
             return next;
         });
+        showSuccess(`${actionableRows.length} matching ad${actionableRows.length !== 1 ? 's' : ''} ${selected ? 'included in' : 'excluded from'} this launch${actionableRows.length < visibleManifestRows.length ? `; ${visibleManifestRows.length - actionableRows.length} protected row${visibleManifestRows.length - actionableRows.length !== 1 ? 's' : ''} unchanged` : ''}.`);
+    };
+
+    const setVisibleStandardSelection = (selected) => {
+        const actionableRows = visibleStandardRows.filter(row => !protectedReconciliationIdSet.has(row.ad.id));
+        setManifestExcludedAdIds(prev => {
+            const next = new Set(prev);
+            visibleStandardRows.forEach(row => {
+                if (selected && !protectedReconciliationIdSet.has(row.ad.id)) next.delete(row.ad.id);
+                else next.add(row.ad.id);
+            });
+            return next;
+        });
+        showSuccess(`${actionableRows.length} matching ad${actionableRows.length !== 1 ? 's' : ''} ${selected ? 'included in' : 'excluded from'} this launch${actionableRows.length < visibleStandardRows.length ? `; ${visibleStandardRows.length - actionableRows.length} protected row${visibleStandardRows.length - actionableRows.length !== 1 ? 's' : ''} unchanged` : ''}.`);
     };
 
     const updateManifestField = (row, field, value) => {
@@ -740,49 +794,6 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             if (field === 'cta') return { ...ad, ctaOverride: value, ctaSource: 'Manual row edit' };
             return ad;
         }));
-    };
-
-    const removeAd = (index) => {
-        // Computed BEFORE the setAdsData updater, not inside it — an updater must
-        // be pure (React may invoke it more than once for the same transition,
-        // most visibly under StrictMode's double-invoke); calling setRemovedStack
-        // from inside setAdsData's callback was exactly that anti-pattern, caught
-        // in pre-push review. Reading adsData directly here instead.
-        const ad = adsData[index];
-        const key = `${ad.id}_${Date.now()}`;
-        setRemovedStack(prev => [...prev.slice(-(MAX_UNDO_STACK - 1)), { key, ad, index }]);
-        setAdsData(prev => prev.filter((_, i) => i !== index));
-        // Each entry expires independently, 8s from when IT was added — not a
-        // single shared timer that a later removal would reset for an earlier one.
-        setTimeout(() => {
-            setRemovedStack(prev => prev.filter(r => r.key !== key));
-        }, 8000);
-    };
-
-    const undoRemove = (key) => {
-        const entry = removedStack.find(r => r.key === key);
-        if (!entry) return;
-        setAdsData(prev => {
-            const next = [...prev];
-            // Clamp — the list may have shrunk further (another exclude, or a
-            // re-launch that regenerated adsData) since this one was removed.
-            const insertAt = Math.min(entry.index, next.length);
-            // Re-derive the restored ad's name against whatever pattern is
-            // CURRENTLY applied to the rest of the batch (lastAppliedNamingPattern,
-            // not necessarily what's live in the field) — otherwise an ad excluded
-            // before a "Rename current ads" click comes back on the stale pattern,
-            // silently mismatched against every other ad in the grid with no
-            // indication anything's off (pre-push review, code-auditor: MEDIUM).
-            // Skipped for an ad Joel manually renamed by hand — that's a deliberate
-            // choice, not a pattern artifact, and undo should restore exactly what
-            // he typed, not overwrite it.
-            const restoredAd = entry.ad.nameManuallyEdited
-                ? entry.ad
-                : { ...entry.ad, name: computeAdName(lastAppliedNamingPattern, entry.ad) };
-            next.splice(insertAt, 0, restoredAd);
-            return next;
-        });
-        setRemovedStack(prev => prev.filter(r => r.key !== key));
     };
 
     const updateAdName = (index, name) => {
@@ -1772,34 +1783,6 @@ const BulkAdCreation = ({ onNext, onBack }) => {
 
             {!loading ? (
                 <>
-                    {/* Undo banners — the exclude ("✕") button on this dense grid is a
-                        smaller, closer-together target than the old isolated row button
-                        it replaced, with no confirm step. This is the safety net for a
-                        misclick, not a confirm dialog on every exclude (CLAUDE.md bans
-                        native confirm() outright, and a modal on every card-corner click
-                        would be worse friction than the problem it solves).
-                        `sticky top-2` — flagged in review: at a real 15-20 ad batch, a
-                        misclick usually happens scrolled well past the top of the grid,
-                        and a banner in normal document flow above it renders off-screen
-                        exactly when it's needed. A stack (not one slot) — a second
-                        exclude within the window no longer silently overwrites the
-                        first one's undo with no indication anything was lost. */}
-                    {removedStack.length > 0 && (
-                        <div className="sticky top-2 z-20 space-y-2 mb-3">
-                            {removedStack.map(entry => (
-                                <div key={entry.key} className="flex items-center justify-between gap-3 px-4 py-2.5 bg-gray-800 text-white text-sm rounded-lg shadow-lg">
-                                    <span>Removed "{entry.ad.name}"</span>
-                                    <div className="flex items-center gap-3 flex-shrink-0">
-                                        <button onClick={() => undoRemove(entry.key)} className="font-semibold text-amber-300 hover:text-amber-200">Undo</button>
-                                        <button onClick={() => setRemovedStack(prev => prev.filter(r => r.key !== entry.key))} className="text-gray-400 hover:text-gray-200" aria-label="Dismiss">
-                                            <X size={14} />
-                                        </button>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-
                     {isDriveManifest ? (
                         <div className="mb-5">
                             <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -1862,6 +1845,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                             const selected = row.ad.id === selectedManifestRow?.ad.id;
                                             const included = !manifestExcludedAdIds.has(row.ad.id) && !protectedReconciliationIdSet.has(row.ad.id);
                                             const protectedRow = protectedReconciliationIdSet.has(row.ad.id);
+                                            const excludedRow = manifestExcludedAdIds.has(row.ad.id) && !protectedRow;
                                             return (
                                                 <div
                                                     key={row.ad.id}
@@ -1901,7 +1885,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                                         <div className="text-xs text-gray-400">{row.destinationLabel}</div>
                                                     </div>
                                                     <div className="hidden md:block">
-                                                        <span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${protectedRow ? 'bg-gray-100 text-gray-600' : row.copyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{protectedRow ? 'Protected — excluded from retry' : row.copyReady ? 'Ready' : 'Needs copy'}</span>
+                                                        <span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${protectedRow || excludedRow ? 'bg-gray-100 text-gray-600' : row.copyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{protectedRow ? 'Protected — excluded from retry' : excludedRow ? 'Excluded from launch' : row.copyReady ? 'Ready' : 'Needs copy'}</span>
                                                         {row.outcome && <span className={`mt-1 inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${row.outcome.cls}`}>{row.outcome.label}</span>}
                                                     </div>
                                                     <button type="button" onClick={(event) => { event.stopPropagation(); setSelectedManifestAdId(row.ad.id); setEditDrawerOpen(true); }} className="text-right text-xs font-semibold text-amber-700 hover:text-amber-900">Open →</button>
@@ -1916,14 +1900,44 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         combination, instead of a thumbnail + rename row. Shows the actual
                         headline/body text for that specific combination so a bad pairing is
                         visible before launch, not just trusted from the permutation math. */
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-4">
-                        {adsData.map((ad, index) => {
+                    <div className="mb-4">
+                        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white p-3">
+                            <input
+                                value={manifestSearch}
+                                onChange={(event) => setManifestSearch(event.target.value)}
+                                placeholder="Search ad name, creative, copy, or category"
+                                className="min-w-[220px] flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                            />
+                            <select
+                                value={manifestCategory}
+                                onChange={(event) => setManifestCategory(event.target.value)}
+                                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                            >
+                                <option value="all">All categories</option>
+                                {manifestCategories.map(category => <option key={category} value={category}>{category}</option>)}
+                            </select>
+                            <button type="button" onClick={() => setVisibleStandardSelection(true)} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">
+                                Include {visibleStandardRows.length} visible
+                            </button>
+                            <button type="button" onClick={() => setVisibleStandardSelection(false)} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">
+                                Exclude {visibleStandardRows.length} visible
+                            </button>
+                            <span className="ml-auto text-xs font-semibold text-gray-500">
+                                {manifestReadyCount} ready · {activeAds.length} included · {excludedAdIds.size} excluded · {visibleStandardRows.length} matching
+                            </span>
+                        </div>
+                        <p className="-mt-2 mb-3 text-xs text-gray-500">Bulk actions apply only to matching cards. Excluded ads remain visible for review and can be included again.</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {visibleStandardRows.map(row => {
+                            const ad = row.ad;
+                            const index = row.index;
                             const creative = creativeData.creatives?.find(c => c.id === ad.creativeId);
                             const isVideo = creative?.mediaType === 'video';
                             const protectedRow = protectedReconciliationIdSet.has(ad.id);
-                                    const headline = ad.headlineOverride || creativeData.headlines?.[ad.headlineIndex];
-                                    const body = ad.bodyOverride || creativeData.bodies?.[ad.bodyIndex];
-                                    const description = creative?.description ?? creativeData.description;
+                            const included = !manifestExcludedAdIds.has(ad.id) && !protectedRow;
+                            const headline = row.headline;
+                            const body = row.body;
+                            const description = row.description;
                             // Distinct from a real confirmed name — never render the unconfirmed
                             // placeholder with the same confident styling as a real Page name.
                             // A stale-but-real-looking name (or a generic "Your Page" that reads
@@ -1981,12 +1995,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                             <Pencil size={13} />
                                         </button>
                                         <button
-                                            onClick={() => removeAd(index)}
+                                            onClick={() => toggleManifestAd(ad.id)}
                                             disabled={protectedRow}
-                                            title={protectedRow ? 'Protected from retry after reconciliation' : 'Exclude this ad from the launch'}
-                                            className="p-1 rounded-full bg-white/90 text-red-500 hover:text-red-700 hover:bg-white shadow-sm transition-colors disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-white/90"
+                                            title={protectedRow ? 'Protected from retry after reconciliation' : included ? 'Exclude this ad from the launch' : 'Include this ad in the launch'}
+                                            className={`p-1 rounded-full bg-white/90 shadow-sm transition-colors disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-white/90 ${included ? 'text-red-500 hover:text-red-700 hover:bg-white' : 'text-emerald-600 hover:text-emerald-800 hover:bg-white'}`}
                                         >
-                                            <X size={14} />
+                                            {included ? <X size={14} /> : <Check size={14} />}
                                         </button>
                                     </div>
 
@@ -1994,9 +2008,16 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                     <div className="flex items-center gap-2 px-3 pt-3">
                                         {protectedRow ? (
                                             <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-gray-200 text-gray-700">Protected — excluded from retry</span>
+                                        ) : !included ? (
+                                            <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-gray-100 text-gray-600">Excluded from launch</span>
                                         ) : outcome && (
                                             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${outcome.cls}`}>
                                                 {outcome.label}
+                                            </span>
+                                        )}
+                                        {!protectedRow && included && !outcome && (
+                                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${row.copyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>
+                                                {row.copyReady ? 'Ready' : 'Needs copy'}
                                             </span>
                                         )}
                                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
@@ -2133,6 +2154,10 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 </div>
                             );
                         })}
+                        {visibleStandardRows.length === 0 && (
+                            <p className="col-span-full rounded-xl border border-dashed border-gray-300 bg-white px-4 py-10 text-center text-sm text-gray-500">No standard ads match those filters.</p>
+                        )}
+                        </div>
                     </div>
                     )}
 
