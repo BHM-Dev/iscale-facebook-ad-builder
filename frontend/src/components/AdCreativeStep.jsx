@@ -304,12 +304,45 @@ const countVariations = (creativeData) => {
     return { media, headlines: assignedHeadlineCount, bodies: assignedBodyCount, total, hasPerCreativeCopy };
 };
 
+const formatReconciliationRecords = (records) => records.map(record => {
+    const ads = (record.readyAdNumbers || []).join(', ') || 'unknown ADs';
+    const meta = (record.createdMetaIds || []).join(', ') || 'Meta ID pending';
+    const scope = `${record.campaignId || 'campaign unknown'} / ${record.adsetId || 'ad set unknown'}`;
+    const when = record.recordedAt ? new Date(record.recordedAt).toLocaleString() : 'time unknown';
+    return `${ads} (Meta: ${meta}; ${scope}; ${when})`;
+}).join(' • ');
+
 const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const isMatchImport = mode === 'match-import';
     const { showWarning, showError, showSuccess } = useToast();
     const { authFetch } = useAuth();
     const { creativeData, setCreativeData, selectedAdAccount, adsetData, campaignData, setLaunchSummary } = useCampaign();
     const { brands } = useBrands();
+    const [reconciliationPendingRecords, setReconciliationPendingRecords] = useState([]);
+    const reconciliationAccountId = selectedAdAccount?.accountId || selectedAdAccount?.id || 'none';
+    useEffect(() => {
+        const keys = [
+            `bulk-creation-reconciliation-active:${reconciliationAccountId}`,
+            `bulk-match-reconciliation-active:${reconciliationAccountId}`,
+        ];
+        const records = keys.flatMap(key => {
+            try {
+                const raw = localStorage.getItem(key);
+                if (!raw) return [];
+                const parsed = JSON.parse(raw);
+                const items = Array.isArray(parsed) ? parsed : parsed?.scope ? [parsed] : [];
+                return items.filter(item => item && item.blocked !== false);
+            } catch (storageError) {
+                console.warn('Could not read reconciliation warning:', storageError);
+                return [];
+            }
+        });
+        const uniqueRecords = [...new Map(records.map((record, index) => [
+            `${record.scope || 'unknown'}:${record.recordedAt || index}`,
+            record,
+        ])).values()];
+        setReconciliationPendingRecords(uniqueRecords);
+    }, [reconciliationAccountId]);
     // Cache keys for creative defaults (URL/headlines/bodies/description/CTA) are scoped
     // by ad account AND campaign — the same ad account can run multiple niches, each with
     // its own destination URL/copy, so account-only scoping would leak the wrong niche's
@@ -1825,6 +1858,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     return (
         <>
         <div>
+            {reconciliationPendingRecords.length > 0 && (
+                <div className="mb-5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    <strong>This ad account has an unresolved launch.</strong> You can continue building this batch, but reconcile the pending launch before creating new ads.
+                    <div className="mt-1 text-xs">Affected rows: {formatReconciliationRecords(reconciliationPendingRecords)}</div>
+                </div>
+            )}
             {isMatchImport ? (
                 <>
                     <h2 className="text-2xl font-bold mb-6">Ad Creative - Basic Info</h2>
