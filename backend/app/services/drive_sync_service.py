@@ -693,6 +693,34 @@ class DriveSyncService:
             bound["drive_file_id"] = drive_file_id
         return bound
 
+    def _write_merged_soft_tags(self, drive_file_id: str, new_tags: Dict[str, Any]) -> int:
+        """Merge new_tags into a drive_assets row's existing soft_tags rather than
+        overwriting the whole column. A row accumulates tags across multiple sync
+        passes (initial match, refresh, copy-integrity warning) — a raw overwrite
+        silently drops fields (source, copy_id, copy_source_drive_file_id, ...) that
+        an earlier pass set and this one didn't happen to recompute."""
+        existing = self.db.execute(
+            text("SELECT soft_tags FROM drive_assets WHERE drive_file_id = :drive_file_id"),
+            {"drive_file_id": drive_file_id},
+        ).mappings().first()
+        try:
+            parsed = json.loads(existing["soft_tags"]) if existing and existing["soft_tags"] else {}
+            existing_tags = parsed if isinstance(parsed, dict) else {}
+        except (TypeError, json.JSONDecodeError):
+            existing_tags = {}
+        merged_tags = {**existing_tags, **new_tags}
+        result = self.db.execute(
+            text(
+                """
+                UPDATE drive_assets
+                SET soft_tags = :soft_tags, synced_at = NOW()
+                WHERE drive_file_id = :drive_file_id
+                """
+            ),
+            {"soft_tags": json.dumps(merged_tags), "drive_file_id": drive_file_id},
+        )
+        return result.rowcount or 0
+
     def _refresh_folder_copy_metadata(self, file_meta: Dict[str, Any]) -> int:
         parents = file_meta.get("parents") or []
         if not parents:
@@ -739,33 +767,10 @@ class DriveSyncService:
                 refreshed_tags["copy_source_drive_file_id"] = (
                     folder_metadata.get("_copy_source_drive_file_id") or file_meta.get("id")
                 )
-                result = self.db.execute(
-                    text(
-                        """
-                        UPDATE drive_assets
-                        SET soft_tags = :soft_tags, synced_at = NOW()
-                        WHERE drive_file_id = :drive_file_id
-                        """
-                    ),
-                    {
-                        "soft_tags": json.dumps(refreshed_tags),
-                        "drive_file_id": drive_file_id,
-                    },
-                )
-                updated += result.rowcount or 0
+                updated += self._write_merged_soft_tags(drive_file_id, refreshed_tags)
 
         for drive_file_id, warning in (folder_metadata.get("_copy_integrity_warnings") or {}).items():
-            result = self.db.execute(
-                text(
-                    """
-                    UPDATE drive_assets
-                    SET soft_tags = :soft_tags, synced_at = NOW()
-                    WHERE drive_file_id = :drive_file_id
-                    """
-                ),
-                {"soft_tags": json.dumps(warning), "drive_file_id": drive_file_id},
-            )
-            updated += result.rowcount or 0
+            updated += self._write_merged_soft_tags(drive_file_id, warning)
 
         if not matched_media_ids:
             raise RuntimeError("Drive copy document did not resolve to any matching media files")
@@ -1553,9 +1558,17 @@ class DriveSyncService:
                 else:
                     logger.info("Drive image %s has no unique category-copy match", file_name)
                 if len(sections) == 1 and item.get("id"):
+                    section_category = next(iter(sections.values()))["category"]
                     copy_integrity_warnings[item["id"]] = {
                         "copy_integrity_issue": True,
-                        "copy_integrity_reason": "Drive filename did not uniquely match the package copy section",
+                        # Named for the person fixing it in Drive, not just for a
+                        # developer reading a log — points at the actual filename
+                        # and the copy doc's own heading text to check/rename against.
+                        "copy_integrity_reason": (
+                            f"\"{file_name}\" doesn't match this package's copy section "
+                            f"(\"{section_category}\"). Rename it to include a word from "
+                            f"that heading, or fix the heading in the copy doc."
+                        ),
                         "package_folder_id": folder_id,
                         "file_name": file_name,
                     }
