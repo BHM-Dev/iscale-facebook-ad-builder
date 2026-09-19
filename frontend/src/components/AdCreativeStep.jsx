@@ -171,6 +171,8 @@ const buildDriveAssetGroups = (assets) => {
             // but useless for organizing a 50-row launch manifest.
             category: tags.category || null,
             copyPairingAmbiguous: tags.copy_pairing_status === 'ambiguous',
+            copyIntegrityIssue: tags.copy_integrity_issue === true,
+            copyIntegrityReason: tags.copy_integrity_reason || null,
             sortClusterKey,
         };
         existing.assets.push(asset);
@@ -179,6 +181,8 @@ const buildDriveAssetGroups = (assets) => {
         existing.cta = existing.cta || tags.cta || null;
         existing.category = existing.category || tags.category || null;
         existing.copyPairingAmbiguous = existing.copyPairingAmbiguous || tags.copy_pairing_status === 'ambiguous';
+        existing.copyIntegrityIssue = existing.copyIntegrityIssue || tags.copy_integrity_issue === true;
+        existing.copyIntegrityReason = existing.copyIntegrityReason || tags.copy_integrity_reason || null;
         grouped.set(key, existing);
     });
 
@@ -231,7 +235,8 @@ const buildDriveAssetGroups = (assets) => {
             copy: pairCopyIntegrityOk ? group.copy : null,
             landingPage: pairCopyIntegrityOk ? group.landingPage : null,
             cta: pairCopyIntegrityOk ? group.cta : null,
-            copyIntegrityIssue: isPair && !pairCopyIntegrityOk,
+            copyIntegrityIssue: group.copyIntegrityIssue || (isPair && !pairCopyIntegrityOk),
+            copyIntegrityReason: group.copyIntegrityReason || null,
             copyRefreshUnverified: pairedMetadata.some(metadata => metadata.refreshStatus === 'unverified'),
             copyPairingAmbiguous: group.copyPairingAmbiguous,
             syncedAt: latestSyncedAt(group),
@@ -2487,7 +2492,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                         <span className="text-xs font-semibold text-gray-900">Ad {index + 1}</span>
                                                         {creative.dualPlacement && <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-semibold text-purple-700">Feed + Stories</span>}
                                                         {creative.driveCopyIntegrityIssue ? (
-                                                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Pair data mismatch</span>
+                                                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">{creative.drivePairId ? 'Pair data mismatch' : 'Copy mapping issue'}</span>
                                                         ) : invalidDriveCta ? (
                                                             <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Unsupported CTA</span>
                                                         ) : missingDriveFields.length > 0 ? (
@@ -2512,7 +2517,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                             className="mt-1 text-[11px] font-semibold text-indigo-700 hover:text-indigo-900"
                                                         >
                                                             {creative.driveCopyIntegrityIssue
-                                                                ? 'Open Drive to repair this pair'
+                                                                ? (creative.drivePairId ? 'Open Drive to repair this pair' : 'Open Drive to repair copy mapping')
                                                                 : invalidDriveCta
                                                                     ? `Open Drive to repair unsupported CTA: ${creative.cta}`
                                                                 : `Edit the ${missingDriveFields.join(' + ')} below, or refresh from Drive`}
@@ -3155,7 +3160,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                 </div>
                                             ) : group.copyIntegrityIssue || group.copyRefreshUnverified ? (
                                                 <div className="absolute bottom-10 left-2 bg-red-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
-                                                    {group.copyRefreshUnverified ? 'Drive source needs repair — refresh Drive' : 'Pair data mismatch — refresh Drive'}
+                                                    {group.copyRefreshUnverified
+                                                        ? 'Drive source needs repair — refresh Drive'
+                                                        : group.copyIntegrityReason || 'Pair data mismatch — refresh Drive'}
                                                 </div>
                                             ) : (copyMatched || group.landingPage || group.cta || tags.copy_id) && (
                                                 <div className="absolute bottom-10 left-2 bg-emerald-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">

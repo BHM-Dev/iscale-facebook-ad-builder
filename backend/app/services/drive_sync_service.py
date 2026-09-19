@@ -667,6 +667,9 @@ class DriveSyncService:
                 if folder_metadata.get("_copy_source_drive_file_id"):
                     bound["copy_source_drive_file_id"] = folder_metadata["_copy_source_drive_file_id"]
                 return bound
+            warning = (folder_metadata.get("_copy_integrity_warnings") or {}).get(file_meta.get("id"))
+            if warning:
+                return self._bind_media_metadata_to_file(warning, file_meta.get("id"))
         strategy_folder = self._find_strategy_package_folder(file_meta)
         if not strategy_folder:
             return {}
@@ -750,6 +753,19 @@ class DriveSyncService:
                     },
                 )
                 updated += result.rowcount or 0
+
+        for drive_file_id, warning in (folder_metadata.get("_copy_integrity_warnings") or {}).items():
+            result = self.db.execute(
+                text(
+                    """
+                    UPDATE drive_assets
+                    SET soft_tags = :soft_tags, synced_at = NOW()
+                    WHERE drive_file_id = :drive_file_id
+                    """
+                ),
+                {"soft_tags": json.dumps(warning), "drive_file_id": drive_file_id},
+            )
+            updated += result.rowcount or 0
 
         if not matched_media_ids:
             raise RuntimeError("Drive copy document did not resolve to any matching media files")
@@ -1489,6 +1505,7 @@ class DriveSyncService:
             raise RuntimeError("Drive category copy document contained no complete copy sections")
         assets: Dict[str, Dict[str, Any]] = {}
         assets_by_drive_id: Dict[str, Dict[str, Any]] = {}
+        copy_integrity_warnings: Dict[str, Dict[str, Any]] = {}
         candidates = []
         for item in media_files:
             file_name = item.get("name") or ""
@@ -1535,6 +1552,13 @@ class DriveSyncService:
                     logger.warning("Drive image %s matched multiple copy categories: %s", file_name, matches)
                 else:
                     logger.info("Drive image %s has no unique category-copy match", file_name)
+                if len(sections) == 1 and item.get("id"):
+                    copy_integrity_warnings[item["id"]] = {
+                        "copy_integrity_issue": True,
+                        "copy_integrity_reason": "Drive filename did not uniquely match the package copy section",
+                        "package_folder_id": folder_id,
+                        "file_name": file_name,
+                    }
                 continue
             number = matches[0]
             section = sections[number]
@@ -1601,7 +1625,11 @@ class DriveSyncService:
             # Keep a basename fallback for older callers, but use the exact Drive
             # ID index whenever available so duplicate names remain distinct.
                 assets[file_name.lower()] = metadata
-        return {"assets": assets, "assets_by_drive_id": assets_by_drive_id}
+        return {
+            "assets": assets,
+            "assets_by_drive_id": assets_by_drive_id,
+            "_copy_integrity_warnings": copy_integrity_warnings,
+        }
 
     def _strategy_folder_copy_metadata(self, folder_id, folder_files, media_by_name, text_body):
         blocks = self._parse_strategy_copy_doc(text_body)

@@ -268,6 +268,8 @@ Generic package copy.
     # section. The old fully-permissive fallback silently attached this copy.
     assert result["assets"] == {}
     assert result["assets_by_drive_id"] == {}
+    assert result["_copy_integrity_warnings"]["feed"]["copy_integrity_issue"] is True
+    assert result["_copy_integrity_warnings"]["stories"]["copy_integrity_issue"] is True
 
 
 def test_ad_numbered_copy_doc_parses_established_meta_labels():
