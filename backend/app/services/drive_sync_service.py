@@ -1203,8 +1203,9 @@ class DriveSyncService:
 
     # Drive packages created before the naming convention was formalized use
     # short folder/file labels. Keep those abbreviations explicit. A generic
-    # one-section copy package may use them safely because there is no second
-    # copy block that could receive the asset by mistake.
+    # one-section copy package may use them when the section heading identifies
+    # the same semantic family. Never use a short code from one family as a
+    # generic fallback for an unrelated heading.
     _CATEGORY_KEYWORD_ALIASES = (
         (
             ("landscaping", "landscape", "landscaper", "landscapers", "lawn care", "field service", "outdoor crew", "land", "lnd"),
@@ -1287,7 +1288,6 @@ class DriveSyncService:
     def _category_alias_replacements(
         self,
         category: str,
-        allow_single_section_short_codes: bool = False,
     ) -> Dict[str, str]:
         """Return the short naming aliases that are valid for this copy section."""
         normalized_category = self._normalize_name(category)
@@ -1298,26 +1298,22 @@ class DriveSyncService:
                 self._name_contains_phrase(normalized_category, keyword)
                 for keyword in normalized_keywords
             )
-            if not (category_identifies_vertical or allow_single_section_short_codes):
+            if not category_identifies_vertical:
                 continue
             canonical = normalized_keywords[0]
             for variant in (*normalized_keywords, *(self._normalize_name(alias) for alias in keyword_aliases)):
                 replacements[variant] = canonical
         return replacements
 
-    def _matches_known_category_short_code(self, file_name: str) -> bool:
+    def _matches_category_short_code(self, file_name: str, category: str) -> bool:
         normalized_file = self._normalize_name(os.path.splitext(file_name)[0])
-        return any(
-            self._name_contains_phrase(normalized_file, self._normalize_name(alias))
-            for _, short_aliases in self._CATEGORY_KEYWORD_ALIASES
-            for alias in short_aliases
-        )
+        aliases = self._category_alias_replacements(category)
+        return any(self._name_contains_phrase(normalized_file, alias) for alias in aliases)
 
     def _category_pair_key(
         self,
         file_name: str,
         category: str = "",
-        allow_single_section_short_codes: bool = False,
     ) -> str:
         """Stable identity for a category-copy Feed/Stories export.
 
@@ -1331,7 +1327,7 @@ class DriveSyncService:
         stem = os.path.splitext(file_name or "")[0].lower()
         stem = re.sub(r"(?:^|[-_ ])(?:1x1|9x16)(?=$|[-_ ])", " ", stem, flags=re.IGNORECASE)
         normalized_stem = re.sub(r"[-_\s]+", " ", stem).strip()
-        for alias, canonical in self._category_alias_replacements(category, allow_single_section_short_codes).items():
+        for alias, canonical in self._category_alias_replacements(category).items():
             normalized_stem = re.sub(
                 rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])",
                 canonical,
@@ -1527,11 +1523,12 @@ class DriveSyncService:
                 for number, section in sections.items()
                 if self._category_matches(file_name, section["category"], number)
             ]
-            if not matches and len(sections) == 1 and self._matches_known_category_short_code(file_name):
-                # A legacy one-copy package can have a generic heading such as
-                # "Local Business Coverage." With only one complete copy block
-                # there is no competing category to misroute, so accept the
-                # explicit short label and pair its Feed/Stories exports.
+            if not matches and len(sections) == 1 and self._matches_category_short_code(
+                file_name, next(iter(sections.values()))["category"]
+            ):
+                # A one-copy package may omit the full category words from its
+                # filenames, but only a short code from that section's own
+                # semantic family is safe to use as the fallback.
                 matches = [next(iter(sections))]
             if len(matches) != 1:
                 if len(matches) > 1:
@@ -1552,7 +1549,6 @@ class DriveSyncService:
                 identity = self._category_pair_key(
                     candidate[1],
                     category_candidates[0][3]["category"],
-                    allow_single_section_short_codes=len(sections) == 1,
                 )
                 by_identity.setdefault(identity, {"1x1": [], "9x16": []})[candidate[4]].append(candidate)
 
@@ -1579,7 +1575,6 @@ class DriveSyncService:
                 self._category_pair_key(
                     entry[1],
                     entry[3]["category"],
-                    allow_single_section_short_codes=len(sections) == 1,
                 ),
                 entry[1].lower(),
                 str(entry[0].get("id") or ""),

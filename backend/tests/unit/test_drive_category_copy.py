@@ -250,7 +250,7 @@ Landscaping copy.
     assert landscaping_result["assets_by_drive_id"]["land-feed"]["copy_id"] == landscaping_result["assets_by_drive_id"]["land-stories"]["copy_id"]
 
 
-def test_single_generic_category_section_pairs_known_short_codes():
+def test_single_generic_category_section_rejects_cross_family_short_codes():
     service = DriveSyncService.__new__(DriveSyncService)
     document = """1. LOCAL BUSINESS COVERAGE
 Headline: Compare Business Coverage
@@ -264,8 +264,10 @@ Generic package copy.
 
     result = service._category_folder_copy_metadata("generic-package", media, document)
 
-    assert result["assets_by_drive_id"]["feed"]["copy_id"] == "CATEGORY-01"
-    assert result["assets_by_drive_id"]["feed"]["copy_id"] == result["assets_by_drive_id"]["stories"]["copy_id"]
+    # FLR/FLOR identifies the florist family, not the generic local-business
+    # section. The old fully-permissive fallback silently attached this copy.
+    assert result["assets"] == {}
+    assert result["assets_by_drive_id"] == {}
 
 
 def test_ad_numbered_copy_doc_parses_established_meta_labels():
