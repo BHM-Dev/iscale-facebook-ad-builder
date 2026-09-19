@@ -853,7 +853,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             const replacement = backfilled.length
                 ? ` Backfilled with: ${blockedDriveGroupSummary(backfilled)}.`
                 : '';
-            showWarning(`Select first ${n}: skipped position${blockedInScope.length !== 1 ? 's' : ''} ${skipped}.${replacement} Resolve blocked sources in Drive, then refresh.`);
+            // Default 5s auto-dismiss is too short once this message is naming
+            // specific files rather than just a count (code-auditor review).
+            showWarning(`Select first ${n}: skipped position${blockedInScope.length !== 1 ? 's' : ''} ${skipped}.${replacement} Resolve blocked sources in Drive, then refresh.`, 9000);
         }
         setSelectedDriveAssetIds(prev => {
             const next = new Set(prev);
@@ -868,7 +870,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             .filter(Boolean);
         const blockedGroups = selectedGroups.filter(isDriveGroupSelectionBlocked);
         if (blockedGroups.length > 0) {
-            showWarning(`Cannot add blocked Drive creative${blockedGroups.length !== 1 ? 's' : ''}: ${blockedDriveGroupSummary(blockedGroups)}. Resolve the copy or placement issue, then try again.`);
+            showWarning(`Cannot add blocked Drive creative${blockedGroups.length !== 1 ? 's' : ''}: ${blockedDriveGroupSummary(blockedGroups)}. Resolve the copy or placement issue, then try again.`, 9000);
             return;
         }
         const groupsWithCopy = selectedGroups.filter(group => hasCompleteCopy(group.copy || {}) && !group.copyRefreshUnverified);
