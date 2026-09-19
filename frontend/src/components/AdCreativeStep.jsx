@@ -275,6 +275,13 @@ const isDriveGroupSelectionBlocked = (group) => Boolean(
     group?.copyPairingAmbiguous || group?.copyRefreshUnverified || group?.copyIntegrityIssue
 );
 
+const driveGroupLabel = (group) => group?.displayAsset?.file_name || group?.category || 'Unnamed Drive creative';
+
+const blockedDriveGroupSummary = (groups, limit = 3) => {
+    const labels = groups.slice(0, limit).map(driveGroupLabel);
+    return `${labels.join(', ')}${groups.length > limit ? `, +${groups.length - limit} more` : ''}`;
+};
+
 // Live permutation count for the sticky counter below — mirrors BulkAdCreation.jsx's
 // own useEffect (media.length × valid-headlines × valid-bodies) exactly, so the number
 // shown here never drifts from what Review actually generates. Kept as a pure function
@@ -797,7 +804,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         if (isDriveGroupSelectionBlocked(group)) {
             showWarning(group?.copyRefreshUnverified
                 ? 'This Drive copy source needs repair. Refresh after fixing the source document before selecting it.'
-                : 'This ad number has multiple or incomplete placements in Drive. Rename or resolve the source files, then refresh copy before selecting it.');
+                : `${driveGroupLabel(group)} is blocked: resolve its Drive copy or placement issue before selecting it.`);
             return;
         }
         setSelectedDriveAssetIds(prev => {
@@ -836,13 +843,21 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const selectFirstNDriveAssets = () => {
         const n = parseInt(driveSelectCount, 10);
         if (!Number.isFinite(n) || n <= 0) return;
-        const blockedCount = driveAssetGroups.filter(isDriveGroupSelectionBlocked).length;
-        if (blockedCount) {
-            showWarning(String(blockedCount) + ' Drive creative' + (blockedCount !== 1 ? 's were' : ' was') + ' skipped. Resolve the source in Drive, then refresh.');
+        const positionalScope = driveAssetGroups.slice(0, n);
+        const blockedInScope = positionalScope.filter(isDriveGroupSelectionBlocked);
+        const eligibleSelection = driveAssetGroups.filter(group => !isDriveGroupSelectionBlocked(group)).slice(0, n);
+        const positionalIds = new Set(positionalScope.map(group => group.id));
+        const backfilled = eligibleSelection.filter(group => !positionalIds.has(group.id));
+        if (blockedInScope.length) {
+            const skipped = blockedDriveGroupSummary(blockedInScope);
+            const replacement = backfilled.length
+                ? ` Backfilled with: ${blockedDriveGroupSummary(backfilled)}.`
+                : '';
+            showWarning(`Select first ${n}: skipped position${blockedInScope.length !== 1 ? 's' : ''} ${skipped}.${replacement} Resolve blocked sources in Drive, then refresh.`);
         }
         setSelectedDriveAssetIds(prev => {
             const next = new Set(prev);
-            driveAssetGroups.filter(group => !isDriveGroupSelectionBlocked(group)).slice(0, n).forEach(group => next.add(group.id));
+            eligibleSelection.forEach(group => next.add(group.id));
             return next;
         });
     };
@@ -853,7 +868,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             .filter(Boolean);
         const blockedGroups = selectedGroups.filter(isDriveGroupSelectionBlocked);
         if (blockedGroups.length > 0) {
-            showWarning('Resolve the Drive copy or placement issue before adding these creatives.');
+            showWarning(`Cannot add blocked Drive creative${blockedGroups.length !== 1 ? 's' : ''}: ${blockedDriveGroupSummary(blockedGroups)}. Resolve the copy or placement issue, then try again.`);
             return;
         }
         const groupsWithCopy = selectedGroups.filter(group => hasCompleteCopy(group.copy || {}) && !group.copyRefreshUnverified);
