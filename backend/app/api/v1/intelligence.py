@@ -498,11 +498,13 @@ def _everflow_offers_for_account(ad_account_id: Optional[str]) -> Optional[set[s
     """Return the configured offer allow-list, or None when revenue is untracked."""
     if not ad_account_id:
         return None
-    account_id = str(ad_account_id).strip()
-    if account_id.isdigit():
-        account_id = f"act_{account_id}"
+    def canonical(value) -> str:
+        value = str(value).strip()
+        return f"act_{value[4:]}" if value.lower().startswith("act_") else normalize_account_id(value)
+
+    account_id = canonical(ad_account_id).lower()
     configured_accounts = {
-        normalize_account_id(value.strip()) for value in os.getenv("SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS", "").split(",") if value.strip()
+        canonical(value).lower() for value in os.getenv("SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS", "").split(",") if value.strip()
     }
     if account_id not in configured_accounts:
         return None
@@ -512,7 +514,7 @@ def _everflow_offers_for_account(ad_account_id: Optional[str]) -> Optional[set[s
         logger.warning("Invalid SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS JSON")
         return set()
     normalized_mapping = {
-        normalize_account_id(str(key).strip()): value for key, value in mapping.items()
+        canonical(key).lower(): value for key, value in mapping.items()
     } if isinstance(mapping, dict) else {}
     offers = normalized_mapping.get(account_id, [])
     return {str(value).strip() for value in offers if str(value).strip()}
@@ -683,8 +685,15 @@ def _build_best_times(
             row for row in redtrack_rows
             if str(row.get('p_sub2') or row.get('sub2') or '').strip() in known_adsets
         ]
-        matching_redtrack_rows = [row for row in scoped_redtrack_rows if _redtrack_offer_matches(row, allowed)]
-        rows_for_attribution = matching_redtrack_rows or scoped_redtrack_rows
+        explicit_offer_rows = [
+            row for row in scoped_redtrack_rows
+            if any(row.get(field) not in (None, '') for field in ('offer_name', 'offer', 'offerName'))
+        ]
+        matching_redtrack_rows = [row for row in explicit_offer_rows if _redtrack_offer_matches(row, allowed)]
+        offer_labels_mismatch = bool(explicit_offer_rows) and not matching_redtrack_rows
+        rows_for_attribution = [] if offer_labels_mismatch else (matching_redtrack_rows or scoped_redtrack_rows)
+        if matching_redtrack_rows and len(matching_redtrack_rows) < len(explicit_offer_rows):
+            dropped_count += len(explicit_offer_rows) - len(matching_redtrack_rows)
         for row in rows_for_attribution:
             adset_id = str(row.get('p_sub2') or row.get('sub2') or '').strip()
             when = _redtrack_datetime(row, tz)
@@ -716,7 +725,9 @@ def _build_best_times(
             attribution_method = 'redtrack_attribution_everflow_billing_allocated'
             attribution_warning = 'Everflow billing revenue is allocated across RedTrack-attributed ad sets and hours; use this as a directional timing signal.'
             if scoped_redtrack_rows and not matching_redtrack_rows:
-                attribution_warning += ' RedTrack offer labels did not match the Everflow offer name, so the selected Meta ad-set scope was used.'
+                attribution_warning += ' RedTrack offer labels did not match the Everflow offer name, so direct Everflow ad-set attribution was used.'
+            elif matching_redtrack_rows and len(matching_redtrack_rows) < len(explicit_offer_rows):
+                attribution_warning += ' Some RedTrack rows had a different offer label and were excluded.'
             if dropped_count:
                 attribution_warning += f' {dropped_count} conversion rows were excluded from the allocation basis.'
             redtrack_usable = True
@@ -822,6 +833,7 @@ def niche_profitability(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     resolved_from, resolved_to, day_filter, preset_label = _resolve_preset(preset, date_from, date_to)
 
     try:

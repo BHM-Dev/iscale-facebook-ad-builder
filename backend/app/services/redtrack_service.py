@@ -252,7 +252,8 @@ class RedTrackService:
                             if isinstance(data.get(key), list):
                                 page_rows = data[key]
                                 break
-                    total_value = data.get("total")
+                    pagination = data.get("pagination") if isinstance(data.get("pagination"), dict) else {}
+                    total_value = data.get("total", pagination.get("total"))
                     if total_value is not None:
                         total = int(total_value)
                 else:
