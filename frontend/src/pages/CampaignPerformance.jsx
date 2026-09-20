@@ -270,7 +270,9 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
   }, [initialOpen]);
 
   useEffect(() => {
+    intelligenceRequestRef.current += 1;
     bestTimesRequestRef.current += 1;
+    loadedPresetRef.current = null;
     setData(null);
     setError(null);
     setBestTimesData(null);
