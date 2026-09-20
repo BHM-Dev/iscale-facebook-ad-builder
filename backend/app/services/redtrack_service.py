@@ -244,7 +244,10 @@ class RedTrackService:
             if isinstance(data, dict):
                 for key in ("data", "conversions", "rows"):
                     if isinstance(data.get(key), list):
-                        return data[key]
+                        rows = data[key]
+                        if len(rows) >= per:
+                            raise RuntimeError(f"RedTrack conversions reached the {per}-row cap; attribution is incomplete")
+                        return rows
             raise RuntimeError(f"Unrecognised RedTrack conversions response shape: {type(data).__name__}")
         except httpx.HTTPStatusError as e:
             logger.error("RedTrack conversions HTTP error: %s %s", e.response.status_code, e.response.text)
