@@ -593,7 +593,7 @@ def _conversion_datetime(row: dict, timezone: ZoneInfo) -> Optional[datetime]:
     return None
 
 
-def _build_best_times(meta_payload: dict, conversions: list[dict], offer_names: Optional[set[str]]) -> list[dict]:
+def _build_best_times(meta_payload: dict, conversions: list[dict], offer_names: Optional[set[str]], include_metadata: bool = False):
     tz = EVERFLOW_TZ_BY_ID[BEST_TIMES_TIMEZONE_ID]
     tracked = offer_names is not None and bool(offer_names)
     adsets = meta_payload['adsets']
@@ -662,7 +662,13 @@ def _build_best_times(meta_payload: dict, conversions: list[dict], offer_names: 
             'revenue_source': 'everflow' if tracked else 'not_tracked',
             'cells': cells,
         })
-    return output
+    result = {
+        'niches': output,
+        'dropped_conversion_count': dropped_count if tracked else 0,
+        'dropped_revenue': float(dropped_revenue.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)) if tracked else 0,
+        'attribution_complete': not tracked or dropped_count == 0,
+    }
+    return result if include_metadata else output
 
 
 def _build_summary(action_queue: dict) -> str:
@@ -759,15 +765,16 @@ def best_times(
                 resolved_to,
                 timezone_id=BEST_TIMES_TIMEZONE_ID,
             )
-        result = _build_best_times(meta_payload, conversions, offer_names)
+        result = _build_best_times(meta_payload, conversions, offer_names, include_metadata=True)
     except RuntimeError as exc:
         raise HTTPException(502, str(exc)) from exc
     except Exception as exc:
         logger.exception("Best Times failed for %s", ad_account_id)
         raise HTTPException(502, f"Best Times data unavailable: {exc}") from exc
 
+    niches = result['niches']
     if niche:
-        result = [row for row in result if row['niche'].casefold() == niche.casefold()]
+        niches = [row for row in niches if row['niche'].casefold() == niche.casefold()]
     return {
         'question_set': 'best_times',
         'preset': preset,
@@ -777,5 +784,8 @@ def best_times(
         'timezone_id': BEST_TIMES_TIMEZONE_ID,
         'timezone': str(EVERFLOW_TZ_BY_ID[BEST_TIMES_TIMEZONE_ID]),
         'dayparts': list(BEST_TIMES_DAYPARTS),
-        'niches': result,
+        'niches': niches,
+        'dropped_conversion_count': result['dropped_conversion_count'],
+        'dropped_revenue': result['dropped_revenue'],
+        'attribution_complete': result['attribution_complete'],
     }

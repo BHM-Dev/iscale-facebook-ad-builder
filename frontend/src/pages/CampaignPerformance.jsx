@@ -58,8 +58,13 @@ function bestTimesCellClass(cell) {
 }
 
 function BestTimesGrid({ data }) {
-  const [selectedNiche, setSelectedNiche] = useState(data.niches?.[0]?.niche || '');
-  const niche = data.niches?.find(item => item.niche === selectedNiche) || data.niches?.[0];
+  const nicheSummaries = useMemo(() => (data.niches || []).map(item => {
+    const spend = (item.cells || []).reduce((sum, cell) => sum + Number(cell.spend || 0), 0);
+    const revenue = item.revenue_source === 'not_tracked' ? null : (item.cells || []).reduce((sum, cell) => sum + Number(cell.revenue || 0), 0);
+    return { ...item, totalSpend: spend, totalRevenue: revenue, totalRoi: revenue != null && spend > 0 ? (revenue - spend) / spend : null };
+  }).sort((a, b) => b.totalSpend - a.totalSpend), [data.niches]);
+  const [selectedNiche, setSelectedNiche] = useState(() => nicheSummaries[0]?.niche || '');
+  const niche = nicheSummaries.find(item => item.niche === selectedNiche) || nicheSummaries[0];
   const cells = useMemo(() => {
     const map = new Map((niche?.cells || []).map(cell => [`${cell.day_of_week}-${cell.hour}`, cell]));
     return map;
@@ -97,7 +102,7 @@ function BestTimesGrid({ data }) {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <select value={niche.niche} onChange={e => setSelectedNiche(e.target.value)} className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white">
-          {data.niches.map(item => <option key={item.niche} value={item.niche}>{item.niche}</option>)}
+          {nicheSummaries.map(item => <option key={item.niche} value={item.niche}>{item.niche} · ${Math.round(item.totalSpend).toLocaleString()} spend{item.totalRoi != null ? ` · ${item.totalRoi >= 0 ? '+' : ''}${Math.round(item.totalRoi * 100)}% ROI` : ' · not tracked'}</option>)}
         </select>
         <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${untracked ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-green-50 text-green-700 border-green-200'}`}>
           {untracked ? 'Revenue not tracked for this account' : 'Everflow revenue'}
@@ -180,6 +185,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
   const [error, setError] = useState(null);
   const loadedPresetRef = useRef(null);
   const userSelectedPresetRef = useRef(false);
+  const bestTimesRequestRef = useRef(0);
 
   const loadIntelligence = useCallback(async (nextPreset = preset, nextFrom = customFrom, nextTo = customTo) => {
     setLoading(true);
@@ -208,6 +214,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
   }, [adAccountId, preset, customFrom, customTo]);
 
   const loadBestTimes = useCallback(async (nextPreset = preset, nextFrom = customFrom, nextTo = customTo) => {
+    const requestId = ++bestTimesRequestRef.current;
     setBestTimesLoading(true);
     setBestTimesError(null);
     try {
@@ -222,11 +229,12 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
         const e = await res.json().catch(() => ({}));
         throw new Error(e.detail || `Error ${res.status}`);
       }
-      setBestTimesData(await res.json());
+      const result = await res.json();
+      if (requestId === bestTimesRequestRef.current) setBestTimesData(result);
     } catch (e) {
-      setBestTimesError(e.message || 'Failed to load Best Times data');
+      if (requestId === bestTimesRequestRef.current) setBestTimesError(e.message || 'Failed to load Best Times data');
     } finally {
-      setBestTimesLoading(false);
+      if (requestId === bestTimesRequestRef.current) setBestTimesLoading(false);
     }
   }, [adAccountId, preset, customFrom, customTo]);
 
@@ -246,9 +254,11 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
   }, [initialOpen]);
 
   useEffect(() => {
+    bestTimesRequestRef.current += 1;
     setBestTimesData(null);
     setBestTimesError(null);
-  }, [adAccountId, pageDatePreset, pageDateFrom, pageDateTo]);
+    if (open && intelligenceView === 'best-times') loadBestTimes(preset, customFrom, customTo);
+  }, [adAccountId, pageDatePreset, pageDateFrom, pageDateTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Single source of truth for syncing Intelligence's preset to the page's own
   // date range. Always respects an explicit manual pick (userSelectedPresetRef),
@@ -271,6 +281,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
     const key = nextPreset === 'custom' ? `custom:${nextFrom}:${nextTo}` : nextPreset;
     if ((open || initialOpen) && loadedPresetRef.current !== key) {
       loadIntelligence(nextPreset, nextFrom, nextTo);
+      if (intelligenceView === 'best-times') loadBestTimes(nextPreset, nextFrom, nextTo);
     }
   }, [pageDatePreset, pageDateFrom, pageDateTo, initialPreset, open, initialOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -307,7 +318,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
           <div className="absolute inset-0 bg-black/30 pointer-events-auto" onClick={toggleOpen} />
           {/* Drawer */}
           <div className="relative w-full max-w-3xl bg-white shadow-2xl pointer-events-auto flex flex-col h-full overflow-y-auto">
-            <div className="px-6 py-4 flex items-center justify-between bg-violet-50/40 border-b border-violet-100 sticky top-0 z-10">
+            <div className="px-6 py-4 flex items-center justify-between bg-violet-50/40 border-b border-violet-100">
               <h2 className="font-semibold text-gray-900 flex items-center gap-2">
                 <Sparkles size={16} className="text-violet-500" />
                 Campaign Intelligence
@@ -427,6 +438,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
               {intelligenceView === 'best-times' && (
                 <div className="mb-5 rounded-xl border border-violet-100 bg-white p-3">
                   <div className="flex items-center justify-between mb-3"><div><h3 className="text-sm font-semibold text-gray-900">Best Times by Niche</h3><p className="text-[11px] text-gray-500 mt-0.5">True revenue ROI in the account's advertiser-local timezone · {bestTimesData?.timezone || 'Pacific time'}</p></div><button type="button" onClick={() => loadBestTimes(preset, customFrom, customTo)} className="text-xs text-violet-600 hover:text-violet-800">Refresh</button></div>
+                  {!bestTimesLoading && !bestTimesError && bestTimesData && !bestTimesData.attribution_complete && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><span className="font-semibold">Revenue attribution incomplete.</span> {bestTimesData.dropped_conversion_count} conversion{bestTimesData.dropped_conversion_count === 1 ? '' : 's'} totaling {formatMoney(bestTimesData.dropped_revenue)} could not be assigned to a Meta ad set in this window. Treat the ROI signals as directional.</div>}
                   {bestTimesLoading && <div className="h-48 rounded-lg bg-gray-50 animate-pulse" />}
                   {!bestTimesLoading && bestTimesError && <div className="text-sm text-red-600 py-6 text-center">{bestTimesError}</div>}
                   {!bestTimesLoading && !bestTimesError && bestTimesData && <BestTimesGrid data={bestTimesData} />}
