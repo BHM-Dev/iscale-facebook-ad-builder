@@ -1337,7 +1337,7 @@ export default function Dashboard() {
       </div>
 
       {/* Performance by Niche */}
-      <div className="bg-white rounded-xl border border-blue-100 border-l-4 border-l-blue-500 shadow-sm overflow-hidden">
+      <div className="order-3 bg-white rounded-xl border border-blue-100 border-l-4 border-l-blue-500 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-blue-100 bg-blue-50/40 flex items-center justify-between gap-3">
           <button
             type="button"
@@ -1435,7 +1435,7 @@ export default function Dashboard() {
       </div>
 
       <CapiMatchQualityCard
-        className="order-3"
+        className="order-4"
         apiUrl={API_URL}
         authFetch={authFetch}
         showSuccess={showSuccess}
