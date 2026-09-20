@@ -43,10 +43,13 @@ function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
     cpl: { label: 'CPL', color: '#ea580c', format: v => `$${v.toFixed(2)}` },
   }[metric];
   const values = rows.map(row => row[metric]).filter(value => value != null);
+  const hasValues = values.length > 0;
   const max = Math.max(...values, 1);
   const width = 720, height = 190, padX = 34, padY = 22;
   const points = rows.map((row, index) => {
-    const x = padX + (rows.length <= 1 ? 0 : index * (width - padX * 2) / (rows.length - 1));
+    const x = rows.length <= 1
+      ? width / 2
+      : padX + index * (width - padX * 2) / (rows.length - 1);
     const value = row[metric];
     const y = value == null ? null : height - padY - (value / max) * (height - padY * 2);
     return { ...row, x, y };
@@ -63,12 +66,17 @@ function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
       <div className="flex gap-1">{Object.entries(metricConfig ? { spend: 'Spend', leads: 'Leads', cpl: 'CPL' } : {}).map(([key, label]) => <button key={key} type="button" onClick={() => setMetric(key)} className={`text-[11px] px-2 py-1 rounded ${metric === key ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}>{label}</button>)}</div>
     </div>
     {loading ? <div className="h-[238px] flex items-center justify-center text-sm text-gray-400">Loading trend...</div>
-      : !rows.length ? <div className="h-[238px] flex items-center justify-center text-sm text-gray-400">No daily Meta data for this range.</div>
+      : !rows.length || !hasValues ? <div className="h-[238px] flex flex-col items-center justify-center gap-1 text-sm text-gray-400"><span>No Meta {metricConfig.label.toLowerCase()} data for this range.</span><span className="text-[11px]">Meta may not have reported spend or leads for the selected day yet.</span></div>
       : <div className="px-4 pt-4 pb-3">
         <div className="relative h-[190px] w-full">
           <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="w-full h-full overflow-visible" role="img" aria-label={`${metricConfig.label} daily trend`}>
             <line x1={padX} y1={height - padY} x2={width - padX} y2={height - padY} stroke="#e5e7eb" />
             <line x1={padX} y1={padY} x2={padX} y2={height - padY} stroke="#e5e7eb" />
+            {points.filter(point => point.y != null).map(point => {
+              const barWidth = Math.max(8, ((width - padX * 2) / Math.max(rows.length, 1)) * 0.45);
+              const barHeight = Math.max(3, height - padY - point.y);
+              return <rect key={`bar-${point.date}`} x={point.x - barWidth / 2} y={height - padY - barHeight} width={barWidth} height={barHeight} rx="3" fill={metricConfig.color} opacity="0.16"><title>{point.date}: {metricConfig.format(point[metric])}</title></rect>;
+            })}
             {path.map((segment, index) => <path key={index} d={segment} fill="none" stroke={metricConfig.color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />)}
             {points.filter(point => point.y != null).map(point => <circle key={point.date} cx={point.x} cy={point.y} r="4" fill="white" stroke={metricConfig.color} strokeWidth="2"><title>{point.date}: {metricConfig.format(point[metric])}</title></circle>)}
           </svg>
