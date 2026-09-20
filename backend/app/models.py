@@ -13,7 +13,7 @@ def normalize_account_id(acct):
     if not acct:
         return acct
     acct = str(acct).strip()
-    return acct if acct.startswith("act_") else f"act_{acct}"
+    return f"act_{acct[4:]}" if acct.lower().startswith("act_") else f"act_{acct}"
 
 # Many-to-Many relationship table for User <-> Role
 user_roles = Table(

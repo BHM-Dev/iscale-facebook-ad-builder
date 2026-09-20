@@ -718,6 +718,10 @@ def _build_best_times(
         billing_rows = [row for row in conversions if EverflowService._offer_name(row).casefold() in allowed]
         matched_billing_rows = [row for row in billing_rows if str(row.get('sub3') or '').strip() in scoped_adsets]
         billing_total = sum((Decimal(str(row.get('revenue') or 0)) for row in matched_billing_rows), Decimal('0'))
+        unmatched_billing_rows = [row for row in billing_rows if row not in matched_billing_rows]
+        if unmatched_billing_rows:
+            dropped_count += len(unmatched_billing_rows)
+            dropped_revenue += sum((Decimal(str(row.get('revenue') or 0)) for row in unmatched_billing_rows), Decimal('0'))
         if redtrack_total > 0 and billing_total > 0:
             scale = billing_total / redtrack_total
             for key, amount in redtrack_aggregate.items():
