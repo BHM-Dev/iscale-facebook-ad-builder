@@ -15,7 +15,7 @@ import json
 import os
 import re
 from datetime import date, timedelta, datetime
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Optional, Dict
 from zoneinfo import ZoneInfo
 
@@ -615,16 +615,26 @@ def _redtrack_datetime(row: dict, timezone: ZoneInfo) -> Optional[datetime]:
 
 def _redtrack_revenue(row: dict) -> Decimal:
     for field in ('revenue', 'total_revenue', 'payout', 'amount'):
-        if row.get(field) not in (None, '', 0, '0', 0.0, '0.0'):
-            return Decimal(str(row[field]))
+        value = row.get(field)
+        if value in (None, ''):
+            continue
+        try:
+            parsed = Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError):
+            continue
+        if parsed != 0:
+            return parsed
     return Decimal('0')
 
 
 def _redtrack_offer_matches(row: dict, allowed_offers: set[str]) -> bool:
     """Use an offer field when RedTrack exposes one; ad-set scope is the fallback."""
     for field in ('offer_name', 'offer', 'offerName'):
-        if row.get(field) not in (None, ''):
-            return str(row[field]).casefold() in allowed_offers
+        value = row.get(field)
+        if value not in (None, ''):
+            if isinstance(value, dict):
+                value = value.get('name') or value.get('offer_name') or value.get('label') or value.get('id')
+            return str(value).casefold() in allowed_offers
     return True
 
 
@@ -885,7 +895,6 @@ def best_times(
         if redtrack_warning:
             result['attribution_warning'] = redtrack_warning
             result['attribution_method'] = 'everflow_adset_id_redtrack_unavailable'
-            result['attribution_complete'] = False
     except RuntimeError as exc:
         raise HTTPException(502, str(exc)) from exc
     except Exception as exc:

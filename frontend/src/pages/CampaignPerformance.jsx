@@ -96,6 +96,7 @@ function BestTimesGrid({ data }) {
   const untracked = niche.revenue_source === 'not_tracked';
   const attributionIncomplete = Boolean(data.attribution_complete === false);
   const allocated = Boolean(data.attribution_allocated);
+  const fallback = data.attribution_method === 'everflow_adset_id_redtrack_unavailable';
   const daypartRows = BEST_TIMES_DAYS.flatMap((day, dayIndex) => dayparts.map(part => ({ day, part, ...aggregateDaypart(dayIndex, part) })));
   const actionableRows = attributionIncomplete ? [] : daypartRows.filter(cell => cell.revenue != null && cell.confidence !== 'low' && cell.spend > 0);
   const bestWindow = actionableRows.length ? actionableRows.reduce((best, cell) => cell.roi > best.roi ? cell : best) : null;
@@ -104,10 +105,10 @@ function BestTimesGrid({ data }) {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <select value={niche.niche} onChange={e => setSelectedNiche(e.target.value)} className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white">
-          {nicheSummaries.map(item => <option key={item.niche} value={item.niche}>{item.niche} · ${Math.round(item.totalSpend).toLocaleString()} spend{item.totalRoi != null ? ` · ${item.totalRoi >= 0 ? '+' : ''}${Math.round(item.totalRoi * 100)}% ROI` : ' · not tracked'}</option>)}
+          {nicheSummaries.map(item => <option key={item.niche} value={item.niche}>{item.niche} · ${Math.round(item.totalSpend).toLocaleString()} spend{item.totalRoi != null ? ` · ${allocated ? '≈' : ''}${item.totalRoi >= 0 ? '+' : ''}${Math.round(item.totalRoi * 100)}% ${allocated ? 'directional ROI' : 'ROI'}` : ' · not tracked'}</option>)}
         </select>
         <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${untracked ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-green-50 text-green-700 border-green-200'}`}>
-          {untracked ? 'Revenue not tracked for this account' : allocated ? 'Everflow billing · allocated by RedTrack' : 'Everflow revenue'}
+          {untracked ? 'Revenue not tracked for this account' : fallback ? 'Fallback · direct Everflow ad-set attribution' : allocated ? 'Everflow billing · allocated by RedTrack' : 'Everflow revenue'}
         </span>
       </div>
       {untracked && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Spend and leads are shown for context, but ROI is unavailable until this account has an exact Switchboard offer mapping.</div>}
@@ -117,7 +118,7 @@ function BestTimesGrid({ data }) {
           // Only one actionable window exists — showing it twice as both "best"
           // and "weakest" reads as a bug, not as "this is your only data point".
           [allocated ? 'Directional weakest' : 'Weakest window', bestWindow !== weakestWindow ? weakestWindow : null, 'border-red-200 bg-red-50 text-red-800'],
-        ].map(([label, cell, classes]) => cell && <div key={label} className={`rounded-lg border px-3 py-2 ${classes}`}><div className="text-[10px] font-semibold uppercase tracking-wide opacity-70">{label}</div><div className="text-sm font-semibold">{cell.day} · {cell.part.label} · {cell.roi >= 0 ? '+' : ''}{Math.round(cell.roi * 100)}% ROI</div><div className="text-[11px] opacity-75">${Math.round(cell.spend).toLocaleString()} spend · {cell.leads} leads · ${Math.round(cell.revenue).toLocaleString()} revenue</div></div>)}
+        ].map(([label, cell, classes]) => cell && <div key={label} className={`rounded-lg border px-3 py-2 ${classes}`}><div className="text-[10px] font-semibold uppercase tracking-wide opacity-70">{label}</div><div className="text-sm font-semibold">{cell.day} · {cell.part.label} · {allocated ? '≈' : ''}{cell.roi >= 0 ? '+' : ''}{Math.round(cell.roi * 100)}% {allocated ? 'directional ROI' : 'ROI'}</div><div className="text-[11px] opacity-75">${Math.round(cell.spend).toLocaleString()} spend · {cell.leads} leads · ${Math.round(cell.revenue).toLocaleString()} revenue</div></div>)}
       </div>}
       <div className="overflow-x-auto rounded-xl border border-gray-100">
         <table className="w-full min-w-[620px] text-xs">
