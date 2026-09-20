@@ -586,18 +586,14 @@ class DriveSyncService:
         return bool((guessed and guessed.startswith(TEXT_PREFIXES)) or file_name.lower().endswith(".txt"))
 
     def _find_package_folder(self, file_meta: Dict[str, Any], max_depth: int = 4) -> Optional[str]:
-        """Walk up from a file's immediate parent to find the folder that directly
-        contains a *_HANDOFF_MANIFEST.txt file.
+        """Walk up from a file's immediate parent to find its manifest package.
 
         Verified live 2026-08-20: a media file's own immediate parent is often a
         typed subfolder ("1x1 Images", "9x16 Images") that is a SIBLING of the
-        folder actually holding the manifest, not a descendant of it — so passing a
-        media file's own parent straight to _folder_copy_metadata (which only
-        searches downward) never finds the manifest. This walks upward first to
-        locate the real package root, then _folder_copy_metadata searches downward
-        from there. Returns None if no manifest is found within max_depth levels —
-        meaning this file simply isn't part of a manifest-backed package, which is
-        the common case (most of Joel's Drive has no manifest at all).
+        manifest. Some newer packages also put the manifest itself inside an "Ad
+        Copy" child folder. The package root is therefore the nearest ancestor whose
+        recursive subtree contains both a manifest and media. Returns None if no such
+        root is found within max_depth levels.
         """
         drive = self._client()
         parents = file_meta.get("parents") or []
@@ -617,22 +613,7 @@ class DriveSyncService:
                 break
             visited.append(current)
             try:
-                listing = None
-                folder_page_token = None
-                folder_items = []
-                while True:
-                    listing = drive.files().list(
-                        q=f"'{current}' in parents and trashed = false",
-                        spaces="drive",
-                        pageToken=folder_page_token,
-                        fields="nextPageToken,files(name,mimeType)",
-                        includeItemsFromAllDrives=True,
-                        supportsAllDrives=True,
-                    ).execute()
-                    folder_items.extend(listing.get("files", []))
-                    folder_page_token = listing.get("nextPageToken")
-                    if not folder_page_token:
-                        break
+                folder_items = self._list_folder_subtree(current)
             except Exception as exc:
                 logger.warning("Could not check Drive folder %s for a handoff manifest: %s", current, exc)
                 break
@@ -641,8 +622,17 @@ class DriveSyncService:
                 for item in folder_items
                 if item.get("mimeType") != "application/vnd.google-apps.folder"
             )
-            if has_manifest:
+            has_media = any(
+                self._is_supported_media(item.get("mimeType") or "", item.get("name") or "")
+                for item in folder_items
+            )
+            if has_manifest and has_media:
                 resolved = current
+                break
+            if has_media and depth >= 1:
+                # At this point we have checked both the media's placement folder
+                # and its likely package root. Do not climb into a brand root and
+                # borrow a manifest from an unrelated sibling package.
                 break
             try:
                 info = drive.files().get(fileId=current, fields="id,parents", supportsAllDrives=True).execute()
@@ -1777,55 +1767,139 @@ class DriveSyncService:
         return self._download_file(drive_file_id).decode("utf-8", errors="replace")
 
     def _parse_handoff_manifest(self, text_body: str) -> Dict[str, Any]:
-        # Allow an optional leading bullet ("- Meta button: Get Quote.") — verified
-        # live 2026-08-20 that the real manifest's ONLY "Meta button:" occurrence is
-        # bulleted, inside the LOAD INSTRUCTIONS section; without tolerating the "- "
-        # prefix, cta parsed as null for every real package.
-        landing_match = re.search(r"^\s*(?:-\s*)?Landing page\s*:\s*(\S+)", text_body, re.IGNORECASE | re.MULTILINE)
-        cta_match = re.search(r"^\s*(?:-\s*)?Meta button\s*:\s*([A-Za-z_ ]+)", text_body, re.IGNORECASE | re.MULTILINE)
+        lines = text_body.splitlines()
+        landing_page = self._extract_manifest_value(lines, r"Landing page")
+        cta_value = self._extract_manifest_value(lines, r"Meta button")
         entries: Dict[str, Dict[str, str]] = {}
         current_id: Optional[str] = None
-        for raw_line in text_body.splitlines():
+        active_copy_file: Optional[str] = None
+        pending_field: Optional[str] = None
+
+        for raw_line in lines:
             line = raw_line.strip()
-            copy_id_match = re.match(r"^(?:Copy ID\s*:\s*)?([A-Z]{2,5}\s*F\d{2})\s*:?\s*$", line, re.IGNORECASE)
-            if copy_id_match:
-                current_id = re.sub(r"\s+", " ", copy_id_match.group(1).upper())
+            if not line:
+                continue
+
+            copy_file = self._extract_manifest_file_name(line)
+            if copy_file:
+                active_copy_file = copy_file
+
+            copy_id = self._extract_handoff_copy_id(
+                line,
+                allow_embedded=bool(re.match(r"^\s*Copy\s*:", line, re.IGNORECASE)),
+            )
+            if copy_id:
+                current_id = copy_id
                 entries.setdefault(current_id, {})
+                if active_copy_file:
+                    entries[current_id]["copy_file"] = active_copy_file
+
             if not current_id:
                 continue
-            field_match = re.match(r"(1x1|9x16|Copy file)\s*:\s*(.+)", line, re.IGNORECASE)
+
+            if pending_field:
+                value = self._manifest_field_value(pending_field, line)
+                if value:
+                    entries[current_id][pending_field] = value
+                pending_field = None
+
+            field_match = re.match(r"^(1x1|9x16|Copy file|Copy)\s*(?::\s*(.*))?$", line, re.IGNORECASE)
             if field_match:
                 key = field_match.group(1).lower()
-                if key == "copy file":
+                if key in {"copy", "copy file"}:
                     key = "copy_file"
-                entries[current_id][key] = field_match.group(2).strip()
+                value = (field_match.group(2) or "").strip()
+                if value:
+                    parsed_value = self._manifest_field_value(key, value)
+                    if parsed_value:
+                        entries[current_id][key] = parsed_value
+                else:
+                    pending_field = key
+
+            if copy_file:
+                entries[current_id]["copy_file"] = copy_file
+
         return {
-            "landing_page": landing_match.group(1).strip() if landing_match else None,
-            "cta": self._normalize_cta(cta_match.group(1)) if cta_match else None,
+            "landing_page": landing_page.rstrip(".,") if landing_page else None,
+            "cta": self._normalize_cta(cta_value.rstrip(".,")) if cta_value else None,
             "entries": entries,
         }
 
     def _parse_copy_file(self, text_body: str) -> Dict[str, Dict[str, str]]:
         blocks: Dict[str, Dict[str, str]] = {}
-        for block in re.split(r"\n={4,}\n", text_body):
-            # Line-anchored but NOT end-anchored: real copy-file block headers are
-            # pipe-delimited ("HST F01 | BOARDING BARN | ...", confirmed live against
-            # actual Drive content), never a bare "Copy ID: X" line the way manifest
-            # entries are. Requiring end-of-line here (as the manifest parser correctly
-            # does) would silently match zero blocks against every real copy file.
-            # Anchoring to the start of the line is still enough to close the original
-            # false-positive risk (a stray "TX F01 filing note" mid-sentence, not at the
-            # start of a line, no longer matches).
-            copy_id_match = re.search(r"^\s*(?:Copy ID\s*:\s*)?([A-Z]{2,5}\s*F\d{2})\b", block, re.IGNORECASE | re.MULTILINE)
-            if not copy_id_match:
-                continue
-            copy_id = re.sub(r"\s+", " ", copy_id_match.group(1).upper())
+        lines = text_body.splitlines()
+        headings = [
+            (index, copy_id)
+            for index, line in enumerate(lines)
+            if (copy_id := self._extract_handoff_copy_id(line))
+        ]
+        for heading_index, (line_index, copy_id) in enumerate(headings):
+            next_line = headings[heading_index + 1][0] if heading_index + 1 < len(headings) else len(lines)
+            block = "\n".join(lines[line_index + 1:next_line])
             blocks[copy_id.lower()] = {
                 "primary_text": self._extract_copy_field(block, "PRIMARY TEXT"),
                 "headline": self._extract_copy_field(block, "HEADLINE"),
                 "description": self._extract_copy_field(block, "DESCRIPTION"),
             }
         return blocks
+
+    _HANDOFF_COPY_ID = re.compile(
+        r"(?P<prefix>[A-Z]{2,6}(?:[ _-]+[A-Z]{1,6}){0,2})[ _-]*(?P<number>\d{1,3})",
+        re.IGNORECASE,
+    )
+    _MANIFEST_FILE_NAME = re.compile(r"([A-Z0-9][A-Z0-9_.-]*\.txt)\b", re.IGNORECASE)
+
+    def _extract_handoff_copy_id(self, raw_line: str, allow_embedded: bool = False) -> Optional[str]:
+        """Extract one canonical handoff ID from a structurally plausible line."""
+        line = self._clean_markdown_value(raw_line).strip()
+        if not line or "://" in line:
+            return None
+        if not allow_embedded and re.search(r"\.(?:txt|png|jpe?g|webp|gif|mp4)\b", line, re.IGNORECASE):
+            return None
+
+        explicit_match = re.match(r"^(?:Copy|Ad)\s+ID\s*:\s*(.+)$", line, re.IGNORECASE)
+        target = explicit_match.group(1) if explicit_match else line
+        embedded = allow_embedded or bool(explicit_match)
+        match = self._HANDOFF_COPY_ID.search(target) if embedded else self._HANDOFF_COPY_ID.match(target)
+        if not match:
+            return None
+
+        if not embedded:
+            remainder = target[match.end():]
+            if remainder and not re.match(r"^\s*(?:[|:\-\u2013\u2014]|_)", remainder):
+                return None
+
+        tokens = [token.upper() for token in re.split(r"[ _-]+", match.group("prefix")) if token]
+        number = match.group("number")
+        if tokens and len(tokens[-1]) == 1:
+            tokens[-1] = f"{tokens[-1]}{number}"
+        else:
+            tokens.append(number)
+        return " ".join(tokens)
+
+    def _extract_manifest_value(self, lines: List[str], label: str) -> Optional[str]:
+        for index, raw_line in enumerate(lines):
+            line = raw_line.strip()
+            match = re.match(rf"^(?:-\s*)?{label}\s*(?::\s*(.*))?$", line, re.IGNORECASE)
+            if not match:
+                continue
+            inline_value = (match.group(1) or "").strip()
+            if inline_value:
+                return inline_value
+            for following in lines[index + 1:]:
+                value = following.strip()
+                if value:
+                    return value
+        return None
+
+    def _extract_manifest_file_name(self, line: str) -> Optional[str]:
+        matches = self._MANIFEST_FILE_NAME.findall(line)
+        return os.path.basename(matches[-1].replace("\\", "/")) if matches else None
+
+    def _manifest_field_value(self, key: str, value: str) -> Optional[str]:
+        if key == "copy_file":
+            return self._extract_manifest_file_name(value)
+        return os.path.basename(value.replace("\\", "/")).strip() or None
 
     # Known section labels a copy-file block can be followed by. Deliberately an
     # enumerated/narrow pattern, NOT "any all-caps line" — verified live that real ad
@@ -1835,11 +1909,11 @@ class DriveSyncService:
     # VISUAL SCENE covers the 1X1/9X16 headers confirmed live plus other aspect
     # ratios (4X5, 16X9, etc.) that may appear in other packages without needing to
     # widen this to match arbitrary text.
-    _COPY_FIELD_STOP_LABELS = r"PRIMARY TEXT|HEADLINE|DESCRIPTION|\d+[Xx]\d+\s+VISUAL SCENE"
+    _COPY_FIELD_STOP_LABELS = r"PRIMARY TEXT|HEADLINE|DESCRIPTION|\d+[Xx]\d+\s+(?:VISUAL\s+)?(?:SCENE|IMAGE)"
 
     def _extract_copy_field(self, block: str, label: str) -> str:
         match = re.search(
-            rf"^[ \t]*(?i:{re.escape(label)})[ \t]*:?[ \t]*(?:\r?\n)?(.*?)(?=^[ \t]*(?:{self._COPY_FIELD_STOP_LABELS})[ \t]*:?[ \t]*$|\Z)",
+            rf"^[ \t]*(?i:{re.escape(label)})[ \t]*:?[ \t]*(?:\r?\n)?(.*?)(?=^[ \t]*(?:{self._COPY_FIELD_STOP_LABELS})[ \t]*:?[ \t]*$|^[ \t]*={{4,}}[ \t]*$|\Z)",
             block,
             re.IGNORECASE | re.MULTILINE | re.DOTALL,
         )
