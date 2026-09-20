@@ -876,7 +876,7 @@ export default function Dashboard() {
   });
 
   adsets
-    .filter(a => isActiveDelivery(a) && a.fb_adset_id && !pausedOverrides.has(a.fb_adset_id))
+    .filter(a => a.fb_adset_id && !pausedOverrides.has(a.fb_adset_id))
     .forEach(a => {
       const ins = bulkInsights[a.fb_adset_id];
       if (!ins) return;
@@ -920,6 +920,7 @@ export default function Dashboard() {
         reasons: issues,
         fb_adset_id: a.fb_adset_id,
         fb_campaign_id: a.fb_campaign_id || '',
+        isActive: isActiveDelivery(a),
       });
     });
 
@@ -1211,7 +1212,7 @@ export default function Dashboard() {
             loading ? (
               <div className="px-5 py-6 text-center text-sm text-gray-400">Loading...</div>
             ) : attentionList.length === 0 ? (
-              <div className="px-5 py-8 text-center text-sm"><span className="text-green-600 font-medium">All clear</span><span className="text-gray-400"> — no active ad sets currently need action. Paused batches remain available in Performance.</span></div>
+              <div className="px-5 py-8 text-center text-sm"><span className="text-green-600 font-medium">All clear</span><span className="text-gray-400"> — no active or historical issues in this range.</span></div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -1221,12 +1222,12 @@ export default function Dashboard() {
                       const isPausing = item.fb_adset_id && pausingAdsets.has(item.fb_adset_id);
                       const ins = bulkInsights[item.fb_adset_id] || {};
                       return <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-5 py-3"><Link to={perfLink('attention', item.fb_adset_id)} className="block"><div className="flex items-center gap-2"><div className={`w-2 h-2 rounded-full flex-shrink-0 ${item.severity === 'red' ? 'bg-red-500' : 'bg-orange-400'}`} /><div className="font-medium text-gray-900 truncate max-w-[220px]" title={item.label}>{item.label}</div></div>{item.campaignName && <div className="text-xs text-gray-400 truncate max-w-[220px] pl-4">{item.campaignName}</div>}</Link></td>
+                        <td className="px-5 py-3"><Link to={perfLink('attention', item.fb_adset_id)} className="block"><div className="flex items-center gap-2"><div className={`w-2 h-2 rounded-full flex-shrink-0 ${item.severity === 'red' ? 'bg-red-500' : 'bg-orange-400'}`} /><div className="font-medium text-gray-900 truncate max-w-[220px]" title={item.label}>{item.label}</div></div>{item.campaignName && <div className="text-xs text-gray-400 truncate max-w-[220px] pl-4">{item.campaignName}</div>}{item.adset && !item.isActive && <div className="text-[10px] text-gray-500 uppercase tracking-wide pl-4 mt-1">Paused · historical issue</div>}</Link></td>
                         <td className="px-3 py-3"><div className="flex flex-col gap-0.5">{item.reasons.slice(0, 2).map((r, i) => <span key={i} className={`text-xs ${r.severity === 'red' ? 'text-red-600' : 'text-orange-500'}`}>{r.text}</span>)}{item.reasons.length > 2 && <span className="text-[11px] text-gray-400">+{item.reasons.length - 2} more in Performance</span>}</div></td>
                         <td className="hidden sm:table-cell px-3 py-3 text-right font-medium text-gray-800">{ins.spend != null ? `$${ins.spend.toFixed(0)}` : '—'}</td>
                         <td className="hidden sm:table-cell px-3 py-3 text-right text-red-600 font-semibold">{ins.cpl != null ? `$${ins.cpl.toFixed(2)}` : '—'}</td>
                         <td className="hidden sm:table-cell px-3 py-3">{item.adset && <BudgetButton adset={item.adset} />}</td>
-                        <td className="px-3 py-3">{item.fb_adset_id && <button onClick={() => pauseAdset(item.fb_adset_id)} disabled={isPausing} className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-gray-500 border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-40">{isPausing ? <RefreshCw size={11} className="animate-spin" /> : <PauseCircle size={11} />} Pause</button>}</td>
+                        <td className="px-3 py-3">{item.fb_adset_id && item.isActive ? <button onClick={() => pauseAdset(item.fb_adset_id)} disabled={isPausing} className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-gray-500 border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-40">{isPausing ? <RefreshCw size={11} className="animate-spin" /> : <PauseCircle size={11} />} Pause</button> : item.fb_adset_id ? <Link to={perfLink('attention', item.fb_adset_id)} className="text-xs font-medium text-gray-500 hover:text-orange-600">Review</Link> : null}</td>
                       </tr>;
                     })}
                   </tbody>
