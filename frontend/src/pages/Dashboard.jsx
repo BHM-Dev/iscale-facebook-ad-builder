@@ -45,7 +45,15 @@ function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
   const values = rows.map(row => row[metric]).filter(value => value != null);
   const hasValues = values.length > 0;
   const max = Math.max(...values, 1);
-  const width = 720, height = 190, padX = 34, padY = 22;
+  const width = Math.max(720, rows.length * 64), height = 230, padX = 40, padY = 28;
+  const showValueLabels = rows.length <= 31;
+  const formatDateTick = date => {
+    const parsed = new Date(`${date}T12:00:00`);
+    if (Number.isNaN(parsed.getTime())) return date;
+    return parsed.toLocaleDateString('en-US', rows.length > 14
+      ? { month: 'numeric', day: 'numeric' }
+      : { weekday: 'short', month: 'numeric', day: 'numeric' });
+  };
   const points = rows.map((row, index) => {
     const x = rows.length <= 1
       ? width / 2
@@ -68,8 +76,8 @@ function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
     {loading ? <div className="h-[238px] flex items-center justify-center text-sm text-gray-400">Loading trend...</div>
       : !rows.length || !hasValues ? <div className="h-[238px] flex flex-col items-center justify-center gap-1 text-sm text-gray-400"><span>No Meta {metricConfig.label.toLowerCase()} data for this range.</span><span className="text-[11px]">Meta may not have reported spend or leads for the selected day yet.</span></div>
       : <div className="px-4 pt-4 pb-3">
-        <div className="relative h-[190px] w-full">
-          <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="w-full h-full overflow-visible" role="img" aria-label={`${metricConfig.label} daily trend`}>
+        <div className="relative h-[230px] w-full overflow-x-auto">
+          <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="h-full min-w-full" style={{ width: `${width}px` }} role="img" aria-label={`${metricConfig.label} daily trend`}>
             <line x1={padX} y1={height - padY} x2={width - padX} y2={height - padY} stroke="#e5e7eb" />
             <line x1={padX} y1={padY} x2={padX} y2={height - padY} stroke="#e5e7eb" />
             {points.filter(point => point.y != null).map(point => {
@@ -78,13 +86,16 @@ function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
               return <rect key={`bar-${point.date}`} x={point.x - barWidth / 2} y={height - padY - barHeight} width={barWidth} height={barHeight} rx="3" fill={metricConfig.color} opacity="0.16"><title>{point.date}: {metricConfig.format(point[metric])}</title></rect>;
             })}
             {path.map((segment, index) => <path key={index} d={segment} fill="none" stroke={metricConfig.color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />)}
-            {points.filter(point => point.y != null).map(point => <circle key={point.date} cx={point.x} cy={point.y} r="4" fill="white" stroke={metricConfig.color} strokeWidth="2"><title>{point.date}: {metricConfig.format(point[metric])}</title></circle>)}
+            {points.filter(point => point.y != null).map(point => <g key={`point-${point.date}`}>
+              <circle cx={point.x} cy={point.y} r="4" fill="white" stroke={metricConfig.color} strokeWidth="2"><title>{point.date}: {metricConfig.format(point[metric])}</title></circle>
+              {showValueLabels && <text x={point.x} y={Math.max(12, point.y - 9)} textAnchor="middle" fontSize="9" fill={metricConfig.color} fontWeight="600">{metricConfig.format(point[metric])}</text>}
+            </g>)}
+            {points.map(point => <text key={`date-${point.date}`} x={point.x} y={height - 5} textAnchor="middle" fontSize="9" fill="#6b7280">{formatDateTick(point.date)}</text>)}
           </svg>
           <div className="absolute left-1 top-0 text-[10px] text-gray-400">{metricConfig.format(max)}</div>
           <div className="absolute left-1 bottom-0 text-[10px] text-gray-400">0</div>
         </div>
-        <div className="flex justify-between px-5 text-[10px] text-gray-400"><span>{rows[0]?.date}</span><span>{rows[rows.length - 1]?.date}</span></div>
-        <div className="mt-2 text-[11px] text-gray-500">Today may be partial. Missing days are left blank rather than filled with estimates.</div>
+        <div className="mt-2 text-[11px] text-gray-500">Each tick is one calendar day. Today may be partial; missing days are left blank rather than filled with estimates.{rows.length > 14 ? ' Scroll horizontally to inspect the full range.' : ''}</div>
       </div>}
   </div>;
 }
