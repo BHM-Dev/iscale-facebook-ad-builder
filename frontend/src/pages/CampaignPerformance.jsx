@@ -197,9 +197,11 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
   const [error, setError] = useState(null);
   const loadedPresetRef = useRef(null);
   const userSelectedPresetRef = useRef(false);
+  const intelligenceRequestRef = useRef(0);
   const bestTimesRequestRef = useRef(0);
 
   const loadIntelligence = useCallback(async (nextPreset = preset, nextFrom = customFrom, nextTo = customTo) => {
+    const requestId = ++intelligenceRequestRef.current;
     setLoading(true);
     setError(null);
     setData(null);
@@ -216,12 +218,14 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
         throw new Error(e.detail || `Error ${res.status}`);
       }
       const result = await res.json();
-      loadedPresetRef.current = nextPreset === 'custom' ? `custom:${nextFrom}:${nextTo}` : nextPreset;
-      setData(result);
+      if (requestId === intelligenceRequestRef.current) {
+        loadedPresetRef.current = nextPreset === 'custom' ? `custom:${nextFrom}:${nextTo}` : nextPreset;
+        setData(result);
+      }
     } catch (e) {
-      setError(e.message || 'Failed to load intelligence data');
+      if (requestId === intelligenceRequestRef.current) setError(e.message || 'Failed to load intelligence data');
     } finally {
-      setLoading(false);
+      if (requestId === intelligenceRequestRef.current) setLoading(false);
     }
   }, [adAccountId, preset, customFrom, customTo]);
 

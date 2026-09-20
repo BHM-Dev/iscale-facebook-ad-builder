@@ -599,7 +599,13 @@ def _conversion_datetime(row: dict, timezone: ZoneInfo) -> Optional[datetime]:
         if value in (None, ''):
             continue
         if str(value).isdigit():
-            return datetime.fromtimestamp(int(value), tz=timezone)
+            try:
+                timestamp = int(value)
+                if len(str(abs(timestamp))) >= 13:
+                    timestamp //= 1000
+                return datetime.fromtimestamp(timestamp, tz=timezone)
+            except (OverflowError, OSError, ValueError):
+                continue
         try:
             parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
         except ValueError:
@@ -614,7 +620,13 @@ def _redtrack_datetime(row: dict, timezone: ZoneInfo) -> Optional[datetime]:
         if value in (None, ''):
             continue
         if str(value).isdigit():
-            return datetime.fromtimestamp(int(value), tz=timezone)
+            try:
+                timestamp = int(value)
+                if len(str(abs(timestamp))) >= 13:
+                    timestamp //= 1000
+                return datetime.fromtimestamp(timestamp, tz=timezone)
+            except (OverflowError, OSError, ValueError):
+                continue
         try:
             parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
         except ValueError:
