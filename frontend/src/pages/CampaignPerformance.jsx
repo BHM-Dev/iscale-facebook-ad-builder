@@ -108,7 +108,7 @@ function BestTimesGrid({ data }) {
           {nicheSummaries.map(item => <option key={item.niche} value={item.niche}>{item.niche} · ${Math.round(item.totalSpend).toLocaleString()} spend{item.totalRoi != null ? ` · ${allocated ? '≈' : ''}${item.totalRoi >= 0 ? '+' : ''}${Math.round(item.totalRoi * 100)}% ${allocated ? 'directional ROI' : 'ROI'}` : ' · not tracked'}</option>)}
         </select>
         <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${untracked ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-green-50 text-green-700 border-green-200'}`}>
-          {untracked ? 'Revenue not tracked for this account' : fallback ? 'Fallback · direct Everflow ad-set attribution' : allocated ? 'Everflow billing · allocated by RedTrack' : 'Everflow revenue'}
+          {untracked ? 'Revenue not tracked for this account' : fallback ? `Fallback · direct Everflow attribution${!attributionIncomplete ? ' · complete' : ''}` : allocated ? 'Everflow billing · allocated by RedTrack' : 'Everflow revenue'}
         </span>
       </div>
       {untracked && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Spend and leads are shown for context, but ROI is unavailable until this account has an exact Switchboard offer mapping.</div>}
@@ -118,7 +118,7 @@ function BestTimesGrid({ data }) {
           // Only one actionable window exists — showing it twice as both "best"
           // and "weakest" reads as a bug, not as "this is your only data point".
           [allocated ? 'Directional weakest' : 'Weakest window', bestWindow !== weakestWindow ? weakestWindow : null, 'border-red-200 bg-red-50 text-red-800'],
-        ].map(([label, cell, classes]) => cell && <div key={label} className={`rounded-lg border px-3 py-2 ${classes}`}><div className="text-[10px] font-semibold uppercase tracking-wide opacity-70">{label}</div><div className="text-sm font-semibold">{cell.day} · {cell.part.label} · {allocated ? '≈' : ''}{cell.roi >= 0 ? '+' : ''}{Math.round(cell.roi * 100)}% {allocated ? 'directional ROI' : 'ROI'}</div><div className="text-[11px] opacity-75">${Math.round(cell.spend).toLocaleString()} spend · {cell.leads} leads · ${Math.round(cell.revenue).toLocaleString()} revenue</div></div>)}
+        ].map(([label, cell, classes]) => cell && <div key={label} className={`rounded-lg border px-3 py-2 ${classes}`}><div className="text-[10px] font-semibold uppercase tracking-wide opacity-70">{label}</div><div className="text-sm font-semibold">{cell.day} · {cell.part.label} · {allocated ? '≈' : ''}{cell.roi >= 0 ? '+' : ''}{Math.round(cell.roi * 100)}% {allocated ? 'directional ROI' : 'ROI'}</div><div className="text-[11px] opacity-75">${Math.round(cell.spend).toLocaleString()} spend · {cell.leads} leads · {allocated ? '≈' : ''}${Math.round(cell.revenue).toLocaleString()} {allocated ? 'allocated revenue' : 'revenue'}</div></div>)}
       </div>}
       <div className="overflow-x-auto rounded-xl border border-gray-100">
         <table className="w-full min-w-[620px] text-xs">
@@ -133,7 +133,7 @@ function BestTimesGrid({ data }) {
                   const cell = aggregateDaypart(dayIndex, part);
                   const cellTone = untracked || attributionIncomplete ? 'bg-amber-50 text-amber-700 border-amber-200' : allocated ? 'bg-amber-50 text-amber-800 border-amber-200' : bestTimesCellClass(cell);
                   const roiLabel = cell.roi != null ? `${allocated ? '≈' : ''}${cell.roi >= 0 ? '+' : ''}${Math.round(cell.roi * 100)}%` : '—';
-                  return <td key={part.key} className="px-1.5 py-1.5"><div className={`rounded-lg border px-2 py-2 text-center ${cellTone}`} title={`${cell.spend ? `$${cell.spend.toFixed(2)} spend · ${cell.leads} leads` : 'No spend'}${cell.revenue != null ? ` · $${cell.revenue.toFixed(2)} revenue` : ''}`}><div className="font-semibold">{attributionIncomplete ? '—' : roiLabel}</div><div className="text-[10px] opacity-75">{cell.spend ? `$${Math.round(cell.spend)} spend` : cell.revenue != null ? `$${Math.round(cell.revenue)} revenue, no spend` : untracked ? 'untracked' : attributionIncomplete ? 'directional only' : 'insufficient'}</div></div></td>;
+                  return <td key={part.key} className="px-1.5 py-1.5"><div className={`rounded-lg border px-2 py-2 text-center ${cellTone}`} title={`${cell.spend ? `$${cell.spend.toFixed(2)} spend · ${cell.leads} leads` : 'No spend'}${cell.revenue != null ? ` · ${allocated ? '≈' : ''}$${cell.revenue.toFixed(2)} ${allocated ? 'allocated revenue' : 'revenue'}` : ''}`}><div className="font-semibold">{attributionIncomplete ? '—' : roiLabel}</div><div className="text-[10px] opacity-75">{cell.spend ? `$${Math.round(cell.spend)} spend` : cell.revenue != null ? `${allocated ? '≈' : ''}$${Math.round(cell.revenue)} ${allocated ? 'allocated revenue' : 'revenue'}, no spend` : untracked ? 'untracked' : attributionIncomplete ? 'directional only' : 'insufficient'}</div></div></td>;
                 })}
               </tr>
             ))}

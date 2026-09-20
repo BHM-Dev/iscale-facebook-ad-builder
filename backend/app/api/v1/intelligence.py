@@ -614,7 +614,7 @@ def _redtrack_datetime(row: dict, timezone: ZoneInfo) -> Optional[datetime]:
 
 
 def _redtrack_revenue(row: dict) -> Decimal:
-    for field in ('revenue', 'total_revenue', 'payout', 'amount'):
+    for field in ('value', 'revenue', 'total_revenue', 'pub_revenue', 'payout', 'amount'):
         value = row.get(field)
         if value in (None, ''):
             continue
@@ -622,7 +622,7 @@ def _redtrack_revenue(row: dict) -> Decimal:
             parsed = Decimal(str(value))
         except (InvalidOperation, TypeError, ValueError):
             continue
-        if parsed != 0:
+        if parsed.is_finite() and parsed != 0:
             return parsed
     return Decimal('0')
 
@@ -674,7 +674,7 @@ def _build_best_times(
         dropped_revenue = Decimal('0')
         known_adsets = set(adsets)
         for row in redtrack_rows:
-            adset_id = str(row.get('sub2') or '').strip()
+            adset_id = str(row.get('p_sub2') or row.get('sub2') or '').strip()
             when = _redtrack_datetime(row, tz)
             amount = _redtrack_revenue(row)
             if not adset_id or adset_id not in known_adsets:
@@ -683,7 +683,7 @@ def _build_best_times(
                 continue
             if not _redtrack_offer_matches(row, allowed):
                 continue
-            if not when:
+            if not when or amount <= 0:
                 dropped_count += 1
                 dropped_revenue += amount
                 continue
@@ -693,12 +693,14 @@ def _build_best_times(
             redtrack_total += amount
 
         scoped_adsets = known_adsets
-        billing_total = sum(
-            (Decimal(str(row.get('revenue') or 0)) for row in conversions
-             if EverflowService._offer_name(row).casefold() in allowed
-             and str(row.get('sub3') or '').strip() in scoped_adsets),
-            Decimal('0'),
-        )
+        billing_rows = [row for row in conversions if EverflowService._offer_name(row).casefold() in allowed]
+        matched_billing_rows = [row for row in billing_rows if str(row.get('sub3') or '').strip() in scoped_adsets]
+        billing_total = sum((Decimal(str(row.get('revenue') or 0)) for row in matched_billing_rows), Decimal('0'))
+        unmatched_billing_rows = [row for row in billing_rows if row not in matched_billing_rows]
+        unmatched_billing_revenue = sum((Decimal(str(row.get('revenue') or 0)) for row in unmatched_billing_rows), Decimal('0'))
+        if unmatched_billing_rows:
+            dropped_count += len(unmatched_billing_rows)
+            dropped_revenue += unmatched_billing_revenue
         if redtrack_total > 0 and billing_total > 0:
             scale = billing_total / redtrack_total
             for key, amount in redtrack_aggregate.items():
@@ -706,7 +708,7 @@ def _build_best_times(
             attribution_method = 'redtrack_attribution_everflow_billing_allocated'
             attribution_warning = 'Everflow billing revenue is allocated across RedTrack-attributed ad sets and hours; use this as a directional timing signal.'
             if dropped_count:
-                attribution_warning += f' {dropped_count} RedTrack conversion rows lacked a usable timestamp and were excluded.'
+                attribution_warning += f' {dropped_count} conversion rows were excluded from the allocation basis.'
             redtrack_usable = True
         else:
             attribution_warning = 'RedTrack returned no usable revenue rows; fell back to direct Everflow ad-set attribution.'

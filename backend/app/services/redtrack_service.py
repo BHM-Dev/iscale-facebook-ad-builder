@@ -231,26 +231,43 @@ class RedTrackService:
         if not self.is_configured():
             return []
         try:
-            resp = httpx.get(
-                f"{BASE_URL}/conversions",
-                headers=self._headers(),
-                params={**self._auth_params(), "date_from": date_from, "date_to": date_to, "per": per},
-                timeout=30,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            if isinstance(data, list):
-                if len(data) >= per:
-                    raise RuntimeError(f"RedTrack conversions reached the {per}-row cap; attribution is incomplete")
-                return data
-            if isinstance(data, dict):
-                for key in ("data", "conversions", "rows"):
-                    if isinstance(data.get(key), list):
-                        rows = data[key]
-                        if len(rows) >= per:
-                            raise RuntimeError(f"RedTrack conversions reached the {per}-row cap; attribution is incomplete")
-                        return rows
-            raise RuntimeError(f"Unrecognised RedTrack conversions response shape: {type(data).__name__}")
+            rows: list[dict] = []
+            page = 1
+            total: int | None = None
+            while True:
+                resp = httpx.get(
+                    f"{BASE_URL}/conversions",
+                    headers=self._headers(),
+                    params={**self._auth_params(), "date_from": date_from, "date_to": date_to, "page": page, "per": per},
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                if isinstance(data, list):
+                    page_rows = data
+                elif isinstance(data, dict):
+                    page_rows = data.get("items")
+                    if page_rows is None:
+                        for key in ("data", "conversions", "rows"):
+                            if isinstance(data.get(key), list):
+                                page_rows = data[key]
+                                break
+                    total_value = data.get("total")
+                    if total_value is not None:
+                        total = int(total_value)
+                else:
+                    page_rows = None
+                if not isinstance(page_rows, list):
+                    raise RuntimeError(f"Unrecognised RedTrack conversions response shape: {type(data).__name__}")
+                rows.extend(page_rows)
+                if total is None or len(rows) >= total or len(page_rows) < per:
+                    break
+                page += 1
+                if page > 100:
+                    raise RuntimeError("RedTrack conversions exceeded the pagination safety limit; attribution is incomplete")
+            if total is not None and len(rows) < total:
+                raise RuntimeError(f"RedTrack returned {len(rows)} of {total} conversions; attribution is incomplete")
+            return rows
         except httpx.HTTPStatusError as e:
             logger.error("RedTrack conversions HTTP error: %s %s", e.response.status_code, e.response.text)
             raise RuntimeError(f"RedTrack returned HTTP {e.response.status_code}") from e
