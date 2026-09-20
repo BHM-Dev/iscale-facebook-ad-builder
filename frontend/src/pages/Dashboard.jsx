@@ -1178,7 +1178,7 @@ export default function Dashboard() {
   const visibleNicheSummary = expandedSections.nicheSummary ? nicheSummary : nicheSummary.slice(0, 10);
 
   return (
-    <div className="max-w-7xl mx-auto space-y-8">
+    <div className="max-w-7xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -1267,9 +1267,9 @@ export default function Dashboard() {
       </div>
 
       <div className="flex flex-col gap-4">
-        <div className="grid grid-cols-1 xl:grid-cols-7 gap-4">
-          <div className="xl:col-span-4 bg-white rounded-xl border border-orange-100 border-l-4 border-l-orange-500 shadow-sm overflow-hidden">
-            <div className="px-5 py-3 border-b border-orange-100 bg-orange-50/50 flex items-center justify-between gap-3">
+        <div className="order-1 grid grid-cols-1 xl:grid-cols-7 gap-4">
+          <div className="xl:col-span-4 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
               <button type="button" onClick={() => toggleSection('needsAttention')} className="flex items-center gap-2 text-sm font-semibold text-gray-900 text-left">
                 <ChevronDown size={15} className={`text-orange-600 transition-transform ${collapsedSections.needsAttention ? '-rotate-90' : ''}`} />
                 <AlertTriangle size={15} className="text-orange-600" />
@@ -1315,21 +1315,21 @@ export default function Dashboard() {
           </div>
         </div>
 
-      <div className="space-y-4">
-        {/* Top Performers */}
-        <div className="bg-white rounded-xl border border-green-100 border-l-4 border-l-green-500 shadow-sm overflow-hidden">
-          <div className="px-5 py-3 border-b border-green-100 bg-green-50/40 flex items-center justify-between gap-3">
+        <div className="order-3 space-y-4">
+          {/* Top Performers */}
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
             <button
               type="button"
               onClick={() => toggleSection('topPerformers')}
               className="min-w-0 font-semibold text-gray-900 flex items-center gap-2 text-sm text-left"
             >
               <ChevronDown size={15} className={`text-green-600 transition-transform ${collapsedSections.topPerformers ? '-rotate-90' : ''}`} />
-              <TrendingUp size={15} className="text-green-600" />
+              <TrendingUp size={15} className="text-gray-400" />
               <span>Top Performers</span>
               <span className="text-xs text-gray-500 font-normal">by RT ROAS · selected range</span>
             </button>
-            <Link to={perfLink('top-performers')} className="text-xs text-green-700 hover:underline flex items-center gap-1 flex-shrink-0">
+            <Link to={perfLink('top-performers')} className="text-xs text-gray-500 hover:text-gray-900 hover:underline flex items-center gap-1 flex-shrink-0">
               View all in Performance <ArrowRight size={11} />
             </Link>
           </div>
@@ -1452,18 +1452,18 @@ export default function Dashboard() {
       </div>
 
       {/* Performance by Niche */}
-      <div className="bg-white rounded-xl border border-blue-100 border-l-4 border-l-blue-500 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-blue-100 bg-blue-50/40 flex items-center justify-between gap-3">
+      <div className="order-2 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
           <button
             type="button"
             onClick={() => toggleSection('nicheSummary')}
             className="min-w-0 font-semibold text-gray-900 flex items-center gap-2 text-sm text-left"
           >
-            <ChevronDown size={15} className={`text-blue-600 transition-transform ${collapsedSections.nicheSummary ? '-rotate-90' : ''}`} />
-            <TrendingUp size={15} className="text-blue-600" />
+            <ChevronDown size={15} className={`text-gray-400 transition-transform ${collapsedSections.nicheSummary ? '-rotate-90' : ''}`} />
+            <TrendingUp size={15} className="text-gray-400" />
             <span>Performance by Niche</span>
           </button>
-          <span className="text-xs text-gray-500 flex-shrink-0">{rangeLabel}</span>
+          <span className="text-[11px] text-gray-400 flex-shrink-0">{rangeLabel} · sorted by spend</span>
         </div>
         {!collapsedSections.nicheSummary && (loading ? (
           <div className="p-5 space-y-3">
