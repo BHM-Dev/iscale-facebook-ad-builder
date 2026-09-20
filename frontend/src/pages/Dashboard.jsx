@@ -82,7 +82,7 @@ function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
     segments[segments.length - 1].push(point);
     return segments;
   }, [[]]).filter(segment => segment.length > 0).map(segment => segment.map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' '));
-  return <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden h-full">
+  return <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
     <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
       <div><div className="text-sm font-semibold text-gray-900">Daily trend</div><div className="text-[11px] text-gray-500">Meta Insights · {rangeLabel}</div></div>
       <div className="flex gap-1">{Object.entries(metricConfig ? { spend: 'Spend', leads: 'Leads', cpl: 'CPL' } : {}).map(([key, label]) => <button key={key} type="button" onClick={() => setMetric(key)} className={`text-[11px] px-2 py-1 rounded ${metric === key ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}>{label}</button>)}</div>
