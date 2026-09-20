@@ -138,7 +138,7 @@ const normalizeAdLibraryImport = (raw, activeVerticalLabel) => {
     source_url: sourceUrl,
     ads: sourceAds
       .filter(ad => ad.library_id || ad.external_id)
-      .map((ad, index) => {
+      .map((ad) => {
         const adVideos = videos
           .filter(video => video.ad_library_id && video.ad_library_id === ad.library_id)
           .slice(0, 3)
@@ -794,7 +794,10 @@ export default function Research() {
       params.set('limit', '500');
 
       const res = await authFetch(`${API_URL}/research/config-verticals/${activeVertical}/browse-ads?${params}`);
-      if (!res.ok) throw new Error('Failed to load ads');
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `Failed to load ads (${res.status})`);
+      }
       const ads = await res.json();
       if (requestId === browseRequestRef.current) setBrowseAds(ads.map(withDerivedResearchStatus));
     } catch (e) {
