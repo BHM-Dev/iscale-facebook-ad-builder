@@ -48,6 +48,12 @@ _DATE_LABEL_RE = re.compile(
     r'(?:\s+\d{1,2}:\d{2}(?:\s*[AP]M)?)?$',
     re.IGNORECASE,
 )
+_MONTH_DATE_LABEL_RE = re.compile(
+    r'^(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|'
+    r'jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|'
+    r'nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:,?\s+\d{2,4})?$',
+    re.IGNORECASE,
+)
 
 
 def _is_date_label(value: str) -> bool:
@@ -57,7 +63,8 @@ def _is_date_label(value: str) -> bool:
     entire segment to be date-shaped keeps ``24/7 Emergency Plumbing``,
     ``3/4 Ton Trucking``, and ``1.2 Acre Homes`` as real niches.
     """
-    return bool(_DATE_LABEL_RE.fullmatch(value.strip()))
+    normalized = value.strip()
+    return bool(_DATE_LABEL_RE.fullmatch(normalized) or _MONTH_DATE_LABEL_RE.fullmatch(normalized))
 
 
 def _extract_niche(adset_name: str, campaign_name: str = "") -> str:
