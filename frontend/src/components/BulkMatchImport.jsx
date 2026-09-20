@@ -88,6 +88,34 @@ function downloadCsvTemplate() {
     URL.revokeObjectURL(url);
 }
 
+function downloadFilenameGuide() {
+    const guide = [
+        'Ad Builder naming-convention package',
+        '',
+        'For every ad_number in the CSV, include both image files:',
+        '  ad1-commercial-roofing-1x1.png',
+        '  ad1-commercial-roofing-9x16.png',
+        '',
+        'Rules:',
+        '- The number after "ad" must match the CSV ad_number.',
+        '- Use 1x1 for Facebook Feed and Instagram Stream.',
+        '- Use 9x16 for Facebook Stories, Instagram Stories, and Instagram Reels.',
+        '- PNG, JPG, and JPEG are accepted.',
+        '- Both placements are required before ads can be created.',
+        '- Ads are created PAUSED; activate them in Ads Manager when ready.',
+        '- A single ad set can contain at most 50 ready ads.',
+    ].join('\n');
+    const blob = new Blob([guide], { type: 'text/plain;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'ad-package-filename-guide.txt';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+}
+
 /**
  * Uploads a raw File to our own server (same path used internally by
  * uploadImageToFacebook/uploadVideoToFacebook for blob URLs) and returns the
@@ -1007,14 +1035,17 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                 </div>
             )}
             <p className="text-gray-600 mb-6">
-                Upload a copy CSV and an image folder. Rows are matched by ad number (<code className="bg-gray-100 px-1 rounded">AD 1</code> ↔{' '}
-                <code className="bg-gray-100 px-1 rounded">ad1-slug-1x1.png</code>). Both a <strong>1x1</strong> (Feed) and a <strong>9x16</strong> (Story)
-                image are required per ad — Meta publishes both placements together with the same copy. Only <strong>Ready</strong> rows are created.
+                Upload a copy CSV and the matching image files. Rows are matched by ad number (<code className="bg-gray-100 px-1 rounded">AD 1</code> ↔{' '}
+                <code className="bg-gray-100 px-1 rounded">ad1-slug-1x1.png</code>). Both a <strong>1x1</strong> asset for Facebook Feed/Instagram Stream and a <strong>9x16</strong> asset for Facebook Stories/Instagram Stories/Reels
+                are required per ad. Meta creates both placements with the same copy, and every created ad is <strong>PAUSED</strong>. Only <strong>Ready</strong> rows are created.
             </p>
-            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-6">
-                <strong>9x16 is now required for every ad</strong> (previously optional) — both images must be present for a row to be Ready.
-                Re-running a batch that only had 1x1 images before will show new "Missing 9x16" rows; that's expected, not a bug.
-            </p>
+            <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-6">
+                <div><strong>Each ad needs two matching image files:</strong> <code className="rounded bg-white/70 px-1">ad1-slug-1x1.png</code> for Facebook Feed/Instagram Stream and <code className="rounded bg-white/70 px-1">ad1-slug-9x16.png</code> for Stories/Reels.</div>
+                <div className="mt-1">Both placements are required before ads can be created. Older 1x1-only batches will show Missing 9x16 rows. Ads are created PAUSED.</div>
+                <button type="button" onClick={downloadFilenameGuide} className="mt-2 inline-flex items-center gap-1 font-semibold text-amber-900 underline hover:no-underline">
+                    <FileText size={12} /> Download filename guide
+                </button>
+            </div>
 
             {!loading ? (
                 <>
@@ -1038,14 +1069,14 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                                     <FileText size={16} /> Download template
                                 </button>
                             </div>
-                            <p className="text-xs text-amber-700 mt-3">Maximum {MAX_ADS_PER_ADSET} ready ads per ad set.</p>
+                            <p className="text-xs text-amber-700 mt-3">Maximum {MAX_ADS_PER_ADSET} ready ads per ad set. The preflight below identifies missing pairs before launch.</p>
                             {csvRows.length > 0 && <p className="text-xs text-green-700 mt-2">{csvRows.length} row{csvRows.length !== 1 ? 's' : ''} loaded</p>}
                             {csvError && <p className="text-xs text-red-700 mt-2">{csvError}</p>}
                         </div>
 
                         <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors">
                             <ImageIcon className="mx-auto mb-2 text-gray-400" size={28} />
-                            <p className="text-sm font-medium text-gray-700 mb-1">Image Folder</p>
+                            <p className="text-sm font-medium text-gray-700 mb-1">Image Files</p>
                             <p className="text-xs text-gray-500 mb-3">ad{'{N}'}-{'{slug}'}-1x1.png / 9x16.png — both required per ad</p>
                             <label className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer hover:bg-blue-700">
                                 <UploadCloud size={16} /> Choose Images
