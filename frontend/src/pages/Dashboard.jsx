@@ -1158,7 +1158,7 @@ export default function Dashboard() {
       </div>
 
       <div className="flex flex-col gap-4">
-        <div className="grid grid-cols-1 xl:grid-cols-7 gap-4 order-1">
+        <div className="grid grid-cols-1 xl:grid-cols-7 gap-4">
           <div className="xl:col-span-4 bg-white rounded-xl border border-orange-100 border-l-4 border-l-orange-500 shadow-sm overflow-hidden">
             <div className="px-5 py-3 border-b border-orange-100 bg-orange-50/50 flex items-center justify-between gap-3">
               <button type="button" onClick={() => toggleSection('needsAttention')} className="flex items-center gap-2 text-sm font-semibold text-gray-900 text-left">
@@ -1203,7 +1203,7 @@ export default function Dashboard() {
           <div className="xl:col-span-3"><PerformanceSnapshot rangeLabel={rangeLabel} activeCount={activeCount} attentionCount={attentionList.length} rtRoas={rtRoas} blendedCpl={blendedCpl} topPerformer={topPerformers[0]} /></div>
         </div>
 
-      <div className="space-y-4 order-2">
+      <div className="space-y-4">
         {/* Top Performers */}
         <div className="bg-white rounded-xl border border-green-100 border-l-4 border-l-green-500 shadow-sm overflow-hidden">
           <div className="px-5 py-3 border-b border-green-100 bg-green-50/40 flex items-center justify-between gap-3">
@@ -1337,7 +1337,7 @@ export default function Dashboard() {
       </div>
 
       {/* Performance by Niche */}
-      <div className="order-3 bg-white rounded-xl border border-blue-100 border-l-4 border-l-blue-500 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-xl border border-blue-100 border-l-4 border-l-blue-500 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-blue-100 bg-blue-50/40 flex items-center justify-between gap-3">
           <button
             type="button"
@@ -1435,7 +1435,6 @@ export default function Dashboard() {
       </div>
 
       <CapiMatchQualityCard
-        className="order-4"
         apiUrl={API_URL}
         authFetch={authFetch}
         showSuccess={showSuccess}
