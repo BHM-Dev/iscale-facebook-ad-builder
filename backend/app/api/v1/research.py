@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import List, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 from app.database import get_db
@@ -22,15 +22,70 @@ MAX_AD_LIBRARY_IMPORT_ADS = 100
 MAX_AD_LIBRARY_VIDEO_URLS = 3
 MAX_AD_LIBRARY_TEXT_CHARS = 5000
 MAX_AD_LIBRARY_CREATIVE_INTEL_CHARS = 12000
+RESEARCH_MEDIA_TYPES = {"image", "video", "carousel", "unknown"}
+RESEARCH_SORT_OPTIONS = {"longest_running", "newest_seen", "most_sightings", "multiple_versions"}
+
+
+def _parse_research_date(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+    text = str(value).strip()
+    for parser in (
+        lambda item: _normalize_research_datetime(datetime.fromisoformat(item.replace("Z", "+00:00"))),
+        lambda item: datetime.strptime(item, "%B %d, %Y"),
+        lambda item: datetime.strptime(item, "%b %d, %Y"),
+    ):
+        try:
+            return parser(text)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _normalize_research_datetime(value):
+    return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+
+
+def _serialize_research_datetime(value):
+    normalized = _parse_research_date(value)
+    return f"{normalized.isoformat()}Z" if normalized else value
+
+
+def _sort_research_ads(ads, sort_by):
+    """Sort source-backed research signals with unknown dates last."""
+    if sort_by == "longest_running":
+        return sorted(ads, key=lambda ad: (
+            _parse_research_date(ad.start_date) is None,
+            _parse_research_date(ad.start_date) or datetime.max,
+        ))
+    if sort_by == "most_sightings":
+        return sorted(ads, key=lambda ad: (ad.seen_count is None, -(ad.seen_count or 0)))
+    if sort_by == "multiple_versions":
+        return sorted(ads, key=lambda ad: (
+            not bool(ad.is_multiple_versions),
+            _parse_research_date(ad.last_seen) is None,
+            -(_parse_research_date(ad.last_seen).timestamp() if _parse_research_date(ad.last_seen) else 0),
+        ))
+    return sorted(ads, key=lambda ad: (
+        _parse_research_date(ad.last_seen) is None,
+        -(_parse_research_date(ad.last_seen).timestamp() if _parse_research_date(ad.last_seen) else 0),
+    ))
 
 
 def _serialize_scraped_ad(ad, board_item_id=None):
+    # _parse_research_date normalizes timezone-aware DB values to naive UTC
+    # before arithmetic, matching datetime.utcnow() below.
+    start_date = _parse_research_date(ad.start_date)
+    last_seen = _parse_research_date(ad.last_seen)
     result = {
         "id": ad.id,
         "brand_name": ad.brand_name,
         "headline": ad.headline,
         "ad_copy": ad.ad_copy,
         "cta_text": ad.cta_text,
+        "platforms": ad.platforms,
         "media_type": ad.media_type,
         "media_url": ad.media_url,
         "destination_domain": ad.destination_domain,
@@ -43,8 +98,10 @@ def _serialize_scraped_ad(ad, board_item_id=None):
         "creative_intel": ad.creative_intel,
         "volume_score": ad.volume_score,
         "ad_link": ad.ad_link,
-        "start_date": ad.start_date,
+        "start_date": _serialize_research_datetime(ad.start_date),
         "seen_count": ad.seen_count or 1,
+        "running_days": max(0, (datetime.utcnow() - start_date).days) if start_date else None,
+        "is_active": bool(last_seen and (datetime.utcnow() - last_seen).days <= 30),
         "angle_tag": ad.angle_tag,
         "hook_type": ad.hook_type,
         "persona": ad.persona,
@@ -54,8 +111,8 @@ def _serialize_scraped_ad(ad, board_item_id=None):
         "pacing": ad.pacing,
         "numbers_used": ad.numbers_used,
         "is_saved": ad.is_saved,
-        "created_at": ad.created_at.isoformat() if ad.created_at else None,
-        "last_seen": ad.last_seen.isoformat() if ad.last_seen else None,
+        "created_at": _serialize_research_datetime(ad.created_at),
+        "last_seen": _serialize_research_datetime(ad.last_seen),
     }
     if board_item_id is not None:
         result["board_item_id"] = board_item_id
@@ -893,7 +950,9 @@ def import_ad_library_capture(
             continue
 
         video_urls = (incoming.video_urls or [])[:MAX_AD_LIBRARY_VIDEO_URLS]
-        media_type = incoming.media_type or ("video" if video_urls else "image")
+        # Preserve unknown media format instead of silently classifying every
+        # non-video capture as an image. A missing source value is not evidence.
+        media_type = incoming.media_type or ("video" if video_urls else None)
         has_media = bool(incoming.media_url or incoming.thumbnail_url or video_urls)
         if has_media:
             with_media += 1
@@ -957,7 +1016,7 @@ def import_ad_library_capture(
         ad.ad_copy = _truncate_text(incoming.ad_copy)
         ad.cta_text = incoming.cta_text
         ad.platform = "facebook"
-        ad.platforms = incoming.platforms or ["facebook"]
+        ad.platforms = incoming.platforms
         ad.start_date = incoming.start_date
         ad.media_type = media_type
         ad.media_url = incoming.media_url or incoming.thumbnail_url
@@ -1079,8 +1138,10 @@ def get_vertical_browse_ads(
     config_id: str,
     sub_vertical: str | None = None,
     angle_tag: str | None = None,
+    media_type: str | None = None,
     active_only: bool = False,
     advertiser: str | None = None,
+    sort_by: str = "newest_seen",
     limit: int = 500,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -1093,7 +1154,7 @@ def get_vertical_browse_ads(
     """
     from app.models import ScrapedAd, SavedSearch, Vertical, FacebookPage, PageBlacklist
     from app.core.vertical_config import VERTICAL_KEYWORD_SETS, ALWAYS_BLOCKED_PAGES
-    from sqlalchemy import func, distinct
+    from sqlalchemy import func, distinct, or_
     from datetime import datetime, timedelta
 
     if config_id not in VERTICAL_KEYWORD_SETS:
@@ -1153,11 +1214,29 @@ def get_vertical_browse_ads(
         query = query.filter(ScrapedAd.angle_tag == angle_tag)
     if advertiser:
         query = query.filter(ScrapedAd.brand_name.ilike(f"%{advertiser}%"))
+    if media_type and media_type not in RESEARCH_MEDIA_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unknown media_type: {media_type}")
+    if media_type:
+        query = query.filter(
+            or_(
+                func.nullif(ScrapedAd.media_type, "").is_(None),
+                ~func.lower(ScrapedAd.media_type).in_(["image", "video", "carousel"]),
+            ) if media_type == "unknown" else ScrapedAd.media_type == media_type
+        )
     if active_only:
-        cutoff = datetime.utcnow() - timedelta(days=30)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
         query = query.filter(ScrapedAd.last_seen >= cutoff)
 
-    ads = query.order_by(ScrapedAd.last_seen.desc().nullslast()).limit(limit).all()
+    if sort_by not in RESEARCH_SORT_OPTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown sort_by: {sort_by}. Use one of: {', '.join(sorted(RESEARCH_SORT_OPTIONS))}",
+        )
+    current_ads = [
+        ad for ad in query.all()
+        if not ad.brand_name or ad.brand_name.lower() not in blacklisted_names
+    ]
+    ads = _sort_research_ads(current_ads, sort_by)[:limit]
 
     # Compute running duration; filter blacklisted advertisers and off-topic ads
     now = datetime.utcnow()
@@ -1167,18 +1246,14 @@ def get_vertical_browse_ads(
         if ad.brand_name and ad.brand_name.lower() in blacklisted_names:
             continue
 
-        running_days = None
-        if ad.start_date:
-            try:
-                start = datetime.fromisoformat(ad.start_date.replace("Z", "+00:00").replace("+00:00", ""))
-                running_days = (now - start).days
-            except Exception:
-                pass
+        start = _parse_research_date(ad.start_date)
+        running_days = max(0, (now - start).days) if start else None
 
         # "Active" proxy: seen within last 30 days
         is_active = False
-        if ad.last_seen:
-            is_active = (now - ad.last_seen.replace(tzinfo=None)).days <= 30
+        last_seen = _parse_research_date(ad.last_seen)
+        if last_seen:
+            is_active = (now - last_seen).days <= 30
 
         result.append({
             "id": ad.id,
@@ -1189,6 +1264,7 @@ def get_vertical_browse_ads(
             "ad_link": ad.ad_link,
             "media_url": ad.media_url,
             "media_type": ad.media_type,
+            "platforms": ad.platforms,
             "destination_domain": ad.destination_domain,
             "source_query": ad.source_query,
             "rank_position": ad.rank_position,
@@ -1198,7 +1274,7 @@ def get_vertical_browse_ads(
             "thumbnail_url": ad.thumbnail_url,
             "creative_intel": ad.creative_intel,
             "volume_score": ad.volume_score,
-            "start_date": ad.start_date,
+            "start_date": _serialize_research_datetime(ad.start_date),
             "running_days": running_days,
             "is_active": is_active,
             "seen_count": ad.seen_count or 1,
@@ -1211,7 +1287,7 @@ def get_vertical_browse_ads(
             "pacing": ad.pacing,
             "numbers_used": ad.numbers_used,
             "is_saved": ad.is_saved,
-            "last_seen": ad.last_seen.isoformat() if ad.last_seen else None,
+            "last_seen": _serialize_research_datetime(ad.last_seen),
         })
 
     return result
@@ -1220,6 +1296,7 @@ def get_vertical_browse_ads(
 @router.delete("/config-verticals/{config_id}/ads")
 def clear_vertical_ads(
     config_id: str,
+    sub_vertical: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -1239,7 +1316,13 @@ def clear_vertical_ads(
 
     # Determine vertical labels (same logic as get_vertical_browse_ads)
     if config_id == "home_services":
-        vertical_labels = [sv["label"] for sv in config.get("sub_verticals", {}).values()]
+        if sub_vertical:
+            selected = config.get("sub_verticals", {}).get(sub_vertical)
+            if not selected:
+                raise HTTPException(status_code=404, detail=f"Unknown sub-vertical: {sub_vertical}")
+            vertical_labels = [selected["label"]]
+        else:
+            vertical_labels = [sv["label"] for sv in config.get("sub_verticals", {}).values()]
     else:
         vertical_labels = [config["label"]]
 
@@ -1326,6 +1409,7 @@ async def search_and_save_vertical(
     total_duplicate = 0
     keywords_run = 0
     first_error: str | None = None
+    rate_limited = False
 
     for label, keywords in pairs:
         # Look up or create the DB Vertical for this label
@@ -1340,6 +1424,8 @@ async def search_and_save_vertical(
             try:
                 allowed, remaining, _ = rate_limiter.check_limit(db)
                 if not allowed:
+                    rate_limited = True
+                    first_error = first_error or "Rate limit reached before all keywords were checked"
                     break  # Hit rate limit mid-run — stop gracefully
 
                 request = AdSearchRequest(
@@ -1375,10 +1461,15 @@ async def search_and_save_vertical(
                 except Exception:
                     pass
 
+        if rate_limited:
+            break
+
     return {
         "total_new": total_new,
         "total_duplicate": total_duplicate,
         "keywords_run": keywords_run,
         "message": f"Refreshed {keywords_run} keywords — {total_new} new ads found",
         "first_error": first_error,  # None when all succeed; error class + message when any fail
+        "rate_limited": rate_limited,
+        "status": "failed" if first_error and keywords_run == 0 and not rate_limited else "partial" if first_error or rate_limited else "complete",
     }

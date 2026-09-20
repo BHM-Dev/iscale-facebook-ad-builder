@@ -45,6 +45,63 @@ const normalizeAdLibraryDate = (value) => {
   return parsed.toISOString().slice(0, 10);
 };
 
+const sortResearchAds = (ads, sortBy) => {
+  const sorted = [...ads];
+  const dateValue = (value) => {
+    if (!value) return null;
+    const timestamp = new Date(value).getTime();
+    return Number.isFinite(timestamp) ? timestamp : null;
+  };
+  sorted.sort((a, b) => {
+    if (sortBy === 'longest_running') {
+      const av = dateValue(a.start_date);
+      const bv = dateValue(b.start_date);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return av - bv;
+    }
+    if (sortBy === 'most_sightings') {
+      return (b.seen_count || 0) - (a.seen_count || 0);
+    }
+    if (sortBy === 'multiple_versions') {
+      const versionOrder = Number(Boolean(b.is_multiple_versions)) - Number(Boolean(a.is_multiple_versions));
+      if (versionOrder !== 0) return versionOrder;
+      const av = dateValue(a.last_seen);
+      const bv = dateValue(b.last_seen);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return bv - av;
+    }
+    const av = dateValue(a.last_seen);
+    const bv = dateValue(b.last_seen);
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    return bv - av;
+  });
+  return sorted;
+};
+
+const withDerivedResearchStatus = (ad) => {
+  const lastSeen = ad.last_seen ? new Date(ad.last_seen).getTime() : NaN;
+  const isActive = Number.isFinite(lastSeen) && (Date.now() - lastSeen) <= 30 * 24 * 60 * 60 * 1000;
+  return { ...ad, is_active: ad.is_active ?? isActive };
+};
+
+const isUnknownMedia = (mediaType) => !['image', 'video', 'carousel'].includes((mediaType || '').toLowerCase());
+
+const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, advertiserFilter, activeOnly, sortBy }) => {
+  const advertiser = advertiserFilter.trim().toLowerCase();
+  return sortResearchAds(ads.filter(ad => (
+    (!angleFilter || ad.angle_tag === angleFilter) &&
+    (!mediaTypeFilter || (mediaTypeFilter === 'unknown' ? isUnknownMedia(ad.media_type) : ad.media_type === mediaTypeFilter)) &&
+    (!advertiser || (ad.brand_name || '').toLowerCase().includes(advertiser)) &&
+    (!activeOnly || withDerivedResearchStatus(ad).is_active)
+  )), sortBy);
+};
+
 const normalizeAdLibraryImport = (raw, activeVerticalLabel) => {
   const sourceAds = raw.ads || raw.visible_ads || [];
   const videos = raw.videos || [];
@@ -95,12 +152,12 @@ const normalizeAdLibraryImport = (raw, activeVerticalLabel) => {
           ad_copy: ad.ad_copy || preview,
           cta_text: ad.cta || ad.cta_text || '',
           ad_link: ad.ad_link || `https://www.facebook.com/ads/library/?id=${ad.library_id || ad.external_id}`,
-          platforms: ad.platforms || ['facebook'],
+          platforms: ad.platforms || null,
           start_date: normalizeAdLibraryDate(ad.started_running || ad.start_date || ''),
-          media_type: ad.media_type || (adVideos.length ? 'video' : 'image'),
+          media_type: ad.media_type || (adVideos.length ? 'video' : null),
           media_url: ad.media_url || ad.thumbnail_url || '',
           destination_domain: ad.domain || ad.destination_domain || '',
-          rank_position: ad.rank_position ?? index + 1,
+          rank_position: ad.rank_position ?? null,
           is_multiple_versions: Boolean(ad.multiple_versions ?? ad.is_multiple_versions),
           video_urls: ad.video_urls || adVideos,
           thumbnail_url: ad.thumbnail_url || ad.media_url || '',
@@ -307,12 +364,23 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
       <div className="flex items-center gap-2">
         <span className={`flex items-center gap-1 text-xs font-medium ${ad.is_active ? 'text-green-600' : 'text-gray-400'}`}>
           <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${ad.is_active ? 'bg-green-500' : 'bg-gray-300'}`} />
-          {ad.is_active ? 'ACTIVE' : 'STOPPED'}
+          {ad.is_active ? 'RECENT CAPTURE' : 'NOT RECENTLY CAPTURED'}
         </span>
         {ad.media_type === 'video' && (
           <span className="inline-flex items-center gap-1 text-xs font-medium text-purple-600">
             <Video size={11} />
             VIDEO
+          </span>
+        )}
+        {isUnknownMedia(ad.media_type) && (
+          <span className="text-xs font-medium text-gray-400" title="The source did not provide a supported media format">UNKNOWN FORMAT</span>
+        )}
+        {['image', 'carousel'].includes((ad.media_type || '').toLowerCase()) && (
+          <span className="text-xs font-medium text-gray-400">{ad.media_type.toUpperCase()}</span>
+        )}
+        {Array.isArray(ad.platforms) && ad.platforms.length > 0 && (
+          <span className="text-xs text-gray-400" title="Platforms reported by the Ad Library capture">
+            {ad.platforms.join(' · ')}
           </span>
         )}
         <a
@@ -338,19 +406,19 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <AngleBadge tag={ad.angle_tag} />
         {ad.volume_score != null && (
-          <span className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded px-2 py-0.5">
+          <span className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded px-2 py-0.5" title="Directional capture signal based on rank, age, repeat versions, and media presence—not spend or impressions.">
             <BarChart3 size={11} />
-            Vol {ad.volume_score}
+            Signal {ad.volume_score}
           </span>
         )}
         {ad.rank_position != null && (
-          <span className="text-xs text-gray-400">Rank #{ad.rank_position}</span>
+          <span className="text-xs text-gray-400" title="Position in the imported Ad Library capture, not a performance ranking">Capture rank #{ad.rank_position}</span>
         )}
         {ad.is_multiple_versions && (
           <span className="text-xs text-gray-400">Multiple versions</span>
         )}
         {ad.running_days != null && (
-          <span className="text-xs text-gray-400">Running {ad.running_days}d</span>
+          <span className="text-xs text-gray-400" title="Calculated from the source-provided start date; not confirmation of current delivery">Observed {ad.running_days}d</span>
         )}
         {ad.destination_domain && (
           <span className="text-xs text-gray-400 truncate max-w-[160px]">{ad.destination_domain}</span>
@@ -476,10 +544,16 @@ function SavedCard({ ad, onUnsave, onUseAsInspiration, boards, onAddToBoard, onC
             Video
           </span>
         )}
+        {isUnknownMedia(ad.media_type) && (
+          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-500" title="The source did not provide a supported media format">Unknown format</span>
+        )}
+        {['image', 'carousel'].includes((ad.media_type || '').toLowerCase()) && (
+          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-500">{ad.media_type}</span>
+        )}
         {ad.volume_score != null && (
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold bg-indigo-50 text-indigo-600">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold bg-indigo-50 text-indigo-600" title="Directional capture signal—not spend or impressions.">
             <BarChart3 size={10} />
-            {ad.volume_score}
+            Signal {ad.volume_score}
           </span>
         )}
       </div>
@@ -638,10 +712,28 @@ export default function Research() {
 
   // Filters
   const [angleFilter, setAngleFilter] = useState('');
+  const [mediaTypeFilter, setMediaTypeFilter] = useState('');
+  const [sortBy, setSortBy] = useState('newest_seen');
   const [activeOnly, setActiveOnly] = useState(false);
   const [advertiserFilter, setAdvertiserFilter] = useState('');
+  const [resultMode, setResultMode] = useState('browse');
+  const [searchResultAds, setSearchResultAds] = useState([]);
+  const [browseReloadKey, setBrowseReloadKey] = useState(0);
+  const browseRequestRef = useRef(0);
+  const searchRequestRef = useRef(0);
+  const refreshRequestRef = useRef(0);
+  const contextGenerationRef = useRef(0);
+  const activeVerticalRef = useRef(activeVertical);
+  const activeSubVerticalRef = useRef(activeSubVertical);
 
   // ── Boot ─────────────────────────────────────────────────────
+  useEffect(() => {
+    contextGenerationRef.current += 1;
+    activeVerticalRef.current = activeVertical;
+    activeSubVerticalRef.current = activeSubVertical;
+    setQueryLoading(false);
+  }, [activeVertical, activeSubVertical]);
+
   useEffect(() => {
     loadConfig();
     loadBoards();
@@ -658,6 +750,8 @@ export default function Research() {
   useEffect(() => {
     if (!verticalConfig) return;
     setRefreshSummary(null);
+    setResultMode('browse');
+    setSearchResultAds([]);
     loadBrowseAds();
     loadSavedAds();
   }, [activeVertical, activeSubVertical, verticalConfig]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -685,6 +779,7 @@ export default function Research() {
   };
 
   const loadBrowseAds = async () => {
+    const requestId = ++browseRequestRef.current;
     setBrowseLoading(true);
     setBrowseError('');
     setBrowseAds([]);
@@ -692,17 +787,20 @@ export default function Research() {
       const params = new URLSearchParams();
       if (activeSubVertical) params.set('sub_vertical', activeSubVertical);
       if (angleFilter) params.set('angle_tag', angleFilter);
+      if (mediaTypeFilter) params.set('media_type', mediaTypeFilter);
       if (activeOnly) params.set('active_only', 'true');
       if (advertiserFilter.trim()) params.set('advertiser', advertiserFilter.trim());
+      params.set('sort_by', sortBy);
       params.set('limit', '500');
 
       const res = await authFetch(`${API_URL}/research/config-verticals/${activeVertical}/browse-ads?${params}`);
       if (!res.ok) throw new Error('Failed to load ads');
-      setBrowseAds(await res.json());
+      const ads = await res.json();
+      if (requestId === browseRequestRef.current) setBrowseAds(ads.map(withDerivedResearchStatus));
     } catch (e) {
-      setBrowseError(e.message || 'Failed to load ads');
+      if (requestId === browseRequestRef.current) setBrowseError(e.message || 'Failed to load ads');
     } finally {
-      setBrowseLoading(false);
+      if (requestId === browseRequestRef.current) setBrowseLoading(false);
     }
   };
 
@@ -822,40 +920,78 @@ export default function Research() {
   const handleQuerySearch = async (event) => {
     event.preventDefault();
     const trimmedQuery = query.trim();
-    if (!trimmedQuery || queryLoading) return;
+    if (!trimmedQuery || queryLoading || refreshing || clearing) return;
+    const requestId = ++searchRequestRef.current;
+    const searchVertical = activeVertical;
+    const searchSubVertical = activeSubVertical;
+    const searchContextGeneration = contextGenerationRef.current;
     setQueryLoading(true);
+    setResultMode('search');
+    setBrowseAds([]);
+    setBrowseLoading(false);
+    setBrowseError('');
+    setRefreshSummary(null);
     try {
       // Uses the shared searchAndSave() helper (frontend/src/api/research.js)
       // rather than a second hand-built fetch call against the same endpoint
       // — the two had already started drifting in header/error-shape
       // handling (code-auditor pre-push review, LOW).
       const result = await searchAndSave({ query: trimmedQuery, platform: 'facebook', limit: 30, country: 'US', search_type: 'one_time' });
-      const filtered = (result.ads || []).filter(ad => (
-        (!angleFilter || ad.angle_tag === angleFilter) &&
-        (!advertiserFilter.trim() || (ad.brand_name || '').toLowerCase().includes(advertiserFilter.trim().toLowerCase())) &&
-        (!activeOnly || (ad.last_seen && (Date.now() - new Date(ad.last_seen).getTime()) <= 30 * 24 * 60 * 60 * 1000))
-      ));
+      if (
+        requestId !== searchRequestRef.current
+        || searchVertical !== activeVerticalRef.current
+        || searchSubVertical !== activeSubVerticalRef.current
+        || searchContextGeneration !== contextGenerationRef.current
+      ) return;
+      const normalized = (result.ads || []).map(withDerivedResearchStatus);
+      browseRequestRef.current += 1;
+      setBrowseError('');
+      setSearchResultAds(normalized);
+      setResultMode('search');
+      const filtered = filterResearchAds(normalized, { angleFilter, mediaTypeFilter, advertiserFilter, activeOnly, sortBy });
       setBrowseAds(filtered);
-      showSuccess(`Search saved — ${filtered.length} ads ready to organize`);
+      showSuccess(`Search saved — ${filtered.length} matching ads shown`);
       loadBoards();
       loadSavedAds();
     } catch (e) {
-      setBrowseError(e.message || 'Search failed');
-      showError(e.message || 'Search failed');
+      if (requestId === searchRequestRef.current && searchVertical === activeVerticalRef.current && searchSubVertical === activeSubVerticalRef.current && searchContextGeneration === contextGenerationRef.current) {
+        setBrowseError(e.message || 'Search failed');
+        showError(e.message || 'Search failed');
+      }
     } finally {
-      setQueryLoading(false);
+      if (requestId === searchRequestRef.current) setQueryLoading(false);
     }
   };
 
   // Re-run browse when filters change (with debounce on advertiser text)
   useEffect(() => {
     if (!verticalConfig) return;
+    if (resultMode === 'search') {
+      setBrowseAds(filterResearchAds(searchResultAds, { angleFilter, mediaTypeFilter, advertiserFilter, activeOnly, sortBy }));
+      return undefined;
+    }
     const t = setTimeout(() => loadBrowseAds(), advertiserFilter ? 400 : 0);
     return () => clearTimeout(t);
-  }, [angleFilter, activeOnly, advertiserFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [angleFilter, mediaTypeFilter, sortBy, activeOnly, advertiserFilter, resultMode, searchResultAds, browseReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Actions ──────────────────────────────────────────────────
-  const handleRefresh = async () => {
+  const handleRefresh = async ({ allowWhileClearing = false } = {}) => {
+    if (queryLoading || (clearing && !allowWhileClearing)) {
+      showWarning('Finish the current Search or Clear operation before refreshing.');
+      return;
+    }
+    const requestId = ++refreshRequestRef.current;
+    const refreshVertical = activeVertical;
+    const refreshSubVertical = activeSubVertical;
+    const refreshContextGeneration = contextGenerationRef.current;
+    setResultMode('browse');
+    setSearchResultAds([]);
+    searchRequestRef.current += 1;
+    setQueryLoading(false);
+    setRefreshSummary(null);
+    setBrowseError('');
+    setBrowseLoading(false);
+    browseRequestRef.current += 1;
     setRefreshing(true);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 min cap
@@ -874,47 +1010,69 @@ export default function Research() {
         throw new Error(err.detail || 'Refresh failed');
       }
       const result = await res.json();
+      if (requestId !== refreshRequestRef.current || refreshVertical !== activeVerticalRef.current || refreshSubVertical !== activeSubVerticalRef.current || refreshContextGeneration !== contextGenerationRef.current) return;
       setRefreshSummary(result);
-      if (result.keywords_run === 0) {
-        showError('Refresh failed — Facebook token may be missing. Ping Steve or Golden to check the API config.');
+      if (result.rate_limited) {
+        showInfo(`Refresh stopped at the research rate limit after ${result.keywords_run} keywords. ${result.total_new} new ads were saved; retry after the limit resets.`);
+        setBrowseReloadKey(value => value + 1);
+        loadSavedAds();
+      } else if (result.keywords_run === 0 && result.first_error) {
+        showError(`Refresh failed — ${result.first_error}`);
       } else if (result.first_error) {
         showInfo(`Refresh partially completed — ${result.keywords_run} keywords checked, ${result.total_new} new ads. First error: ${result.first_error}`);
-        loadBrowseAds();
+        setBrowseReloadKey(value => value + 1);
         loadSavedAds();
       } else if (result.total_new === 0) {
         const duplicateText = result.total_duplicate > 0 ? `, ${result.total_duplicate} duplicates seen` : '';
         showInfo(`No new ads — ${result.keywords_run} keywords checked${duplicateText}`);
-        loadBrowseAds();
+        setBrowseReloadKey(value => value + 1);
         loadSavedAds();
       } else {
         showSuccess(result.message || `Refresh complete — ${result.total_new} new ads`);
-        loadBrowseAds();
+        setBrowseReloadKey(value => value + 1);
         loadSavedAds();
       }
     } catch (e) {
+      if (requestId !== refreshRequestRef.current || refreshVertical !== activeVerticalRef.current || refreshSubVertical !== activeSubVerticalRef.current || refreshContextGeneration !== contextGenerationRef.current) return;
       if (e.name === 'AbortError') {
+        setRefreshSummary({ status: 'timed_out', keywords_run: 0, total_new: 0, total_duplicate: 0, first_error: 'Request timed out; earlier keywords may have completed and saved results.' });
+        setBrowseReloadKey(value => value + 1);
         showError('Refresh timed out — try a single sub-vertical tab instead of pulling all at once.');
       } else {
+        setRefreshSummary({ status: 'failed', keywords_run: 0, total_new: 0, total_duplicate: 0, first_error: e.message || 'Refresh failed before completion.' });
+        setBrowseError('');
         showError(e.message || 'Refresh failed');
       }
     } finally {
       clearTimeout(timeoutId);
-      setRefreshing(false);
+      if (requestId === refreshRequestRef.current) setRefreshing(false);
     }
   };
 
   const handleClear = async () => {
+    if (queryLoading || refreshing) {
+      showWarning('Finish the current Search or Refresh operation before clearing ads.');
+      return;
+    }
     setClearing(true);
     setShowClearModal(false);
+    browseRequestRef.current += 1;
+    searchRequestRef.current += 1;
+    refreshRequestRef.current += 1;
+    setQueryLoading(false);
     try {
-      const res = await authFetch(`${API_URL}/research/config-verticals/${activeVertical}/ads`, {
+      const clearParams = activeSubVertical ? `?sub_vertical=${encodeURIComponent(activeSubVertical)}` : '';
+      const res = await authFetch(`${API_URL}/research/config-verticals/${activeVertical}/ads${clearParams}`, {
         method: 'DELETE',
       });
       if (!res.ok) throw new Error('Clear failed');
       const result = await res.json();
+      setBrowseAds([]);
+      setSearchResultAds([]);
       showSuccess(`Cleared ${result.deleted} ads — pulling fresh results now…`);
-      handleRefresh();
+      await handleRefresh({ allowWhileClearing: true });
     } catch (e) {
+      setRefreshSummary({ status: 'clear_failed', keywords_run: 0, total_new: 0, total_duplicate: 0, first_error: 'Clear failed; current ads were not deleted.' });
       showError(e.message || 'Clear failed');
     } finally {
       setClearing(false);
@@ -1045,13 +1203,15 @@ export default function Research() {
         { method: 'POST' },
       );
       if (!res.ok) {
-        showInfo('Page already blocked');
+        showError('Could not block advertiser — try again.');
         return;
       }
-      setBrowseAds(prev => prev.filter(a => a.brand_name !== pageName));
+      const normalizedPageName = pageName.toLowerCase();
+      setBrowseAds(prev => prev.filter(a => (a.brand_name || '').toLowerCase() !== normalizedPageName));
+      setSearchResultAds(prev => prev.filter(a => (a.brand_name || '').toLowerCase() !== normalizedPageName));
       showSuccess(`${pageName} blocked — won't appear again`);
     } catch (e) {
-      showInfo('Page already blocked');
+      showError('Could not block advertiser — try again.');
     }
   };
 
@@ -1097,14 +1257,14 @@ export default function Research() {
             <FlaskConical size={24} className="text-indigo-600" />
             Research Library
           </h1>
-          <p className="text-sm text-gray-500 mt-0.5">Study what's working in your markets before you write.</p>
+          <p className="text-sm text-gray-500 mt-0.5">Study captured competitor patterns before you write.</p>
         </div>
         <div className="flex flex-col items-end gap-1">
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setShowImportModal(true)}
-              disabled={refreshing || clearing}
+              disabled={refreshing || clearing || queryLoading}
               className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               title="Import Chrome-captured Ad Library examples"
             >
@@ -1114,7 +1274,7 @@ export default function Research() {
             <button
               type="button"
               onClick={() => setShowClearModal(true)}
-              disabled={clearing || refreshing}
+              disabled={clearing || refreshing || queryLoading}
               className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               title="Delete all unsaved ads for this vertical"
             >
@@ -1124,7 +1284,7 @@ export default function Research() {
             <button
               type="button"
               onClick={handleRefresh}
-              disabled={refreshing || clearing}
+              disabled={refreshing || clearing || queryLoading}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
@@ -1132,7 +1292,7 @@ export default function Research() {
             </button>
           </div>
           {refreshing && (
-            <p className="text-xs text-gray-400">Pulling ads from Facebook — may take up to 60s</p>
+            <p className="text-xs text-gray-400">Pulling ads from Facebook — may take up to 3 minutes</p>
           )}
         </div>
       </div>
@@ -1244,13 +1404,13 @@ export default function Research() {
                 type="search"
                 value={query}
                 onChange={e => setQuery(e.target.value)}
-                placeholder="Ask a research question or search the Ad Library…"
+                placeholder="Search the Ad Library by keyword…"
                 className="min-w-0 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-300"
                 aria-label="Research query"
               />
               <button
                 type="submit"
-                disabled={queryLoading || !query.trim()}
+                disabled={queryLoading || refreshing || clearing || !query.trim()}
                 className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <RefreshCw size={14} className={queryLoading ? 'animate-spin' : ''} />
@@ -1270,12 +1430,13 @@ export default function Research() {
                 </button>
               ))}
             </div>
+            <p className="mt-2 text-[11px] text-gray-400">Keyword Search is global; the selected vertical scopes Browse and Refresh.</p>
           </form>
           {/* Filter bar */}
           <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-2 flex-1 min-w-0">
               <span className="text-xs font-medium text-gray-500 whitespace-nowrap">
-                BROWSE
+                {resultMode === 'search' ? 'SEARCH RESULTS' : 'BROWSE'}
                 {!browseLoading && <span className="ml-1 text-gray-400">({browseAds.length})</span>}
               </span>
               <div className="h-4 w-px bg-gray-200" />
@@ -1294,6 +1455,39 @@ export default function Research() {
 
               <div className="h-4 w-px bg-gray-200" />
 
+              {/* Media type filter — captured metadata, not classifier output */}
+              <select
+                value={mediaTypeFilter}
+                onChange={e => setMediaTypeFilter(e.target.value)}
+                className="text-xs border-0 text-gray-600 bg-transparent focus:ring-0 cursor-pointer pr-6 py-0"
+                title="Filter by media type captured from the Ad Library"
+              >
+                <option value="">All media</option>
+                <option value="image">Images</option>
+                <option value="video">Videos</option>
+                <option value="carousel">Carousels</option>
+                <option value="unknown">Unknown format</option>
+              </select>
+
+              <div className="h-4 w-px bg-gray-200" />
+
+              <span className="text-xs text-gray-400 whitespace-nowrap" title="These are internal Ad Library capture signals, not spend, reach, or market prevalence.">
+                Sort by
+              </span>
+              <select
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value)}
+                className="text-xs border-0 text-gray-600 bg-transparent focus:ring-0 cursor-pointer pr-6 py-0"
+                title="Sort by source-backed research signals"
+              >
+                <option value="newest_seen">Last captured</option>
+                <option value="longest_running">Longest running</option>
+                <option value="most_sightings">Captured most often</option>
+                <option value="multiple_versions">Multiple versions</option>
+              </select>
+
+              <div className="h-4 w-px bg-gray-200" />
+
               {/* Active only */}
               <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap">
                 <input
@@ -1302,7 +1496,7 @@ export default function Research() {
                   onChange={e => setActiveOnly(e.target.checked)}
                   className="rounded text-indigo-600 focus:ring-indigo-500"
                 />
-                Active only
+                  Captured in last 30 days
               </label>
             </div>
 
@@ -1316,6 +1510,12 @@ export default function Research() {
             />
           </div>
 
+          {refreshSummary?.first_error && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {refreshSummary.status === 'timed_out' ? 'Refresh timed out' : refreshSummary.status === 'failed' ? 'Refresh failed' : refreshSummary.status === 'clear_failed' ? 'Clear failed' : 'Refresh was partial'}: {refreshSummary.first_error} {refreshSummary.status !== 'partial' && 'Showing the last successful capture where available.'}
+            </div>
+          )}
+
           {/* Card gallery */}
           {browseLoading ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -1323,33 +1523,35 @@ export default function Research() {
             </div>
           ) : browseError ? (
             <div className="bg-white rounded-xl border border-red-100 px-6 py-16 text-center">
-              <p className="text-red-600 font-medium mb-1">Couldn’t load ads for {currentVerticalLabel}</p>
+              <p className="text-red-600 font-medium mb-1">{resultMode === 'search' ? `Search failed for “${query}”` : `Couldn’t load ads for ${currentVerticalLabel}`}</p>
               <p className="text-sm text-gray-400 mb-4">{browseError}</p>
               <button
                 type="button"
-                onClick={loadBrowseAds}
+                onClick={resultMode === 'search' ? () => document.querySelector('[aria-label="Research query"]')?.focus() : loadBrowseAds}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 transition-colors"
               >
                 <RefreshCw size={14} />
-                Try again
+                {resultMode === 'search' ? 'Edit search' : 'Try again'}
               </button>
             </div>
           ) : browseAds.length === 0 ? (
             <div className="bg-white rounded-xl border border-gray-200 px-6 py-16 text-center">
-              <p className="text-gray-500 font-medium mb-1">No ads yet for {currentVerticalLabel}</p>
+              <p className="text-gray-500 font-medium mb-1">{resultMode === 'search' ? `No ads found for “${query}”` : `No ads yet for ${currentVerticalLabel}`}</p>
               <p className="text-sm text-gray-400 mb-4">
                 {refreshSummary
-                  ? `${refreshSummary.keywords_run || 0} keywords checked. ${refreshSummary.total_duplicate || 0} duplicates seen, no new ads kept.`
-                  : <>Click <strong>Refresh Vertical</strong> to pull competitor ads from the Facebook Ad Library.</>}
+                  ? `${refreshSummary.keywords_run || 0} keywords checked. ${refreshSummary.total_duplicate || 0} duplicates seen, no new ads kept.${refreshSummary.first_error ? ` Refresh note: ${refreshSummary.first_error}` : ''}`
+                  : resultMode === 'search'
+                    ? <>Try a broader keyword or edit the global Search above.</>
+                    : <>Click <strong>Refresh Vertical</strong> to pull competitor ads from the Facebook Ad Library.</>}
               </p>
               <button
                 type="button"
-                onClick={handleRefresh}
+                onClick={resultMode === 'search' ? () => document.querySelector('[aria-label="Research query"]')?.focus() : handleRefresh}
                 disabled={refreshing}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 transition-colors"
               >
                 <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
-                {refreshing ? 'Refreshing…' : 'Pull Ads Now'}
+                {resultMode === 'search' ? 'Edit search' : refreshing ? 'Refreshing…' : 'Pull Ads Now'}
               </button>
             </div>
           ) : (
@@ -1483,7 +1685,9 @@ export default function Research() {
             <h3 className="text-lg font-semibold text-gray-900 mb-2">Clear all unsaved ads?</h3>
             <p className="text-sm text-gray-600 mb-6">
               {activeVertical === 'home_services' ? (
-                <>This removes all non-saved ads across <strong>all Home Services sub-verticals</strong>.
+                <>{activeSubVertical
+                  ? <>This removes all non-saved ads for the <strong>{subVerticals[activeSubVertical]?.label || activeSubVertical}</strong> sub-vertical.</>
+                  : <>This removes all non-saved ads across <strong>all Home Services sub-verticals</strong>.</>}
                 Use this after tightening keyword filters to remove irrelevant ads pulled by old searches.
                 Your <strong>saved ads are kept</strong>.</>
               ) : (
