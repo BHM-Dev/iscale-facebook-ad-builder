@@ -267,9 +267,14 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
 
   useEffect(() => {
     bestTimesRequestRef.current += 1;
+    setData(null);
+    setError(null);
     setBestTimesData(null);
     setBestTimesError(null);
-    if (open && intelligenceView === 'best-times') loadBestTimes(preset, customFrom, customTo);
+    if (open) {
+      loadIntelligence(preset, customFrom, customTo);
+      if (intelligenceView === 'best-times') loadBestTimes(preset, customFrom, customTo);
+    }
   }, [adAccountId, pageDatePreset, pageDateFrom, pageDateTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Single source of truth for syncing Intelligence's preset to the page's own

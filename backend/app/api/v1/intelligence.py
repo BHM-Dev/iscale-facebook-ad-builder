@@ -613,6 +613,8 @@ def _redtrack_datetime(row: dict, timezone: ZoneInfo) -> Optional[datetime]:
         value = row.get(field)
         if value in (None, ''):
             continue
+        if str(value).isdigit():
+            return datetime.fromtimestamp(int(value), tz=timezone)
         try:
             parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
         except ValueError:
@@ -762,6 +764,7 @@ def _build_best_times(
             key = (niche, when.weekday(), when.hour)
             aggregate.setdefault(key, {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})['revenue'] += Decimal(str(row.get('revenue') or 0))
         if dropped_count:
+            attribution_warning = f'{attribution_warning} {dropped_count} Everflow conversion rows totaling ${dropped_revenue.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)} could not be assigned.'
             logger.warning(
                 "Best Times: dropped %d Everflow conversion(s) totaling $%s — unmatched adset or unparseable timestamp",
                 dropped_count, dropped_revenue.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
