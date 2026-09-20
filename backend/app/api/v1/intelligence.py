@@ -23,7 +23,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_active_user, get_db
-from app.models import User, FacebookAdSet
+from app.api.v1.facebook import _resolve_scoped_default_account
+from app.models import User, FacebookAdSet, normalize_account_id
 from app.services.redtrack_service import RedTrackService
 from app.services.everflow_service import CONVERSION_DATE_FIELDS, EVERFLOW_TZ_BY_ID, EverflowService
 
@@ -501,7 +502,7 @@ def _everflow_offers_for_account(ad_account_id: Optional[str]) -> Optional[set[s
     if account_id.isdigit():
         account_id = f"act_{account_id}"
     configured_accounts = {
-        value.strip() for value in (os.getenv("SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS", "").split(",")) if value.strip()
+        normalize_account_id(value.strip()) for value in os.getenv("SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS", "").split(",") if value.strip()
     }
     if account_id not in configured_accounts:
         return None
@@ -510,7 +511,10 @@ def _everflow_offers_for_account(ad_account_id: Optional[str]) -> Optional[set[s
     except json.JSONDecodeError:
         logger.warning("Invalid SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS JSON")
         return set()
-    offers = mapping.get(account_id, []) if isinstance(mapping, dict) else []
+    normalized_mapping = {
+        normalize_account_id(str(key).strip()): value for key, value in mapping.items()
+    } if isinstance(mapping, dict) else {}
+    offers = normalized_mapping.get(account_id, [])
     return {str(value).strip() for value in offers if str(value).strip()}
 
 
@@ -675,7 +679,13 @@ def _build_best_times(
         dropped_count = 0
         dropped_revenue = Decimal('0')
         known_adsets = set(adsets)
-        for row in redtrack_rows:
+        scoped_redtrack_rows = [
+            row for row in redtrack_rows
+            if str(row.get('p_sub2') or row.get('sub2') or '').strip() in known_adsets
+        ]
+        matching_redtrack_rows = [row for row in scoped_redtrack_rows if _redtrack_offer_matches(row, allowed)]
+        rows_for_attribution = matching_redtrack_rows or scoped_redtrack_rows
+        for row in rows_for_attribution:
             adset_id = str(row.get('p_sub2') or row.get('sub2') or '').strip()
             when = _redtrack_datetime(row, tz)
             amount = _redtrack_revenue(row)
@@ -699,17 +709,14 @@ def _build_best_times(
         billing_rows = [row for row in conversions if EverflowService._offer_name(row).casefold() in allowed]
         matched_billing_rows = [row for row in billing_rows if str(row.get('sub3') or '').strip() in scoped_adsets]
         billing_total = sum((Decimal(str(row.get('revenue') or 0)) for row in matched_billing_rows), Decimal('0'))
-        unmatched_billing_rows = [row for row in billing_rows if row not in matched_billing_rows]
-        unmatched_billing_revenue = sum((Decimal(str(row.get('revenue') or 0)) for row in unmatched_billing_rows), Decimal('0'))
-        if unmatched_billing_rows:
-            dropped_count += len(unmatched_billing_rows)
-            dropped_revenue += unmatched_billing_revenue
         if redtrack_total > 0 and billing_total > 0:
             scale = billing_total / redtrack_total
             for key, amount in redtrack_aggregate.items():
                 aggregate.setdefault(key, {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})['revenue'] += amount * scale
             attribution_method = 'redtrack_attribution_everflow_billing_allocated'
             attribution_warning = 'Everflow billing revenue is allocated across RedTrack-attributed ad sets and hours; use this as a directional timing signal.'
+            if scoped_redtrack_rows and not matching_redtrack_rows:
+                attribution_warning += ' RedTrack offer labels did not match the Everflow offer name, so the selected Meta ad-set scope was used.'
             if dropped_count:
                 attribution_warning += f' {dropped_count} conversion rows were excluded from the allocation basis.'
             redtrack_usable = True
@@ -866,6 +873,7 @@ def best_times(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return true-revenue ROI by niche, weekday, and advertiser-local hour."""
+    ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     resolved_from, resolved_to, _day_filter, preset_label = _resolve_preset(preset, date_from, date_to)
     offer_names = _everflow_offers_for_account(ad_account_id)
     try:
