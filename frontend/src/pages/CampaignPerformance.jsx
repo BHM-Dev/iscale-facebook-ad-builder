@@ -140,7 +140,7 @@ function BestTimesGrid({ data }) {
           </tbody>
         </table>
       </div>
-      <div className="flex flex-wrap gap-3 text-[11px] text-gray-500"><span><i className="inline-block w-2.5 h-2.5 rounded bg-green-200 mr-1" />Directional positive</span><span><i className="inline-block w-2.5 h-2.5 rounded bg-orange-100 mr-1" />Watch</span><span><i className="inline-block w-2.5 h-2.5 rounded bg-red-200 mr-1" />Directional negative</span><span><i className="inline-block w-2.5 h-2.5 rounded bg-gray-200 mr-1" />Insufficient data</span></div>
+      <div className="flex flex-wrap gap-3 text-[11px] text-gray-500"><span><i className="inline-block w-2.5 h-2.5 rounded bg-green-200 mr-1" />{allocated ? 'Directional positive' : 'Positive'}</span><span><i className="inline-block w-2.5 h-2.5 rounded bg-orange-100 mr-1" />Watch</span><span><i className="inline-block w-2.5 h-2.5 rounded bg-red-200 mr-1" />{allocated ? 'Directional negative' : 'Negative'}</span><span><i className="inline-block w-2.5 h-2.5 rounded bg-gray-200 mr-1" />Insufficient data</span></div>
     </div>
   );
 }

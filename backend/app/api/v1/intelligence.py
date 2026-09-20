@@ -614,7 +614,7 @@ def _redtrack_datetime(row: dict, timezone: ZoneInfo) -> Optional[datetime]:
 
 
 def _redtrack_revenue(row: dict) -> Decimal:
-    for field in ('value', 'revenue', 'total_revenue', 'pub_revenue', 'payout', 'amount'):
+    for field in ('payout', 'value', 'revenue', 'total_revenue', 'pub_revenue', 'amount'):
         value = row.get(field)
         if value in (None, ''):
             continue
@@ -681,8 +681,9 @@ def _build_best_times(
                 # Meta ad-set IDs are account-scoped, so this excludes other
                 # RedTrack accounts without blending their rows into billing.
                 continue
-            if not _redtrack_offer_matches(row, allowed):
-                continue
+            # RedTrack and Everflow can use different offer labels. The Meta
+            # ad-set scope above is the account boundary; Everflow remains the
+            # authoritative, offer-filtered billing source.
             if not when or amount <= 0:
                 dropped_count += 1
                 dropped_revenue += amount
@@ -895,7 +896,8 @@ def best_times(
             redtrack_rows=redtrack_rows,
         )
         if redtrack_warning:
-            result['attribution_warning'] = redtrack_warning
+            existing_warning = result.get('attribution_warning')
+            result['attribution_warning'] = ' '.join(part for part in (redtrack_warning, existing_warning) if part)
             result['attribution_method'] = 'everflow_adset_id_redtrack_unavailable'
     except RuntimeError as exc:
         raise HTTPException(502, str(exc)) from exc
