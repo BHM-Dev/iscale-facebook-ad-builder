@@ -8,6 +8,7 @@ import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorag
 import { cropImageToAspect } from '../lib/imageCrop';
 import { useBrands } from '../context/BrandContext';
 import CreativeEnhancementsPanel from './CreativeEnhancementsPanel';
+import { countCreativeVariations } from '../lib/launchPlan';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 // Kept solely as an emergency rollback switch while the row-and-rail editor
@@ -286,36 +287,6 @@ const blockedDriveGroupSummary = (groups, limit = 3) => {
 // own useEffect (media.length × valid-headlines × valid-bodies) exactly, so the number
 // shown here never drifts from what Review actually generates. Kept as a pure function
 // (not inline in the component) so the two call sites can't quietly diverge.
-const countVariations = (creativeData) => {
-    const media = creativeData?.creatives?.length || 0;
-    const headlines = (creativeData?.headlines || []).filter(h => h && h.trim() !== '').length;
-    const bodies = (creativeData?.bodies || []).filter(b => b && b.trim() !== '').length;
-    const hasPerCreativeCopy = (creativeData?.creatives || []).some(c => c.source === 'drive' || c.headline || c.body);
-    // The Launch Plan rail needs counts that describe the copy actually
-    // assigned to each ad, not only the shared fallback fields. In standard
-    // mode a row can be Ready with per-ad headline/body overrides while the
-    // shared arrays remain empty; reporting those arrays alone made the rail
-    // say "Headlines 0 / Bodies 0" beside a Ready ad.
-    const assignedHeadlineCount = hasPerCreativeCopy
-        ? (creativeData.creatives || []).reduce((sum, creative) => (
-            sum + (creative.source === 'drive' || creative.headline?.trim() ? 1 : headlines)
-        ), 0)
-        : headlines;
-    const assignedBodyCount = hasPerCreativeCopy
-        ? (creativeData.creatives || []).reduce((sum, creative) => (
-            sum + (creative.source === 'drive' || creative.body?.trim() ? 1 : bodies)
-        ), 0)
-        : bodies;
-    const total = hasPerCreativeCopy
-        ? (creativeData.creatives || []).reduce((sum, creative) => {
-            const headlineCount = creative.source === 'drive' || creative.headline?.trim() ? 1 : headlines;
-            const bodyCount = creative.source === 'drive' || creative.body?.trim() ? 1 : bodies;
-            return sum + (headlineCount * bodyCount);
-        }, 0)
-        : media * headlines * bodies;
-    return { media, headlines: assignedHeadlineCount, bodies: assignedBodyCount, total, hasPerCreativeCopy };
-};
-
 const formatReconciliationRecords = (records) => records.map(record => {
     const ads = (record.readyAdNumbers || []).join(', ') || 'unknown ADs';
     const meta = (record.createdMetaIds || []).join(', ') || 'Meta ID pending';
@@ -370,7 +341,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // dependency array) — this step's whole job is showing the count change on every
     // keystroke/upload, and the computation itself is three array lengths, not worth
     // the staleness risk of a memo dependency list drifting from the real fields.
-    const variationCount = countVariations(creativeData);
+    const variationCount = countCreativeVariations(creativeData);
 
     // Feeds the launcher shell's Launch Plan rail — this step owns the creative/
     // headline/body/total-ad counts, so it pushes them up rather than the shell
@@ -1310,6 +1281,19 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     useEffect(() => {
         if (selectedAdAccount) {
             const requestId = ++pageFetchRequestRef.current;
+            // Clear a Page from the prior account before the new account's
+            // request resolves. Otherwise the old name/ID remains visible in
+            // Launch Plan and can pass the truthy page validation during the
+            // loading window.
+            if (creativeData.pageAccountId !== selectedAdAccount.id) {
+                setCreativeData(prev => ({
+                    ...prev,
+                    pageId: '',
+                    pageName: null,
+                    pageAccountId: selectedAdAccount.id,
+                    instagramId: null,
+                }));
+            }
             fetchPages(selectedAdAccount, requestId);
         } else {
             pageFetchRequestRef.current += 1;
@@ -1360,7 +1344,15 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         } catch (error) {
             if (requestId !== pageFetchRequestRef.current) return;
             console.error('Error fetching pages:', error);
-            showError('Failed to load Facebook Pages. You can enter Page ID manually.');
+            setPages([]);
+            setCreativeData(prev => ({
+                ...prev,
+                pageId: '',
+                pageName: null,
+                pageAccountId: account.id,
+                instagramId: null,
+            }));
+            showError('Facebook Pages could not be loaded. Enter the Page ID manually to continue.');
             setManualPageEntry(true); // Auto-switch to manual entry
         } finally {
             if (requestId === pageFetchRequestRef.current) setLoadingPages(false);
@@ -1836,7 +1828,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             return;
         }
 
-        if (!creativeData.pageId) {
+        if (loadingPages) {
+            showWarning('Still loading Facebook Pages — give it a moment and try again.');
+            return;
+        }
+
+        if (!creativeData.pageId || creativeData.pageAccountId !== selectedAdAccount?.id) {
             showWarning('Please enter a Facebook Page ID');
             return;
         }

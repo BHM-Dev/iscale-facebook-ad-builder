@@ -69,7 +69,7 @@ const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaig
                 <SummaryRow label="Account" value={selectedAdAccount?.name} />
                 <SummaryRow label="Campaign" value={campaignData?.name} />
                 <SummaryRow label="Ad set" value={adsetData?.name} />
-                <SummaryRow label="Facebook Page" value={creativeData?.pageId} />
+                <SummaryRow label="Facebook Page" value={creativeData?.pageName || creativeData?.pageId} />
                 <SummaryRow label="Creative source" value={creativeSource} />
             </div>
             <div className="mt-3 pt-3 border-t border-gray-100 divide-y divide-gray-100">
