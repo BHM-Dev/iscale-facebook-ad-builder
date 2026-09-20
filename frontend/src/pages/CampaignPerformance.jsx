@@ -89,6 +89,10 @@ function BestTimesGrid({ data }) {
 
   if (!niche) return <p className="text-sm text-gray-400 py-6 text-center">No hourly data returned for this account and period.</p>;
   const untracked = niche.revenue_source === 'not_tracked';
+  const daypartRows = BEST_TIMES_DAYS.flatMap((day, dayIndex) => dayparts.map(part => ({ day, part, ...aggregateDaypart(dayIndex, part) })));
+  const actionableRows = daypartRows.filter(cell => cell.revenue != null && cell.confidence !== 'low' && cell.spend > 0);
+  const bestWindow = actionableRows.length ? actionableRows.reduce((best, cell) => cell.roi > best.roi ? cell : best) : null;
+  const weakestWindow = actionableRows.length ? actionableRows.reduce((worst, cell) => cell.roi < worst.roi ? cell : worst) : null;
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -100,6 +104,9 @@ function BestTimesGrid({ data }) {
         </span>
       </div>
       {untracked && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Spend and leads are shown for context, but ROI is unavailable until this account has an exact Switchboard offer mapping.</div>}
+      {!untracked && (bestWindow || weakestWindow) && <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {[['Best window', bestWindow, 'border-green-200 bg-green-50 text-green-800'], ['Weakest window', weakestWindow, 'border-red-200 bg-red-50 text-red-800']].map(([label, cell, classes]) => cell && <div key={label} className={`rounded-lg border px-3 py-2 ${classes}`}><div className="text-[10px] font-semibold uppercase tracking-wide opacity-70">{label}</div><div className="text-sm font-semibold">{cell.day} · {cell.part.label} · {cell.roi >= 0 ? '+' : ''}{Math.round(cell.roi * 100)}% ROI</div><div className="text-[11px] opacity-75">${Math.round(cell.spend).toLocaleString()} spend · {cell.leads} leads · ${Math.round(cell.revenue).toLocaleString()} revenue</div></div>)}
+      </div>}
       <div className="overflow-x-auto rounded-xl border border-gray-100">
         <table className="w-full min-w-[620px] text-xs">
           <thead className="bg-gray-50 border-b border-gray-100">
@@ -111,7 +118,7 @@ function BestTimesGrid({ data }) {
                 <th className="px-3 py-2 text-left font-semibold text-gray-700">{day}</th>
                 {dayparts.map(part => {
                   const cell = aggregateDaypart(dayIndex, part);
-                  return <td key={part.key} className="px-1.5 py-1.5"><div className={`rounded-lg border px-2 py-2 text-center ${untracked ? 'bg-amber-50 text-amber-700 border-amber-200' : bestTimesCellClass(cell)}`} title={`${cell.spend ? `$${cell.spend.toFixed(2)} spend · ${cell.leads} leads` : 'No spend'}${cell.revenue != null ? ` · $${cell.revenue.toFixed(2)} revenue` : ''}`}><div className="font-semibold">{cell.roi != null ? `${cell.roi >= 0 ? '+' : ''}${Math.round(cell.roi * 100)}%` : '—'}</div><div className="text-[10px] opacity-75">{cell.revenue != null ? `$${Math.round(cell.revenue)} rev` : untracked ? 'untracked' : 'insufficient'}</div></div></td>;
+                  return <td key={part.key} className="px-1.5 py-1.5"><div className={`rounded-lg border px-2 py-2 text-center ${untracked ? 'bg-amber-50 text-amber-700 border-amber-200' : bestTimesCellClass(cell)}`} title={`${cell.spend ? `$${cell.spend.toFixed(2)} spend · ${cell.leads} leads` : 'No spend'}${cell.revenue != null ? ` · $${cell.revenue.toFixed(2)} revenue` : ''}`}><div className="font-semibold">{cell.roi != null ? `${cell.roi >= 0 ? '+' : ''}${Math.round(cell.roi * 100)}%` : '—'}</div><div className="text-[10px] opacity-75">{cell.spend ? `$${Math.round(cell.spend)} spend` : cell.revenue != null ? `$${Math.round(cell.revenue)} rev` : untracked ? 'untracked' : 'insufficient'}</div></div></td>;
                 })}
               </tr>
             ))}
