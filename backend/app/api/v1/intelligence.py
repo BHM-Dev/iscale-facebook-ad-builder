@@ -498,6 +498,8 @@ def _everflow_offers_for_account(ad_account_id: Optional[str]) -> Optional[set[s
     if not ad_account_id:
         return None
     account_id = str(ad_account_id).strip()
+    if account_id.isdigit():
+        account_id = f"act_{account_id}"
     configured_accounts = {
         value.strip() for value in (os.getenv("SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS", "").split(",")) if value.strip()
     }

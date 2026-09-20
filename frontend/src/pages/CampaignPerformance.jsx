@@ -58,6 +58,7 @@ function bestTimesCellClass(cell) {
 }
 
 function BestTimesGrid({ data }) {
+  const attributionIncomplete = Boolean(data.attribution_complete === false);
   const nicheSummaries = useMemo(() => (data.niches || []).map(item => {
     const spend = (item.cells || []).reduce((sum, cell) => sum + Number(cell.spend || 0), 0);
     const revenue = item.revenue_source === 'not_tracked' ? null : (item.cells || []).reduce((sum, cell) => sum + Number(cell.revenue || 0), 0);
@@ -94,7 +95,6 @@ function BestTimesGrid({ data }) {
 
   if (!niche) return <p className="text-sm text-gray-400 py-6 text-center">No hourly data returned for this account and period.</p>;
   const untracked = niche.revenue_source === 'not_tracked';
-  const attributionIncomplete = Boolean(data.attribution_complete === false);
   const allocated = Boolean(data.attribution_allocated);
   const fallback = data.attribution_method === 'everflow_adset_id_redtrack_unavailable';
   const daypartRows = BEST_TIMES_DAYS.flatMap((day, dayIndex) => dayparts.map(part => ({ day, part, ...aggregateDaypart(dayIndex, part) })));
@@ -105,9 +105,9 @@ function BestTimesGrid({ data }) {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <select value={niche.niche} onChange={e => setSelectedNiche(e.target.value)} className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white">
-          {nicheSummaries.map(item => <option key={item.niche} value={item.niche}>{item.niche} · ${Math.round(item.totalSpend).toLocaleString()} spend{item.totalRoi != null ? ` · ${allocated ? '≈' : ''}${item.totalRoi >= 0 ? '+' : ''}${Math.round(item.totalRoi * 100)}% ${allocated ? 'directional ROI' : 'ROI'}` : ' · not tracked'}</option>)}
+          {nicheSummaries.map(item => <option key={item.niche} value={item.niche}>{item.niche} · ${Math.round(item.totalSpend).toLocaleString()} spend{!attributionIncomplete && item.totalRoi != null ? ` · ${allocated ? '≈' : ''}${item.totalRoi >= 0 ? '+' : ''}${Math.round(item.totalRoi * 100)}% ${allocated ? 'directional ROI' : 'ROI'}` : item.revenue_source === 'not_tracked' ? ' · not tracked' : ' · attribution incomplete'}</option>)}
         </select>
-        <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${untracked ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-green-50 text-green-700 border-green-200'}`}>
+        <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${untracked || attributionIncomplete || allocated ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-green-50 text-green-700 border-green-200'}`}>
           {untracked ? 'Revenue not tracked for this account' : fallback ? `Fallback · direct Everflow attribution${!attributionIncomplete ? ' · complete' : ''}` : allocated ? 'Everflow billing · allocated by RedTrack' : 'Everflow revenue'}
         </span>
       </div>
@@ -133,7 +133,8 @@ function BestTimesGrid({ data }) {
                   const cell = aggregateDaypart(dayIndex, part);
                   const cellTone = untracked || attributionIncomplete ? 'bg-amber-50 text-amber-700 border-amber-200' : allocated ? 'bg-amber-50 text-amber-800 border-amber-200' : bestTimesCellClass(cell);
                   const roiLabel = cell.roi != null ? `${allocated ? '≈' : ''}${cell.roi >= 0 ? '+' : ''}${Math.round(cell.roi * 100)}%` : '—';
-                  return <td key={part.key} className="px-1.5 py-1.5"><div className={`rounded-lg border px-2 py-2 text-center ${cellTone}`} title={`${cell.spend ? `$${cell.spend.toFixed(2)} spend · ${cell.leads} leads` : 'No spend'}${cell.revenue != null ? ` · ${allocated ? '≈' : ''}$${cell.revenue.toFixed(2)} ${allocated ? 'allocated revenue' : 'revenue'}` : ''}`}><div className="font-semibold">{attributionIncomplete ? '—' : roiLabel}</div><div className="text-[10px] opacity-75">{cell.spend ? `$${Math.round(cell.spend)} spend` : cell.revenue != null ? `${allocated ? '≈' : ''}$${Math.round(cell.revenue)} ${allocated ? 'allocated revenue' : 'revenue'}, no spend` : untracked ? 'untracked' : attributionIncomplete ? 'directional only' : 'insufficient'}</div></div></td>;
+                  const revenueLabel = cell.revenue != null ? `${allocated ? '≈' : ''}$${Math.round(cell.revenue)} ${allocated ? 'allocated revenue' : 'revenue'}` : null;
+                  return <td key={part.key} className="px-1.5 py-1.5"><div className={`rounded-lg border px-2 py-2 text-center ${cellTone}`} title={`${cell.spend ? `$${cell.spend.toFixed(2)} spend · ${cell.leads} leads` : 'No spend'}${cell.revenue != null ? ` · ${allocated ? '≈' : ''}$${cell.revenue.toFixed(2)} ${allocated ? 'allocated revenue' : 'revenue'}` : ''}`}><div className="font-semibold">{attributionIncomplete ? '—' : roiLabel}</div><div className="text-[10px] opacity-75">{cell.spend ? `$${Math.round(cell.spend)} spend${revenueLabel ? ` · ${revenueLabel}` : ''}` : revenueLabel || (untracked ? 'untracked' : attributionIncomplete ? 'directional only' : 'insufficient')}</div></div></td>;
                 })}
               </tr>
             ))}
@@ -447,7 +448,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
 
               {intelligenceView === 'best-times' && (
                 <div className="mb-5 rounded-xl border border-violet-100 bg-white p-3">
-                  <div className="flex items-center justify-between mb-3"><div><h3 className="text-sm font-semibold text-gray-900">Best Times by Niche</h3><p className="text-[11px] text-gray-500 mt-0.5">{bestTimesData?.attribution_allocated ? 'RedTrack attribution · Everflow billing total allocated by hour' : 'Everflow ad-set attribution'} · {bestTimesData?.timezone || 'Pacific time'}</p></div><button type="button" onClick={() => loadBestTimes(preset, customFrom, customTo)} className="text-xs text-violet-600 hover:text-violet-800">Refresh</button></div>
+                  <div className="flex items-center justify-between mb-3"><div><h3 className="text-sm font-semibold text-gray-900">Best Times by Niche</h3><p className="text-[11px] text-gray-500 mt-0.5">{bestTimesData?.attribution_method === 'everflow_adset_id_redtrack_unavailable' ? 'Exact Everflow ad-set attribution' : bestTimesData?.attribution_allocated ? 'RedTrack attribution · Everflow billing total allocated by hour' : bestTimesData?.niches?.some(item => item.revenue_source === 'not_tracked') ? 'Revenue unavailable · no Everflow offer mapping' : 'Exact Everflow ad-set attribution'} · {bestTimesData?.timezone || 'Pacific time'}</p></div><button type="button" onClick={() => loadBestTimes(preset, customFrom, customTo)} className="text-xs text-violet-600 hover:text-violet-800">Refresh</button></div>
                   {!bestTimesLoading && !bestTimesError && bestTimesData && (bestTimesData.attribution_warning || !bestTimesData.attribution_complete) && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><span className="font-semibold">Attribution note.</span> {bestTimesData.attribution_warning || `${bestTimesData.dropped_conversion_count} conversion${bestTimesData.dropped_conversion_count === 1 ? '' : 's'} totaling ${formatMoney(bestTimesData.dropped_revenue)} could not be assigned to a Meta ad set in this window. Treat the ROI signals as directional.`}</div>}
                   {bestTimesLoading && <div className="h-48 rounded-lg bg-gray-50 animate-pulse" />}
                   {!bestTimesLoading && bestTimesError && <div className="text-sm text-red-600 py-6 text-center">{bestTimesError}</div>}
