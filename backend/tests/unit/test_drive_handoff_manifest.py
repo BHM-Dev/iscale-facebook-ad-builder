@@ -16,6 +16,12 @@ def test_handoff_id_extractor_normalizes_live_formats_and_rejects_prose():
     assert service._extract_handoff_copy_id("01 - Truck Winner Variations") is None
     assert service._extract_handoff_copy_id("Quote in 7 minutes.") is None
     assert service._extract_handoff_copy_id("AD-DEALER-CR-00-image-1x1.jpg") is None
+    assert service._extract_handoff_copy_id("Copy ID") is None
+    assert service._extract_handoff_copy_id("Batch 3") is None
+    assert service._extract_handoff_copy_id("Batch 3 | variation") is None
+    assert service._extract_handoff_copy_id("Phase 2") is None
+    assert service._extract_handoff_copy_id("Phase 2 - retarget") is None
+    assert service._extract_handoff_copy_id("V2") is None
 
 
 def test_handoff_manifest_parses_inline_copy_reference_and_folder_paths():
@@ -117,6 +123,63 @@ AD-DEALER-CR-00-DealerOperations-9x16.jpg
     parsed = service._parse_copy_file(copy_file)
 
     assert parsed["ad dealer cr 00"]["headline"] == "Dealer headline"
+
+
+def test_copy_file_ignores_bare_batch_label_inside_copy_body():
+    service = _service()
+    copy_file = """AD DEALER CR 00
+PRIMARY TEXT
+Dealer primary text line one.
+Batch 3
+More primary text after the stray line.
+HEADLINE
+Dealer headline
+1X1 IMAGE
+AD-DEALER-CR-00-DealerOperations-1x1.jpg
+"""
+
+    parsed = service._parse_copy_file(copy_file)
+
+    assert "batch 3" not in parsed
+    assert parsed["ad dealer cr 00"]["primary_text"] == (
+        "Dealer primary text line one.\nBatch 3\nMore primary text after the stray line."
+    )
+    assert parsed["ad dealer cr 00"]["headline"] == "Dealer headline"
+
+
+def test_copy_file_ignores_non_id_labels_before_field_headers():
+    service = _service()
+    copy_file = """AD DEALER CR 00
+PRIMARY TEXT
+Dealer primary text.
+Phase 2
+HEADLINE
+Dealer headline
+"""
+
+    parsed = service._parse_copy_file(copy_file)
+
+    assert "phase 2" not in parsed
+    assert parsed["ad dealer cr 00"]["primary_text"] == "Dealer primary text.\nPhase 2"
+    assert parsed["ad dealer cr 00"]["headline"] == "Dealer headline"
+
+
+def test_manifest_ignores_bare_batch_label_between_real_copy_ids():
+    service = _service()
+    manifest = """WLD TRK 01
+1x1
+welders-01-1x1.jpg
+Batch 3
+This is an incidental batch note.
+AD DEALER CR 00
+1x1
+dealer-00-1x1.jpg
+"""
+
+    parsed = service._parse_handoff_manifest(manifest)
+
+    assert "BATCH 3" not in parsed["entries"]
+    assert list(parsed["entries"]) == ["WLD TRK 01", "AD DEALER CR 00"]
 
 
 def test_package_folder_can_resolve_manifest_nested_beside_media():

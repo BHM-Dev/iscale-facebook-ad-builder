@@ -1775,10 +1775,12 @@ class DriveSyncService:
         active_copy_file: Optional[str] = None
         pending_field: Optional[str] = None
 
-        for raw_line in lines:
+        for index, raw_line in enumerate(lines):
             line = raw_line.strip()
             if not line:
                 continue
+
+            next_line = next((candidate.strip() for candidate in lines[index + 1:] if candidate.strip()), None)
 
             copy_file = self._extract_manifest_file_name(line)
             if copy_file:
@@ -1787,6 +1789,7 @@ class DriveSyncService:
             copy_id = self._extract_handoff_copy_id(
                 line,
                 allow_embedded=bool(re.match(r"^\s*Copy\s*:", line, re.IGNORECASE)),
+                next_line=next_line,
             )
             if copy_id:
                 current_id = copy_id
@@ -1831,7 +1834,10 @@ class DriveSyncService:
         headings = [
             (index, copy_id)
             for index, line in enumerate(lines)
-            if (copy_id := self._extract_handoff_copy_id(line))
+            if (copy_id := self._extract_handoff_copy_id(
+                line,
+                next_line=next((candidate.strip() for candidate in lines[index + 1:] if candidate.strip()), None),
+            ))
         ]
         for heading_index, (line_index, copy_id) in enumerate(headings):
             next_line = headings[heading_index + 1][0] if heading_index + 1 < len(headings) else len(lines)
@@ -1847,12 +1853,24 @@ class DriveSyncService:
         r"(?P<prefix>[A-Z]{2,6}(?:[ _-]+[A-Z]{1,6}){0,2})[ _-]*(?P<number>\d{1,3})",
         re.IGNORECASE,
     )
+    _HANDOFF_NON_ID_LABEL = re.compile(
+        r"(?:(?:BATCH|PHASE)\s+\d{1,3}|V\d{1,3}|SCALE|RETARGET)"
+        r"(?:\s*(?:[|:\-–—_]\s*.*))?",
+        re.IGNORECASE,
+    )
     _MANIFEST_FILE_NAME = re.compile(r"([A-Z0-9][A-Z0-9_.-]*\.txt)\b", re.IGNORECASE)
 
-    def _extract_handoff_copy_id(self, raw_line: str, allow_embedded: bool = False) -> Optional[str]:
+    def _extract_handoff_copy_id(
+        self,
+        raw_line: str,
+        allow_embedded: bool = False,
+        next_line: Optional[str] = None,
+    ) -> Optional[str]:
         """Extract one canonical handoff ID from a structurally plausible line."""
         line = self._clean_markdown_value(raw_line).strip()
         if not line or "://" in line:
+            return None
+        if self._HANDOFF_NON_ID_LABEL.fullmatch(line):
             return None
         if not allow_embedded and re.search(r"\.(?:txt|png|jpe?g|webp|gif|mp4)\b", line, re.IGNORECASE):
             return None
@@ -1868,6 +1886,8 @@ class DriveSyncService:
             remainder = target[match.end():]
             if remainder and not re.match(r"^\s*(?:[|:\-\u2013\u2014]|_)", remainder):
                 return None
+            if not remainder and next_line is not None and not self._looks_like_handoff_structure(next_line):
+                return None
 
         tokens = [token.upper() for token in re.split(r"[ _-]+", match.group("prefix")) if token]
         number = match.group("number")
@@ -1876,6 +1896,18 @@ class DriveSyncService:
         else:
             tokens.append(number)
         return " ".join(tokens)
+
+    def _looks_like_handoff_structure(self, raw_line: str) -> bool:
+        line = self._clean_markdown_value(raw_line).strip()
+        if not line:
+            return False
+        if re.match(
+            rf"^(?:PRIMARY TEXT|HEADLINE|DESCRIPTION|Copy(?: ID| file| concept)?|\d+[Xx]\d+(?:\s+(?:VISUAL\s+)?(?:SCENE|IMAGE))?)\s*(?::|$)",
+            line,
+            re.IGNORECASE,
+        ):
+            return True
+        return bool(self._extract_handoff_copy_id(line))
 
     def _extract_manifest_value(self, lines: List[str], label: str) -> Optional[str]:
         for index, raw_line in enumerate(lines):
