@@ -319,6 +319,8 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
       setCustomTo('');
       setData(null);
       setError(null);
+      intelligenceRequestRef.current += 1;
+      bestTimesRequestRef.current += 1;
       setBestTimesData(null);
       return;
     }
