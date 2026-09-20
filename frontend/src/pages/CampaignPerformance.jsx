@@ -47,6 +47,82 @@ function formatMoney(value) {
     : '—';
 }
 
+const BEST_TIMES_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function bestTimesCellClass(cell) {
+  if (cell.revenue == null || cell.confidence === 'low') return 'bg-gray-100 text-gray-400 border-gray-200';
+  if (cell.roi >= 0.25) return 'bg-green-100 text-green-800 border-green-200';
+  if (cell.roi >= 0) return 'bg-emerald-50 text-emerald-700 border-emerald-100';
+  if (cell.roi > -0.25) return 'bg-orange-50 text-orange-700 border-orange-100';
+  return 'bg-red-100 text-red-800 border-red-200';
+}
+
+function BestTimesGrid({ data }) {
+  const [selectedNiche, setSelectedNiche] = useState(data.niches?.[0]?.niche || '');
+  const niche = data.niches?.find(item => item.niche === selectedNiche) || data.niches?.[0];
+  const cells = useMemo(() => {
+    const map = new Map((niche?.cells || []).map(cell => [`${cell.day_of_week}-${cell.hour}`, cell]));
+    return map;
+  }, [niche]);
+  const dayparts = data.dayparts || [
+    { key: 'overnight', label: '12a–6a', start: 0, end: 6 },
+    { key: 'morning', label: '6a–2p', start: 6, end: 14 },
+    { key: 'afternoon', label: '2p–6p', start: 14, end: 18 },
+    { key: 'evening', label: '6p–12a', start: 18, end: 24 },
+  ];
+
+  const aggregateDaypart = (day, part) => {
+    const partCells = [];
+    for (let hour = part.start; hour < part.end; hour += 1) {
+      const cell = cells.get(`${day}-${hour}`);
+      if (cell) partCells.push(cell);
+    }
+    const spend = partCells.reduce((sum, cell) => sum + Number(cell.spend || 0), 0);
+    const leads = partCells.reduce((sum, cell) => sum + Number(cell.leads || 0), 0);
+    const revenueKnown = partCells.some(cell => cell.revenue != null);
+    const revenue = revenueKnown ? partCells.reduce((sum, cell) => sum + Number(cell.revenue || 0), 0) : null;
+    const roi = revenue != null && spend > 0 ? (revenue - spend) / spend : null;
+    const confidence = partCells.some(cell => cell.confidence === 'high') ? 'high'
+      : partCells.some(cell => cell.confidence === 'medium') ? 'medium' : 'low';
+    return { spend, leads, revenue, roi, confidence };
+  };
+
+  if (!niche) return <p className="text-sm text-gray-400 py-6 text-center">No hourly data returned for this account and period.</p>;
+  const untracked = niche.revenue_source === 'not_tracked';
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <select value={niche.niche} onChange={e => setSelectedNiche(e.target.value)} className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white">
+          {data.niches.map(item => <option key={item.niche} value={item.niche}>{item.niche}</option>)}
+        </select>
+        <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${untracked ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-green-50 text-green-700 border-green-200'}`}>
+          {untracked ? 'Revenue not tracked for this account' : 'Everflow revenue'}
+        </span>
+      </div>
+      {untracked && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Spend and leads are shown for context, but ROI is unavailable until this account has an exact Switchboard offer mapping.</div>}
+      <div className="overflow-x-auto rounded-xl border border-gray-100">
+        <table className="w-full min-w-[620px] text-xs">
+          <thead className="bg-gray-50 border-b border-gray-100">
+            <tr><th className="px-3 py-2 text-left text-gray-500 font-medium">Day</th>{dayparts.map(part => <th key={part.key} className="px-2 py-2 text-center text-gray-500 font-medium">{part.label}</th>)}</tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {BEST_TIMES_DAYS.map((day, dayIndex) => (
+              <tr key={day}>
+                <th className="px-3 py-2 text-left font-semibold text-gray-700">{day}</th>
+                {dayparts.map(part => {
+                  const cell = aggregateDaypart(dayIndex, part);
+                  return <td key={part.key} className="px-1.5 py-1.5"><div className={`rounded-lg border px-2 py-2 text-center ${untracked ? 'bg-amber-50 text-amber-700 border-amber-200' : bestTimesCellClass(cell)}`} title={`${cell.spend ? `$${cell.spend.toFixed(2)} spend · ${cell.leads} leads` : 'No spend'}${cell.revenue != null ? ` · $${cell.revenue.toFixed(2)} revenue` : ''}`}><div className="font-semibold">{cell.roi != null ? `${cell.roi >= 0 ? '+' : ''}${Math.round(cell.roi * 100)}%` : '—'}</div><div className="text-[10px] opacity-75">{cell.revenue != null ? `$${Math.round(cell.revenue)} rev` : untracked ? 'untracked' : 'insufficient'}</div></div></td>;
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex flex-wrap gap-3 text-[11px] text-gray-500"><span><i className="inline-block w-2.5 h-2.5 rounded bg-green-200 mr-1" />Scale signal</span><span><i className="inline-block w-2.5 h-2.5 rounded bg-orange-100 mr-1" />Watch</span><span><i className="inline-block w-2.5 h-2.5 rounded bg-red-200 mr-1" />Cut signal</span><span><i className="inline-block w-2.5 h-2.5 rounded bg-gray-200 mr-1" />Insufficient data</span></div>
+    </div>
+  );
+}
+
 function CreativeCompass({ buckets, onOpenAdset, dateRangeLabel }) {
   return (
     <section className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-hidden">
@@ -89,6 +165,10 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
   const [customFrom, setCustomFrom] = useState(resolvedInitialPreset === 'custom' ? (pageDateFrom || '') : '');
   const [customTo, setCustomTo] = useState(resolvedInitialPreset === 'custom' ? (pageDateTo || '') : '');
   const [data, setData] = useState(null);
+  const [intelligenceView, setIntelligenceView] = useState('niche');
+  const [bestTimesData, setBestTimesData] = useState(null);
+  const [bestTimesLoading, setBestTimesLoading] = useState(false);
+  const [bestTimesError, setBestTimesError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const loadedPresetRef = useRef(null);
@@ -120,6 +200,29 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
     }
   }, [adAccountId, preset, customFrom, customTo]);
 
+  const loadBestTimes = useCallback(async (nextPreset = preset, nextFrom = customFrom, nextTo = customTo) => {
+    setBestTimesLoading(true);
+    setBestTimesError(null);
+    try {
+      const params = new URLSearchParams({ preset: nextPreset });
+      if (adAccountId) params.set('ad_account_id', adAccountId);
+      if (nextPreset === 'custom' && nextFrom && nextTo) {
+        params.set('date_from', nextFrom);
+        params.set('date_to', nextTo);
+      }
+      const res = await authFetch(`${API_BASE}/intelligence/best-times?${params}`);
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.detail || `Error ${res.status}`);
+      }
+      setBestTimesData(await res.json());
+    } catch (e) {
+      setBestTimesError(e.message || 'Failed to load Best Times data');
+    } finally {
+      setBestTimesLoading(false);
+    }
+  }, [adAccountId, preset, customFrom, customTo]);
+
   const toggleOpen = useCallback(() => {
     setOpen(current => {
       const next = !current;
@@ -134,6 +237,11 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
     if (!initialOpen) return;
     setOpen(true);
   }, [initialOpen]);
+
+  useEffect(() => {
+    setBestTimesData(null);
+    setBestTimesError(null);
+  }, [adAccountId, pageDatePreset, pageDateFrom, pageDateTo]);
 
   // Single source of truth for syncing Intelligence's preset to the page's own
   // date range. Always respects an explicit manual pick (userSelectedPresetRef),
@@ -167,14 +275,22 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
       setCustomTo('');
       setData(null);
       setError(null);
+      setBestTimesData(null);
       return;
     }
     if (open) loadIntelligence(nextPreset, '', '');
+    // Keep Best Times in sync with the preset even while the niche tab is
+    // active — otherwise switching back to Best Times later shows data for
+    // the previous preset with no visual indication it's stale.
+    if (open && intelligenceView === 'best-times') loadBestTimes(nextPreset, '', '');
+    else setBestTimesData(null);
   };
 
   return (
     <>
-      {/* Temporarily hidden while the niche analysis is paused; the drawer code remains available for reactivation. */}
+      <button type="button" onClick={toggleOpen} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-violet-200 bg-violet-50 text-violet-700 text-xs font-semibold hover:bg-violet-100 transition-colors">
+        <Sparkles size={14} /> Campaign Intelligence
+      </button>
 
       {open && (
         // z-40, one below the Remix drawer's z-50 — if both are ever open at once,
@@ -238,7 +354,11 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                 className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-violet-400"
               />
               <button
-                onClick={() => loadIntelligence('custom', customFrom, customTo)}
+                onClick={() => {
+                  loadIntelligence('custom', customFrom, customTo);
+                  if (intelligenceView === 'best-times') loadBestTimes('custom', customFrom, customTo);
+                  else setBestTimesData(null);
+                }}
                 disabled={!customFrom || !customTo}
                 className="px-3 py-1.5 bg-violet-600 text-white text-xs font-medium rounded-lg hover:bg-violet-700 disabled:opacity-40 transition-colors"
               >
@@ -291,6 +411,20 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                   </div>
                 </div>
               </div>
+
+              <div className="flex gap-1 p-1 mb-4 rounded-lg bg-gray-100 w-fit">
+                <button type="button" onClick={() => setIntelligenceView('niche')} className={`px-3 py-1.5 rounded-md text-xs font-semibold ${intelligenceView === 'niche' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500'}`}>Niche profitability</button>
+                <button type="button" onClick={() => { setIntelligenceView('best-times'); if (!bestTimesData) loadBestTimes(preset, customFrom, customTo); }} className={`px-3 py-1.5 rounded-md text-xs font-semibold ${intelligenceView === 'best-times' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500'}`}>Best Times</button>
+              </div>
+
+              {intelligenceView === 'best-times' && (
+                <div className="mb-5 rounded-xl border border-violet-100 bg-white p-3">
+                  <div className="flex items-center justify-between mb-3"><div><h3 className="text-sm font-semibold text-gray-900">Best Times by Niche</h3><p className="text-[11px] text-gray-500 mt-0.5">True revenue ROI in the account's advertiser-local timezone · {bestTimesData?.timezone || 'Pacific time'}</p></div><button type="button" onClick={() => loadBestTimes(preset, customFrom, customTo)} className="text-xs text-violet-600 hover:text-violet-800">Refresh</button></div>
+                  {bestTimesLoading && <div className="h-48 rounded-lg bg-gray-50 animate-pulse" />}
+                  {!bestTimesLoading && bestTimesError && <div className="text-sm text-red-600 py-6 text-center">{bestTimesError}</div>}
+                  {!bestTimesLoading && !bestTimesError && bestTimesData && <BestTimesGrid data={bestTimesData} />}
+                </div>
+              )}
 
               {data.action_queue && (
                 <div className="mb-4">
@@ -1837,6 +1971,12 @@ export default function CampaignPerformance() {
 
       <div className="px-5 pb-5 space-y-4 mt-1">
       <CreativeCompass buckets={compassBuckets} onOpenAdset={openCompassAdset} dateRangeLabel={dateRangeLabel} />
+      <CampaignIntelligencePanel
+        adAccountId={adAccountId}
+        pageDatePreset={datePreset}
+        pageDateFrom={dateFrom}
+        pageDateTo={dateTo}
+      />
 
       {/* Ad Set Performance Table */}
       <div className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-clip">

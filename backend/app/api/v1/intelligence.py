@@ -11,9 +11,13 @@ Supported presets: today, yesterday, last_3d, last_7d, last_14d, last_30d,
 """
 
 import logging
+import json
+import os
 import re
 from datetime import date, timedelta, datetime
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional, Dict
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -21,26 +25,45 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_current_active_user, get_db
 from app.models import User, FacebookAdSet
 from app.services.redtrack_service import RedTrackService
+from app.services.everflow_service import CONVERSION_DATE_FIELDS, EVERFLOW_TZ_BY_ID, EverflowService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _NON_NICHE_RE = re.compile(
-    r'^(batch\s*\d+|v\d+|scale|retarget|broad|phase\s*\d+|test|duplicate|copy)$',
+    r'^(batch\s*\d+(?:\s*[-|/]?\s*capi)?|v\d+|scale|retarget|broad|phase\s*\d+|test|duplicate|copy|capi)$',
     re.IGNORECASE,
 )
 
+BEST_TIMES_TIMEZONE_ID = 90
+BEST_TIMES_DAYPARTS = (
+    {"key": "overnight", "label": "12a–6a", "start": 0, "end": 6},
+    {"key": "morning", "label": "6a–2p", "start": 6, "end": 14},
+    {"key": "afternoon", "label": "2p–6p", "start": 14, "end": 18},
+    {"key": "evening", "label": "6p–12a", "start": 18, "end": 24},
+)
 
-def _extract_niche(adset_name: str) -> str:
-    if not adset_name:
-        return "General"
-    parts = [p.strip() for p in adset_name.split(" - ")]
-    for part in parts[1:]:
-        if part and not _NON_NICHE_RE.match(part) and not re.match(r'^\d{1,2}/\d{1,2}', part):
-            return part
-    if parts and not re.match(r'^\d{1,2}/\d{1,2}', parts[0]):
-        return parts[0]
-    return "General"
+
+def _extract_niche(adset_name: str, campaign_name: str = "") -> str:
+    """Extract a niche from the ad set, falling back to its campaign name.
+
+    Some CAPI and Painting ad sets are named only ``BATCH 2`` (or a CAPI
+    variant), while the campaign still carries the real niche. Keep the
+    fallback here so every caller that uses the intelligence extractor gets
+    the same attribution behavior.
+    """
+    def candidate(name: str) -> Optional[str]:
+        if not name:
+            return None
+        parts = [p.strip() for p in name.split(" - ")]
+        for part in parts[1:]:
+            if part and not _NON_NICHE_RE.match(part) and not re.match(r'^\d{1,2}/\d{1,2}', part):
+                return part
+        if parts and not re.match(r'^(?:\d{1,2}/\d{1,2}|\d{4}-\d{2}-\d{2})', parts[0]) and not _NON_NICHE_RE.match(parts[0]):
+            return parts[0]
+        return None
+
+    return candidate(adset_name) or candidate(campaign_name) or "General"
 
 
 def _resolve_preset(preset: str, date_from: Optional[str], date_to: Optional[str]):
@@ -84,7 +107,7 @@ def _fetch_meta_insights(ad_account_id: Optional[str], date_from: str, date_to: 
     svc.initialize()
 
     fields = [
-        'adset_id', 'adset_name', 'spend', 'impressions', 'actions',
+        'adset_id', 'adset_name', 'campaign_name', 'spend', 'impressions', 'actions',
     ]
 
     lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
@@ -142,6 +165,7 @@ def _fetch_meta_insights(ad_account_id: Optional[str], date_from: str, date_to: 
         if fb_id not in out:
             out[fb_id] = {
                 'adset_name': str(row.get('adset_name') or ''),
+                'campaign_name': str(row.get('campaign_name') or ''),
                 'spend': 0.0,
                 'leads': 0,
                 'impressions': 0,
@@ -342,7 +366,7 @@ def _aggregate_by_niche(meta_data: dict, rt_data: dict, day_filter: str, budget_
         adset_spend = m['spend']
         adset_roi   = (revenue - adset_spend) / adset_spend if adset_spend > 0 else None
 
-        niche = _extract_niche(m['adset_name'])
+        niche = _extract_niche(m['adset_name'], m.get('campaign_name', ''))
         if niche not in niche_map:
             niche_map[niche] = {
                 'niche': niche,
@@ -446,6 +470,186 @@ def _aggregate_by_niche(meta_data: dict, rt_data: dict, day_filter: str, budget_
     return sorted(rows, key=lambda r: r['spend'], reverse=True)
 
 
+def _everflow_offers_for_account(ad_account_id: Optional[str]) -> Optional[set[str]]:
+    """Return the configured offer allow-list, or None when revenue is untracked."""
+    if not ad_account_id:
+        return None
+    account_id = str(ad_account_id).strip()
+    configured_accounts = {
+        value.strip() for value in (os.getenv("SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS", "").split(",")) if value.strip()
+    }
+    if account_id not in configured_accounts:
+        return None
+    try:
+        mapping = json.loads(os.getenv("SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS", "{}"))
+    except json.JSONDecodeError:
+        logger.warning("Invalid SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS JSON")
+        return set()
+    offers = mapping.get(account_id, []) if isinstance(mapping, dict) else []
+    return {str(value).strip() for value in offers if str(value).strip()}
+
+
+def _parse_hour_value(value) -> Optional[int]:
+    if isinstance(value, dict):
+        value = value.get("hour") or value.get("value") or value.get("name")
+    if isinstance(value, list):
+        value = value[0] if value else None
+    match = re.search(r"(?:^|\D)(\d{1,2})(?::\d{2})?", str(value or ""))
+    if not match:
+        return None
+    hour = int(match.group(1))
+    return hour if 0 <= hour <= 23 else None
+
+
+def _fetch_best_times_meta(ad_account_id: Optional[str], date_from: str, date_to: str) -> dict:
+    """Fetch Meta spend/leads at day × hour × ad set grain."""
+    from app.services.facebook_service import FacebookService
+    from facebook_business.exceptions import FacebookRequestError
+
+    svc = FacebookService()
+    svc.initialize()
+    fields = [
+        'adset_id', 'adset_name', 'campaign_name', 'date_start', 'spend', 'actions',
+        'hourly_stats_aggregated_by_advertiser_time_zone',
+    ]
+    params = {
+        'time_range': {'since': date_from, 'until': date_to},
+        'time_increment': 1,
+        'level': 'adset',
+        'breakdowns': ['hourly_stats_aggregated_by_advertiser_time_zone'],
+    }
+    try:
+        results = svc._get_account(ad_account_id).get_insights(fields, params)
+    except FacebookRequestError as exc:
+        body = exc.body() if hasattr(exc, 'body') and callable(exc.body) else {}
+        error = body.get('error', {}) if isinstance(body, dict) else {}
+        raise RuntimeError(f"Facebook API: {error.get('message') or str(exc)}") from exc
+
+    lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
+    rows = []
+    adsets = {}
+    for row in results:
+        fb_id = str(row.get('adset_id') or '').strip()
+        date_value = str(row.get('date_start') or '')
+        if not fb_id or not date_value:
+            continue
+        hour = _parse_hour_value(row.get('hourly_stats_aggregated_by_advertiser_time_zone'))
+        if hour is None:
+            # Some SDK versions expose the breakdown under a slightly different
+            # key shape; accept a direct `hour` value for test doubles and future
+            # Graph response variants without changing the source grain.
+            hour = _parse_hour_value(row.get('hour'))
+        if hour is None:
+            continue
+        leads = sum(
+            int(float(action.get('value', 0) or 0))
+            for action in (row.get('actions') or [])
+            if action.get('action_type') in lead_types
+        )
+        adsets[fb_id] = {
+            'adset_name': str(row.get('adset_name') or ''),
+            'campaign_name': str(row.get('campaign_name') or ''),
+        }
+        rows.append({
+            'adset_id': fb_id,
+            'date': date_value,
+            'hour': hour,
+            'spend': Decimal(str(row.get('spend') or 0)),
+            'leads': leads,
+        })
+    return {'rows': rows, 'adsets': adsets}
+
+
+def _conversion_datetime(row: dict, timezone: ZoneInfo) -> Optional[datetime]:
+    # Reuse the same field list get_revenue_by_adset/_conversion_month already
+    # trust for this API — a narrower list here would silently drop revenue
+    # for rows whose only populated timestamp field isn't in it.
+    for field in CONVERSION_DATE_FIELDS:
+        value = row.get(field)
+        if value in (None, ''):
+            continue
+        if str(value).isdigit():
+            return datetime.fromtimestamp(int(value), tz=timezone)
+        try:
+            parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        except ValueError:
+            continue
+        return parsed.astimezone(timezone) if parsed.tzinfo else parsed.replace(tzinfo=timezone)
+    return None
+
+
+def _build_best_times(meta_payload: dict, conversions: list[dict], offer_names: Optional[set[str]]) -> list[dict]:
+    tz = EVERFLOW_TZ_BY_ID[BEST_TIMES_TIMEZONE_ID]
+    tracked = offer_names is not None and bool(offer_names)
+    adsets = meta_payload['adsets']
+    niche_by_adset = {
+        adset_id: _extract_niche(values['adset_name'], values['campaign_name'])
+        for adset_id, values in adsets.items()
+    }
+    aggregate: dict[tuple[str, int, int], dict] = {}
+    for row in meta_payload['rows']:
+        niche = niche_by_adset.get(row['adset_id'], 'General')
+        key = (niche, datetime.strptime(row['date'], '%Y-%m-%d').weekday(), row['hour'])
+        cell = aggregate.setdefault(key, {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})
+        cell['spend'] += row['spend']
+        cell['leads'] += row['leads']
+
+    if tracked:
+        allowed = {name.casefold() for name in offer_names}
+        dropped_count = 0
+        dropped_revenue = Decimal('0')
+        for row in conversions:
+            offer = EverflowService._offer_name(row).casefold()
+            if offer not in allowed:
+                continue
+            adset_id = str(row.get('sub3') or '').strip()
+            niche = niche_by_adset.get(adset_id)
+            when = _conversion_datetime(row, tz)
+            if not niche or not when:
+                # Adset absent from this window's Meta fetch (paused, zero-spend
+                # day, or an hour-parse failure) or an unparseable timestamp.
+                # Not counted anywhere else in the response — log it so a gap
+                # is visible rather than silently understating a niche's ROI.
+                dropped_count += 1
+                dropped_revenue += Decimal(str(row.get('revenue') or 0))
+                continue
+            key = (niche, when.weekday(), when.hour)
+            aggregate.setdefault(key, {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})['revenue'] += Decimal(str(row.get('revenue') or 0))
+        if dropped_count:
+            logger.warning(
+                "Best Times: dropped %d Everflow conversion(s) totaling $%s — unmatched adset or unparseable timestamp",
+                dropped_count, dropped_revenue.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+            )
+
+    niches = sorted({key[0] for key in aggregate})
+    output = []
+    for niche in niches:
+        cells = []
+        for day_of_week in range(7):
+            for hour in range(24):
+                value = aggregate.get((niche, day_of_week, hour), {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})
+                spend = value['spend'].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                revenue = value['revenue'].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) if tracked else None
+                roi = ((revenue - spend) / spend).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP) if tracked and spend > 0 else None
+                confidence, reason = _assign_confidence(float(spend), value['leads'])
+                cells.append({
+                    'day_of_week': day_of_week,
+                    'hour': hour,
+                    'spend': float(spend),
+                    'leads': value['leads'],
+                    'revenue': float(revenue) if revenue is not None else None,
+                    'roi': float(roi) if roi is not None else None,
+                    'confidence': confidence if tracked else 'low',
+                    'confidence_reason': reason if tracked else 'Revenue source is not tracked for this account',
+                })
+        output.append({
+            'niche': niche,
+            'revenue_source': 'everflow' if tracked else 'not_tracked',
+            'cells': cells,
+        })
+    return output
+
+
 def _build_summary(action_queue: dict) -> str:
     """Build one factual headline from the already-sorted action queue."""
     lane_phrases = []
@@ -516,4 +720,47 @@ def niche_profitability(
         "tracking_warning":  tracking_warning,
         "summary":           summary,
         "rows":              rows,
+    }
+
+
+@router.get("/best-times")
+def best_times(
+    preset: str = Query("last_30d"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    ad_account_id: Optional[str] = Query(None),
+    niche: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return true-revenue ROI by niche, weekday, and advertiser-local hour."""
+    resolved_from, resolved_to, _day_filter, preset_label = _resolve_preset(preset, date_from, date_to)
+    offer_names = _everflow_offers_for_account(ad_account_id)
+    try:
+        meta_payload = _fetch_best_times_meta(ad_account_id, resolved_from, resolved_to)
+        conversions = []
+        if offer_names:
+            conversions = EverflowService().get_raw_conversions(
+                resolved_from,
+                resolved_to,
+                timezone_id=BEST_TIMES_TIMEZONE_ID,
+            )
+        result = _build_best_times(meta_payload, conversions, offer_names)
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Best Times failed for %s", ad_account_id)
+        raise HTTPException(502, f"Best Times data unavailable: {exc}") from exc
+
+    if niche:
+        result = [row for row in result if row['niche'].casefold() == niche.casefold()]
+    return {
+        'question_set': 'best_times',
+        'preset': preset,
+        'preset_label': preset_label,
+        'date_from': resolved_from,
+        'date_to': resolved_to,
+        'timezone_id': BEST_TIMES_TIMEZONE_ID,
+        'timezone': str(EVERFLOW_TZ_BY_ID[BEST_TIMES_TIMEZONE_ID]),
+        'dayparts': list(BEST_TIMES_DAYPARTS),
+        'niches': result,
     }
