@@ -45,7 +45,7 @@ const CAPI_PERFORMANCE_PRESETS = [
   { value: 'this_month', label: 'This Month' },
 ];
 
-function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
+function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError, className = '' }) {
   const [pixels, setPixels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -57,6 +57,7 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
   const [perfPreset, setPerfPreset] = useState('last_30d');
   const [perfRange, setPerfRange] = useState(null);
   const [expandedPerfPixels, setExpandedPerfPixels] = useState({});
+  const [isExpanded, setIsExpanded] = useState(false);
   // Keyed by pixel_id, not a single shared value — the toggle buttons render
   // inside each expanded pixel's own row, so a single shared value would flip
   // every other expanded pixel's view too when you change one (confirmed as
@@ -132,18 +133,28 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
   const CAPI_STALE_THRESHOLD_HOURS = 42;
   const stale = date => date && ((Date.now() - new Date(`${date}T00:00:00Z`).getTime()) / 3600000 > CAPI_STALE_THRESHOLD_HOURS);
 
-  return <div className="bg-white rounded-xl border border-cyan-100 border-l-4 border-l-cyan-500 shadow-sm overflow-hidden">
-    <div className="px-5 py-3 border-b border-cyan-100 bg-cyan-50/40">
+  return <div className={`${className} bg-white rounded-xl border border-cyan-100 border-l-4 border-l-cyan-500 shadow-sm overflow-hidden`}>
+    <div className="w-full px-5 py-3 bg-cyan-50/40 hover:bg-cyan-50 transition-colors">
       <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
-          <span>CAPI Match Quality</span>
+        <button type="button" onClick={() => setIsExpanded(prev => !prev)} className="min-w-0 flex items-center gap-2 text-sm font-semibold text-gray-900 text-left">
+          <ChevronRight size={15} className={`text-cyan-600 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+          <span>Account Health</span>
           <span title="Meta's 0–10 score for how well server-sent conversion data matches real Meta accounts. Higher usually means lower costs."><Info size={14} className="text-gray-400" /></span>
-        </div>
-        <button type="button" onClick={sync} disabled={syncing} title="Sync now" className="text-xs text-cyan-700 hover:text-cyan-900 disabled:opacity-50 flex items-center gap-1">
-          <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} /> Sync now
         </button>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-500 truncate max-w-[180px] sm:max-w-none">CAPI Match Quality · sync status · diagnostics</span>
+          {isExpanded && <button type="button" onClick={sync} disabled={syncing} title="Sync now" className="text-xs text-cyan-700 hover:text-cyan-900 disabled:opacity-50 flex items-center gap-1">
+            <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} /> Sync now
+          </button>}
+        </div>
       </div>
-      <p className="mt-1 text-[11px] text-gray-500">
+      {!isExpanded && <p className="mt-1 pl-6 text-[11px] text-gray-500">
+        Operational data-quality diagnostics are available here when you need them; they stay out of the daily optimization path by default.
+      </p>}
+    </div>
+    {isExpanded && <>
+    <div className="px-5 py-3 border-b border-cyan-100 bg-cyan-50/40">
+      <p className="text-[11px] text-gray-500">
         One row per Meta pixel, not per account — a pixel shared by more than one ad account (e.g. an advertiser's own CAPI pixel also used by another account) is shown once, listing every account that sends to it, so the same dataset never reads as two separate comparisons.
         {' '}Meta's API has no setting for this — it doesn't accept a date range and always returns its own rolling score (event coverage is explicitly a 7-day average; the match-quality score behaves the same way). Syncing daily just re-checks that same rolling number, it doesn't reset it to "today" — expect these scores to move slowly and reflect an ongoing trend, not a single day's traffic.
       </p>
@@ -329,7 +340,44 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError }) {
           </table>
         </div>}
     </div>
+    </>}
   </div>;
+}
+
+function PerformanceSnapshot({ rangeLabel, activeCount, attentionCount, rtRoas, blendedCpl, topPerformer }) {
+  const formattedCpl = blendedCpl != null
+    ? `$${Number(blendedCpl).toFixed(2)}`
+    : 'Awaiting data';
+  return (
+    <div className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-hidden">
+      <div className="px-5 py-3 border-b border-indigo-100 bg-indigo-50/40 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-gray-900">Performance snapshot</div>
+          <div className="text-[11px] text-gray-500 mt-0.5">A quick read for {rangeLabel.toLowerCase()}</div>
+        </div>
+        <TrendingUp size={15} className="text-indigo-600" />
+      </div>
+      <div className="grid grid-cols-2 gap-px bg-indigo-50">
+        <div className="bg-white px-5 py-4">
+          <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">Active ad sets</div>
+          <div className="text-xl font-bold text-gray-900 mt-1">{activeCount}</div>
+        </div>
+        <div className="bg-white px-5 py-4">
+          <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">Needs action</div>
+          <div className={`text-xl font-bold mt-1 ${attentionCount ? 'text-orange-600' : 'text-green-600'}`}>{attentionCount}</div>
+        </div>
+        <div className="bg-white px-5 py-4">
+          <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">RT ROAS</div>
+          <div className={`text-xl font-bold mt-1 ${rtRoas != null && rtRoas >= 1 ? 'text-green-600' : 'text-gray-900'}`}>{rtRoas != null ? `${rtRoas.toFixed(2)}x` : '—'}</div>
+        </div>
+        <div className="bg-white px-5 py-4">
+          <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">Best performer</div>
+          <div className="text-sm font-semibold text-gray-900 mt-1 truncate" title={topPerformer?.name || ''}>{topPerformer?.name || 'No qualifying data'}</div>
+          <div className="text-[11px] text-gray-500">{topPerformer?.rtRoas != null ? `${topPerformer.rtRoas.toFixed(2)}x RT ROAS` : `${formattedCpl} blended CPL`}</div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function DateFilter({ preset, setPreset, dateFrom, setDateFrom, dateTo, setDateTo, onApply }) {
@@ -849,7 +897,15 @@ export default function Dashboard() {
       });
     });
 
-  const attentionList = Array.from(attentionMap.values()).slice(0, 8);
+  const attentionList = Array.from(attentionMap.values())
+    .sort((a, b) => {
+      const severityDelta = (a.severity === 'red' ? 0 : 1) - (b.severity === 'red' ? 0 : 1);
+      if (severityDelta !== 0) return severityDelta;
+      const aSpend = bulkInsights[a.fb_adset_id]?.spend || 0;
+      const bSpend = bulkInsights[b.fb_adset_id]?.spend || 0;
+      return bSpend - aSpend;
+    })
+    ;
 
   // Build a Campaign Performance URL that carries the active date so the page
   // loads with the same date range the Dashboard is currently showing.
@@ -888,7 +944,7 @@ export default function Dashboard() {
         frequency: ins?.frequency ?? null,
       };
     })
-    .filter(a => a.spend >= 50 && a.rtRoas != null && a.rtRoas > 0)
+    .filter(a => isActiveDelivery(a.adset) && a.spend >= 50 && a.rtRoas != null && a.rtRoas > 0)
     .sort((a, b) => b.rtRoas - a.rtRoas)
     .slice(0, 8);
 
@@ -1019,7 +1075,7 @@ export default function Dashboard() {
   };
 
   const visibleTopPerformers = expandedSections.topPerformers ? topPerformers : topPerformers.slice(0, 10);
-  const visibleAttentionList = expandedSections.needsAttention ? attentionList : attentionList.slice(0, 10);
+  const visibleAttentionList = expandedSections.needsAttention ? attentionList : attentionList.slice(0, 3);
   const visibleNicheSummary = expandedSections.nicheSummary ? nicheSummary : nicheSummary.slice(0, 10);
 
   return (
@@ -1101,14 +1157,53 @@ export default function Dashboard() {
         />
       </div>
 
-      <CapiMatchQualityCard
-        apiUrl={API_URL}
-        authFetch={authFetch}
-        showSuccess={showSuccess}
-        showError={showError}
-      />
+      <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-1 xl:grid-cols-7 gap-4 order-1">
+          <div className="xl:col-span-4 bg-white rounded-xl border border-orange-100 border-l-4 border-l-orange-500 shadow-sm overflow-hidden">
+            <div className="px-5 py-3 border-b border-orange-100 bg-orange-50/50 flex items-center justify-between gap-3">
+              <button type="button" onClick={() => toggleSection('needsAttention')} className="flex items-center gap-2 text-sm font-semibold text-gray-900 text-left">
+                <ChevronDown size={15} className={`text-orange-600 transition-transform ${collapsedSections.needsAttention ? '-rotate-90' : ''}`} />
+                <AlertTriangle size={15} className="text-orange-600" />
+                <span>Needs Attention</span>
+                {attentionList.length > 0 && <span className="text-xs text-orange-600 font-normal">{attentionList.length} item{attentionList.length === 1 ? '' : 's'}</span>}
+              </button>
+              <Link to={perfLink('attention')} className="text-xs text-orange-700 hover:underline flex items-center gap-1 flex-shrink-0">
+                View all <ArrowRight size={11} />
+              </Link>
+            </div>
+            {!collapsedSections.needsAttention && (
+            loading ? (
+              <div className="px-5 py-6 text-center text-sm text-gray-400">Loading...</div>
+            ) : attentionList.length === 0 ? (
+              <div className="px-5 py-8 text-center text-sm"><span className="text-green-600 font-medium">All clear</span><span className="text-gray-400"> — no ad sets currently need action.</span></div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100"><th className="px-5 py-2 text-left">Ad Set</th><th className="px-3 py-2 text-left">Issue</th><th className="hidden sm:table-cell px-3 py-2 text-right">Spend</th><th className="hidden sm:table-cell px-3 py-2 text-right">CPL</th><th className="hidden sm:table-cell px-3 py-2 text-left">Budget</th><th className="px-3 py-2 text-left">Action</th></tr></thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {visibleAttentionList.map(item => {
+                      const isPausing = item.fb_adset_id && pausingAdsets.has(item.fb_adset_id);
+                      const ins = bulkInsights[item.fb_adset_id] || {};
+                      return <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-5 py-3"><Link to={perfLink('attention', item.fb_adset_id)} className="block"><div className="flex items-center gap-2"><div className={`w-2 h-2 rounded-full flex-shrink-0 ${item.severity === 'red' ? 'bg-red-500' : 'bg-orange-400'}`} /><div className="font-medium text-gray-900 truncate max-w-[220px]" title={item.label}>{item.label}</div></div>{item.campaignName && <div className="text-xs text-gray-400 truncate max-w-[220px] pl-4">{item.campaignName}</div>}</Link></td>
+                        <td className="px-3 py-3"><div className="flex flex-col gap-0.5">{item.reasons.slice(0, 2).map((r, i) => <span key={i} className={`text-xs ${r.severity === 'red' ? 'text-red-600' : 'text-orange-500'}`}>{r.text}</span>)}{item.reasons.length > 2 && <span className="text-[11px] text-gray-400">+{item.reasons.length - 2} more in Performance</span>}</div></td>
+                        <td className="hidden sm:table-cell px-3 py-3 text-right font-medium text-gray-800">{ins.spend != null ? `$${ins.spend.toFixed(0)}` : '—'}</td>
+                        <td className="hidden sm:table-cell px-3 py-3 text-right text-red-600 font-semibold">{ins.cpl != null ? `$${ins.cpl.toFixed(2)}` : '—'}</td>
+                        <td className="hidden sm:table-cell px-3 py-3">{item.adset && <BudgetButton adset={item.adset} />}</td>
+                        <td className="px-3 py-3">{item.fb_adset_id && <button onClick={() => pauseAdset(item.fb_adset_id)} disabled={isPausing} className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-gray-500 border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-40">{isPausing ? <RefreshCw size={11} className="animate-spin" /> : <PauseCircle size={11} />} Pause</button>}</td>
+                      </tr>;
+                    })}
+                  </tbody>
+                </table>
+                {attentionList.length > 3 && <div className="px-5 py-3 border-t border-gray-100"><button type="button" onClick={() => toggleExpandedSection('needsAttention')} className="text-xs font-semibold text-orange-700 hover:text-orange-800">{expandedSections.needsAttention ? 'Show top 3' : `See all ${attentionList.length}`}</button></div>}
+              </div>
+            )
+            )}
+          </div>
+          <div className="xl:col-span-3"><PerformanceSnapshot rangeLabel={rangeLabel} activeCount={activeCount} attentionCount={attentionList.length} rtRoas={rtRoas} blendedCpl={blendedCpl} topPerformer={topPerformers[0]} /></div>
+        </div>
 
-      <div className="space-y-4">
+      <div className="space-y-4 order-2">
         {/* Top Performers */}
         <div className="bg-white rounded-xl border border-green-100 border-l-4 border-l-green-500 shadow-sm overflow-hidden">
           <div className="px-5 py-3 border-b border-green-100 bg-green-50/40 flex items-center justify-between gap-3">
@@ -1148,7 +1243,7 @@ export default function Dashboard() {
                     <th className="px-3 py-2 text-right">RT ROAS</th>
                     <th className="px-3 py-2 text-right">Freq</th>
                     <th className="px-3 py-2 text-left">Budget</th>
-                    <th className="px-3 py-2 text-left">Action</th>
+                    <th className="hidden sm:table-cell px-3 py-2 text-left">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -1163,6 +1258,16 @@ export default function Dashboard() {
                             <div className="text-xs text-gray-400 truncate max-w-[280px]">{a.campaignName}</div>
                           )}
                         </Link>
+                        <div className="sm:hidden flex flex-wrap gap-1.5 mt-2">
+                          {(() => {
+                            const isCBO = a.adset.campaign_budget_optimization === 'CBO' || !!a.adset.campaign_daily_budget;
+                            const hasBudget = isCBO ? !!a.adset.campaign_daily_budget : !!a.adset.daily_budget;
+                            const scaleKey = isCBO ? `cbo-${a.fb_campaign_id}` : a.fb_adset_id;
+                            const isScaling = scalingAdset.has(scaleKey);
+                            return <button onClick={() => scaleAdset(a)} disabled={isScaling || !hasBudget} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-green-700 border border-green-200 bg-green-50 disabled:opacity-40">{isScaling ? <RefreshCw size={10} className="animate-spin" /> : '+20%'} Scale</button>;
+                          })()}
+                          <button onClick={() => handleQuickGenerate(a)} disabled={quickGeneratingAdsets.has(a.fb_adset_id || a.id)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-indigo-600 border border-indigo-100 bg-indigo-50 disabled:opacity-40"><Zap size={10} /> Quick Generate</button>
+                        </div>
                       </td>
                       <td className="px-3 py-3 text-right font-medium text-gray-800">${a.spend.toFixed(0)}</td>
                       <td className="px-3 py-3 text-right text-gray-600">{a.rtCpl != null ? `$${a.rtCpl.toFixed(2)}` : '—'}</td>
@@ -1179,7 +1284,7 @@ export default function Dashboard() {
                         ) : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="px-3 py-3"><BudgetButton adset={a.adset} /></td>
-                      <td className="px-3 py-3">
+                      <td className="hidden sm:table-cell px-3 py-3">
                         <div className="flex items-center gap-1.5">
                           {(() => {
                             const isCBO = a.adset.campaign_budget_optimization === 'CBO' || !!a.adset.campaign_daily_budget;
@@ -1229,101 +1334,6 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* Needs Attention */}
-        <div className="bg-white rounded-xl border border-orange-100 border-l-4 border-l-orange-500 shadow-sm overflow-hidden">
-          <div className="px-5 py-3 border-b border-orange-100 bg-orange-50/50 flex items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={() => toggleSection('needsAttention')}
-              className="min-w-0 font-semibold text-gray-900 flex items-center gap-2 text-sm text-left"
-            >
-              <ChevronDown size={15} className={`text-orange-600 transition-transform ${collapsedSections.needsAttention ? '-rotate-90' : ''}`} />
-              <AlertTriangle size={15} className="text-orange-600" />
-              <span>Needs Attention</span>
-            </button>
-            <Link to={perfLink('attention')} className="text-xs text-orange-700 hover:underline flex items-center gap-1 flex-shrink-0">
-              View all in Performance <ArrowRight size={11} />
-            </Link>
-          </div>
-          {!collapsedSections.needsAttention && (loading ? (
-            <div className="px-5 py-6 text-center text-sm text-gray-400">Loading...</div>
-          ) : attentionList.length === 0 ? (
-            <div className="px-5 py-6 text-center text-sm text-gray-400">
-              <span className="text-green-500 font-medium">All clear</span> — no issues flagged.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100">
-                    <th className="px-5 py-2 text-left">Ad Set</th>
-                    <th className="px-3 py-2 text-left">Issue</th>
-                    <th className="px-3 py-2 text-right">Spend</th>
-                    <th className="px-3 py-2 text-right">CPL</th>
-                    <th className="px-3 py-2 text-left">Budget</th>
-                    <th className="px-3 py-2 text-left">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {visibleAttentionList.map(item => {
-                    const isPausing = item.fb_adset_id && pausingAdsets.has(item.fb_adset_id);
-                    const ins = bulkInsights[item.fb_adset_id] || {};
-                    return (
-                      <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-5 py-3">
-                          <Link to={perfLink('attention', item.fb_adset_id)} className="block">
-                            <div className="flex items-center gap-2">
-                              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${item.severity === 'red' ? 'bg-red-500' : 'bg-orange-400'}`} />
-                              <div className="font-medium text-gray-900 truncate max-w-[260px]" title={item.label}>{item.label}</div>
-                            </div>
-                            {item.campaignName && (
-                              <div className="text-xs text-gray-400 truncate max-w-[260px] pl-4">{item.campaignName}</div>
-                            )}
-                          </Link>
-                        </td>
-                        <td className="px-3 py-3">
-                          <div className="flex flex-col gap-0.5">
-                            {item.reasons.map((r, i) => (
-                              <span key={i} className={`text-xs ${r.severity === 'red' ? 'text-red-600' : 'text-orange-500'}`}>
-                                {r.text}
-                              </span>
-                            ))}
-                          </div>
-                        </td>
-                        <td className="px-3 py-3 text-right font-medium text-gray-800">{ins.spend != null ? `$${ins.spend.toFixed(0)}` : '—'}</td>
-                        <td className="px-3 py-3 text-right text-red-600 font-semibold">{ins.cpl != null ? `$${ins.cpl.toFixed(2)}` : '—'}</td>
-                        <td className="px-3 py-3">{item.adset && <BudgetButton adset={item.adset} />}</td>
-                        <td className="px-3 py-3">
-                          {item.fb_adset_id && (
-                            <button
-                              onClick={() => pauseAdset(item.fb_adset_id)}
-                              disabled={isPausing}
-                              className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-gray-500 border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-40"
-                            >
-                              {isPausing ? <RefreshCw size={11} className="animate-spin" /> : <PauseCircle size={11} />}
-                              Pause
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              {attentionList.length > 10 && (
-                <div className="px-5 py-3 border-t border-gray-100 bg-white">
-                  <button
-                    type="button"
-                    onClick={() => toggleExpandedSection('needsAttention')}
-                    className="text-xs font-semibold text-orange-700 hover:text-orange-800"
-                  >
-                    {expandedSections.needsAttention ? 'Show top 10' : `See all ${attentionList.length}`}
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
       </div>
 
       {/* Performance by Niche */}
@@ -1424,6 +1434,15 @@ export default function Dashboard() {
         ))}
       </div>
 
+      <CapiMatchQualityCard
+        className="order-3"
+        apiUrl={API_URL}
+        authFetch={authFetch}
+        showSuccess={showSuccess}
+        showError={showError}
+      />
+
+    </div>
     </div>
   );
 }
