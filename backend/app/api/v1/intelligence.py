@@ -42,6 +42,22 @@ BEST_TIMES_DAYPARTS = (
     {"key": "afternoon", "label": "2p–6p", "start": 14, "end": 18},
     {"key": "evening", "label": "6p–12a", "start": 18, "end": 24},
 )
+_DATE_LABEL_RE = re.compile(
+    r'^(?:(?:\d{1,2}[/.]\d{1,2}(?:[/.]\d{2,4})?)|'
+    r'(?:\d{1,4}[-/]\d{1,2}[-/]\d{1,4}))'
+    r'(?:\s+\d{1,2}:\d{2}(?:\s*[AP]M)?)?$',
+    re.IGNORECASE,
+)
+
+
+def _is_date_label(value: str) -> bool:
+    """Recognize a standalone date segment without hiding numeric niches.
+
+    Candidate name segments are already split on ``" - "``. Requiring the
+    entire segment to be date-shaped keeps ``24/7 Emergency Plumbing``,
+    ``3/4 Ton Trucking``, and ``1.2 Acre Homes`` as real niches.
+    """
+    return bool(_DATE_LABEL_RE.fullmatch(value.strip()))
 
 
 def _extract_niche(adset_name: str, campaign_name: str = "") -> str:
@@ -57,9 +73,9 @@ def _extract_niche(adset_name: str, campaign_name: str = "") -> str:
             return None
         parts = [p.strip() for p in name.split(" - ")]
         for part in parts[1:]:
-            if part and not _NON_NICHE_RE.match(part) and not re.match(r'^\d{1,2}/\d{1,2}', part):
+            if part and not _NON_NICHE_RE.match(part) and not _is_date_label(part):
                 return part
-        if parts and not re.match(r'^(?:\d{1,2}/\d{1,2}|\d{4}-\d{2}-\d{2})', parts[0]) and not _NON_NICHE_RE.match(parts[0]):
+        if parts and not _is_date_label(parts[0]) and not _NON_NICHE_RE.match(parts[0]):
             return parts[0]
         return None
 
