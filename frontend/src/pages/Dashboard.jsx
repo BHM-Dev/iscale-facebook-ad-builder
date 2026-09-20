@@ -39,6 +39,7 @@ function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
   const rows = trend?.daily || [];
   const chartViewportRef = useRef(null);
   const [viewportWidth, setViewportWidth] = useState(0);
+  const [hoveredPoint, setHoveredPoint] = useState(null);
   const metricConfig = {
     spend: { label: 'Spend', color: '#4f46e5', format: v => `$${Math.round(v).toLocaleString()}` },
     leads: { label: 'Leads', color: '#059669', format: v => Math.round(v).toLocaleString() },
@@ -76,6 +77,30 @@ function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
     const y = value == null ? null : height - padY - (value / max) * (height - padY * 2);
     return { ...row, x, y };
   });
+  const currentHoveredPoint = hoveredPoint
+    ? points.find(point => point.date === hoveredPoint.point.date && point.y != null)
+    : null;
+  const handlePointerMove = event => {
+    const svg = event.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width || !points.length) return;
+    const chartX = Math.min(width, Math.max(0, ((event.clientX - rect.left) / rect.width) * width));
+    const nearest = points.reduce((best, point) => {
+      if (point.y == null) return best;
+      return !best || Math.abs(point.x - chartX) < Math.abs(best.x - chartX) ? point : best;
+    }, null);
+    if (!nearest) return;
+    const viewport = chartViewportRef.current?.getBoundingClientRect();
+    const viewportX = viewport ? event.clientX - viewport.left : 50;
+    const edge = viewport && viewportX < 140
+      ? 'left'
+      : viewport && viewportX > viewport.width - 140 ? 'right' : 'center';
+    setHoveredPoint({
+      point: nearest,
+      left: viewport ? viewportX + viewport.scrollLeft : 50,
+      edge,
+    });
+  };
   const path = points.reduce((segments, point) => {
     if (point.y == null) return segments.concat([[]]);
     if (!segments.length) segments.push([]);
@@ -90,8 +115,24 @@ function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
     {loading ? <div className="h-[190px] flex items-center justify-center text-sm text-gray-400">Loading trend...</div>
       : !rows.length || !hasValues ? <div className="h-[190px] flex flex-col items-center justify-center gap-1 text-sm text-gray-400"><span>No Meta {metricConfig.label.toLowerCase()} data for this range.</span><span className="text-[11px]">Meta may not have reported spend or leads for the selected day yet.</span></div>
       : <div className="px-3 pt-3 pb-2">
-        <div ref={chartViewportRef} className="relative h-[170px] w-full overflow-x-auto">
-          <svg viewBox={`0 0 ${width} ${height}`} className="h-full" style={{ width: `${width}px` }} role="img" aria-label={`${metricConfig.label} daily trend`}>
+        <div ref={chartViewportRef} className="relative h-[170px] w-full overflow-x-auto" onMouseLeave={() => setHoveredPoint(null)}>
+          {hoveredPoint && currentHoveredPoint && (
+            <div
+              role="tooltip"
+              className={`pointer-events-none absolute top-2 z-10 rounded-lg border border-gray-200 bg-gray-950 px-3 py-2 text-[11px] text-white shadow-lg ${hoveredPoint.edge === 'center' ? '-translate-x-1/2' : hoveredPoint.edge === 'right' ? '-translate-x-full' : ''}`}
+              style={{ left: hoveredPoint.edge === 'left' ? 8 : hoveredPoint.edge === 'center' ? hoveredPoint.left : undefined, right: hoveredPoint.edge === 'right' ? 8 : undefined }}
+            >
+              <div className="font-semibold">{formatDateTick(currentHoveredPoint.date)}</div>
+              <div className="mt-1 flex max-w-[min(18rem,calc(100vw-2rem))] flex-wrap gap-x-3 gap-y-1">
+                <span>{metricConfig.label}: <strong>{metricConfig.format(currentHoveredPoint[metric])}</strong></span>
+                {currentHoveredPoint.spend != null && metric !== 'spend' && <span>Spend: <strong>${Number(currentHoveredPoint.spend).toLocaleString('en-US', { maximumFractionDigits: 0 })}</strong></span>}
+                {currentHoveredPoint.leads != null && metric !== 'leads' && <span>Leads: <strong>{Math.round(currentHoveredPoint.leads).toLocaleString()}</strong></span>}
+                {currentHoveredPoint.cpl != null && metric !== 'cpl' && <span>CPL: <strong>${Number(currentHoveredPoint.cpl).toFixed(2)}</strong></span>}
+              </div>
+            </div>
+          )}
+          <svg viewBox={`0 0 ${width} ${height}`} className="h-full" style={{ width: `${width}px` }} role="img" aria-label={`${metricConfig.label} daily trend`} onMouseMove={handlePointerMove}>
+            <rect x="0" y="0" width={width} height={height} fill="transparent" />
             <line x1={padX} y1={height - padY} x2={width - padX} y2={height - padY} stroke="#e5e7eb" />
             <line x1={padX} y1={padY} x2={padX} y2={height - padY} stroke="#e5e7eb" />
             {points.filter(point => point.y != null).map(point => {
@@ -104,8 +145,11 @@ function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
               <circle cx={point.x} cy={point.y} r="4" fill="white" stroke={metricConfig.color} strokeWidth="2"><title>{point.date}: {metricConfig.format(point[metric])}</title></circle>
               {showValueLabels && <text x={point.x} y={Math.max(12, point.y - 9)} textAnchor="middle" fontSize="9" fill={metricConfig.color} fontWeight="600">{metricConfig.format(point[metric])}</text>}
             </g>)}
-            {points.map(point => <text key={`date-${point.date}`} x={point.x} y={height - 5} textAnchor="middle" fontSize="9" fill="#6b7280">{formatDateTick(point.date)}</text>)}
+            {points.map(point => <text key={`date-${point.date}`} x={point.x} y={height - 5} textAnchor="middle" fontSize="9" fill={point.y == null ? '#b9bec8' : '#6b7280'}>{point.y == null ? 'No data' : formatDateTick(point.date)}</text>)}
           </svg>
+          <div className="sr-only" aria-label={`${metricConfig.label} daily details`}>
+            {points.filter(point => point.y != null).map(point => <div key={`detail-${point.date}`}>{formatDateTick(point.date)}: {metricConfig.format(point[metric])}; spend {point.spend != null ? `$${Number(point.spend).toFixed(0)}` : 'unavailable'}; leads {point.leads ?? 'unavailable'}; CPL {point.cpl != null ? `$${Number(point.cpl).toFixed(2)}` : 'unavailable'}</div>)}
+          </div>
           <div className="absolute left-1 top-0 text-[10px] text-gray-400">{metricConfig.format(max)}</div>
           <div className="absolute left-1 bottom-0 text-[10px] text-gray-400">0</div>
         </div>
@@ -527,6 +571,7 @@ export default function Dashboard() {
   const [pausingAdsets, setPausingAdsets] = useState(new Set());
   const [pausedOverrides, setPausedOverrides] = useState(new Set()); // fb_adset_ids paused this session
   const [insightsError, setInsightsError] = useState(null);
+  const [adsetsError, setAdsetsError] = useState(null);
   const [adsets, setAdsets] = useState([]);
   const [adStatusByAdset, setAdStatusByAdset] = useState({});
   const [adStatusError, setAdStatusError] = useState(null);
@@ -537,7 +582,10 @@ export default function Dashboard() {
   const [trendMetric, setTrendMetric] = useState('spend');
   const loadGeneration = useRef(0);
   const [nicheSummary, setNicheSummary] = useState([]);
+  const [nicheError, setNicheError] = useState(null);
+  const [nicheLoading, setNicheLoading] = useState(true);
   const [rules, setRules] = useState([]);
+  const [rulesError, setRulesError] = useState(null);
 
   const [budgetPopover, setBudgetPopover] = useState(null);
   const [campaignBudgetInput, setCampaignBudgetInput] = useState('');
@@ -569,13 +617,34 @@ export default function Dashboard() {
     const generation = ++loadGeneration.current;
     const isCurrent = () => generation === loadGeneration.current;
     const { preset: p, dateFrom: df, dateTo: dt } = range || { preset: 'today', dateFrom: null, dateTo: null };
-    if (activeAccountLoading) return;
-    if (!activeAccountId && adAccounts.length > 0) return;
+    if (activeAccountLoading) {
+      setAdsets([]); setBulkInsights({}); setTrend(null); setNicheSummary([]); setRules([]); setAdStatusByAdset({});
+      setAdsetsError(null); setNicheError(null); setRulesError(null); setAdStatusError(null); setTrendError(null);
+      setNicheLoading(false);
+      setInsightsError(null); setAdsetsError(null); setNicheError(null); setRulesError(null); setAdStatusError(null); setTrendError(null);
+      setLoading(false); setTrendLoading(false);
+      return;
+    }
+    if (!activeAccountId && adAccounts.length > 0) {
+      setAdsets([]);
+      setBulkInsights({});
+      setTrend(null); setNicheSummary([]); setRules([]); setAdStatusByAdset({});
+      setNicheLoading(false);
+      setTrendLoading(false);
+      setLoading(false);
+      setInsightsError('No active ad account is available — choose an account and retry.');
+      return;
+    }
     setLoading(true);
     setInsightsError(null);
+    setAdsetsError(null);
+    setRulesError(null);
     setAdStatusError(null);
     setBulkInsights({}); // clear stale data so KPIs show — while loading
+    setAdsets([]);
     setNicheSummary([]);
+    setNicheError(null);
+    setNicheLoading(true);
     setTrend(null);
     setTrendLoading(true);
     setTrendError(null);
@@ -596,28 +665,31 @@ export default function Dashboard() {
         return authFetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(tid));
       };
 
-      const [adsetsRes, insightsRes, nicheRes, rulesRes, adStatusRes, trendRes] = await Promise.all([
-        timedFetch(`${API_URL}/facebook/adsets/saved?${insightsParams}`, 10000),
-        timedFetch(`${API_URL}/auto-pause/insights-bulk?${insightsParams}`, 25000),
-        timedFetch(`${API_URL}/dashboard/niche-summary?${insightsParams}`, 25000),
-        timedFetch(`${API_URL}/auto-pause/rules`, 10000),
+      const [adsetsRes, insightsRes, rulesRes, adStatusRes] = await Promise.all([
+        timedFetch(`${API_URL}/facebook/adsets/saved?${insightsParams}`, 10000).catch(() => null),
+        timedFetch(`${API_URL}/auto-pause/insights-bulk?${insightsParams}`, 25000).catch(() => null),
+        timedFetch(`${API_URL}/auto-pause/rules`, 10000).catch(() => null),
         timedFetch(`${API_URL}/facebook/ads/status-bulk?${activeAccountId ? `ad_account_id=${encodeURIComponent(activeAccountId)}` : ''}`, 15000).catch(() => null),
-        timedFetch(`${API_URL}/dashboard/trend?${insightsParams}`, 25000).catch(() => null),
       ]);
       if (!isCurrent()) return;
-      if (adsetsRes.ok)   setAdsets(await adsetsRes.json());
-      if (insightsRes.ok) {
+      if (adsetsRes?.ok) {
+        setAdsets(await adsetsRes.json());
+      } else {
+        const err = await adsetsRes?.json().catch(() => ({}));
+        setAdsetsError(err?.detail || `Ad set list unavailable${adsetsRes ? ` (${adsetsRes.status})` : ''}`);
+      }
+      if (insightsRes?.ok) {
         setBulkInsights(await insightsRes.json());
       } else {
-        const err = await insightsRes.json().catch(() => ({}));
-        setInsightsError(err.detail || `Meta API error (${insightsRes.status}) — try a different date range`);
+        const err = await insightsRes?.json().catch(() => ({}));
+        setInsightsError(err?.detail || `Meta API error${insightsRes ? ` (${insightsRes.status})` : ''} — try a different date range`);
       }
-      if (nicheRes.ok) {
-        setNicheSummary(await nicheRes.json());
+      if (rulesRes?.ok) {
+        setRules(await rulesRes.json());
       } else {
-        showError(`Niche summary unavailable (${nicheRes.status})`);
+        setRules([]);
+        setRulesError('Auto-pause rules are unavailable — refresh to retry.');
       }
-      if (rulesRes.ok)    setRules(await rulesRes.json());
       if (adStatusRes?.ok) {
         try {
           setAdStatusByAdset(await adStatusRes.json());
@@ -627,17 +699,33 @@ export default function Dashboard() {
       } else {
         setAdStatusError('Live ad delivery status is unavailable — scaling is disabled until Refresh succeeds.');
       }
+      setLoading(false);
+
+      // Secondary panels should not hold the KPI/ad-set view hostage when a
+      // slower niche or trend request is unavailable.
+      const [nicheRes, trendRes] = await Promise.all([
+        timedFetch(`${API_URL}/dashboard/niche-summary?${insightsParams}`, 15000).catch(() => null),
+        timedFetch(`${API_URL}/dashboard/trend?${insightsParams}`, 15000).catch(() => null),
+      ]);
+      if (!isCurrent()) return;
+      if (nicheRes?.ok) setNicheSummary(await nicheRes.json());
+      else setNicheError(`Niche summary unavailable${nicheRes ? ` (${nicheRes.status})` : ''}`);
+      setNicheLoading(false);
       if (trendRes?.ok) setTrend(await trendRes.json());
       else setTrendError('Daily trend is temporarily unavailable.');
     } catch (e) {
-      if (e.name !== 'AbortError') setInsightsError('Request timed out — check your connection and try again');
+      if (isCurrent() && e.name !== 'AbortError') {
+        setAdsets([]);
+        setAdsetsError('Ad set list unavailable — check your connection and try again');
+        setInsightsError('Request timed out — check your connection and try again');
+      }
     } finally {
       if (isCurrent()) {
         setLoading(false);
         setTrendLoading(false);
       }
     }
-  }, [activeAccountId, activeAccountLoading, adAccounts.length, showError]);
+  }, [activeAccountId, activeAccountLoading, adAccounts.length]);
 
 
   const syncAll = useCallback(async () => {
@@ -1046,6 +1134,7 @@ export default function Dashboard() {
     .filter(a => a.spend >= 50 && a.rtRoas != null && a.rtRoas > 0)
     .sort((a, b) => b.rtRoas - a.rtRoas)
     .slice(0, 8);
+  const redtrackUnavailable = rows.length > 0 && rows.every(row => row.redtrack == null);
 
   const BudgetButton = ({ adset }) => {
     const isCBO = adset.campaign_budget_optimization === 'CBO' || !!adset.campaign_daily_budget;
@@ -1222,10 +1311,22 @@ export default function Dashboard() {
           {insightsError}
         </div>
       )}
+      {adsetsError && !loading && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-800">
+          <AlertTriangle size={14} className="flex-shrink-0" />
+          {adsetsError}
+        </div>
+      )}
       {adStatusError && !loading && (
         <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-800">
           <AlertTriangle size={14} className="flex-shrink-0" />
           {adStatusError}
+        </div>
+      )}
+      {rulesError && !loading && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-800">
+          <AlertTriangle size={14} className="flex-shrink-0" />
+          {rulesError}
         </div>
       )}
 
@@ -1335,6 +1436,8 @@ export default function Dashboard() {
           </div>
           {!collapsedSections.topPerformers && (loading ? (
             <div className="px-5 py-6 text-center text-sm text-gray-400">Loading...</div>
+          ) : redtrackUnavailable ? (
+            <div className="px-5 py-6 text-center text-sm text-amber-700">RedTrack metrics are unavailable, so top performers cannot be ranked. Retry or sync RedTrack from the Performance page.</div>
           ) : topPerformers.length === 0 ? (
             <div className="px-5 py-6 text-center text-sm text-gray-400">
               No qualifying performers in this range — choose a wider range or sync RedTrack from the Performance page.
@@ -1434,17 +1537,9 @@ export default function Dashboard() {
                   ))}
                 </tbody>
               </table>
-              {topPerformers.length > 10 && (
-                <div className="px-5 py-3 border-t border-gray-100 bg-white">
-                  <button
-                    type="button"
-                    onClick={() => toggleExpandedSection('topPerformers')}
-                    className="text-xs font-semibold text-green-700 hover:text-green-800"
-                  >
-                    {expandedSections.topPerformers ? 'Show top 10' : `See all ${topPerformers.length}`}
-                  </button>
-                </div>
-              )}
+              <div className="px-5 py-3 border-t border-gray-100 bg-white text-[11px] text-gray-400">
+                Showing the top 8 by positive RedTrack ROAS · <Link to={perfLink('top-performers')} className="font-medium text-green-700 hover:underline">View all in Performance</Link>
+              </div>
             </div>
           ))}
         </div>
@@ -1479,6 +1574,13 @@ export default function Dashboard() {
               </div>
             ))}
           </div>
+        ) : nicheLoading ? (
+          <div className="p-5 text-sm text-gray-400">Loading niche summary…</div>
+        ) : nicheError ? (
+          <div className="px-5 py-8 text-center text-sm text-amber-700">
+            <div>{nicheError}</div>
+            <button type="button" onClick={() => load(activeRange)} className="mt-3 rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-medium hover:bg-amber-50">Retry niche summary</button>
+          </div>
         ) : nicheSummary.length === 0 ? (
           <div className="px-5 py-8 text-center text-sm text-gray-400">
             No niche data available for this period.
@@ -1491,9 +1593,9 @@ export default function Dashboard() {
                   <th className="px-5 py-3">Niche</th>
                   <th className="px-5 py-3 text-right">Ad Sets</th>
                   <th className="px-5 py-3 text-right">Spend</th>
-                  <th className="px-5 py-3 text-right">Revenue</th>
-                  <th className="px-5 py-3 text-right">Profit</th>
-                  <th className="px-5 py-3 text-right">ROAS</th>
+                  <th className="px-5 py-3 text-right" title="Meta's reported conversion value, not billable Switchboard revenue">Meta Conversion Value</th>
+                  <th className="px-5 py-3 text-right" title="Meta conversion value minus Meta spend; directional only, not final P&L">Directional Profit</th>
+                  <th className="px-5 py-3 text-right" title="Meta conversion value divided by Meta spend; directional only">Directional ROAS</th>
                   <th className="px-5 py-3 text-right">CPL</th>
                   <th className="px-5 py-3 text-right">Leads</th>
                 </tr>
@@ -1501,7 +1603,26 @@ export default function Dashboard() {
               <tbody className="divide-y divide-gray-50">
                 {visibleNicheSummary.map(row => (
                   <tr key={row.niche} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-5 py-3 font-medium text-gray-900">{row.niche}</td>
+                    <td className="px-5 py-3 font-medium text-gray-900">
+                      {['General', 'Unknown'].includes(row.niche) ? row.niche : (
+                        <Link
+                          to={(() => {
+                            const params = new URLSearchParams({ view: 'all', niche: row.niche });
+                            if (activeRange.dateFrom && activeRange.dateTo) {
+                              params.set('date_from', activeRange.dateFrom);
+                              params.set('date_to', activeRange.dateTo);
+                            } else if (activeRange.preset) {
+                              params.set('preset', activeRange.preset);
+                            }
+                            return `/campaign-performance?${params.toString()}`;
+                          })()}
+                          className="text-indigo-700 hover:text-indigo-900 hover:underline"
+                          title={`View ad sets matching ${row.niche}`}
+                        >
+                          {row.niche}
+                        </Link>
+                      )}
+                    </td>
                     <td className="px-5 py-3 text-right text-gray-500">{row.adset_count}</td>
                     <td className="px-5 py-3 text-right text-gray-700">{formatMoney(row.total_spend)}</td>
                     <td className="px-5 py-3 text-right text-gray-700">

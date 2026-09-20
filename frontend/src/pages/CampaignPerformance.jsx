@@ -49,14 +49,6 @@ function formatMoney(value) {
 
 const BEST_TIMES_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-function bestTimesCellClass(cell) {
-  if (cell.revenue == null || cell.confidence === 'low') return 'bg-gray-100 text-gray-400 border-gray-200';
-  if (cell.roi >= 0.25) return 'bg-green-100 text-green-800 border-green-200';
-  if (cell.roi >= 0) return 'bg-emerald-50 text-emerald-700 border-emerald-100';
-  if (cell.roi > -0.25) return 'bg-orange-50 text-orange-700 border-orange-100';
-  return 'bg-red-100 text-red-800 border-red-200';
-}
-
 function BestTimesGrid({ data }) {
   const attributionIncomplete = Boolean(data.attribution_complete === false);
   const nicheSummaries = useMemo(() => (data.niches || []).map(item => {
@@ -90,59 +82,49 @@ function BestTimesGrid({ data }) {
     const roi = revenue != null && spend > 0 ? (revenue - spend) / spend : null;
     const confidence = partCells.some(cell => cell.confidence === 'high') ? 'high'
       : partCells.some(cell => cell.confidence === 'medium') ? 'medium' : 'low';
-    return { spend, leads, revenue, roi, confidence };
+    const supportedHours = partCells.filter(cell => cell.confidence !== 'low' && cell.spend > 0).length;
+    return { spend, leads, revenue, roi, confidence, supportedHours };
   };
 
-  if (!niche) return <p className="text-sm text-gray-400 py-6 text-center">No hourly data returned for this account and period.</p>;
-  const untracked = niche.revenue_source === 'not_tracked';
+  const untracked = niche?.revenue_source === 'not_tracked';
   const allocated = Boolean(data.attribution_allocated);
   const fallback = data.attribution_method === 'everflow_adset_id_redtrack_unavailable';
-  const daypartRows = BEST_TIMES_DAYS.flatMap((day, dayIndex) => dayparts.map(part => ({ day, part, ...aggregateDaypart(dayIndex, part) })));
-  const actionableRows = attributionIncomplete ? [] : daypartRows.filter(cell => cell.revenue != null && cell.confidence !== 'low' && cell.spend > 0);
+  const daypartRows = niche ? BEST_TIMES_DAYS.flatMap((day, dayIndex) => dayparts.map(part => ({ day, part, ...aggregateDaypart(dayIndex, part) }))) : [];
+  // RedTrack-shaped revenue is useful context, but it is not exact enough to
+  // turn into a budget or scheduling instruction. Only exact Everflow
+  // ad-set attribution can produce Run/Avoid cards.
+  const actionableRows = attributionIncomplete || allocated ? [] : daypartRows.filter(cell => cell.revenue != null && cell.confidence !== 'low' && cell.spend >= 100 && cell.leads >= 5 && cell.supportedHours >= Math.ceil((cell.part.end - cell.part.start) / 2));
   const bestWindow = actionableRows.length ? actionableRows.reduce((best, cell) => cell.roi > best.roi ? cell : best) : null;
   const weakestWindow = actionableRows.length ? actionableRows.reduce((worst, cell) => cell.roi < worst.roi ? cell : worst) : null;
+  const sortedByRoi = [...actionableRows].sort((a, b) => b.roi - a.roi);
+  const runGap = sortedByRoi.length > 1 ? sortedByRoi[0].roi - sortedByRoi[1].roi : null;
+  const sortedWorstFirst = [...actionableRows].sort((a, b) => a.roi - b.roi);
+  const avoidGap = sortedWorstFirst.length > 1 ? sortedWorstFirst[1].roi - sortedWorstFirst[0].roi : null;
+  const runWindow = bestWindow && bestWindow.roi > 0 && (runGap == null || runGap >= 0.1) ? bestWindow : null;
+  const avoidWindow = weakestWindow && weakestWindow.roi < 0 && avoidGap != null && avoidGap >= 0.1 ? weakestWindow : null;
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <select value={niche.niche} onChange={e => setSelectedNiche(e.target.value)} className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white">
+        <select value={niche?.niche || ''} onChange={e => setSelectedNiche(e.target.value)} disabled={!nicheSummaries.length} className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white disabled:bg-gray-50">
           {nicheSummaries.map(item => <option key={item.niche} value={item.niche}>{item.niche} · ${Math.round(item.totalSpend).toLocaleString()} spend{!attributionIncomplete && item.totalRoi != null ? ` · ${allocated ? '≈' : ''}${item.totalRoi >= 0 ? '+' : ''}${Math.round(item.totalRoi * 100)}% ${allocated ? 'directional ROI' : 'ROI'}` : item.revenue_source === 'not_tracked' ? ' · not tracked' : ' · attribution incomplete'}</option>)}
         </select>
-        <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${untracked || attributionIncomplete || allocated ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-green-50 text-green-700 border-green-200'}`}>
-          {untracked ? 'Revenue not tracked for this account' : attributionIncomplete ? 'Directional attribution · incomplete' : fallback ? 'Exact Everflow attribution · complete' : allocated ? 'Directional revenue allocation' : 'Exact Everflow revenue'}
+        <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${untracked || attributionIncomplete || !niche || !actionableRows.length || allocated ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-green-50 text-green-700 border-green-200'}`}>
+          {!niche ? 'No hourly data' : untracked ? 'Revenue not tracked for this account' : attributionIncomplete ? 'Directional attribution · incomplete' : !actionableRows.length ? 'Not enough data to rank' : fallback ? 'Exact Everflow attribution · complete' : allocated ? 'Directional revenue allocation' : 'Exact Everflow revenue'}
         </span>
       </div>
-      {untracked && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Spend and leads are shown for context, but ROI is unavailable until this account has an exact Switchboard offer mapping.</div>}
-      {!untracked && (bestWindow || weakestWindow) && <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      {!niche && <p className="text-sm text-gray-400 py-6 text-center">No hourly data returned for this account and period.</p>}
+      {attributionIncomplete && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">Timing recommendation unavailable</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">Best Times cannot rank hours because some Everflow revenue is not tied to a Meta ad set. Do not change budgets from this view; revenue matching needs to be fixed first.</p><p className="mt-2 text-[11px] font-medium text-amber-800">{data.dropped_conversion_count || 0} attribution records · {formatMoney(data.dropped_revenue || 0)} unmatched value</p></div></div></div>}
+      {niche && !attributionIncomplete && allocated && <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">Directional timing only</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">Revenue is allocated from RedTrack timing and reconciled to Everflow billing. Use this as a research signal only; do not scale or pause budgets from this view.</p></div></div></div>}
+      {niche && untracked && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">Revenue tracking unavailable</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">Spend and leads are available, but Best Times cannot rank hours until this account has an exact Switchboard offer mapping. Do not change budgets from this view.</p></div></div></div>}
+      {niche && !untracked && !attributionIncomplete && !allocated && !actionableRows.length && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">Not enough data to rank a time window</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">This niche does not have at least $100 spend and 5 leads in a qualifying daypart. Select another niche or keep budgets unchanged until more data is available.</p></div></div></div>}
+      {!untracked && !allocated && actionableRows.length > 0 && <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {[
-          [allocated ? 'Directional best' : 'Best window', bestWindow, 'border-green-200 bg-green-50 text-green-800'],
-          // Only one actionable window exists — showing it twice as both "best"
-          // and "weakest" reads as a bug, not as "this is your only data point".
-          [allocated ? 'Directional weakest' : 'Weakest window', bestWindow !== weakestWindow ? weakestWindow : null, 'border-red-200 bg-red-50 text-red-800'],
-        ].map(([label, cell, classes]) => cell && <div key={label} className={`rounded-lg border px-3 py-2 ${classes}`}><div className="text-[10px] font-semibold uppercase tracking-wide opacity-70">{label}</div><div className="text-sm font-semibold">{cell.day} · {cell.part.label} · {allocated ? '≈' : ''}{cell.roi >= 0 ? '+' : ''}{Math.round(cell.roi * 100)}% {allocated ? 'directional ROI' : 'ROI'}</div><div className="text-[11px] opacity-75">${Math.round(cell.spend).toLocaleString()} spend · {cell.leads} leads · {allocated ? '≈' : ''}${Math.round(cell.revenue).toLocaleString()} {allocated ? 'allocated revenue' : 'revenue'}</div></div>)}
+          [allocated ? 'Directional run window' : 'Run', runWindow, 'border-green-200 bg-green-50 text-green-800'],
+          [allocated ? 'Directional avoid window' : 'Avoid', avoidWindow, 'border-red-200 bg-red-50 text-red-800'],
+        ].map(([label, cell, classes]) => cell && <div key={label} className={`rounded-lg border px-3 py-2 ${classes}`}><div className="text-[10px] font-semibold uppercase tracking-wide opacity-70">{label}</div><div className="text-sm font-semibold">{cell.day} · {cell.part.label} · {allocated ? '≈' : ''}{cell.roi >= 0 ? '+' : ''}{Math.round(cell.roi * 100)}% {allocated ? 'directional ROI' : 'ROI'}</div><div className="text-[11px] opacity-75">${Math.round(cell.spend).toLocaleString()} spend · {cell.leads} leads · {allocated ? '≈' : ''}${Math.round(cell.revenue).toLocaleString()} {allocated ? 'allocated revenue' : 'revenue'} · {cell.confidence} confidence · {cell.supportedHours} supported hours</div></div>)}
       </div>}
-      <div className="overflow-x-auto rounded-xl border border-gray-100">
-        <table className="w-full min-w-[620px] text-xs">
-          <thead className="bg-gray-50 border-b border-gray-100">
-            <tr><th className="px-3 py-2 text-left text-gray-500 font-medium">Day</th>{dayparts.map(part => <th key={part.key} className="px-2 py-2 text-center text-gray-500 font-medium">{part.label}</th>)}</tr>
-          </thead>
-          <tbody className="divide-y divide-gray-50">
-            {BEST_TIMES_DAYS.map((day, dayIndex) => (
-              <tr key={day}>
-                <th className="px-3 py-2 text-left font-semibold text-gray-700">{day}</th>
-                {dayparts.map(part => {
-                  const cell = aggregateDaypart(dayIndex, part);
-                  const cellTone = untracked || attributionIncomplete ? 'bg-amber-50 text-amber-700 border-amber-200' : bestTimesCellClass(cell);
-                  const roiLabel = cell.roi != null ? `${allocated ? '≈' : ''}${cell.roi >= 0 ? '+' : ''}${Math.round(cell.roi * 100)}%` : '—';
-                  const revenueLabel = cell.revenue != null ? `${allocated ? '≈' : ''}$${Math.round(cell.revenue)} ${allocated ? 'allocated revenue' : 'revenue'}` : null;
-                  const cellStatus = attributionIncomplete ? `${revenueLabel || 'incomplete'} · partial` : revenueLabel;
-                  return <td key={part.key} className="px-1.5 py-1.5"><div className={`rounded-lg border px-2 py-2 text-center ${cellTone}`} title={`${cell.spend ? `$${cell.spend.toFixed(2)} spend · ${cell.leads} leads` : 'No spend'}${cell.revenue != null ? ` · ${allocated ? '≈' : ''}$${cell.revenue.toFixed(2)} ${allocated ? 'allocated revenue' : 'revenue'}` : ''}`}><div className="font-semibold">{attributionIncomplete ? '—' : roiLabel}</div><div className="text-[10px] opacity-75">{cell.spend ? `$${Math.round(cell.spend)} spend${cellStatus ? ` · ${cellStatus}` : ''}` : cellStatus || (untracked ? 'untracked' : 'insufficient')}</div></div></td>;
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="flex flex-wrap gap-3 text-[11px] text-gray-500"><span><i className="inline-block w-2.5 h-2.5 rounded bg-green-200 mr-1" />{allocated ? 'Directional positive' : 'Positive'}</span><span><i className="inline-block w-2.5 h-2.5 rounded bg-orange-100 mr-1" />Watch</span><span><i className="inline-block w-2.5 h-2.5 rounded bg-red-200 mr-1" />{allocated ? 'Directional negative' : 'Negative'}</span><span><i className="inline-block w-2.5 h-2.5 rounded bg-gray-200 mr-1" />Insufficient data</span></div>
+      {actionableRows.length > 0 && !runWindow && <p className="text-xs text-gray-500">No qualifying block is currently profitable enough to label Run. Keep budgets unchanged.</p>}
+      {actionableRows.length > 0 && runWindow && !avoidWindow && <p className="text-xs text-gray-500">No clear avoid window—every qualifying block is non-negative. Use the Run window as the starting test.</p>}
     </div>
   );
 }
@@ -280,6 +262,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
     setError(null);
     setBestTimesData(null);
     setBestTimesError(null);
+    setBestTimesLoading(false);
     if (open) {
       loadIntelligence(preset, customFrom, customTo);
       if (intelligenceView === 'best-times') loadBestTimes(preset, customFrom, customTo);
@@ -321,7 +304,10 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
       setError(null);
       intelligenceRequestRef.current += 1;
       bestTimesRequestRef.current += 1;
+      setLoading(false);
+      setBestTimesLoading(false);
       setBestTimesData(null);
+      setBestTimesLoading(false);
       return;
     }
     if (open) loadIntelligence(nextPreset, '', '');
@@ -329,7 +315,11 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
     // active — otherwise switching back to Best Times later shows data for
     // the previous preset with no visual indication it's stale.
     if (open && intelligenceView === 'best-times') loadBestTimes(nextPreset, '', '');
-    else setBestTimesData(null);
+    else {
+      bestTimesRequestRef.current += 1;
+      setBestTimesData(null);
+      setBestTimesLoading(false);
+    }
   };
 
   return (
@@ -355,7 +345,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => loadIntelligence(preset, customFrom, customTo)}
-                  disabled={loading}
+                  disabled={loading || (preset === 'custom' && (!customFrom || !customTo))}
                   className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-40"
                   title="Refresh intelligence"
                 >
@@ -465,10 +455,10 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
 
               {intelligenceView === 'best-times' && (
                 <div className="mb-5 rounded-xl border border-violet-100 bg-white p-3">
-                  <div className="flex items-center justify-between mb-3"><div><h3 className="text-sm font-semibold text-gray-900">Best Times by Niche</h3><p className="text-[11px] text-gray-500 mt-0.5">{!bestTimesData ? 'Loading attribution…' : bestTimesData.attribution_complete === false ? 'Attribution incomplete · partial revenue shown · no timing recommendation' : bestTimesData.attribution_method === 'everflow_adset_id_redtrack_unavailable' ? 'Exact Everflow ad-set attribution' : bestTimesData.attribution_allocated ? 'Directional revenue allocation · RedTrack shape + Everflow billing' : bestTimesData.niches?.some(item => item.revenue_source === 'not_tracked') ? 'Revenue unavailable · no Everflow offer mapping' : 'Exact Everflow ad-set attribution'} · {bestTimesData?.timezone || '—'}</p></div><button type="button" onClick={() => loadBestTimes(preset, customFrom, customTo)} className="text-xs text-violet-600 hover:text-violet-800">Refresh</button></div>
-                  {!bestTimesLoading && !bestTimesError && bestTimesData && (bestTimesData.attribution_warning || !bestTimesData.attribution_complete) && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><span className="font-semibold">Attribution note.</span> {bestTimesData.attribution_warning || `${bestTimesData.dropped_conversion_count} conversion${bestTimesData.dropped_conversion_count === 1 ? '' : 's'} totaling ${formatMoney(bestTimesData.dropped_revenue)} could not be assigned to a Meta ad set in this window. Treat the ROI signals as directional.`} {!bestTimesData.attribution_complete && <span className="block mt-1 font-medium">Daypart ranking is unavailable until attribution is complete.</span>}</div>}
+                  <div className="flex items-center justify-between mb-3"><div><h3 className="text-sm font-semibold text-gray-900">Best Times by Niche</h3><p className="text-[11px] text-gray-500 mt-0.5">{!bestTimesData ? 'Loading attribution…' : bestTimesData.attribution_complete === false ? 'Attribution incomplete · timing recommendations unavailable' : bestTimesData.attribution_method === 'everflow_adset_id_redtrack_unavailable' ? 'Exact Everflow ad-set attribution' : bestTimesData.attribution_allocated ? 'Directional revenue allocation · RedTrack shape + Everflow billing' : bestTimesData.niches?.some(item => item.revenue_source === 'not_tracked') ? 'Revenue unavailable · no Everflow offer mapping' : 'Exact Everflow ad-set attribution'} · {bestTimesData?.timezone || '—'}</p></div><button type="button" onClick={() => loadBestTimes(preset, customFrom, customTo)} className="text-xs text-violet-600 hover:text-violet-800">Refresh</button></div>
+                  {!bestTimesLoading && !bestTimesError && bestTimesData && bestTimesData.attribution_complete !== false && bestTimesData.attribution_warning && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><span className="font-semibold">Attribution note.</span> {bestTimesData.attribution_warning}</div>}
                   {bestTimesLoading && <div className="h-48 rounded-lg bg-gray-50 animate-pulse" />}
-                  {!bestTimesLoading && bestTimesError && <div className="text-sm text-red-600 py-6 text-center">{bestTimesError}</div>}
+      {!bestTimesLoading && bestTimesError && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700"><div className="font-semibold">Timing recommendations unavailable</div><div className="mt-1">{bestTimesError}</div><div className="mt-1 text-xs">Keep current budgets and schedules unchanged, then use Refresh to retry.</div></div>}
                   {!bestTimesLoading && !bestTimesError && bestTimesData && <BestTimesGrid data={bestTimesData} />}
                 </div>
               )}
@@ -598,7 +588,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
 
 // ── Creative breakdown table (ad-level) ──────────────────────────────────────
 // onRemix: ({ ad_id, ad_name, headline, body, cta_label, image_url, adsetName, campaign_id }) => void
-function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccountId, adsBulk, adsLoading, rtAdsBulk, onAdStatusChange, onRemix }) {
+function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccountId, adsBulk, adsLoading, adsError, rtAdsBulk, onAdStatusChange, onRemix }) {
   const { showSuccess, showError } = useToast();
   const navigate = useNavigate();
   const [pausingAds, setPausingAds] = useState(new Set());
@@ -702,6 +692,8 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
   if (adsLoading) return (
     <div className="mt-3 pl-10 text-xs text-gray-400 animate-pulse">Loading creatives...</div>
   );
+
+  if (adsError) return <div className="mt-3 pl-10 text-xs text-amber-700">Creative breakdown unavailable: {adsError}</div>;
 
   const ads = adsBulk?.[fbAdsetId];
   if (!ads || ads.length === 0) return (
@@ -1008,12 +1000,15 @@ function Field({ label, children }) {
 // ── Remix Drawer ─────────────────────────────────────────────────────────────
 // Extract the meaningful niche segment from a verbose ad set name.
 // Ad set names follow the pattern: "[Date] - [Niche] - [Batch/test info]"
-// Returns the second segment (index 1) when the pattern matches, otherwise
-// falls back to the full name so no data is silently lost.
 function extractNiche(adsetName) {
-  if (!adsetName) return '';
-  const parts = adsetName.split(' - ');
-  return parts.length >= 2 ? parts[1].trim() : adsetName;
+  if (!adsetName) return 'Unknown';
+  const nonNiche = /^(batch\s*\d+|v\d+|scale|retarget|broad|phase\s*\d+|test|duplicate|copy)$/i;
+  const parts = adsetName.split(' - ').map(part => part.trim());
+  const dateLike = /^(?:\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|\d{4}-\d{1,2}-\d{1,2}|\d{1,2}-\d{1,2}-\d{4})/;
+  for (const part of parts.slice(1)) {
+    if (part && !nonNiche.test(part) && !dateLike.test(part)) return part;
+  }
+  return parts[0] && !dateLike.test(parts[0]) ? parts[0] : 'General';
 }
 
 function RemixDrawer({ creative, brands, onClose, onLaunchWizard }) {
@@ -1215,12 +1210,14 @@ export default function CampaignPerformance() {
     return DATE_PRESETS.find(p => p.value === datePreset)?.label || datePreset;
   }, [datePreset, dateFrom, dateTo]);
   const [loadingAdsets, setLoadingAdsets] = useState(false);
+  const [adsetsError, setAdsetsError] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [statusFilter, setStatusFilter] = useState(() => {
     const view = searchParams.get('view');
     if (view === 'attention') return 'flagged';
-    if (view === 'top-performers') return 'has_spend';
-    return 'ACTIVE';
+    if (view === 'top-performers') return 'top_performers';
+    if (searchParams.get('niche')) return 'all';
+    return 'all';
   });
   const [sortBy, setSortBy] = useState(() => {
     const view = searchParams.get('view');
@@ -1230,7 +1227,8 @@ export default function CampaignPerformance() {
   // Name search — the one filter primitive AdEspresso's campaign-list view has that
   // this page didn't, per the competitor synthesis brief (§3.4). Local-only, not
   // synced to the URL — a transient narrowing while scanning, not a saved view.
-  const [nameSearch, setNameSearch] = useState('');
+  const [nameSearch, setNameSearch] = useState(() => searchParams.get('search') || '');
+  const [nicheFilter, setNicheFilter] = useState(() => searchParams.get('niche') || '');
   // Metric-threshold filter — AdEspresso's "Filter by CPL < = > value" (§4 of that
   // capture), the other filter-surface gap logged in the same brief section.
   // `value === ''` means inactive; a real value narrows visibleAdsets by the
@@ -1243,12 +1241,17 @@ export default function CampaignPerformance() {
   // Bulk insights state — one API call replaces N per-row calls
   const [bulkInsights, setBulkInsights]       = useState(null);
   const [bulkInsightsLoading, setBulkInsightsLoading] = useState(false);
-  const [, setBulkInsightsError]   = useState(null);
+  const [bulkInsightsError, setBulkInsightsError]   = useState(null);
 
   // Ad-level (creative) breakdown state
   const [adsBulk, setAdsBulk]           = useState(null);
   const [adsLoading, setAdsLoading]     = useState(false);
+  const [adsError, setAdsError]         = useState(null);
   const [rtAdsBulk, setRtAdsBulk]       = useState(null);  // RT data keyed by ad_id (sub3)
+  const [rtAdsError, setRtAdsError]     = useState(null);
+  const insightsRequestRef = useRef(0);
+  const adsRequestRef = useRef(0);
+  const rtAdsRequestRef = useRef(0);
   const [expandedAdsets, setExpandedAdsets] = useState(new Set());
   // Campaign-level collapse — starts with all open; add campaignId to collapse it
   const [collapsedCampaigns, setCollapsedCampaigns] = useState(new Set());
@@ -1282,15 +1285,20 @@ export default function CampaignPerformance() {
   const [highlightedAdsetId, setHighlightedAdsetId] = useState(null);
   const rowRefs = useRef({});
   const scrolledToRef = useRef(null); // tracks which adsetId we've already scrolled to
+  const adsetsRequestRef = useRef(0);
 
   const loadAdsets = useCallback(async () => {
+    const requestId = ++adsetsRequestRef.current;
+    const isCurrent = () => adsetsRequestRef.current === requestId;
     setLoadingAdsets(true);
+    setAdsetsError(null);
     try {
       const qs = adAccountId ? `?ad_account_id=${encodeURIComponent(adAccountId)}` : '';
       const res = await authFetch(`${API_BASE}/facebook/adsets/saved${qs}`);
       if (!res.ok) throw new Error('Failed to load ad sets');
       const data = await res.json();
       const adsetList = Array.isArray(data) ? data : data.adsets || [];
+      if (!isCurrent()) return;
       setAdsets(adsetList);
       // Seed campaignBrands from adsets that already have a brand assigned (keyed by adset.id)
       const brands = {};
@@ -1300,9 +1308,9 @@ export default function CampaignPerformance() {
         }
       });
       setCampaignBrands(prev => ({ ...prev, ...brands }));
-    } catch (e) { showError(e.message); }
-    finally { setLoadingAdsets(false); }
-  }, [showError, adAccountId]);
+    } catch (e) { if (isCurrent()) setAdsetsError(e.message || 'Failed to load ad sets'); }
+    finally { if (isCurrent()) setLoadingAdsets(false); }
+  }, [adAccountId]);
 
   const loadRules = useCallback(async () => {
     try {
@@ -1333,47 +1341,60 @@ export default function CampaignPerformance() {
   }, []);
 
   const loadBulkInsights = useCallback(async (accountId, preset, dateFrom = null, dateTo = null) => {
+    const requestId = ++insightsRequestRef.current;
+    const isCurrent = () => insightsRequestRef.current === requestId;
     setBulkInsightsLoading(true);
     setBulkInsightsError(null);
     try {
       const params = buildDateParams(preset, dateFrom, dateTo);
       if (accountId) params.set('ad_account_id', accountId);
       const res = await timedFetch(`${API_BASE}/auto-pause/insights-bulk?${params}`, {}, 25000);
-      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed to load insights'); }
-      setBulkInsights(await res.json());
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `Failed to load insights (${res.status})`); }
+      const data = await res.json();
+      if (isCurrent()) setBulkInsights(data);
     } catch (e) {
-      setBulkInsightsError(e.name === 'AbortError' ? 'Request timed out — Meta API is slow, try again.' : e.message);
+      if (isCurrent()) {
+        setBulkInsights(null);
+        setBulkInsightsError(e.name === 'AbortError' ? 'Request timed out — Meta API is slow, try again.' : e.message);
+      }
     } finally {
-      setBulkInsightsLoading(false);
+      if (isCurrent()) setBulkInsightsLoading(false);
     }
   }, [buildDateParams, timedFetch]);
 
   const loadAdsBulk = useCallback(async (accountId, preset, dateFrom = null, dateTo = null) => {
+    const requestId = ++adsRequestRef.current;
+    const isCurrent = () => adsRequestRef.current === requestId;
+    setAdsError(null);
     setAdsLoading(true);
     try {
       const params = buildDateParams(preset, dateFrom, dateTo);
       if (accountId) params.set('ad_account_id', accountId);
       const res = await timedFetch(`${API_BASE}/auto-pause/ads-bulk?${params}`, {}, 20000);
-      if (!res.ok) return;
-      setAdsBulk(await res.json());
-    } catch {
-      // silently fail — creative breakdown is supplementary
+      if (!res.ok) throw new Error(`Creative breakdown unavailable (${res.status})`);
+      const data = await res.json();
+      if (isCurrent()) setAdsBulk(data);
+    } catch (e) {
+      if (isCurrent()) setAdsError(e.name === 'AbortError' ? 'Request timed out — try again.' : e.message);
     } finally {
-      setAdsLoading(false);
+      if (isCurrent()) setAdsLoading(false);
     }
   }, [buildDateParams, timedFetch]);
 
   const loadRtAdsBulk = useCallback(async (preset, dateFrom = null, dateTo = null) => {
+    const requestId = ++rtAdsRequestRef.current;
+    const isCurrent = () => rtAdsRequestRef.current === requestId;
     setRtAdsBulk(null);
+    setRtAdsError(null);
     try {
       const params = buildDateParams(preset, dateFrom, dateTo);
       if (adAccountId) params.set('ad_account_id', adAccountId);
       const res = await timedFetch(`${API_BASE}/redtrack/report/sub1?${params}`, {}, 15000);
-      if (!res.ok) return;
+      if (!res.ok) throw new Error(`RedTrack creative data unavailable (${res.status})`);
       const data = await res.json();
-      if (data.configured && data.data) setRtAdsBulk(data.data);
-    } catch {
-      // silently fail — RT ad-level is supplementary
+      if (isCurrent() && data.configured && data.data) setRtAdsBulk(data.data);
+    } catch (e) {
+      if (isCurrent()) setRtAdsError(e.name === 'AbortError' ? 'Request timed out — try again.' : e.message);
     }
   }, [adAccountId, buildDateParams, timedFetch]);
 
@@ -1408,11 +1429,21 @@ export default function CampaignPerformance() {
   // Track whether the initial load has fired — prevents datePreset effect
   // from double-firing before the active account is resolved.
   const initialLoadFired = useRef(false);
+  const skipNextDateReload = useRef(true);
 
   // Fire initial data load once the global active account has resolved; re-fire
   // when the header account switcher changes.
   useEffect(() => {
-    if (activeAccountLoading) return;
+    if (activeAccountLoading) {
+      insightsRequestRef.current += 1;
+      adsRequestRef.current += 1;
+      rtAdsRequestRef.current += 1;
+      setAdsets([]); setBulkInsights(null); setAdsBulk(null); setRtAdsBulk(null);
+      setBulkInsightsError(null); setAdsError(null); setRtAdsError(null);
+      adsetsRequestRef.current += 1;
+      setLoadingAdsets(false);
+      return;
+    }
     initialLoadFired.current = true;
     const initPreset = searchParams.get('preset') || 'today';
     const initFrom   = searchParams.get('date_from') || null;
@@ -1421,9 +1452,13 @@ export default function CampaignPerformance() {
     setAdsets([]);
     setBulkInsights(null);
     setAdsBulk(null);
+    setAdsError(null);
+    setBulkInsights(null);
+    setBulkInsightsError(null);
     setRtAdsBulk(null);
+    setRtAdsError(null);
     loadBulkInsights(adAccountId, resolvedPreset, initFrom, initTo);
-    // loadAdsBulk fires after bulkInsights settles (see deferred effect below)
+    loadAdsBulk(adAccountId, resolvedPreset, initFrom, initTo);
     loadRtAdsBulk(resolvedPreset, initFrom, initTo);
   }, [activeAccountLoading, adAccountId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1431,25 +1466,21 @@ export default function CampaignPerformance() {
   // For custom range, wait until both dateFrom and dateTo are set
   useEffect(() => {
     if (!initialLoadFired.current) return;
+    if (skipNextDateReload.current) {
+      skipNextDateReload.current = false;
+      return;
+    }
     if (datePreset === 'custom' && (!dateFrom || !dateTo)) return;
     const from = datePreset === 'custom' ? dateFrom : null;
     const to   = datePreset === 'custom' ? dateTo   : null;
+    setBulkInsights(null);
+    setBulkInsightsError(null);
+    setAdsBulk(null);
+    setAdsError(null);
     loadBulkInsights(adAccountId, datePreset, from, to);
+    loadAdsBulk(adAccountId, datePreset, from, to);
     loadRtAdsBulk(datePreset, from, to);
   }, [datePreset, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Deferred: fire loadAdsBulk after bulk insights finish loading.
-  // This avoids two heavy Meta API calls running in parallel on every page load.
-  const prevBulkLoadingRef = useRef(false);
-  useEffect(() => {
-    // Detect the transition: was loading → now done with data
-    if (prevBulkLoadingRef.current && !bulkInsightsLoading && bulkInsights !== null) {
-      const from = datePreset === 'custom' ? dateFrom : null;
-      const to   = datePreset === 'custom' ? dateTo   : null;
-      loadAdsBulk(adAccountId, datePreset, from, to);
-    }
-    prevBulkLoadingRef.current = bulkInsightsLoading;
-  }, [bulkInsightsLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (activeAccountLoading) return;
@@ -1467,8 +1498,10 @@ export default function CampaignPerformance() {
   // Sync filter/sort state when URL params change (handles component staying mounted across navigations)
   useEffect(() => {
     const view = searchParams.get('view');
+    setNameSearch(searchParams.get('search') || '');
+    setNicheFilter(searchParams.get('niche') || '');
     if (view === 'attention') { setStatusFilter('flagged'); setSortBy('spend'); }
-    else if (view === 'top-performers') { setStatusFilter('has_spend'); setSortBy('roas'); }
+    else if (view === 'top-performers') { setStatusFilter('top_performers'); setSortBy('roas'); }
   }, [searchParams]);
 
   // Sync Dashboard-provided date params when this component stays mounted across navigations.
@@ -1721,7 +1754,14 @@ export default function CampaignPerformance() {
       list = list.filter(isActiveDelivery);
     } else if (statusFilter === 'PAUSED') {
       list = list.filter(isPausedDelivery);
-    } else if (statusFilter === 'has_spend') {
+    } else if (statusFilter === 'top_performers' && (bulkInsightsError || (bulkInsights && Object.keys(bulkInsights).length > 0 && Object.values(bulkInsights).every(insight => insight?.redtrack == null)))) {
+      list = [];
+    } else if (statusFilter === 'top_performers') {
+      list = list.filter(a => {
+        const insight = bulkInsights?.[a.fb_adset_id];
+        return (insight?.spend ?? 0) >= 50 && (insight?.redtrack?.roas ?? 0) > 0;
+      });
+    } else if (statusFilter === 'has_spend' && !bulkInsightsError) {
       list = list.filter(a => (bulkInsights?.[a.fb_adset_id]?.spend ?? 0) > 0);
     } else if (statusFilter === 'flagged') {
       list = list.filter(a => isActiveDelivery(a) && isFlagged(a));
@@ -1733,8 +1773,12 @@ export default function CampaignPerformance() {
       list = list.filter(a => a.name?.toLowerCase().includes(q));
     }
 
+    if (nicheFilter) {
+      list = list.filter(a => extractNiche(a.name) === nicheFilter);
+    }
+
     // Metric-threshold filter (AdEspresso's "Filter by CPL < = > value")
-    if (metricFilter.value !== '' && !Number.isNaN(Number(metricFilter.value))) {
+    if (metricFilter.value !== '' && !Number.isNaN(Number(metricFilter.value)) && !bulkInsightsError) {
       const threshold = Number(metricFilter.value);
       list = list.filter(a => {
         const insight = bulkInsights?.[a.fb_adset_id];
@@ -1777,7 +1821,7 @@ export default function CampaignPerformance() {
     });
 
     return list;
-  }, [adsets, statusFilter, sortBy, nameSearch, metricFilter, bulkInsights, isFlagged, getAdsetStatus, isActiveDelivery, isPausedDelivery]);
+  }, [adsets, statusFilter, sortBy, nameSearch, nicheFilter, metricFilter, bulkInsights, bulkInsightsError, isFlagged, getAdsetStatus, isActiveDelivery, isPausedDelivery]);
 
   useEffect(() => {
     if (!targetAdsetId || targetAdsetId === 'null') return;
@@ -2004,11 +2048,15 @@ export default function CampaignPerformance() {
                 })()
               : dashboardView === 'attention'
                 ? <><AlertTriangle size={15} /> Showing flagged ad sets — high frequency, zero-lead spend, or auto-paused</>
-                : <><TrendingUp size={15} /> Showing top performers — sorted by RT ROAS, active with spend</>
+              : nicheFilter
+                ? <><Target size={15} /> Showing all ad sets in niche <span className="font-semibold">{nicheFilter}</span></>
+                : dashboardView === 'top-performers'
+                  ? <><TrendingUp size={15} /> Showing top performers — at least $50 spend and positive RT ROAS</>
+                  : <><TrendingUp size={15} /> Showing all ad sets</>
             }
           </div>
           <button
-            onClick={() => { setSearchParams({}); setStatusFilter('ACTIVE'); setSortBy('spend'); setHighlightedAdsetId(null); }}
+            onClick={() => { setSearchParams({}); setStatusFilter('all'); setNameSearch(''); setNicheFilter(''); setSortBy('spend'); setHighlightedAdsetId(null); }}
             className="ml-4 hover:opacity-70 transition-opacity"
           >
             <X size={14} />
@@ -2031,6 +2079,7 @@ export default function CampaignPerformance() {
           <div className="flex items-center gap-3">
             <h2 className="font-semibold text-gray-900 flex items-center gap-2">
               <Target size={16} className="text-indigo-600" /> Performance
+              {nicheFilter && <span className="text-xs text-indigo-600 font-normal">· {nicheFilter}</span>}
               <span className="text-xs text-gray-500 font-normal">
                 {groupedCampaigns.length} campaign{groupedCampaigns.length !== 1 ? 's' : ''} · {visibleAdsets.length} ad set{visibleAdsets.length !== 1 ? 's' : ''}
               </span>
@@ -2077,6 +2126,7 @@ export default function CampaignPerformance() {
               <select
                 className="text-xs text-gray-600 bg-transparent focus:outline-none"
                 value={metricFilter.metric}
+                disabled={bulkInsightsLoading || !!bulkInsightsError}
                 onChange={e => setMetricFilter(prev => ({ ...prev, metric: e.target.value }))}
               >
                 <option value="cpl">CPL</option>
@@ -2086,6 +2136,7 @@ export default function CampaignPerformance() {
               <select
                 className="text-xs text-gray-600 bg-transparent focus:outline-none"
                 value={metricFilter.operator}
+                disabled={bulkInsightsLoading || !!bulkInsightsError}
                 onChange={e => setMetricFilter(prev => ({ ...prev, operator: e.target.value }))}
               >
                 <option value="lt">&lt;</option>
@@ -2095,6 +2146,7 @@ export default function CampaignPerformance() {
                 type="number"
                 placeholder="value"
                 value={metricFilter.value}
+                disabled={bulkInsightsLoading || !!bulkInsightsError}
                 onChange={e => setMetricFilter(prev => ({ ...prev, value: e.target.value }))}
                 className="w-14 text-xs text-gray-600 bg-transparent focus:outline-none"
               />
@@ -2118,6 +2170,7 @@ export default function CampaignPerformance() {
               <option value="ACTIVE">Active only</option>
               <option value="PAUSED">Paused only</option>
               <option value="has_spend">Has spend</option>
+              <option value="top_performers">Top performers</option>
               <option value="flagged">⚠ Needs attention</option>
             </select>
             {/* Sort */}
@@ -2133,7 +2186,14 @@ export default function CampaignPerformance() {
               <option value="name">Sort: Name A–Z</option>
             </select>
             <button
-              onClick={() => { loadAdsets(); loadBulkInsights(adAccountId, datePreset, datePreset === 'custom' ? dateFrom : null, datePreset === 'custom' ? dateTo : null); }}
+              onClick={() => {
+                const from = datePreset === 'custom' ? dateFrom : null;
+                const to = datePreset === 'custom' ? dateTo : null;
+                loadAdsets();
+                loadBulkInsights(adAccountId, datePreset, from, to);
+                loadAdsBulk(adAccountId, datePreset, from, to);
+                loadRtAdsBulk(datePreset, from, to);
+              }}
               className="text-gray-400 hover:text-gray-600 transition-colors"
               title="Refresh"
             >
@@ -2143,15 +2203,31 @@ export default function CampaignPerformance() {
         </div>
 
         {/* Show spinner while loading — especially important for insight-dependent filters */}
-        {(loadingAdsets || (bulkInsightsLoading && ['flagged', 'has_spend', 'roas'].includes(statusFilter))) ? (
+        {bulkInsightsError && statusFilter === 'top_performers' && (
+          <div role="alert" className="mx-5 mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            Top-performer metrics are unavailable: {bulkInsightsError}. <button type="button" className="font-semibold underline" onClick={() => { const from = datePreset === 'custom' ? dateFrom : null; const to = datePreset === 'custom' ? dateTo : null; loadBulkInsights(adAccountId, datePreset, from, to); }}>Retry metrics</button>
+          </div>
+        )}
+        {bulkInsightsError && statusFilter !== 'top_performers' && (
+          <div role="alert" className="mx-5 mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            Performance metrics are unavailable: {bulkInsightsError}. Showing campaigns without spend filtering so Meta/API failures do not look like zero activity.
+          </div>
+        )}
+        {statusFilter === 'top_performers' && bulkInsights && Object.keys(bulkInsights).length > 0 && Object.values(bulkInsights).some(insight => insight?.redtrack == null) && (
+          <div role="alert" className="mx-5 mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">RedTrack metrics are incomplete, so only ad sets with confirmed ROAS can appear here. Retry or sync RedTrack before acting on this view.</div>
+        )}
+        {rtAdsError && <div role="status" className="mx-5 mb-4 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">RedTrack creative-level data is unavailable: {rtAdsError}. Meta creative metrics remain available.</div>}
+        {adsetsError && <div role="alert" className="mx-5 mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{adsetsError}. <button type="button" className="font-semibold underline" onClick={loadAdsets}>Retry ad sets</button></div>}
+        {(loadingAdsets || (bulkInsightsLoading && (['flagged', 'has_spend', 'top_performers', 'roas'].includes(statusFilter) || sortBy === 'cpl' || sortBy === 'roas' || metricFilter.value !== ''))) ? (
           <div className="p-8 text-center text-gray-400 text-sm flex items-center justify-center gap-2">
             <RefreshCw size={14} className="animate-spin" /> Loading…
           </div>
-        ) : visibleAdsets.length === 0 ? (
+        ) : adsetsError ? null : visibleAdsets.length === 0 ? (
           <div className="p-8 text-center text-gray-400 text-sm">
             {nameSearch ? `No ad sets matching "${nameSearch}".` :
              metricFilter.value !== '' ? `No ad sets with ${metricFilter.metric.toUpperCase()} ${metricFilter.operator === 'lt' ? '<' : '>'} ${metricFilter.value}.` :
              statusFilter === 'has_spend' ? 'No ad sets with spend in this date range.' :
+             statusFilter === 'top_performers' ? 'No ad sets with at least $50 spend and positive ROAS in this date range.' :
              statusFilter === 'flagged' ? 'No flagged ad sets — everything looks healthy.' :
              statusFilter !== 'all' ? `No ${statusFilter.toLowerCase()} ad sets found.` :
              'No launched ad sets found. Create and launch a campaign first.'}
@@ -2628,6 +2704,7 @@ export default function CampaignPerformance() {
                                         adAccountId={adAccountId}
                                         adsBulk={adsBulk}
                                         adsLoading={adsLoading}
+                                        adsError={adsError}
                                         rtAdsBulk={rtAdsBulk}
                                         onAdStatusChange={() => loadAdsBulk(adAccountId, datePreset, datePreset === 'custom' ? dateFrom : null, datePreset === 'custom' ? dateTo : null)}
                                         onRemix={(creative) => {

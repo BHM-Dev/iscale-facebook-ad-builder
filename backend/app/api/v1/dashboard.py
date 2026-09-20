@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -8,6 +10,7 @@ from app.core.deps import get_current_active_user
 from app.api.v1.facebook import _resolve_scoped_default_account
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def extract_niche(adset_name: str) -> str:
@@ -18,13 +21,14 @@ def extract_niche(adset_name: str) -> str:
         r'^(batch\s*\d+|v\d+|scale|retarget|broad|phase\s*\d+|test|duplicate|copy)$',
         re.IGNORECASE
     )
+    DATE_LIKE = re.compile(r'^(?:\d{1,2}/\d{1,2}(?:/\d{2,4})?|\d{4}-\d{1,2}-\d{1,2}|\d{1,2}-\d{1,2}-\d{4})')
     parts = [p.strip() for p in adset_name.split(" - ")]
     # Try parts[1:] first (standard [Date] - [Niche] - [Batch] format)
     for part in parts[1:]:
-        if part and not NON_NICHE.match(part) and not re.match(r'^\d{1,2}/\d{1,2}', part):
+        if part and not NON_NICHE.match(part) and not DATE_LIKE.match(part):
             return part
     # Fallback: if parts[0] looks like a niche (not a date), use it
-    if parts and not re.match(r'^\d{1,2}/\d{1,2}', parts[0]):
+    if parts and not DATE_LIKE.match(parts[0]):
         return parts[0]
     return "General"
 
@@ -61,7 +65,8 @@ def get_niche_summary(
 ):
     """
     Aggregate Meta ad set performance by niche for the Dashboard.
-    Returns [] on Meta API failures so the Dashboard remains usable.
+    Returns a 502 when Meta data cannot be loaded so the Dashboard can distinguish
+    an unavailable summary from a valid period with no data.
     """
     ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     try:
@@ -85,8 +90,6 @@ def get_niche_summary(
                     "total_spend": 0.0,
                     "total_leads": 0,
                     "total_revenue": 0.0,
-                    "cpl_total": 0.0,
-                    "cpl_count": 0,
                 },
             )
 
@@ -94,10 +97,6 @@ def get_niche_summary(
             bucket["total_spend"] += float(row.get("spend") or 0)
             bucket["total_leads"] += int(row.get("leads") or 0)
             bucket["total_revenue"] += float(row.get("revenue") or 0)
-
-            if row.get("cpl") is not None:
-                bucket["cpl_total"] += float(row["cpl"])
-                bucket["cpl_count"] += 1
 
         summary = []
         for bucket in by_niche.values():
@@ -111,12 +110,13 @@ def get_niche_summary(
                 "total_leads": bucket["total_leads"],
                 "total_revenue": round(total_revenue, 2),
                 "avg_roas": avg_roas,
-                "avg_cpl": round(bucket["cpl_total"] / bucket["cpl_count"], 2) if bucket["cpl_count"] else None,
+                "avg_cpl": round(total_spend / bucket["total_leads"], 2) if bucket["total_leads"] > 0 else None,
             })
 
         return sorted(summary, key=lambda item: item["total_spend"], reverse=True)
-    except Exception:
-        return []
+    except Exception as exc:
+        logger.exception("Dashboard niche summary failed")
+        raise HTTPException(status_code=502, detail="Niche summary unavailable") from exc
 
 
 @router.get('/trend')
@@ -129,12 +129,19 @@ def get_dashboard_trend(
 ):
     """Return a truthful daily Meta trend plus a comparable prior-period baseline."""
     ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
-    if date_from and date_to:
-        start, end = date.fromisoformat(date_from), date.fromisoformat(date_to)
-    else:
-        from app.services.redtrack_service import RedTrackService
-        start_s, end_s = RedTrackService.preset_to_dates(date_preset)
-        start, end = date.fromisoformat(start_s), date.fromisoformat(end_s)
+    try:
+        if bool(date_from) != bool(date_to):
+            raise ValueError('incomplete date range')
+        if date_from and date_to:
+            start, end = date.fromisoformat(date_from), date.fromisoformat(date_to)
+        else:
+            from app.services.redtrack_service import RedTrackService
+            start_s, end_s = RedTrackService.preset_to_dates(date_preset)
+            start, end = date.fromisoformat(start_s), date.fromisoformat(end_s)
+        if start > end:
+            raise ValueError('reversed date range')
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail='Invalid date range')
     days = (end - start).days + 1
     previous_start = start - timedelta(days=days)
     previous_end = start - timedelta(days=1)
@@ -163,4 +170,5 @@ def get_dashboard_trend(
             'source': 'Meta Insights',
         }
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f'Daily trend unavailable: {exc}')
+        logger.exception('Dashboard daily trend failed')
+        raise HTTPException(status_code=502, detail='Daily trend unavailable') from exc

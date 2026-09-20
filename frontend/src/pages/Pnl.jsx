@@ -239,6 +239,7 @@ export default function Pnl() {
   const [loading, setLoading] = useState(true);
   const [monthsLoading, setMonthsLoading] = useState(true);
   const [monthsError, setMonthsError] = useState('');
+  const [loadingSlow, setLoadingSlow] = useState(false);
   // Remembers whether the event breakdown was left open, per Joel's request.
   const [showEvents, setShowEvents] = useState(() => localStorage.getItem('pnlShowEvents') === '1');
   // Bumped on every load. Each chain checks it still owns the latest request
@@ -262,14 +263,18 @@ export default function Pnl() {
   // loading flag with the summary meant the whole page sat blank behind it. They
   // now render independently, each with its own loading and error state.
   const load = useCallback(() => {
+    const token = ++loadToken.current;
     if (activeAccountLoading || (!isAllScope && !activeAccountId)) {
       // Without this the flags stay true forever when there is no account to
       // load — e.g. account resolution failed — and the page reads as loading.
       setLoading(false);
       setMonthsLoading(false);
+      setSummary(null);
+      setMonths([]);
+      setMonthsError('');
+      setLoadError(activeAccountLoading ? '' : 'No active ad account is available');
       return;
     }
-    const token = ++loadToken.current;
     const current = () => loadToken.current === token;
     setLoadError('');
 
@@ -278,6 +283,7 @@ export default function Pnl() {
       if (!customFrom || !customTo) {
         setSummary(null);
         setMonths([]);
+        setMonthsError('');
         setLoading(false);
         setMonthsLoading(false);
         setLoadError('Choose a start and end date to load a custom Profit/Loss range');
@@ -323,6 +329,15 @@ export default function Pnl() {
   }, [activeAccountId, activeAccountLoading, customFrom, customTo, isAllScope, month, period, requestAccountId, showError]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!loading && !monthsLoading) {
+      setLoadingSlow(false);
+      return undefined;
+    }
+    const timer = setTimeout(() => setLoadingSlow(true), 4000);
+    return () => clearTimeout(timer);
+  }, [loading, monthsLoading]);
 
   const deleteCost = async (entry) => {
     try {
@@ -453,7 +468,14 @@ export default function Pnl() {
 
       {loadError && !loading && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {loadError}. The previous Profit/Loss figures were cleared so stale account data is not shown.
+          <div>{loadError}. The previous Profit/Loss figures were cleared so stale account data is not shown.</div>
+          <button type="button" onClick={load} className="mt-2 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium hover:bg-red-100">Retry summary</button>
+        </div>
+      )}
+
+      {(loading || monthsLoading) && loadingSlow && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          Profit/Loss is still loading live Meta and revenue data. The summary and six-month history use separate requests and may finish at different times.
         </div>
       )}
 
@@ -645,7 +667,7 @@ export default function Pnl() {
               {monthsLoading ? (
                 <tr><td colSpan={isAllScope ? 9 : 7} className="px-5 py-8 text-center text-sm text-gray-400">Loading month history — this walks six months of Meta and revenue data and can take a while.</td></tr>
               ) : monthsError ? (
-                <tr><td colSpan={isAllScope ? 9 : 7} className="px-5 py-8 text-center text-sm text-amber-700">{monthsError}</td></tr>
+                <tr><td colSpan={isAllScope ? 9 : 7} className="px-5 py-8 text-center text-sm text-amber-700"><div>{monthsError}</div><button type="button" onClick={load} className="mt-3 rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-medium hover:bg-amber-50">Retry month history</button></td></tr>
               ) : !months.length ? (
                 <tr><td colSpan={isAllScope ? 9 : 7} className="px-5 py-8 text-center text-sm text-gray-400">No month history available.</td></tr>
               ) : months.map(row => {
