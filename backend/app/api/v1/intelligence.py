@@ -682,10 +682,7 @@ def _build_best_times(
             redtrack_aggregate[key] = redtrack_aggregate.get(key, Decimal('0')) + amount
             redtrack_total += amount
 
-        scoped_adsets = known_adsets | {
-            str(row.get('sub2') or '').strip() for row in redtrack_rows
-            if str(row.get('sub2') or '').strip()
-        }
+        scoped_adsets = known_adsets
         billing_total = sum(
             (Decimal(str(row.get('revenue') or 0)) for row in conversions
              if EverflowService._offer_name(row).casefold() in allowed
@@ -698,6 +695,8 @@ def _build_best_times(
                 aggregate.setdefault(key, {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})['revenue'] += amount * scale
             attribution_method = 'redtrack_attribution_everflow_billing_allocated'
             attribution_warning = 'Everflow billing revenue is allocated across RedTrack-attributed ad sets and hours; use this as a directional timing signal.'
+            if dropped_count:
+                attribution_warning += f' {dropped_count} RedTrack conversion rows lacked a usable timestamp and were excluded.'
             redtrack_usable = True
         else:
             attribution_warning = 'RedTrack returned no usable revenue rows; fell back to direct Everflow ad-set attribution.'
@@ -761,7 +760,8 @@ def _build_best_times(
         'niches': output,
         'dropped_conversion_count': dropped_count if tracked else 0,
         'dropped_revenue': float(dropped_revenue.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)) if tracked else 0,
-        'attribution_complete': not tracked or (redtrack_usable or dropped_count == 0),
+        'attribution_complete': not tracked or (redtrack_usable and dropped_count == 0) or (not redtrack_rows and dropped_count == 0),
+        'attribution_allocated': attribution_method.endswith('_allocated'),
         'attribution_method': attribution_method,
         'attribution_warning': attribution_warning,
     }
@@ -868,9 +868,13 @@ def best_times(
             if redtrack.is_configured():
                 try:
                     redtrack_rows = redtrack.get_raw_conversions(resolved_from, resolved_to)
+                    if not redtrack_rows:
+                        redtrack_warning = 'RedTrack returned no rows; showing direct Everflow ad-set matches instead.'
                 except Exception as exc:
                     logger.warning("Best Times RedTrack attribution unavailable; using Everflow adset IDs: %s", exc)
                     redtrack_warning = 'RedTrack attribution was unavailable; showing direct Everflow ad-set matches instead.'
+            else:
+                redtrack_warning = 'RedTrack is not configured for this environment; showing direct Everflow ad-set matches instead.'
         result = _build_best_times(
             meta_payload,
             conversions,
@@ -906,4 +910,5 @@ def best_times(
         'attribution_complete': result['attribution_complete'],
         'attribution_method': result['attribution_method'],
         'attribution_warning': result['attribution_warning'],
+        'attribution_allocated': result['attribution_allocated'],
     }
