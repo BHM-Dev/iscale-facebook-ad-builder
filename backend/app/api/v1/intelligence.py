@@ -797,7 +797,7 @@ def _build_best_times(
         'niches': output,
         'dropped_conversion_count': dropped_count if tracked else 0,
         'dropped_revenue': float(dropped_revenue.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)) if tracked else 0,
-        'attribution_complete': not tracked or (redtrack_usable and dropped_count == 0) or (not redtrack_rows and dropped_count == 0),
+        'attribution_complete': not tracked or dropped_count == 0,
         'attribution_allocated': attribution_method.endswith('_allocated'),
         'attribution_method': attribution_method,
         'attribution_warning': attribution_warning,

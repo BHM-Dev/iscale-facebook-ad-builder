@@ -131,7 +131,7 @@ function BestTimesGrid({ data }) {
                 <th className="px-3 py-2 text-left font-semibold text-gray-700">{day}</th>
                 {dayparts.map(part => {
                   const cell = aggregateDaypart(dayIndex, part);
-                  const cellTone = untracked || attributionIncomplete ? 'bg-amber-50 text-amber-700 border-amber-200' : allocated ? 'bg-amber-50 text-amber-800 border-amber-200' : bestTimesCellClass(cell);
+                  const cellTone = untracked || attributionIncomplete ? 'bg-amber-50 text-amber-700 border-amber-200' : bestTimesCellClass(cell);
                   const roiLabel = cell.roi != null ? `${allocated ? '≈' : ''}${cell.roi >= 0 ? '+' : ''}${Math.round(cell.roi * 100)}%` : '—';
                   const revenueLabel = cell.revenue != null ? `${allocated ? '≈' : ''}$${Math.round(cell.revenue)} ${allocated ? 'allocated revenue' : 'revenue'}` : null;
                   const cellStatus = attributionIncomplete ? 'incomplete' : revenueLabel;
