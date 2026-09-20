@@ -17,7 +17,7 @@ import re
 from datetime import date, timedelta, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Optional, Dict
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_current_active_user, get_db, require_permission
 from app.api.v1.facebook import _resolve_scoped_default_account
 from app.models import User, FacebookAdSet, normalize_account_id
-from app.services.redtrack_service import RedTrackService
+from app.services.redtrack_service import RedTrackService, today_in_rt_tz
 from app.services.everflow_service import CONVERSION_DATE_FIELDS, EVERFLOW_TZ_BY_ID, EverflowService
 
 logger = logging.getLogger(__name__)
@@ -37,6 +37,13 @@ _NON_NICHE_RE = re.compile(
 )
 
 BEST_TIMES_TIMEZONE_ID = 90
+BEST_TIMES_TZ = EVERFLOW_TZ_BY_ID[BEST_TIMES_TIMEZONE_ID]
+REDTRACK_TZ_VALID = True
+try:
+    REDTRACK_TZ = ZoneInfo(os.getenv('REDTRACK_TIMEZONE', 'America/Los_Angeles'))
+except Exception:
+    REDTRACK_TZ_VALID = False
+    REDTRACK_TZ = ZoneInfo('America/Los_Angeles')
 BEST_TIMES_DAYPARTS = (
     {"key": "overnight", "label": "12a–6a", "start": 0, "end": 6},
     {"key": "morning", "label": "6a–2p", "start": 6, "end": 14},
@@ -90,9 +97,17 @@ def _extract_niche(adset_name: str, campaign_name: str = "") -> str:
     return candidate(adset_name) or candidate(campaign_name) or "General"
 
 
-def _resolve_preset(preset: str, date_from: Optional[str], date_to: Optional[str]):
+def _resolve_preset(
+    preset: str,
+    date_from: Optional[str],
+    date_to: Optional[str],
+    calendar_timezone: ZoneInfo = REDTRACK_TZ,
+):
     """Return (date_from, date_to, day_filter, label)."""
-    today = date.today()
+    # Keep preset boundaries in the same advertiser/reporting timezone used by
+    # RedTrack timestamp bucketing.  The VPS clock may already be on the next
+    # UTC date while the account is still on the prior Pacific date.
+    today = datetime.now(tz=calendar_timezone).date()
     month_start = today.replace(day=1)
     if preset == "today":
         return str(today), str(today), "all", "Today"
@@ -532,7 +547,7 @@ def _parse_hour_value(value) -> Optional[int]:
     return hour if 0 <= hour <= 23 else None
 
 
-def _fetch_best_times_meta(ad_account_id: Optional[str], date_from: str, date_to: str) -> dict:
+def _fetch_best_times_meta(ad_account_id: Optional[str], date_from: str, date_to: str, day_filter: str = 'all') -> dict:
     """Fetch Meta spend/leads at day × hour × ad set grain."""
     from app.services.facebook_service import FacebookService
     from facebook_business.exceptions import FacebookRequestError
@@ -540,7 +555,7 @@ def _fetch_best_times_meta(ad_account_id: Optional[str], date_from: str, date_to
     svc = FacebookService()
     svc.initialize()
     fields = [
-        'adset_id', 'adset_name', 'campaign_name', 'date_start', 'spend', 'actions',
+    'adset_id', 'adset_name', 'campaign_name', 'date_start', 'spend', 'actions',
     ]
     params = {
         'time_range': {'since': date_from, 'until': date_to},
@@ -549,7 +564,20 @@ def _fetch_best_times_meta(ad_account_id: Optional[str], date_from: str, date_to
         'breakdowns': ['hourly_stats_aggregated_by_advertiser_time_zone'],
     }
     try:
-        results = svc._get_account(ad_account_id).get_insights(fields, params)
+        account = svc._get_account(ad_account_id)
+        account_timezone = account.api_get(fields=['timezone_name']).get('timezone_name')
+        if not account_timezone:
+            raise RuntimeError('Best Times could not verify the Meta ad account timezone.')
+        try:
+            if ZoneInfo(str(account_timezone)) != BEST_TIMES_TZ:
+                raise RuntimeError(
+                    f'Best Times requires a Pacific Meta ad account; this account reports {account_timezone}.'
+                )
+        except ZoneInfoNotFoundError as exc:
+            raise RuntimeError(
+                f'Best Times could not validate the Meta ad account timezone ({account_timezone}).'
+            ) from exc
+        results = account.get_insights(fields, params)
     except FacebookRequestError as exc:
         body = exc.body() if hasattr(exc, 'body') and callable(exc.body) else {}
         error = body.get('error', {}) if isinstance(body, dict) else {}
@@ -558,11 +586,18 @@ def _fetch_best_times_meta(ad_account_id: Optional[str], date_from: str, date_to
     lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
     rows = []
     adsets = {}
+    valid_dows = ({5, 6} if day_filter == 'weekend' else {0, 1, 2, 3, 4}) if day_filter != 'all' else None
     for row in results:
         fb_id = str(row.get('adset_id') or '').strip()
         date_value = str(row.get('date_start') or '')
         if not fb_id or not date_value:
             continue
+        if valid_dows is not None:
+            try:
+                if datetime.strptime(date_value, '%Y-%m-%d').weekday() not in valid_dows:
+                    continue
+            except ValueError:
+                continue
         hour = _parse_hour_value(row.get('hourly_stats_aggregated_by_advertiser_time_zone'))
         if hour is None:
             # Some SDK versions expose the breakdown under a slightly different
@@ -631,8 +666,16 @@ def _redtrack_datetime(row: dict, timezone: ZoneInfo) -> Optional[datetime]:
             parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
         except ValueError:
             continue
-        return parsed.astimezone(timezone) if parsed.tzinfo else parsed.replace(tzinfo=timezone)
+        return parsed.astimezone(timezone) if parsed.tzinfo else parsed.replace(tzinfo=REDTRACK_TZ).astimezone(timezone)
     return None
+
+
+def _day_filter_allows(day_of_week: int, day_filter: str) -> bool:
+    if day_filter == 'weekday':
+        return day_of_week < 5
+    if day_filter == 'weekend':
+        return day_of_week >= 5
+    return True
 
 
 def _redtrack_revenue(row: dict) -> Decimal:
@@ -660,14 +703,34 @@ def _redtrack_offer_matches(row: dict, allowed_offers: set[str]) -> bool:
     return True
 
 
+def _redtrack_adset_id(row: dict, known_adsets: set[str]) -> str:
+    """Return the RedTrack field value that actually matches a Meta ad set.
+
+    RedTrack exports can include both publisher-prefixed and plain sub fields.
+    Prefer the candidate that is present in the current Meta insight payload;
+    choosing the first populated field can discard valid rows when ``p_sub2``
+    is populated with a non-Meta value while ``sub2`` contains the ad-set ID.
+    """
+    candidates = []
+    for field in ('p_sub2', 'sub2', 'p_sub2_value', 'sub2_value'):
+        value = str(row.get(field) or '').strip()
+        if value and value not in candidates:
+            candidates.append(value)
+    for candidate in candidates:
+        if candidate in known_adsets:
+            return candidate
+    return candidates[0] if candidates else ''
+
+
 def _build_best_times(
     meta_payload: dict,
     conversions: list[dict],
     offer_names: Optional[set[str]],
     include_metadata: bool = False,
     redtrack_rows: Optional[list[dict]] = None,
+    day_filter: str = 'all',
 ):
-    tz = EVERFLOW_TZ_BY_ID[BEST_TIMES_TIMEZONE_ID]
+    tz = BEST_TIMES_TZ
     tracked = offer_names is not None and bool(offer_names)
     adsets = meta_payload['adsets']
     niche_by_adset = {
@@ -676,6 +739,8 @@ def _build_best_times(
     }
     aggregate: dict[tuple[str, int, int], dict] = {}
     for row in meta_payload['rows']:
+        if not _day_filter_allows(datetime.strptime(row['date'], '%Y-%m-%d').weekday(), day_filter):
+            continue
         niche = niche_by_adset.get(row['adset_id'], 'General')
         key = (niche, datetime.strptime(row['date'], '%Y-%m-%d').weekday(), row['hour'])
         cell = aggregate.setdefault(key, {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})
@@ -697,19 +762,30 @@ def _build_best_times(
         known_adsets = set(adsets)
         scoped_redtrack_rows = [
             row for row in redtrack_rows
-            if str(row.get('p_sub2') or row.get('sub2') or '').strip() in known_adsets
+            if _redtrack_adset_id(row, known_adsets) in known_adsets
         ]
+        # Raw RedTrack conversions are account-wide. Rows whose ad-set IDs are
+        # absent from this Meta account are intentionally out of scope, not
+        # missing revenue for the selected account.
         explicit_offer_rows = [
             row for row in scoped_redtrack_rows
             if any(row.get(field) not in (None, '') for field in ('offer_name', 'offer', 'offerName'))
         ]
         matching_redtrack_rows = [row for row in explicit_offer_rows if _redtrack_offer_matches(row, allowed)]
+        mismatched_redtrack_rows = [row for row in explicit_offer_rows if not _redtrack_offer_matches(row, allowed)]
+        unlabeled_redtrack_rows = [
+            row for row in scoped_redtrack_rows
+            if not any(row.get(field) not in (None, '') for field in ('offer_name', 'offer', 'offerName'))
+        ]
         offer_labels_mismatch = bool(explicit_offer_rows) and not matching_redtrack_rows
-        rows_for_attribution = [] if offer_labels_mismatch else (matching_redtrack_rows or scoped_redtrack_rows)
-        if matching_redtrack_rows and len(matching_redtrack_rows) < len(explicit_offer_rows):
-            dropped_count += len(explicit_offer_rows) - len(matching_redtrack_rows)
+        # Keep unlabeled rows when at least one labeled row matches. Only an
+        # explicit offer mismatch is evidence that a row belongs elsewhere.
+        rows_for_attribution = matching_redtrack_rows + unlabeled_redtrack_rows
+        if mismatched_redtrack_rows:
+            dropped_count += len(mismatched_redtrack_rows)
+            dropped_revenue += sum((_redtrack_revenue(row) for row in mismatched_redtrack_rows), Decimal('0'))
         for row in rows_for_attribution:
-            adset_id = str(row.get('p_sub2') or row.get('sub2') or '').strip()
+            adset_id = _redtrack_adset_id(row, known_adsets)
             when = _redtrack_datetime(row, tz)
             amount = _redtrack_revenue(row)
             if not adset_id or adset_id not in known_adsets:
@@ -723,13 +799,22 @@ def _build_best_times(
                 dropped_count += 1
                 dropped_revenue += amount
                 continue
+            if not _day_filter_allows(when.weekday(), day_filter):
+                continue
             niche = niche_by_adset.get(adset_id, 'General')
             key = (niche, when.weekday(), when.hour)
             redtrack_aggregate[key] = redtrack_aggregate.get(key, Decimal('0')) + amount
             redtrack_total += amount
 
         scoped_adsets = known_adsets
-        billing_rows = [row for row in conversions if EverflowService._offer_name(row).casefold() in allowed]
+        billing_rows = []
+        for row in conversions:
+            if EverflowService._offer_name(row).casefold() not in allowed:
+                continue
+            when = _conversion_datetime(row, tz)
+            if day_filter != 'all' and (when is None or not _day_filter_allows(when.weekday(), day_filter)):
+                continue
+            billing_rows.append(row)
         matched_billing_rows = [row for row in billing_rows if str(row.get('sub3') or '').strip() in scoped_adsets]
         billing_total = sum((Decimal(str(row.get('revenue') or 0)) for row in matched_billing_rows), Decimal('0'))
         unmatched_billing_rows = [row for row in billing_rows if row not in matched_billing_rows]
@@ -742,20 +827,23 @@ def _build_best_times(
                 aggregate.setdefault(key, {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})['revenue'] += amount * scale
             attribution_method = 'redtrack_attribution_everflow_billing_allocated'
             attribution_warning = 'Everflow billing revenue is allocated across RedTrack-attributed ad sets and hours; use this as a directional timing signal.'
-            if scoped_redtrack_rows and not matching_redtrack_rows:
+            if scoped_redtrack_rows and not matching_redtrack_rows and not unlabeled_redtrack_rows:
                 attribution_warning += ' RedTrack offer labels did not match the Everflow offer name, so direct Everflow ad-set attribution was used.'
-            elif matching_redtrack_rows and len(matching_redtrack_rows) < len(explicit_offer_rows):
-                attribution_warning += ' Some RedTrack rows had a different offer label and were excluded.'
+            elif mismatched_redtrack_rows:
+                attribution_warning += ' Some explicitly labeled RedTrack rows had a different offer label and were excluded; unlabeled rows were retained.'
             if dropped_count:
                 attribution_warning += f' {dropped_count} conversion rows were excluded from the allocation basis.'
             redtrack_usable = True
         else:
             attribution_warning = 'RedTrack returned no usable revenue rows; fell back to direct Everflow ad-set attribution.'
             attribution_method = 'everflow_adset_id_redtrack_unavailable'
-            dropped_count = len(redtrack_rows)
-            dropped_revenue = billing_total
+            # Direct Everflow matching below becomes the completeness test.
+            # RedTrack rows that cannot shape the timing distribution are not
+            # billable rows and must not be reported as unmatched revenue.
     if tracked and not redtrack_usable:
         allowed = {name.casefold() for name in offer_names}
+        attribution_method = 'everflow_adset_id_redtrack_unavailable'
+        attribution_warning = attribution_warning or 'RedTrack timing attribution was unavailable; showing direct Everflow ad-set matches without timing confidence.'
         dropped_count = 0
         dropped_revenue = Decimal('0')
         for row in conversions:
@@ -772,6 +860,8 @@ def _build_best_times(
                 # is visible rather than silently understating a niche's ROI.
                 dropped_count += 1
                 dropped_revenue += Decimal(str(row.get('revenue') or 0))
+                continue
+            if not _day_filter_allows(when.weekday(), day_filter):
                 continue
             key = (niche, when.weekday(), when.hour)
             aggregate.setdefault(key, {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})['revenue'] += Decimal(str(row.get('revenue') or 0))
@@ -812,7 +902,10 @@ def _build_best_times(
         'niches': output,
         'dropped_conversion_count': dropped_count if tracked else 0,
         'dropped_revenue': float(dropped_revenue.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)) if tracked else 0,
-        'attribution_complete': not tracked or dropped_count == 0,
+        # Direct Everflow fallback can reconcile billing by ad set, but it
+        # cannot identify Meta delivery hours. Do not present that fallback as
+        # timing-complete even when every billing row matches.
+        'attribution_complete': not tracked or (redtrack_usable and dropped_count == 0),
         'attribution_allocated': attribution_method.endswith('_allocated'),
         'attribution_method': attribution_method,
         'attribution_warning': attribution_warning,
@@ -903,12 +996,14 @@ def best_times(
     niche: Optional[str] = Query(None),
     current_user: User = Depends(require_permission("pnl:read")),
 ):
-    """Return true-revenue ROI by niche, weekday, and advertiser-local hour."""
+    """Return exact or directional revenue timing by niche and advertiser-local hour."""
     ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
-    resolved_from, resolved_to, _day_filter, preset_label = _resolve_preset(preset, date_from, date_to)
+    resolved_from, resolved_to, _day_filter, preset_label = _resolve_preset(
+        preset, date_from, date_to, calendar_timezone=BEST_TIMES_TZ
+    )
     offer_names = _everflow_offers_for_account(ad_account_id)
     try:
-        meta_payload = _fetch_best_times_meta(ad_account_id, resolved_from, resolved_to)
+        meta_payload = _fetch_best_times_meta(ad_account_id, resolved_from, resolved_to, _day_filter)
         conversions = []
         redtrack_rows = []
         redtrack_warning = None
@@ -920,13 +1015,16 @@ def best_times(
             )
             redtrack = RedTrackService()
             if redtrack.is_configured():
-                try:
-                    redtrack_rows = redtrack.get_raw_conversions(resolved_from, resolved_to)
-                    if not redtrack_rows:
-                        redtrack_warning = 'RedTrack returned no rows; showing direct Everflow ad-set matches instead.'
-                except Exception as exc:
-                    logger.warning("Best Times RedTrack attribution unavailable; using Everflow adset IDs: %s", exc)
-                    redtrack_warning = 'RedTrack attribution was unavailable; showing direct Everflow ad-set matches instead.'
+                if not REDTRACK_TZ_VALID or REDTRACK_TZ != BEST_TIMES_TZ:
+                    redtrack_warning = 'RedTrack timezone does not match the required Pacific Best Times timezone; timing recommendations are unavailable until REDTRACK_TIMEZONE is corrected.'
+                else:
+                    try:
+                        redtrack_rows = redtrack.get_raw_conversions(resolved_from, resolved_to)
+                        if not redtrack_rows:
+                            redtrack_warning = 'RedTrack returned no rows; showing direct Everflow ad-set matches instead.'
+                    except Exception as exc:
+                        logger.warning("Best Times RedTrack attribution unavailable; using Everflow adset IDs: %s", exc)
+                        redtrack_warning = 'RedTrack attribution was unavailable; showing direct Everflow ad-set matches instead.'
             else:
                 redtrack_warning = 'RedTrack is not configured for this environment; showing direct Everflow ad-set matches instead.'
         result = _build_best_times(
@@ -935,6 +1033,7 @@ def best_times(
             offer_names,
             include_metadata=True,
             redtrack_rows=redtrack_rows,
+            day_filter=_day_filter,
         )
         if redtrack_warning:
             existing_warning = result.get('attribution_warning')

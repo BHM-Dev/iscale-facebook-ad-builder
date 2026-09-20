@@ -24,18 +24,20 @@ BASE_URL = "https://api.redtrack.io"
 
 # RedTrack reports dates in the account's configured timezone.
 # Set REDTRACK_TIMEZONE on the VPS to match what's set in RedTrack → Settings → General.
-# Default is UTC; Joel's RedTrack account may be set to America/New_York or similar.
-_RT_TZ_NAME = os.getenv("REDTRACK_TIMEZONE", "UTC")
+# Default is Pacific; override with REDTRACK_TIMEZONE if the account differs.
+_RT_TZ_NAME = os.getenv("REDTRACK_TIMEZONE", "America/Los_Angeles")
 # Whether the env var was actually set, captured in the SAME import-time snapshot
 # as the two names below. /redtrack/status reports all three together; reading the
 # env live there instead would let "configured: true" sit next to a resolved value
 # from before the var was added, which reads as a contradiction.
 _RT_TZ_FROM_ENV = bool(os.getenv("REDTRACK_TIMEZONE"))
+_RT_TZ_VALID = True
 try:
     _RT_TZ = ZoneInfo(_RT_TZ_NAME)
 except ZoneInfoNotFoundError:
-    logger.warning("REDTRACK_TIMEZONE '%s' not recognised — falling back to UTC", _RT_TZ_NAME)
-    _RT_TZ = ZoneInfo("UTC")
+    _RT_TZ_VALID = False
+    logger.warning("REDTRACK_TIMEZONE '%s' not recognised — falling back to America/Los_Angeles", _RT_TZ_NAME)
+    _RT_TZ = ZoneInfo("America/Los_Angeles")
 
 
 def today_in_rt_tz() -> date:

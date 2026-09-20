@@ -71,8 +71,9 @@ def get_status(current_user=Depends(get_current_user)):
     """Check whether REDTRACK_API_KEY is configured, and which timezone we resolve dates in.
 
     The timezone is reported because it silently decides what "today",
-    "yesterday" and every month boundary mean. REDTRACK_TIMEZONE defaults to UTC
-    when unset, and RedTrack's own account is Pacific — a 7-hour skew that shows
+    "yesterday" and every month boundary mean. REDTRACK_TIMEZONE defaults to
+    America/Los_Angeles when unset, matching RedTrack's account timezone. A
+    mismatch shows
     up as "the stats for yesterday look odd" rather than as an error. There was
     no way to see the configured value from outside the VPS, so a mismatch could
     sit there indefinitely. `timezone_configured: false` means it is defaulting.
