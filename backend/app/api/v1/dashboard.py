@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Brand, Product, GeneratedAd, WinningAd, FacebookCampaign
 from app.services.facebook_service import FacebookService
+from datetime import date, timedelta
 from app.core.deps import get_current_active_user
 from app.api.v1.facebook import _resolve_scoped_default_account
 
@@ -116,3 +117,50 @@ def get_niche_summary(
         return sorted(summary, key=lambda item: item["total_spend"], reverse=True)
     except Exception:
         return []
+
+
+@router.get('/trend')
+def get_dashboard_trend(
+    ad_account_id: str | None = Query(None),
+    date_preset: str = Query('last_7d'),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
+    current_user=Depends(get_current_active_user),
+):
+    """Return a truthful daily Meta trend plus a comparable prior-period baseline."""
+    ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
+    if date_from and date_to:
+        start, end = date.fromisoformat(date_from), date.fromisoformat(date_to)
+    else:
+        from app.services.redtrack_service import RedTrackService
+        start_s, end_s = RedTrackService.preset_to_dates(date_preset)
+        start, end = date.fromisoformat(start_s), date.fromisoformat(end_s)
+    days = (end - start).days + 1
+    previous_start = start - timedelta(days=days)
+    previous_end = start - timedelta(days=1)
+    try:
+        svc = FacebookService()
+        combined_daily = svc.get_account_daily_insights(ad_account_id, str(previous_start), str(end))
+        by_date = {row['date']: row for row in combined_daily}
+        def fill_dates(window_start, window_end):
+            rows = []
+            cursor = window_start
+            while cursor <= window_end:
+                key = str(cursor)
+                rows.append(by_date.get(key, {'date': key, 'spend': None, 'leads': None, 'cpl': None}))
+                cursor += timedelta(days=1)
+            return rows
+        current_daily = fill_dates(start, end)
+        previous_daily = fill_dates(previous_start, previous_end)
+        def totals(rows):
+            spend = sum(row['spend'] or 0 for row in rows)
+            leads = sum(row['leads'] or 0 for row in rows)
+            return {'spend': round(spend, 2), 'leads': leads, 'cpl': round(spend / leads, 2) if leads else None}
+        return {
+            'date_from': str(start), 'date_to': str(end),
+            'previous_date_from': str(previous_start), 'previous_date_to': str(previous_end),
+            'daily': current_daily, 'totals': totals(current_daily), 'previous_totals': totals(previous_daily),
+            'source': 'Meta Insights',
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f'Daily trend unavailable: {exc}')

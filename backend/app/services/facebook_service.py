@@ -1852,6 +1852,50 @@ class FacebookService:
 
         return out
 
+    def get_account_daily_insights(
+        self,
+        ad_account_id: str = None,
+        date_from: str = None,
+        date_to: str = None,
+    ) -> list[dict]:
+        """Fetch account-level Meta spend and lead totals one day at a time."""
+        import logging
+        logger = logging.getLogger(__name__)
+        account = self._get_account(ad_account_id)
+        fields = ['date_start', 'spend', 'actions']
+        params = {
+            'time_range': {'since': date_from, 'until': date_to},
+            'time_increment': 1,
+            'level': 'account',
+        }
+        try:
+            # Keep this call synchronous. A worker thread cannot be safely
+            # killed if the SDK hangs, so wrapping it in a timeout executor
+            # would leak one thread per stalled Meta request.
+            results = account.get_insights(fields, params)
+        except RuntimeError:
+            raise
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            msg = err.get('message') or str(e)
+            logger.error('Meta daily insights error: %s', msg)
+            raise RuntimeError(f'Facebook API: {msg}') from e
+
+        lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
+        daily = []
+        for row in results:
+            leads = sum(int(float(action.get('value', 0) or 0)) for action in (row.get('actions') or [])
+                        if action.get('action_type') in lead_types)
+            spend = round(float(row.get('spend', 0) or 0), 2)
+            daily.append({
+                'date': str(row.get('date_start') or ''),
+                'spend': spend,
+                'leads': leads,
+                'cpl': round(spend / leads, 2) if leads else None,
+            })
+        return sorted(daily, key=lambda item: item['date'])
+
     def get_account_ad_status_bulk(self, ad_account_id: str = None) -> dict:
         """Return live child-ad delivery counts keyed by Meta ad set ID."""
         import logging

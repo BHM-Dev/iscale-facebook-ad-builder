@@ -17,16 +17,68 @@ const PRESETS = [
   { value: 'last_30d', label: 'Last 30 Days' },
 ];
 
-function KpiCard({ label, value, sub, highlight, warn }) {
+function KpiCard({ label, value, sub, delta, deltaGoodWhen = 'up', highlight, warn }) {
+  const deltaClass = delta == null ? '' : deltaGoodWhen === 'down'
+    ? (delta < 0 ? 'text-green-600' : delta > 0 ? 'text-red-600' : 'text-gray-400')
+    : (delta > 0 ? 'text-green-600' : delta < 0 ? 'text-red-600' : 'text-gray-400');
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
       <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">{label}</div>
       <div className={`text-2xl font-bold ${highlight ? 'text-red-600' : warn ? 'text-orange-500' : 'text-gray-900'}`}>
         {value}
       </div>
-      {sub && <div className="text-xs text-gray-400 mt-0.5">{sub}</div>}
+      <div className="flex items-center gap-2 mt-0.5">
+        {sub && <div className="text-xs text-gray-400">{sub}</div>}
+        {delta != null && <div className={`text-[11px] font-semibold ${deltaClass}`} title="Compared with the previous equal-length period">{delta > 0 ? '↑' : delta < 0 ? '↓' : '→'} {Math.abs(delta).toFixed(0)}%</div>}
+      </div>
     </div>
   );
+}
+
+function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
+  const rows = trend?.daily || [];
+  const metricConfig = {
+    spend: { label: 'Spend', color: '#4f46e5', format: v => `$${Math.round(v).toLocaleString()}` },
+    leads: { label: 'Leads', color: '#059669', format: v => Math.round(v).toLocaleString() },
+    cpl: { label: 'CPL', color: '#ea580c', format: v => `$${v.toFixed(2)}` },
+  }[metric];
+  const values = rows.map(row => row[metric]).filter(value => value != null);
+  const max = Math.max(...values, 1);
+  const width = 720, height = 190, padX = 34, padY = 22;
+  const points = rows.map((row, index) => {
+    const x = padX + (rows.length <= 1 ? 0 : index * (width - padX * 2) / (rows.length - 1));
+    const value = row[metric];
+    const y = value == null ? null : height - padY - (value / max) * (height - padY * 2);
+    return { ...row, x, y };
+  });
+  const path = points.reduce((segments, point) => {
+    if (point.y == null) return segments.concat([[]]);
+    if (!segments.length) segments.push([]);
+    segments[segments.length - 1].push(point);
+    return segments;
+  }, [[]]).filter(segment => segment.length > 0).map(segment => segment.map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' '));
+  return <div className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-hidden">
+    <div className="px-5 py-3 border-b border-indigo-100 bg-indigo-50/40 flex items-center justify-between gap-3">
+      <div><div className="text-sm font-semibold text-gray-900">Daily trend</div><div className="text-[11px] text-gray-500">Meta Insights · {rangeLabel}</div></div>
+      <div className="flex gap-1">{Object.entries(metricConfig ? { spend: 'Spend', leads: 'Leads', cpl: 'CPL' } : {}).map(([key, label]) => <button key={key} type="button" onClick={() => setMetric(key)} className={`text-[11px] px-2 py-1 rounded ${metric === key ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}>{label}</button>)}</div>
+    </div>
+    {loading ? <div className="h-[238px] flex items-center justify-center text-sm text-gray-400">Loading trend...</div>
+      : !rows.length ? <div className="h-[238px] flex items-center justify-center text-sm text-gray-400">No daily Meta data for this range.</div>
+      : <div className="px-4 pt-4 pb-3">
+        <div className="relative h-[190px] w-full">
+          <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="w-full h-full overflow-visible" role="img" aria-label={`${metricConfig.label} daily trend`}>
+            <line x1={padX} y1={height - padY} x2={width - padX} y2={height - padY} stroke="#e5e7eb" />
+            <line x1={padX} y1={padY} x2={padX} y2={height - padY} stroke="#e5e7eb" />
+            {path.map((segment, index) => <path key={index} d={segment} fill="none" stroke={metricConfig.color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />)}
+            {points.filter(point => point.y != null).map(point => <circle key={point.date} cx={point.x} cy={point.y} r="4" fill="white" stroke={metricConfig.color} strokeWidth="2"><title>{point.date}: {metricConfig.format(point[metric])}</title></circle>)}
+          </svg>
+          <div className="absolute left-1 top-0 text-[10px] text-gray-400">{metricConfig.format(max)}</div>
+          <div className="absolute left-1 bottom-0 text-[10px] text-gray-400">0</div>
+        </div>
+        <div className="flex justify-between px-5 text-[10px] text-gray-400"><span>{rows[0]?.date}</span><span>{rows[rows.length - 1]?.date}</span></div>
+        <div className="mt-2 text-[11px] text-gray-500">Today may be partial. Missing days are left blank rather than filled with estimates.</div>
+      </div>}
+  </div>;
 }
 
 // Real conversion events, in the order we'd trust as "the" score for an
@@ -492,6 +544,11 @@ export default function Dashboard() {
   const [adStatusByAdset, setAdStatusByAdset] = useState({});
   const [adStatusError, setAdStatusError] = useState(null);
   const [bulkInsights, setBulkInsights] = useState({});
+  const [trend, setTrend] = useState(null);
+  const [trendLoading, setTrendLoading] = useState(true);
+  const [trendError, setTrendError] = useState(null);
+  const [trendMetric, setTrendMetric] = useState('spend');
+  const loadGeneration = useRef(0);
   const [nicheSummary, setNicheSummary] = useState([]);
   const [rules, setRules] = useState([]);
 
@@ -522,6 +579,8 @@ export default function Dashboard() {
   };
 
   const load = useCallback(async (range) => {
+    const generation = ++loadGeneration.current;
+    const isCurrent = () => generation === loadGeneration.current;
     const { preset: p, dateFrom: df, dateTo: dt } = range || { preset: 'today', dateFrom: null, dateTo: null };
     if (activeAccountLoading) return;
     if (!activeAccountId && adAccounts.length > 0) return;
@@ -530,6 +589,9 @@ export default function Dashboard() {
     setAdStatusError(null);
     setBulkInsights({}); // clear stale data so KPIs show — while loading
     setNicheSummary([]);
+    setTrend(null);
+    setTrendLoading(true);
+    setTrendError(null);
     setAdStatusByAdset({});
     try {
       const insightsParams = new URLSearchParams();
@@ -547,13 +609,15 @@ export default function Dashboard() {
         return authFetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(tid));
       };
 
-      const [adsetsRes, insightsRes, nicheRes, rulesRes, adStatusRes] = await Promise.all([
+      const [adsetsRes, insightsRes, nicheRes, rulesRes, adStatusRes, trendRes] = await Promise.all([
         timedFetch(`${API_URL}/facebook/adsets/saved?${insightsParams}`, 10000),
         timedFetch(`${API_URL}/auto-pause/insights-bulk?${insightsParams}`, 25000),
         timedFetch(`${API_URL}/dashboard/niche-summary?${insightsParams}`, 25000),
         timedFetch(`${API_URL}/auto-pause/rules`, 10000),
         timedFetch(`${API_URL}/facebook/ads/status-bulk?${activeAccountId ? `ad_account_id=${encodeURIComponent(activeAccountId)}` : ''}`, 15000).catch(() => null),
+        timedFetch(`${API_URL}/dashboard/trend?${insightsParams}`, 25000).catch(() => null),
       ]);
+      if (!isCurrent()) return;
       if (adsetsRes.ok)   setAdsets(await adsetsRes.json());
       if (insightsRes.ok) {
         setBulkInsights(await insightsRes.json());
@@ -576,10 +640,15 @@ export default function Dashboard() {
       } else {
         setAdStatusError('Live ad delivery status is unavailable — scaling is disabled until Refresh succeeds.');
       }
+      if (trendRes?.ok) setTrend(await trendRes.json());
+      else setTrendError('Daily trend is temporarily unavailable.');
     } catch (e) {
       if (e.name !== 'AbortError') setInsightsError('Request timed out — check your connection and try again');
     } finally {
-      setLoading(false);
+      if (isCurrent()) {
+        setLoading(false);
+        setTrendLoading(false);
+      }
     }
   }, [activeAccountId, activeAccountLoading, adAccounts.length, showError]);
 
@@ -835,14 +904,24 @@ export default function Dashboard() {
     .map(row => row.avg_cpl)
     .sort((a, b) => a - b);
 
+  const percentDelta = (current, previous) => {
+    if (current == null || previous == null || previous === 0) return null;
+    return ((current - previous) / Math.abs(previous)) * 100;
+  };
+  const previousTotals = trend?.previous_totals || {};
+  const spendDelta = percentDelta(totalSpend, previousTotals.spend);
+  const leadsDelta = percentDelta(totalLeads, previousTotals.leads);
+  const cplDelta = percentDelta(blendedCpl, previousTotals.cpl);
+  const latestRtSync = rows.map(row => row.redtrack?.synced_at).filter(Boolean).sort().at(-1);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const rangeIncludesToday = activeRange.dateTo
+    ? activeRange.dateTo >= todayIso
+    : ['today', 'last_7d', 'last_14d', 'last_30d'].includes(activeRange.preset);
+
   function formatMoney(value) {
     return value != null
       ? `$${Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       : '—';
-  }
-
-  function formatPercent(value) {
-    return value != null ? `${(Number(value) * 100).toFixed(1)}%` : '—';
   }
 
   function cplClass(avgCpl) {
@@ -911,6 +990,7 @@ export default function Dashboard() {
 
       if (issues.length === 0) return;
 
+      const statusUnknown = !!adStatusError && normalizeStatus(a.status) === 'ACTIVE';
       attentionMap.set(a.fb_adset_id, {
         id: `adset-${a.id}`,
         adset: a,
@@ -921,6 +1001,7 @@ export default function Dashboard() {
         fb_adset_id: a.fb_adset_id,
         fb_campaign_id: a.fb_campaign_id || '',
         isActive: isActiveDelivery(a),
+        statusUnknown,
       });
     });
 
@@ -1115,7 +1196,7 @@ export default function Dashboard() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-gray-500 text-sm mt-0.5">{rangeLabel} · {activeCount} active ad sets</p>
+          <p className="text-gray-500 text-sm mt-0.5">{rangeLabel} · {activeCount} active ad sets · Meta range data{latestRtSync ? ` · RedTrack synced ${new Date(latestRtSync).toLocaleString()}` : ''}</p>
         </div>
         <div className="flex items-center gap-2">
           <DateFilter
@@ -1167,16 +1248,20 @@ export default function Dashboard() {
           label="Total Spend"
           value={loading ? '—' : `$${totalSpend.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`}
           sub="Meta · ad spend"
+          delta={rangeIncludesToday ? null : spendDelta}
         />
         <KpiCard
           label="Total Leads"
           value={loading ? '—' : totalLeads.toLocaleString()}
           sub="Meta attribution"
+          delta={rangeIncludesToday ? null : leadsDelta}
         />
         <KpiCard
           label="Blended CPL"
           value={loading ? '—' : blendedCpl != null ? `$${blendedCpl.toFixed(2)}` : '—'}
           sub="spend ÷ leads"
+          delta={rangeIncludesToday ? null : cplDelta}
+          deltaGoodWhen="down"
           highlight={blendedCpl != null && blendedCpl > 60}
           warn={blendedCpl != null && blendedCpl > 40 && blendedCpl <= 60}
         />
@@ -1194,6 +1279,9 @@ export default function Dashboard() {
         />
       </div>
 
+      <TrendChart trend={trend} loading={trendLoading} metric={trendMetric} setMetric={setTrendMetric} rangeLabel={rangeLabel} />
+      {trendError && !loading && <div className="-mt-6 text-[11px] text-amber-700">{trendError} The KPI cards and operational tables are still available.</div>}
+
       <div className="flex flex-col gap-4">
         <div className="grid grid-cols-1 xl:grid-cols-7 gap-4">
           <div className="xl:col-span-4 bg-white rounded-xl border border-orange-100 border-l-4 border-l-orange-500 shadow-sm overflow-hidden">
@@ -1202,7 +1290,7 @@ export default function Dashboard() {
                 <ChevronDown size={15} className={`text-orange-600 transition-transform ${collapsedSections.needsAttention ? '-rotate-90' : ''}`} />
                 <AlertTriangle size={15} className="text-orange-600" />
                 <span>Needs Attention</span>
-                {attentionList.length > 0 && <span className="text-xs text-orange-600 font-normal">{attentionList.length} item{attentionList.length === 1 ? '' : 's'}</span>}
+                {attentionList.length > 0 && <span className="text-xs text-orange-600 font-normal">{attentionList.filter(item => item.isActive).length} active · {attentionList.filter(item => item.statusUnknown).length} status unknown · {attentionList.filter(item => !item.isActive && !item.statusUnknown).length} historical</span>}
               </button>
               <Link to={perfLink('attention')} className="text-xs text-orange-700 hover:underline flex items-center gap-1 flex-shrink-0">
                 View all <ArrowRight size={11} />
@@ -1222,12 +1310,12 @@ export default function Dashboard() {
                       const isPausing = item.fb_adset_id && pausingAdsets.has(item.fb_adset_id);
                       const ins = bulkInsights[item.fb_adset_id] || {};
                       return <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-5 py-3"><Link to={perfLink('attention', item.fb_adset_id)} className="block"><div className="flex items-center gap-2"><div className={`w-2 h-2 rounded-full flex-shrink-0 ${item.severity === 'red' ? 'bg-red-500' : 'bg-orange-400'}`} /><div className="font-medium text-gray-900 truncate max-w-[220px]" title={item.label}>{item.label}</div></div>{item.campaignName && <div className="text-xs text-gray-400 truncate max-w-[220px] pl-4">{item.campaignName}</div>}{item.adset && !item.isActive && <div className="text-[10px] text-gray-500 uppercase tracking-wide pl-4 mt-1">Paused · historical issue</div>}</Link></td>
+                        <td className="px-5 py-3"><Link to={perfLink('attention', item.fb_adset_id)} className="block"><div className="flex items-center gap-2"><div className={`w-2 h-2 rounded-full flex-shrink-0 ${item.severity === 'red' ? 'bg-red-500' : 'bg-orange-400'}`} /><div className="font-medium text-gray-900 truncate max-w-[220px]" title={item.label}>{item.label}</div></div>{item.campaignName && <div className="text-xs text-gray-400 truncate max-w-[220px] pl-4">{item.campaignName}</div>}{item.statusUnknown ? <div className="text-[10px] text-amber-600 uppercase tracking-wide pl-4 mt-1">Status unavailable</div> : item.adset && !item.isActive && <div className="text-[10px] text-gray-500 uppercase tracking-wide pl-4 mt-1">Paused · historical issue</div>}</Link></td>
                         <td className="px-3 py-3"><div className="flex flex-col gap-0.5">{item.reasons.slice(0, 2).map((r, i) => <span key={i} className={`text-xs ${r.severity === 'red' ? 'text-red-600' : 'text-orange-500'}`}>{r.text}</span>)}{item.reasons.length > 2 && <span className="text-[11px] text-gray-400">+{item.reasons.length - 2} more in Performance</span>}</div></td>
                         <td className="hidden sm:table-cell px-3 py-3 text-right font-medium text-gray-800">{ins.spend != null ? `$${ins.spend.toFixed(0)}` : '—'}</td>
                         <td className="hidden sm:table-cell px-3 py-3 text-right text-red-600 font-semibold">{ins.cpl != null ? `$${ins.cpl.toFixed(2)}` : '—'}</td>
                         <td className="hidden sm:table-cell px-3 py-3">{item.adset && <BudgetButton adset={item.adset} />}</td>
-                        <td className="px-3 py-3">{item.fb_adset_id && item.isActive ? <button onClick={() => pauseAdset(item.fb_adset_id)} disabled={isPausing} className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-gray-500 border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-40">{isPausing ? <RefreshCw size={11} className="animate-spin" /> : <PauseCircle size={11} />} Pause</button> : item.fb_adset_id ? <Link to={perfLink('attention', item.fb_adset_id)} className="text-xs font-medium text-gray-500 hover:text-orange-600">Review</Link> : null}</td>
+                        <td className="px-3 py-3">{item.fb_adset_id && item.isActive ? <button onClick={() => pauseAdset(item.fb_adset_id)} disabled={isPausing} className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-gray-500 border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-40">{isPausing ? <RefreshCw size={11} className="animate-spin" /> : <PauseCircle size={11} />} Pause</button> : item.fb_adset_id ? <Link to={perfLink('attention', item.fb_adset_id)} className="text-xs font-medium text-gray-500 hover:text-orange-600">{item.statusUnknown ? 'Status check' : 'Review'}</Link> : null}</td>
                       </tr>;
                     })}
                   </tbody>
