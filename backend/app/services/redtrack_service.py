@@ -261,9 +261,9 @@ class RedTrackService:
                 if not isinstance(page_rows, list):
                     raise RuntimeError(f"Unrecognised RedTrack conversions response shape: {type(data).__name__}")
                 rows.extend(page_rows)
-                if total is None and len(page_rows) >= per:
-                    raise RuntimeError(f"RedTrack returned a full {per}-row page without a total; attribution is incomplete")
-                if total is None or len(rows) >= total or len(page_rows) < per:
+                if total is None:
+                    raise RuntimeError("RedTrack conversions response omitted pagination total; attribution is incomplete")
+                if len(rows) >= total or len(page_rows) < per:
                     break
                 page += 1
                 if page > 100:

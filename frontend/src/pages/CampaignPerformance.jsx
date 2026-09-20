@@ -260,9 +260,12 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
       if (next && loadedPresetRef.current !== preset) {
         loadIntelligence(preset, customFrom, customTo);
       }
+      if (next && intelligenceView === 'best-times' && !bestTimesData) {
+        loadBestTimes(preset, customFrom, customTo);
+      }
       return next;
     });
-  }, [preset, customFrom, customTo, loadIntelligence]);
+  }, [preset, customFrom, customTo, intelligenceView, bestTimesData, loadIntelligence, loadBestTimes]);
 
   useEffect(() => {
     if (!initialOpen) return;
@@ -460,7 +463,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
 
               {intelligenceView === 'best-times' && (
                 <div className="mb-5 rounded-xl border border-violet-100 bg-white p-3">
-                  <div className="flex items-center justify-between mb-3"><div><h3 className="text-sm font-semibold text-gray-900">Best Times by Niche</h3><p className="text-[11px] text-gray-500 mt-0.5">{bestTimesData?.attribution_complete === false ? 'Directional only · attribution incomplete' : bestTimesData?.attribution_method === 'everflow_adset_id_redtrack_unavailable' ? 'Exact Everflow ad-set attribution' : bestTimesData?.attribution_allocated ? 'Directional revenue allocation · RedTrack shape + Everflow billing' : bestTimesData?.niches?.some(item => item.revenue_source === 'not_tracked') ? 'Revenue unavailable · no Everflow offer mapping' : 'Exact Everflow ad-set attribution'} · {bestTimesData?.timezone || 'Pacific time'}</p></div><button type="button" onClick={() => loadBestTimes(preset, customFrom, customTo)} className="text-xs text-violet-600 hover:text-violet-800">Refresh</button></div>
+                  <div className="flex items-center justify-between mb-3"><div><h3 className="text-sm font-semibold text-gray-900">Best Times by Niche</h3><p className="text-[11px] text-gray-500 mt-0.5">{!bestTimesData ? 'Loading attribution…' : bestTimesData.attribution_complete === false ? 'Attribution incomplete · partial revenue shown · no timing recommendation' : bestTimesData.attribution_method === 'everflow_adset_id_redtrack_unavailable' ? 'Exact Everflow ad-set attribution' : bestTimesData.attribution_allocated ? 'Directional revenue allocation · RedTrack shape + Everflow billing' : bestTimesData.niches?.some(item => item.revenue_source === 'not_tracked') ? 'Revenue unavailable · no Everflow offer mapping' : 'Exact Everflow ad-set attribution'} · {bestTimesData?.timezone || '—'}</p></div><button type="button" onClick={() => loadBestTimes(preset, customFrom, customTo)} className="text-xs text-violet-600 hover:text-violet-800">Refresh</button></div>
                   {!bestTimesLoading && !bestTimesError && bestTimesData && (bestTimesData.attribution_warning || !bestTimesData.attribution_complete) && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><span className="font-semibold">Attribution note.</span> {bestTimesData.attribution_warning || `${bestTimesData.dropped_conversion_count} conversion${bestTimesData.dropped_conversion_count === 1 ? '' : 's'} totaling ${formatMoney(bestTimesData.dropped_revenue)} could not be assigned to a Meta ad set in this window. Treat the ROI signals as directional.`} {!bestTimesData.attribution_complete && <span className="block mt-1 font-medium">Daypart ranking is unavailable until attribution is complete.</span>}</div>}
                   {bestTimesLoading && <div className="h-48 rounded-lg bg-gray-50 animate-pulse" />}
                   {!bestTimesLoading && bestTimesError && <div className="text-sm text-red-600 py-6 text-center">{bestTimesError}</div>}
