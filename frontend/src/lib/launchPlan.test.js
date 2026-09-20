@@ -18,7 +18,12 @@ describe('countCreativeVariations', () => {
         expect(countCreativeVariations({ creatives: [{ id: 'a' }], headlines: [''], bodies: ['Body'] }).total).toBe(0);
     });
 
-    it('keeps whitespace overrides as one invalid row, matching Review', () => {
-        expect(countCreativeVariations({ creatives: [{ headline: '   ', body: 'Body' }], headlines: ['H1', 'H2'], bodies: ['B1', 'B2'] })).toMatchObject({ total: 1, headlines: 1, bodies: 1 });
+    it('falls back to the shared headline pool for a whitespace-only override, matching Review', () => {
+        // Review's missingCopy filter falls back to creativeData.headlines[0]
+        // for a non-drive row whose own headline doesn't survive .trim() — it
+        // is NOT treated as a satisfied 1-count override, so the count must
+        // multiply across the full shared pool just like a row with no
+        // override at all.
+        expect(countCreativeVariations({ creatives: [{ headline: '   ', body: 'Body' }], headlines: ['H1', 'H2'], bodies: ['B1', 'B2'] })).toMatchObject({ total: 2, headlines: 2, bodies: 1 });
     });
 });

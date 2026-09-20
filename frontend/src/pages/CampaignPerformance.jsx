@@ -129,7 +129,8 @@ function BestTimesGrid({ data }) {
                 <th className="px-3 py-2 text-left font-semibold text-gray-700">{day}</th>
                 {dayparts.map(part => {
                   const cell = aggregateDaypart(dayIndex, part);
-                  return <td key={part.key} className="px-1.5 py-1.5"><div className={`rounded-lg border px-2 py-2 text-center ${untracked ? 'bg-amber-50 text-amber-700 border-amber-200' : bestTimesCellClass(cell)}`} title={`${cell.spend ? `$${cell.spend.toFixed(2)} spend · ${cell.leads} leads` : 'No spend'}${cell.revenue != null ? ` · $${cell.revenue.toFixed(2)} revenue` : ''}`}><div className="font-semibold">{cell.roi != null ? `${cell.roi >= 0 ? '+' : ''}${Math.round(cell.roi * 100)}%` : '—'}</div><div className="text-[10px] opacity-75">{cell.spend ? `$${Math.round(cell.spend)} spend` : cell.revenue != null ? `$${Math.round(cell.revenue)} revenue, no spend` : untracked ? 'untracked' : 'insufficient'}</div></div></td>;
+                  const cellTone = untracked || attributionIncomplete ? 'bg-amber-50 text-amber-700 border-amber-200' : bestTimesCellClass(cell);
+                  return <td key={part.key} className="px-1.5 py-1.5"><div className={`rounded-lg border px-2 py-2 text-center ${cellTone}`} title={`${cell.spend ? `$${cell.spend.toFixed(2)} spend · ${cell.leads} leads` : 'No spend'}${cell.revenue != null ? ` · $${cell.revenue.toFixed(2)} revenue` : ''}`}><div className="font-semibold">{attributionIncomplete ? '—' : cell.roi != null ? `${cell.roi >= 0 ? '+' : ''}${Math.round(cell.roi * 100)}%` : '—'}</div><div className="text-[10px] opacity-75">{cell.spend ? `$${Math.round(cell.spend)} spend` : cell.revenue != null ? `$${Math.round(cell.revenue)} revenue, no spend` : untracked ? 'untracked' : attributionIncomplete ? 'directional only' : 'insufficient'}</div></div></td>;
                 })}
               </tr>
             ))}

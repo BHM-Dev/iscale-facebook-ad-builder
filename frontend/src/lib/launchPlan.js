@@ -7,10 +7,14 @@ export function countCreativeVariations(creativeData = {}) {
     const creatives = Array.isArray(creativeData.creatives) ? creativeData.creatives : [];
     const headlines = (creativeData.headlines || []).filter(value => value?.trim()).length;
     const bodies = (creativeData.bodies || []).filter(value => value?.trim()).length;
-    // Match Review's manifest builder: a truthy per-creative value is an
-    // override, even if it is whitespace. Review will flag that row as missing
-    // copy; the counter must still describe one row, not silently expand it
-    // across the shared combinations.
+    // A creative "has per-creative copy" (raw truthiness, matching the
+    // original inline implementation) only decides whether we're in
+    // per-creative mode at all. Per-creative VALIDITY, below, always requires
+    // `.trim()` — this must match Review's own missingCopy filter exactly
+    // (AdCreativeStep.jsx): a non-drive row's own whitespace-only override
+    // is not valid copy, so it falls back to the shared headlines/bodies
+    // pool just like a row with no override at all, rather than counting as
+    // one (invalid) override.
     const hasPerCreativeCopy = creatives.some(creative => (
         creative?.source === 'drive' || creative?.headline || creative?.body
     ));
@@ -23,8 +27,8 @@ export function countCreativeVariations(creativeData = {}) {
     let assignedHeadlineCount = 0;
     let assignedBodyCount = 0;
     creatives.forEach(creative => {
-        const headlineCount = creative?.source === 'drive' || creative?.headline ? 1 : headlines;
-        const bodyCount = creative?.source === 'drive' || creative?.body ? 1 : bodies;
+        const headlineCount = creative?.source === 'drive' || creative?.headline?.trim() ? 1 : headlines;
+        const bodyCount = creative?.source === 'drive' || creative?.body?.trim() ? 1 : bodies;
         assignedHeadlineCount += headlineCount;
         assignedBodyCount += bodyCount;
         total += headlineCount * bodyCount;
