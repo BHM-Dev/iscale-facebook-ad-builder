@@ -221,6 +221,38 @@ class RedTrackService:
             logger.error("RedTrack fetch error: %s", e)
             return {}
 
+    def get_raw_conversions(
+        self,
+        date_from: str,
+        date_to: str,
+        per: int = 10000,
+    ) -> list[dict]:
+        """Return timestamped conversion rows for attribution joins."""
+        if not self.is_configured():
+            return []
+        try:
+            resp = httpx.get(
+                f"{BASE_URL}/conversions",
+                headers=self._headers(),
+                params={**self._auth_params(), "date_from": date_from, "date_to": date_to, "per": per},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                for key in ("data", "conversions", "rows"):
+                    if isinstance(data.get(key), list):
+                        return data[key]
+            raise RuntimeError(f"Unrecognised RedTrack conversions response shape: {type(data).__name__}")
+        except httpx.HTTPStatusError as e:
+            logger.error("RedTrack conversions HTTP error: %s %s", e.response.status_code, e.response.text)
+            raise RuntimeError(f"RedTrack returned HTTP {e.response.status_code}") from e
+        except Exception as e:
+            logger.error("RedTrack conversions fetch error: %s", e)
+            raise
+
     def get_report_by_adset_preset(self, date_preset: str = "last_7d") -> dict:
         """Convenience wrapper — accepts Meta-style date presets."""
         date_from, date_to = self.preset_to_dates(date_preset)

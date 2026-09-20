@@ -600,7 +600,33 @@ def _conversion_datetime(row: dict, timezone: ZoneInfo) -> Optional[datetime]:
     return None
 
 
-def _build_best_times(meta_payload: dict, conversions: list[dict], offer_names: Optional[set[str]], include_metadata: bool = False):
+def _redtrack_datetime(row: dict, timezone: ZoneInfo) -> Optional[datetime]:
+    for field in ('conv_time', 'track_time', 'conversion_time', 'created_at'):
+        value = row.get(field)
+        if value in (None, ''):
+            continue
+        try:
+            parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        except ValueError:
+            continue
+        return parsed.astimezone(timezone) if parsed.tzinfo else parsed.replace(tzinfo=timezone)
+    return None
+
+
+def _redtrack_revenue(row: dict) -> Decimal:
+    for field in ('revenue', 'total_revenue', 'payout', 'amount'):
+        if row.get(field) not in (None, ''):
+            return Decimal(str(row[field] or 0))
+    return Decimal('0')
+
+
+def _build_best_times(
+    meta_payload: dict,
+    conversions: list[dict],
+    offer_names: Optional[set[str]],
+    include_metadata: bool = False,
+    redtrack_rows: Optional[list[dict]] = None,
+):
     tz = EVERFLOW_TZ_BY_ID[BEST_TIMES_TIMEZONE_ID]
     tracked = offer_names is not None and bool(offer_names)
     adsets = meta_payload['adsets']
@@ -616,7 +642,40 @@ def _build_best_times(meta_payload: dict, conversions: list[dict], offer_names: 
         cell['spend'] += row['spend']
         cell['leads'] += row['leads']
 
-    if tracked:
+    attribution_method = 'everflow_adset_id'
+    if tracked and redtrack_rows:
+        # RedTrack supplies the reliable Meta attribution grain and timestamp.
+        # Everflow supplies the authoritative billable total; scale the
+        # RedTrack distribution to that total so niche/hour dollars reconcile.
+        allowed = {name.casefold() for name in offer_names}
+        redtrack_total = Decimal('0')
+        redtrack_aggregate: dict[tuple[str, int, int], Decimal] = {}
+        dropped_count = 0
+        dropped_revenue = Decimal('0')
+        known_adsets = set(adsets)
+        for row in redtrack_rows:
+            adset_id = str(row.get('sub2') or '').strip()
+            when = _redtrack_datetime(row, tz)
+            amount = _redtrack_revenue(row)
+            if not adset_id or adset_id not in known_adsets or not when:
+                dropped_count += 1
+                dropped_revenue += amount
+                continue
+            niche = niche_by_adset.get(adset_id, 'General')
+            key = (niche, when.weekday(), when.hour)
+            redtrack_aggregate[key] = redtrack_aggregate.get(key, Decimal('0')) + amount
+            redtrack_total += amount
+
+        billing_total = sum(
+            (Decimal(str(row.get('revenue') or 0)) for row in conversions
+             if EverflowService._offer_name(row).casefold() in allowed),
+            Decimal('0'),
+        )
+        scale = billing_total / redtrack_total if redtrack_total > 0 else Decimal('0')
+        for key, amount in redtrack_aggregate.items():
+            aggregate.setdefault(key, {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})['revenue'] += amount * scale
+        attribution_method = 'redtrack_attribution_everflow_billing'
+    elif tracked:
         allowed = {name.casefold() for name in offer_names}
         dropped_count = 0
         dropped_revenue = Decimal('0')
@@ -674,6 +733,7 @@ def _build_best_times(meta_payload: dict, conversions: list[dict], offer_names: 
         'dropped_conversion_count': dropped_count if tracked else 0,
         'dropped_revenue': float(dropped_revenue.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)) if tracked else 0,
         'attribution_complete': not tracked or dropped_count == 0,
+        'attribution_method': attribution_method,
     }
     return result if include_metadata else output
 
@@ -766,13 +826,26 @@ def best_times(
     try:
         meta_payload = _fetch_best_times_meta(ad_account_id, resolved_from, resolved_to)
         conversions = []
+        redtrack_rows = []
         if offer_names:
             conversions = EverflowService().get_raw_conversions(
                 resolved_from,
                 resolved_to,
                 timezone_id=BEST_TIMES_TIMEZONE_ID,
             )
-        result = _build_best_times(meta_payload, conversions, offer_names, include_metadata=True)
+            redtrack = RedTrackService()
+            if redtrack.is_configured():
+                try:
+                    redtrack_rows = redtrack.get_raw_conversions(resolved_from, resolved_to)
+                except Exception as exc:
+                    logger.warning("Best Times RedTrack attribution unavailable; using Everflow adset IDs: %s", exc)
+        result = _build_best_times(
+            meta_payload,
+            conversions,
+            offer_names,
+            include_metadata=True,
+            redtrack_rows=redtrack_rows,
+        )
     except RuntimeError as exc:
         raise HTTPException(502, str(exc)) from exc
     except Exception as exc:
@@ -795,4 +868,5 @@ def best_times(
         'dropped_conversion_count': result['dropped_conversion_count'],
         'dropped_revenue': result['dropped_revenue'],
         'attribution_complete': result['attribution_complete'],
+        'attribution_method': result['attribution_method'],
     }
