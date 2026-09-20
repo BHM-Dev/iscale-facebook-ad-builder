@@ -344,40 +344,45 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError, class
   </div>;
 }
 
-function PerformanceSnapshot({ rangeLabel, activeCount, attentionCount, rtRoas, blendedCpl, topPerformer }) {
+function PerformanceSnapshot({ rangeLabel, activeCount, attentionCount, totalSpend, totalLeads, rtRoas, blendedCpl, topPerformer, loading }) {
   const formattedCpl = blendedCpl != null
     ? `$${Number(blendedCpl).toFixed(2)}`
     : 'Awaiting data';
+  const formattedSpend = loading ? '—' : `$${Number(totalSpend || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
   return (
     <div className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-hidden">
       <div className="px-5 py-3 border-b border-indigo-100 bg-indigo-50/40 flex items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-semibold text-gray-900">Performance snapshot</div>
-          <div className="text-[11px] text-gray-500 mt-0.5">A quick read for {rangeLabel.toLowerCase()}</div>
+          <div className="text-sm font-semibold text-gray-900">Range snapshot</div>
+          <div className="text-[11px] text-gray-500 mt-0.5">{rangeLabel} performance · current delivery: {activeCount} active · {attentionCount} needs action</div>
         </div>
         <TrendingUp size={15} className="text-indigo-600" />
       </div>
       <div className="grid grid-cols-2 gap-px bg-indigo-50">
         <div className="bg-white px-5 py-4">
-          <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">Active ad sets</div>
-          <div className="text-xl font-bold text-gray-900 mt-1">{activeCount}</div>
+          <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">Spend</div>
+          <div className="text-xl font-bold text-gray-900 mt-1">{formattedSpend}</div>
         </div>
         <div className="bg-white px-5 py-4">
-          <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">Needs action</div>
-          <div className={`text-xl font-bold mt-1 ${attentionCount ? 'text-orange-600' : 'text-green-600'}`}>{attentionCount}</div>
+          <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">Leads</div>
+          <div className="text-xl font-bold text-gray-900 mt-1">{loading ? '—' : Number(totalLeads || 0).toLocaleString()}</div>
+        </div>
+        <div className="bg-white px-5 py-4">
+          <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">Blended CPL</div>
+          <div className="text-xl font-bold text-gray-900 mt-1">{loading || formattedCpl === 'Awaiting data' ? '—' : formattedCpl}</div>
         </div>
         <div className="bg-white px-5 py-4">
           <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">RT ROAS</div>
-          <div className={`text-xl font-bold mt-1 ${rtRoas != null && rtRoas >= 1 ? 'text-green-600' : 'text-gray-900'}`}>{rtRoas != null ? `${rtRoas.toFixed(2)}x` : '—'}</div>
+          <div className={`text-xl font-bold mt-1 ${rtRoas != null && rtRoas >= 1 ? 'text-green-600' : 'text-gray-900'}`}>{loading || rtRoas == null ? '—' : `${rtRoas.toFixed(2)}x`}</div>
         </div>
-        <div className="bg-white px-5 py-4">
-          <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">Best performer</div>
-          <div className="text-sm font-semibold text-gray-900 mt-1 truncate" title={topPerformer?.name || ''}>{topPerformer?.name || 'No qualifying data'}</div>
+        <div className="bg-white px-5 py-4 col-span-2 border-t border-indigo-50">
+          <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">Best performer in range</div>
+          <div className="text-sm font-semibold text-gray-900 mt-1 truncate" title={loading ? '' : topPerformer?.name || ''}>{loading ? 'Loading…' : topPerformer?.name || 'No qualifying data'}</div>
           <div className="text-[11px] text-gray-500">
-            {topPerformer?.rtRoas != null ? `${topPerformer.rtRoas.toFixed(2)}x RT ROAS` : `${formattedCpl} blended CPL`}
-            {topPerformer?.statusUnknown
+            {loading ? 'Refreshing selected range' : topPerformer?.rtRoas != null ? `${topPerformer.rtRoas.toFixed(2)}x RT ROAS` : `${formattedCpl} blended CPL`}
+            {!loading && topPerformer?.statusUnknown
               ? <span className="text-amber-600"> · live status unavailable</span>
-              : topPerformer && !topPerformer.isActive && <span className="text-gray-400"> · paused historical winner</span>}
+              : !loading && topPerformer && !topPerformer.isActive && <span className="text-gray-400"> · paused historical winner</span>}
           </div>
         </div>
       </div>
@@ -1231,7 +1236,7 @@ export default function Dashboard() {
             )
             )}
           </div>
-          <div className="xl:col-span-3"><PerformanceSnapshot rangeLabel={rangeLabel} activeCount={activeCount} attentionCount={attentionList.length} rtRoas={rtRoas} blendedCpl={blendedCpl} topPerformer={topPerformers[0]} /></div>
+          <div className="xl:col-span-3"><PerformanceSnapshot rangeLabel={rangeLabel} activeCount={activeCount} attentionCount={attentionList.length} totalSpend={totalSpend} totalLeads={totalLeads} rtRoas={rtRoas} blendedCpl={blendedCpl} topPerformer={topPerformers[0]} loading={loading} /></div>
         </div>
 
       <div className="space-y-4">
