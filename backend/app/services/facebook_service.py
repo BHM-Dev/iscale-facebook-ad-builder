@@ -1852,6 +1852,34 @@ class FacebookService:
 
         return out
 
+    def get_account_ad_status_bulk(self, ad_account_id: str = None) -> dict:
+        """Return live child-ad delivery counts keyed by Meta ad set ID."""
+        import logging
+        logger = logging.getLogger(__name__)
+        account = self._get_account(ad_account_id)
+        counts = {}
+        try:
+            ads = account.get_ads(
+                fields=['id', 'adset_id', 'status', 'effective_status'],
+                params={'effective_status': ['ACTIVE', 'PAUSED']},
+            )
+            for ad in ads:
+                adset_id = str(ad.get('adset_id') or '')
+                if not adset_id:
+                    continue
+                row = counts.setdefault(adset_id, {'total': 0, 'active': 0})
+                row['total'] += 1
+                effective = str(ad.get('effective_status') or ad.get('status') or '').upper()
+                if effective == 'ACTIVE':
+                    row['active'] += 1
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            err = body.get('error', {}) if isinstance(body, dict) else {}
+            msg = err.get('message') or str(e)
+            logger.error("Meta ad status fetch failed: %s", msg)
+            raise RuntimeError(f"Facebook API: {msg}") from e
+        return counts
+
     def get_account_ads_insights_bulk(
         self,
         ad_account_id: str = None,

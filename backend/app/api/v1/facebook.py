@@ -519,6 +519,19 @@ def read_saved_adsets(
         for a in adsets
     ]
 
+@router.get("/ads/status-bulk")
+def read_ads_status_bulk(
+    ad_account_id: Optional[str] = Query(None),
+    service: FacebookService = Depends(get_facebook_service),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return live active/total child-ad counts by ad set for dashboard actions."""
+    ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
+    try:
+        return service.get_account_ad_status_bulk(ad_account_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 @router.patch("/adsets/{fb_adset_id}/budget")
 def update_adset_budget(

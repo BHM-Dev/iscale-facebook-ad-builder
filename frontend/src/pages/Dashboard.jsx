@@ -373,7 +373,12 @@ function PerformanceSnapshot({ rangeLabel, activeCount, attentionCount, rtRoas, 
         <div className="bg-white px-5 py-4">
           <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">Best performer</div>
           <div className="text-sm font-semibold text-gray-900 mt-1 truncate" title={topPerformer?.name || ''}>{topPerformer?.name || 'No qualifying data'}</div>
-          <div className="text-[11px] text-gray-500">{topPerformer?.rtRoas != null ? `${topPerformer.rtRoas.toFixed(2)}x RT ROAS` : `${formattedCpl} blended CPL`}</div>
+          <div className="text-[11px] text-gray-500">
+            {topPerformer?.rtRoas != null ? `${topPerformer.rtRoas.toFixed(2)}x RT ROAS` : `${formattedCpl} blended CPL`}
+            {topPerformer?.statusUnknown
+              ? <span className="text-amber-600"> · live status unavailable</span>
+              : topPerformer && !topPerformer.isActive && <span className="text-gray-400"> · paused historical winner</span>}
+          </div>
         </div>
       </div>
     </div>
@@ -479,6 +484,8 @@ export default function Dashboard() {
   const [pausedOverrides, setPausedOverrides] = useState(new Set()); // fb_adset_ids paused this session
   const [insightsError, setInsightsError] = useState(null);
   const [adsets, setAdsets] = useState([]);
+  const [adStatusByAdset, setAdStatusByAdset] = useState({});
+  const [adStatusError, setAdStatusError] = useState(null);
   const [bulkInsights, setBulkInsights] = useState({});
   const [nicheSummary, setNicheSummary] = useState([]);
   const [rules, setRules] = useState([]);
@@ -515,8 +522,10 @@ export default function Dashboard() {
     if (!activeAccountId && adAccounts.length > 0) return;
     setLoading(true);
     setInsightsError(null);
+    setAdStatusError(null);
     setBulkInsights({}); // clear stale data so KPIs show — while loading
     setNicheSummary([]);
+    setAdStatusByAdset({});
     try {
       const insightsParams = new URLSearchParams();
       if (activeAccountId) insightsParams.set('ad_account_id', activeAccountId);
@@ -533,11 +542,12 @@ export default function Dashboard() {
         return authFetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(tid));
       };
 
-      const [adsetsRes, insightsRes, nicheRes, rulesRes] = await Promise.all([
+      const [adsetsRes, insightsRes, nicheRes, rulesRes, adStatusRes] = await Promise.all([
         timedFetch(`${API_URL}/facebook/adsets/saved?${insightsParams}`, 10000),
         timedFetch(`${API_URL}/auto-pause/insights-bulk?${insightsParams}`, 25000),
         timedFetch(`${API_URL}/dashboard/niche-summary?${insightsParams}`, 25000),
         timedFetch(`${API_URL}/auto-pause/rules`, 10000),
+        timedFetch(`${API_URL}/facebook/ads/status-bulk?${activeAccountId ? `ad_account_id=${encodeURIComponent(activeAccountId)}` : ''}`, 15000).catch(() => null),
       ]);
       if (adsetsRes.ok)   setAdsets(await adsetsRes.json());
       if (insightsRes.ok) {
@@ -552,6 +562,15 @@ export default function Dashboard() {
         showError(`Niche summary unavailable (${nicheRes.status})`);
       }
       if (rulesRes.ok)    setRules(await rulesRes.json());
+      if (adStatusRes?.ok) {
+        try {
+          setAdStatusByAdset(await adStatusRes.json());
+        } catch {
+          setAdStatusError('Live ad delivery status is unavailable — scaling is disabled until Refresh succeeds.');
+        }
+      } else {
+        setAdStatusError('Live ad delivery status is unavailable — scaling is disabled until Refresh succeeds.');
+      }
     } catch (e) {
       if (e.name !== 'AbortError') setInsightsError('Request timed out — check your connection and try again');
     } finally {
@@ -603,7 +622,7 @@ export default function Dashboard() {
       if (!metaIncomplete && !rtFailed) {
         showSuccess('Sync complete');
       }
-      load(activeRange);
+      await load(activeRange);
     } catch (e) { showError(e.message || 'Sync failed'); }
     finally { setSyncing(false); setSyncingRT(false); }
   }, [activeAccountId, activeAccountLoading, activeRange, adAccounts.length, load, showSuccess, showWarning, showError]);
@@ -801,7 +820,9 @@ export default function Dashboard() {
   const isActiveDelivery = (adset) => {
     const adsetStatus = normalizeStatus(adset.status);
     const campaignStatus = normalizeStatus(adset.campaign_status);
-    return adsetStatus === 'ACTIVE' && (!campaignStatus || campaignStatus === 'ACTIVE');
+    if (adsetStatus !== 'ACTIVE' || (campaignStatus && campaignStatus !== 'ACTIVE')) return false;
+    const childAds = adStatusByAdset[adset.fb_adset_id];
+    return !!childAds && childAds.total > 0 && childAds.active > 0;
   };
   const activeCount  = adsets.filter(isActiveDelivery).length;
   const cplRanks = nicheSummary
@@ -942,9 +963,13 @@ export default function Dashboard() {
         rtCpl: rt?.cpl,
         rtConvs: rt?.conversions || 0,
         frequency: ins?.frequency ?? null,
+        isActive: isActiveDelivery(a),
+        statusUnknown: !!adStatusError && normalizeStatus(a.status) === 'ACTIVE',
       };
     })
-    .filter(a => isActiveDelivery(a.adset) && a.spend >= 50 && a.rtRoas != null && a.rtRoas > 0)
+    // Historical winners remain useful after Joel pauses a batch. Keep them in
+    // the ranking, but label them and disable live scaling below.
+    .filter(a => a.spend >= 50 && a.rtRoas != null && a.rtRoas > 0)
     .sort((a, b) => b.rtRoas - a.rtRoas)
     .slice(0, 8);
 
@@ -1123,6 +1148,12 @@ export default function Dashboard() {
           {insightsError}
         </div>
       )}
+      {adStatusError && !loading && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-800">
+          <AlertTriangle size={14} className="flex-shrink-0" />
+          {adStatusError}
+        </div>
+      )}
 
       {/* KPI Row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
@@ -1175,7 +1206,7 @@ export default function Dashboard() {
             loading ? (
               <div className="px-5 py-6 text-center text-sm text-gray-400">Loading...</div>
             ) : attentionList.length === 0 ? (
-              <div className="px-5 py-8 text-center text-sm"><span className="text-green-600 font-medium">All clear</span><span className="text-gray-400"> — no ad sets currently need action.</span></div>
+              <div className="px-5 py-8 text-center text-sm"><span className="text-green-600 font-medium">All clear</span><span className="text-gray-400"> — no active ad sets currently need action. Paused batches remain available in Performance.</span></div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -1215,7 +1246,7 @@ export default function Dashboard() {
               <ChevronDown size={15} className={`text-green-600 transition-transform ${collapsedSections.topPerformers ? '-rotate-90' : ''}`} />
               <TrendingUp size={15} className="text-green-600" />
               <span>Top Performers</span>
-              <span className="text-xs text-gray-500 font-normal">by RT ROAS · has spend</span>
+              <span className="text-xs text-gray-500 font-normal">by RT ROAS · selected range</span>
             </button>
             <Link to={perfLink('top-performers')} className="text-xs text-green-700 hover:underline flex items-center gap-1 flex-shrink-0">
               View all in Performance <ArrowRight size={11} />
@@ -1225,7 +1256,7 @@ export default function Dashboard() {
             <div className="px-5 py-6 text-center text-sm text-gray-400">Loading...</div>
           ) : topPerformers.length === 0 ? (
             <div className="px-5 py-6 text-center text-sm text-gray-400">
-              No RT data yet — sync RedTrack from the Performance page.
+              No qualifying performers in this range — choose a wider range or sync RedTrack from the Performance page.
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -1257,6 +1288,9 @@ export default function Dashboard() {
                           {a.campaignName && (
                             <div className="text-xs text-gray-400 truncate max-w-[280px]">{a.campaignName}</div>
                           )}
+                          <span className={`inline-flex mt-1 text-[10px] font-semibold uppercase tracking-wide ${a.isActive ? 'text-green-600' : 'text-gray-500'}`}>
+                            {a.statusUnknown ? 'Status unavailable' : a.isActive ? 'Active' : 'Paused · historical'}
+                          </span>
                         </Link>
                         <div className="sm:hidden flex flex-wrap gap-1.5 mt-2">
                           {(() => {
@@ -1264,7 +1298,7 @@ export default function Dashboard() {
                             const hasBudget = isCBO ? !!a.adset.campaign_daily_budget : !!a.adset.daily_budget;
                             const scaleKey = isCBO ? `cbo-${a.fb_campaign_id}` : a.fb_adset_id;
                             const isScaling = scalingAdset.has(scaleKey);
-                            return <button onClick={() => scaleAdset(a)} disabled={isScaling || !hasBudget} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-green-700 border border-green-200 bg-green-50 disabled:opacity-40">{isScaling ? <RefreshCw size={10} className="animate-spin" /> : '+20%'} Scale</button>;
+                            return <button onClick={() => scaleAdset(a)} disabled={isScaling || !hasBudget || !a.isActive} title={a.isActive ? 'Increase the live budget by 20%' : 'Activate this ad set in Meta before scaling'} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-green-700 border border-green-200 bg-green-50 disabled:opacity-40">{isScaling ? <RefreshCw size={10} className="animate-spin" /> : '+20%'} Scale</button>;
                           })()}
                           <button onClick={() => handleQuickGenerate(a)} disabled={quickGeneratingAdsets.has(a.fb_adset_id || a.id)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-indigo-600 border border-indigo-100 bg-indigo-50 disabled:opacity-40"><Zap size={10} /> Quick Generate</button>
                         </div>
@@ -1294,8 +1328,8 @@ export default function Dashboard() {
                             return (
                               <button
                                 onClick={() => scaleAdset(a)}
-                                disabled={isScaling || !hasBudget}
-                                title={hasBudget ? (isCBO ? '+20% campaign budget - affects all ad sets in this campaign' : '+20% ad set budget') : 'Set budget first'}
+                                disabled={isScaling || !hasBudget || !a.isActive}
+                                title={!a.isActive ? 'Activate this ad set in Meta before scaling' : hasBudget ? (isCBO ? '+20% campaign budget - affects all ad sets in this campaign' : '+20% ad set budget') : 'Set budget first'}
                                 className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-green-700 border border-green-200 bg-green-50 hover:bg-green-100 transition-colors disabled:opacity-40"
                               >
                                 {isScaling ? <RefreshCw size={11} className="animate-spin" /> : '+20%'}
