@@ -510,7 +510,6 @@ def _fetch_best_times_meta(ad_account_id: Optional[str], date_from: str, date_to
     svc.initialize()
     fields = [
         'adset_id', 'adset_name', 'campaign_name', 'date_start', 'spend', 'actions',
-        'hourly_stats_aggregated_by_advertiser_time_zone',
     ]
     params = {
         'time_range': {'since': date_from, 'until': date_to},
