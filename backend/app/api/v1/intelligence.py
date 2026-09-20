@@ -615,8 +615,8 @@ def _redtrack_datetime(row: dict, timezone: ZoneInfo) -> Optional[datetime]:
 
 def _redtrack_revenue(row: dict) -> Decimal:
     for field in ('revenue', 'total_revenue', 'payout', 'amount'):
-        if row.get(field) not in (None, ''):
-            return Decimal(str(row[field] or 0))
+        if row.get(field) not in (None, '', 0, '0', 0.0, '0.0'):
+            return Decimal(str(row[field]))
     return Decimal('0')
 
 
@@ -652,6 +652,7 @@ def _build_best_times(
 
     attribution_method = 'everflow_adset_id'
     attribution_warning = None
+    redtrack_usable = False
     if tracked and redtrack_rows:
         # RedTrack supplies the reliable Meta attribution grain and timestamp.
         # Everflow supplies the authoritative billable total; scale the
@@ -681,22 +682,29 @@ def _build_best_times(
             redtrack_aggregate[key] = redtrack_aggregate.get(key, Decimal('0')) + amount
             redtrack_total += amount
 
+        scoped_adsets = known_adsets | {
+            str(row.get('sub2') or '').strip() for row in redtrack_rows
+            if str(row.get('sub2') or '').strip()
+        }
         billing_total = sum(
             (Decimal(str(row.get('revenue') or 0)) for row in conversions
-             if EverflowService._offer_name(row).casefold() in allowed),
+             if EverflowService._offer_name(row).casefold() in allowed
+             and str(row.get('sub3') or '').strip() in scoped_adsets),
             Decimal('0'),
         )
         if redtrack_total > 0 and billing_total > 0:
             scale = billing_total / redtrack_total
             for key, amount in redtrack_aggregate.items():
                 aggregate.setdefault(key, {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})['revenue'] += amount * scale
-            attribution_method = 'redtrack_attribution_everflow_billing'
+            attribution_method = 'redtrack_attribution_everflow_billing_allocated'
+            attribution_warning = 'Everflow billing revenue is allocated across RedTrack-attributed ad sets and hours; use this as a directional timing signal.'
+            redtrack_usable = True
         else:
             attribution_warning = 'RedTrack returned no usable revenue rows; fell back to direct Everflow ad-set attribution.'
             attribution_method = 'everflow_adset_id_redtrack_unavailable'
             dropped_count = len(redtrack_rows)
             dropped_revenue = billing_total
-    elif tracked:
+    if tracked and not redtrack_usable:
         allowed = {name.casefold() for name in offer_names}
         dropped_count = 0
         dropped_revenue = Decimal('0')
@@ -753,7 +761,7 @@ def _build_best_times(
         'niches': output,
         'dropped_conversion_count': dropped_count if tracked else 0,
         'dropped_revenue': float(dropped_revenue.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)) if tracked else 0,
-        'attribution_complete': not tracked or dropped_count == 0,
+        'attribution_complete': not tracked or (redtrack_usable or dropped_count == 0),
         'attribution_method': attribution_method,
         'attribution_warning': attribution_warning,
     }

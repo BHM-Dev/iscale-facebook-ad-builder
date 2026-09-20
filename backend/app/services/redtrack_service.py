@@ -240,6 +240,8 @@ class RedTrackService:
             resp.raise_for_status()
             data = resp.json()
             if isinstance(data, list):
+                if len(data) >= per:
+                    raise RuntimeError(f"RedTrack conversions reached the {per}-row cap; attribution is incomplete")
                 return data
             if isinstance(data, dict):
                 for key in ("data", "conversions", "rows"):
