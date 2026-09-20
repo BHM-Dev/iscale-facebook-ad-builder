@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_current_active_user, get_db
+from app.core.deps import get_current_active_user, get_db, require_permission
 from app.api.v1.facebook import _resolve_scoped_default_account
 from app.models import User, FacebookAdSet, normalize_account_id
 from app.services.redtrack_service import RedTrackService
@@ -834,7 +834,7 @@ def niche_profitability(
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     ad_account_id: Optional[str] = Query(None),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_permission("pnl:read")),
     db: Session = Depends(get_db),
 ):
     ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
@@ -886,7 +886,7 @@ def best_times(
     date_to: Optional[str] = Query(None),
     ad_account_id: Optional[str] = Query(None),
     niche: Optional[str] = Query(None),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_permission("pnl:read")),
 ):
     """Return true-revenue ROI by niche, weekday, and advertiser-local hour."""
     ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
