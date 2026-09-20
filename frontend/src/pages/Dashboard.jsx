@@ -37,6 +37,8 @@ function KpiCard({ label, value, sub, delta, deltaGoodWhen = 'up', highlight, wa
 
 function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
   const rows = trend?.daily || [];
+  const chartViewportRef = useRef(null);
+  const [viewportWidth, setViewportWidth] = useState(0);
   const metricConfig = {
     spend: { label: 'Spend', color: '#4f46e5', format: v => `$${Math.round(v).toLocaleString()}` },
     leads: { label: 'Leads', color: '#059669', format: v => Math.round(v).toLocaleString() },
@@ -44,8 +46,20 @@ function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
   }[metric];
   const values = rows.map(row => row[metric]).filter(value => value != null);
   const hasValues = values.length > 0;
+  useEffect(() => {
+    const viewport = chartViewportRef.current;
+    if (!viewport || typeof ResizeObserver === 'undefined') return undefined;
+    const updateWidth = () => setViewportWidth(viewport.clientWidth);
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [loading, hasValues]);
   const max = Math.max(...values, 1);
-  const width = Math.max(720, rows.length * 64), height = 230, padX = 40, padY = 28;
+  const width = rows.length > 14
+    ? Math.max(720, rows.length * 64, viewportWidth)
+    : (viewportWidth || 720);
+  const height = 170, padX = 32, padY = 22;
   const showValueLabels = rows.length <= 31;
   const formatDateTick = date => {
     const parsed = new Date(`${date}T12:00:00`);
@@ -68,16 +82,16 @@ function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
     segments[segments.length - 1].push(point);
     return segments;
   }, [[]]).filter(segment => segment.length > 0).map(segment => segment.map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' '));
-  return <div className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-hidden">
-    <div className="px-5 py-3 border-b border-indigo-100 bg-indigo-50/40 flex items-center justify-between gap-3">
+  return <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden h-full">
+    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
       <div><div className="text-sm font-semibold text-gray-900">Daily trend</div><div className="text-[11px] text-gray-500">Meta Insights · {rangeLabel}</div></div>
       <div className="flex gap-1">{Object.entries(metricConfig ? { spend: 'Spend', leads: 'Leads', cpl: 'CPL' } : {}).map(([key, label]) => <button key={key} type="button" onClick={() => setMetric(key)} className={`text-[11px] px-2 py-1 rounded ${metric === key ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}>{label}</button>)}</div>
     </div>
-    {loading ? <div className="h-[238px] flex items-center justify-center text-sm text-gray-400">Loading trend...</div>
-      : !rows.length || !hasValues ? <div className="h-[238px] flex flex-col items-center justify-center gap-1 text-sm text-gray-400"><span>No Meta {metricConfig.label.toLowerCase()} data for this range.</span><span className="text-[11px]">Meta may not have reported spend or leads for the selected day yet.</span></div>
-      : <div className="px-4 pt-4 pb-3">
-        <div className="relative h-[230px] w-full overflow-x-auto">
-          <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="h-full min-w-full" style={{ width: `${width}px` }} role="img" aria-label={`${metricConfig.label} daily trend`}>
+    {loading ? <div className="h-[190px] flex items-center justify-center text-sm text-gray-400">Loading trend...</div>
+      : !rows.length || !hasValues ? <div className="h-[190px] flex flex-col items-center justify-center gap-1 text-sm text-gray-400"><span>No Meta {metricConfig.label.toLowerCase()} data for this range.</span><span className="text-[11px]">Meta may not have reported spend or leads for the selected day yet.</span></div>
+      : <div className="px-3 pt-3 pb-2">
+        <div ref={chartViewportRef} className="relative h-[170px] w-full overflow-x-auto">
+          <svg viewBox={`0 0 ${width} ${height}`} className="h-full" style={{ width: `${width}px` }} role="img" aria-label={`${metricConfig.label} daily trend`}>
             <line x1={padX} y1={height - padY} x2={width - padX} y2={height - padY} stroke="#e5e7eb" />
             <line x1={padX} y1={padY} x2={padX} y2={height - padY} stroke="#e5e7eb" />
             {points.filter(point => point.y != null).map(point => {
@@ -95,7 +109,7 @@ function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
           <div className="absolute left-1 top-0 text-[10px] text-gray-400">{metricConfig.format(max)}</div>
           <div className="absolute left-1 bottom-0 text-[10px] text-gray-400">0</div>
         </div>
-        <div className="mt-2 text-[11px] text-gray-500">Each tick is one calendar day. Today may be partial; missing days are left blank rather than filled with estimates.{rows.length > 14 ? ' Scroll horizontally to inspect the full range.' : ''}</div>
+        <div className="mt-1 text-[10px] text-gray-500">Daily view · Today may be partial; missing days are left blank.{rows.length > 14 ? ' Scroll for the full range.' : ''}</div>
       </div>}
   </div>;
 }
@@ -413,52 +427,6 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError, class
     </div>
     </>}
   </div>;
-}
-
-function PerformanceSnapshot({ rangeLabel, activeCount, attentionCount, totalSpend, totalLeads, rtRoas, blendedCpl, topPerformer, loading }) {
-  const formattedCpl = blendedCpl != null
-    ? `$${Number(blendedCpl).toFixed(2)}`
-    : 'Awaiting data';
-  const formattedSpend = loading ? '—' : `$${Number(totalSpend || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
-  return (
-    <div className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-hidden">
-      <div className="px-5 py-3 border-b border-indigo-100 bg-indigo-50/40 flex items-center justify-between gap-3">
-        <div>
-          <div className="text-sm font-semibold text-gray-900">Range snapshot</div>
-          <div className="text-[11px] text-gray-500 mt-0.5">{rangeLabel} performance · current delivery: {activeCount} active · {attentionCount} needs action</div>
-        </div>
-        <TrendingUp size={15} className="text-indigo-600" />
-      </div>
-      <div className="grid grid-cols-2 gap-px bg-indigo-50">
-        <div className="bg-white px-5 py-4">
-          <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">Spend</div>
-          <div className="text-xl font-bold text-gray-900 mt-1">{formattedSpend}</div>
-        </div>
-        <div className="bg-white px-5 py-4">
-          <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">Leads</div>
-          <div className="text-xl font-bold text-gray-900 mt-1">{loading ? '—' : Number(totalLeads || 0).toLocaleString()}</div>
-        </div>
-        <div className="bg-white px-5 py-4">
-          <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">Blended CPL</div>
-          <div className="text-xl font-bold text-gray-900 mt-1">{loading || formattedCpl === 'Awaiting data' ? '—' : formattedCpl}</div>
-        </div>
-        <div className="bg-white px-5 py-4">
-          <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">RT ROAS</div>
-          <div className={`text-xl font-bold mt-1 ${rtRoas != null && rtRoas >= 1 ? 'text-green-600' : 'text-gray-900'}`}>{loading || rtRoas == null ? '—' : `${rtRoas.toFixed(2)}x`}</div>
-        </div>
-        <div className="bg-white px-5 py-4 col-span-2 border-t border-indigo-50">
-          <div className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">Best performer in range</div>
-          <div className="text-sm font-semibold text-gray-900 mt-1 truncate" title={loading ? '' : topPerformer?.name || ''}>{loading ? 'Loading…' : topPerformer?.name || 'No qualifying data'}</div>
-          <div className="text-[11px] text-gray-500">
-            {loading ? 'Refreshing selected range' : topPerformer?.rtRoas != null ? `${topPerformer.rtRoas.toFixed(2)}x RT ROAS` : `${formattedCpl} blended CPL`}
-            {!loading && topPerformer?.statusUnknown
-              ? <span className="text-amber-600"> · live status unavailable</span>
-              : !loading && topPerformer && !topPerformer.isActive && <span className="text-gray-400"> · paused historical winner</span>}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 function DateFilter({ preset, setPreset, dateFrom, setDateFrom, dateTo, setDateTo, onApply }) {
@@ -1298,9 +1266,6 @@ export default function Dashboard() {
         />
       </div>
 
-      <TrendChart trend={trend} loading={trendLoading} metric={trendMetric} setMetric={setTrendMetric} rangeLabel={rangeLabel} />
-      {trendError && !loading && <div className="-mt-6 text-[11px] text-amber-700">{trendError} The KPI cards and operational tables are still available.</div>}
-
       <div className="flex flex-col gap-4">
         <div className="grid grid-cols-1 xl:grid-cols-7 gap-4">
           <div className="xl:col-span-4 bg-white rounded-xl border border-orange-100 border-l-4 border-l-orange-500 shadow-sm overflow-hidden">
@@ -1344,7 +1309,10 @@ export default function Dashboard() {
             )
             )}
           </div>
-          <div className="xl:col-span-3"><PerformanceSnapshot rangeLabel={rangeLabel} activeCount={activeCount} attentionCount={attentionList.length} totalSpend={totalSpend} totalLeads={totalLeads} rtRoas={rtRoas} blendedCpl={blendedCpl} topPerformer={topPerformers[0]} loading={loading} /></div>
+          <div className="xl:col-span-3">
+            <TrendChart trend={trend} loading={trendLoading} metric={trendMetric} setMetric={setTrendMetric} rangeLabel={rangeLabel} />
+            {trendError && !loading && <div className="mt-2 text-[11px] text-amber-700">{trendError} The KPI cards and operational tables are still available.</div>}
+          </div>
         </div>
 
       <div className="space-y-4">
