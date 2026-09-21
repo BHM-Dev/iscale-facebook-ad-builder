@@ -408,6 +408,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const [driveSearchTerm, setDriveSearchTerm] = useState('');
     const [driveRepairPairId, setDriveRepairPairId] = useState(null);
     const [driveFormatFilter, setDriveFormatFilter] = useState('');
+    const [showBlockedDriveOnly, setShowBlockedDriveOnly] = useState(false);
     const [showDriveLibraryHint, setShowDriveLibraryHint] = useState(
         () => safeLocalStorageGet('driveLibraryHintSeen') !== 'true'
     );
@@ -510,14 +511,19 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             const haystack = `${asset.file_name || ''} ${asset.folder_path || ''} ${asset.brand_name || ''}`.toLowerCase();
             return haystack.includes(query);
         });
-        return buildDriveAssetGroups(visibleAssets);
-    }, [driveAssets, driveSearchTerm, driveFormatFilter, driveRepairPairId]);
+        const groups = buildDriveAssetGroups(visibleAssets);
+        return showBlockedDriveOnly ? groups.filter(isDriveGroupSelectionBlocked) : groups;
+    }, [driveAssets, driveSearchTerm, driveFormatFilter, driveRepairPairId, showBlockedDriveOnly]);
 
     // Keep the full group index separate from the visible filtered list. A
     // buyer can select Feed assets, switch to Stories, and continue selecting;
     // filtering must not erase the earlier choices from the eventual payload.
     const allDriveAssetGroups = useMemo(() => buildDriveAssetGroups(driveAssets), [driveAssets]);
     const driveGroupById = useMemo(() => new Map(allDriveAssetGroups.map(group => [group.id, group])), [allDriveAssetGroups]);
+    const totalBlockedDriveGroupCount = useMemo(
+        () => allDriveAssetGroups.filter(isDriveGroupSelectionBlocked).length,
+        [allDriveAssetGroups],
+    );
     const mixedDriveCopyMatches = useMemo(() => {
         const matchedPairs = driveAssetGroups.filter(group => group.isPair && hasCompleteCopy(group.copy || {})).length;
         const unmatchedPairs = driveAssetGroups.filter(group => group.isPair && !hasCompleteCopy(group.copy || {})).length;
@@ -3047,6 +3053,18 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             </div>
                             <button
                                 type="button"
+                                onClick={() => setShowBlockedDriveOnly(current => !current)}
+                                disabled={totalBlockedDriveGroupCount === 0}
+                                className={`px-3 py-1 text-xs font-semibold rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                                    showBlockedDriveOnly
+                                        ? 'border-red-300 bg-red-50 text-red-800'
+                                        : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                                }`}
+                            >
+                                {showBlockedDriveOnly ? 'Showing blocked' : `Blocked (${totalBlockedDriveGroupCount})`}
+                            </button>
+                            <button
+                                type="button"
                                 onClick={selectAllVisibleDriveAssets}
                                 disabled={driveAssetGroups.length === 0}
                                 className="px-3 py-1 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -3088,25 +3106,27 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     The number that actually matters (what he'll get) leads in bold;
                                     everything else is de-emphasized so this scans in one glance
                                     instead of reading as a full sentence (joel-perspective review). */}
-                                {/* Persistent and ABOVE the grid: Joel selects ~20 tiles at a time and
-                                    needs the blocked count when he starts selecting, not in a toast after
-                                    clicking Add. Deliberately not in the footer -- that bar is a fixed
-                                    h-[68px] and already renders two lines once something is selected, so a
-                                    third line clips. Counts are over the filtered set, same as every other
-                                    number in this bar. */}
-                                {driveAssetGroups.length > 0 && (() => {
-                                    const blocked = driveAssetGroups.filter(isDriveGroupSelectionBlocked);
-                                    if (blocked.length === 0) return null;
+                                {/* Counts use the complete Drive library, not the current search
+                                    result. A narrow filter must never turn "24 blocked" into "1 of 1". */}
+                                {totalBlockedDriveGroupCount > 0 && (() => {
+                                    const blocked = allDriveAssetGroups.filter(isDriveGroupSelectionBlocked);
                                     const renameCount = blocked.filter(group => group.copyRefusedForOtherFile).length;
                                     const repairCount = blocked.length - renameCount;
+                                    const eligibleCount = allDriveAssetGroups.length - blocked.length;
                                     const parts = [];
                                     // "need" is the verb: 1 needs / 2 need. Not a typo.
                                     if (renameCount > 0) parts.push(`${renameCount} need${renameCount !== 1 ? '' : 's'} a rename in Drive (filename reused across packages)`);
                                     if (repairCount > 0) parts.push(`${repairCount} need${repairCount !== 1 ? '' : 's'} a Drive copy or pairing repair`);
                                     return (
-                                        <p className="mt-2 text-[11px] font-semibold text-red-700">
-                                            {blocked.length} of {driveAssetGroups.length} shown can't be selected · {parts.join(' · ')}
-                                        </p>
+                                        <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] font-semibold text-red-700">
+                                            <span>{blocked.length} blocked · {eligibleCount} eligible of {allDriveAssetGroups.length} total creative groups</span>
+                                            <span className="text-red-300">·</span>
+                                            <span>{parts.join(' · ')}</span>
+                                            <span className="text-red-300">·</span>
+                                            <a href="/drive-package-health" target="_blank" rel="noreferrer" className="underline decoration-red-300 underline-offset-2 hover:text-red-900">
+                                                Review package health
+                                            </a>
+                                        </div>
                                     );
                                 })()}
                                 {driveSelectCount && driveAssetGroups.length > 0 && (() => {
