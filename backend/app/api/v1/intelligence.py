@@ -46,11 +46,9 @@ try:
 except Exception:
     REDTRACK_TZ_VALID = False
     REDTRACK_TZ = ZoneInfo('America/Los_Angeles')
-BEST_TIMES_DAYPARTS = (
-    {"key": "overnight", "label": "12a–6a", "start": 0, "end": 6},
-    {"key": "morning", "label": "6a–2p", "start": 6, "end": 14},
-    {"key": "afternoon", "label": "2p–6p", "start": 14, "end": 18},
-    {"key": "evening", "label": "6p–12a", "start": 18, "end": 24},
+BEST_TIMES_DAYPARTS = tuple(
+    {"key": f"block-{hour:02d}", "label": f"{hour % 12 or 12}{'a' if hour < 12 else 'p'}–{(hour + 2) % 12 or 12}{'a' if (hour + 2) % 24 < 12 else 'p'}", "start": hour, "end": hour + 2}
+    for hour in range(0, 24, 2)
 )
 # Canonical Everflow offer names do not always equal RedTrack's operational
 # offer labels. Keep aliases explicit: loose substring matching can blend a
@@ -970,6 +968,8 @@ def _build_best_times(
                 dropped_count, dropped_revenue.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
             )
 
+    result_attribution_incomplete = bool(tracked and (not redtrack_usable or dropped_count > 0))
+
     def serialize_cells(source: dict, entity_id: str):
         cells = []
         for day_of_week in range(7):
@@ -985,19 +985,126 @@ def _build_best_times(
                     'spend': float(spend),
                     'leads': value['leads'],
                     'revenue': float(revenue) if revenue is not None else None,
+                    'profit': float((revenue - spend).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)) if revenue is not None else None,
                     'roi': float(roi) if roi is not None else None,
                     'confidence': confidence if tracked else 'low',
                     'confidence_reason': reason if tracked else 'Revenue source is not tracked for this account',
                 })
         return cells
 
+    def build_timing_summary(cells):
+        """Return scan-friendly 2-hour blocks and a stable schedule recommendation."""
+        blocks = []
+        for group_label, day_indexes in (('Mon–Fri', range(5)), ('Sat–Sun', range(5, 7))):
+            for part in BEST_TIMES_DAYPARTS:
+                day_rows = []
+                for day in day_indexes:
+                    matching = [cell for cell in cells if cell['day_of_week'] == day and part['start'] <= cell['hour'] < part['end']]
+                    spend = sum(cell['spend'] for cell in matching)
+                    revenue_known = any(cell['revenue'] is not None for cell in matching)
+                    revenue = sum((cell['revenue'] or 0) for cell in matching) if revenue_known else None
+                    if spend > 0 and revenue is not None:
+                        day_rows.append({'spend': spend, 'revenue': revenue, 'profit': revenue - spend})
+                spend = sum(row['spend'] for row in day_rows)
+                revenue = sum(row['revenue'] for row in day_rows) if tracked and day_rows else None
+                profit = revenue - spend if revenue is not None else None
+                evidence_days = len(day_rows)
+                positive_days = sum(1 for row in day_rows if row['profit'] > 0)
+                consistency_rate = positive_days / evidence_days if evidence_days else None
+                minimum_days = 3 if group_label == 'Mon–Fri' else 2
+                enough_evidence = (
+                    tracked and not result_attribution_incomplete and revenue is not None
+                    and spend >= 100 and revenue >= 25 and evidence_days >= minimum_days
+                )
+                stable_positive = enough_evidence and profit > 0 and consistency_rate >= 0.6
+                stable_negative = enough_evidence and profit < 0 and consistency_rate <= 0.4
+                status = 'unavailable'
+                reason = 'Insufficient attributable evidence'
+                if enough_evidence:
+                    if stable_positive and profit / spend >= 0.1:
+                        status, reason = 'run', f"Positive in {positive_days} of {evidence_days} {group_label.lower()} evidence buckets."
+                    elif stable_negative and profit / spend <= -0.1:
+                        status, reason = 'avoid', f"Negative in {evidence_days - positive_days} of {evidence_days} {group_label.lower()} evidence buckets."
+                    elif profit > 0:
+                        status, reason = 'inconsistent', f"Profitable overall, but positive in only {positive_days} of {evidence_days} {group_label.lower()} evidence buckets."
+                    else:
+                        status, reason = 'hold', 'No repeatable material advantage yet.'
+                if not tracked:
+                    reason = 'Revenue source is not tracked for this account.'
+                confidence = 'low'
+                if enough_evidence and consistency_rate is not None:
+                    if evidence_days >= minimum_days and consistency_rate >= 0.75 and spend >= 500 and revenue >= 100:
+                        confidence = 'high'
+                    elif consistency_rate >= 0.6:
+                        confidence = 'medium'
+                blocks.append({
+                    'key': f"{group_label}:{part['key']}",
+                    'group': group_label,
+                    'label': part['label'],
+                    'start': part['start'],
+                    'end': part['end'],
+                    'spend': round(spend, 2),
+                    'revenue': round(revenue, 2) if revenue is not None else None,
+                    'profit': round(profit, 2) if profit is not None else None,
+                    'roi': round(profit / spend, 4) if profit is not None and spend > 0 else None,
+                    'positive_bucket_count': positive_days,
+                    'evidence_bucket_count': evidence_days,
+                    'consistency_rate': round(consistency_rate, 4) if consistency_rate is not None else None,
+                    'confidence': confidence,
+                    'status': status,
+                    'reason': reason,
+                })
+
+        if not tracked or result_attribution_incomplete:
+            return {'status': 'unavailable', 'confidence': 'low', 'blocks': blocks, 'run_windows': [], 'avoid_windows': [], 'reason': 'Timing recommendations are unavailable until revenue attribution is complete.'}
+
+        run_blocks = [block for block in blocks if block['status'] == 'run']
+        avoid_blocks = [block for block in blocks if block['status'] == 'avoid']
+        best = max(run_blocks, key=lambda block: block['profit'], default=None)
+        if not best:
+            profitable_inconsistent = [block for block in blocks if block['status'] == 'inconsistent']
+            reason = profitable_inconsistent[0]['reason'] if profitable_inconsistent else 'No time block has enough repeatable evidence to recommend a schedule.'
+            return {'status': 'none', 'confidence': 'low', 'blocks': blocks, 'run_windows': [], 'avoid_windows': [], 'reason': reason}
+
+        def make_windows(selected):
+            windows = []
+            for group in ('Mon–Fri', 'Sat–Sun'):
+                group_blocks = sorted((block for block in selected if block['group'] == group), key=lambda block: block['start'])
+                for block in group_blocks:
+                    if windows and windows[-1]['group'] == group and windows[-1]['end_hour'] == block['start']:
+                        windows[-1]['end_hour'] = block['end']
+                    else:
+                        windows.append({'group': group, 'start_hour': block['start'], 'end_hour': block['end']})
+            return windows
+
+        run_windows = make_windows(run_blocks)
+        avoid_windows = make_windows(avoid_blocks)
+        run_label = ' · '.join(f"{window['group']} · {window['start_hour'] % 12 or 12}{' AM' if window['start_hour'] < 12 else ' PM'}–{window['end_hour'] % 12 or 12}{' AM' if window['end_hour'] % 24 < 12 else ' PM'} PT" for window in run_windows[:2])
+        return {
+            'status': 'run',
+            'confidence': best['confidence'],
+            'blocks': blocks,
+            'run_windows': run_windows,
+            'avoid_windows': avoid_windows,
+            'label': run_label,
+            'profit': round(sum(block['profit'] for block in run_blocks), 2),
+            'roi': round(sum(block['profit'] for block in run_blocks) / sum(block['spend'] for block in run_blocks), 4) if sum(block['spend'] for block in run_blocks) > 0 else None,
+            'positive_bucket_count': best['positive_bucket_count'],
+            'evidence_bucket_count': best['evidence_bucket_count'],
+            'reason': f"{best['reason']} Confidence is {best['confidence']}.",
+        }
+
     niches = sorted({key[0] for key in aggregate})
     output = []
     for niche in niches:
+        niche_cells = serialize_cells(aggregate, niche)
+        niche_timing = build_timing_summary(niche_cells)
         output.append({
             'niche': niche,
             'revenue_source': 'everflow' if tracked else 'not_tracked',
-            'cells': serialize_cells(aggregate, niche),
+            'cells': niche_cells,
+            'timing_blocks': niche_timing['blocks'],
+            'recommendation': niche_timing,
         })
 
     campaign_aggregate: dict[tuple[str, int, int], dict] = {}
@@ -1027,19 +1134,27 @@ def _build_best_times(
         cell['revenue'] += value['revenue']
     campaigns = []
     for campaign_id, metadata in campaign_metadata.items():
+        campaign_cells = serialize_cells(campaign_aggregate, campaign_id)
+        campaign_timing = build_timing_summary(campaign_cells)
+        adset_summaries = []
+        for adset_id in campaign_adsets[campaign_id]:
+            adset_cells = serialize_cells(adset_aggregate, adset_id)
+            adset_timing = build_timing_summary(adset_cells)
+            adset_summaries.append({
+                'adset_id': adset_id,
+                'adset_name': adsets[adset_id].get('adset_name') or 'Unnamed ad set',
+                'revenue_source': 'everflow' if tracked else 'not_tracked',
+                'cells': adset_cells,
+                'timing_blocks': adset_timing['blocks'],
+                'recommendation': adset_timing,
+            })
         campaigns.append({
             **metadata,
             'revenue_source': 'everflow' if tracked else 'not_tracked',
-            'cells': serialize_cells(campaign_aggregate, campaign_id),
-            'adsets': [
-                {
-                    'adset_id': adset_id,
-                    'adset_name': adsets[adset_id].get('adset_name') or 'Unnamed ad set',
-                    'revenue_source': 'everflow' if tracked else 'not_tracked',
-                    'cells': serialize_cells(adset_aggregate, adset_id),
-                }
-                for adset_id in campaign_adsets[campaign_id]
-            ],
+            'cells': campaign_cells,
+            'timing_blocks': campaign_timing['blocks'],
+            'recommendation': campaign_timing,
+            'adsets': adset_summaries,
         })
     campaigns.sort(key=lambda item: item['campaign_name'].casefold())
     result = {
