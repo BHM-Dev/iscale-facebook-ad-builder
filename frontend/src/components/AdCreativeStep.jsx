@@ -1,7 +1,7 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image, BookOpen, Check, Layers, FolderOpen, Maximize2, Search, ExternalLink } from 'lucide-react';
+import { ChevronDown, ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image, BookOpen, Check, Layers, FolderOpen, Maximize2, Search, ExternalLink } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
@@ -134,6 +134,22 @@ const driveAssetMatchesQuery = (asset, query) => {
 // visible image half added the video half too and launched an ad the buyer
 // never saw (pre-push review, code-auditor: HIGH). Filtering whole groups keeps
 // an id meaning one fixed set of assets in every list.
+// The picker was a single 964-tile grid with no structure -- "ads upon ads".
+// Drive's own folders are not decoration: the package folder is what copy docs
+// are keyed to, what package_folder_id pairs on, and what Drive Package Health
+// reports against. Sectioning by it makes the picker agree with both.
+//
+// Measured on the live library: stripping a trailing "1x1 Images"/"9x16 Images"
+// placement folder and keeping the first two segments yields 144 sections --
+// exactly the 144 packages the health report counts. Keeping the full path
+// instead splits "Final Creatives" from "Source Images" into 162.
+const drivePackageSection = (group) => {
+    const raw = group?.displayAsset?.folder_path || group?.assets?.[0]?.folder_path || '';
+    const parts = String(raw).split(/[\\/]/).map(part => part.trim()).filter(Boolean);
+    if (parts.length && /^(?:1x1|9x16)(?:\s+(?:images?|assets?))?$/i.test(parts[parts.length - 1])) parts.pop();
+    return parts.slice(0, 2).join(' / ') || 'Uncategorized';
+};
+
 const filterGroupsByFormat = (groups, format) => (
     format ? groups.filter(group => group.assets.some(asset => asset.format === format)) : groups
 );
@@ -432,6 +448,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // One filter at a time. Both on at once yields "blocked AND needs copy",
     // an intersection nobody asked for behind two independent-looking toggles.
     const [showNeedsCopyDriveOnly, setShowNeedsCopyDriveOnly] = useState(false);
+    const [driveSectionOverrides, setDriveSectionOverrides] = useState({});
     // Reset on open: as component state this survived closing the modal, so a
     // buyer returning the next day met a 7-tile library with the format pills
     // still reading "All 288" and nothing indicating a filter was on.
@@ -439,6 +456,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         if (showDriveLibraryModal) {
             setShowBlockedDriveOnly(false);
             setShowNeedsCopyDriveOnly(false);
+            setDriveSectionOverrides({});
         }
     }, [showDriveLibraryModal]);
     const [showDriveLibraryHint, setShowDriveLibraryHint] = useState(
@@ -556,13 +574,64 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // and absence is invisible: measured against the live Drive, 893 of 964
     // tiles are in this state, so "why is nothing filled in" is the single most
     // likely question this picker provokes.
-    const needsCopy = (group) => !hasCompleteCopy(group?.copy || {});
+    // Blocked tiles are excluded deliberately: they refuse selection outright,
+    // so listing them as work-to-do sent Joel to a grid of tiles he cannot
+    // click. Blocked covers copyRefreshUnverified, which is why the submit
+    // path's extra `|| group.copyRefreshUnverified` (addDriveSelectionToCreatives)
+    // needs no counterpart here -- those groups are already out.
+    const needsCopy = (group) => !isDriveGroupSelectionBlocked(group) && !hasCompleteCopy(group?.copy || {});
 
     const driveAssetGroups = useMemo(() => {
         if (blockedFilterActive) return scopedDriveAssetGroups.filter(isDriveGroupSelectionBlocked);
         if (needsCopyFilterActive) return scopedDriveAssetGroups.filter(needsCopy);
         return scopedDriveAssetGroups;
     }, [scopedDriveAssetGroups, blockedFilterActive, needsCopyFilterActive]);
+
+    const driveSections = useMemo(() => {
+        const bySection = new Map();
+        driveAssetGroups.forEach(group => {
+            const key = drivePackageSection(group);
+            if (!bySection.has(key)) bySection.set(key, []);
+            bySection.get(key).push(group);
+        });
+        // Insertion order, so sections inherit the grid's existing recency sort
+        // rather than resorting the library alphabetically underneath the buyer.
+        return [...bySection.entries()].map(([key, groups]) => ({
+            key,
+            groups,
+            needsCopyCount: groups.filter(needsCopy).length,
+            eligibleCount: groups.filter(group => !isDriveGroupSelectionBlocked(group)).length,
+        }));
+    }, [driveAssetGroups]);
+
+    // Expansion is derived, with an explicit per-section override on top. A
+    // plain state Set plus an effect to sync it against search/filter changes
+    // is the shape that loops; this cannot.
+    const sectionsExpandByDefault = driveSections.length <= 6
+        || Boolean(driveSearchTerm.trim())
+        || blockedFilterActive
+        || needsCopyFilterActive
+        || Boolean(driveRepairPairId);
+    const isSectionExpanded = (key) => driveSectionOverrides[key] ?? sectionsExpandByDefault;
+    const toggleDriveSection = (key) => setDriveSectionOverrides(prev => ({
+        ...prev,
+        [key]: !(prev[key] ?? sectionsExpandByDefault),
+    }));
+    const setAllDriveSections = (expanded) => setDriveSectionOverrides(
+        Object.fromEntries(driveSections.map(section => [section.key, expanded])),
+    );
+
+    const selectSectionDriveAssets = (section) => {
+        const skipped = section.groups.length - section.eligibleCount;
+        if (skipped) {
+            showWarning(String(skipped) + ' Drive creative' + (skipped !== 1 ? 's were' : ' was') + ' skipped because their pair or copy source needs repair.');
+        }
+        setSelectedDriveAssetIds(prev => {
+            const next = new Set(prev);
+            section.groups.filter(group => !isDriveGroupSelectionBlocked(group)).forEach(group => next.add(group.id));
+            return next;
+        });
+    };
 
     const scopedNeedsCopyDriveGroupCount = useMemo(
         () => scopedDriveAssetGroups.filter(needsCopy).length,
@@ -3158,7 +3227,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     setShowNeedsCopyDriveOnly(current => !current);
                                     setShowBlockedDriveOnly(false);
                                 }}
-                                disabled={scopedNeedsCopyDriveGroupCount === 0 || Boolean(driveRepairPairId)}
+                                disabled={(scopedNeedsCopyDriveGroupCount === 0 && !needsCopyFilterActive) || Boolean(driveRepairPairId)}
                                 aria-pressed={needsCopyFilterActive}
                                 className={`whitespace-nowrap rounded-lg border px-3 py-1 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                                     needsCopyFilterActive
@@ -3174,7 +3243,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     setShowBlockedDriveOnly(current => !current);
                                     setShowNeedsCopyDriveOnly(false);
                                 }}
-                                disabled={scopedBlockedDriveGroupCount === 0 || Boolean(driveRepairPairId)}
+                                disabled={(scopedBlockedDriveGroupCount === 0 && !blockedFilterActive) || Boolean(driveRepairPairId)}
                                 aria-pressed={blockedFilterActive}
                                 className={`px-3 py-1 text-xs font-semibold rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                                     blockedFilterActive
@@ -3303,7 +3372,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             </p>
                         ) : driveAssetGroups.length === 0 && needsCopyFilterActive ? (
                             <p className="text-center text-gray-500 py-12">
-                                Every creative matching your current search already has copy from Drive.
+                                None of the creatives that need copy match your current search or format filter.
+                                {' '}Clear those to see all {allDriveAssetGroups.filter(needsCopy).length}.
                             </p>
                         ) : driveAssetGroups.length === 0 ? (
                             <p className="text-center text-gray-500 py-12">No Drive assets match that search.</p>
@@ -3314,8 +3384,43 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     {mixedDriveCopyMatches.matchedPairs} pair{mixedDriveCopyMatches.matchedPairs !== 1 ? 's' : ''} matched copy from a strategy doc; {mixedDriveCopyMatches.unmatchedPairs} pair{mixedDriveCopyMatches.unmatchedPairs !== 1 ? 's' : ''} did not. Check the source files, then use Refresh copy from Drive.
                                 </div>
                             )}
-                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
-                                {driveAssetGroups.map(group => {
+                            {driveSections.length > 1 && (
+                                <div className="mb-2 flex flex-wrap items-center justify-end gap-2 text-[11px] font-semibold text-gray-500">
+                                    <span className="mr-auto">{driveSections.length} Drive folder{driveSections.length !== 1 ? 's' : ''}</span>
+                                    <button type="button" onClick={() => setAllDriveSections(true)} className="rounded border border-gray-300 px-2 py-0.5 hover:bg-gray-50">Expand all</button>
+                                    <button type="button" onClick={() => setAllDriveSections(false)} className="rounded border border-gray-300 px-2 py-0.5 hover:bg-gray-50">Collapse all</button>
+                                </div>
+                            )}
+                            {driveSections.map(section => {
+                                const sectionExpanded = isSectionExpanded(section.key);
+                                return (
+                                <div key={section.key} className="mb-3 overflow-hidden rounded-lg border border-gray-200">
+                                    <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 bg-gray-50 px-2 py-1.5">
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleDriveSection(section.key)}
+                                            aria-expanded={sectionExpanded}
+                                            className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                                        >
+                                            <ChevronDown size={14} className={`shrink-0 text-gray-400 transition-transform ${sectionExpanded ? '' : '-rotate-90'}`} />
+                                            <span className="truncate text-xs font-semibold text-gray-800" title={section.key}>{section.key}</span>
+                                            <span className="shrink-0 text-[11px] font-medium text-gray-500">{section.groups.length}</span>
+                                            {section.needsCopyCount > 0 && (
+                                                <span className="shrink-0 text-[11px] font-medium text-amber-700">· {section.needsCopyCount} need copy</span>
+                                            )}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => selectSectionDriveAssets(section)}
+                                            disabled={section.eligibleCount === 0}
+                                            className="shrink-0 rounded border border-gray-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                        >
+                                            Select {section.eligibleCount}
+                                        </button>
+                                    </div>
+                                    {sectionExpanded && (
+                                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 p-2">
+                                {section.groups.map(group => {
                                     const asset = group.displayAsset;
                                     const isSelected = selectedDriveAssetIds.has(group.id);
                                     const tags = parseDriveTags(asset);
@@ -3427,9 +3532,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                             ? 'Drive source needs repair — refresh Drive'
                                                             : group.copyIntegrityReason || 'Pair data mismatch — refresh Drive'}
                                                 </div>
-                                            ) : (copyMatched || group.landingPage || group.cta || tags.copy_id) ? (
+                                            ) : copyMatched ? (
                                                 <div className="absolute bottom-10 left-2 bg-emerald-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
-                                                    {copyMatched ? 'Copy matched' : 'URL matched'}
+                                                    Copy matched
                                                 </div>
                                             ) : (
                                                 // Not blocked -- selectable, and it launches once the
@@ -3440,7 +3545,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     title="Drive has no copy for this creative. You can still select it and write the headline and primary text yourself."
                                                     className="absolute bottom-10 left-2 rounded-full bg-gray-700/90 px-2 py-1 text-[11px] font-semibold text-white shadow-sm"
                                                 >
-                                                    No copy in Drive
+                                                    {(group.landingPage || group.cta || tags.copy_id) ? 'No copy — URL only' : 'No copy in Drive'}
                                                 </div>
                                             )}
                                             <div className="p-1 text-xs text-gray-600 bg-white" title={group.isPair ? `Feed: ${group.feedAsset?.file_name} · Stories: ${group.storiesAsset?.file_name}` : asset.file_name}>
@@ -3450,7 +3555,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                         </div>
                                     );
                                 })}
-                            </div>
+                                    </div>
+                                    )}
+                                </div>
+                                );
+                            })}
                             </>
                         )}
                     </div>
