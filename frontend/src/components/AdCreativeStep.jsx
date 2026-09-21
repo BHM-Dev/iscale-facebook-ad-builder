@@ -449,6 +449,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // an intersection nobody asked for behind two independent-looking toggles.
     const [showNeedsCopyDriveOnly, setShowNeedsCopyDriveOnly] = useState(false);
     const [driveSectionOverrides, setDriveSectionOverrides] = useState({});
+    const [driveParentOverrides, setDriveParentOverrides] = useState({});
     // Reset on open: as component state this survived closing the modal, so a
     // buyer returning the next day met a 7-tile library with the format pills
     // still reading "All 288" and nothing indicating a filter was on.
@@ -609,6 +610,40 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         }));
     }, [driveAssetGroups]);
 
+    // A leaf's own folder either sits directly under a top-level Drive folder
+    // (a "flat" package -- no subfolder layer, straight to media) or under a
+    // brand/category folder that holds several packages as real subfolders.
+    // Measured on the live library: 16 top-level folders, 6 flat, the other
+    // 10 holding between 2 and 101 package subfolders each, never both in the
+    // same top-level folder. Grouping on driveSections' own parentLabel finds
+    // that split for free -- a flat leaf has none, so it is its own parent.
+    const driveParents = useMemo(() => {
+        const parents = new Map();
+        driveSections.forEach(section => {
+            const parentKey = section.parentLabel || section.key;
+            if (!parents.has(parentKey)) parents.set(parentKey, { key: parentKey, rootLeaf: null, children: [] });
+            const bucket = parents.get(parentKey);
+            if (section.parentLabel) bucket.children.push(section);
+            else bucket.rootLeaf = section;
+        });
+        return [...parents.values()].map(parent => {
+            const groups = [...(parent.rootLeaf ? parent.rootLeaf.groups : []), ...parent.children.flatMap(child => child.groups)];
+            return {
+                ...parent,
+                groups,
+                needsCopyCount: groups.filter(needsCopy).length,
+                blockedCount: groups.filter(isDriveGroupSelectionBlocked).length,
+                eligibleCount: groups.filter(group => !isDriveGroupSelectionBlocked(group)).length,
+                // A folder this large is "find the one I named", not "scan them
+                // all" -- opening it by default onto 101 subfolder rows is the
+                // opposite of what collapsing into a tree was supposed to buy.
+                // Threshold matches nothing in particular except being well
+                // above every other parent's child count (max elsewhere is 16).
+                defaultOpen: parent.children.length <= 20,
+            };
+        });
+    }, [driveSections]);
+
     // Expansion is derived, with an explicit per-section override on top. A
     // plain state Set plus an effect to sync it against search/filter changes
     // is the shape that loops; this cannot.
@@ -616,20 +651,35 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         || blockedFilterActive
         || needsCopyFilterActive
         || Boolean(driveRepairPairId);
-    // Expand from the top until roughly a screen of tiles is showing, then
-    // collapse the rest. Recognition still works on open, and the remaining
-    // 140-odd folders stay one click away instead of 900 tiles deep.
+    const isParentExpanded = (parent) => driveParentOverrides[parent.key] ?? parent.defaultOpen;
+    const toggleDriveParent = (parent) => setDriveParentOverrides(prev => ({ ...prev, [parent.key]: !isParentExpanded(parent) }));
+    // Expand each parent's OWN children from the top until roughly a screen of
+    // tiles is showing, then collapse the rest -- scoped per parent, not
+    // cumulative across all 16, or "Commercial Insurance Master - Abel" (101
+    // children) would exhaust the budget before any other folder got a look.
+    // Deliberately has no entry for a flat parent's rootLeaf: its tile
+    // visibility is `isFlatParent || isSectionExpanded(...)`, and that
+    // short-circuit means this Set is never consulted for it. If that
+    // short-circuit is ever removed, add rootLeaf.key here too, or a flat
+    // folder will render collapsed the first time nobody overrode it.
     const defaultExpandedSections = useMemo(() => {
         const keys = new Set();
-        if (expandEverySection) return keys;
-        let shown = 0;
-        for (const section of driveSections) {
-            if (shown >= 60 && keys.size > 0) break;
-            keys.add(section.key);
-            shown += section.groups.length;
-        }
+        driveParents.forEach(parent => {
+            if (expandEverySection) {
+                parent.children.forEach(child => keys.add(child.key));
+                return;
+            }
+            let shown = 0;
+            let addedAny = false;
+            for (const child of parent.children) {
+                if (shown >= 60 && addedAny) break;
+                keys.add(child.key);
+                addedAny = true;
+                shown += child.groups.length;
+            }
+        });
         return keys;
-    }, [driveSections, expandEverySection]);
+    }, [driveParents, expandEverySection]);
     const isSectionExpanded = (key) => (
         // A search or filter wins over a stale manual collapse. Without this,
         // "Collapse all" then a search showed matching headers with real counts
@@ -640,16 +690,42 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     );
     const toggleDriveSection = (key) => setDriveSectionOverrides(prev => ({ ...prev, [key]: !isSectionExpanded(key) }));
     // A collapse made while searching must not outlive the search, or the two
-    // rules fight and the buyer loses.
+    // rules fight and the buyer loses. Both levels reset together.
     useEffect(() => {
         setDriveSectionOverrides({});
+        setDriveParentOverrides({});
     }, [driveSearchTerm, driveFormatFilter, blockedFilterActive, needsCopyFilterActive, driveRepairPairId]);
-    const setAllDriveSections = (expanded) => setDriveSectionOverrides(
-        Object.fromEntries(driveSections.map(section => [section.key, expanded])),
-    );
+    const setAllDriveSections = (expanded) => {
+        setDriveParentOverrides(Object.fromEntries(driveParents.map(parent => [parent.key, expanded])));
+        setDriveSectionOverrides(Object.fromEntries(driveSections.map(section => [section.key, expanded])));
+    };
 
     const sectionFullySelected = (section) => section.eligibleCount > 0
         && section.groups.every(group => isDriveGroupSelectionBlocked(group) || selectedDriveAssetIds.has(group.id));
+    // Parent-level mirror of the below: a top-level "Select N shown" grabs
+    // every eligible tile across all of that folder's children at once,
+    // without making the buyer open each one first.
+    const parentFullySelected = (parent) => parent.eligibleCount > 0
+        && parent.groups.every(group => isDriveGroupSelectionBlocked(group) || selectedDriveAssetIds.has(group.id));
+    const toggleParentDriveAssets = (parent) => {
+        const eligible = parent.groups.filter(group => !isDriveGroupSelectionBlocked(group));
+        const deselecting = parentFullySelected(parent);
+        if (!deselecting) {
+            const skipped = parent.groups.length - parent.eligibleCount;
+            if (skipped) {
+                showWarning(String(skipped) + ' creative' + (skipped !== 1 ? 's' : '') + ' in ' + parent.key + ' ' + (skipped !== 1 ? 'were' : 'was') + ' skipped because their pair or copy source needs repair.');
+            }
+            if (eligible.length > 30) {
+                showWarning(`Selected all ${eligible.length} creatives in ${parent.key}, including subfolders still collapsed. Review the selection count below before adding.`);
+            }
+            setDriveParentOverrides(prev => ({ ...prev, [parent.key]: true }));
+        }
+        setSelectedDriveAssetIds(prev => {
+            const next = new Set(prev);
+            eligible.forEach(group => (deselecting ? next.delete(group.id) : next.add(group.id)));
+            return next;
+        });
+    };
 
     const toggleSectionDriveAssets = (section) => {
         const eligible = section.groups.filter(group => !isDriveGroupSelectionBlocked(group));
@@ -3421,22 +3497,71 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     {mixedDriveCopyMatches.matchedPairs} pair{mixedDriveCopyMatches.matchedPairs !== 1 ? 's' : ''} matched copy from a strategy doc; {mixedDriveCopyMatches.unmatchedPairs} pair{mixedDriveCopyMatches.unmatchedPairs !== 1 ? 's' : ''} did not. Check the source files, then use Refresh copy from Drive.
                                 </div>
                             )}
-                            {driveSections.length > 1 && (
+                            {driveParents.length > 1 && (
                                 <div className="mb-2 flex flex-wrap items-center justify-end gap-2 text-[11px] font-semibold text-gray-500">
-                                    <span className="mr-auto">{driveSections.length} Drive folder{driveSections.length !== 1 ? 's' : ''}</span>
+                                    <span className="mr-auto">{driveParents.length} Drive folder{driveParents.length !== 1 ? 's' : ''}</span>
                                     <button type="button" onClick={() => setAllDriveSections(true)} className="rounded border border-gray-300 px-2 py-0.5 hover:bg-gray-50">Expand all</button>
                                     <button type="button" onClick={() => setAllDriveSections(false)} className="rounded border border-gray-300 px-2 py-0.5 hover:bg-gray-50">Collapse all</button>
                                 </div>
                             )}
-                            {driveSections.map(section => {
-                                const sectionExpanded = isSectionExpanded(section.key);
+                            {driveParents.map(parent => {
+                                const parentExpanded = isParentExpanded(parent);
+                                const parentSelected = parent.groups.filter(group => selectedDriveAssetIds.has(group.id)).length;
+                                const parentAllSelected = parentFullySelected(parent);
+                                // A flat parent's media sits directly in the folder -- there is no
+                                // real subfolder to name, so its one leaf renders straight into
+                                // tiles under the parent header instead of a second identical row
+                                // that would just repeat what the parent already said.
+                                const childSections = parent.rootLeaf ? [parent.rootLeaf] : parent.children;
+                                const isFlatParent = Boolean(parent.rootLeaf);
+                                return (
+                                <div key={parent.key} className="mb-3 overflow-hidden rounded-lg border border-gray-200">
+                                    <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 bg-gray-100 px-2 py-1.5">
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleDriveParent(parent)}
+                                            aria-expanded={parentExpanded}
+                                            className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                                        >
+                                            <ChevronDown size={14} className={`shrink-0 text-gray-500 transition-transform ${parentExpanded ? '' : '-rotate-90'}`} />
+                                            <span className="shrink-0 text-xs font-bold text-gray-900" title={parent.key}>{parent.key}</span>
+                                            <span className="shrink-0 text-[11px] font-medium text-gray-500">{parent.groups.length}</span>
+                                            {!isFlatParent && (
+                                                <span className="shrink-0 text-[11px] font-medium text-gray-400">· {parent.children.length} folder{parent.children.length !== 1 ? 's' : ''}</span>
+                                            )}
+                                            {parent.needsCopyCount > 0 && (
+                                                <span className="shrink-0 text-[11px] font-medium text-amber-700">· {parent.needsCopyCount} need copy</span>
+                                            )}
+                                            {parent.blockedCount > 0 && (
+                                                <span className="shrink-0 text-[11px] font-medium text-red-700">· {parent.blockedCount} blocked</span>
+                                            )}
+                                            {parentSelected > 0 && (
+                                                <span className="shrink-0 text-[11px] font-semibold text-indigo-700">· {parentSelected} selected</span>
+                                            )}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleParentDriveAssets(parent)}
+                                            disabled={parent.eligibleCount === 0}
+                                            className="shrink-0 rounded border border-gray-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                        >
+                                            {parentAllSelected ? `Deselect all ${parent.eligibleCount}` : `Select all ${parent.eligibleCount}`}
+                                        </button>
+                                    </div>
+                                    {parentExpanded && (
+                                    <div className="p-2">
+                            {childSections.map(section => {
+                                // The flat leaf IS the parent -- its header would just repeat the
+                                // name and count already shown one row up, so skip straight to tiles.
+                                const sectionExpanded = isFlatParent || isSectionExpanded(section.key);
                                 // Selection survives collapse by design (filtering must not
                                 // erase earlier choices), so a collapsed header is the only
                                 // place that can admit it is holding some.
                                 const sectionSelected = section.groups.filter(group => selectedDriveAssetIds.has(group.id)).length;
                                 const sectionAllSelected = sectionFullySelected(section);
                                 return (
-                                <div key={section.key} className="mb-3 overflow-hidden rounded-lg border border-gray-200">
+                                <div key={section.key} className={isFlatParent ? '' : 'mb-2 overflow-hidden rounded-lg border border-gray-200'}>
+                                    {!isFlatParent && (
                                     <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 bg-gray-50 px-2 py-1.5">
                                         <button
                                             type="button"
@@ -3445,12 +3570,6 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                                         >
                                             <ChevronDown size={14} className={`shrink-0 text-gray-400 transition-transform ${sectionExpanded ? '' : '-rotate-90'}`} />
-                                            {/* The niche is the part Joel recognises and CSS truncate
-                                                was eating it off the end, keeping the master folder
-                                                someone else named. Truncate the prefix instead. */}
-                                            {section.parentLabel && (
-                                                <span className="min-w-0 max-w-[40%] truncate text-[11px] text-gray-400" title={section.key}>{section.parentLabel} /</span>
-                                            )}
                                             <span className="shrink-0 text-xs font-semibold text-gray-800" title={section.key}>{section.label}</span>
                                             <span className="shrink-0 text-[11px] font-medium text-gray-500">{section.groups.length}</span>
                                             {section.needsCopyCount > 0 && (
@@ -3475,6 +3594,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             {sectionAllSelected ? `Deselect ${section.eligibleCount}` : `Select ${section.eligibleCount} shown`}
                                         </button>
                                     </div>
+                                    )}
                                     {sectionExpanded && (
                                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 p-2">
                                 {section.groups.map(group => {
@@ -3612,6 +3732,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                         </div>
                                     );
                                 })}
+                                    </div>
+                                    )}
+                                </div>
+                                );
+                            })}
                                     </div>
                                     )}
                                 </div>
