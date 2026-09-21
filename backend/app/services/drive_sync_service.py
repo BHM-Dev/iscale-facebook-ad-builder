@@ -722,16 +722,30 @@ class DriveSyncService:
         if not brand_id:
             return 0
 
-        package_folder = self._find_package_folder(file_meta)
-        if package_folder:
-            metadata_folder = package_folder
-            folder_metadata = self._folder_copy_metadata(metadata_folder, force=True)
-        else:
-            strategy_folder = self._find_strategy_package_folder(file_meta)
-            if not strategy_folder:
-                return 0
-            metadata_folder = strategy_folder
-            folder_metadata = self._folder_copy_metadata(metadata_folder, force=True)
+        # Only a handoff manifest names its own package by filename, which is the
+        # single thing _find_package_folder recognizes. Its "has_media and depth >= 1"
+        # guard also assumes the walk started at a media file inside a placement
+        # subfolder ("1x1 Images"), one level below the package root. A strategy or
+        # category doc sitting directly IN its package root is already at depth 0, so
+        # that guard lets the walk climb one level too far and adopt an unrelated
+        # sibling package's manifest — refreshing that package instead while this
+        # doc's own media is never matched and stays unverified forever. Content
+        # matching (_find_strategy_package_folder) resolves those docs correctly, so
+        # prefer it for anything that is not a handoff manifest.
+        doc_name = (file_meta.get("name") or "").lower()
+        is_handoff_manifest = "handoff" in doc_name and "manifest" in doc_name
+        # Both branches keep the other resolver as a fallback: a doc whose filename
+        # merely happens to contain both tokens ("Creative-Handoff-Manifest-Strategy
+        # -Notes.md") is not a manifest to _folder_copy_metadata either, and would
+        # otherwise silently resolve to nothing.
+        metadata_folder = (
+            self._find_package_folder(file_meta) or self._find_strategy_package_folder(file_meta)
+            if is_handoff_manifest
+            else self._find_strategy_package_folder(file_meta) or self._find_package_folder(file_meta)
+        )
+        if not metadata_folder:
+            return 0
+        folder_metadata = self._folder_copy_metadata(metadata_folder, force=True)
         updated = 0
         refresh_assets = folder_metadata.get("assets_by_drive_id") or folder_metadata.get("assets", {})
         matched_media_ids = set()

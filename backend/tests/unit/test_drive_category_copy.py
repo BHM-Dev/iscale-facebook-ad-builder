@@ -515,6 +515,9 @@ def test_successful_copy_refresh_clears_stale_unverified_mark():
     writes = {}
     service._resolve_drive_path = lambda file_meta: type("R", (), {"brand_folder": "Brand", "folder_path": "p"})()
     service._match_brand_id = lambda brand_folder: "brand-id"
+    # Content matching is tried first for a non-handoff doc; falling through to
+    # _find_package_folder is the legacy path and must still work.
+    service._find_strategy_package_folder = lambda file_meta: None
     service._find_package_folder = lambda file_meta: "package"
     service._folder_copy_metadata = lambda folder_id, force=False: {
         "assets_by_drive_id": {"media-1": {"file_name": "AD1-1x1.jpg", "drive_file_ids": ["media-1"], "copy_id": "AD-01"}},
@@ -534,3 +537,54 @@ def test_successful_copy_refresh_clears_stale_unverified_mark():
     # must clear it too or a filename mismatch fixed in Drive stays blocked forever.
     assert writes["media-1"]["copy_integrity_issue"] is False
     assert writes["media-1"]["copy_integrity_reason"] is None
+
+
+def test_strategy_doc_in_package_root_does_not_adopt_sibling_handoff_package():
+    """_find_package_folder only recognizes a package by a handoff manifest, and its
+    depth guard assumes the walk began at a media file one level below the package
+    root. A strategy doc living directly in its package root starts at depth 0, so
+    that walk climbs too far and returns an unrelated sibling package. Content
+    matching resolves it correctly, so a non-handoff doc must prefer that."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._resolve_drive_path = lambda file_meta: type("R", (), {"brand_folder": "Brand", "folder_path": "p"})()
+    service._match_brand_id = lambda brand_folder: "brand-id"
+    service._find_package_folder = lambda file_meta: "unrelated-sibling-package"
+    service._find_strategy_package_folder = lambda file_meta: "correct-package"
+    seen = {}
+    service._folder_copy_metadata = lambda folder_id, force=False: seen.setdefault("folder", folder_id) and {} or {
+        "assets_by_drive_id": {"media-1": {"file_name": "AD-CL-01-1x1.png", "drive_file_ids": ["media-1"]}},
+        "_copy_source_drive_file_id": "strategy-doc",
+    }
+    service._write_merged_soft_tags = lambda drive_file_id, tags: 1
+    service._mark_unmatched_package_assets_unverified = lambda package_folder, matched: None
+
+    service._refresh_folder_copy_metadata(
+        {"id": "strategy-doc", "name": "Auto-Dealership-Strategy-and-Copy-v2.md",
+         "mimeType": "text/markdown", "parents": ["correct-package"]}
+    )
+
+    assert seen["folder"] == "correct-package"
+
+
+def test_handoff_manifest_still_resolves_via_manifest_package_lookup():
+    """A handoff manifest names its own package, so it must keep using
+    _find_package_folder rather than the content-matching fallback."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._resolve_drive_path = lambda file_meta: type("R", (), {"brand_folder": "Brand", "folder_path": "p"})()
+    service._match_brand_id = lambda brand_folder: "brand-id"
+    service._find_package_folder = lambda file_meta: "manifest-package"
+    service._find_strategy_package_folder = lambda file_meta: (_ for _ in ()).throw(
+        AssertionError("handoff manifest must not use the strategy resolver")
+    )
+    seen = {}
+    service._folder_copy_metadata = lambda folder_id, force=False: seen.setdefault("folder", folder_id) and {} or {
+        "assets_by_drive_id": {"media-1": {"file_name": "AD1-1x1.jpg", "drive_file_ids": ["media-1"]}},
+    }
+    service._write_merged_soft_tags = lambda drive_file_id, tags: 1
+    service._mark_unmatched_package_assets_unverified = lambda package_folder, matched: None
+
+    service._refresh_folder_copy_metadata(
+        {"id": "manifest", "name": "Handoff-Manifest.md", "mimeType": "text/markdown", "parents": ["manifest-package"]}
+    )
+
+    assert seen["folder"] == "manifest-package"
