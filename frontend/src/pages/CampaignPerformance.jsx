@@ -127,11 +127,17 @@ function BestTimesGrid({ data }) {
   const qualifies = cell => !attributionIncomplete && cell.revenue != null && cell.confidence !== 'low' && cell.spend >= 100 && cell.revenue >= 25 && cell.sampleDays >= (cell.label === 'Mon–Fri' ? 3 : 2) && cell.supportedHours >= cell.part.end - cell.part.start;
   const weekdayActionable = weekdayRows.filter(qualifies);
   const weekendActionable = weekendRows.filter(qualifies);
-  const bestWeekday = weekdayActionable.length ? weekdayActionable.reduce((best, cell) => cell.roi > best.roi ? cell : best) : null;
-  const weakestWeekend = weekendActionable.length ? weekendActionable.reduce((worst, cell) => cell.roi < worst.roi ? cell : worst) : null;
-  const runWindow = bestWeekday && bestWeekday.roi > 0 ? bestWeekday : null;
-  const avoidWindow = weakestWeekend && weakestWeekend.roi < 0 ? weakestWeekend : null;
   const actionableRows = [...weekdayActionable, ...weekendActionable];
+  const classifyWindow = (cell) => {
+    if (!qualifies(cell)) return { label: 'No signal', classes: 'border-gray-200 bg-gray-50 text-gray-500', detail: 'Insufficient attributable evidence' };
+    if (cell.roi <= -0.1) return { label: allocated ? 'Test pause' : 'Avoid', classes: 'border-red-200 bg-red-50 text-red-800', detail: 'Negative timing signal' };
+    if (cell.roi >= 0.1) return { label: allocated ? 'Test run' : 'Run', classes: 'border-green-200 bg-green-50 text-green-800', detail: 'Positive timing signal' };
+    return { label: 'Hold', classes: 'border-amber-200 bg-amber-50 text-amber-800', detail: 'No material advantage' };
+  };
+  const scheduleGroups = [
+    { label: 'Weekday schedule', detail: 'Mon–Fri', rows: weekdayRows },
+    { label: 'Weekend schedule', detail: 'Sat–Sun', rows: weekendRows },
+  ];
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -160,17 +166,14 @@ function BestTimesGrid({ data }) {
       {!niche && <p className="text-sm text-gray-400 py-6 text-center">No hourly data returned for this account and period.</p>}
       {attributionIncomplete && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">Timing recommendation unavailable</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">{data.attribution_warning || 'Best Times cannot rank hours because some Everflow revenue is not tied to a Meta ad set.'} Do not change budgets from this view.</p>{(data.dropped_conversion_count || data.dropped_revenue) ? <p className="mt-2 text-[11px] font-medium text-amber-800">{data.dropped_conversion_count || 0} attribution records · {formatMoney(data.dropped_revenue || 0)} unmatched value</p> : null}</div></div></div>}
       {niche && !attributionIncomplete && allocated && <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">Directional timing · test only</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">Revenue is allocated from RedTrack timing and reconciled to Everflow billing. Use these windows only as a controlled test hypothesis; do not scale or pause budgets from this view.</p></div></div></div>}
+      {niche?.level === 'Ad set' && <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-xs text-violet-900"><span className="font-semibold">Ad-set diagnostic.</span> Use this to investigate variation inside the campaign, not to override a well-supported campaign schedule. Ad-set timing can diverge simply because its sample is smaller.</div>}
       {niche && untracked && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">Revenue tracking unavailable</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">Spend and leads are available, but Best Times cannot rank hours until this account has an exact Switchboard offer mapping. Do not change budgets from this view.</p></div></div></div>}
       {niche && !untracked && !attributionIncomplete && !actionableRows.length && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">No repeatable timing signal yet</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">A weekday Run needs at least $100 spend, $25 attributable revenue, and 3 weekday buckets. A weekend Avoid needs the same proof across Saturday and Sunday. Keep budgets unchanged or select a campaign/ad set with a deeper sample.</p></div></div></div>}
-      {!untracked && actionableRows.length > 0 && <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        {[
-          [allocated ? 'Test Run' : 'Run', runWindow, 'border-green-200 bg-green-50 text-green-800'],
-          [allocated ? 'Test Avoid' : 'Avoid', avoidWindow, 'border-red-200 bg-red-50 text-red-800'],
-        ].map(([label, cell, classes]) => cell && <div key={label} className={`rounded-lg border px-3 py-2 ${classes}`}><div className="text-[10px] font-semibold uppercase tracking-wide opacity-70">{label}</div><div className="text-sm font-semibold">{cell.label} · {cell.part.label} · {allocated ? '≈' : ''}{cell.roi >= 0 ? '+' : ''}{Math.round(cell.roi * 100)}% {allocated ? 'directional ROI' : 'ROI'}</div><div className="text-[11px] opacity-75">${Math.round(cell.spend).toLocaleString()} spend · {cell.leads} leads · {allocated ? '≈' : ''}${Math.round(cell.revenue).toLocaleString()} {allocated ? 'allocated revenue' : 'revenue'} · {cell.confidence} confidence · {cell.sampleDays} of {cell.label === 'Mon–Fri' ? 5 : 2} weekday buckets</div></div>)}
+      {!untracked && !attributionIncomplete && <div className="space-y-3">
+        <div><h4 className="text-sm font-semibold text-gray-900">Test schedule by daypart</h4><p className="mt-0.5 text-xs text-gray-500">Read left to right as the operating day: a Test pause can be followed by a later Test run.</p></div>
+        {scheduleGroups.map(group => <div key={group.label} className="rounded-xl border border-gray-200 overflow-hidden"><div className="flex items-center justify-between bg-gray-50 px-3 py-2"><span className="text-xs font-semibold text-gray-800">{group.label}</span><span className="text-[11px] text-gray-500">{group.detail}</span></div><div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-px bg-gray-200">{group.rows.map(cell => { const status = classifyWindow(cell); return <div key={cell.part.key} className={`bg-white p-3 ${status.classes}`}><div className="text-[10px] font-semibold uppercase tracking-wide opacity-70">{cell.part.label}</div><div className="mt-1 text-sm font-semibold">{status.label}</div><div className="mt-1 text-[11px] leading-snug">{cell.revenue != null && cell.spend > 0 ? `${allocated ? '≈' : ''}${Math.round(cell.revenue).toLocaleString()} revenue · ${Math.round(cell.spend).toLocaleString()} spend · ${cell.roi >= 0 ? '+' : ''}${Math.round(cell.roi * 100)}% ROI` : status.detail}</div><div className="mt-1 text-[10px] opacity-75">{cell.sampleDays} of {cell.label === 'Mon–Fri' ? 5 : 2} weekday buckets</div></div>; })}</div></div>)}
       </div>}
       {niche && <p className="text-[11px] text-gray-500">Sampling: {data.date_from}–{data.date_to}. Each weekday bucket combines every matching calendar date in that window; a bucket counts only when that daypart had Meta spend and RedTrack-attributed revenue.</p>}
-      {actionableRows.length > 0 && !runWindow && <p className="text-xs text-gray-500">No weekday block is currently profitable enough to label {allocated ? 'Test Run' : 'Run'}. Keep weekday budgets unchanged.</p>}
-      {actionableRows.length > 0 && runWindow && !avoidWindow && <p className="text-xs text-gray-500">No supported negative weekend block yet. Keep weekend budgets unchanged until both Saturday and Sunday have enough data to evaluate.</p>}
     </div>
   );
 }
