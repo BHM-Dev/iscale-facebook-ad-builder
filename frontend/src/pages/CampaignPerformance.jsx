@@ -466,7 +466,19 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
 
               <div className="flex gap-1 p-1 mb-4 rounded-lg bg-gray-100 w-fit">
                 <button type="button" onClick={() => setIntelligenceView('niche')} className={`px-3 py-1.5 rounded-md text-xs font-semibold ${intelligenceView === 'niche' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500'}`}>Niche profitability</button>
-                <button type="button" onClick={() => { setIntelligenceView('best-times'); if (!bestTimesData && (preset !== 'custom' || (customFrom && customTo))) loadBestTimes(preset, customFrom, customTo); }} className={`px-3 py-1.5 rounded-md text-xs font-semibold ${intelligenceView === 'best-times' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500'}`}>Best Times</button>
+                <button type="button" onClick={() => {
+                  setIntelligenceView('best-times');
+                  // A one- or two-week slice is useful for current P&L, but
+                  // too sparse once its data is split into four dayparts.
+                  // Start timing analysis on a stable 30-day sample so the
+                  // first view is actionable rather than an empty grid.
+                  if (['today', 'yesterday', 'last_3d', 'last_7d', 'last_14d'].includes(preset)) {
+                    handlePreset('last_30d');
+                    loadBestTimes('last_30d', '', '');
+                  } else if (!bestTimesData && (preset !== 'custom' || (customFrom && customTo))) {
+                    loadBestTimes(preset, customFrom, customTo);
+                  }
+                }} className={`px-3 py-1.5 rounded-md text-xs font-semibold ${intelligenceView === 'best-times' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500'}`}>Best Times</button>
               </div>
 
               {intelligenceView === 'best-times' && (
