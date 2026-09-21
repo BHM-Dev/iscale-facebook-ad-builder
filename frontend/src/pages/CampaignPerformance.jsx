@@ -1308,6 +1308,10 @@ export default function CampaignPerformance() {
   const insightsRequestRef = useRef(0);
   const adsRequestRef = useRef(0);
   const rtAdsRequestRef = useRef(0);
+  // Ad-level detail is intentionally lazy. The campaign scan only needs
+  // ad-set metrics; loading every creative and every RedTrack sub1 row before
+  // Joel expands one is the largest avoidable request on this page.
+  const creativeDetailsKeyRef = useRef(null);
   const [expandedAdsets, setExpandedAdsets] = useState(new Set());
   // Campaign-level collapse — starts with all open; add campaignId to collapse it
   const [collapsedCampaigns, setCollapsedCampaigns] = useState(new Set());
@@ -1430,8 +1434,10 @@ export default function CampaignPerformance() {
       if (!res.ok) throw new Error(`Creative breakdown unavailable (${res.status})`);
       const data = await res.json();
       if (isCurrent()) setAdsBulk(data);
+      return true;
     } catch (e) {
       if (isCurrent()) setAdsError(e.name === 'AbortError' ? 'Request timed out — try again.' : e.message);
+      return false;
     } finally {
       if (isCurrent()) setAdsLoading(false);
     }
@@ -1449,10 +1455,24 @@ export default function CampaignPerformance() {
       if (!res.ok) throw new Error(`RedTrack creative data unavailable (${res.status})`);
       const data = await res.json();
       if (isCurrent() && data.configured && data.data) setRtAdsBulk(data.data);
+      return true;
     } catch (e) {
       if (isCurrent()) setRtAdsError(e.name === 'AbortError' ? 'Request timed out — try again.' : e.message);
+      return false;
     }
   }, [adAccountId, buildDateParams, timedFetch]);
+
+  const loadCreativeDetails = useCallback(async (accountId, preset, dateFrom = null, dateTo = null, force = false) => {
+    if (preset === 'custom' && (!dateFrom || !dateTo)) return;
+    const rangeKey = [accountId || '', preset, dateFrom || '', dateTo || ''].join(':');
+    if (!force && creativeDetailsKeyRef.current === rangeKey) return;
+    creativeDetailsKeyRef.current = rangeKey;
+    const loaded = await Promise.all([
+      loadAdsBulk(accountId, preset, dateFrom, dateTo),
+      loadRtAdsBulk(preset, dateFrom, dateTo),
+    ]);
+    if (loaded.some(result => result === false)) creativeDetailsKeyRef.current = null;
+  }, [loadAdsBulk, loadRtAdsBulk]);
 
   const toggleAdsetStatus = useCallback(async (adset) => {
     const currentStatus = normalizeStatus(adsetStatusOverrides[adset.fb_adset_id] ?? adset.status);
@@ -1494,7 +1514,7 @@ export default function CampaignPerformance() {
       insightsRequestRef.current += 1;
       adsRequestRef.current += 1;
       rtAdsRequestRef.current += 1;
-      setAdsets([]); setBulkInsights(null); setAdsBulk(null); setRtAdsBulk(null);
+      setAdsets([]); setExpandedAdsets(new Set()); setBulkInsights(null); setAdsBulk(null); setRtAdsBulk(null);
       setBulkInsightsError(null); setAdsError(null); setRtAdsError(null);
       adsetsRequestRef.current += 1;
       setLoadingAdsets(false);
@@ -1506,6 +1526,7 @@ export default function CampaignPerformance() {
     const initTo     = searchParams.get('date_to')   || null;
     const resolvedPreset = (initFrom && initTo) ? 'custom' : initPreset;
     setAdsets([]);
+    setExpandedAdsets(new Set());
     setBulkInsights(null);
     setAdsBulk(null);
     setAdsError(null);
@@ -1513,9 +1534,8 @@ export default function CampaignPerformance() {
     setBulkInsightsError(null);
     setRtAdsBulk(null);
     setRtAdsError(null);
+    creativeDetailsKeyRef.current = null;
     loadBulkInsights(adAccountId, resolvedPreset, initFrom, initTo);
-    loadAdsBulk(adAccountId, resolvedPreset, initFrom, initTo);
-    loadRtAdsBulk(resolvedPreset, initFrom, initTo);
   }, [activeAccountLoading, adAccountId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-fetch when user changes the date preset — skip the initial mount render
@@ -1533,10 +1553,22 @@ export default function CampaignPerformance() {
     setBulkInsightsError(null);
     setAdsBulk(null);
     setAdsError(null);
+    setRtAdsBulk(null);
+    setRtAdsError(null);
+    creativeDetailsKeyRef.current = null;
     loadBulkInsights(adAccountId, datePreset, from, to);
-    loadAdsBulk(adAccountId, datePreset, from, to);
-    loadRtAdsBulk(datePreset, from, to);
   }, [datePreset, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Deep links can expand an ad set without a click. Fetch creative detail at
+  // that point too, but never while the normal campaign scan is collapsed.
+  useEffect(() => {
+    if (activeAccountLoading || !expandedAdsets.size) return;
+    const from = datePreset === 'custom' ? dateFrom : null;
+    const to = datePreset === 'custom' ? dateTo : null;
+    const rangeKey = [adAccountId || '', datePreset, from || '', to || ''].join(':');
+    if (creativeDetailsKeyRef.current === rangeKey) return;
+    loadCreativeDetails(adAccountId, datePreset, from, to);
+  }, [activeAccountLoading, adAccountId, datePreset, dateFrom, dateTo, expandedAdsets, loadCreativeDetails]);
 
   useEffect(() => {
     if (activeAccountLoading) return;
@@ -1626,11 +1658,12 @@ export default function CampaignPerformance() {
         throw new Error(e.detail || 'Meta sync failed');
       }
       const result = await metaRes.json();
+      const redTrackFailed = !rtRes || !rtRes.ok;
       // RedTrack failure must never be silently absorbed — a buyer refreshing
       // this page needs to know revenue/CPL may be stale even though the ad
       // structure just synced clean (audit finding 2026-08-21: this used to
       // be .catch(() => null) with the response discarded entirely).
-      if (!rtRes || !rtRes.ok) {
+      if (redTrackFailed) {
         const rtErr = rtRes ? await rtRes.json().catch(() => ({})) : {};
         showWarning(
           `Meta synced, but RedTrack revenue refresh failed${rtErr.detail ? `: ${rtErr.detail}` : ''} — revenue/CPL numbers may be stale.`
@@ -1646,13 +1679,19 @@ export default function CampaignPerformance() {
         showWarning(
           `Meta sync INCOMPLETE — ${detail} Some ad sets could not be fetched${result.errors?.length ? `: ${result.errors.join('; ')}` : ''}. Revenue attribution may be understated until this is re-run.`
         );
-      } else {
+      } else if (!redTrackFailed) {
         showSuccess(`Sync complete — ${detail}`);
       }
       loadAdsets();
       const from = datePreset === 'custom' ? dateFrom : null;
       const to   = datePreset === 'custom' ? dateTo   : null;
       loadBulkInsights(adAccountId, datePreset, from, to);
+      setAdsBulk(null);
+      setRtAdsBulk(null);
+      setAdsError(null);
+      setRtAdsError(null);
+      creativeDetailsKeyRef.current = null;
+      if (expandedAdsets.size) loadCreativeDetails(adAccountId, datePreset, from, to);
     } catch (e) { showError(e.message || 'Sync failed'); }
     finally { setSyncing(false); setSyncingRT(false); }
   };
@@ -2247,8 +2286,12 @@ export default function CampaignPerformance() {
                 const to = datePreset === 'custom' ? dateTo : null;
                 loadAdsets();
                 loadBulkInsights(adAccountId, datePreset, from, to);
-                loadAdsBulk(adAccountId, datePreset, from, to);
-                loadRtAdsBulk(datePreset, from, to);
+                setAdsBulk(null);
+                setRtAdsBulk(null);
+                setAdsError(null);
+                setRtAdsError(null);
+                creativeDetailsKeyRef.current = null;
+                if (expandedAdsets.size) loadCreativeDetails(adAccountId, datePreset, from, to);
               }}
               className="text-gray-400 hover:text-gray-600 transition-colors"
               title="Refresh"
@@ -2517,17 +2560,6 @@ export default function CampaignPerformance() {
                             const rt = d?.redtrack;
                             const rowRoas = rt?.roas ?? d?.roas ?? null;
                             const rowProfit = rt?.profit ?? null;
-                            const adsetAds = adsBulk?.[adset.fb_adset_id] || [];
-                            const adsetAvgCpl = adsetAds.filter(a => a.leads > 0).length > 0
-                              ? adsetAds.filter(a => a.leads > 0).reduce((s, a) => s + a.cpl, 0) / adsetAds.filter(a => a.leads > 0).length
-                              : null;
-                            const hasPoorCreatives = adsetAds.some(a => {
-                              const adsetProfitableByRt = rt?.roas != null && rt.roas >= 1;
-                              const isPoorRoas = (a.roas != null && a.roas < 1) && !adsetProfitableByRt;
-                              const isHighCpl = adsetAvgCpl != null && a.cpl != null && a.cpl > adsetAvgCpl * 1.4 && a.spend > 20;
-                              const isNoLeads = a.spend >= 20 && a.leads === 0;
-                              return isPoorRoas || isHighCpl || isNoLeads;
-                            });
                             const adsetRules = rules.filter(r => r.adset_id === adset.id);
                             const triggeredRule = adsetRules.find(r => r.triggered_at);
                             const activeRule = adsetRules.find(r => r.is_active && !r.triggered_at);
@@ -2535,11 +2567,18 @@ export default function CampaignPerformance() {
                             const isAssigning = assigningBrand === adset.id;
                             const isHighlighted = highlightedAdsetId === adset.fb_adset_id;
 
-                            const toggleExpand = () => setExpandedAdsets(prev => {
-                              const next = new Set(prev);
-                              next.has(adset.fb_adset_id) ? next.delete(adset.fb_adset_id) : next.add(adset.fb_adset_id);
-                              return next;
-                            });
+                            const toggleExpand = () => {
+                              if (!isExpanded) {
+                                const from = datePreset === 'custom' ? dateFrom : null;
+                                const to = datePreset === 'custom' ? dateTo : null;
+                                loadCreativeDetails(adAccountId, datePreset, from, to);
+                              }
+                              setExpandedAdsets(prev => {
+                                const next = new Set(prev);
+                                next.has(adset.fb_adset_id) ? next.delete(adset.fb_adset_id) : next.add(adset.fb_adset_id);
+                                return next;
+                              });
+                            };
 
                             return (
                               <React.Fragment key={adset.id}>
@@ -2553,17 +2592,12 @@ export default function CampaignPerformance() {
                                     <button
                                       onClick={toggleExpand}
                                       className="flex items-center gap-2 min-w-0 text-left"
-                                      title="Show creative breakdown"
+                                      title="Show creative breakdown (loaded on demand)"
                                     >
                                       <span className="flex-shrink-0 text-gray-400">
                                         {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                       </span>
                                       <span className="font-medium text-gray-900 truncate" title={adset.name}>{adset.name}</span>
-                                      {hasPoorCreatives && !isExpanded && (
-                                        <span className="flex-shrink-0 text-xs px-1.5 py-0.5 rounded font-medium bg-orange-50 text-orange-600 flex items-center gap-1">
-                                          <AlertTriangle size={10} /> Poor creative
-                                        </span>
-                                      )}
                                       {triggeredRule && (
                                         <span className="flex-shrink-0 text-xs px-1.5 py-0.5 rounded font-medium bg-red-100 text-red-700 flex items-center gap-1">
                                           <PauseCircle size={10} /> Rule triggered
@@ -2762,7 +2796,7 @@ export default function CampaignPerformance() {
                                         adsLoading={adsLoading}
                                         adsError={adsError}
                                         rtAdsBulk={rtAdsBulk}
-                                        onAdStatusChange={() => loadAdsBulk(adAccountId, datePreset, datePreset === 'custom' ? dateFrom : null, datePreset === 'custom' ? dateTo : null)}
+                                        onAdStatusChange={() => loadCreativeDetails(adAccountId, datePreset, datePreset === 'custom' ? dateFrom : null, datePreset === 'custom' ? dateTo : null, true)}
                                         onRemix={(creative) => {
                                           const brandContext = campaignBrands[adset.id];
                                           setRemixDrawer({ ...creative, brand_id: brandContext?.brand_id || '', brand_name: brandContext?.brand_name || '' });
