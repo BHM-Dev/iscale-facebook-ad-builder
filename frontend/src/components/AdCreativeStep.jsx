@@ -118,6 +118,26 @@ const driveAssetPlacement = (asset) => {
     return 'feed';
 };
 
+// Shared by the grid and the format pills so the two can never disagree about
+// what a search matches.
+const driveAssetMatchesQuery = (asset, query) => {
+    if (!query) return true;
+    const haystack = `${asset.file_name || ''} ${asset.folder_path || ''} ${asset.brand_name || ''}`.toLowerCase();
+    return haystack.includes(query);
+};
+
+// Format filtering is GROUP-aware, never asset-aware. Filtering the raw assets
+// first and grouping the survivors splits a mixed-format pair (1x1 image +
+// 9x16 video) into a half-group that carries the SAME id as the merged pair --
+// the key is manifest:brand:package:copy_id, which has no format in it. Since
+// selection resolves ids through the unfiltered driveGroupById, selecting that
+// visible image half added the video half too and launched an ad the buyer
+// never saw (pre-push review, code-auditor: HIGH). Filtering whole groups keeps
+// an id meaning one fixed set of assets in every list.
+const filterGroupsByFormat = (groups, format) => (
+    format ? groups.filter(group => group.assets.some(asset => asset.format === format)) : groups
+);
+
 const buildDriveAssetGroups = (assets) => {
     const grouped = new Map();
     assets.forEach(asset => {
@@ -516,13 +536,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             return buildDriveAssetGroups(driveAssets).filter(group => group.id === driveRepairPairId);
         }
         const query = driveSearchTerm.trim().toLowerCase();
-        const visibleAssets = driveAssets.filter(asset => {
-            if (driveFormatFilter && asset.format !== driveFormatFilter) return false;
-            if (!query) return true;
-            const haystack = `${asset.file_name || ''} ${asset.folder_path || ''} ${asset.brand_name || ''}`.toLowerCase();
-            return haystack.includes(query);
-        });
-        return buildDriveAssetGroups(visibleAssets);
+        const searched = driveAssets.filter(asset => driveAssetMatchesQuery(asset, query));
+        return filterGroupsByFormat(buildDriveAssetGroups(searched), driveFormatFilter);
     }, [driveAssets, driveSearchTerm, driveFormatFilter, driveRepairPairId]);
 
     // The repair path scopes the grid to a single pair and must win over the
@@ -699,13 +714,24 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         });
     }, [driveGroupById]);
 
+    // Creative groups, not files. These pills read "All 288" -- a raw file
+    // count -- on a bar where every other number is groups: "144 creative
+    // groups", the blocked count, "Select all". A Feed + Stories pair is one
+    // tile and two files, so the two units were off by the number of pairs and
+    // the bar contradicted itself.
+    //
+    // Counted through the same search the grid applies, so each pill predicts
+    // what clicking it actually shows -- the same defect the blocked-count
+    // scoping fixed twice already.
     const driveCounts = useMemo(() => {
-        return driveAssets.reduce((acc, asset) => {
-            acc.total += 1;
-            acc[asset.format] = (acc[asset.format] || 0) + 1;
-            return acc;
-        }, { total: 0, image: 0, video: 0 });
-    }, [driveAssets]);
+        const query = driveSearchTerm.trim().toLowerCase();
+        const searched = buildDriveAssetGroups(driveAssets.filter(asset => driveAssetMatchesQuery(asset, query)));
+        return {
+            total: searched.length,
+            image: filterGroupsByFormat(searched, 'image').length,
+            video: filterGroupsByFormat(searched, 'video').length,
+        };
+    }, [driveAssets, driveSearchTerm]);
 
     const defaultUrlForDriveGroup = (group) => {
         const brandId = group?.displayAsset?.brand_id;
@@ -3058,12 +3084,31 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             <input
                                 value={driveSearchTerm}
                                 onChange={(e) => setDriveSearchTerm(e.target.value)}
-                                placeholder="Search filenames, folders, or brands"
-                                className="w-full rounded-lg border border-gray-300 bg-white py-1 pl-9 pr-3 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                                placeholder={driveRepairPairId ? 'Repairing one pair — search paused' : 'Search filenames, folders, or brands'}
+                                disabled={Boolean(driveRepairPairId)}
+                                className="w-full rounded-lg border border-gray-300 bg-white py-1 pl-9 pr-3 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400"
                             />
                         </label>
                         <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap lg:shrink-0">
-                            <div className="inline-flex overflow-hidden rounded-lg border border-gray-300 bg-white">
+                            {/* The only way out of repair scope used to be closing and
+                                reopening the picker -- with search and the pills both
+                                inert, every control on this bar was dead. */}
+                            {driveRepairPairId && (
+                                <button
+                                    type="button"
+                                    onClick={() => setDriveRepairPairId(null)}
+                                    className="whitespace-nowrap rounded-lg border border-indigo-300 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                                >
+                                    Repairing 1 pair · Show all
+                                </button>
+                            )}
+                            <div
+                                className="inline-flex overflow-hidden rounded-lg border border-gray-300 bg-white"
+                                title="Creative groups, not files — a Feed + Stories pair counts once. Filtering by format can list a mixed-format pair under both."
+                            >
+                                <span className="border-r border-gray-200 bg-gray-50 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                                    Groups
+                                </span>
                                 {[
                                     { value: '', label: `All ${driveCounts.total}` },
                                     { value: 'image', label: `Images ${driveCounts.image || 0}` },
@@ -3073,7 +3118,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                         key={option.value || 'all'}
                                         type="button"
                                         onClick={() => setDriveFormatFilter(option.value)}
-                                        className={`px-3 py-1 text-xs font-semibold transition-colors ${
+                                        // Repair mode scopes the grid to one pair and bypasses the
+                                        // format filter entirely, so these would be dead clicks.
+                                        disabled={Boolean(driveRepairPairId)}
+                                        title={driveRepairPairId ? 'Not available while repairing a single pair' : undefined}
+                                        className={`px-3 py-1 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                                             driveFormatFilter === option.value
                                                 ? 'bg-gray-900 text-white'
                                                 : 'text-gray-600 hover:bg-gray-50'
