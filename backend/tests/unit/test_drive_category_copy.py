@@ -383,6 +383,14 @@ def test_ad_numbered_copy_doc_resolves_a_package_from_sibling_media():
     service = DriveSyncService.__new__(DriveSyncService)
     service._strategy_package_folder_cache = {}
     service._client = lambda: None
+    # "package" is a real package (root/brand/package), not a brand root, so the
+    # container guard must let the strategy walk keep it.
+    service.root_folder_id = "root"
+    service._folder_chain_to_root = lambda folder_id: [
+        {"id": "package", "name": "package"},
+        {"id": "brand", "name": "brand"},
+        {"id": "root", "name": "root"},
+    ]
     document = """AD 1 — Identity
 META HEADLINE
 Headline
@@ -588,3 +596,308 @@ def test_handoff_manifest_still_resolves_via_manifest_package_lookup():
     )
 
     assert seen["folder"] == "manifest-package"
+
+
+# --------------------------------------------------------------------------
+# Flat-package copy leak: a package whose media sits directly in the package
+# root with no handoff manifest. The walk in _find_package_folder starts at
+# depth 0 in that folder, its "has_media and depth >= 1" guard does not fire at
+# depth 0, so it climbs into the brand root -- whose subtree DOES contain a
+# manifest plus media belonging to a SIBLING package. The by-drive-id lookup
+# then misses (different package) but the by-lowercased-filename lookup can hit,
+# attaching the sibling's headline/primary_text/landing_page/CTA to a creative
+# that launches to Meta with real spend, tagged source=handoff_manifest and
+# copy_refresh_status=verified with no integrity flag.
+# --------------------------------------------------------------------------
+
+ROOT = "root-folder"
+BRAND = "brand-folder"
+FLAT_PKG = "flat-package"
+SIBLING_PKG = "sibling-package"
+PLACEMENT = "placement-1x1"
+AD_COPY = "ad-copy-subfolder"
+
+FOLDER_MIME = "application/vnd.google-apps.folder"
+
+
+class _FakeExecute:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def execute(self):
+        return self._payload
+
+
+class _FakeFiles:
+    def __init__(self, parents_by_id, names_by_id):
+        self._parents = parents_by_id
+        self._names = names_by_id
+
+    def get(self, fileId=None, fields=None, supportsAllDrives=None):
+        parents = self._parents.get(fileId)
+        payload = {"id": fileId, "name": self._names.get(fileId, fileId)}
+        if parents:
+            payload["parents"] = [parents]
+        return _FakeExecute(payload)
+
+
+class _FakeDrive:
+    def __init__(self, parents_by_id, names_by_id):
+        self._files = _FakeFiles(parents_by_id, names_by_id)
+
+    def files(self):
+        return self._files
+
+
+def _service(parents_by_id, subtrees, names_by_id=None):
+    """Build a DriveSyncService with the Drive calls stubbed out.
+
+    parents_by_id maps folder/file id -> its single parent id.
+    subtrees maps folder id -> the recursive non-folder listing under it.
+    """
+    service = DriveSyncService.__new__(DriveSyncService)
+    service.root_folder_id = ROOT
+    service._package_folder_cache = {}
+    service._strategy_package_folder_cache = {}
+    service._folder_metadata_cache = {}
+    service._path_cache = {}
+    drive = _FakeDrive(parents_by_id, names_by_id or {})
+    service._client = lambda: drive
+    service._list_folder_subtree = lambda folder_id, max_files=2000: subtrees.get(folder_id, [])
+    return service
+
+
+def _png(file_id, name):
+    return {"id": file_id, "name": name, "mimeType": "image/png"}
+
+
+def _manifest(file_id="manifest-id", name="SIBLING_HANDOFF_MANIFEST.txt"):
+    return {"id": file_id, "name": name, "mimeType": "text/plain"}
+
+
+def test_flat_package_does_not_borrow_sibling_manifest_from_brand_root():
+    """A flat package must not resolve to the brand root."""
+    flat_media = _png("flat-media-id", "contractor.png")
+    sibling_media = _png("sibling-media-id", "contractor.png")
+    parents = {FLAT_PKG: BRAND, SIBLING_PKG: BRAND, BRAND: ROOT}
+    subtrees = {
+        FLAT_PKG: [flat_media],
+        SIBLING_PKG: [sibling_media, _manifest()],
+        BRAND: [flat_media, sibling_media, _manifest()],
+    }
+    service = _service(parents, subtrees)
+
+    resolved = service._find_package_folder({"id": "flat-media-id", "parents": [FLAT_PKG]})
+
+    assert resolved is None, "walk climbed into the brand root and borrowed a sibling's manifest"
+
+
+def test_flat_package_media_gets_no_copy_instead_of_a_siblings_copy():
+    """End to end: the flat package's creative must not inherit sibling copy."""
+    flat_media = _png("flat-media-id", "contractor.png")
+    sibling_media = _png("sibling-media-id", "contractor.png")
+    parents = {FLAT_PKG: BRAND, SIBLING_PKG: BRAND, BRAND: ROOT}
+    subtrees = {
+        FLAT_PKG: [flat_media],
+        SIBLING_PKG: [sibling_media, _manifest()],
+        BRAND: [flat_media, sibling_media, _manifest()],
+    }
+    service = _service(parents, subtrees)
+    # Whatever folder is resolved, the sibling's manifest metadata is keyed by the
+    # colliding basename and owned by the SIBLING's Drive file id.
+    service._folder_copy_metadata = lambda folder_id, force=False: {
+        "assets": {
+            "contractor.png": {
+                "copy_id": "SIB-F01",
+                "copy": {"headline": "Sibling headline", "primary_text": "Sibling body"},
+                "landing_page": "https://example.com/sibling",
+                "cta": "GET_QUOTE",
+                "source": "handoff_manifest",
+                "drive_file_id": "sibling-media-id",
+            }
+        },
+        "_copy_source_drive_file_id": "manifest-id",
+    }
+    service._find_strategy_package_folder = lambda file_meta, max_depth=4: None
+
+    metadata = service._metadata_for_media_file(
+        {"id": "flat-media-id", "parents": [FLAT_PKG]}, "contractor.png"
+    )
+
+    assert metadata.get("copy_id") != "SIB-F01", "creative inherited a sibling package's copy"
+    assert not metadata.get("copy"), "creative inherited a sibling package's copy body"
+    assert metadata.get("landing_page") is None, "creative inherited a sibling package's landing page"
+    assert metadata.get("cta") is None, "creative inherited a sibling package's CTA"
+
+
+def test_filename_match_owned_by_another_file_is_refused():
+    service = DriveSyncService.__new__(DriveSyncService)
+    folder_metadata = {
+        "assets": {
+            "ad1-identity-1x1.png": {
+                "copy": {"headline": "Roofing headline"},
+                "drive_file_id": "roofing-file-id",
+            }
+        }
+    }
+
+    metadata, refusal = service._filename_keyed_metadata(
+        folder_metadata, "ad1-identity-1x1.png", "janitorial-file-id", "some-folder"
+    )
+
+    assert metadata == {}
+    # The refusal must be visible: the picker reads a missing copy_refresh_status
+    # as "verified", so an empty dict would leave the asset silently selectable.
+    assert refusal["copy_integrity_issue"] is True
+    assert refusal["copy_refresh_status"] == "unverified"
+    assert "ad1-identity-1x1.png" in refusal["copy_integrity_reason"]
+
+
+def test_filename_match_owned_by_this_file_is_accepted():
+    service = DriveSyncService.__new__(DriveSyncService)
+    entry = {"copy": {"headline": "Roofing headline"}, "drive_file_id": "roofing-file-id"}
+    folder_metadata = {"assets": {"ad1-identity-1x1.png": entry}}
+
+    assert service._filename_keyed_metadata(
+        folder_metadata, "ad1-identity-1x1.png", "roofing-file-id", "some-folder"
+    ) == (entry, {})
+
+
+def test_filename_match_without_a_resolved_owner_is_still_accepted():
+    """A manifest entry whose media has not landed in Drive yet keeps working."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    entry = {"copy": {"headline": "Pending headline"}, "drive_file_id": None}
+    folder_metadata = {"assets": {"pending-1x1.png": entry}}
+
+    assert service._filename_keyed_metadata(
+        folder_metadata, "pending-1x1.png", "some-file-id", "some-folder"
+    ) == (entry, {})
+
+
+def test_normal_placement_subfolder_layout_still_resolves_to_its_package():
+    """Regression: media in "1x1 Images" under a manifest-bearing package root."""
+    media = _png("media-id", "AD-ROOF-01-1x1.png")
+    parents = {PLACEMENT: SIBLING_PKG, SIBLING_PKG: BRAND, BRAND: ROOT}
+    subtrees = {
+        PLACEMENT: [media],
+        SIBLING_PKG: [media, _manifest()],
+        BRAND: [media, _manifest()],
+    }
+    service = _service(parents, subtrees)
+
+    resolved = service._find_package_folder({"id": "media-id", "parents": [PLACEMENT]})
+
+    assert resolved == SIBLING_PKG
+
+
+def test_manifest_in_ad_copy_subfolder_layout_still_resolves_to_its_package():
+    """Regression: two live packages keep their manifest in an "Ad Copy" child,
+    not in the package root. That layout must keep resolving."""
+    media = _png("media-id", "AD-DEALER-CD-01-1x1.jpg")
+    manifest = _manifest("dealer-manifest", "AUTO-DEALER-CLAIM-DENIAL-HANDOFF-MANIFEST.txt")
+    parents = {
+        PLACEMENT: SIBLING_PKG,
+        AD_COPY: SIBLING_PKG,
+        SIBLING_PKG: BRAND,
+        BRAND: ROOT,
+    }
+    subtrees = {
+        PLACEMENT: [media],
+        AD_COPY: [manifest],
+        SIBLING_PKG: [media, manifest],
+        BRAND: [media, manifest],
+    }
+    service = _service(parents, subtrees)
+
+    resolved = service._find_package_folder({"id": "media-id", "parents": [PLACEMENT]})
+
+    assert resolved == SIBLING_PKG
+
+
+def test_brand_root_is_a_package_container_but_a_package_is_not():
+    service = _service({BRAND: ROOT, SIBLING_PKG: BRAND}, {})
+
+    assert service._is_package_container(ROOT)
+    assert service._is_package_container(BRAND)
+    assert not service._is_package_container(SIBLING_PKG)
+
+
+def test_refused_asset_is_flagged_so_the_picker_blocks_it():
+    """A refusal must set the two flags the picker blocks selection on.
+
+    frontend/src/components/AdCreativeStep.jsx reads
+    `refreshStatus: tags.copy_refresh_status || 'verified'`, so an asset with no
+    status key renders as verified and stays selectable -- and its landing page
+    would silently fall back to the brand default at the launch step.
+    """
+    service = DriveSyncService.__new__(DriveSyncService)
+    folder_metadata = {
+        "assets": {
+            "ad1-identity-1x1.png": {
+                "copy": {"headline": "Roofing headline"},
+                "landing_page": "https://example.com/roofing",
+                "cta": "GET_QUOTE",
+                "drive_file_id": "roofing-file-id",
+            }
+        }
+    }
+
+    _, refusal = service._filename_keyed_metadata(
+        folder_metadata, "ad1-identity-1x1.png", "janitorial-file-id", "pkg"
+    )
+
+    assert refusal["copy_integrity_issue"] is True
+    assert refusal["copy_refresh_status"] == "unverified"
+    # and it must not carry the other package's destination through
+    assert "landing_page" not in refusal
+    assert "cta" not in refusal
+    # package_folder_id is the pairing key in buildDriveAssetGroups and these tags
+    # get merged over an existing row; overwriting it would migrate the refused
+    # asset out of its real pair group.
+    assert "package_folder_id" not in refusal
+
+
+def test_strategy_resolver_also_refuses_to_adopt_a_brand_root():
+    """The strategy walk needs its own container guard.
+
+    _strategy_folder_copy_metadata pairs a doc's blocks against filenames and
+    stamps each entry with THAT file's own Drive ID, so an entry built from a
+    brand root's doc legitimately owns this file -- the identity check cannot
+    catch it. Only refusing to resolve the brand root prevents it.
+    """
+    media = _png("flat-media-id", "AD-ROOF-01-1x1.png")
+    strategy_doc = {"id": "doc-id", "name": "strategy.md", "mimeType": "text/markdown"}
+    parents = {FLAT_PKG: BRAND, SIBLING_PKG: BRAND, BRAND: ROOT}
+    subtrees = {
+        FLAT_PKG: [media],
+        SIBLING_PKG: [_png("sib-id", "AD-ROOF-02-1x1.png"), strategy_doc],
+        BRAND: [media, _png("sib-id", "AD-ROOF-02-1x1.png"), strategy_doc],
+    }
+    service = _service(parents, subtrees)
+    service._download_text_file = lambda file_id: "## AD-ROOF-01\nMeta headline: x\nPrimary text: y\n"
+
+    resolved = service._find_strategy_package_folder({"id": "flat-media-id", "parents": [FLAT_PKG]})
+
+    assert resolved is None, "strategy walk adopted the brand root's copy doc"
+
+
+def test_package_container_fails_closed_when_the_chain_cannot_be_resolved():
+    """Fail closed: False would mean "real package, adopt it" -- the leak itself."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service.root_folder_id = ROOT
+    service._folder_chain_to_root = lambda folder_id: None
+
+    assert service._is_package_container("anything")
+
+
+def test_package_container_fails_closed_when_drive_raises():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service.root_folder_id = ROOT
+
+    def _boom(folder_id):
+        raise TimeoutError("connection reset")
+
+    service._folder_chain_to_root = _boom
+
+    # Must not propagate: this runs inside the sync loop and would kill the run.
+    assert service._is_package_container("anything")

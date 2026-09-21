@@ -210,6 +210,8 @@ dealer-00-1x1.jpg
 def test_package_folder_can_resolve_manifest_nested_beside_media():
     service = _service()
     service._package_folder_cache = {}
+    service._path_cache = {}
+    service.root_folder_id = "root"
     service._list_folder_subtree = lambda folder_id: {
         "ad-copy": [{"name": "HANDOFF_MANIFEST.txt", "mimeType": "text/plain"}],
         "package": [
@@ -218,13 +220,24 @@ def test_package_folder_can_resolve_manifest_nested_beside_media():
         ],
     }[folder_id]
 
+    # "package" sits under a brand folder under the sync root, so it is a real
+    # package and not a package container -- the walk must be allowed to keep it.
+    parents = {"ad-copy": "package", "package": "brand", "brand": "root"}
+
     class _Request:
+        def __init__(self, file_id):
+            self._file_id = file_id
+
         def execute(self):
-            return {"id": "ad-copy", "parents": ["package"]}
+            payload = {"id": self._file_id, "name": self._file_id}
+            parent = parents.get(self._file_id)
+            if parent:
+                payload["parents"] = [parent]
+            return payload
 
     class _Files:
-        def get(self, **_kwargs):
-            return _Request()
+        def get(self, fileId=None, **_kwargs):
+            return _Request(fileId)
 
     class _Drive:
         def files(self):

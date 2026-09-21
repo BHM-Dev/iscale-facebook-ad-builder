@@ -627,6 +627,14 @@ class DriveSyncService:
                 for item in folder_items
             )
             if has_manifest and has_media:
+                if self._is_package_container(current):
+                    # `current` is the sync root or a brand root: a folder that holds
+                    # MANY packages, so any manifest in its subtree belongs to one
+                    # specific child package and not to the file we walked up from.
+                    # Stop with resolved=None so the caller falls through to the
+                    # content-based strategy resolver (or leaves the asset
+                    # unverified) instead of adopting a sibling package's copy.
+                    break
                 resolved = current
                 break
             if has_media and depth >= 1:
@@ -646,30 +654,181 @@ class DriveSyncService:
             self._package_folder_cache[folder_id] = resolved
         return resolved
 
+    def _is_package_container(self, folder_id: str) -> bool:
+        """True when folder_id is the sync root or a brand root.
+
+        Those folders hold many packages rather than being one, so a manifest
+        found anywhere in their subtree is always some child package's manifest.
+        A chain of length 1 is the sync root itself; length 2 is a brand folder
+        sitting directly under it. Verified live 2026-09-21: all 8 manifest-bearing
+        packages sit at chain length 3 or 4 and no media folder sits directly under
+        the sync root, so nothing currently in Drive is wrongly refused.
+
+        An unresolvable chain returns True -- fail CLOSED, matching the rest of this
+        file. Returning False would mean "this is a real package, adopt it", which is
+        exactly the wrong-copy leak, and Drive being flaky mid-sync is precisely when
+        that would fire. An unverified asset is recoverable; a launched ad is not.
+        """
+        if folder_id == self.root_folder_id:
+            return True
+        try:
+            chain = self._folder_chain_to_root(folder_id)
+        except Exception as exc:
+            # _folder_chain_to_root only catches HttpError; a timeout or reset would
+            # otherwise propagate and kill the whole sync run mid-way.
+            logger.warning("Could not resolve Drive folder chain for %s: %s", folder_id, exc)
+            return True
+        if not chain:
+            return True
+        return len(chain) <= 2
+
+    @staticmethod
+    def _copy_entry_owner_ids(metadata: Dict[str, Any]) -> List[str]:
+        """Drive file IDs a copy entry was actually resolved to, if any.
+
+        Both the handoff-manifest and strategy builders record the concrete
+        `drive_file_id` they matched a manifest/doc entry to, out of the media
+        found in the resolved package's own subtree. `drive_file_ids` (plural)
+        is accepted for forward compatibility with a duplicate-basename entry.
+        """
+        ids = metadata.get("drive_file_ids")
+        if not ids:
+            single = metadata.get("drive_file_id")
+            ids = [single] if single else []
+        return [item for item in ids if item]
+
+    def _filename_keyed_metadata(
+        self,
+        folder_metadata: Dict[str, Any],
+        file_name: str,
+        drive_file_id: Optional[str],
+        package_folder: str,
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        """Look a media file up by lowercased filename, refusing another file's copy.
+
+        Returns (metadata, refusal_tags); at most one is non-empty.
+
+        The by-filename lookup is the ONLY lookup the handoff-manifest path has
+        (`_handoff_folder_copy_metadata` returns `assets` keyed by name and no
+        `assets_by_drive_id` at all), so it cannot simply be removed. But a
+        filename is not unique across packages -- this Drive really does carry the
+        same basename in up to six sibling packages (`ad1-identity-9x16.png`) -- so
+        whenever `_find_package_folder` resolves too high, the name can hit an
+        entry that belongs to a DIFFERENT physical file. That silently attaches a
+        sibling package's headline/primary_text/landing_page/CTA to a launchable
+        creative, tagged verified, with no integrity flag.
+
+        The builders already resolved each entry to a concrete Drive file ID out of
+        the package subtree they were given, so file identity -- not folder shape --
+        is the reliable discriminator. Structure cannot work here: a manifest one
+        level below the resolved folder is indistinguishable between the legitimate
+        `Package/Ad Copy/MANIFEST.txt` layout (live in this Drive) and the
+        borrowed `BrandRoot/SiblingPackage/MANIFEST.txt` case.
+
+        An entry with no resolved owner is accepted unchanged: nothing proves it
+        belongs to someone else, and rejecting it would unverify assets whose media
+        merely has not landed in Drive yet.
+        """
+        candidate = (folder_metadata.get("assets") or {}).get(file_name.lower())
+        if not candidate:
+            return {}, {}
+        owner_ids = self._copy_entry_owner_ids(candidate)
+        if owner_ids and drive_file_id not in owner_ids:
+            logger.warning(
+                "Refusing copy for Drive file %s (%s): package %s matched it by filename but that "
+                "copy entry belongs to Drive file(s) %s. Flagging the asset rather than "
+                "attaching another package's copy.",
+                drive_file_id,
+                file_name,
+                package_folder,
+                ", ".join(owner_ids),
+            )
+            return {}, self._copy_refusal_tags(file_name)
+        return candidate, {}
+
+    @staticmethod
+    def _copy_refusal_tags(file_name: str) -> Dict[str, Any]:
+        """Tags that make a refused match visible instead of silently absent.
+
+        Returning {} here would be worse than the bug in one specific way: the
+        picker reads `tags.copy_refresh_status || 'verified'`, so an asset with NO
+        status key renders as VERIFIED and stays selectable. Worse, only headline
+        and primary text would read as missing -- the landing page falls back to
+        the brand default and the CTA to the step default, both pre-filled and
+        looking correct. A buyer fills the two blanks he is told to fill and
+        launches against the wrong URL, losing the package's tracked LP and its
+        session passthrough.
+
+        copy_integrity_issue + copy_refresh_status=unverified are the two flags the
+        picker already blocks selection on, so this reuses the existing badge and
+        block with no frontend change.
+        """
+        return {
+            "copy_integrity_issue": True,
+            "copy_refresh_status": "unverified",
+            "copy_refresh_error": "copy_matched_another_file",
+            # Written for whoever fixes it in Drive, not for a developer reading a log.
+            "copy_integrity_reason": (
+                f"\"{file_name}\" could not be matched to this package's copy: the only copy "
+                "entry with that filename belongs to a different image. That filename is "
+                "probably reused in another package under this brand. Rename it to something "
+                "unique to this package, or give this package its own handoff manifest."
+            ),
+            # Deliberately NOT package_folder_id. These tags are merged over an
+            # existing row ({**existing, **new}), and package_folder_id is the
+            # pairing key in buildDriveAssetGroups. Overwriting it would migrate a
+            # refused asset out of its real pair group -- and, on an id collision,
+            # into another package's group, blocking that one too. The row's own
+            # value is already correct; leave it alone.
+            "file_name": file_name,
+        }
+
     def _metadata_for_media_file(self, file_meta: Dict[str, Any], file_name: str) -> Dict[str, Any]:
+        drive_file_id = file_meta.get("id")
+        # A refusal from the package resolver is held, not returned immediately: the
+        # strategy resolver below may still find this file's real copy, and only if
+        # it does not should the asset be flagged.
+        pending_refusal: Dict[str, Any] = {}
         package_folder = self._find_package_folder(file_meta)
         if package_folder:
             folder_metadata = self._folder_copy_metadata(package_folder)
-            metadata = folder_metadata.get("assets_by_drive_id", {}).get(file_meta.get("id"))
-            metadata = metadata or folder_metadata.get("assets", {}).get(file_name.lower(), {})
+            # Guarded on a truthy id: a Drive item with no id must not match an
+            # entry indexed under a None key.
+            metadata = (
+                folder_metadata.get("assets_by_drive_id", {}).get(drive_file_id)
+                if drive_file_id
+                else None
+            )
+            if not metadata:
+                metadata, pending_refusal = self._filename_keyed_metadata(
+                    folder_metadata, file_name, drive_file_id, package_folder
+                )
             if metadata:
-                bound = self._bind_media_metadata_to_file(metadata, file_meta.get("id"))
+                bound = self._bind_media_metadata_to_file(metadata, drive_file_id)
                 if folder_metadata.get("_copy_source_drive_file_id"):
                     bound["copy_source_drive_file_id"] = folder_metadata["_copy_source_drive_file_id"]
                 return bound
-            warning = (folder_metadata.get("_copy_integrity_warnings") or {}).get(file_meta.get("id"))
+            warning = (folder_metadata.get("_copy_integrity_warnings") or {}).get(drive_file_id)
             if warning:
-                return self._bind_media_metadata_to_file(warning, file_meta.get("id"))
+                return self._bind_media_metadata_to_file(warning, drive_file_id)
         strategy_folder = self._find_strategy_package_folder(file_meta)
         if not strategy_folder:
-            return {}
+            return pending_refusal
         folder_metadata = self._folder_copy_metadata(strategy_folder)
-        bound = self._bind_media_metadata_to_file(
-            folder_metadata.get("assets_by_drive_id", {}).get(file_meta.get("id"))
-            or folder_metadata.get("assets", {}).get(file_name.lower(), {}),
-            file_meta.get("id"),
+        metadata = (
+            folder_metadata.get("assets_by_drive_id", {}).get(drive_file_id)
+            if drive_file_id
+            else None
         )
-        if bound and folder_metadata.get("_copy_source_drive_file_id"):
+        if not metadata:
+            metadata, strategy_refusal = self._filename_keyed_metadata(
+                folder_metadata, file_name, drive_file_id, strategy_folder
+            )
+            pending_refusal = pending_refusal or strategy_refusal
+        bound = self._bind_media_metadata_to_file(metadata, drive_file_id)
+        if not bound:
+            return pending_refusal
+        if folder_metadata.get("_copy_source_drive_file_id"):
             bound["copy_source_drive_file_id"] = folder_metadata["_copy_source_drive_file_id"]
         return bound
 
@@ -1013,6 +1172,17 @@ class DriveSyncService:
                         or self._looks_like_ad_copy_doc(text_body)
                     )
                 ):
+                    if self._is_package_container(current):
+                        # Same rule as _find_package_folder: a brand root holds many
+                        # packages, so a copy doc anywhere in its subtree belongs to
+                        # one specific child package. _strategy_folder_copy_metadata
+                        # would otherwise pair THIS file's name against that doc's
+                        # blocks and stamp the entry with this file's own Drive ID --
+                        # which the identity check in _filename_keyed_metadata cannot
+                        # catch, because the entry really does own this file. Stop the
+                        # walk with resolved=None instead.
+                        found = True
+                        break
                     resolved = current
                     found = True
                     break
@@ -1523,7 +1693,8 @@ class DriveSyncService:
                     "package_folder_id": folder_id,
                     "file_name": file_name,
                 }
-                assets_by_drive_id[item.get("id")] = metadata
+                if item.get("id"):
+                    assets_by_drive_id[item["id"]] = metadata
                 assets[file_name.lower()] = metadata
         return {"assets": assets, "assets_by_drive_id": assets_by_drive_id}
 
@@ -1657,7 +1828,8 @@ class DriveSyncService:
                     "package_folder_id": folder_id,
                     "file_name": file_name,
                 }
-                assets_by_drive_id[item.get("id")] = metadata
+                if item.get("id"):
+                    assets_by_drive_id[item["id"]] = metadata
             # Keep a basename fallback for older callers, but use the exact Drive
             # ID index whenever available so duplicate names remain distinct.
                 assets[file_name.lower()] = metadata
