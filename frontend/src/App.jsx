@@ -38,6 +38,7 @@ import AdRemix from './pages/AdRemix';
 import BatchGenerate from './pages/BatchGenerate';
 import CopyLibrary from './pages/CopyLibrary';
 import CreativeLibrary from './pages/CreativeLibrary';
+import DrivePackageHealth from './pages/DrivePackageHealth';
 import Pnl from './pages/Pnl';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
@@ -87,6 +88,7 @@ function App() {
                   <Route path="winning-ads" element={<WinningAds />} />
                   <Route path="generated-ads" element={<GeneratedAds />} />
                   <Route path="creative-library" element={<CreativeLibrary />} />
+                  <Route path="drive-package-health" element={<DrivePackageHealth />} />
                   <Route path="copy-library" element={<CopyLibrary />} />
                   <Route path="brands" element={<Brands />} />
                   <Route path="products" element={<Products />} />

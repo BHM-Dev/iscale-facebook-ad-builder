@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Wand2, Settings, LogOut, ShoppingBag, Target, ChevronLeft, ChevronRight, UserCog, Search, Library, DollarSign, BriefcaseBusiness } from 'lucide-react';
+import { LayoutDashboard, Wand2, Settings, LogOut, ShoppingBag, Target, ChevronLeft, ChevronRight, UserCog, Search, Library, DollarSign, BriefcaseBusiness, FolderSearch } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useBrands } from '../context/BrandContext';
@@ -52,6 +52,7 @@ export default function Layout() {
         { icon: Wand2, label: 'Build Creatives', path: '/build-creatives', matchPaths: ['/image-ads', '/batch-generate', '/ad-remix', '/video-ads'] },
         { icon: ShoppingBag, label: 'Brands', path: '/brand-hub', matchPaths: ['/brands', '/products', '/profiles'] },
         { icon: Library, label: 'Libraries', path: '/libraries', matchPaths: ['/generated-ads', '/creative-library', '/copy-library'] },
+        { icon: FolderSearch, label: 'Drive Health', path: '/drive-package-health' },
         { icon: Target, label: 'Facebook', path: '/facebook-hub', matchPaths: ['/campaign-performance', '/auto-pause-rules', '/facebook-campaigns'] },
     ];
 
