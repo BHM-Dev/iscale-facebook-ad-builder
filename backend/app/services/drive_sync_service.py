@@ -769,10 +769,11 @@ class DriveSyncService:
             "copy_refresh_error": "copy_matched_another_file",
             # Written for whoever fixes it in Drive, not for a developer reading a log.
             "copy_integrity_reason": (
-                f"\"{file_name}\" could not be matched to this package's copy: the only copy "
-                "entry with that filename belongs to a different image. That filename is "
-                "probably reused in another package under this brand. Rename it to something "
-                "unique to this package, or give this package its own handoff manifest."
+                f"\"{file_name}\" could not be matched to this package's copy: the copy entry "
+                "with that filename resolved to a different image. Give this file a name unique "
+                "to its package AND update the copy doc or manifest entry to that new name, then "
+                "run Refresh copy from Drive. Renaming the image on its own leaves it with no "
+                "copy at all, because the copy entry still points at the old filename."
             ),
             # Deliberately NOT package_folder_id. These tags are merged over an
             # existing row ({**existing, **new}), and package_folder_id is the

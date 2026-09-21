@@ -174,6 +174,12 @@ const buildDriveAssetGroups = (assets) => {
             copyPairingAmbiguous: tags.copy_pairing_status === 'ambiguous',
             copyIntegrityIssue: tags.copy_integrity_issue === true,
             copyIntegrityReason: tags.copy_integrity_reason || null,
+            // Set by drive_sync_service when a copy entry matched this file by
+            // NAME but is owned by a different Drive file (the same basename is
+            // reused across sibling packages). Refreshing provably cannot fix it
+            // -- the file has to be renamed in Drive -- so it must not fall into
+            // the generic "refresh Drive" messaging below.
+            copyRefusedForOtherFile: tags.copy_refresh_error === 'copy_matched_another_file',
             sortClusterKey,
         };
         existing.assets.push(asset);
@@ -184,6 +190,7 @@ const buildDriveAssetGroups = (assets) => {
         existing.copyPairingAmbiguous = existing.copyPairingAmbiguous || tags.copy_pairing_status === 'ambiguous';
         existing.copyIntegrityIssue = existing.copyIntegrityIssue || tags.copy_integrity_issue === true;
         existing.copyIntegrityReason = existing.copyIntegrityReason || tags.copy_integrity_reason || null;
+        existing.copyRefusedForOtherFile = existing.copyRefusedForOtherFile || tags.copy_refresh_error === 'copy_matched_another_file';
         grouped.set(key, existing);
     });
 
@@ -238,6 +245,7 @@ const buildDriveAssetGroups = (assets) => {
             cta: pairCopyIntegrityOk ? group.cta : null,
             copyIntegrityIssue: group.copyIntegrityIssue || (isPair && !pairCopyIntegrityOk),
             copyIntegrityReason: group.copyIntegrityReason || null,
+            copyRefusedForOtherFile: group.copyRefusedForOtherFile || false,
             copyRefreshUnverified: pairedMetadata.some(metadata => metadata.refreshStatus === 'unverified'),
             copyPairingAmbiguous: group.copyPairingAmbiguous,
             syncedAt: latestSyncedAt(group),
@@ -730,6 +738,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     return {
                         ...creative,
                         driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || group.copyPairingAmbiguous || false,
+                        driveCopyRefusedForOtherFile: group.copyRefusedForOtherFile || false,
+                        driveCopyIntegrityReason: group.copyIntegrityReason || null,
                         category: group.category || creative.category,
                         headline: matchedCopy.headline || '',
                         body: matchedCopy.primary_text || '',
@@ -773,9 +783,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const toggleDriveAssetSelection = (assetId) => {
         const group = driveGroupById.get(assetId);
         if (isDriveGroupSelectionBlocked(group)) {
-            showWarning(group?.copyRefreshUnverified
-                ? 'This Drive copy source needs repair. Refresh after fixing the source document before selecting it.'
-                : `${driveGroupLabel(group)} is blocked: resolve its Drive copy or placement issue before selecting it.`);
+            showWarning(group?.copyRefusedForOtherFile
+                ? (group.copyIntegrityReason
+                    || `${driveGroupLabel(group)} shares a filename with another package, so its copy could not be matched. Rename it in Drive to something unique to this package.`)
+                : group?.copyRefreshUnverified
+                    ? 'This Drive copy source needs repair. Refresh after fixing the source document before selecting it.'
+                    : `${driveGroupLabel(group)} is blocked: resolve its Drive copy or placement issue before selecting it.`);
             return;
         }
         setSelectedDriveAssetIds(prev => {
@@ -895,6 +908,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     drivePairId: group.id,
                     driveAssetIds: [group.feedAsset.id, group.storiesAsset.id],
                     driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || group.copyPairingAmbiguous || false,
+                    driveCopyRefusedForOtherFile: group.copyRefusedForOtherFile || false,
+                    driveCopyIntegrityReason: group.copyIntegrityReason || null,
                     category: group.category || group.feedAsset?.brand_name || 'Uncategorized',
                     headline: matchedCopy.headline || '',
                     body: matchedCopy.primary_text || '',
@@ -923,6 +938,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     drivePairId: null,
                     driveAssetIds: [asset.id],
                     driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || group.copyPairingAmbiguous || false,
+                    driveCopyRefusedForOtherFile: group.copyRefusedForOtherFile || false,
+                    driveCopyIntegrityReason: group.copyIntegrityReason || null,
                     category: group.category || asset.brand_name || 'Uncategorized',
                     headline: matchedCopy.headline || '',
                     body: matchedCopy.primary_text || '',
@@ -950,6 +967,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 drivePairId: group.id,
                 driveAssetIds: [asset.id],
                 driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || group.copyPairingAmbiguous || false,
+                driveCopyRefusedForOtherFile: group.copyRefusedForOtherFile || false,
+                driveCopyIntegrityReason: group.copyIntegrityReason || null,
                 category: group.category || asset.brand_name || 'Uncategorized',
                 headline: matchedCopy.headline || '',
                 body: matchedCopy.primary_text || '',
@@ -1756,7 +1775,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 );
                 if (pairMetadataMismatchIds.size > 0) {
                     focusCopyCreative(creativeData.creatives.find(c => c.driveCopyIntegrityIssue)?.id || null);
-                    showWarning(`${pairMetadataMismatchIds.size} Feed + Stories pair${pairMetadataMismatchIds.size !== 1 ? 's have' : ' has'} mismatched Drive copy, CTA, or destination data. Return to the Drive picker and refresh the paired source files before continuing.`);
+                    const renameBlocked = creativeData.creatives.filter(c => c.driveCopyIntegrityIssue && c.driveCopyRefusedForOtherFile);
+                    showWarning(renameBlocked.length > 0
+                        // Refreshing cannot clear a name collision, so don't tell him to.
+                        ? `${renameBlocked.length} Drive creative${renameBlocked.length !== 1 ? 's' : ''} could not be matched to copy because the filename is reused in another package. Give the file a unique name and update its copy doc entry in Drive, then run Refresh copy from Drive.`
+                        : `${pairMetadataMismatchIds.size} Feed + Stories pair${pairMetadataMismatchIds.size !== 1 ? 's have' : ' has'} mismatched Drive copy, CTA, or destination data. Return to the Drive picker and refresh the paired source files before continuing.`);
                     return;
                 }
                 const missingCopy = creativeData.creatives.filter(c => (
@@ -2367,7 +2390,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             if (!headline) issues.push('Headline');
                             if (!CTA_OPTIONS.includes(cta)) issues.push('CTA');
                             try { if (!new URL(url).protocol.startsWith('http')) issues.push('URL'); } catch { issues.push('URL'); }
-                            if (creative.driveCopyIntegrityIssue) issues.push('Drive pair');
+                            if (creative.driveCopyIntegrityIssue) issues.push(creative.driveCopyRefusedForOtherFile ? 'Drive copy not matched' : 'Drive pair');
                             if (body.length > BODY_LIMIT) issues.push('Primary text length');
                             if (headline.length > HEADLINE_LIMIT) issues.push('Headline length');
                             if (description.length > DESC_LIMIT) issues.push('Description length');
@@ -2419,7 +2442,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                 {selectedCreative.dualPlacement && selectedCreative.secondaryImageUrl && <img src={selectedCreative.secondaryImageUrl} alt="Stories preview" className="w-1/2 object-contain" />}
                                             </div>
                                             {!selectedIsDrive && (!selectedCreative.body || !selectedCreative.headline || !selectedCreative.description || !selectedCreative.cta || !selectedCreative.websiteUrl) && <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-800">Showing shared fallback values for this non-Drive row. Editing any field makes this row independent.</p>}
-                                            {selectedCreative.driveCopyIntegrityIssue && <button type="button" onClick={() => { setSelectedDriveAssetIds(new Set()); setDriveSearchTerm(''); setDriveRepairPairId(selectedCreative.drivePairId || null); setDriveFormatFilter(''); setShowDriveLibraryModal(true); }} className="w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-left text-xs font-semibold text-amber-900 hover:bg-amber-100">Open Drive to repair this pair</button>}
+                                            {selectedCreative.driveCopyIntegrityIssue && <button type="button" onClick={() => { setSelectedDriveAssetIds(new Set()); setDriveSearchTerm(''); setDriveRepairPairId(selectedCreative.drivePairId || null); setDriveFormatFilter(''); setShowDriveLibraryModal(true); }} className={`w-full rounded-lg border px-3 py-2 text-left text-xs font-semibold ${selectedCreative.driveCopyRefusedForOtherFile ? 'border-red-300 bg-red-50 text-red-900 hover:bg-red-100' : 'border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'}`}>{selectedCreative.driveCopyRefusedForOtherFile ? 'Show this creative in the picker' : 'Open Drive to repair this pair'}</button>}
+                                            {selectedCreative.driveCopyRefusedForOtherFile && selectedCreative.driveCopyIntegrityReason && (
+                                                <p className="mt-1 text-[11px] leading-snug text-red-700">{selectedCreative.driveCopyIntegrityReason}</p>
+                                            )}
                                             <label className="block text-xs font-semibold text-gray-700">Primary text *<textarea rows="5" value={selectedBody} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'body', event.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100 ${selectedBody.length > BODY_LIMIT ? 'border-red-400' : 'border-gray-300'}`} /><span className={`mt-1 block text-right text-[11px] ${charCountClass(selectedBody.length, BODY_WARN, BODY_LIMIT)}`}>{selectedBody.length} / {BODY_LIMIT}</span></label>
                                             <label className="block text-xs font-semibold text-gray-700">Headline *<input value={selectedHeadline} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'headline', event.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100 ${selectedHeadline.length > HEADLINE_LIMIT ? 'border-red-400' : 'border-gray-300'}`} /><span className={`mt-1 block text-right text-[11px] ${charCountClass(selectedHeadline.length, HEADLINE_WARN, HEADLINE_LIMIT)}`}>{selectedHeadline.length} / {HEADLINE_LIMIT}</span></label>
                                             <label className="block text-xs font-semibold text-gray-700">Description <span className="font-normal text-gray-400">(optional)</span><input value={selectedDescription} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'description', event.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100 ${selectedDescription.length > DESC_LIMIT ? 'border-red-400' : 'border-gray-300'}`} /><span className={`mt-1 block text-right text-[11px] ${charCountClass(selectedDescription.length, DESC_LIMIT, DESC_LIMIT)}`}>{selectedDescription.length} / {DESC_LIMIT}</span></label>
@@ -2506,7 +2532,17 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                         <span className="text-xs font-semibold text-gray-900">Ad {index + 1}</span>
                                                         {creative.dualPlacement && <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-semibold text-purple-700">Feed + Stories</span>}
                                                         {creative.driveCopyIntegrityIssue ? (
-                                                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">{creative.drivePairId ? 'Pair data mismatch' : 'Copy mapping issue'}</span>
+                                                            <span
+                                                                className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                                                                    creative.driveCopyRefusedForOtherFile
+                                                                        ? 'bg-red-100 text-red-700'
+                                                                        : 'bg-amber-100 text-amber-700'
+                                                                }`}
+                                                            >
+                                                                {creative.driveCopyRefusedForOtherFile
+                                                                    ? 'Copy not matched — blocks launch'
+                                                                    : creative.drivePairId ? 'Pair data mismatch' : 'Copy mapping issue'}
+                                                            </span>
                                                         ) : invalidDriveCta ? (
                                                             <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Unsupported CTA</span>
                                                         ) : missingDriveFields.length > 0 ? (
@@ -2518,6 +2554,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                         )}
                                                     </div>
                                                     <p className="truncate text-[11px] text-gray-500 mt-1" title={creative.name}>{creative.name}</p>
+                                                    {/* Inline, not a title= tooltip: this names the filename Joel has to
+                                                        find in Drive, and a tooltip can't be selected or copied. */}
+                                                    {creative.driveCopyRefusedForOtherFile && creative.driveCopyIntegrityReason && (
+                                                        <p className="mt-1 text-[11px] leading-snug text-red-700">{creative.driveCopyIntegrityReason}</p>
+                                                    )}
                                                     {(creative.driveCopyIntegrityIssue || invalidDriveCta || missingDriveFields.length > 0) && (
                                                         <button
                                                             type="button"
@@ -2531,7 +2572,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                             className="mt-1 text-[11px] font-semibold text-indigo-700 hover:text-indigo-900"
                                                         >
                                                             {creative.driveCopyIntegrityIssue
-                                                                ? (creative.drivePairId ? 'Open Drive to repair this pair' : 'Open Drive to repair copy mapping')
+                                                                ? (creative.driveCopyRefusedForOtherFile
+                                                                    ? 'Show this creative in the picker'
+                                                                    : creative.drivePairId ? 'Open Drive to repair this pair' : 'Open Drive to repair copy mapping')
                                                                 : invalidDriveCta
                                                                     ? `Open Drive to repair unsupported CTA: ${creative.cta}`
                                                                 : `Edit the ${missingDriveFields.join(' + ')} below, or refresh from Drive`}
@@ -3045,6 +3088,27 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     The number that actually matters (what he'll get) leads in bold;
                                     everything else is de-emphasized so this scans in one glance
                                     instead of reading as a full sentence (joel-perspective review). */}
+                                {/* Persistent and ABOVE the grid: Joel selects ~20 tiles at a time and
+                                    needs the blocked count when he starts selecting, not in a toast after
+                                    clicking Add. Deliberately not in the footer -- that bar is a fixed
+                                    h-[68px] and already renders two lines once something is selected, so a
+                                    third line clips. Counts are over the filtered set, same as every other
+                                    number in this bar. */}
+                                {driveAssetGroups.length > 0 && (() => {
+                                    const blocked = driveAssetGroups.filter(isDriveGroupSelectionBlocked);
+                                    if (blocked.length === 0) return null;
+                                    const renameCount = blocked.filter(group => group.copyRefusedForOtherFile).length;
+                                    const repairCount = blocked.length - renameCount;
+                                    const parts = [];
+                                    // "need" is the verb: 1 needs / 2 need. Not a typo.
+                                    if (renameCount > 0) parts.push(`${renameCount} need${renameCount !== 1 ? '' : 's'} a rename in Drive (filename reused across packages)`);
+                                    if (repairCount > 0) parts.push(`${repairCount} need${repairCount !== 1 ? '' : 's'} a Drive copy or pairing repair`);
+                                    return (
+                                        <p className="mt-2 text-[11px] font-semibold text-red-700">
+                                            {blocked.length} of {driveAssetGroups.length} shown can't be selected · {parts.join(' · ')}
+                                        </p>
+                                    );
+                                })()}
                                 {driveSelectCount && driveAssetGroups.length > 0 && (() => {
                                     const n = parseInt(driveSelectCount, 10);
                                     if (!Number.isFinite(n) || n <= 0) return null;
@@ -3105,7 +3169,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     // decides "needs repair" vs "mismatch," regardless of copyIntegrityIssue
                                     // (for a pair, an unverified refresh ALSO sets copyIntegrityIssue, so
                                     // excluding that case here would make amber almost never fire).
-                                    const needsRepair = selectionBlocked && !group.copyPairingAmbiguous && group.copyRefreshUnverified;
+                                    // A name-collision refusal is excluded: amber means "refreshable
+                                    // Drive-side fix", and this is the one case refreshing cannot fix.
+                                    // It falls through to red, matching its hard-block severity.
+                                    const needsRepair = selectionBlocked && !group.copyPairingAmbiguous
+                                        && group.copyRefreshUnverified && !group.copyRefusedForOtherFile;
                                     // Suppressed while selected — a card that's both currently chosen and
                                     // already in a prior batch doesn't need a second badge competing with
                                     // the selected ring for attention.
@@ -3122,7 +3190,18 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             key={group.id}
                                             onClick={() => toggleDriveAssetSelection(group.id)}
                                             aria-disabled={selectionBlocked}
-                                            title={selectionBlocked ? (needsRepair ? 'The Drive copy source needs repair. Refresh after fixing it before launch.' : 'Multiple or incomplete placements use this ad number. Resolve them in Drive before launch.') : undefined}
+                                            // Must mirror the badge's precedence below. This wrapper covers far
+                                            // more hit area than the badge, so leaving it on the old two-way branch
+                                            // meant hovering a refused tile popped "Refresh after fixing it" -- the
+                                            // exact instruction that cannot fix a filename collision.
+                                            title={selectionBlocked
+                                                ? (group.copyRefusedForOtherFile
+                                                    ? (group.copyIntegrityReason
+                                                        || 'This file shares a filename with another package, so its copy could not be matched. Rename it in Drive to something unique to this package, then refresh copy from Drive.')
+                                                    : needsRepair
+                                                        ? 'The Drive copy source needs repair. Refresh after fixing it before launch.'
+                                                        : 'Multiple or incomplete placements use this ad number. Resolve them in Drive before launch.')
+                                                : undefined}
                                             className={`relative rounded-xl overflow-hidden border-2 bg-white transition-all ${selectionBlocked ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'} ${borderClass}`}
                                         >
                                             <div className={`flex h-[96px] gap-1.5 bg-gray-100 p-1 ${group.isPair && group.storiesAsset ? 'items-stretch' : 'items-center justify-center'}`}>
@@ -3173,10 +3252,19 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     {group.category || 'AD'} needs 1 Feed + 1 Stories source
                                                 </div>
                                             ) : group.copyIntegrityIssue || group.copyRefreshUnverified ? (
-                                                <div className="absolute bottom-10 left-2 bg-red-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
-                                                    {group.copyRefreshUnverified
-                                                        ? 'Drive source needs repair — refresh Drive'
-                                                        : group.copyIntegrityReason || 'Pair data mismatch — refresh Drive'}
+                                                // A name-collision refusal outranks copyRefreshUnverified: it sets
+                                                // BOTH flags, and the generic string would tell Joel to refresh,
+                                                // which cannot fix it. Full reason goes in the tooltip -- it names
+                                                // the file and the fix, and is far too long for the pill.
+                                                <div
+                                                    title={group.copyIntegrityReason || undefined}
+                                                    className="absolute bottom-10 left-2 bg-red-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm"
+                                                >
+                                                    {group.copyRefusedForOtherFile
+                                                        ? 'Copy not matched — rename in Drive'
+                                                        : group.copyRefreshUnverified
+                                                            ? 'Drive source needs repair — refresh Drive'
+                                                            : group.copyIntegrityReason || 'Pair data mismatch — refresh Drive'}
                                                 </div>
                                             ) : (copyMatched || group.landingPage || group.cta || tags.copy_id) && (
                                                 <div className="absolute bottom-10 left-2 bg-emerald-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
