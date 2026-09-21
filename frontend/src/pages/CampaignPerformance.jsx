@@ -527,23 +527,11 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                 <button type="button" onClick={() => setIntelligenceView('niche')} className={`px-3 py-1.5 rounded-md text-xs font-semibold ${intelligenceView === 'niche' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500'}`}>Niche profitability</button>
                 <button type="button" onClick={() => {
                   setIntelligenceView('best-times');
-                  // A one- or two-week slice is useful for current P&L, but
-                  // too sparse once its data is split into four dayparts.
-                  // Start timing analysis on a stable 30-day sample so the
-                  // first view is actionable rather than an empty grid.
-                  if (['today', 'yesterday', 'last_3d', 'last_7d', 'last_14d'].includes(preset)) {
-                    // Do not use handlePreset here: it also refetches the
-                    // niche-profitability endpoint. That request is not
-                    // visible in Best Times and competes with the much more
-                    // expensive hourly timing request for the same account.
-                    userSelectedPresetRef.current = true;
-                    setPreset('last_30d');
-                    // Do not leave the seven-day niche summary in the header
-                    // while the 30-day timing request is in flight. It made the
-                    // timing view appear to be based on the wrong period.
-                    setData(null);
-                    loadBestTimes('last_30d', '', '');
-                  } else if (!bestTimesData && (preset !== 'custom' || (customFrom && customTo))) {
+                  // Best Times follows the date range the buyer selected in
+                  // Campaign Intelligence. Never silently widen Last 7d to
+                  // Last 30d; a short window is still useful for a current
+                  // scheduling check, even if it yields a lower-confidence result.
+                  if (!bestTimesData && (preset !== 'custom' || (customFrom && customTo))) {
                     loadBestTimes(preset, customFrom, customTo);
                   }
                 }} className={`px-3 py-1.5 rounded-md text-xs font-semibold ${intelligenceView === 'best-times' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500'}`}>Best Times</button>
