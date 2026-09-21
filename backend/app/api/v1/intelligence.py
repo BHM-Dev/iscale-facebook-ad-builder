@@ -1097,7 +1097,10 @@ def best_times(
     other_account_adset_ids = {
         str(fb_adset_id).strip()
         for fb_adset_id, fb_account_id in saved_adset_rows
-        if fb_account_id and normalize_account_id(fb_account_id) != normalized_account_id
+        # A saved ad set without an account cannot be attributed to the
+        # selected account. Treat legacy/unscoped inventory as out of scope,
+        # never as missing revenue for the selected account's timing view.
+        if normalize_account_id(fb_account_id) != normalized_account_id
     }
     try:
         meta_payload = _fetch_best_times_meta(ad_account_id, resolved_from, resolved_to, _day_filter)
