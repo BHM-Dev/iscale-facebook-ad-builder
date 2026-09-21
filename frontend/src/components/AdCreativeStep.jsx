@@ -146,7 +146,7 @@ const driveAssetMatchesQuery = (asset, query) => {
 const drivePackageSection = (group) => {
     const raw = group?.displayAsset?.folder_path || group?.assets?.[0]?.folder_path || '';
     const parts = String(raw).split(/[\\/]/).map(part => part.trim()).filter(Boolean);
-    if (parts.length && /^(?:1x1|9x16)(?:\s+(?:images?|assets?))?$/i.test(parts[parts.length - 1])) parts.pop();
+    if (parts.length && /^(?:1x1|9x16|4x5)(?:\s+(?:images?|assets?|videos?|creatives?))?$/i.test(parts[parts.length - 1])) parts.pop();
     return parts.slice(0, 2).join(' / ') || 'Uncategorized';
 };
 
@@ -600,35 +600,72 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             key,
             groups,
             needsCopyCount: groups.filter(needsCopy).length,
+            blockedCount: groups.filter(isDriveGroupSelectionBlocked).length,
             eligibleCount: groups.filter(group => !isDriveGroupSelectionBlocked(group)).length,
+            // The folder is the part Joel recognises; the master folder above it
+            // is the part CSS truncation was eating.
+            parentLabel: key.split(' / ').slice(0, -1).join(' / '),
+            label: key.split(' / ').slice(-1)[0] || key,
         }));
     }, [driveAssetGroups]);
 
     // Expansion is derived, with an explicit per-section override on top. A
     // plain state Set plus an effect to sync it against search/filter changes
     // is the shape that loops; this cannot.
-    const sectionsExpandByDefault = driveSections.length <= 6
-        || Boolean(driveSearchTerm.trim())
+    const expandEverySection = Boolean(driveSearchTerm.trim())
         || blockedFilterActive
         || needsCopyFilterActive
         || Boolean(driveRepairPairId);
-    const isSectionExpanded = (key) => driveSectionOverrides[key] ?? sectionsExpandByDefault;
-    const toggleDriveSection = (key) => setDriveSectionOverrides(prev => ({
-        ...prev,
-        [key]: !(prev[key] ?? sectionsExpandByDefault),
-    }));
+    // Expand from the top until roughly a screen of tiles is showing, then
+    // collapse the rest. Recognition still works on open, and the remaining
+    // 140-odd folders stay one click away instead of 900 tiles deep.
+    const defaultExpandedSections = useMemo(() => {
+        const keys = new Set();
+        if (expandEverySection) return keys;
+        let shown = 0;
+        for (const section of driveSections) {
+            if (shown >= 60 && keys.size > 0) break;
+            keys.add(section.key);
+            shown += section.groups.length;
+        }
+        return keys;
+    }, [driveSections, expandEverySection]);
+    const isSectionExpanded = (key) => (
+        // A search or filter wins over a stale manual collapse. Without this,
+        // "Collapse all" then a search showed matching headers with real counts
+        // and no tiles, and nothing on screen explained why.
+        expandEverySection
+            ? (driveSectionOverrides[key] ?? true)
+            : (driveSectionOverrides[key] ?? defaultExpandedSections.has(key))
+    );
+    const toggleDriveSection = (key) => setDriveSectionOverrides(prev => ({ ...prev, [key]: !isSectionExpanded(key) }));
+    // A collapse made while searching must not outlive the search, or the two
+    // rules fight and the buyer loses.
+    useEffect(() => {
+        setDriveSectionOverrides({});
+    }, [driveSearchTerm, driveFormatFilter, blockedFilterActive, needsCopyFilterActive, driveRepairPairId]);
     const setAllDriveSections = (expanded) => setDriveSectionOverrides(
         Object.fromEntries(driveSections.map(section => [section.key, expanded])),
     );
 
-    const selectSectionDriveAssets = (section) => {
-        const skipped = section.groups.length - section.eligibleCount;
-        if (skipped) {
-            showWarning(String(skipped) + ' Drive creative' + (skipped !== 1 ? 's were' : ' was') + ' skipped because their pair or copy source needs repair.');
+    const sectionFullySelected = (section) => section.eligibleCount > 0
+        && section.groups.every(group => isDriveGroupSelectionBlocked(group) || selectedDriveAssetIds.has(group.id));
+
+    const toggleSectionDriveAssets = (section) => {
+        const eligible = section.groups.filter(group => !isDriveGroupSelectionBlocked(group));
+        const deselecting = sectionFullySelected(section);
+        if (!deselecting) {
+            const skipped = section.groups.length - section.eligibleCount;
+            if (skipped) {
+                showWarning(String(skipped) + ' creative' + (skipped !== 1 ? 's' : '') + ' in ' + section.label + ' ' + (skipped !== 1 ? 'were' : 'was') + ' skipped because their pair or copy source needs repair.');
+            }
         }
+        // Selecting a collapsed section moved the footer by up to 76 creatives
+        // with no visible change in the grid. Show what was just taken.
+        if (!deselecting) setDriveSectionOverrides(prev => ({ ...prev, [section.key]: true }));
         setSelectedDriveAssetIds(prev => {
             const next = new Set(prev);
-            section.groups.filter(group => !isDriveGroupSelectionBlocked(group)).forEach(group => next.add(group.id));
+            eligible.forEach(group => (deselecting ? next.delete(group.id) : next.add(group.id)));
             return next;
         });
     };
@@ -3393,6 +3430,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             )}
                             {driveSections.map(section => {
                                 const sectionExpanded = isSectionExpanded(section.key);
+                                // Selection survives collapse by design (filtering must not
+                                // erase earlier choices), so a collapsed header is the only
+                                // place that can admit it is holding some.
+                                const sectionSelected = section.groups.filter(group => selectedDriveAssetIds.has(group.id)).length;
+                                const sectionAllSelected = sectionFullySelected(section);
                                 return (
                                 <div key={section.key} className="mb-3 overflow-hidden rounded-lg border border-gray-200">
                                     <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 bg-gray-50 px-2 py-1.5">
@@ -3403,19 +3445,34 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                                         >
                                             <ChevronDown size={14} className={`shrink-0 text-gray-400 transition-transform ${sectionExpanded ? '' : '-rotate-90'}`} />
-                                            <span className="truncate text-xs font-semibold text-gray-800" title={section.key}>{section.key}</span>
+                                            {/* The niche is the part Joel recognises and CSS truncate
+                                                was eating it off the end, keeping the master folder
+                                                someone else named. Truncate the prefix instead. */}
+                                            {section.parentLabel && (
+                                                <span className="min-w-0 max-w-[40%] truncate text-[11px] text-gray-400" title={section.key}>{section.parentLabel} /</span>
+                                            )}
+                                            <span className="shrink-0 text-xs font-semibold text-gray-800" title={section.key}>{section.label}</span>
                                             <span className="shrink-0 text-[11px] font-medium text-gray-500">{section.groups.length}</span>
                                             {section.needsCopyCount > 0 && (
                                                 <span className="shrink-0 text-[11px] font-medium text-amber-700">· {section.needsCopyCount} need copy</span>
                                             )}
+                                            {section.blockedCount > 0 && (
+                                                <span className="shrink-0 text-[11px] font-medium text-red-700">· {section.blockedCount} blocked</span>
+                                            )}
+                                            {sectionSelected > 0 && (
+                                                <span className="shrink-0 text-[11px] font-semibold text-indigo-700">· {sectionSelected} selected</span>
+                                            )}
                                         </button>
                                         <button
                                             type="button"
-                                            onClick={() => selectSectionDriveAssets(section)}
+                                            onClick={() => toggleSectionDriveAssets(section)}
                                             disabled={section.eligibleCount === 0}
                                             className="shrink-0 rounded border border-gray-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
                                         >
-                                            Select {section.eligibleCount}
+                                            {/* "shown", because sections derive from the filtered
+                                                grid: with Needs copy on, a 30-creative folder
+                                                offers "Select 8" and that is not the folder. */}
+                                            {sectionAllSelected ? `Deselect ${section.eligibleCount}` : `Select ${section.eligibleCount} shown`}
                                         </button>
                                     </div>
                                     {sectionExpanded && (
@@ -3543,7 +3600,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                 // to neighbours wearing a green one.
                                                 <div
                                                     title="Drive has no copy for this creative. You can still select it and write the headline and primary text yourself."
-                                                    className="absolute bottom-10 left-2 rounded-full bg-gray-700/90 px-2 py-1 text-[11px] font-semibold text-white shadow-sm"
+                                                    className="absolute bottom-10 left-2 rounded-full bg-white/85 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 shadow-sm"
                                                 >
                                                     {(group.landingPage || group.cta || tags.copy_id) ? 'No copy — URL only' : 'No copy in Drive'}
                                                 </div>
