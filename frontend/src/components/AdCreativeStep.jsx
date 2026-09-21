@@ -1,7 +1,7 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image, BookOpen, Check, Layers, FolderOpen, Maximize2, Search } from 'lucide-react';
+import { ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image, BookOpen, Check, Layers, FolderOpen, Maximize2, Search, ExternalLink } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
@@ -409,6 +409,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const [driveRepairPairId, setDriveRepairPairId] = useState(null);
     const [driveFormatFilter, setDriveFormatFilter] = useState('');
     const [showBlockedDriveOnly, setShowBlockedDriveOnly] = useState(false);
+    // Reset on open: as component state this survived closing the modal, so a
+    // buyer returning the next day met a 7-tile library with the format pills
+    // still reading "All 288" and nothing indicating a filter was on.
+    useEffect(() => {
+        if (showDriveLibraryModal) setShowBlockedDriveOnly(false);
+    }, [showDriveLibraryModal]);
     const [showDriveLibraryHint, setShowDriveLibraryHint] = useState(
         () => safeLocalStorageGet('driveLibraryHintSeen') !== 'true'
     );
@@ -500,7 +506,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         setCreativeData(current => ({ ...current, creative_enhancements: next }));
     };
 
-    const driveAssetGroups = useMemo(() => {
+    // Everything search/format/repair allows, BEFORE the blocked toggle. The
+    // toggle's own count has to come from here: a library-wide "Blocked (7)" on
+    // the button while the grid also applies a search produced an empty grid
+    // reading "No Drive assets match that search" -- the button having just said
+    // seven exist. That reads as a broken filter.
+    const scopedDriveAssetGroups = useMemo(() => {
         if (driveRepairPairId) {
             return buildDriveAssetGroups(driveAssets).filter(group => group.id === driveRepairPairId);
         }
@@ -511,9 +522,30 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             const haystack = `${asset.file_name || ''} ${asset.folder_path || ''} ${asset.brand_name || ''}`.toLowerCase();
             return haystack.includes(query);
         });
-        const groups = buildDriveAssetGroups(visibleAssets);
-        return showBlockedDriveOnly ? groups.filter(isDriveGroupSelectionBlocked) : groups;
-    }, [driveAssets, driveSearchTerm, driveFormatFilter, driveRepairPairId, showBlockedDriveOnly]);
+        return buildDriveAssetGroups(visibleAssets);
+    }, [driveAssets, driveSearchTerm, driveFormatFilter, driveRepairPairId]);
+
+    // The repair path scopes the grid to a single pair and must win over the
+    // toggle, or the button can read "Showing blocked" above one unblocked pair.
+    const blockedFilterActive = showBlockedDriveOnly && !driveRepairPairId;
+
+    const driveAssetGroups = useMemo(
+        () => (blockedFilterActive ? scopedDriveAssetGroups.filter(isDriveGroupSelectionBlocked) : scopedDriveAssetGroups),
+        [scopedDriveAssetGroups, blockedFilterActive],
+    );
+
+    // In-scope, so the button promises what clicking it will actually show.
+    const scopedBlockedDriveGroupCount = useMemo(
+        () => scopedDriveAssetGroups.filter(isDriveGroupSelectionBlocked).length,
+        [scopedDriveAssetGroups],
+    );
+    // Selectable tiles currently on screen. "Select all (7)" was enabled while
+    // the blocked filter was on, and every one of those 7 is by definition
+    // unselectable -- the click selected nothing and threw a warning toast.
+    const eligibleVisibleDriveGroupCount = useMemo(
+        () => driveAssetGroups.filter(group => !isDriveGroupSelectionBlocked(group)).length,
+        [driveAssetGroups],
+    );
 
     // Keep the full group index separate from the visible filtered list. A
     // buyer can select Feed assets, switch to Stories, and continue selecting;
@@ -3054,22 +3086,38 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             <button
                                 type="button"
                                 onClick={() => setShowBlockedDriveOnly(current => !current)}
-                                disabled={totalBlockedDriveGroupCount === 0}
+                                disabled={scopedBlockedDriveGroupCount === 0 || Boolean(driveRepairPairId)}
+                                aria-pressed={blockedFilterActive}
                                 className={`px-3 py-1 text-xs font-semibold rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-                                    showBlockedDriveOnly
+                                    blockedFilterActive
                                         ? 'border-red-300 bg-red-50 text-red-800'
                                         : 'border-gray-300 text-gray-700 hover:bg-gray-50'
                                 }`}
                             >
-                                {showBlockedDriveOnly ? 'Showing blocked' : `Blocked (${totalBlockedDriveGroupCount})`}
+                                {blockedFilterActive
+                                    ? `Showing ${scopedBlockedDriveGroupCount} blocked — show all`
+                                    : `Blocked (${scopedBlockedDriveGroupCount})`}
                             </button>
+                            {/* The only way in. Drive Health was removed from the main nav
+                                (it is a creative-side report, not a daily buyer surface), and
+                                the contextual link below renders only once something is already
+                                blocked -- which is exactly too late for a preventative report.
+                                Opens in a new tab so the current selection survives. */}
+                            <a
+                                href="/drive-package-health"
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 px-3 py-1 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 transition-colors hover:bg-gray-50"
+                            >
+                                Package health <ExternalLink size={12} />
+                            </a>
                             <button
                                 type="button"
                                 onClick={selectAllVisibleDriveAssets}
-                                disabled={driveAssetGroups.length === 0}
+                                disabled={eligibleVisibleDriveGroupCount === 0}
                                 className="px-3 py-1 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
                             >
-                                Select all {driveAssetGroups.length > 0 ? `(${driveAssetGroups.length})` : ''}
+                                Select all {eligibleVisibleDriveGroupCount > 0 ? `(${eligibleVisibleDriveGroupCount})` : '(0 eligible)'}
                             </button>
                             <button
                                 type="button"
@@ -3094,7 +3142,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     <button
                                         type="button"
                                         onClick={selectFirstNDriveAssets}
-                                        disabled={!driveSelectCount || driveAssetGroups.length === 0}
+                                        disabled={!driveSelectCount || eligibleVisibleDriveGroupCount === 0}
                                         className="px-3 py-1 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
                                     >
                                         Go
@@ -3119,13 +3167,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     if (repairCount > 0) parts.push(`${repairCount} need${repairCount !== 1 ? '' : 's'} a Drive copy or pairing repair`);
                                     return (
                                         <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] font-semibold text-red-700">
-                                            <span>{blocked.length} blocked · {eligibleCount} eligible of {allDriveAssetGroups.length} total creative groups</span>
+                                            <span>Across all Drive: {blocked.length} blocked · {eligibleCount} eligible of {allDriveAssetGroups.length} creative groups</span>
                                             <span className="text-red-300">·</span>
                                             <span>{parts.join(' · ')}</span>
-                                            <span className="text-red-300">·</span>
-                                            <a href="/drive-package-health" target="_blank" rel="noreferrer" className="underline decoration-red-300 underline-offset-2 hover:text-red-900">
-                                                Review package health
-                                            </a>
                                         </div>
                                     );
                                 })()}
@@ -3164,6 +3208,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             </div>
                         ) : driveAssets.length === 0 ? (
                             <p className="text-center text-gray-500 py-12">No synced Drive creative yet. It appears here once the Drive sync job (or a manual sync) has run.</p>
+                        ) : driveAssetGroups.length === 0 && blockedFilterActive ? (
+                            <p className="text-center text-gray-500 py-12">
+                                None of the blocked creatives match your current search or format filter.
+                                {' '}Clear those to see all {totalBlockedDriveGroupCount}.
+                            </p>
                         ) : driveAssetGroups.length === 0 ? (
                             <p className="text-center text-gray-500 py-12">No Drive assets match that search.</p>
                         ) : (
