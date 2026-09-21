@@ -87,11 +87,28 @@ function BestTimesGrid({ data }) {
     return { spend, leads, revenue, roi, confidence, supportedHours };
   };
 
+  // A timing recommendation needs to describe a repeatable operating window,
+  // not a one-off result from a single Monday. Pool each daypart across the
+  // whole selected period and require evidence from multiple distinct days.
+  const aggregateWeeklyDaypart = (part) => {
+    const dailyParts = BEST_TIMES_DAYS.map((day, dayIndex) => ({ day, ...aggregateDaypart(dayIndex, part) }));
+    const spend = dailyParts.reduce((sum, row) => sum + row.spend, 0);
+    const leads = dailyParts.reduce((sum, row) => sum + row.leads, 0);
+    const revenueKnown = dailyParts.some(row => row.revenue != null);
+    const revenue = revenueKnown ? dailyParts.reduce((sum, row) => sum + (row.revenue || 0), 0) : null;
+    const supportedHours = dailyParts.reduce((sum, row) => sum + row.supportedHours, 0);
+    const sampleDays = dailyParts.filter(row => row.spend > 0 && row.leads > 0).length;
+    const roi = revenue != null && spend > 0 ? (revenue - spend) / spend : null;
+    const confidence = sampleDays >= 4 && spend >= 500 && leads >= 15 ? 'high'
+      : sampleDays >= 3 && spend >= 100 && leads >= 5 ? 'medium' : 'low';
+    return { part, spend, leads, revenue, roi, confidence, supportedHours, sampleDays };
+  };
+
   const untracked = niche?.revenue_source === 'not_tracked';
   const allocated = Boolean(data.attribution_allocated);
   const fallback = data.attribution_method === 'everflow_adset_id_redtrack_unavailable';
-  const daypartRows = niche ? BEST_TIMES_DAYS.flatMap((day, dayIndex) => dayparts.map(part => ({ day, part, ...aggregateDaypart(dayIndex, part) }))) : [];
-  const actionableRows = attributionIncomplete ? [] : daypartRows.filter(cell => cell.revenue != null && cell.confidence !== 'low' && cell.spend >= 100 && cell.leads >= 5 && cell.supportedHours >= Math.ceil((cell.part.end - cell.part.start) / 2));
+  const daypartRows = niche ? dayparts.map(part => aggregateWeeklyDaypart(part)) : [];
+  const actionableRows = attributionIncomplete ? [] : daypartRows.filter(cell => cell.revenue != null && cell.confidence !== 'low' && cell.spend >= 100 && cell.leads >= 5 && cell.sampleDays >= 3 && cell.supportedHours >= cell.part.end - cell.part.start);
   const bestWindow = actionableRows.length ? actionableRows.reduce((best, cell) => cell.roi > best.roi ? cell : best) : null;
   const weakestWindow = actionableRows.length ? actionableRows.reduce((worst, cell) => cell.roi < worst.roi ? cell : worst) : null;
   const sortedByRoi = [...actionableRows].sort((a, b) => b.roi - a.roi);
@@ -107,19 +124,19 @@ function BestTimesGrid({ data }) {
           {nicheSummaries.map(item => <option key={item.niche} value={item.niche}>{item.niche} · ${Math.round(item.totalSpend).toLocaleString()} spend{!attributionIncomplete && item.totalRoi != null ? ` · ${allocated ? '≈' : ''}${item.totalRoi >= 0 ? '+' : ''}${Math.round(item.totalRoi * 100)}% ${allocated ? 'directional ROI' : 'ROI'}` : item.revenue_source === 'not_tracked' ? ' · not tracked' : ' · attribution incomplete'}</option>)}
         </select>
         <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${untracked || attributionIncomplete || !niche || !actionableRows.length || allocated ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-green-50 text-green-700 border-green-200'}`}>
-          {!niche ? 'No hourly data' : untracked ? 'Revenue not tracked for this account' : attributionIncomplete ? 'Directional attribution · incomplete' : allocated ? 'Directional timing · test only' : !actionableRows.length ? 'Not enough data to rank' : fallback ? 'Exact Everflow attribution · complete' : 'Exact Everflow revenue'}
+          {!niche ? 'No hourly data' : untracked ? 'Revenue not tracked for this account' : attributionIncomplete ? 'Directional attribution · incomplete' : allocated ? 'Directional timing · test only' : !actionableRows.length ? 'No repeatable timing signal yet' : fallback ? 'Exact Everflow attribution · complete' : 'Exact Everflow revenue'}
         </span>
       </div>
       {!niche && <p className="text-sm text-gray-400 py-6 text-center">No hourly data returned for this account and period.</p>}
       {attributionIncomplete && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">Timing recommendation unavailable</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">{data.attribution_warning || 'Best Times cannot rank hours because some Everflow revenue is not tied to a Meta ad set.'} Do not change budgets from this view.</p>{(data.dropped_conversion_count || data.dropped_revenue) ? <p className="mt-2 text-[11px] font-medium text-amber-800">{data.dropped_conversion_count || 0} attribution records · {formatMoney(data.dropped_revenue || 0)} unmatched value</p> : null}</div></div></div>}
       {niche && !attributionIncomplete && allocated && <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">Directional timing · test only</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">Revenue is allocated from RedTrack timing and reconciled to Everflow billing. Use these windows only as a controlled test hypothesis; do not scale or pause budgets from this view.</p></div></div></div>}
       {niche && untracked && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">Revenue tracking unavailable</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">Spend and leads are available, but Best Times cannot rank hours until this account has an exact Switchboard offer mapping. Do not change budgets from this view.</p></div></div></div>}
-      {niche && !untracked && !attributionIncomplete && !actionableRows.length && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">Not enough data to rank a time window</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">This niche does not have at least $100 spend and 5 leads in a qualifying daypart. Select another niche or keep budgets unchanged until more data is available.</p></div></div></div>}
+      {niche && !untracked && !attributionIncomplete && !actionableRows.length && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">No repeatable timing signal yet</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">A Run or Avoid recommendation needs at least $100 spend, 5 leads, and evidence across 3 distinct days in the same daypart. Keep budgets unchanged or select a niche with a deeper sample.</p></div></div></div>}
       {!untracked && actionableRows.length > 0 && <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {[
           [allocated ? 'Test Run' : 'Run', runWindow, 'border-green-200 bg-green-50 text-green-800'],
           [allocated ? 'Test Avoid' : 'Avoid', avoidWindow, 'border-red-200 bg-red-50 text-red-800'],
-        ].map(([label, cell, classes]) => cell && <div key={label} className={`rounded-lg border px-3 py-2 ${classes}`}><div className="text-[10px] font-semibold uppercase tracking-wide opacity-70">{label}</div><div className="text-sm font-semibold">{cell.day} · {cell.part.label} · {allocated ? '≈' : ''}{cell.roi >= 0 ? '+' : ''}{Math.round(cell.roi * 100)}% {allocated ? 'directional ROI' : 'ROI'}</div><div className="text-[11px] opacity-75">${Math.round(cell.spend).toLocaleString()} spend · {cell.leads} leads · {allocated ? '≈' : ''}${Math.round(cell.revenue).toLocaleString()} {allocated ? 'allocated revenue' : 'revenue'} · {cell.confidence} confidence · {cell.supportedHours} supported hours</div></div>)}
+        ].map(([label, cell, classes]) => cell && <div key={label} className={`rounded-lg border px-3 py-2 ${classes}`}><div className="text-[10px] font-semibold uppercase tracking-wide opacity-70">{label}</div><div className="text-sm font-semibold">{cell.part.label} daily · {allocated ? '≈' : ''}{cell.roi >= 0 ? '+' : ''}{Math.round(cell.roi * 100)}% {allocated ? 'directional ROI' : 'ROI'}</div><div className="text-[11px] opacity-75">${Math.round(cell.spend).toLocaleString()} spend · {cell.leads} leads · {allocated ? '≈' : ''}${Math.round(cell.revenue).toLocaleString()} {allocated ? 'allocated revenue' : 'revenue'} · {cell.confidence} confidence · {cell.sampleDays} sampled days</div></div>)}
       </div>}
       {actionableRows.length > 0 && !runWindow && <p className="text-xs text-gray-500">No qualifying block is currently profitable enough to label {allocated ? 'Test Run' : 'Run'}. Keep budgets unchanged.</p>}
       {actionableRows.length > 0 && runWindow && !avoidWindow && <p className="text-xs text-gray-500">No clear {allocated ? 'test avoid' : 'avoid'} window—every qualifying block is non-negative. Use the {allocated ? 'Test Run' : 'Run'} window as the starting test.</p>}
