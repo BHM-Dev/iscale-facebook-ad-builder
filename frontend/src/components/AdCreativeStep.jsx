@@ -429,11 +429,17 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const [driveRepairPairId, setDriveRepairPairId] = useState(null);
     const [driveFormatFilter, setDriveFormatFilter] = useState('');
     const [showBlockedDriveOnly, setShowBlockedDriveOnly] = useState(false);
+    // One filter at a time. Both on at once yields "blocked AND needs copy",
+    // an intersection nobody asked for behind two independent-looking toggles.
+    const [showNeedsCopyDriveOnly, setShowNeedsCopyDriveOnly] = useState(false);
     // Reset on open: as component state this survived closing the modal, so a
     // buyer returning the next day met a 7-tile library with the format pills
     // still reading "All 288" and nothing indicating a filter was on.
     useEffect(() => {
-        if (showDriveLibraryModal) setShowBlockedDriveOnly(false);
+        if (showDriveLibraryModal) {
+            setShowBlockedDriveOnly(false);
+            setShowNeedsCopyDriveOnly(false);
+        }
     }, [showDriveLibraryModal]);
     const [showDriveLibraryHint, setShowDriveLibraryHint] = useState(
         () => safeLocalStorageGet('driveLibraryHintSeen') !== 'true'
@@ -543,10 +549,24 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // The repair path scopes the grid to a single pair and must win over the
     // toggle, or the button can read "Showing blocked" above one unblocked pair.
     const blockedFilterActive = showBlockedDriveOnly && !driveRepairPairId;
+    const needsCopyFilterActive = showNeedsCopyDriveOnly && !driveRepairPairId;
 
-    const driveAssetGroups = useMemo(
-        () => (blockedFilterActive ? scopedDriveAssetGroups.filter(isDriveGroupSelectionBlocked) : scopedDriveAssetGroups),
-        [scopedDriveAssetGroups, blockedFilterActive],
+    // A tile with no copy is not blocked -- it is selectable and launches once
+    // the buyer types a headline and body. It just renders with no badge at all,
+    // and absence is invisible: measured against the live Drive, 893 of 964
+    // tiles are in this state, so "why is nothing filled in" is the single most
+    // likely question this picker provokes.
+    const needsCopy = (group) => !hasCompleteCopy(group?.copy || {});
+
+    const driveAssetGroups = useMemo(() => {
+        if (blockedFilterActive) return scopedDriveAssetGroups.filter(isDriveGroupSelectionBlocked);
+        if (needsCopyFilterActive) return scopedDriveAssetGroups.filter(needsCopy);
+        return scopedDriveAssetGroups;
+    }, [scopedDriveAssetGroups, blockedFilterActive, needsCopyFilterActive]);
+
+    const scopedNeedsCopyDriveGroupCount = useMemo(
+        () => scopedDriveAssetGroups.filter(needsCopy).length,
+        [scopedDriveAssetGroups],
     );
 
     // In-scope, so the button promises what clicking it will actually show.
@@ -2126,7 +2146,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     </div>
                                     <p className="text-xs text-indigo-600 mt-1 mb-3">Use synced Feed and Stories assets</p>
                                     <span className="inline-flex items-center text-sm font-semibold text-indigo-800 bg-white rounded-md px-2.5 py-1 border border-indigo-200">
-                                        Browse Drive Library · {driveAssets.length} asset{driveAssets.length !== 1 ? 's' : ''}
+                                        Browse Drive Library · {allDriveAssetGroups.length} creative{allDriveAssetGroups.length !== 1 ? 's' : ''}
                                     </span>
                                 </button>
                             </div>
@@ -3134,7 +3154,26 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             </div>
                             <button
                                 type="button"
-                                onClick={() => setShowBlockedDriveOnly(current => !current)}
+                                onClick={() => {
+                                    setShowNeedsCopyDriveOnly(current => !current);
+                                    setShowBlockedDriveOnly(false);
+                                }}
+                                disabled={scopedNeedsCopyDriveGroupCount === 0 || Boolean(driveRepairPairId)}
+                                aria-pressed={needsCopyFilterActive}
+                                className={`whitespace-nowrap rounded-lg border px-3 py-1 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                                    needsCopyFilterActive
+                                        ? 'border-amber-300 bg-amber-50 text-amber-800'
+                                        : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                                }`}
+                            >
+                                {needsCopyFilterActive ? 'Showing needs copy' : `Needs copy (${scopedNeedsCopyDriveGroupCount})`}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setShowBlockedDriveOnly(current => !current);
+                                    setShowNeedsCopyDriveOnly(false);
+                                }}
                                 disabled={scopedBlockedDriveGroupCount === 0 || Boolean(driveRepairPairId)}
                                 aria-pressed={blockedFilterActive}
                                 className={`px-3 py-1 text-xs font-semibold rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
@@ -3262,6 +3301,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 None of the blocked creatives match your current search or format filter.
                                 {' '}Clear those to see all {totalBlockedDriveGroupCount}.
                             </p>
+                        ) : driveAssetGroups.length === 0 && needsCopyFilterActive ? (
+                            <p className="text-center text-gray-500 py-12">
+                                Every creative matching your current search already has copy from Drive.
+                            </p>
                         ) : driveAssetGroups.length === 0 ? (
                             <p className="text-center text-gray-500 py-12">No Drive assets match that search.</p>
                         ) : (
@@ -3384,9 +3427,20 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                             ? 'Drive source needs repair — refresh Drive'
                                                             : group.copyIntegrityReason || 'Pair data mismatch — refresh Drive'}
                                                 </div>
-                                            ) : (copyMatched || group.landingPage || group.cta || tags.copy_id) && (
+                                            ) : (copyMatched || group.landingPage || group.cta || tags.copy_id) ? (
                                                 <div className="absolute bottom-10 left-2 bg-emerald-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">
                                                     {copyMatched ? 'Copy matched' : 'URL matched'}
+                                                </div>
+                                            ) : (
+                                                // Not blocked -- selectable, and it launches once the
+                                                // buyer types a headline and body. It just had no badge
+                                                // at all before, and an absent badge is invisible next
+                                                // to neighbours wearing a green one.
+                                                <div
+                                                    title="Drive has no copy for this creative. You can still select it and write the headline and primary text yourself."
+                                                    className="absolute bottom-10 left-2 rounded-full bg-gray-700/90 px-2 py-1 text-[11px] font-semibold text-white shadow-sm"
+                                                >
+                                                    No copy in Drive
                                                 </div>
                                             )}
                                             <div className="p-1 text-xs text-gray-600 bg-white" title={group.isPair ? `Feed: ${group.feedAsset?.file_name} · Stories: ${group.storiesAsset?.file_name}` : asset.file_name}>
