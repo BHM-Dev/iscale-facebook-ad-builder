@@ -349,6 +349,28 @@ async def startup_event():
             finally:
                 db.close()
 
+        def scheduled_drive_health_snapshot():
+            """Precompute the Drive package health report into drive_sync_state.
+
+            The endpoint only ever reads this row. Building inline would mean a
+            multi-minute HTTP request that also pins a DB connection for its
+            whole duration.
+            """
+            db = SessionLocal()
+            try:
+                from app.api.v1.drive_health import refresh_package_health_snapshot
+                report = refresh_package_health_snapshot(db)
+                flagged = sum(1 for package in report.get("packages", []) if package.get("issues"))
+                print(
+                    "✅ Drive package health: "
+                    f"{len(report.get('packages', []))} packages, {flagged} flagged, "
+                    f"{len(report.get('collisions', []))} filename collisions"
+                )
+            except Exception as exc:
+                print(f"⚠️  Drive package health snapshot error: {exc}")
+            finally:
+                db.close()
+
         def scheduled_drive_sync():
             """Pull shared Google Drive creative into the existing R2-backed library."""
             db = SessionLocal()
@@ -403,6 +425,13 @@ async def startup_event():
         scheduler.add_job(scheduled_check, 'interval', minutes=30, id='auto_pause_check')
         scheduler.add_job(scheduled_redtrack_sync, 'interval', minutes=30, id='redtrack_sync')
         scheduler.add_job(scheduled_drive_sync, 'interval', minutes=30, id='drive_creative_sync')
+        # Hourly and offset to :20. This walks the whole Drive tree (~285s measured
+        # against production) and shares Drive API quota with drive_creative_sync
+        # above. As a plain 'interval' job it would start at the same T+60/T+120
+        # boundaries that sync fires on and contend with it for the full walk;
+        # cron at minute=20 puts it between sync's :00 and :30 runs. It is a
+        # structural report, not a live metric, so hourly is ample.
+        scheduler.add_job(scheduled_drive_health_snapshot, 'cron', minute=20, id='drive_health_snapshot')
         scheduler.add_job(scheduled_token_check, 'cron', hour=13, minute=0, timezone='UTC', id='token_expiry_check')
         scheduler.add_job(scheduled_capi_quality_sync, 'cron', hour=14, minute=0, timezone='UTC', id='capi_quality_sync')
         # PAUSED at Joel's request (2026-09-13). The hourly offer-performance
