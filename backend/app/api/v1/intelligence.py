@@ -14,6 +14,8 @@ import logging
 import json
 import os
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Optional, Dict
@@ -558,6 +560,19 @@ def _parse_hour_value(value) -> Optional[int]:
 
 _ACCOUNT_TIMEZONE_CACHE: dict[str, tuple[str, float]] = {}
 _ACCOUNT_TIMEZONE_CACHE_TTL_SECONDS = 6 * 60 * 60
+# Hourly Meta insight breakdowns expand to day × hour × ad set rows. Reusing
+# a completed result makes returning to the panel immediate; manual Refresh
+# bypasses this short-lived cache.
+_BEST_TIMES_RESULT_CACHE: dict[tuple[str, str, str, str], tuple[dict, float]] = {}
+_BEST_TIMES_RESULT_CACHE_TTL_SECONDS = 15 * 60
+
+
+def _get_cached_best_times(cache_key: tuple[str, str, str, str]) -> Optional[dict]:
+    cached = _BEST_TIMES_RESULT_CACHE.get(cache_key)
+    if cached and (time.monotonic() - cached[1]) < _BEST_TIMES_RESULT_CACHE_TTL_SECONDS:
+        return cached[0]
+    _BEST_TIMES_RESULT_CACHE.pop(cache_key, None)
+    return None
 
 
 def _get_account_timezone_cached(account, ad_account_id: Optional[str]) -> Optional[str]:
@@ -1066,6 +1081,7 @@ def best_times(
     date_to: Optional[str] = Query(None),
     ad_account_id: Optional[str] = Query(None),
     niche: Optional[str] = Query(None),
+    refresh: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("pnl:read")),
 ):
@@ -1075,43 +1091,43 @@ def best_times(
         preset, date_from, date_to, calendar_timezone=BEST_TIMES_TZ
     )
     offer_names = _everflow_offers_for_account(ad_account_id)
+    cache_key = (str(ad_account_id or ''), resolved_from, resolved_to, _day_filter)
+    result = None if refresh else _get_cached_best_times(cache_key)
     try:
-        meta_payload = _fetch_best_times_meta(ad_account_id, resolved_from, resolved_to, _day_filter)
-        conversions = []
-        redtrack_rows = []
-        redtrack_warning = None
-        if offer_names:
-            conversions = EverflowService().get_raw_conversions(
-                resolved_from,
-                resolved_to,
-                timezone_id=BEST_TIMES_TIMEZONE_ID,
-            )
-            redtrack = RedTrackService()
-            if redtrack.is_configured():
-                if not REDTRACK_TZ_VALID or REDTRACK_TZ != BEST_TIMES_TZ:
-                    redtrack_warning = 'RedTrack timezone does not match the required Pacific Best Times timezone; timing recommendations are unavailable until REDTRACK_TIMEZONE is corrected.'
-                else:
+        if result is None:
+            redtrack_warning = None
+            redtrack = RedTrackService() if offer_names else None
+            can_fetch_redtrack = bool(redtrack and redtrack.is_configured() and REDTRACK_TZ_VALID and REDTRACK_TZ == BEST_TIMES_TZ)
+            if redtrack and not redtrack.is_configured():
+                redtrack_warning = 'RedTrack is not configured for this environment; showing direct Everflow ad-set matches instead.'
+            elif redtrack and (not REDTRACK_TZ_VALID or REDTRACK_TZ != BEST_TIMES_TZ):
+                redtrack_warning = 'RedTrack timezone does not match the required Pacific Best Times timezone; timing recommendations are unavailable until REDTRACK_TIMEZONE is corrected.'
+
+            # The three upstream reads are independent. Parallelizing them
+            # changes first-load latency from their combined duration to the
+            # slowest individual source without changing the calculation.
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                meta_future = executor.submit(_fetch_best_times_meta, ad_account_id, resolved_from, resolved_to, _day_filter)
+                everflow_future = executor.submit(EverflowService().get_raw_conversions, resolved_from, resolved_to, timezone_id=BEST_TIMES_TIMEZONE_ID) if offer_names else None
+                redtrack_future = executor.submit(redtrack.get_raw_conversions, resolved_from, resolved_to) if can_fetch_redtrack else None
+                meta_payload = meta_future.result()
+                conversions = everflow_future.result() if everflow_future else []
+                redtrack_rows = []
+                if redtrack_future:
                     try:
-                        redtrack_rows = redtrack.get_raw_conversions(resolved_from, resolved_to)
+                        redtrack_rows = redtrack_future.result()
                         if not redtrack_rows:
                             redtrack_warning = 'RedTrack returned no rows; showing direct Everflow ad-set matches instead.'
                     except Exception as exc:
                         logger.warning("Best Times RedTrack attribution unavailable; using Everflow adset IDs: %s", exc)
                         redtrack_warning = 'RedTrack attribution was unavailable; showing direct Everflow ad-set matches instead.'
-            else:
-                redtrack_warning = 'RedTrack is not configured for this environment; showing direct Everflow ad-set matches instead.'
-        result = _build_best_times(
-            meta_payload,
-            conversions,
-            offer_names,
-            include_metadata=True,
-            redtrack_rows=redtrack_rows,
-            day_filter=_day_filter,
-        )
-        if redtrack_warning:
-            existing_warning = result.get('attribution_warning')
-            result['attribution_warning'] = ' '.join(part for part in (redtrack_warning, existing_warning) if part)
-            result['attribution_method'] = 'everflow_adset_id_redtrack_unavailable'
+
+            result = _build_best_times(meta_payload, conversions, offer_names, include_metadata=True, redtrack_rows=redtrack_rows, day_filter=_day_filter)
+            if redtrack_warning:
+                existing_warning = result.get('attribution_warning')
+                result['attribution_warning'] = ' '.join(part for part in (redtrack_warning, existing_warning) if part)
+                result['attribution_method'] = 'everflow_adset_id_redtrack_unavailable'
+            _BEST_TIMES_RESULT_CACHE[cache_key] = (result, time.monotonic())
     except RuntimeError as exc:
         raise HTTPException(502, str(exc)) from exc
     except Exception as exc:

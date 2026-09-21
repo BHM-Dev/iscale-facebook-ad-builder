@@ -209,13 +209,14 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
     }
   }, [adAccountId, preset, customFrom, customTo]);
 
-  const loadBestTimes = useCallback(async (nextPreset = preset, nextFrom = customFrom, nextTo = customTo) => {
+  const loadBestTimes = useCallback(async (nextPreset = preset, nextFrom = customFrom, nextTo = customTo, forceRefresh = false) => {
     const requestId = ++bestTimesRequestRef.current;
     setBestTimesLoading(true);
     setBestTimesError(null);
     try {
       const params = new URLSearchParams({ preset: nextPreset });
       if (adAccountId) params.set('ad_account_id', adAccountId);
+      if (forceRefresh) params.set('refresh', 'true');
       if (nextPreset === 'custom' && nextFrom && nextTo) {
         params.set('date_from', nextFrom);
         params.set('date_to', nextTo);
@@ -473,7 +474,12 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                   // Start timing analysis on a stable 30-day sample so the
                   // first view is actionable rather than an empty grid.
                   if (['today', 'yesterday', 'last_3d', 'last_7d', 'last_14d'].includes(preset)) {
-                    handlePreset('last_30d');
+                    // Do not use handlePreset here: it also refetches the
+                    // niche-profitability endpoint. That request is not
+                    // visible in Best Times and competes with the much more
+                    // expensive hourly timing request for the same account.
+                    userSelectedPresetRef.current = true;
+                    setPreset('last_30d');
                     loadBestTimes('last_30d', '', '');
                   } else if (!bestTimesData && (preset !== 'custom' || (customFrom && customTo))) {
                     loadBestTimes(preset, customFrom, customTo);
@@ -483,7 +489,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
 
               {intelligenceView === 'best-times' && (
                 <div className="mb-5 rounded-xl border border-violet-100 bg-white p-3">
-                  <div className="flex items-center justify-between mb-3"><div><h3 className="text-sm font-semibold text-gray-900">Best Times by Niche</h3><p className="text-[11px] text-gray-500 mt-0.5">{!bestTimesData ? 'Loading attribution…' : bestTimesData.attribution_complete === false ? 'Attribution incomplete · timing recommendations unavailable' : bestTimesData.attribution_method === 'everflow_adset_id_redtrack_unavailable' ? 'Exact Everflow ad-set attribution' : bestTimesData.attribution_allocated ? 'Directional revenue allocation · RedTrack shape + Everflow billing' : bestTimesData.niches?.some(item => item.revenue_source === 'not_tracked') ? 'Revenue unavailable · no Everflow offer mapping' : 'Exact Everflow ad-set attribution'} · {bestTimesData?.timezone || '—'}</p></div><button type="button" onClick={() => loadBestTimes(preset, customFrom, customTo)} disabled={bestTimesLoading || (preset === 'custom' && (!customFrom || !customTo))} className="text-xs text-violet-600 hover:text-violet-800 disabled:opacity-40">{bestTimesLoading ? 'Loading…' : 'Refresh'}</button></div>
+                  <div className="flex items-center justify-between mb-3"><div><h3 className="text-sm font-semibold text-gray-900">Best Times by Niche</h3><p className="text-[11px] text-gray-500 mt-0.5">{!bestTimesData ? 'Loading attribution…' : bestTimesData.attribution_complete === false ? 'Attribution incomplete · timing recommendations unavailable' : bestTimesData.attribution_method === 'everflow_adset_id_redtrack_unavailable' ? 'Exact Everflow ad-set attribution' : bestTimesData.attribution_allocated ? 'Directional revenue allocation · RedTrack shape + Everflow billing' : bestTimesData.niches?.some(item => item.revenue_source === 'not_tracked') ? 'Revenue unavailable · no Everflow offer mapping' : 'Exact Everflow ad-set attribution'} · {bestTimesData?.timezone || '—'}</p></div><button type="button" onClick={() => loadBestTimes(preset, customFrom, customTo, true)} disabled={bestTimesLoading || (preset === 'custom' && (!customFrom || !customTo))} className="text-xs text-violet-600 hover:text-violet-800 disabled:opacity-40">{bestTimesLoading ? 'Loading…' : 'Refresh'}</button></div>
                   {!bestTimesLoading && !bestTimesError && bestTimesData && bestTimesData.attribution_warning && bestTimesData.attribution_complete !== false && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><span className="font-semibold">Attribution note.</span> {bestTimesData.attribution_warning}</div>}
                   {bestTimesLoading && <div className="h-48 rounded-lg bg-gray-50 animate-pulse" />}
                   {!bestTimesLoading && bestTimesError && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700"><div className="font-semibold">Timing recommendations unavailable</div><div className="mt-1">We couldn’t load the timing data for this account and period.</div><div className="mt-1 text-xs">Keep current budgets and schedules unchanged, then use Refresh to retry.</div></div>}
