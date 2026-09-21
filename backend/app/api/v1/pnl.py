@@ -3,7 +3,7 @@ import json
 import logging
 import time
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -14,8 +14,8 @@ from sqlalchemy.orm import Session
 from app.api.v1.facebook import _resolve_scoped_default_account
 from app.core.deps import require_permission
 from app.database import get_db
-from app.models import FacebookAdSet, FacebookCampaign, PnlCostEntry, PnlMonthSnapshot, User, normalize_account_id
-from app.services.everflow_service import META_ID_RE, EverflowService
+from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, PnlCostEntry, PnlMonthSnapshot, User, normalize_account_id
+from app.services.everflow_service import EVERFLOW_TZ_BY_ID, META_ID_RE, EverflowService
 from app.services.facebook_service import FacebookService
 from app.services.redtrack_service import today_in_rt_tz
 
@@ -37,6 +37,10 @@ CENT = Decimal("0.01")
 EVERFLOW_ACCOUNT_IDS_ENV = "SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS"
 EVERFLOW_ACCOUNT_OFFERS_ENV = "SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS"
 PNL_ALL_ACCOUNTS_SCOPE_ENV = "PNL_ALL_ACCOUNTS_SCOPE_IDS"
+AUDIT_SUB_FIELDS = tuple(f"sub{number}" for number in range(1, 9))
+AUDIT_CACHE_TTL_SECONDS = 300
+AUDIT_CACHE_MAX_ENTRIES = 24
+_attribution_audit_cache: dict[tuple[str, str, str], tuple[float, dict]] = {}
 
 
 def _money(value) -> Decimal:
@@ -183,6 +187,212 @@ def _everflow_offer_names_for_account(account_id: str) -> set[str]:
     if not isinstance(values, list):
         return set()
     return {str(value).strip() for value in values if str(value).strip()}
+
+
+def _audit_revenue_attribution(
+    rows: list[dict],
+    offer_names: set[str],
+    scoped_adsets: set[str],
+    scoped_ads: dict[str, str],
+    scoped_campaigns: set[str],
+    foreign_meta_ids: set[str],
+) -> dict:
+    """Audit current P&L coverage separately from candidate future mappings.
+
+    Production P&L currently only assigns an Everflow ``sub3`` that matches a
+    Meta ad-set ID.  A match in another field is useful evidence about the
+    live tracking contract, but it must never be presented as P&L-ready or
+    timing-ready until the consuming resolver has been deliberately changed.
+    """
+    allowed_offers = {name.casefold() for name in offer_names if name}
+    buckets = {
+        "current_pnl_exact_sub3_adset": {"events": 0, "revenue": Decimal("0"), "reasons": {}, "event_types": {}},
+        "current_pnl_campaign_only_sub3": {"events": 0, "revenue": Decimal("0"), "reasons": {}, "event_types": {}},
+        "candidate_adset_other_field": {"events": 0, "revenue": Decimal("0"), "reasons": {}, "event_types": {}},
+        "candidate_ad_other_field": {"events": 0, "revenue": Decimal("0"), "reasons": {}, "event_types": {}},
+        "foreign_meta_id": {"events": 0, "revenue": Decimal("0"), "reasons": {}, "event_types": {}},
+        "missing_or_unknown": {"events": 0, "revenue": Decimal("0"), "reasons": {}, "event_types": {}},
+    }
+    field_presence = {field: {"events": 0, "revenue": Decimal("0")} for field in AUDIT_SUB_FIELDS}
+    total_events = 0
+    total_revenue = Decimal("0")
+
+    def record(bucket_name: str, revenue: Decimal, reason: str, event_name: str) -> None:
+        bucket = buckets[bucket_name]
+        bucket["events"] += 1
+        bucket["revenue"] += revenue
+        bucket["reasons"][reason] = bucket["reasons"].get(reason, 0) + 1
+        event = bucket["event_types"].setdefault(event_name, {"events": 0, "revenue": Decimal("0")})
+        event["events"] += 1
+        event["revenue"] += revenue
+
+    for row in rows:
+        if allowed_offers and EverflowService._offer_name(row).casefold() not in allowed_offers:
+            continue
+        raw_revenue = row.get("revenue")
+        try:
+            if raw_revenue in (None, ""):
+                raise InvalidOperation
+            revenue = Decimal(str(raw_revenue))
+            if not revenue.is_finite():
+                raise InvalidOperation
+        except (InvalidOperation, ValueError, TypeError):
+            raise ValueError("Switchboard returned a conversion with missing or invalid revenue")
+        event_name = str(row.get("event") or "unknown").strip() or "unknown"
+        total_events += 1
+        total_revenue += revenue
+        values = []
+        for field in AUDIT_SUB_FIELDS:
+            value = str(row.get(field) or "").strip()
+            if not value:
+                continue
+            field_presence[field]["events"] += 1
+            field_presence[field]["revenue"] += revenue
+            values.append((field, value))
+
+        sub3 = str(row.get("sub3") or "").strip()
+        if sub3 in scoped_adsets:
+            record("current_pnl_exact_sub3_adset", revenue, "sub3 matched Meta ad set (current P&L path)", event_name)
+            continue
+        if sub3 in scoped_campaigns:
+            record("current_pnl_campaign_only_sub3", revenue, "sub3 matched Meta campaign (not ad-set attributable)", event_name)
+            continue
+        other_values = [(field, value) for field, value in values if field != "sub3"]
+        candidate_adset = next(((field, value) for field, value in other_values if value in scoped_adsets), None)
+        if candidate_adset:
+            record("candidate_adset_other_field", revenue, f"{candidate_adset[0]} matched Meta ad set (not current P&L path)", event_name)
+            continue
+        candidate_ad = next(((field, value) for field, value in values if value in scoped_ads), None)
+        if candidate_ad:
+            record("candidate_ad_other_field", revenue, f"{candidate_ad[0]} matched Meta ad (not timing-validated)", event_name)
+            continue
+        foreign = next(((field, value) for field, value in values if value in foreign_meta_ids), None)
+        if foreign:
+            record("foreign_meta_id", revenue, f"{foreign[0]} matched a different Meta account", event_name)
+            continue
+        numeric = next(((field, value) for field, value in values if META_ID_RE.fullmatch(value)), None)
+        record(
+            "missing_or_unknown",
+            revenue,
+            f"{numeric[0]} is not in the synced Meta identity map" if numeric else "no usable Meta ID in sub1–sub8",
+            event_name,
+        )
+
+    classified_revenue = sum((bucket["revenue"] for bucket in buckets.values()), Decimal("0"))
+    current_pnl_revenue = buckets["current_pnl_exact_sub3_adset"]["revenue"]
+    return {
+        "total_events": total_events,
+        "total_revenue": _float(total_revenue),
+        "classification_total": _float(classified_revenue),
+        "classification_difference": _float(total_revenue - classified_revenue),
+        "current_pnl_adset_revenue": _float(current_pnl_revenue),
+        "current_pnl_adset_coverage": float(current_pnl_revenue / total_revenue) if total_revenue > 0 else None,
+        "buckets": {
+            name: {
+                "events": data["events"],
+                "revenue": _float(data["revenue"]),
+                "reasons": data["reasons"],
+                "event_types": {
+                    event_name: {"events": event["events"], "revenue": _float(event["revenue"])}
+                    for event_name, event in data["event_types"].items()
+                },
+            }
+            for name, data in buckets.items()
+        },
+        "field_presence": {
+            field: {"events": data["events"], "revenue": _float(data["revenue"])}
+            for field, data in field_presence.items()
+        },
+    }
+
+
+def _source_offer_breakdown(rows: list[dict], configured_offers: set[str]) -> dict:
+    """Aggregate every source row so an offer-map error cannot look clean."""
+    offers: dict[str, dict] = {}
+    total_revenue = Decimal("0")
+    for row in rows:
+        raw_revenue = row.get("revenue")
+        try:
+            if raw_revenue in (None, ""):
+                raise InvalidOperation
+            revenue = Decimal(str(raw_revenue))
+            if not revenue.is_finite():
+                raise InvalidOperation
+        except (InvalidOperation, ValueError, TypeError):
+            raise ValueError("Switchboard returned a conversion with missing or invalid revenue")
+        offer = EverflowService._offer_name(row) or "(missing offer name)"
+        slot = offers.setdefault(offer, {"events": 0, "revenue": Decimal("0")})
+        slot["events"] += 1
+        slot["revenue"] += revenue
+        total_revenue += revenue
+    allowed = {name.casefold() for name in configured_offers if name}
+    source_offer_keys = {name.casefold() for name in offers}
+    configured_offers_without_source = sorted(
+        name for name in configured_offers if name.casefold() not in source_offer_keys
+    )
+    admitted_events = 0
+    admitted_revenue = Decimal("0")
+    excluded_events = 0
+    excluded_revenue = Decimal("0")
+    excluded_offers = {}
+    for name, slot in offers.items():
+        if name.casefold() in allowed:
+            admitted_events += slot["events"]
+            admitted_revenue += slot["revenue"]
+        else:
+            excluded_events += slot["events"]
+            excluded_revenue += slot["revenue"]
+            excluded_offers[name] = {"events": slot["events"], "revenue": _float(slot["revenue"])}
+
+    return {
+        "events": sum(slot["events"] for slot in offers.values()),
+        "revenue": _float(total_revenue),
+        "offers": {
+            name: {"events": slot["events"], "revenue": _float(slot["revenue"])}
+            for name, slot in sorted(offers.items(), key=lambda item: -item[1]["revenue"])
+        },
+        "configured_offer_scope": {
+            "admitted_events": admitted_events,
+            "admitted_revenue": _float(admitted_revenue),
+            "excluded_events": excluded_events,
+            "excluded_revenue": _float(excluded_revenue),
+            "excluded_offers": excluded_offers,
+            "configured_offers_without_source": configured_offers_without_source,
+            "status": (
+                "no_matching_source_offers" if not admitted_events
+                else "configured_offer_without_source" if configured_offers_without_source
+                else "mixed_offers" if excluded_events
+                else "matched_only"
+            ),
+        },
+    }
+
+
+def _meta_identity_map_for_audit(db: Session, account_id: str) -> tuple[set[str], dict[str, str], set[str], set[str]]:
+    """Return scoped IDs plus known IDs owned by other accounts for audit only."""
+    account_id = normalize_account_id(account_id)
+    adsets = {
+        str(row[0]) for row in db.query(FacebookAdSet.fb_adset_id)
+        .filter(FacebookAdSet.fb_account_id == account_id, FacebookAdSet.fb_adset_id.isnot(None)).all()
+    }
+    campaigns = {
+        str(row[0]) for row in db.query(FacebookCampaign.fb_campaign_id)
+        .filter(FacebookCampaign.fb_account_id == account_id, FacebookCampaign.fb_campaign_id.isnot(None)).all()
+    }
+    ads = {
+        str(ad_id): str(adset_id)
+        for ad_id, adset_id in db.query(FacebookAd.fb_ad_id, FacebookAdSet.fb_adset_id)
+        .join(FacebookAdSet, FacebookAd.adset_id == FacebookAdSet.id)
+        .filter(FacebookAdSet.fb_account_id == account_id, FacebookAd.fb_ad_id.isnot(None), FacebookAdSet.fb_adset_id.isnot(None)).all()
+    }
+    all_ids = set()
+    for model, field in (
+        (FacebookAdSet, FacebookAdSet.fb_adset_id),
+        (FacebookCampaign, FacebookCampaign.fb_campaign_id),
+        (FacebookAd, FacebookAd.fb_ad_id),
+    ):
+        all_ids |= {str(row[0]) for row in db.query(field).filter(field.isnot(None)).all()}
+    return adsets, ads, campaigns, all_ids - adsets - set(ads) - campaigns
 
 
 def _spend_for_account(account_id: str, start: date, end: date) -> Decimal:
@@ -871,6 +1081,97 @@ def get_summary(
     if account_id == "all":
         return _summary_all(db, current_user, start, end, label)
     return _summary(db, account_id, start, end, label)
+
+
+@router.get("/attribution-audit")
+def get_attribution_audit(
+    ad_account_id: str = Query(...),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("pnl:read")),
+):
+    """Read-only coverage audit for Switchboard billable-revenue attribution.
+
+    This endpoint returns aggregates only. It intentionally does not expose
+    conversion identifiers, click parameters, or any other raw-event data.
+    """
+    account_id = _require_account(current_user, ad_account_id)
+    if account_id == "all":
+        raise HTTPException(status_code=400, detail="Choose one ad account for an attribution audit.")
+    if _revenue_provider_for_account(account_id) != "everflow":
+        raise HTTPException(status_code=400, detail="This account has no configured Switchboard revenue source.")
+    offers = _everflow_offer_names_for_account(account_id)
+    if not offers:
+        raise HTTPException(status_code=400, detail=f"{EVERFLOW_ACCOUNT_OFFERS_ENV} has no offer mapping for this account.")
+
+    if bool(date_from) != bool(date_to):
+        raise HTTPException(status_code=400, detail="date_from and date_to must be supplied together.")
+    if date_from and date_to:
+        try:
+            start = datetime.strptime(date_from, "%Y-%m-%d").date()
+            end = datetime.strptime(date_to, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="date_from and date_to must be YYYY-MM-DD.")
+    else:
+        end = datetime.now(EVERFLOW_TZ_BY_ID[80]).date()
+        start = end - timedelta(days=29)
+    if end < start:
+        raise HTTPException(status_code=400, detail="date_to must be on or after date_from.")
+    if (end - start).days > 30:
+        raise HTTPException(status_code=400, detail="Attribution audits are limited to 31 days per request.")
+
+    now = time.time()
+    expired_keys = [key for key, (created_at, _) in _attribution_audit_cache.items() if now - created_at >= AUDIT_CACHE_TTL_SECONDS]
+    for key in expired_keys:
+        _attribution_audit_cache.pop(key, None)
+    cache_key = (account_id, start.isoformat(), end.isoformat())
+    cached = _attribution_audit_cache.get(cache_key)
+    if cached:
+        return {**cached[1], "cached": True}
+
+    service = EverflowService()
+    if not service.is_configured():
+        raise HTTPException(status_code=503, detail="Switchboard Everflow is not configured on this server.")
+    try:
+        rows = service.get_raw_conversions(start, end)
+        source = _source_offer_breakdown(rows, offers)
+        scoped_adsets, scoped_ads, scoped_campaigns, foreign_ids = _meta_identity_map_for_audit(db, account_id)
+        audit = _audit_revenue_attribution(rows, offers, scoped_adsets, scoped_ads, scoped_campaigns, foreign_ids)
+    except Exception as exc:  # noqa: BLE001 - source data must never be rendered as a clean $0 audit
+        logger.warning("pnl.attribution_audit failed account=%s: %s", account_id, exc)
+        raise HTTPException(status_code=502, detail="Switchboard attribution audit could not produce a complete source report.")
+
+    payload = {
+        "ad_account_id": account_id,
+        "date_from": start.isoformat(),
+        "date_to": end.isoformat(),
+        "timezone": "America/New_York",
+        "offer_names": sorted(offers),
+        "source_report": source,
+        "meta_identity_counts": {
+            "adsets": len(scoped_adsets),
+            "ads": len(scoped_ads),
+            "campaigns": len(scoped_campaigns),
+        },
+        "best_times_eligibility": {
+            "status": "not_ready",
+            "current_direct_everflow_field": "sub3",
+            "reason": "This audit does not validate RedTrack timing coverage or upgrade Best Times confidence.",
+        },
+        "portal_reconciliation": {
+            "status": "not_run",
+            "reason": "Raw conversion coverage is not an independent comparison with the Switchboard portal total.",
+        },
+        "read_only": True,
+        "cached": False,
+        **audit,
+    }
+    if len(_attribution_audit_cache) >= AUDIT_CACHE_MAX_ENTRIES:
+        oldest_key = min(_attribution_audit_cache, key=lambda key: _attribution_audit_cache[key][0])
+        _attribution_audit_cache.pop(oldest_key, None)
+    _attribution_audit_cache[cache_key] = (now, payload)
+    return payload
 
 
 def _snapshot_provider(revenue_source: str | None) -> str | None:
