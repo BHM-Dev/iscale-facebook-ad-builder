@@ -2,10 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Copy, FolderSearch, RefreshCw } from 'lucide-react';
 import { authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
+import { isArchivedPackage, isArchivedPath } from '../lib/drivePackageHealth';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 const driveFolderUrl = (folderId) => `https://drive.google.com/drive/folders/${folderId}`;
+
 
 // Measured against the live Drive: 144 packages, 132 with no copy source and 111
 // flat, but only 7 with a filename problem. Treating all of them as "needs
@@ -79,6 +81,7 @@ export default function DrivePackageHealth() {
   const [error, setError] = useState(null);
   const [rebuilding, setRebuilding] = useState(false);
   const [onlyIssues, setOnlyIssues] = useState(false);
+  const [showArchive, setShowArchive] = useState(false);
 
   const loadReport = async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
@@ -125,14 +128,31 @@ export default function DrivePackageHealth() {
     return () => clearInterval(timer);
   }, [rebuilding]);
 
+  // Every count on this page is over live packages only. Including the archive
+  // made the headline read "133 of 144 need attention" when the real number of
+  // folders anyone has to touch is a fraction of that.
+  const livePackages = useMemo(
+    () => (report?.packages || []).filter((item) => !isArchivedPackage(item)),
+    [report],
+  );
+  const archivedPackages = useMemo(
+    () => (report?.packages || []).filter(isArchivedPackage),
+    [report],
+  );
   const packages = useMemo(() => {
-    const all = report?.packages || [];
+    const all = showArchive ? (report?.packages || []) : livePackages;
     const filtered = onlyIssues ? all.filter(willRefuse) : all;
     // Refusals first: they are the only rows anyone has to act on today.
     return [...filtered].sort((a, b) => (willRefuse(b) ? 1 : 0) - (willRefuse(a) ? 1 : 0));
-  }, [report, onlyIssues]);
-  const issueCount = report?.packages?.filter((item) => item.issues?.length).length || 0;
-  const blockingCount = report?.packages?.filter(willRefuse).length || 0;
+  }, [report, livePackages, onlyIssues, showArchive]);
+  // Counted over whatever set the table is showing. Pinning these to
+  // livePackages left the headline claiming "7 of 34" while 144 rows rendered
+  // below it -- and with "only refused" also on, the visible row count WAS the
+  // honest blocking number and did not match the sentence above it.
+  const counted = showArchive ? (report?.packages || []) : livePackages;
+  const issueCount = counted.filter((item) => item.issues?.length).length;
+  const blockingCount = counted.filter(willRefuse).length;
+  const archivedIssueCount = archivedPackages.filter((item) => item.issues?.length).length;
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
@@ -203,16 +223,38 @@ export default function DrivePackageHealth() {
         <div className="flex items-center gap-2 text-sm text-gray-700">
           {blockingCount ? <AlertTriangle size={18} className="text-red-600" /> : <CheckCircle2 size={18} className="text-emerald-600" />}
           <span>
-            <strong>{blockingCount}</strong> of <strong>{report?.packages?.length || 0}</strong> packages will be refused at launch.
+            <strong>{blockingCount}</strong> of <strong>{counted.length}</strong> {showArchive ? 'packages' : 'active packages'} will be refused at launch.
             {issueCount > blockingCount && (
               <span className="text-gray-500"> · {issueCount - blockingCount} more have a structural finding that does not block launch.</span>
             )}
+            {!showArchive && archivedPackages.length > 0 && (
+              <span className="text-gray-400">
+                {' '}Excludes {archivedPackages.length} archive folders
+                {archivedIssueCount > 0 ? ` (${archivedIssueCount} with findings)` : ''}, which are not expected to carry copy docs.
+              </span>
+            )}
           </span>
         </div>
-        <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-gray-700">
-          <input type="checkbox" checked={onlyIssues} onChange={(event) => setOnlyIssues(event.target.checked)} className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-500" />
-          Only packages that will be refused
-        </label>
+        <div className="flex flex-wrap items-center gap-4">
+          {archivedPackages.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowArchive((current) => !current)}
+              aria-pressed={showArchive}
+              className={`rounded-lg border px-3 py-1 text-xs font-semibold transition-colors ${
+                showArchive ? 'border-gray-400 bg-gray-100 text-gray-800' : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {showArchive
+                ? `Hide archive (${archivedPackages.length})`
+                : `Show ${archivedPackages.length} archive folders`}
+            </button>
+          )}
+          <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-gray-700">
+            <input type="checkbox" checked={onlyIssues} onChange={(event) => setOnlyIssues(event.target.checked)} className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-500" />
+            Only packages that will be refused
+          </label>
+        </div>
       </div>
       )}
 
@@ -235,8 +277,15 @@ export default function DrivePackageHealth() {
         ) : packages.length === 0 ? (
           <div className="p-10 text-center">
             <CheckCircle2 className="mx-auto mb-3 text-emerald-600" size={28} />
-            <p className="font-medium text-gray-900">Nothing will be refused at launch</p>
+            <p className="font-medium text-gray-900">
+              {!showArchive && archivedPackages.length > 0 ? 'Nothing active will be refused at launch' : 'Nothing will be refused at launch'}
+            </p>
             <p className="mt-1 text-sm text-gray-500">No packages match this filter.</p>
+            {!showArchive && archivedPackages.length > 0 && (
+              // Said after the all-clear, never instead of it: the claim above
+              // is scoped to live packages and the reader has to know that.
+              <p className="mt-1 text-sm text-gray-500">{archivedPackages.length} archive folders are hidden and were not counted.</p>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -245,6 +294,9 @@ export default function DrivePackageHealth() {
               <tbody className="divide-y divide-gray-100">
                 {packages.map((item) => <tr key={item.folder_id} className="align-top hover:bg-gray-50">
                   <td className="max-w-md break-words px-5 py-4 font-medium text-gray-900">
+                    {isArchivedPackage(item) && (
+                      <span className="mr-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Archive</span>
+                    )}
                     {/* folder_id is already in the payload -- naming a problem and then
                         making someone hunt for the folder by hand is how a report
                         gets opened once. */}
@@ -272,7 +324,7 @@ export default function DrivePackageHealth() {
       </section>
 
       {report?.collisions?.length > 0 && <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div className="flex items-center gap-2 border-b border-gray-200 px-5 py-4"><Copy size={17} className="text-gray-500" /><div><h2 className="font-semibold text-gray-900">Cross-package filename collisions</h2><p className="text-xs text-gray-500">These names are reused under the same brand and need package-level copy context.</p></div></div>
+        <div className="flex items-center gap-2 border-b border-gray-200 px-5 py-4"><Copy size={17} className="text-gray-500" /><div><h2 className="font-semibold text-gray-900">Cross-package filename collisions</h2><p className="text-xs text-gray-500">These names are reused under the same brand and need package-level copy context. Computed across every folder, archive included — so a live package can appear here because of an archived twin.</p></div></div>
         <div className="divide-y divide-gray-100">{report.collisions.map((collision, index) => (
           // Key includes the index: the same basename can collide under two
           // different brands, producing two entries with the same basename.
@@ -285,6 +337,12 @@ export default function DrivePackageHealth() {
               {(collision.package_folders || collision.packages.map((path) => ({ path, folder_id: null }))).map((entry, entryIndex) => (
                 <span key={entry.folder_id || `${entry.path}-${entryIndex}`}>
                   {entryIndex > 0 && ' · '}
+                  {/* Badged here too: the packages table can be hiding these
+                      rows, and an unlabelled archive path in a section the
+                      reader thinks is scoped to live folders is misleading. */}
+                  {isArchivedPath(entry.path) && (
+                    <span className="mr-1 rounded bg-gray-100 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Archive</span>
+                  )}
                   {entry.folder_id
                     ? <a href={driveFolderUrl(entry.folder_id)} target="_blank" rel="noopener noreferrer" className="text-indigo-700 hover:text-indigo-900 hover:underline">{entry.path}</a>
                     : entry.path}
