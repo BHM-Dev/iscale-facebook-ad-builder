@@ -145,8 +145,8 @@ function BestTimesGrid({ data }) {
               const campaignMatches = !query || group.campaign?.label.toLowerCase().includes(query);
               if (!group.campaign) return matchingAdsets.map(item => <option key={item.key} value={item.key}>{item.label} · timing group</option>);
               if (!campaignMatches && !matchingAdsets.length) return null;
-              return <optgroup key={group.campaign.key} label={`Campaign · ${group.campaign.label}`}>
-                {campaignMatches && <option value={group.campaign.key}>Campaign total · ${Math.round(group.campaign.totalSpend).toLocaleString()} spend</option>}
+              return <optgroup key={group.campaign.key} label="Campaign">
+                {campaignMatches && <option value={group.campaign.key}>{group.campaign.label} · Campaign total · ${Math.round(group.campaign.totalSpend).toLocaleString()} spend</option>}
                 {matchingAdsets.map(item => <option key={item.key} value={item.key}>↳ Ad set · {item.label} · ${Math.round(item.totalSpend).toLocaleString()} spend</option>)}
               </optgroup>;
             })}
