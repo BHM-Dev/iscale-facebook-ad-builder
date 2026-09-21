@@ -243,15 +243,13 @@ class EverflowService:
         return ""
 
     @staticmethod
-    def _conversion_month(row: dict, timezone_id: int = DEFAULT_TIMEZONE_ID) -> str:
-        """Bucket a conversion into its month IN THE REPORTING TIMEZONE.
+    def _conversion_date(row: dict, timezone_id: int = DEFAULT_TIMEZONE_ID) -> date:
+        """Return a conversion's calendar date in the reporting timezone.
 
         Must not use a naive datetime. The VPS clock is UTC while we report in
         Eastern (timezone_id 80), so a conversion at 2026-07-01 03:00 UTC is
-        2026-06-30 23:00 Eastern and belongs to June. Bucketing naively puts it
-        in July, which makes /pnl/months disagree with /pnl/summary for the same
-        month — summary asks Everflow for an Eastern-bounded range, so the two
-        would never reconcile.
+        2026-06-30 23:00 Eastern. Treating that timestamp as a naive server date
+        puts both daily trend and month reporting in the wrong calendar bucket.
         """
         tz = EVERFLOW_TZ_BY_ID.get(timezone_id, EVERFLOW_TZ_BY_ID[DEFAULT_TIMEZONE_ID])
         for field in CONVERSION_DATE_FIELDS:
@@ -260,21 +258,26 @@ class EverflowService:
                 continue
             value = str(raw)
             if value.isdigit():
-                return datetime.fromtimestamp(int(value), tz=tz).date().replace(day=1).isoformat()
+                return datetime.fromtimestamp(int(value), tz=tz).date()
             try:
                 parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
             except ValueError:
                 match = re.match(r"^\d{4}-\d{2}-\d{2}", value)
                 if match:
                     # Date-only string: already expressed in the report's timezone.
-                    return datetime.strptime(match.group(0), "%Y-%m-%d").date().replace(day=1).isoformat()
+                    return datetime.strptime(match.group(0), "%Y-%m-%d").date()
                 continue
             # A tz-naive timestamp string from Everflow is already in the
             # requested reporting timezone; an aware one gets converted.
             if parsed.tzinfo is not None:
                 parsed = parsed.astimezone(tz)
-            return parsed.date().replace(day=1).isoformat()
+            return parsed.date()
         raise RuntimeError("Everflow conversion row is missing a recognised conversion date field")
+
+    @staticmethod
+    def _conversion_month(row: dict, timezone_id: int = DEFAULT_TIMEZONE_ID) -> str:
+        """Bucket a conversion into its month IN THE REPORTING TIMEZONE."""
+        return EverflowService._conversion_date(row, timezone_id).replace(day=1).isoformat()
 
     # This endpoint cannot be paged. Verified against the live API 2026-07-28:
     # `page`/`page_size` in the body are ignored in both the flat and the nested

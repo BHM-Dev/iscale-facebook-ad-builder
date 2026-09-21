@@ -35,16 +35,20 @@ function KpiCard({ label, value, sub, delta, deltaGoodWhen = 'up', highlight, wa
   );
 }
 
-function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
+function TrendChart({ trend, loading, error, metric, setMetric, rangeLabel }) {
   const rows = trend?.daily || [];
   const chartViewportRef = useRef(null);
   const [viewportWidth, setViewportWidth] = useState(0);
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const metricConfig = {
     spend: { label: 'Spend', color: '#4f46e5', format: v => `$${Math.round(v).toLocaleString()}` },
+    revenue: { label: 'Revenue', color: '#16a34a', format: v => `$${Math.round(v).toLocaleString()}` },
     leads: { label: 'Leads', color: '#059669', format: v => Math.round(v).toLocaleString() },
     cpl: { label: 'CPL', color: '#ea580c', format: v => `$${v.toFixed(2)}` },
+    revenue_per_lead: { label: 'Rev / Meta Lead', color: '#0f766e', format: v => `$${v.toFixed(2)}` },
   }[metric];
+  const revenueStatus = trend?.revenue_attribution?.status;
+  const revenueAvailable = revenueStatus === 'exact_adset_attributed';
   const values = rows.map(row => row[metric]).filter(value => value != null);
   const hasValues = values.length > 0;
   useEffect(() => {
@@ -109,12 +113,19 @@ function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
   }, [[]]).filter(segment => segment.length > 0).map(segment => segment.map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' '));
   return <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
     <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
-      <div><div className="text-sm font-semibold text-gray-900">Daily trend</div><div className="text-[11px] text-gray-500">Meta Insights · {rangeLabel}</div></div>
-      <div className="flex gap-1">{Object.entries(metricConfig ? { spend: 'Spend', leads: 'Leads', cpl: 'CPL' } : {}).map(([key, label]) => <button key={key} type="button" onClick={() => setMetric(key)} className={`text-[11px] px-2 py-1 rounded ${metric === key ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}>{label}</button>)}</div>
+      <div><div className="text-sm font-semibold text-gray-900">Daily trend</div><div className="text-[11px] text-gray-500">Meta spend & leads · Switchboard billable revenue (PT) · {rangeLabel}</div></div>
+      <div className="flex flex-wrap justify-end gap-1">{Object.entries(metricConfig ? { spend: 'Spend', revenue: 'Revenue', leads: 'Leads', cpl: 'CPL', revenue_per_lead: 'Rev / Meta Lead' } : {}).map(([key, label]) => <button key={key} type="button" onClick={() => setMetric(key)} disabled={['revenue', 'revenue_per_lead'].includes(key) && !revenueAvailable} className={`text-[11px] px-2 py-1 rounded disabled:cursor-not-allowed disabled:opacity-45 ${metric === key ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}>{label}</button>)}</div>
     </div>
     {loading ? <div className="h-[190px] flex items-center justify-center text-sm text-gray-400">Loading trend...</div>
-      : !rows.length || !hasValues ? <div className="h-[190px] flex flex-col items-center justify-center gap-1 text-sm text-gray-400"><span>No Meta {metricConfig.label.toLowerCase()} data for this range.</span><span className="text-[11px]">Meta may not have reported spend or leads for the selected day yet.</span></div>
+      : error ? <div className="h-[190px] flex flex-col items-center justify-center gap-1 px-5 text-center text-sm text-amber-700"><span>{error}</span><span className="text-[11px] text-gray-500">The KPI cards and operational tables are still available.</span></div>
+      : !rows.length || !hasValues ? <div className="h-[190px] flex flex-col items-center justify-center gap-1 text-sm text-gray-400"><span>No {['revenue', 'revenue_per_lead'].includes(metric) ? 'billable ' : 'Meta '}{metricConfig.label.toLowerCase()} data for this range.</span><span className="text-[11px]">{['revenue', 'revenue_per_lead'].includes(metric) ? 'Only exact ad-set-mapped Switchboard events are included.' : 'Meta may not have reported spend or leads for the selected day yet.'}</span></div>
       : <div className="px-3 pt-3 pb-2">
+        <div className="mx-1 mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="rounded-md bg-indigo-50 px-2 py-1.5"><div className="text-[10px] uppercase tracking-wide text-indigo-700">Spend</div><div className="text-sm font-semibold text-indigo-950">${Number(trend?.totals?.spend || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div></div>
+          <div className="rounded-md bg-green-50 px-2 py-1.5"><div className="text-[10px] uppercase tracking-wide text-green-700">Revenue</div><div className="text-sm font-semibold text-green-950">{trend?.totals?.revenue != null ? `$${Number(trend.totals.revenue).toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '—'}</div></div>
+          <div className="rounded-md bg-orange-50 px-2 py-1.5"><div className="text-[10px] uppercase tracking-wide text-orange-700">CPL</div><div className="text-sm font-semibold text-orange-950">{trend?.totals?.cpl != null ? `$${Number(trend.totals.cpl).toFixed(2)}` : '—'}</div></div>
+          <div className="rounded-md bg-teal-50 px-2 py-1.5"><div className="text-[10px] uppercase tracking-wide text-teal-700">Rev / Meta Lead</div><div className="text-sm font-semibold text-teal-950">{trend?.totals?.revenue_per_lead != null ? `$${Number(trend.totals.revenue_per_lead).toFixed(2)}` : '—'}</div></div>
+        </div>
         <div ref={chartViewportRef} className="relative h-[170px] w-full overflow-x-auto" onMouseLeave={() => setHoveredPoint(null)}>
           {hoveredPoint && currentHoveredPoint && (
             <div
@@ -126,8 +137,10 @@ function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
               <div className="mt-1 flex max-w-[min(18rem,calc(100vw-2rem))] flex-wrap gap-x-3 gap-y-1">
                 <span>{metricConfig.label}: <strong>{metricConfig.format(currentHoveredPoint[metric])}</strong></span>
                 {currentHoveredPoint.spend != null && metric !== 'spend' && <span>Spend: <strong>${Number(currentHoveredPoint.spend).toLocaleString('en-US', { maximumFractionDigits: 0 })}</strong></span>}
+                {currentHoveredPoint.revenue != null && metric !== 'revenue' && <span>Revenue: <strong>${Number(currentHoveredPoint.revenue).toLocaleString('en-US', { maximumFractionDigits: 0 })}</strong></span>}
                 {currentHoveredPoint.leads != null && metric !== 'leads' && <span>Leads: <strong>{Math.round(currentHoveredPoint.leads).toLocaleString()}</strong></span>}
                 {currentHoveredPoint.cpl != null && metric !== 'cpl' && <span>CPL: <strong>${Number(currentHoveredPoint.cpl).toFixed(2)}</strong></span>}
+                {currentHoveredPoint.revenue_per_lead != null && metric !== 'revenue_per_lead' && <span>Rev / Meta Lead: <strong>${Number(currentHoveredPoint.revenue_per_lead).toFixed(2)}</strong></span>}
               </div>
             </div>
           )}
@@ -148,12 +161,12 @@ function TrendChart({ trend, loading, metric, setMetric, rangeLabel }) {
             {points.map(point => <text key={`date-${point.date}`} x={point.x} y={height - 5} textAnchor="middle" fontSize="9" fill={point.y == null ? '#b9bec8' : '#6b7280'}>{point.y == null ? 'No data' : formatDateTick(point.date)}</text>)}
           </svg>
           <div className="sr-only" aria-label={`${metricConfig.label} daily details`}>
-            {points.filter(point => point.y != null).map(point => <div key={`detail-${point.date}`}>{formatDateTick(point.date)}: {metricConfig.format(point[metric])}; spend {point.spend != null ? `$${Number(point.spend).toFixed(0)}` : 'unavailable'}; leads {point.leads ?? 'unavailable'}; CPL {point.cpl != null ? `$${Number(point.cpl).toFixed(2)}` : 'unavailable'}</div>)}
+            {points.filter(point => point.y != null).map(point => <div key={`detail-${point.date}`}>{formatDateTick(point.date)}: {metricConfig.format(point[metric])}; spend {point.spend != null ? `$${Number(point.spend).toFixed(0)}` : 'unavailable'}; revenue {point.revenue != null ? `$${Number(point.revenue).toFixed(0)}` : 'unavailable'}; leads {point.leads ?? 'unavailable'}; CPL {point.cpl != null ? `$${Number(point.cpl).toFixed(2)}` : 'unavailable'}; revenue per Meta lead {point.revenue_per_lead != null ? `$${Number(point.revenue_per_lead).toFixed(2)}` : 'unavailable'}</div>)}
           </div>
           <div className="absolute left-1 top-0 text-[10px] text-gray-400">{metricConfig.format(max)}</div>
           <div className="absolute left-1 bottom-0 text-[10px] text-gray-400">0</div>
         </div>
-        <div className="mt-1 text-[10px] text-gray-500">Daily view · Today may be partial; missing days are left blank.{rows.length > 14 ? ' Scroll for the full range.' : ''}</div>
+        <div className="mt-1 text-[10px] text-gray-500">{revenueAvailable ? `Revenue uses mapped Switchboard conversion-date events (PT); ambiguous events are excluded.${trend?.revenue_attribution?.cached ? ' Cached for up to 5 minutes.' : ''} Rev / Meta Lead is directional, not cohort matched. ` : revenueStatus === 'access_denied' ? 'Billable revenue requires P&L access. ' : revenueStatus === 'needs_adset_sync' ? 'Revenue needs a Meta ad-set sync before it can be attributed safely. ' : revenueStatus === 'not_tracked' ? 'This account has no configured billable-revenue source. ' : 'Billable revenue is temporarily unavailable. '}Daily view · Today may be partial; missing days are left blank.{rows.length > 14 ? ' Scroll for the full range.' : ''}</div>
       </div>}
   </div>;
 }
@@ -705,7 +718,11 @@ export default function Dashboard() {
       // slower niche or trend request is unavailable.
       const [nicheRes, trendRes] = await Promise.all([
         timedFetch(`${API_URL}/dashboard/niche-summary?${insightsParams}`, 15000).catch(() => null),
-        timedFetch(`${API_URL}/dashboard/trend?${insightsParams}`, 15000).catch(() => null),
+        // Revenue trends can make several bounded Switchboard requests on a
+        // cold 30-day range. Keep this secondary so it never blocks the core
+        // dashboard, but give it time to finish instead of falsely reading as
+        // an unavailable revenue source.
+        timedFetch(`${API_URL}/dashboard/trend?${insightsParams}`, 45000).catch(() => null),
       ]);
       if (!isCurrent()) return;
       if (nicheRes?.ok) setNicheSummary(await nicheRes.json());
@@ -1411,8 +1428,7 @@ export default function Dashboard() {
             )}
           </div>
           <div className="xl:col-span-3">
-            <TrendChart trend={trend} loading={trendLoading} metric={trendMetric} setMetric={setTrendMetric} rangeLabel={rangeLabel} />
-            {trendError && !loading && <div className="mt-2 text-[11px] text-amber-700">{trendError} The KPI cards and operational tables are still available.</div>}
+            <TrendChart trend={trend} loading={trendLoading} error={trendError} metric={trendMetric} setMetric={setTrendMetric} rangeLabel={rangeLabel} />
           </div>
         </div>
 

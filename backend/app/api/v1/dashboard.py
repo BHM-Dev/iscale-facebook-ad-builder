@@ -1,16 +1,135 @@
 import logging
+import time
+from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Brand, Product, GeneratedAd, WinningAd, FacebookCampaign
+from app.models import Brand, Product, GeneratedAd, WinningAd, FacebookCampaign, FacebookAdSet
 from app.services.facebook_service import FacebookService
+from app.services.everflow_service import EverflowService
 from datetime import date, timedelta
 from app.core.deps import get_current_active_user
 from app.api.v1.facebook import _resolve_scoped_default_account
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+# A trend refresh can otherwise make several raw Everflow calls for the same
+# account/range (especially while Joel switches between the trend tabs). This
+# is deliberately a short, bounded read cache: it never persists revenue or
+# changes P&L's authoritative calculation.
+TREND_REVENUE_CACHE_TTL_SECONDS = 300
+TREND_REVENUE_CACHE_MAX_ENTRIES = 24
+_trend_revenue_cache: dict[tuple, tuple[float, dict]] = {}
+# Daily Trend already uses the RedTrack Pacific calendar for its date presets.
+# Use that same calendar for the Switchboard pull so a displayed day has one
+# reporting boundary. P&L intentionally stays in Everflow Eastern and is not
+# changed by this dashboard-only choice.
+TREND_TIMEZONE_ID = 90
+
+
+def _exact_daily_billable_revenue(
+    rows: list[dict],
+    offer_names: set[str],
+    scoped_adset_ids: set[str],
+) -> dict[str, Decimal]:
+    """Bucket only billable rows with the current P&L's exact sub3 mapping.
+
+    A numeric Meta ID in another sub, a campaign ID, or an unexpanded macro is
+    useful audit evidence but not safe account revenue. Daily reporting follows
+    the same exact-ad-set rule as P&L so it cannot make a campaign look more
+    profitable by allocating ambiguous Switchboard events.
+    """
+    allowed_offers = {name.casefold() for name in offer_names if name}
+    daily: dict[str, Decimal] = {}
+    for row in rows:
+        if EverflowService._offer_name(row).casefold() not in allowed_offers:
+            continue
+        if str(row.get("sub3") or "").strip() not in scoped_adset_ids:
+            continue
+        raw_revenue = row.get("revenue")
+        try:
+            if raw_revenue in (None, ""):
+                raise InvalidOperation
+            revenue = Decimal(str(raw_revenue))
+            if not revenue.is_finite():
+                raise InvalidOperation
+        except (InvalidOperation, ValueError, TypeError) as exc:
+            raise ValueError("Switchboard returned an exact-mapped conversion with invalid revenue") from exc
+        day = EverflowService._conversion_date(row, TREND_TIMEZONE_ID).isoformat()
+        daily[day] = daily.get(day, Decimal("0")) + revenue
+    # Preserve raw precision until period totals are computed. FastAPI encodes
+    # Decimals for the response, while the frontend formats dollars to cents.
+    return daily
+
+
+def _daily_billable_revenue(db: Session, account_id: str, start: date, end: date) -> dict:
+    """Return daily Switchboard revenue or an explicit unavailable state.
+
+    Importing these two policy helpers keeps this dashboard surface tied to the
+    P&L's deliberately strict account/offer configuration instead of silently
+    inventing a second revenue-attribution contract.
+    """
+    from app.api.v1.pnl import _everflow_offer_names_for_account, _revenue_provider_for_account
+
+    if _revenue_provider_for_account(account_id) != "everflow":
+        return {"status": "not_tracked", "daily": {}}
+    offer_names = _everflow_offer_names_for_account(account_id)
+    if not offer_names:
+        return {"status": "unavailable", "daily": {}}
+
+    adset_ids = {
+        str(value)
+        for (value,) in db.query(FacebookAdSet.fb_adset_id)
+        .filter(FacebookAdSet.fb_account_id == account_id, FacebookAdSet.fb_adset_id.isnot(None))
+        .all()
+        if value
+    }
+    if not adset_ids:
+        # A local Meta sync gap must not be presented as $0 billable revenue.
+        # New or externally-created ad sets can have spend before this app has
+        # recorded their IDs, so exact attribution is not possible yet.
+        return {"status": "needs_adset_sync", "daily": {}, "cached": False}
+
+    # Include current attribution inputs in the cache key. A Meta sync or an
+    # offer-map change therefore cannot keep serving a stale $0/incomplete
+    # result for the cache TTL.
+    cache_key = (
+        account_id,
+        start.isoformat(),
+        end.isoformat(),
+        tuple(sorted(adset_ids)),
+        tuple(sorted(name.casefold() for name in offer_names)),
+    )
+    now = time.time()
+    for key, (created_at, _) in list(_trend_revenue_cache.items()):
+        if now - created_at >= TREND_REVENUE_CACHE_TTL_SECONDS:
+            _trend_revenue_cache.pop(key, None)
+    cached = _trend_revenue_cache.get(cache_key)
+    if cached:
+        return {**cached[1], "cached": True}
+
+    service = EverflowService()
+    if not service.is_configured():
+        return {"status": "unavailable", "daily": {}}
+    try:
+        daily = _exact_daily_billable_revenue(
+            service.get_raw_conversions(start, end, timezone_id=TREND_TIMEZONE_ID),
+            offer_names,
+            adset_ids,
+        )
+    except Exception as exc:  # Never render a source outage as a clean $0.
+        logger.warning("Dashboard trend revenue unavailable account=%s: %s", account_id, exc)
+        return {"status": "unavailable", "daily": {}}
+
+    payload = {"status": "exact_adset_attributed", "daily": daily, "cached": False}
+    if len(_trend_revenue_cache) >= TREND_REVENUE_CACHE_MAX_ENTRIES:
+        oldest_key = min(_trend_revenue_cache, key=lambda key: _trend_revenue_cache[key][0])
+        _trend_revenue_cache.pop(oldest_key, None)
+    _trend_revenue_cache[cache_key] = (now, payload)
+    return payload
 
 
 def extract_niche(adset_name: str) -> str:
@@ -125,6 +244,7 @@ def get_dashboard_trend(
     date_preset: str = Query('last_7d'),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
     """Return a truthful daily Meta trend plus a comparable prior-period baseline."""
@@ -140,6 +260,8 @@ def get_dashboard_trend(
             start, end = date.fromisoformat(start_s), date.fromisoformat(end_s)
         if start > end:
             raise ValueError('reversed date range')
+        if (end - start).days > 30:
+            raise ValueError('date range exceeds 31 days')
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail='Invalid date range')
     days = (end - start).days + 1
@@ -149,25 +271,65 @@ def get_dashboard_trend(
         svc = FacebookService()
         combined_daily = svc.get_account_daily_insights(ad_account_id, str(previous_start), str(end))
         by_date = {row['date']: row for row in combined_daily}
-        def fill_dates(window_start, window_end):
+        # Billable revenue is protected by the same permission as the P&L
+        # surface. Dashboard access alone must not become a way to bypass it.
+        revenue = (
+            _daily_billable_revenue(db, ad_account_id, start, end)
+            if current_user.has_permission("pnl:read")
+            else {"status": "access_denied", "daily": {}}
+        )
+        revenue_daily = revenue["daily"]
+        revenue_available = revenue["status"] == "exact_adset_attributed"
+        def fill_dates(window_start, window_end, include_revenue=False):
             rows = []
             cursor = window_start
             while cursor <= window_end:
                 key = str(cursor)
-                rows.append(by_date.get(key, {'date': key, 'spend': None, 'leads': None, 'cpl': None}))
+                meta = by_date.get(key, {'date': key, 'spend': None, 'leads': None, 'cpl': None})
+                row = {
+                    **meta,
+                    # $0 is a real result when the source completed and found
+                    # no exact-mapped payout that day. Prior-period revenue is
+                    # intentionally omitted: this endpoint only fetches the
+                    # visible chart window to keep dashboard refresh fast.
+                    'revenue': revenue_daily.get(key, 0.0) if revenue_available and include_revenue else None,
+                }
+                row['revenue_per_lead'] = (
+                    round(row['revenue'] / row['leads'], 2)
+                    if row['revenue'] is not None and row['leads'] else None
+                )
+                rows.append(row)
                 cursor += timedelta(days=1)
             return rows
-        current_daily = fill_dates(start, end)
+        current_daily = fill_dates(start, end, include_revenue=True)
         previous_daily = fill_dates(previous_start, previous_end)
         def totals(rows):
             spend = sum(row['spend'] or 0 for row in rows)
             leads = sum(row['leads'] or 0 for row in rows)
-            return {'spend': round(spend, 2), 'leads': leads, 'cpl': round(spend / leads, 2) if leads else None}
+            has_revenue = any(row['revenue'] is not None for row in rows)
+            total_revenue = (
+                sum((Decimal(str(row['revenue'] or 0)) for row in rows), Decimal("0"))
+                if has_revenue else None
+            )
+            return {
+                'spend': round(spend, 2),
+                'leads': leads,
+                'cpl': round(spend / leads, 2) if leads else None,
+                'revenue': round(total_revenue, 2) if total_revenue is not None else None,
+                'revenue_per_lead': round(total_revenue / leads, 2) if total_revenue is not None and leads else None,
+            }
         return {
             'date_from': str(start), 'date_to': str(end),
             'previous_date_from': str(previous_start), 'previous_date_to': str(previous_end),
             'daily': current_daily, 'totals': totals(current_daily), 'previous_totals': totals(previous_daily),
-            'source': 'Meta Insights',
+            'source': 'Meta Insights + Switchboard Everflow',
+            'revenue_attribution': {
+                'status': revenue['status'],
+                'source': 'Switchboard Everflow',
+                'timezone': 'America/Los_Angeles',
+                'rule': 'Exact Meta ad set ID in Everflow sub3; mapped offer only.',
+                'cached': bool(revenue.get('cached')),
+            },
         }
     except Exception as exc:
         logger.exception('Dashboard daily trend failed')
