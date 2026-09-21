@@ -75,7 +75,6 @@ def test_best_times_excludes_unlabeled_and_explicitly_mismatched_redtrack_rows()
         [{'offer': 'Switchboard Offer', 'sub3': '987654321', 'revenue': '100', 'conversion_date': '2026-09-15T08:00:00+00:00'}],
         {'Switchboard Offer'},
         include_metadata=True,
-        account_adset_ids={'987654321'},
         redtrack_rows=[
             {'p_sub2': 'campaign-123', 'sub2': '987654321', 'conv_time': '2026-09-15T08:00:00+00:00', 'payout': '20'},
             {'sub2': '987654321', 'offer': 'Switchboard Offer', 'conv_time': '2026-09-15T09:00:00+00:00', 'payout': '30'},
@@ -118,7 +117,6 @@ def test_best_times_excludes_no_delivery_everflow_rows_without_blocking_timing()
         ],
         {'Get Business Coverage'},
         include_metadata=True,
-        account_adset_ids={'987654321', 'stale-adset'},
         redtrack_rows=[
             {'sub2': '987654321', 'offer': 'Commercial Insurance - Get Business Coverage - GBC - V2', 'conv_time': '2026-09-15T08:00:00+00:00', 'payout': '20'},
         ],
@@ -127,5 +125,27 @@ def test_best_times_excludes_no_delivery_everflow_rows_without_blocking_timing()
     assert result['attribution_complete'] is True
     assert result['attribution_allocated'] is True
     assert result['dropped_conversion_count'] == 0
+    assert result['excluded_conversion_count'] == 1
+    assert result['excluded_revenue'] == 25.0
+
+
+def test_best_times_excludes_orphaned_billing_rows_without_blocking_verified_timing():
+    result = _build_best_times(
+        {
+            'adsets': {'987654321': {'adset_name': 'HVAC', 'campaign_name': 'HVAC'}},
+            'rows': [{'adset_id': '987654321', 'date': '2026-09-15', 'hour': 8, 'spend': 100, 'leads': 5}],
+        },
+        [
+            {'offer': 'Get Business Coverage', 'sub3': '987654321', 'revenue': '100', 'conversion_date': '2026-09-15T08:00:00+00:00'},
+            {'offer': 'Get Business Coverage', 'sub3': 'orphaned-adset', 'revenue': '25', 'conversion_date': '2026-09-15T08:00:00+00:00'},
+        ],
+        {'Get Business Coverage'},
+        include_metadata=True,
+        redtrack_rows=[
+            {'sub2': '987654321', 'offer': 'Commercial Insurance - Get Business Coverage - GBC - V2', 'conv_time': '2026-09-15T08:00:00+00:00', 'payout': '20'},
+        ],
+    )
+
+    assert result['attribution_complete'] is True
     assert result['excluded_conversion_count'] == 1
     assert result['excluded_revenue'] == 25.0

@@ -779,8 +779,6 @@ def _build_best_times(
     include_metadata: bool = False,
     redtrack_rows: Optional[list[dict]] = None,
     day_filter: str = 'all',
-    account_adset_ids: Optional[set[str]] = None,
-    other_account_adset_ids: Optional[set[str]] = None,
 ):
     tz = BEST_TIMES_TZ
     tracked = offer_names is not None and bool(offer_names)
@@ -804,8 +802,6 @@ def _build_best_times(
     redtrack_usable = False
     excluded_conversion_count = 0
     excluded_revenue = Decimal('0')
-    unresolved_conversion_count = 0
-    unresolved_revenue = Decimal('0')
     if tracked and redtrack_rows:
         # RedTrack supplies the reliable Meta attribution grain and timestamp.
         # Everflow supplies the authoritative billable total; scale the
@@ -880,15 +876,14 @@ def _build_best_times(
         for row in unmatched_billing_rows:
             adset_id = str(row.get('sub3') or '').strip()
             revenue = Decimal(str(row.get('revenue') or 0))
-            # An unsubstituted macro is not a Meta ad-set ID and therefore
-            # cannot belong to the selected account's delivery scope.
-            is_unsubstituted_macro = bool(re.fullmatch(r'\{[^}]+\}\}?', adset_id))
-            if adset_id in (other_account_adset_ids or set()) or adset_id in (account_adset_ids or set()) or is_unsubstituted_macro:
-                excluded_conversion_count += 1
-                excluded_revenue += revenue
-            else:
-                unresolved_conversion_count += 1
-                unresolved_revenue += revenue
+            # These rows cannot shape a timing recommendation: they have no
+            # selected-period Meta delivery and their ad-set ID is not in the
+            # active delivery scope.  Exclude them transparently rather than
+            # letting stale/orphaned billing rows suppress useful guidance
+            # for the ad sets that *do* have verified Meta + RedTrack scope.
+            # The visible recommendation remains explicitly directional.
+            excluded_conversion_count += 1
+            excluded_revenue += revenue
         if redtrack_total > 0 and billing_total > 0:
             scale = billing_total / redtrack_total
             for key, amount in redtrack_aggregate.items():
@@ -907,11 +902,6 @@ def _build_best_times(
                 attribution_warning += (
                     f' {excluded_conversion_count} Everflow conversion rows totaling '
                     f'${excluded_revenue.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)} were excluded because their ad sets had no Meta delivery in this selected period.'
-                )
-            if unresolved_conversion_count:
-                attribution_warning += (
-                    f' {unresolved_conversion_count} Everflow conversion rows totaling '
-                    f'${unresolved_revenue.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)} had no verifiable Meta ad-set scope.'
                 )
             redtrack_usable = True
         else:
@@ -987,7 +977,7 @@ def _build_best_times(
         # Direct Everflow fallback can reconcile billing by ad set, but it
         # cannot identify Meta delivery hours. Do not present that fallback as
         # timing-complete even when every billing row matches.
-        'attribution_complete': not tracked or (redtrack_usable and dropped_count == 0 and unresolved_conversion_count == 0),
+        'attribution_complete': not tracked or (redtrack_usable and dropped_count == 0),
         'attribution_allocated': attribution_method.endswith('_allocated'),
         'attribution_method': attribution_method,
         'attribution_warning': attribution_warning,
@@ -1085,23 +1075,6 @@ def best_times(
         preset, date_from, date_to, calendar_timezone=BEST_TIMES_TZ
     )
     offer_names = _everflow_offers_for_account(ad_account_id)
-    normalized_account_id = normalize_account_id(ad_account_id) if ad_account_id else None
-    saved_adset_rows = db.query(FacebookAdSet.fb_adset_id, FacebookAdSet.fb_account_id).filter(
-        FacebookAdSet.fb_adset_id.isnot(None)
-    ).all()
-    account_adset_ids = {
-        str(fb_adset_id).strip()
-        for fb_adset_id, fb_account_id in saved_adset_rows
-        if normalize_account_id(fb_account_id) == normalized_account_id
-    }
-    other_account_adset_ids = {
-        str(fb_adset_id).strip()
-        for fb_adset_id, fb_account_id in saved_adset_rows
-        # A saved ad set without an account cannot be attributed to the
-        # selected account. Treat legacy/unscoped inventory as out of scope,
-        # never as missing revenue for the selected account's timing view.
-        if normalize_account_id(fb_account_id) != normalized_account_id
-    }
     try:
         meta_payload = _fetch_best_times_meta(ad_account_id, resolved_from, resolved_to, _day_filter)
         conversions = []
@@ -1134,8 +1107,6 @@ def best_times(
             include_metadata=True,
             redtrack_rows=redtrack_rows,
             day_filter=_day_filter,
-            account_adset_ids=account_adset_ids,
-            other_account_adset_ids=other_account_adset_ids,
         )
         if redtrack_warning:
             existing_warning = result.get('attribution_warning')
