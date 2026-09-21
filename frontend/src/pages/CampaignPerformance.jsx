@@ -597,7 +597,10 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                 </div>
               )}
 
-              {panelData.rows.length > 0 && intelligenceView !== 'best-times' && (
+              {/* Best Times has a different response shape (campaigns/adsets,
+                  not niche-profitability rows). Check the active view first so
+                  a successful timing response can never dereference rows. */}
+              {intelligenceView !== 'best-times' && panelData.rows?.length > 0 && (
                 <div className="overflow-x-auto rounded-xl border border-gray-100">
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 border-b border-gray-100">
