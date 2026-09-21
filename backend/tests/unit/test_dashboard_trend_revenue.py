@@ -51,7 +51,7 @@ def test_trend_returns_exact_revenue_and_revenue_per_meta_lead(monkeypatch):
     monkeypatch.setattr(
         dashboard,
         "_daily_billable_revenue",
-        lambda db, account_id, start, end: {
+        lambda db, account_id, start, end, refresh=False, request_started_at=None: {
             "status": "exact_adset_attributed",
             "daily": {"2026-09-20": 140.0},
             "cached": False,

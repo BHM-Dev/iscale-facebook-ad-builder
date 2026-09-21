@@ -19,6 +19,8 @@ POST   /api/v1/auto-pause/check                  — evaluate all active rules n
 """
 
 import logging
+import time
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -58,6 +60,34 @@ NOTIFY_COOLDOWN = timedelta(hours=NOTIFY_COOLDOWN_HOURS)
 # duplicating ad-set structure is a much heavier action than a Slack ping.
 DUPLICATE_REPEAT_COOLDOWN_HOURS = 24
 DUPLICATE_REPEAT_COOLDOWN = timedelta(hours=DUPLICATE_REPEAT_COOLDOWN_HOURS)
+
+# Dashboard reads this endpoint on every page load. Keep its merged Meta +
+# RedTrack result briefly so navigating around the app does not repeatedly hit
+# Meta for the exact same account and range. Refresh/Sync explicitly bypass it.
+INSIGHTS_BULK_CACHE_TTL_SECONDS = 60
+INSIGHTS_BULK_CACHE_MAX_ENTRIES = 32
+_insights_bulk_cache: dict[tuple, tuple[float, float, dict]] = {}
+
+
+def _read_insights_bulk_cache(key: tuple, refresh: bool):
+    if refresh:
+        return None
+    entry = _insights_bulk_cache.get(key)
+    if entry and time.monotonic() - entry[0] < INSIGHTS_BULK_CACHE_TTL_SECONDS:
+        return deepcopy(entry[2])
+    if entry:
+        _insights_bulk_cache.pop(key, None)
+    return None
+
+
+def _write_insights_bulk_cache(key: tuple, value: dict, request_started_at: float) -> None:
+    existing = _insights_bulk_cache.get(key)
+    if existing and existing[1] > request_started_at:
+        return
+    _insights_bulk_cache[key] = (time.monotonic(), request_started_at, deepcopy(value))
+    if len(_insights_bulk_cache) > INSIGHTS_BULK_CACHE_MAX_ENTRIES:
+        for stale_key, _ in sorted(_insights_bulk_cache.items(), key=lambda item: item[1][0])[:len(_insights_bulk_cache) - INSIGHTS_BULK_CACHE_MAX_ENTRIES]:
+            _insights_bulk_cache.pop(stale_key, None)
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
@@ -510,6 +540,7 @@ def get_insights_bulk(
     date_preset: str = Query("last_7d"),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
+    refresh: bool = Query(False),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -520,6 +551,22 @@ def get_insights_bulk(
     Use this instead of calling /insights/{id} per row — dramatically faster.
     """
     ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
+    # Resolve before the Meta pull so an identical account/range can be served
+    # from the short-lived cache without making any external request.
+    from app.models import RedTrackCache
+    from datetime import date
+    from app.services.redtrack_service import RedTrackService
+    if date_from and date_to:
+        date_from_str, date_to_str = date_from, date_to
+    else:
+        date_from_str, date_to_str = RedTrackService.preset_to_dates(date_preset)
+
+    cache_key = (ad_account_id, date_from_str, date_to_str)
+    cached = _read_insights_bulk_cache(cache_key, refresh)
+    if cached is not None:
+        return cached
+    request_started_at = time.monotonic()
+
     svc = FacebookService()
     try:
         bulk = svc.get_account_insights_bulk(
@@ -532,15 +579,6 @@ def get_insights_bulk(
         raise HTTPException(400, str(e))
 
     # Attach all RedTrack cache rows in one query
-    from app.models import RedTrackCache
-    from datetime import date
-    from app.services.redtrack_service import RedTrackService
-
-    # Resolve the actual date range for RT cache lookup
-    if date_from and date_to:
-        date_from_str, date_to_str = date_from, date_to
-    else:
-        date_from_str, date_to_str = RedTrackService.preset_to_dates(date_preset)
 
     base_rt_query = (
         db.query(RedTrackCache)
@@ -648,6 +686,7 @@ def get_insights_bulk(
                 "redtrack": rt,
             }
 
+    _write_insights_bulk_cache(cache_key, result, request_started_at)
     return result
 
 

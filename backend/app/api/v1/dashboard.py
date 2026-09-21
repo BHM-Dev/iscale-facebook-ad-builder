@@ -1,5 +1,6 @@
 import logging
 import time
+from copy import deepcopy
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, Query, HTTPException
@@ -22,12 +23,57 @@ logger = logging.getLogger(__name__)
 # changes P&L's authoritative calculation.
 TREND_REVENUE_CACHE_TTL_SECONDS = 300
 TREND_REVENUE_CACHE_MAX_ENTRIES = 24
-_trend_revenue_cache: dict[tuple, tuple[float, dict]] = {}
+_trend_revenue_cache: dict[tuple, tuple[float, float, dict]] = {}
 # Daily Trend already uses the RedTrack Pacific calendar for its date presets.
 # Use that same calendar for the Switchboard pull so a displayed day has one
 # reporting boundary. P&L intentionally stays in Everflow Eastern and is not
 # changed by this dashboard-only choice.
 TREND_TIMEZONE_ID = 90
+
+# These are read-through, process-local caches for the Dashboard's expensive
+# aggregate Meta calls. They deliberately stay small and short-lived: a normal
+# reload feels immediate, while Refresh and Sync can always request a new pull.
+DASHBOARD_LIVE_CACHE_TTL_SECONDS = 60
+DASHBOARD_HISTORICAL_CACHE_TTL_SECONDS = 300
+DASHBOARD_CACHE_MAX_ENTRIES = 48
+_niche_summary_cache: dict[tuple, tuple[float, float, list[dict]]] = {}
+_trend_cache: dict[tuple, tuple[float, float, dict]] = {}
+
+
+def _dashboard_cache_ttl(date_preset: str, date_to: str | None) -> int:
+    """Use the shorter TTL whenever a range includes the current RT calendar day."""
+    from app.services.redtrack_service import today_in_rt_tz
+
+    if date_preset == "today" or date_to == today_in_rt_tz().isoformat():
+        return DASHBOARD_LIVE_CACHE_TTL_SECONDS
+    return DASHBOARD_HISTORICAL_CACHE_TTL_SECONDS
+
+
+def _read_dashboard_cache(cache: dict, key: tuple, ttl_seconds: int, refresh: bool):
+    if refresh:
+        return None
+    now = time.monotonic()
+    entry = cache.get(key)
+    if entry and now - entry[0] < ttl_seconds:
+        return deepcopy(entry[2])
+    if entry:
+        cache.pop(key, None)
+    return None
+
+
+def _write_dashboard_cache(cache: dict, key: tuple, value, request_started_at: float) -> None:
+    # A slower request that began before a manual Refresh must never overwrite
+    # the newer answer after it returns.
+    existing = cache.get(key)
+    if existing and existing[1] > request_started_at:
+        return
+    cache[key] = (time.monotonic(), request_started_at, deepcopy(value))
+    # Bound memory and remove expired values opportunistically. Using insertion
+    # order is sufficient here; values are short-lived request results, not a
+    # persistent cache.
+    if len(cache) > DASHBOARD_CACHE_MAX_ENTRIES:
+        for stale_key, _ in sorted(cache.items(), key=lambda item: item[1][0])[:len(cache) - DASHBOARD_CACHE_MAX_ENTRIES]:
+            cache.pop(stale_key, None)
 
 
 def _exact_daily_billable_revenue(
@@ -65,7 +111,14 @@ def _exact_daily_billable_revenue(
     return daily
 
 
-def _daily_billable_revenue(db: Session, account_id: str, start: date, end: date) -> dict:
+def _daily_billable_revenue(
+    db: Session,
+    account_id: str,
+    start: date,
+    end: date,
+    refresh: bool = False,
+    request_started_at: float | None = None,
+) -> dict:
     """Return daily Switchboard revenue or an explicit unavailable state.
 
     Importing these two policy helpers keeps this dashboard surface tied to the
@@ -103,13 +156,14 @@ def _daily_billable_revenue(db: Session, account_id: str, start: date, end: date
         tuple(sorted(adset_ids)),
         tuple(sorted(name.casefold() for name in offer_names)),
     )
-    now = time.time()
-    for key, (created_at, _) in list(_trend_revenue_cache.items()):
+    now = time.monotonic()
+    request_started_at = request_started_at if request_started_at is not None else now
+    for key, (created_at, _, _) in list(_trend_revenue_cache.items()):
         if now - created_at >= TREND_REVENUE_CACHE_TTL_SECONDS:
             _trend_revenue_cache.pop(key, None)
     cached = _trend_revenue_cache.get(cache_key)
-    if cached:
-        return {**cached[1], "cached": True}
+    if cached and not refresh:
+        return {**cached[2], "cached": True}
 
     service = EverflowService()
     if not service.is_configured():
@@ -128,7 +182,9 @@ def _daily_billable_revenue(db: Session, account_id: str, start: date, end: date
     if len(_trend_revenue_cache) >= TREND_REVENUE_CACHE_MAX_ENTRIES:
         oldest_key = min(_trend_revenue_cache, key=lambda key: _trend_revenue_cache[key][0])
         _trend_revenue_cache.pop(oldest_key, None)
-    _trend_revenue_cache[cache_key] = (now, payload)
+    existing = _trend_revenue_cache.get(cache_key)
+    if not existing or existing[1] <= request_started_at:
+        _trend_revenue_cache[cache_key] = (now, request_started_at, payload)
     return payload
 
 
@@ -180,6 +236,7 @@ def get_niche_summary(
     date_preset: str = Query("last_7d"),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    refresh: bool = Query(False),
     current_user=Depends(get_current_active_user),
 ):
     """
@@ -188,6 +245,16 @@ def get_niche_summary(
     an unavailable summary from a valid period with no data.
     """
     ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
+    cache_key = (ad_account_id, date_preset, date_from, date_to)
+    cached = _read_dashboard_cache(
+        _niche_summary_cache,
+        cache_key,
+        _dashboard_cache_ttl(date_preset, date_to),
+        refresh,
+    )
+    if cached is not None:
+        return cached
+    request_started_at = time.monotonic()
     try:
         svc = FacebookService()
         insights = svc.get_account_insights_bulk(
@@ -232,7 +299,9 @@ def get_niche_summary(
                 "avg_cpl": round(total_spend / bucket["total_leads"], 2) if bucket["total_leads"] > 0 else None,
             })
 
-        return sorted(summary, key=lambda item: item["total_spend"], reverse=True)
+        response = sorted(summary, key=lambda item: item["total_spend"], reverse=True)
+        _write_dashboard_cache(_niche_summary_cache, cache_key, response, request_started_at)
+        return response
     except Exception as exc:
         logger.exception("Dashboard niche summary failed")
         raise HTTPException(status_code=502, detail="Niche summary unavailable") from exc
@@ -244,6 +313,7 @@ def get_dashboard_trend(
     date_preset: str = Query('last_7d'),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    refresh: bool = Query(False),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
@@ -267,6 +337,16 @@ def get_dashboard_trend(
     days = (end - start).days + 1
     previous_start = start - timedelta(days=days)
     previous_end = start - timedelta(days=1)
+    cache_key = (ad_account_id, str(start), str(end), current_user.has_permission("pnl:read"))
+    cached = _read_dashboard_cache(
+        _trend_cache,
+        cache_key,
+        _dashboard_cache_ttl(date_preset, str(end)),
+        refresh,
+    )
+    if cached is not None:
+        return cached
+    request_started_at = time.monotonic()
     try:
         svc = FacebookService()
         combined_daily = svc.get_account_daily_insights(ad_account_id, str(previous_start), str(end))
@@ -274,7 +354,14 @@ def get_dashboard_trend(
         # Billable revenue is protected by the same permission as the P&L
         # surface. Dashboard access alone must not become a way to bypass it.
         revenue = (
-            _daily_billable_revenue(db, ad_account_id, start, end)
+            _daily_billable_revenue(
+                db,
+                ad_account_id,
+                start,
+                end,
+                refresh=refresh,
+                request_started_at=request_started_at,
+            )
             if current_user.has_permission("pnl:read")
             else {"status": "access_denied", "daily": {}}
         )
@@ -318,7 +405,7 @@ def get_dashboard_trend(
                 'revenue': round(total_revenue, 2) if total_revenue is not None else None,
                 'revenue_per_lead': round(total_revenue / leads, 2) if total_revenue is not None and leads else None,
             }
-        return {
+        response = {
             'date_from': str(start), 'date_to': str(end),
             'previous_date_from': str(previous_start), 'previous_date_to': str(previous_end),
             'daily': current_daily, 'totals': totals(current_daily), 'previous_totals': totals(previous_daily),
@@ -331,6 +418,8 @@ def get_dashboard_trend(
                 'cached': bool(revenue.get('cached')),
             },
         }
+        _write_dashboard_cache(_trend_cache, cache_key, response, request_started_at)
+        return response
     except Exception as exc:
         logger.exception('Dashboard daily trend failed')
         raise HTTPException(status_code=502, detail='Daily trend unavailable') from exc

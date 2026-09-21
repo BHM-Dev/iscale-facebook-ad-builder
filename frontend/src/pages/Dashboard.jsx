@@ -9,6 +9,42 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 const normalizeStatus = (status) => (status || '').toString().toUpperCase();
 
+// Keep the Dashboard's operational niche table on the same single bulk-insight
+// response as its KPI cards. A second request for the same account/range made
+// every page open feel slower without adding any information.
+const NON_NICHE_PART = /^(batch\s*\d+|v\d+|scale|retarget|broad|phase\s*\d+|test|duplicate|copy)$/i;
+const DATE_LIKE_PART = /^(?:\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|\d{4}-\d{1,2}-\d{1,2}|\d{1,2}-\d{1,2}-\d{4})/;
+
+function nicheFromAdsetName(adsetName = '') {
+  const parts = adsetName.split(' - ').map(part => part.trim());
+  for (const part of parts.slice(1)) {
+    if (part && !NON_NICHE_PART.test(part) && !DATE_LIKE_PART.test(part)) return part;
+  }
+  return parts[0] && !DATE_LIKE_PART.test(parts[0]) ? parts[0] : 'General';
+}
+
+function summarizeNiches(insights) {
+  const byNiche = Object.values(insights).filter(row => row.adset_name).reduce((summary, row) => {
+    const niche = nicheFromAdsetName(row.adset_name || '');
+    const bucket = summary.get(niche) || { niche, adset_count: 0, total_spend: 0, total_leads: 0, total_revenue: 0 };
+    bucket.adset_count += 1;
+    bucket.total_spend += Number(row.spend || 0);
+    bucket.total_leads += Number(row.leads || 0);
+    bucket.total_revenue += Number(row.revenue || 0);
+    summary.set(niche, bucket);
+    return summary;
+  }, new Map());
+  return [...byNiche.values()]
+    .map(row => ({
+      ...row,
+      total_spend: Number(row.total_spend.toFixed(2)),
+      total_revenue: Number(row.total_revenue.toFixed(2)),
+      avg_roas: row.total_spend > 0 && row.total_revenue > 0 ? Number((row.total_revenue / row.total_spend).toFixed(2)) : null,
+      avg_cpl: row.total_leads > 0 ? Number((row.total_spend / row.total_leads).toFixed(2)) : null,
+    }))
+    .sort((a, b) => b.total_spend - a.total_spend);
+}
+
 const PRESETS = [
   { value: 'today',    label: 'Today' },
   { value: 'yesterday', label: 'Yesterday' },
@@ -622,7 +658,7 @@ export default function Dashboard() {
     setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
   };
 
-  const load = useCallback(async (range) => {
+  const load = useCallback(async (range, { forceRefresh = false } = {}) => {
     const generation = ++loadGeneration.current;
     const isCurrent = () => generation === loadGeneration.current;
     const { preset: p, dateFrom: df, dateTo: dt } = range || { preset: 'today', dateFrom: null, dateTo: null };
@@ -667,6 +703,7 @@ export default function Dashboard() {
       } else {
         insightsParams.set('date_preset', p || 'today');
       }
+      if (forceRefresh) insightsParams.set('refresh', 'true');
 
       const timedFetch = (url, ms = 25000) => {
         const ctrl = new AbortController();
@@ -678,7 +715,7 @@ export default function Dashboard() {
         timedFetch(`${API_URL}/facebook/adsets/saved?${insightsParams}`, 10000).catch(() => null),
         timedFetch(`${API_URL}/auto-pause/insights-bulk?${insightsParams}`, 25000).catch(() => null),
         timedFetch(`${API_URL}/auto-pause/rules`, 10000).catch(() => null),
-        timedFetch(`${API_URL}/facebook/ads/status-bulk?${activeAccountId ? `ad_account_id=${encodeURIComponent(activeAccountId)}` : ''}`, 15000).catch(() => null),
+        timedFetch(`${API_URL}/facebook/ads/status-bulk?${new URLSearchParams({ ...(activeAccountId ? { ad_account_id: activeAccountId } : {}), ...(forceRefresh ? { refresh: 'true' } : {}) })}`, 15000).catch(() => null),
       ]);
       if (!isCurrent()) return;
       if (adsetsRes?.ok) {
@@ -688,10 +725,15 @@ export default function Dashboard() {
         setAdsetsError(err?.detail || `Ad set list unavailable${adsetsRes ? ` (${adsetsRes.status})` : ''}`);
       }
       if (insightsRes?.ok) {
-        setBulkInsights(await insightsRes.json());
+        const insights = await insightsRes.json();
+        setBulkInsights(insights);
+        setNicheSummary(summarizeNiches(insights));
+        setNicheLoading(false);
       } else {
         const err = await insightsRes?.json().catch(() => ({}));
         setInsightsError(err?.detail || `Meta API error${insightsRes ? ` (${insightsRes.status})` : ''} — try a different date range`);
+        setNicheError('Niche summary needs Meta insights. Refresh to retry.');
+        setNicheLoading(false);
       }
       if (rulesRes?.ok) {
         setRules(await rulesRes.json());
@@ -710,10 +752,9 @@ export default function Dashboard() {
       }
       setLoading(false);
 
-      // Secondary panels should not hold the KPI/ad-set view hostage when a
-      // slower niche or trend request is unavailable.
-      const [nicheRes, trendRes] = await Promise.all([
-        timedFetch(`${API_URL}/dashboard/niche-summary?${insightsParams}`, 15000).catch(() => null),
+      // The niche table above is derived from the already-loaded bulk payload.
+      // Keep the slower revenue trend secondary so it never blocks operations.
+      const [trendRes] = await Promise.all([
         // Revenue trends can make several bounded Switchboard requests on a
         // cold 30-day range. Keep this secondary so it never blocks the core
         // dashboard, but give it time to finish instead of falsely reading as
@@ -721,9 +762,6 @@ export default function Dashboard() {
         timedFetch(`${API_URL}/dashboard/trend?${insightsParams}`, 45000).catch(() => null),
       ]);
       if (!isCurrent()) return;
-      if (nicheRes?.ok) setNicheSummary(await nicheRes.json());
-      else setNicheError(`Niche summary unavailable${nicheRes ? ` (${nicheRes.status})` : ''}`);
-      setNicheLoading(false);
       if (trendRes?.ok) setTrend(await trendRes.json());
       else setTrendError('Daily trend is temporarily unavailable.');
     } catch (e) {
@@ -746,6 +784,7 @@ export default function Dashboard() {
     setSyncing(true);
     setSyncingRT(true);
     try {
+      let syncCompleted = false;
       const { preset: p, dateFrom: df, dateTo: dt } = activeRange;
       const params = new URLSearchParams();
       if (activeAccountId) params.set('ad_account_id', activeAccountId);
@@ -782,9 +821,10 @@ export default function Dashboard() {
         );
       }
       if (!metaIncomplete && !rtFailed) {
-        showSuccess('Sync complete');
+        syncCompleted = true;
       }
-      await load(activeRange);
+      await load(activeRange, { forceRefresh: true });
+      if (syncCompleted) showSuccess('Meta and RedTrack sync complete');
     } catch (e) { showError(e.message || 'Sync failed'); }
     finally { setSyncing(false); setSyncingRT(false); }
   }, [activeAccountId, activeAccountLoading, activeRange, adAccounts.length, load, showSuccess, showWarning, showError]);
@@ -885,7 +925,7 @@ export default function Dashboard() {
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed'); }
       showSuccess(isCBO ? `Campaign budget set to $${dollars.toFixed(0)}/day` : 'Switched to ABO');
       setBudgetPopover(null);
-      load(activeRange);
+      load(activeRange, { forceRefresh: true });
     } catch (e) {
       showError(e.message || 'Failed');
     } finally {
@@ -910,7 +950,7 @@ export default function Dashboard() {
       showSuccess(`Budget set to $${dollars.toFixed(0)}/day`);
       setEditingBudget(null);
       setBudgetInput('');
-      load(activeRange);
+      load(activeRange, { forceRefresh: true });
     } catch (e) {
       showError(e.message || 'Failed');
     } finally {
@@ -951,7 +991,7 @@ export default function Dashboard() {
         if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed'); }
         showSuccess(`Ad set budget scaled to $${(newCents / 100).toFixed(0)}/day (+20%)`);
       }
-      load(activeRange);
+      load(activeRange, { forceRefresh: true });
     } catch (e) {
       showError(e.message || 'Scale failed');
     } finally {
@@ -1307,9 +1347,10 @@ export default function Dashboard() {
             Sync
           </button>
           <button
-            onClick={() => load(activeRange)}
+            onClick={() => load(activeRange, { forceRefresh: true })}
             disabled={loading}
             className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-500 border border-gray-200 hover:bg-gray-50 transition-colors disabled:opacity-40"
+            title="Refreshes Meta performance and billable trend data. Use Sync to refresh RedTrack cache too."
           >
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
             Refresh
@@ -1591,7 +1632,7 @@ export default function Dashboard() {
         ) : nicheError ? (
           <div className="px-5 py-8 text-center text-sm text-amber-700">
             <div>{nicheError}</div>
-            <button type="button" onClick={() => load(activeRange)} className="mt-3 rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-medium hover:bg-amber-50">Retry niche summary</button>
+            <button type="button" onClick={() => load(activeRange, { forceRefresh: true })} className="mt-3 rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-medium hover:bg-amber-50">Retry niche summary</button>
           </div>
         ) : nicheSummary.length === 0 ? (
           <div className="px-5 py-8 text-center text-sm text-gray-400">
