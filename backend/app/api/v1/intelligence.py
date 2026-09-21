@@ -547,6 +547,31 @@ def _parse_hour_value(value) -> Optional[int]:
     return hour if 0 <= hour <= 23 else None
 
 
+_ACCOUNT_TIMEZONE_CACHE: dict[str, tuple[str, float]] = {}
+_ACCOUNT_TIMEZONE_CACHE_TTL_SECONDS = 6 * 60 * 60
+
+
+def _get_account_timezone_cached(account, ad_account_id: Optional[str]) -> Optional[str]:
+    """Cache the Meta account's timezone_name — it never changes in practice.
+
+    Best Times previously called account.api_get() unconditionally on every
+    request. This codebase has a documented history of tripping Meta's
+    account-level rate limit ("User request limit reached", code 17) from
+    repeated insights/account calls in a short window — an uncached call on
+    the hot path adds to that risk for no benefit, since a Meta ad account's
+    timezone is effectively fixed after creation.
+    """
+    import time
+    cache_key = str(ad_account_id or '')
+    cached = _ACCOUNT_TIMEZONE_CACHE.get(cache_key)
+    if cached and (time.monotonic() - cached[1]) < _ACCOUNT_TIMEZONE_CACHE_TTL_SECONDS:
+        return cached[0]
+    timezone_name = account.api_get(fields=['timezone_name']).get('timezone_name')
+    if timezone_name:
+        _ACCOUNT_TIMEZONE_CACHE[cache_key] = (timezone_name, time.monotonic())
+    return timezone_name
+
+
 def _fetch_best_times_meta(ad_account_id: Optional[str], date_from: str, date_to: str, day_filter: str = 'all') -> dict:
     """Fetch Meta spend/leads at day × hour × ad set grain."""
     from app.services.facebook_service import FacebookService
@@ -565,7 +590,7 @@ def _fetch_best_times_meta(ad_account_id: Optional[str], date_from: str, date_to
     }
     try:
         account = svc._get_account(ad_account_id)
-        account_timezone = account.api_get(fields=['timezone_name']).get('timezone_name')
+        account_timezone = _get_account_timezone_cached(account, ad_account_id)
         if not account_timezone:
             raise RuntimeError('Best Times could not verify the Meta ad account timezone.')
         try:
