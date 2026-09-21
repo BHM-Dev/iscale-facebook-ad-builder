@@ -95,7 +95,7 @@ function BestTimesGrid({ data }) {
     const roi = revenue != null && spend > 0 ? (revenue - spend) / spend : null;
     const confidence = partCells.some(cell => cell.confidence === 'high') ? 'high'
       : partCells.some(cell => cell.confidence === 'medium') ? 'medium' : 'low';
-    const supportedHours = partCells.filter(cell => cell.confidence !== 'low' && cell.spend > 0).length;
+    const supportedHours = partCells.filter(cell => cell.spend > 0 && Number(cell.revenue || 0) > 0).length;
     return { spend, leads, revenue, roi, confidence, supportedHours };
   };
 
@@ -109,10 +109,13 @@ function BestTimesGrid({ data }) {
     const revenueKnown = dailyParts.some(row => row.revenue != null);
     const revenue = revenueKnown ? dailyParts.reduce((sum, row) => sum + (row.revenue || 0), 0) : null;
     const supportedHours = dailyParts.reduce((sum, row) => sum + row.supportedHours, 0);
-    const sampleDays = dailyParts.filter(row => row.spend > 0 && row.leads > 0).length;
+    // RedTrack supplies the timing signal. Meta lead actions can legitimately
+    // be zero or delayed for a working ad set, so do not discard attributable
+    // revenue merely because the Meta action counter is incomplete.
+    const sampleDays = dailyParts.filter(row => row.spend > 0 && (row.revenue || 0) > 0).length;
     const roi = revenue != null && spend > 0 ? (revenue - spend) / spend : null;
-    const confidence = sampleDays >= 4 && spend >= 500 && leads >= 15 ? 'high'
-      : sampleDays >= 3 && spend >= 100 && leads >= 5 ? 'medium' : 'low';
+    const confidence = sampleDays >= 4 && spend >= 500 && (revenue || 0) >= 100 ? 'high'
+      : sampleDays >= 3 && spend >= 100 && (revenue || 0) >= 25 ? 'medium' : 'low';
     return { part, label, spend, leads, revenue, roi, confidence, supportedHours, sampleDays };
   };
 
@@ -121,7 +124,7 @@ function BestTimesGrid({ data }) {
   const fallback = data.attribution_method === 'everflow_adset_id_redtrack_unavailable';
   const weekdayRows = niche ? dayparts.map(part => aggregateWindow(part, [0, 1, 2, 3, 4], 'Mon–Fri')) : [];
   const weekendRows = niche ? dayparts.map(part => aggregateWindow(part, [5, 6], 'Sat–Sun')) : [];
-  const qualifies = cell => !attributionIncomplete && cell.revenue != null && cell.confidence !== 'low' && cell.spend >= 100 && cell.leads >= 5 && cell.sampleDays >= (cell.label === 'Mon–Fri' ? 3 : 2) && cell.supportedHours >= cell.part.end - cell.part.start;
+  const qualifies = cell => !attributionIncomplete && cell.revenue != null && cell.confidence !== 'low' && cell.spend >= 100 && cell.revenue >= 25 && cell.sampleDays >= (cell.label === 'Mon–Fri' ? 3 : 2) && cell.supportedHours >= cell.part.end - cell.part.start;
   const weekdayActionable = weekdayRows.filter(qualifies);
   const weekendActionable = weekendRows.filter(qualifies);
   const bestWeekday = weekdayActionable.length ? weekdayActionable.reduce((best, cell) => cell.roi > best.roi ? cell : best) : null;
@@ -158,14 +161,14 @@ function BestTimesGrid({ data }) {
       {attributionIncomplete && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">Timing recommendation unavailable</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">{data.attribution_warning || 'Best Times cannot rank hours because some Everflow revenue is not tied to a Meta ad set.'} Do not change budgets from this view.</p>{(data.dropped_conversion_count || data.dropped_revenue) ? <p className="mt-2 text-[11px] font-medium text-amber-800">{data.dropped_conversion_count || 0} attribution records · {formatMoney(data.dropped_revenue || 0)} unmatched value</p> : null}</div></div></div>}
       {niche && !attributionIncomplete && allocated && <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">Directional timing · test only</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">Revenue is allocated from RedTrack timing and reconciled to Everflow billing. Use these windows only as a controlled test hypothesis; do not scale or pause budgets from this view.</p></div></div></div>}
       {niche && untracked && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">Revenue tracking unavailable</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">Spend and leads are available, but Best Times cannot rank hours until this account has an exact Switchboard offer mapping. Do not change budgets from this view.</p></div></div></div>}
-      {niche && !untracked && !attributionIncomplete && !actionableRows.length && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">No repeatable timing signal yet</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">A weekday Run needs at least $100 spend, 5 leads, and 3 weekday buckets. A weekend Avoid needs the same proof across Saturday and Sunday. Keep budgets unchanged or select a campaign/ad set with a deeper sample.</p></div></div></div>}
+      {niche && !untracked && !attributionIncomplete && !actionableRows.length && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">No repeatable timing signal yet</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">A weekday Run needs at least $100 spend, $25 attributable revenue, and 3 weekday buckets. A weekend Avoid needs the same proof across Saturday and Sunday. Keep budgets unchanged or select a campaign/ad set with a deeper sample.</p></div></div></div>}
       {!untracked && actionableRows.length > 0 && <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {[
           [allocated ? 'Test Run' : 'Run', runWindow, 'border-green-200 bg-green-50 text-green-800'],
           [allocated ? 'Test Avoid' : 'Avoid', avoidWindow, 'border-red-200 bg-red-50 text-red-800'],
         ].map(([label, cell, classes]) => cell && <div key={label} className={`rounded-lg border px-3 py-2 ${classes}`}><div className="text-[10px] font-semibold uppercase tracking-wide opacity-70">{label}</div><div className="text-sm font-semibold">{cell.label} · {cell.part.label} · {allocated ? '≈' : ''}{cell.roi >= 0 ? '+' : ''}{Math.round(cell.roi * 100)}% {allocated ? 'directional ROI' : 'ROI'}</div><div className="text-[11px] opacity-75">${Math.round(cell.spend).toLocaleString()} spend · {cell.leads} leads · {allocated ? '≈' : ''}${Math.round(cell.revenue).toLocaleString()} {allocated ? 'allocated revenue' : 'revenue'} · {cell.confidence} confidence · {cell.sampleDays} of {cell.label === 'Mon–Fri' ? 5 : 2} weekday buckets</div></div>)}
       </div>}
-      {niche && <p className="text-[11px] text-gray-500">Sampling: {data.date_from}–{data.date_to}. Each weekday bucket combines every matching calendar date in that window; a bucket counts only when that daypart had spend and leads.</p>}
+      {niche && <p className="text-[11px] text-gray-500">Sampling: {data.date_from}–{data.date_to}. Each weekday bucket combines every matching calendar date in that window; a bucket counts only when that daypart had Meta spend and RedTrack-attributed revenue.</p>}
       {actionableRows.length > 0 && !runWindow && <p className="text-xs text-gray-500">No weekday block is currently profitable enough to label {allocated ? 'Test Run' : 'Run'}. Keep weekday budgets unchanged.</p>}
       {actionableRows.length > 0 && runWindow && !avoidWindow && <p className="text-xs text-gray-500">No supported negative weekend block yet. Keep weekend budgets unchanged until both Saturday and Sunday have enough data to evaluate.</p>}
     </div>
