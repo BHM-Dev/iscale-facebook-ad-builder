@@ -501,7 +501,11 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
             </div>
           )}
 
-          {!loading && (data || bestTimesData || bestTimesError) && ( !error || intelligenceView === 'best-times') && (
+          {/* Best Times intentionally clears the niche payload while it fetches
+              its 30-day sample. Keep its own loading/error surface mounted
+              during that request instead of replacing the panel with a blank
+              empty state. */}
+          {!loading && (data || intelligenceView === 'best-times' || bestTimesData || bestTimesError) && ( !error || intelligenceView === 'best-times') && (
             <>
               <div className="bg-violet-50 border border-violet-100 rounded-xl p-4 mb-4 flex gap-3">
                 <Sparkles size={16} className="text-violet-500 flex-shrink-0 mt-0.5" />
@@ -669,7 +673,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
             </>
           )}
 
-          {!loading && !error && !data && (
+          {!loading && !error && !data && intelligenceView !== 'best-times' && (
             <p className="text-sm text-gray-400 text-center py-4">Open or select a preset to load intelligence.</p>
           )}
             </div>
