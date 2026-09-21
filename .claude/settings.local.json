@@ -15,7 +15,8 @@
       "Bash(uvicorn:*)",
       "Bash(brew services start:*)",
       "Bash(brew services:*)",
-      "Bash(psql:*)"
+      "Bash(psql:*)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []

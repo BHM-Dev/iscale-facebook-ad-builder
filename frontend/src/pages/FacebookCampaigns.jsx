@@ -47,9 +47,9 @@ const BatchModeToggle = ({ batchMode, setBatchMode }) => (
 // snapshot each step pushes into it (see CampaignContext.jsx). Never re-derives a
 // count itself, so it can't drift from what the step that owns that number shows.
 const SummaryRow = ({ label, value }) => (
-    <div className="flex items-baseline justify-between gap-3 text-sm py-1">
-        <span className="text-gray-500">{label}</span>
-        <span className={`text-right font-medium ${value ? 'text-gray-900' : 'text-gray-400'}`}>
+    <div className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] items-start gap-3 py-1 text-sm">
+        <span className="min-w-0 text-gray-500">{label}</span>
+        <span className={`min-w-0 break-words text-right font-medium leading-5 ${value ? 'text-gray-900' : 'text-gray-400'}`}>
             {value || 'Not selected'}
         </span>
     </div>
@@ -502,7 +502,7 @@ const FacebookCampaignWizardInner = () => {
                 the summary rail into a mobile drawer is Phase 1B — for now it just
                 stacks full-width under the workspace, which keeps every screen size
                 free of horizontal overflow. */}
-            <div className="grid grid-cols-1 lg:grid-cols-[190px_1fr_240px] gap-5 items-start">
+            <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[190px_minmax(0,1fr)_260px]">
                 {/* Desktop step rail */}
                 <div className="hidden lg:block bg-white rounded-xl shadow-sm border border-gray-200 p-4 lg:sticky lg:top-4">
                     <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Launch Steps</div>
@@ -661,7 +661,7 @@ const FacebookCampaignWizardInner = () => {
                 </div>
 
                 {/* Launch Plan summary rail */}
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 lg:sticky lg:top-4">
+                <div className="min-w-0 bg-white rounded-xl border border-gray-200 p-4 shadow-sm lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
                     <LaunchSummaryPanel
                         currentStep={currentStep}
                         batchMode={batchMode}

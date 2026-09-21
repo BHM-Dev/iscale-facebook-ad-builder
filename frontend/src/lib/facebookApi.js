@@ -160,20 +160,37 @@ export async function getPixels(adAccountId) {
 export async function getPages(adAccountId) {
     try {
         if (!adAccountId) throw new Error('An ad account is required to load promotable Pages');
-        const response = await authFetch(`${API_BASE_URL}/pages?ad_account_id=${encodeURIComponent(adAccountId)}`);
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Failed to fetch pages');
-        }
-        const pages = await response.json();
+        const url = `${API_BASE_URL}/pages?ad_account_id=${encodeURIComponent(adAccountId)}`;
 
-        return pages.map(page => ({
-            id: page.id,
-            name: page.name,
-            accessToken: page.access_token,
-            category: page.category,
-            instagramId: page.instagram_business_account?.id || page.instagram_business_account || null,
-        }));
+        // Page selection is read-only, and a transient browser/network failure
+        // should not force a media buyer into manual Page-ID entry. Retry only
+        // transport failures; a real API response (including Meta's errors) is
+        // surfaced immediately and never retried.
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            let response;
+            try {
+                response = await authFetch(url);
+            } catch (error) {
+                if (attempt === 0) {
+                    await delay(400);
+                    continue;
+                }
+                throw error;
+            }
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Failed to fetch pages');
+            }
+            const pages = await response.json();
+
+            return pages.map(page => ({
+                id: page.id,
+                name: page.name,
+                accessToken: page.access_token,
+                category: page.category,
+                instagramId: page.instagram_business_account?.id || page.instagram_business_account || null,
+            }));
+        }
     } catch (error) {
         console.error('Error fetching pages:', error);
         throw error;

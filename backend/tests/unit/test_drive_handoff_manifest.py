@@ -125,6 +125,31 @@ AD-DEALER-CR-00-DealerOperations-9x16.jpg
     assert parsed["ad dealer cr 00"]["headline"] == "Dealer headline"
 
 
+def test_copy_file_allows_auto_dealer_concept_line_before_fields():
+    service = _service()
+    copy_file = """AD DEALER CR 00
+CONTROL RECREATION
+Dealer Operations Review
+
+PRIMARY TEXT
+You run an auto dealership.
+HEADLINE
+Dealer Operations Review
+1X1 IMAGE
+AD-DEALER-CR-00-DealerOperations-1x1.jpg
+"""
+
+    parsed = service._parse_copy_file(copy_file)
+
+    assert parsed == {
+        "ad dealer cr 00": {
+            "primary_text": "You run an auto dealership.",
+            "headline": "Dealer Operations Review",
+            "description": "",
+        }
+    }
+
+
 def test_copy_file_ignores_bare_batch_label_inside_copy_body():
     service = _service()
     copy_file = """AD DEALER CR 00

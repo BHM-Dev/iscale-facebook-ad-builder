@@ -1780,8 +1780,6 @@ class DriveSyncService:
             if not line:
                 continue
 
-            next_line = next((candidate.strip() for candidate in lines[index + 1:] if candidate.strip()), None)
-
             copy_file = self._extract_manifest_file_name(line)
             if copy_file:
                 active_copy_file = copy_file
@@ -1789,7 +1787,7 @@ class DriveSyncService:
             copy_id = self._extract_handoff_copy_id(
                 line,
                 allow_embedded=bool(re.match(r"^\s*Copy\s*:", line, re.IGNORECASE)),
-                next_line=next_line,
+                following_lines=lines[index + 1:],
             )
             if copy_id:
                 current_id = copy_id
@@ -1836,7 +1834,7 @@ class DriveSyncService:
             for index, line in enumerate(lines)
             if (copy_id := self._extract_handoff_copy_id(
                 line,
-                next_line=next((candidate.strip() for candidate in lines[index + 1:] if candidate.strip()), None),
+                following_lines=lines[index + 1:],
             ))
         ]
         for heading_index, (line_index, copy_id) in enumerate(headings):
@@ -1864,7 +1862,7 @@ class DriveSyncService:
         self,
         raw_line: str,
         allow_embedded: bool = False,
-        next_line: Optional[str] = None,
+        following_lines: Optional[List[str]] = None,
     ) -> Optional[str]:
         """Extract one canonical handoff ID from a structurally plausible line."""
         line = self._clean_markdown_value(raw_line).strip()
@@ -1886,7 +1884,17 @@ class DriveSyncService:
             remainder = target[match.end():]
             if remainder and not re.match(r"^\s*(?:[|:\-\u2013\u2014]|_)", remainder):
                 return None
-            if not remainder and next_line is not None and not self._looks_like_handoff_structure(next_line):
+            # A real copy heading can have a short human-readable concept line
+            # before its first field label (for example, ``AD DEALER CR 00`` /
+            # ``CONTROL RECREATION`` / ``PRIMARY TEXT``). Looking only at the
+            # immediate next line incorrectly rejected every such Auto Dealer
+            # package. Keep the lookahead deliberately bounded: the separate
+            # Batch/Phase/Vn guard above still rejects known incidental labels.
+            if (
+                not remainder
+                and following_lines is not None
+                and not self._has_handoff_structure_ahead(following_lines)
+            ):
                 return None
 
         tokens = [token.upper() for token in re.split(r"[ _-]+", match.group("prefix")) if token]
@@ -1908,6 +1916,29 @@ class DriveSyncService:
         ):
             return True
         return bool(self._extract_handoff_copy_id(line))
+
+    def _has_handoff_structure_ahead(
+        self,
+        raw_lines: List[str],
+        max_plain_lines: int = 2,
+    ) -> bool:
+        """Confirm a bare handoff ID has nearby copy/manifest structure.
+
+        Live handoff files use at most one intervening concept line between an
+        ID and its first field label. Two lines leaves room for a future title
+        plus subtitle, but never scans through an unbounded copy body.
+        """
+        plain_lines = 0
+        for raw_line in raw_lines:
+            line = self._clean_markdown_value(raw_line).strip()
+            if not line:
+                continue
+            if self._looks_like_handoff_structure(line):
+                return True
+            plain_lines += 1
+            if plain_lines > max_plain_lines:
+                return False
+        return False
 
     def _extract_manifest_value(self, lines: List[str], label: str) -> Optional[str]:
         for index, raw_line in enumerate(lines):

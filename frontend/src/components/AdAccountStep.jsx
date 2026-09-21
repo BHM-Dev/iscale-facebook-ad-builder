@@ -223,8 +223,9 @@ const AdAccountStep = ({ onNext }) => {
                 </div>
             )}
 
-            {/* Navigation */}
-            <div className="mt-8 flex justify-end">
+            {/* Persistent workspace navigation — the account list can be long, so
+                advancing should remain one click away instead of below the fold. */}
+            <div className="sticky bottom-0 z-20 -mx-6 mt-10 flex justify-end border-t border-gray-200 bg-white px-6 py-4 shadow-[0_-4px_12px_-4px_rgba(0,0,0,0.08)]">
                 <button
                     onClick={handleNext}
                     disabled={!selectedAdAccount}

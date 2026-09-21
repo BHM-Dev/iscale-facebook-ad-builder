@@ -1510,8 +1510,9 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
             )
             }
 
-            {/* Navigation */}
-            <div className="mt-8 flex justify-between">
+            {/* Persistent workspace navigation — targeting and scheduling are long
+                forms, so the primary action stays in reach while scrolling. */}
+            <div className="sticky bottom-0 z-20 -mx-6 mt-10 flex justify-between border-t border-gray-200 bg-white px-6 py-4 shadow-[0_-4px_12px_-4px_rgba(0,0,0,0.08)]">
                 <button
                     onClick={onBack}
                     className="px-6 py-3 text-gray-600 hover:text-gray-800 font-medium"
