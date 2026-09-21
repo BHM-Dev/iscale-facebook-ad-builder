@@ -52,13 +52,25 @@ const BEST_TIMES_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 function BestTimesGrid({ data }) {
   const attributionIncomplete = Boolean(data.attribution_complete === false);
-  const nicheSummaries = useMemo(() => (data.niches || []).map(item => {
+  const summarizeEntity = (item, key, label, level) => {
     const spend = (item.cells || []).reduce((sum, cell) => sum + Number(cell.spend || 0), 0);
     const revenue = item.revenue_source === 'not_tracked' ? null : (item.cells || []).reduce((sum, cell) => sum + Number(cell.revenue || 0), 0);
-    return { ...item, totalSpend: spend, totalRevenue: revenue, totalRoi: revenue != null && spend > 0 ? (revenue - spend) / spend : null };
-  }).sort((a, b) => b.totalSpend - a.totalSpend), [data.niches]);
-  const [selectedNiche, setSelectedNiche] = useState(() => nicheSummaries[0]?.niche || '');
-  const niche = nicheSummaries.find(item => item.niche === selectedNiche) || nicheSummaries[0];
+    return { ...item, key, label, level, totalSpend: spend, totalRevenue: revenue, totalRoi: revenue != null && spend > 0 ? (revenue - spend) / spend : null };
+  };
+  const campaignGroups = useMemo(() => {
+    const campaigns = data.campaigns || [];
+    if (campaigns.length) return campaigns.map(campaign => ({
+      campaign: summarizeEntity(campaign, `campaign:${campaign.campaign_id || campaign.campaign_name}`, campaign.campaign_name, 'Campaign'),
+      adsets: (campaign.adsets || []).map(adset => summarizeEntity(adset, `adset:${adset.adset_id}`, adset.adset_name, 'Ad set')),
+    })).sort((a, b) => b.campaign.totalSpend - a.campaign.totalSpend);
+    // Backward compatibility while a browser still has a pre-hierarchy API
+    // response in memory.
+    return [{ campaign: null, adsets: (data.niches || []).map(item => summarizeEntity(item, `legacy:${item.niche}`, item.niche, 'Timing group')) }];
+  }, [data]);
+  const selectionOptions = useMemo(() => campaignGroups.flatMap(group => [group.campaign, ...group.adsets].filter(Boolean)), [campaignGroups]);
+  const [selectedEntityKey, setSelectedEntityKey] = useState(() => selectionOptions[0]?.key || '');
+  const [search, setSearch] = useState('');
+  const niche = selectionOptions.find(item => item.key === selectedEntityKey) || selectionOptions[0];
   const cells = useMemo(() => {
     const map = new Map((niche?.cells || []).map(cell => [`${cell.day_of_week}-${cell.hour}`, cell]));
     return map;
@@ -87,11 +99,11 @@ function BestTimesGrid({ data }) {
     return { spend, leads, revenue, roi, confidence, supportedHours };
   };
 
-  // A timing recommendation needs to describe a repeatable operating window,
-  // not a one-off result from a single Monday. Pool each daypart across the
-  // whole selected period and require evidence from multiple distinct days.
-  const aggregateWeeklyDaypart = (part) => {
-    const dailyParts = BEST_TIMES_DAYS.map((day, dayIndex) => ({ day, ...aggregateDaypart(dayIndex, part) }));
+  // Pool repeated occurrences of the same weekday/daypart across the selected
+  // period, then keep weekdays and weekends separate. A weekend result must
+  // never be diluted into an "all days" recommendation.
+  const aggregateWindow = (part, dayIndexes, label) => {
+    const dailyParts = dayIndexes.map(dayIndex => ({ day: BEST_TIMES_DAYS[dayIndex], ...aggregateDaypart(dayIndex, part) }));
     const spend = dailyParts.reduce((sum, row) => sum + row.spend, 0);
     const leads = dailyParts.reduce((sum, row) => sum + row.leads, 0);
     const revenueKnown = dailyParts.some(row => row.revenue != null);
@@ -101,28 +113,43 @@ function BestTimesGrid({ data }) {
     const roi = revenue != null && spend > 0 ? (revenue - spend) / spend : null;
     const confidence = sampleDays >= 4 && spend >= 500 && leads >= 15 ? 'high'
       : sampleDays >= 3 && spend >= 100 && leads >= 5 ? 'medium' : 'low';
-    return { part, spend, leads, revenue, roi, confidence, supportedHours, sampleDays };
+    return { part, label, spend, leads, revenue, roi, confidence, supportedHours, sampleDays };
   };
 
   const untracked = niche?.revenue_source === 'not_tracked';
   const allocated = Boolean(data.attribution_allocated);
   const fallback = data.attribution_method === 'everflow_adset_id_redtrack_unavailable';
-  const daypartRows = niche ? dayparts.map(part => aggregateWeeklyDaypart(part)) : [];
-  const actionableRows = attributionIncomplete ? [] : daypartRows.filter(cell => cell.revenue != null && cell.confidence !== 'low' && cell.spend >= 100 && cell.leads >= 5 && cell.sampleDays >= 3 && cell.supportedHours >= cell.part.end - cell.part.start);
-  const bestWindow = actionableRows.length ? actionableRows.reduce((best, cell) => cell.roi > best.roi ? cell : best) : null;
-  const weakestWindow = actionableRows.length ? actionableRows.reduce((worst, cell) => cell.roi < worst.roi ? cell : worst) : null;
-  const sortedByRoi = [...actionableRows].sort((a, b) => b.roi - a.roi);
-  const runGap = sortedByRoi.length > 1 ? sortedByRoi[0].roi - sortedByRoi[1].roi : null;
-  const sortedWorstFirst = [...actionableRows].sort((a, b) => a.roi - b.roi);
-  const avoidGap = sortedWorstFirst.length > 1 ? sortedWorstFirst[1].roi - sortedWorstFirst[0].roi : null;
-  const runWindow = bestWindow && bestWindow.roi > 0 && (runGap == null || runGap >= 0.1) ? bestWindow : null;
-  const avoidWindow = weakestWindow && weakestWindow.roi < 0 && avoidGap != null && avoidGap >= 0.1 ? weakestWindow : null;
+  const weekdayRows = niche ? dayparts.map(part => aggregateWindow(part, [0, 1, 2, 3, 4], 'Mon–Fri')) : [];
+  const weekendRows = niche ? dayparts.map(part => aggregateWindow(part, [5, 6], 'Sat–Sun')) : [];
+  const qualifies = cell => !attributionIncomplete && cell.revenue != null && cell.confidence !== 'low' && cell.spend >= 100 && cell.leads >= 5 && cell.sampleDays >= (cell.label === 'Mon–Fri' ? 3 : 2) && cell.supportedHours >= cell.part.end - cell.part.start;
+  const weekdayActionable = weekdayRows.filter(qualifies);
+  const weekendActionable = weekendRows.filter(qualifies);
+  const bestWeekday = weekdayActionable.length ? weekdayActionable.reduce((best, cell) => cell.roi > best.roi ? cell : best) : null;
+  const weakestWeekend = weekendActionable.length ? weekendActionable.reduce((worst, cell) => cell.roi < worst.roi ? cell : worst) : null;
+  const runWindow = bestWeekday && bestWeekday.roi > 0 ? bestWeekday : null;
+  const avoidWindow = weakestWeekend && weakestWeekend.roi < 0 ? weakestWeekend : null;
+  const actionableRows = [...weekdayActionable, ...weekendActionable];
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <select value={niche?.niche || ''} onChange={e => setSelectedNiche(e.target.value)} disabled={!nicheSummaries.length} className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white disabled:bg-gray-50">
-          {nicheSummaries.map(item => <option key={item.niche} value={item.niche}>{item.niche} · ${Math.round(item.totalSpend).toLocaleString()} spend{!attributionIncomplete && item.totalRoi != null ? ` · ${allocated ? '≈' : ''}${item.totalRoi >= 0 ? '+' : ''}${Math.round(item.totalRoi * 100)}% ${allocated ? 'directional ROI' : 'ROI'}` : item.revenue_source === 'not_tracked' ? ' · not tracked' : ' · attribution incomplete'}</option>)}
-        </select>
+        <div className="min-w-[280px] flex-1">
+          <label className="sr-only" htmlFor="best-times-search">Search campaigns or ad sets</label>
+          <input id="best-times-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search campaigns or ad sets" className="mb-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white" />
+          <select value={niche?.key || ''} onChange={e => setSelectedEntityKey(e.target.value)} disabled={!selectionOptions.length} className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white disabled:bg-gray-50">
+            {campaignGroups.map(group => {
+              const query = search.trim().toLowerCase();
+              const matchingAdsets = group.adsets.filter(item => !query || item.label.toLowerCase().includes(query));
+              const campaignMatches = !query || group.campaign?.label.toLowerCase().includes(query);
+              if (!group.campaign) return matchingAdsets.map(item => <option key={item.key} value={item.key}>{item.label} · timing group</option>);
+              if (!campaignMatches && !matchingAdsets.length) return null;
+              return <optgroup key={group.campaign.key} label={`Campaign · ${group.campaign.label}`}>
+                {campaignMatches && <option value={group.campaign.key}>Campaign total · ${Math.round(group.campaign.totalSpend).toLocaleString()} spend</option>}
+                {matchingAdsets.map(item => <option key={item.key} value={item.key}>↳ Ad set · {item.label} · ${Math.round(item.totalSpend).toLocaleString()} spend</option>)}
+              </optgroup>;
+            })}
+          </select>
+          <p className="mt-1 text-[11px] text-gray-500">Campaign total combines its ad sets. Choose an indented ad set for its own timing view.</p>
+        </div>
         <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${untracked || attributionIncomplete || !niche || !actionableRows.length || allocated ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-green-50 text-green-700 border-green-200'}`}>
           {!niche ? 'No hourly data' : untracked ? 'Revenue not tracked for this account' : attributionIncomplete ? 'Directional attribution · incomplete' : allocated ? 'Directional timing · test only' : !actionableRows.length ? 'No repeatable timing signal yet' : fallback ? 'Exact Everflow attribution · complete' : 'Exact Everflow revenue'}
         </span>
@@ -131,15 +158,16 @@ function BestTimesGrid({ data }) {
       {attributionIncomplete && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">Timing recommendation unavailable</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">{data.attribution_warning || 'Best Times cannot rank hours because some Everflow revenue is not tied to a Meta ad set.'} Do not change budgets from this view.</p>{(data.dropped_conversion_count || data.dropped_revenue) ? <p className="mt-2 text-[11px] font-medium text-amber-800">{data.dropped_conversion_count || 0} attribution records · {formatMoney(data.dropped_revenue || 0)} unmatched value</p> : null}</div></div></div>}
       {niche && !attributionIncomplete && allocated && <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">Directional timing · test only</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">Revenue is allocated from RedTrack timing and reconciled to Everflow billing. Use these windows only as a controlled test hypothesis; do not scale or pause budgets from this view.</p></div></div></div>}
       {niche && untracked && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">Revenue tracking unavailable</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">Spend and leads are available, but Best Times cannot rank hours until this account has an exact Switchboard offer mapping. Do not change budgets from this view.</p></div></div></div>}
-      {niche && !untracked && !attributionIncomplete && !actionableRows.length && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">No repeatable timing signal yet</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">A Run or Avoid recommendation needs at least $100 spend, 5 leads, and evidence across 3 distinct days in the same daypart. Keep budgets unchanged or select a niche with a deeper sample.</p></div></div></div>}
+      {niche && !untracked && !attributionIncomplete && !actionableRows.length && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><h4 className="text-sm font-semibold text-amber-900">No repeatable timing signal yet</h4><p className="mt-1 text-xs leading-relaxed text-amber-800">A weekday Run needs at least $100 spend, 5 leads, and 3 weekday buckets. A weekend Avoid needs the same proof across Saturday and Sunday. Keep budgets unchanged or select a campaign/ad set with a deeper sample.</p></div></div></div>}
       {!untracked && actionableRows.length > 0 && <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {[
           [allocated ? 'Test Run' : 'Run', runWindow, 'border-green-200 bg-green-50 text-green-800'],
           [allocated ? 'Test Avoid' : 'Avoid', avoidWindow, 'border-red-200 bg-red-50 text-red-800'],
-        ].map(([label, cell, classes]) => cell && <div key={label} className={`rounded-lg border px-3 py-2 ${classes}`}><div className="text-[10px] font-semibold uppercase tracking-wide opacity-70">{label}</div><div className="text-sm font-semibold">All days · {cell.part.label} · {allocated ? '≈' : ''}{cell.roi >= 0 ? '+' : ''}{Math.round(cell.roi * 100)}% {allocated ? 'directional ROI' : 'ROI'}</div><div className="text-[11px] opacity-75">${Math.round(cell.spend).toLocaleString()} spend · {cell.leads} leads · {allocated ? '≈' : ''}${Math.round(cell.revenue).toLocaleString()} {allocated ? 'allocated revenue' : 'revenue'} · {cell.confidence} confidence · {cell.sampleDays} sampled days</div></div>)}
+        ].map(([label, cell, classes]) => cell && <div key={label} className={`rounded-lg border px-3 py-2 ${classes}`}><div className="text-[10px] font-semibold uppercase tracking-wide opacity-70">{label}</div><div className="text-sm font-semibold">{cell.label} · {cell.part.label} · {allocated ? '≈' : ''}{cell.roi >= 0 ? '+' : ''}{Math.round(cell.roi * 100)}% {allocated ? 'directional ROI' : 'ROI'}</div><div className="text-[11px] opacity-75">${Math.round(cell.spend).toLocaleString()} spend · {cell.leads} leads · {allocated ? '≈' : ''}${Math.round(cell.revenue).toLocaleString()} {allocated ? 'allocated revenue' : 'revenue'} · {cell.confidence} confidence · {cell.sampleDays} of {cell.label === 'Mon–Fri' ? 5 : 2} weekday buckets</div></div>)}
       </div>}
-      {actionableRows.length > 0 && !runWindow && <p className="text-xs text-gray-500">No qualifying block is currently profitable enough to label {allocated ? 'Test Run' : 'Run'}. Keep budgets unchanged.</p>}
-      {actionableRows.length > 0 && runWindow && !avoidWindow && <p className="text-xs text-gray-500">No clear {allocated ? 'test avoid' : 'avoid'} window—every qualifying block is non-negative. Use the {allocated ? 'Test Run' : 'Run'} window as the starting test.</p>}
+      {niche && <p className="text-[11px] text-gray-500">Sampling: {data.date_from}–{data.date_to}. Each weekday bucket combines every matching calendar date in that window; a bucket counts only when that daypart had spend and leads.</p>}
+      {actionableRows.length > 0 && !runWindow && <p className="text-xs text-gray-500">No weekday block is currently profitable enough to label {allocated ? 'Test Run' : 'Run'}. Keep weekday budgets unchanged.</p>}
+      {actionableRows.length > 0 && runWindow && !avoidWindow && <p className="text-xs text-gray-500">No supported negative weekend block yet. Keep weekend budgets unchanged until both Saturday and Sunday have enough data to evaluate.</p>}
     </div>
   );
 }

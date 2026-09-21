@@ -604,7 +604,7 @@ def _fetch_best_times_meta(ad_account_id: Optional[str], date_from: str, date_to
     svc = FacebookService()
     svc.initialize()
     fields = [
-    'adset_id', 'adset_name', 'campaign_name', 'date_start', 'spend', 'actions',
+    'adset_id', 'adset_name', 'campaign_id', 'campaign_name', 'date_start', 'spend', 'actions',
     ]
     params = {
         'time_range': {'since': date_from, 'until': date_to},
@@ -666,6 +666,7 @@ def _fetch_best_times_meta(ad_account_id: Optional[str], date_from: str, date_to
         )
         adsets[fb_id] = {
             'adset_name': str(row.get('adset_name') or ''),
+            'campaign_id': str(row.get('campaign_id') or ''),
             'campaign_name': str(row.get('campaign_name') or ''),
         }
         rows.append({
@@ -807,6 +808,7 @@ def _build_best_times(
         for adset_id, values in adsets.items()
     }
     aggregate: dict[tuple[str, int, int], dict] = {}
+    adset_aggregate: dict[tuple[str, int, int], dict] = {}
     for row in meta_payload['rows']:
         if not _day_filter_allows(datetime.strptime(row['date'], '%Y-%m-%d').weekday(), day_filter):
             continue
@@ -815,6 +817,10 @@ def _build_best_times(
         cell = aggregate.setdefault(key, {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})
         cell['spend'] += row['spend']
         cell['leads'] += row['leads']
+        adset_key = (row['adset_id'], datetime.strptime(row['date'], '%Y-%m-%d').weekday(), row['hour'])
+        adset_cell = adset_aggregate.setdefault(adset_key, {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})
+        adset_cell['spend'] += row['spend']
+        adset_cell['leads'] += row['leads']
 
     attribution_method = 'everflow_adset_id'
     attribution_warning = None
@@ -875,8 +881,7 @@ def _build_best_times(
                 continue
             if not _day_filter_allows(when.weekday(), day_filter):
                 continue
-            niche = niche_by_adset.get(adset_id, 'General')
-            key = (niche, when.weekday(), when.hour)
+            key = (adset_id, when.weekday(), when.hour)
             redtrack_aggregate[key] = redtrack_aggregate.get(key, Decimal('0')) + amount
             redtrack_total += amount
 
@@ -905,8 +910,11 @@ def _build_best_times(
             excluded_revenue += revenue
         if redtrack_total > 0 and billing_total > 0:
             scale = billing_total / redtrack_total
-            for key, amount in redtrack_aggregate.items():
-                aggregate.setdefault(key, {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})['revenue'] += amount * scale
+            for (adset_id, day_of_week, hour), amount in redtrack_aggregate.items():
+                revenue = amount * scale
+                niche = niche_by_adset.get(adset_id, 'General')
+                aggregate.setdefault((niche, day_of_week, hour), {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})['revenue'] += revenue
+                adset_aggregate.setdefault((adset_id, day_of_week, hour), {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})['revenue'] += revenue
             attribution_method = 'redtrack_attribution_everflow_billing_allocated'
             attribution_warning = 'Everflow billing revenue is allocated across RedTrack-attributed ad sets and hours; use this as a directional timing signal.'
             if scoped_redtrack_rows and not matching_redtrack_rows and not unlabeled_redtrack_rows:
@@ -954,6 +962,7 @@ def _build_best_times(
                 continue
             key = (niche, when.weekday(), when.hour)
             aggregate.setdefault(key, {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})['revenue'] += Decimal(str(row.get('revenue') or 0))
+            adset_aggregate.setdefault((adset_id, when.weekday(), when.hour), {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})['revenue'] += Decimal(str(row.get('revenue') or 0))
         if dropped_count:
             attribution_warning = f'{attribution_warning} {dropped_count} Everflow conversion rows totaling ${dropped_revenue.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)} could not be assigned.'
             logger.warning(
@@ -961,13 +970,11 @@ def _build_best_times(
                 dropped_count, dropped_revenue.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
             )
 
-    niches = sorted({key[0] for key in aggregate})
-    output = []
-    for niche in niches:
+    def serialize_cells(source: dict, entity_id: str):
         cells = []
         for day_of_week in range(7):
             for hour in range(24):
-                value = aggregate.get((niche, day_of_week, hour), {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})
+                value = source.get((entity_id, day_of_week, hour), {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})
                 spend = value['spend'].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                 revenue = value['revenue'].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) if tracked else None
                 roi = ((revenue - spend) / spend).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP) if tracked and spend > 0 else None
@@ -982,13 +989,62 @@ def _build_best_times(
                     'confidence': confidence if tracked else 'low',
                     'confidence_reason': reason if tracked else 'Revenue source is not tracked for this account',
                 })
+        return cells
+
+    niches = sorted({key[0] for key in aggregate})
+    output = []
+    for niche in niches:
         output.append({
             'niche': niche,
             'revenue_source': 'everflow' if tracked else 'not_tracked',
-            'cells': cells,
+            'cells': serialize_cells(aggregate, niche),
         })
+
+    campaign_aggregate: dict[tuple[str, int, int], dict] = {}
+    campaign_adsets: dict[str, list[str]] = {}
+    campaign_metadata: dict[str, dict] = {}
+    # Do not send 168 empty cells for every archived/zero-delivery ad set.
+    # The selector is for reviewing the period being analyzed, so only ad
+    # sets with delivery or attributable revenue belong in this response.
+    relevant_adsets = {
+        adset_id for (adset_id, _day_of_week, _hour), value in adset_aggregate.items()
+        if value['spend'] > 0 or value['revenue'] > 0
+    }
+    for adset_id in relevant_adsets:
+        values = adsets[adset_id]
+        campaign_id = values.get('campaign_id') or values.get('campaign_name') or 'unknown-campaign'
+        campaign_adsets.setdefault(campaign_id, []).append(adset_id)
+        campaign_metadata[campaign_id] = {
+            'campaign_id': values.get('campaign_id') or None,
+            'campaign_name': values.get('campaign_name') or 'Unnamed campaign',
+        }
+    for (adset_id, day_of_week, hour), value in adset_aggregate.items():
+        values = adsets.get(adset_id, {})
+        campaign_id = values.get('campaign_id') or values.get('campaign_name') or 'unknown-campaign'
+        cell = campaign_aggregate.setdefault((campaign_id, day_of_week, hour), {'spend': Decimal('0'), 'leads': 0, 'revenue': Decimal('0')})
+        cell['spend'] += value['spend']
+        cell['leads'] += value['leads']
+        cell['revenue'] += value['revenue']
+    campaigns = []
+    for campaign_id, metadata in campaign_metadata.items():
+        campaigns.append({
+            **metadata,
+            'revenue_source': 'everflow' if tracked else 'not_tracked',
+            'cells': serialize_cells(campaign_aggregate, campaign_id),
+            'adsets': [
+                {
+                    'adset_id': adset_id,
+                    'adset_name': adsets[adset_id].get('adset_name') or 'Unnamed ad set',
+                    'revenue_source': 'everflow' if tracked else 'not_tracked',
+                    'cells': serialize_cells(adset_aggregate, adset_id),
+                }
+                for adset_id in campaign_adsets[campaign_id]
+            ],
+        })
+    campaigns.sort(key=lambda item: item['campaign_name'].casefold())
     result = {
         'niches': output,
+        'campaigns': campaigns,
         'dropped_conversion_count': dropped_count if tracked else 0,
         'dropped_revenue': float(dropped_revenue.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)) if tracked else 0,
         'excluded_conversion_count': excluded_conversion_count if tracked else 0,
@@ -1151,6 +1207,7 @@ def best_times(
         'timezone': str(EVERFLOW_TZ_BY_ID[BEST_TIMES_TIMEZONE_ID]),
         'dayparts': list(BEST_TIMES_DAYPARTS),
         'niches': niches,
+        'campaigns': result['campaigns'],
         'dropped_conversion_count': result['dropped_conversion_count'],
         'dropped_revenue': result['dropped_revenue'],
         'excluded_conversion_count': result['excluded_conversion_count'],
