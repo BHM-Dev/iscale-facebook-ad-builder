@@ -504,3 +504,33 @@ Primary.
         for asset_id in ("feed", "stories", "extra")
     )
     assert len({result["assets_by_drive_id"][asset_id]["copy_id"] for asset_id in ("feed", "stories", "extra")}) == 3
+
+
+def test_successful_copy_refresh_clears_stale_unverified_mark():
+    """refresh_copy_metadata marks every copy asset unverified before its walk,
+    and _write_merged_soft_tags merges rather than overwrites. A successful match
+    must therefore write the verified status explicitly, or the blanket mark
+    becomes a one-way ratchet no clean copy doc can ever clear."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    writes = {}
+    service._resolve_drive_path = lambda file_meta: type("R", (), {"brand_folder": "Brand", "folder_path": "p"})()
+    service._match_brand_id = lambda brand_folder: "brand-id"
+    service._find_package_folder = lambda file_meta: "package"
+    service._folder_copy_metadata = lambda folder_id, force=False: {
+        "assets_by_drive_id": {"media-1": {"file_name": "AD1-1x1.jpg", "drive_file_ids": ["media-1"], "copy_id": "AD-01"}},
+        "_copy_source_drive_file_id": "copy-doc",
+    }
+    service._write_merged_soft_tags = lambda drive_file_id, tags: (writes.__setitem__(drive_file_id, tags), 1)[1]
+    service._mark_unmatched_package_assets_unverified = lambda package_folder, matched: None
+
+    updated = service._refresh_folder_copy_metadata(
+        {"id": "copy-doc", "name": "Ad Copy.txt", "mimeType": "text/plain", "parents": ["package"]}
+    )
+
+    assert updated == 1
+    assert writes["media-1"]["copy_refresh_status"] == "verified"
+    assert writes["media-1"]["copy_refresh_error"] is None
+    # copy_integrity_issue is only ever written True elsewhere, so a fresh match
+    # must clear it too or a filename mismatch fixed in Drive stays blocked forever.
+    assert writes["media-1"]["copy_integrity_issue"] is False
+    assert writes["media-1"]["copy_integrity_reason"] is None

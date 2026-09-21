@@ -757,6 +757,25 @@ class DriveSyncService:
                 refreshed_tags["copy_source_drive_file_id"] = (
                     folder_metadata.get("_copy_source_drive_file_id") or file_meta.get("id")
                 )
+                # A successful match is the ONLY thing that clears the blanket
+                # "unverified" mark refresh_copy_metadata sets before its walk.
+                # _write_merged_soft_tags merges ({**existing, **new}), so without
+                # writing the status explicitly here the stale flag survives every
+                # re-verification and the fail-closed mark becomes a one-way ratchet:
+                # once an asset carries a `source` tag it is marked unverified on
+                # every later run and can never recover, however clean its copy doc.
+                refreshed_tags["copy_refresh_status"] = "verified"
+                refreshed_tags["copy_refresh_error"] = None
+                # copy_integrity_issue is written True in exactly one place and
+                # never written False, so it ratchets the same way: an image whose
+                # filename/heading mismatch was since fixed in Drive stays blocked
+                # forever on a flag no refresh can clear, while its badge tells the
+                # buyer to "refresh Drive" — the one action that provably cannot
+                # help. An item with a live warning `continue`s before reaching this
+                # loop, and the warnings loop below re-asserts True within this same
+                # run, so clearing it on a fresh match cannot unblock a real problem.
+                refreshed_tags["copy_integrity_issue"] = False
+                refreshed_tags["copy_integrity_reason"] = None
                 updated += self._write_merged_soft_tags(drive_file_id, refreshed_tags)
 
         for drive_file_id, warning in (folder_metadata.get("_copy_integrity_warnings") or {}).items():
