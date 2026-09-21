@@ -610,6 +610,10 @@ def _fetch_best_times_meta(ad_account_id: Optional[str], date_from: str, date_to
         'time_range': {'since': date_from, 'until': date_to},
         'time_increment': 1,
         'level': 'adset',
+        # Graph otherwise defaults to a tiny page. Hourly data across a
+        # month can span thousands of rows, so the default turns one report
+        # into hundreds of sequential cursor requests before we see a result.
+        'limit': 1000,
         'breakdowns': ['hourly_stats_aggregated_by_advertiser_time_zone'],
     }
     try:
