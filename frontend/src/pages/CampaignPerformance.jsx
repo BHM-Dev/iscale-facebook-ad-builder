@@ -374,7 +374,10 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
     }
   };
 
-  const panelData = data || {
+  // Best Times owns its own date window (it defaults to 30 days for a
+  // meaningful hourly sample). Do not keep showing the niche view's old
+  // seven-day label above an already-loaded timing result.
+  const panelData = (intelligenceView === 'best-times' && bestTimesData) || data || {
     preset_label: preset,
     date_from: customFrom || '—',
     date_to: customTo || '—',
