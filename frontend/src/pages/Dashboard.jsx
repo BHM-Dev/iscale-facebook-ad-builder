@@ -40,16 +40,27 @@ function TrendChart({ trend, loading, error, metric, setMetric, rangeLabel }) {
   const chartViewportRef = useRef(null);
   const [viewportWidth, setViewportWidth] = useState(0);
   const [hoveredPoint, setHoveredPoint] = useState(null);
-  const metricConfig = {
-    spend: { label: 'Spend', color: '#4f46e5', format: v => `$${Math.round(v).toLocaleString()}` },
-    revenue: { label: 'Revenue', color: '#16a34a', format: v => `$${Math.round(v).toLocaleString()}` },
-    leads: { label: 'Leads', color: '#059669', format: v => Math.round(v).toLocaleString() },
-    cpl: { label: 'CPL', color: '#ea580c', format: v => `$${v.toFixed(2)}` },
-    revenue_per_lead: { label: 'Rev / Meta Lead', color: '#0f766e', format: v => `$${v.toFixed(2)}` },
-  }[metric];
   const revenueStatus = trend?.revenue_attribution?.status;
   const revenueAvailable = revenueStatus === 'exact_adset_attributed';
-  const values = rows.map(row => row[metric]).filter(value => value != null);
+  const metricConfig = {
+    spend: {
+      label: 'Spend / Revenue',
+      series: [
+        { key: 'spend', label: 'Spend', color: '#4f46e5', format: v => `$${Math.round(v).toLocaleString()}` },
+        { key: 'revenue', label: 'Revenue', color: '#16a34a', format: v => `$${Math.round(v).toLocaleString()}` },
+      ],
+    },
+    leads: { label: 'Leads', series: [{ key: 'leads', label: 'Leads', color: '#059669', format: v => Math.round(v).toLocaleString() }] },
+    cpl: {
+      label: 'CPL / RPL',
+      series: [
+        { key: 'cpl', label: 'CPL', color: '#ea580c', format: v => `$${v.toFixed(2)}` },
+        { key: 'revenue_per_lead', label: 'RPL', color: '#0f766e', format: v => `$${v.toFixed(2)}` },
+      ],
+    },
+  }[metric];
+  const series = metricConfig.series.filter(item => revenueAvailable || !['revenue', 'revenue_per_lead'].includes(item.key));
+  const values = rows.flatMap(row => series.map(item => row[item.key]).filter(value => value != null));
   const hasValues = values.length > 0;
   useEffect(() => {
     const viewport = chartViewportRef.current;
@@ -61,11 +72,13 @@ function TrendChart({ trend, loading, error, metric, setMetric, rangeLabel }) {
     return () => observer.disconnect();
   }, [loading, hasValues]);
   const max = Math.max(...values, 1);
-  const width = rows.length > 14
+  const width = rows.length > 7
     ? Math.max(720, rows.length * 64, viewportWidth)
     : (viewportWidth || 720);
   const height = 170, padX = 32, padY = 22;
-  const showValueLabels = rows.length <= 31;
+  // Two series double the labels; keep 30-day comparisons readable and use
+  // the hover tooltip there instead of stacking 60 values into the chart.
+  const showValueLabels = rows.length <= 7;
   const formatDateTick = date => {
     const parsed = new Date(`${date}T12:00:00`);
     if (Number.isNaN(parsed.getTime())) return date;
@@ -77,22 +90,17 @@ function TrendChart({ trend, loading, error, metric, setMetric, rangeLabel }) {
     const x = rows.length <= 1
       ? width / 2
       : padX + index * (width - padX * 2) / (rows.length - 1);
-    const value = row[metric];
-    const y = value == null ? null : height - padY - (value / max) * (height - padY * 2);
-    return { ...row, x, y };
+    return { ...row, x };
   });
   const currentHoveredPoint = hoveredPoint
-    ? points.find(point => point.date === hoveredPoint.point.date && point.y != null)
+    ? points.find(point => point.date === hoveredPoint.point.date)
     : null;
   const handlePointerMove = event => {
     const svg = event.currentTarget;
     const rect = svg.getBoundingClientRect();
     if (!rect.width || !points.length) return;
     const chartX = Math.min(width, Math.max(0, ((event.clientX - rect.left) / rect.width) * width));
-    const nearest = points.reduce((best, point) => {
-      if (point.y == null) return best;
-      return !best || Math.abs(point.x - chartX) < Math.abs(best.x - chartX) ? point : best;
-    }, null);
+    const nearest = points.reduce((best, point) => !best || Math.abs(point.x - chartX) < Math.abs(best.x - chartX) ? point : best, null);
     if (!nearest) return;
     const viewport = chartViewportRef.current?.getBoundingClientRect();
     const viewportX = viewport ? event.clientX - viewport.left : 50;
@@ -105,27 +113,19 @@ function TrendChart({ trend, loading, error, metric, setMetric, rangeLabel }) {
       edge,
     });
   };
-  const path = points.reduce((segments, point) => {
-    if (point.y == null) return segments.concat([[]]);
-    if (!segments.length) segments.push([]);
-    segments[segments.length - 1].push(point);
-    return segments;
-  }, [[]]).filter(segment => segment.length > 0).map(segment => segment.map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' '));
+  const groupWidth = Math.min(48, ((width - padX * 2) / Math.max(rows.length, 1)) * 0.72);
+  const slotWidth = groupWidth / Math.max(series.length, 1);
+  const barWidth = Math.max(6, slotWidth - 3);
   return <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
     <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
       <div><div className="text-sm font-semibold text-gray-900">Daily trend</div><div className="text-[11px] text-gray-500">Meta spend & leads · Switchboard billable revenue (PT) · {rangeLabel}</div></div>
-      <div className="flex flex-wrap justify-end gap-1">{Object.entries(metricConfig ? { spend: 'Spend', revenue: 'Revenue', leads: 'Leads', cpl: 'CPL', revenue_per_lead: 'Rev / Meta Lead' } : {}).map(([key, label]) => <button key={key} type="button" onClick={() => setMetric(key)} disabled={['revenue', 'revenue_per_lead'].includes(key) && !revenueAvailable} className={`text-[11px] px-2 py-1 rounded disabled:cursor-not-allowed disabled:opacity-45 ${metric === key ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}>{label}</button>)}</div>
+      <div className="flex flex-wrap justify-end gap-1">{Object.entries({ spend: 'Spend/Revenue', leads: 'Leads', cpl: 'CPL/RPL' }).map(([key, label]) => <button key={key} type="button" onClick={() => setMetric(key)} className={`text-[11px] px-2 py-1 rounded ${metric === key ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}>{label}</button>)}</div>
     </div>
     {loading ? <div className="h-[190px] flex items-center justify-center text-sm text-gray-400">Loading trend...</div>
       : error ? <div className="h-[190px] flex flex-col items-center justify-center gap-1 px-5 text-center text-sm text-amber-700"><span>{error}</span><span className="text-[11px] text-gray-500">The KPI cards and operational tables are still available.</span></div>
-      : !rows.length || !hasValues ? <div className="h-[190px] flex flex-col items-center justify-center gap-1 text-sm text-gray-400"><span>No {['revenue', 'revenue_per_lead'].includes(metric) ? 'billable ' : 'Meta '}{metricConfig.label.toLowerCase()} data for this range.</span><span className="text-[11px]">{['revenue', 'revenue_per_lead'].includes(metric) ? 'Only exact ad-set-mapped Switchboard events are included.' : 'Meta may not have reported spend or leads for the selected day yet.'}</span></div>
+      : !rows.length || !hasValues ? <div className="h-[190px] flex flex-col items-center justify-center gap-1 text-sm text-gray-400"><span>No {metric === 'spend' || metric === 'cpl' ? 'billable comparison' : 'Meta leads'} data for this range.</span><span className="text-[11px]">{metric === 'spend' || metric === 'cpl' ? 'Only exact ad-set-mapped Switchboard events are included.' : 'Meta may not have reported leads for the selected day yet.'}</span></div>
       : <div className="px-3 pt-3 pb-2">
-        <div className="mx-1 mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <div className="rounded-md bg-indigo-50 px-2 py-1.5"><div className="text-[10px] uppercase tracking-wide text-indigo-700">Spend</div><div className="text-sm font-semibold text-indigo-950">${Number(trend?.totals?.spend || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div></div>
-          <div className="rounded-md bg-green-50 px-2 py-1.5"><div className="text-[10px] uppercase tracking-wide text-green-700">Revenue</div><div className="text-sm font-semibold text-green-950">{trend?.totals?.revenue != null ? `$${Number(trend.totals.revenue).toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '—'}</div></div>
-          <div className="rounded-md bg-orange-50 px-2 py-1.5"><div className="text-[10px] uppercase tracking-wide text-orange-700">CPL</div><div className="text-sm font-semibold text-orange-950">{trend?.totals?.cpl != null ? `$${Number(trend.totals.cpl).toFixed(2)}` : '—'}</div></div>
-          <div className="rounded-md bg-teal-50 px-2 py-1.5"><div className="text-[10px] uppercase tracking-wide text-teal-700">Rev / Meta Lead</div><div className="text-sm font-semibold text-teal-950">{trend?.totals?.revenue_per_lead != null ? `$${Number(trend.totals.revenue_per_lead).toFixed(2)}` : '—'}</div></div>
-        </div>
+        <div className="mx-1 mb-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-medium text-gray-600">{series.map(item => <span key={item.key} className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-sm" style={{ backgroundColor: item.color }} />{item.label} <strong className="text-gray-900">{trend?.totals?.[item.key] != null ? item.format(trend.totals[item.key]) : '—'}</strong></span>)}{!revenueAvailable && metric !== 'leads' && <span className="text-amber-700">Revenue unavailable — comparison is incomplete</span>}</div>
         <div ref={chartViewportRef} className="relative h-[170px] w-full overflow-x-auto" onMouseLeave={() => setHoveredPoint(null)}>
           {hoveredPoint && currentHoveredPoint && (
             <div
@@ -135,35 +135,31 @@ function TrendChart({ trend, loading, error, metric, setMetric, rangeLabel }) {
             >
               <div className="font-semibold">{formatDateTick(currentHoveredPoint.date)}</div>
               <div className="mt-1 flex max-w-[min(18rem,calc(100vw-2rem))] flex-wrap gap-x-3 gap-y-1">
-                <span>{metricConfig.label}: <strong>{metricConfig.format(currentHoveredPoint[metric])}</strong></span>
-                {currentHoveredPoint.spend != null && metric !== 'spend' && <span>Spend: <strong>${Number(currentHoveredPoint.spend).toLocaleString('en-US', { maximumFractionDigits: 0 })}</strong></span>}
-                {currentHoveredPoint.revenue != null && metric !== 'revenue' && <span>Revenue: <strong>${Number(currentHoveredPoint.revenue).toLocaleString('en-US', { maximumFractionDigits: 0 })}</strong></span>}
-                {currentHoveredPoint.leads != null && metric !== 'leads' && <span>Leads: <strong>{Math.round(currentHoveredPoint.leads).toLocaleString()}</strong></span>}
-                {currentHoveredPoint.cpl != null && metric !== 'cpl' && <span>CPL: <strong>${Number(currentHoveredPoint.cpl).toFixed(2)}</strong></span>}
-                {currentHoveredPoint.revenue_per_lead != null && metric !== 'revenue_per_lead' && <span>Rev / Meta Lead: <strong>${Number(currentHoveredPoint.revenue_per_lead).toFixed(2)}</strong></span>}
+                {series.map(item => currentHoveredPoint[item.key] != null && <span key={item.key}>{item.label}: <strong>{item.format(currentHoveredPoint[item.key])}</strong></span>)}
               </div>
             </div>
           )}
-          <svg viewBox={`0 0 ${width} ${height}`} className="h-full" style={{ width: `${width}px` }} role="img" aria-label={`${metricConfig.label} daily trend`} onMouseMove={handlePointerMove}>
+          <svg viewBox={`0 0 ${width} ${height}`} className="h-full" style={{ width: `${width}px` }} role="img" aria-label={`${metricConfig.label} daily comparison`} onMouseMove={handlePointerMove}>
             <rect x="0" y="0" width={width} height={height} fill="transparent" />
             <line x1={padX} y1={height - padY} x2={width - padX} y2={height - padY} stroke="#e5e7eb" />
             <line x1={padX} y1={padY} x2={padX} y2={height - padY} stroke="#e5e7eb" />
-            {points.filter(point => point.y != null).map(point => {
-              const barWidth = Math.max(8, ((width - padX * 2) / Math.max(rows.length, 1)) * 0.45);
-              const barHeight = Math.max(3, height - padY - point.y);
-              return <rect key={`bar-${point.date}`} x={point.x - barWidth / 2} y={height - padY - barHeight} width={barWidth} height={barHeight} rx="3" fill={metricConfig.color} opacity="0.16"><title>{point.date}: {metricConfig.format(point[metric])}</title></rect>;
-            })}
-            {path.map((segment, index) => <path key={index} d={segment} fill="none" stroke={metricConfig.color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />)}
-            {points.filter(point => point.y != null).map(point => <g key={`point-${point.date}`}>
-              <circle cx={point.x} cy={point.y} r="4" fill="white" stroke={metricConfig.color} strokeWidth="2"><title>{point.date}: {metricConfig.format(point[metric])}</title></circle>
-              {showValueLabels && <text x={point.x} y={Math.max(12, point.y - 9)} textAnchor="middle" fontSize="9" fill={metricConfig.color} fontWeight="600">{metricConfig.format(point[metric])}</text>}
-            </g>)}
-            {points.map(point => <text key={`date-${point.date}`} x={point.x} y={height - 5} textAnchor="middle" fontSize="9" fill={point.y == null ? '#b9bec8' : '#6b7280'}>{point.y == null ? 'No data' : formatDateTick(point.date)}</text>)}
+            {points.flatMap(point => series.map((item, index) => {
+              const value = point[item.key];
+              if (value == null) return null;
+              const barHeight = value > 0 ? Math.max(3, (value / max) * (height - padY * 2)) : 0;
+              const x = point.x - groupWidth / 2 + index * slotWidth + (slotWidth - barWidth) / 2;
+              const y = height - padY - barHeight;
+              return <g key={`${point.date}-${item.key}`}>
+                <rect x={x} y={y} width={barWidth} height={barHeight} rx="2" fill={item.color}><title>{point.date} · {item.label}: {item.format(value)}</title></rect>
+                {showValueLabels && <text x={x + barWidth / 2} y={Math.max(12, y - 5)} textAnchor="middle" fontSize="8" fill={item.color} fontWeight="600">{item.format(value)}</text>}
+              </g>;
+            }))}
+            {points.map(point => <text key={`date-${point.date}`} x={point.x} y={height - 5} textAnchor="middle" fontSize="9" fill="#6b7280">{formatDateTick(point.date)}</text>)}
           </svg>
           <div className="sr-only" aria-label={`${metricConfig.label} daily details`}>
-            {points.filter(point => point.y != null).map(point => <div key={`detail-${point.date}`}>{formatDateTick(point.date)}: {metricConfig.format(point[metric])}; spend {point.spend != null ? `$${Number(point.spend).toFixed(0)}` : 'unavailable'}; revenue {point.revenue != null ? `$${Number(point.revenue).toFixed(0)}` : 'unavailable'}; leads {point.leads ?? 'unavailable'}; CPL {point.cpl != null ? `$${Number(point.cpl).toFixed(2)}` : 'unavailable'}; revenue per Meta lead {point.revenue_per_lead != null ? `$${Number(point.revenue_per_lead).toFixed(2)}` : 'unavailable'}</div>)}
+            {points.map(point => <div key={`detail-${point.date}`}>{formatDateTick(point.date)}: {series.map(item => `${item.label} ${point[item.key] != null ? item.format(point[item.key]) : 'unavailable'}`).join('; ')}</div>)}
           </div>
-          <div className="absolute left-1 top-0 text-[10px] text-gray-400">{metricConfig.format(max)}</div>
+          <div className="absolute left-1 top-0 text-[10px] text-gray-400">{series[0].format(max)}</div>
           <div className="absolute left-1 bottom-0 text-[10px] text-gray-400">0</div>
         </div>
         <div className="mt-1 text-[10px] text-gray-500">{revenueAvailable ? `Revenue uses mapped Switchboard conversion-date events (PT); ambiguous events are excluded.${trend?.revenue_attribution?.cached ? ' Cached for up to 5 minutes.' : ''} Rev / Meta Lead is directional, not cohort matched. ` : revenueStatus === 'access_denied' ? 'Billable revenue requires P&L access. ' : revenueStatus === 'needs_adset_sync' ? 'Revenue needs a Meta ad-set sync before it can be attributed safely. ' : revenueStatus === 'not_tracked' ? 'This account has no configured billable-revenue source. ' : 'Billable revenue is temporarily unavailable. '}Daily view · Today may be partial; missing days are left blank.{rows.length > 14 ? ' Scroll for the full range.' : ''}</div>
