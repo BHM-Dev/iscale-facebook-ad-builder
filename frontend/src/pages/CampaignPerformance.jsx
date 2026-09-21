@@ -534,6 +534,10 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                     // expensive hourly timing request for the same account.
                     userSelectedPresetRef.current = true;
                     setPreset('last_30d');
+                    // Do not leave the seven-day niche summary in the header
+                    // while the 30-day timing request is in flight. It made the
+                    // timing view appear to be based on the wrong period.
+                    setData(null);
                     loadBestTimes('last_30d', '', '');
                   } else if (!bestTimesData && (preset !== 'custom' || (customFrom && customTo))) {
                     loadBestTimes(preset, customFrom, customTo);
