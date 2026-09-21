@@ -50,6 +50,15 @@ BEST_TIMES_DAYPARTS = (
     {"key": "afternoon", "label": "2p–6p", "start": 14, "end": 18},
     {"key": "evening", "label": "6p–12a", "start": 18, "end": 24},
 )
+# Canonical Everflow offer names do not always equal RedTrack's operational
+# offer labels. Keep aliases explicit: loose substring matching can blend a
+# similarly named but commercially distinct offer into timing recommendations.
+REDTRACK_OFFER_LABEL_ALIASES = {
+    'get business coverage': {
+        'commercial insurance get business coverage gbc v2',
+        'commercial insurance get business coverage gbc v2 capi',
+    },
+}
 _DATE_LABEL_RE = re.compile(
     r'^(?:(?:\d{1,2}[/.]\d{1,2}(?:[/.]\d{2,4})?)|'
     r'(?:\d{1,4}[-/]\d{1,2}[-/]\d{1,4}))'
@@ -718,13 +727,29 @@ def _redtrack_revenue(row: dict) -> Decimal:
 
 
 def _redtrack_offer_matches(row: dict, allowed_offers: set[str]) -> bool:
-    """Use an offer field when RedTrack exposes one; ad-set scope is the fallback."""
+    """Match RedTrack's descriptive offer label to the configured billing offer.
+
+    Everflow mappings intentionally use the canonical billing name (for
+    example ``Get Business Coverage``), while RedTrack exposes the operational
+    offer label (``Commercial Insurance - Get Business Coverage - GBC - V2``).
+    Exact-only matching discarded valid timing rows for that account. A
+    whole-phrase containment match accepts the canonical name embedded in a
+    RedTrack label without treating unrelated offers such as HVAC or
+    Commercial Auto as a match.
+    """
     for field in ('offer_name', 'offer', 'offerName'):
         value = row.get(field)
         if value not in (None, ''):
             if isinstance(value, dict):
                 value = value.get('name') or value.get('offer_name') or value.get('label') or value.get('id')
-            return str(value).casefold() in allowed_offers
+            redtrack_label = re.sub(r'[^a-z0-9]+', ' ', str(value).casefold()).strip()
+            allowed_labels = set()
+            for offer in allowed_offers:
+                canonical = re.sub(r'[^a-z0-9]+', ' ', offer.casefold()).strip()
+                if canonical:
+                    allowed_labels.add(canonical)
+                    allowed_labels.update(REDTRACK_OFFER_LABEL_ALIASES.get(canonical, set()))
+            return redtrack_label in allowed_labels
     return True
 
 
@@ -754,6 +779,8 @@ def _build_best_times(
     include_metadata: bool = False,
     redtrack_rows: Optional[list[dict]] = None,
     day_filter: str = 'all',
+    account_adset_ids: Optional[set[str]] = None,
+    other_account_adset_ids: Optional[set[str]] = None,
 ):
     tz = BEST_TIMES_TZ
     tracked = offer_names is not None and bool(offer_names)
@@ -775,6 +802,10 @@ def _build_best_times(
     attribution_method = 'everflow_adset_id'
     attribution_warning = None
     redtrack_usable = False
+    excluded_conversion_count = 0
+    excluded_revenue = Decimal('0')
+    unresolved_conversion_count = 0
+    unresolved_revenue = Decimal('0')
     if tracked and redtrack_rows:
         # RedTrack supplies the reliable Meta attribution grain and timestamp.
         # Everflow supplies the authoritative billable total; scale the
@@ -784,6 +815,7 @@ def _build_best_times(
         redtrack_aggregate: dict[tuple[str, int, int], Decimal] = {}
         dropped_count = 0
         dropped_revenue = Decimal('0')
+        excluded_redtrack_count = 0
         known_adsets = set(adsets)
         scoped_redtrack_rows = [
             row for row in redtrack_rows
@@ -803,12 +835,14 @@ def _build_best_times(
             if not any(row.get(field) not in (None, '') for field in ('offer_name', 'offer', 'offerName'))
         ]
         offer_labels_mismatch = bool(explicit_offer_rows) and not matching_redtrack_rows
-        # Keep unlabeled rows when at least one labeled row matches. Only an
-        # explicit offer mismatch is evidence that a row belongs elsewhere.
-        rows_for_attribution = matching_redtrack_rows + unlabeled_redtrack_rows
-        if mismatched_redtrack_rows:
-            dropped_count += len(mismatched_redtrack_rows)
-            dropped_revenue += sum((_redtrack_revenue(row) for row in mismatched_redtrack_rows), Decimal('0'))
+        # Raw RedTrack conversions are account-wide. An unlabeled row cannot
+        # be proven to belong to this Everflow offer, so never let it shape a
+        # daypart recommendation for the selected offer.
+        rows_for_attribution = matching_redtrack_rows
+        # A different RedTrack offer is deliberately outside this account's
+        # Everflow billing scope. It is a normal scope exclusion, not missing
+        # attribution for this timing result.
+        excluded_redtrack_count = len(mismatched_redtrack_rows)
         for row in rows_for_attribution:
             adset_id = _redtrack_adset_id(row, known_adsets)
             when = _redtrack_datetime(row, tz)
@@ -843,9 +877,18 @@ def _build_best_times(
         matched_billing_rows = [row for row in billing_rows if str(row.get('sub3') or '').strip() in scoped_adsets]
         billing_total = sum((Decimal(str(row.get('revenue') or 0)) for row in matched_billing_rows), Decimal('0'))
         unmatched_billing_rows = [row for row in billing_rows if row not in matched_billing_rows]
-        if unmatched_billing_rows:
-            dropped_count += len(unmatched_billing_rows)
-            dropped_revenue += sum((Decimal(str(row.get('revenue') or 0)) for row in unmatched_billing_rows), Decimal('0'))
+        for row in unmatched_billing_rows:
+            adset_id = str(row.get('sub3') or '').strip()
+            revenue = Decimal(str(row.get('revenue') or 0))
+            # An unsubstituted macro is not a Meta ad-set ID and therefore
+            # cannot belong to the selected account's delivery scope.
+            is_unsubstituted_macro = bool(re.fullmatch(r'\{[^}]+\}\}?', adset_id))
+            if adset_id in (other_account_adset_ids or set()) or adset_id in (account_adset_ids or set()) or is_unsubstituted_macro:
+                excluded_conversion_count += 1
+                excluded_revenue += revenue
+            else:
+                unresolved_conversion_count += 1
+                unresolved_revenue += revenue
         if redtrack_total > 0 and billing_total > 0:
             scale = billing_total / redtrack_total
             for key, amount in redtrack_aggregate.items():
@@ -855,9 +898,21 @@ def _build_best_times(
             if scoped_redtrack_rows and not matching_redtrack_rows and not unlabeled_redtrack_rows:
                 attribution_warning += ' RedTrack offer labels did not match the Everflow offer name, so direct Everflow ad-set attribution was used.'
             elif mismatched_redtrack_rows:
-                attribution_warning += ' Some explicitly labeled RedTrack rows had a different offer label and were excluded; unlabeled rows were retained.'
+                attribution_warning += f' {excluded_redtrack_count} RedTrack rows for other offers were excluded.'
+            if unlabeled_redtrack_rows:
+                attribution_warning += f' {len(unlabeled_redtrack_rows)} unlabeled RedTrack rows were excluded because their offer scope could not be verified.'
             if dropped_count:
                 attribution_warning += f' {dropped_count} conversion rows were excluded from the allocation basis.'
+            if excluded_conversion_count:
+                attribution_warning += (
+                    f' {excluded_conversion_count} Everflow conversion rows totaling '
+                    f'${excluded_revenue.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)} were excluded because their ad sets had no Meta delivery in this selected period.'
+                )
+            if unresolved_conversion_count:
+                attribution_warning += (
+                    f' {unresolved_conversion_count} Everflow conversion rows totaling '
+                    f'${unresolved_revenue.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)} had no verifiable Meta ad-set scope.'
+                )
             redtrack_usable = True
         else:
             attribution_warning = 'RedTrack returned no usable revenue rows; fell back to direct Everflow ad-set attribution.'
@@ -927,10 +982,12 @@ def _build_best_times(
         'niches': output,
         'dropped_conversion_count': dropped_count if tracked else 0,
         'dropped_revenue': float(dropped_revenue.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)) if tracked else 0,
+        'excluded_conversion_count': excluded_conversion_count if tracked else 0,
+        'excluded_revenue': float(excluded_revenue.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)) if tracked else 0,
         # Direct Everflow fallback can reconcile billing by ad set, but it
         # cannot identify Meta delivery hours. Do not present that fallback as
         # timing-complete even when every billing row matches.
-        'attribution_complete': not tracked or (redtrack_usable and dropped_count == 0),
+        'attribution_complete': not tracked or (redtrack_usable and dropped_count == 0 and unresolved_conversion_count == 0),
         'attribution_allocated': attribution_method.endswith('_allocated'),
         'attribution_method': attribution_method,
         'attribution_warning': attribution_warning,
@@ -1019,6 +1076,7 @@ def best_times(
     date_to: Optional[str] = Query(None),
     ad_account_id: Optional[str] = Query(None),
     niche: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("pnl:read")),
 ):
     """Return exact or directional revenue timing by niche and advertiser-local hour."""
@@ -1027,6 +1085,20 @@ def best_times(
         preset, date_from, date_to, calendar_timezone=BEST_TIMES_TZ
     )
     offer_names = _everflow_offers_for_account(ad_account_id)
+    normalized_account_id = normalize_account_id(ad_account_id) if ad_account_id else None
+    saved_adset_rows = db.query(FacebookAdSet.fb_adset_id, FacebookAdSet.fb_account_id).filter(
+        FacebookAdSet.fb_adset_id.isnot(None)
+    ).all()
+    account_adset_ids = {
+        str(fb_adset_id).strip()
+        for fb_adset_id, fb_account_id in saved_adset_rows
+        if normalize_account_id(fb_account_id) == normalized_account_id
+    }
+    other_account_adset_ids = {
+        str(fb_adset_id).strip()
+        for fb_adset_id, fb_account_id in saved_adset_rows
+        if fb_account_id and normalize_account_id(fb_account_id) != normalized_account_id
+    }
     try:
         meta_payload = _fetch_best_times_meta(ad_account_id, resolved_from, resolved_to, _day_filter)
         conversions = []
@@ -1059,6 +1131,8 @@ def best_times(
             include_metadata=True,
             redtrack_rows=redtrack_rows,
             day_filter=_day_filter,
+            account_adset_ids=account_adset_ids,
+            other_account_adset_ids=other_account_adset_ids,
         )
         if redtrack_warning:
             existing_warning = result.get('attribution_warning')
@@ -1085,6 +1159,8 @@ def best_times(
         'niches': niches,
         'dropped_conversion_count': result['dropped_conversion_count'],
         'dropped_revenue': result['dropped_revenue'],
+        'excluded_conversion_count': result['excluded_conversion_count'],
+        'excluded_revenue': result['excluded_revenue'],
         'attribution_complete': result['attribution_complete'],
         'attribution_method': result['attribution_method'],
         'attribution_warning': result['attribution_warning'],

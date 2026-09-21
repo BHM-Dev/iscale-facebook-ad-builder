@@ -3,7 +3,7 @@
 from datetime import date, datetime
 
 import app.api.v1.intelligence as intelligence
-from app.api.v1.intelligence import _build_best_times, _extract_niche, _redtrack_adset_id, _resolve_preset
+from app.api.v1.intelligence import _build_best_times, _extract_niche, _redtrack_adset_id, _redtrack_offer_matches, _resolve_preset
 
 
 def test_extract_niche_skips_date_prefixed_ad_set_segments():
@@ -55,7 +55,18 @@ def test_redtrack_adset_join_prefers_matching_sub2_over_nonmatching_p_sub2():
     ) == '987654321'
 
 
-def test_best_times_keeps_unlabeled_redtrack_rows_and_drops_explicit_mismatch():
+def test_redtrack_offer_match_accepts_canonical_name_inside_descriptive_label():
+    assert _redtrack_offer_matches(
+        {'offer': 'Commercial Insurance - Get Business Coverage - GBC - V2'},
+        {'Get Business Coverage'},
+    )
+    assert not _redtrack_offer_matches(
+        {'offer': 'Commercial Insurance - GBC - HVAC'},
+        {'Get Business Coverage'},
+    )
+
+
+def test_best_times_excludes_unlabeled_and_explicitly_mismatched_redtrack_rows():
     result = _build_best_times(
         {
             'adsets': {'987654321': {'adset_name': 'HVAC', 'campaign_name': 'HVAC'}},
@@ -64,17 +75,19 @@ def test_best_times_keeps_unlabeled_redtrack_rows_and_drops_explicit_mismatch():
         [{'offer': 'Switchboard Offer', 'sub3': '987654321', 'revenue': '100', 'conversion_date': '2026-09-15T08:00:00+00:00'}],
         {'Switchboard Offer'},
         include_metadata=True,
+        account_adset_ids={'987654321'},
         redtrack_rows=[
             {'p_sub2': 'campaign-123', 'sub2': '987654321', 'conv_time': '2026-09-15T08:00:00+00:00', 'payout': '20'},
-            {'sub2': '987654321', 'conv_time': '2026-09-15T09:00:00+00:00', 'payout': '30'},
+            {'sub2': '987654321', 'offer': 'Switchboard Offer', 'conv_time': '2026-09-15T09:00:00+00:00', 'payout': '30'},
             {'sub2': '987654321', 'offer': 'Other Offer', 'conv_time': '2026-09-15T10:00:00+00:00', 'payout': '10'},
         ],
     )
 
     assert result['attribution_allocated'] is True
-    assert result['dropped_conversion_count'] == 1
-    assert result['dropped_revenue'] == 10.0
-    assert 'unlabeled rows were retained' in result['attribution_warning']
+    assert result['attribution_complete'] is True
+    assert result['dropped_conversion_count'] == 0
+    assert '1 RedTrack rows for other offers were excluded' in result['attribution_warning']
+    assert '1 unlabeled RedTrack rows were excluded' in result['attribution_warning']
 
 
 def test_best_times_does_not_call_everflow_fallback_timing_complete():
@@ -91,3 +104,28 @@ def test_best_times_does_not_call_everflow_fallback_timing_complete():
 
     assert result['attribution_method'] == 'everflow_adset_id_redtrack_unavailable'
     assert result['attribution_complete'] is False
+
+
+def test_best_times_excludes_no_delivery_everflow_rows_without_blocking_timing():
+    result = _build_best_times(
+        {
+            'adsets': {'987654321': {'adset_name': 'HVAC', 'campaign_name': 'HVAC'}},
+            'rows': [{'adset_id': '987654321', 'date': '2026-09-15', 'hour': 8, 'spend': 100, 'leads': 5}],
+        },
+        [
+            {'offer': 'Get Business Coverage', 'sub3': '987654321', 'revenue': '100', 'conversion_date': '2026-09-15T08:00:00+00:00'},
+            {'offer': 'Get Business Coverage', 'sub3': 'stale-adset', 'revenue': '25', 'conversion_date': '2026-09-15T08:00:00+00:00'},
+        ],
+        {'Get Business Coverage'},
+        include_metadata=True,
+        account_adset_ids={'987654321', 'stale-adset'},
+        redtrack_rows=[
+            {'sub2': '987654321', 'offer': 'Commercial Insurance - Get Business Coverage - GBC - V2', 'conv_time': '2026-09-15T08:00:00+00:00', 'payout': '20'},
+        ],
+    )
+
+    assert result['attribution_complete'] is True
+    assert result['attribution_allocated'] is True
+    assert result['dropped_conversion_count'] == 0
+    assert result['excluded_conversion_count'] == 1
+    assert result['excluded_revenue'] == 25.0
