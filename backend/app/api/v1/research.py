@@ -1208,7 +1208,17 @@ def get_related_research_ads(
     if not source:
         raise HTTPException(status_code=404, detail="Ad not found")
     source_tags = set(source.creative_tags or [])
-    candidates = db.query(ScrapedAd).filter(ScrapedAd.id != source.id).all()
+    # Bounded to the most recently seen rows so this stays cheap regardless of
+    # how large scraped_ads grows — a full-table scan here (as an earlier
+    # version of this endpoint did) is the exact query pattern already
+    # flagged as a scaling risk elsewhere in this file.
+    candidates = (
+        db.query(ScrapedAd)
+        .filter(ScrapedAd.id != source.id)
+        .order_by(ScrapedAd.last_seen.desc())
+        .limit(500)
+        .all()
+    )
     scored = []
     for candidate in candidates:
         shared_tags = sorted(source_tags & set(candidate.creative_tags or []))

@@ -362,6 +362,12 @@ function ResearchDetailDrawer({ ad, onClose, onBuild }) {
     authFetch(`${API_URL}/research/scraped-ads/${ad.id}/related`).then(res => res.ok ? res.json() : []).then(items => { if (alive) setRelated(items); }).catch(() => { if (alive) setRelated([]); });
     return () => { alive = false; };
   }, [ad?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!ad) return undefined;
+    const onKeyDown = (event) => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [ad, onClose]);
   if (!ad) return null;
   const media = ad.thumbnail_url || ad.media_url;
   return <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/30 backdrop-blur-sm" onClick={onClose}>
@@ -372,7 +378,7 @@ function ResearchDetailDrawer({ ad, onClose, onBuild }) {
       {ad.headline && <h3 className="text-lg font-semibold leading-snug text-slate-900">{ad.headline}</h3>}{ad.ad_copy && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{ad.ad_copy}</p>}
       <dl className="mt-6 grid grid-cols-2 gap-3 border-t border-slate-100 pt-5 text-sm"><div><dt className="text-xs text-slate-400">Destination</dt><dd className="mt-1 truncate font-medium text-slate-700">{ad.destination_domain || 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Observed</dt><dd className="mt-1 font-medium text-slate-700">{ad.running_days != null ? `${ad.running_days} days` : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Last captured</dt><dd className="mt-1 font-medium text-slate-700">{ad.last_seen ? new Date(ad.last_seen).toLocaleDateString() : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Tag source</dt><dd className="mt-1 font-medium text-slate-700">{ad.taxonomy_source || 'Not tagged'}</dd></div></dl>
       {related.length > 0 && <section className="mt-6 border-t border-slate-100 pt-5"><h3 className="text-sm font-semibold text-slate-900">Related patterns</h3><p className="mt-1 text-xs text-slate-400">Matched on visible creative metadata, not performance.</p><div className="mt-3 space-y-2">{related.map(item => <div key={item.id} className="rounded-lg border border-slate-100 p-3"><p className="truncate text-sm font-semibold text-slate-700">{item.brand_name || 'Unknown advertiser'}</p><p className="mt-1 text-xs text-slate-500">{item.match_reasons.join(' · ')}</p></div>)}</div></section>}
-      <div className="mt-7 flex gap-2"><button type="button" onClick={() => onBuild(ad)} className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"><Zap size={15}/>Build from this pattern</button><a href={ad.ad_link} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center rounded-lg border border-slate-200 px-3 text-slate-600 hover:bg-slate-50"><ExternalLink size={16}/></a></div>
+      <div className="mt-7 flex gap-2"><button type="button" onClick={() => onBuild(ad)} className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"><Zap size={15}/>Use as Inspiration</button><a href={ad.ad_link} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center rounded-lg border border-slate-200 px-3 text-slate-600 hover:bg-slate-50"><ExternalLink size={16}/></a></div>
     </aside>
   </div>;
 }
