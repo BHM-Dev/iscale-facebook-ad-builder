@@ -517,12 +517,20 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
         </div>
         <BoardSaveButton ad={ad} boards={boards} onAdd={onAddToBoard} onCreate={onCreateBoard} />
         {/* Secondary row */}
-        <div className="flex items-center gap-2">
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => onInspect(ad)}
+            className="inline-flex w-full items-center justify-center gap-1 px-2 py-1 rounded-md border border-gray-200 text-xs font-medium text-gray-500 hover:text-indigo-600 hover:border-indigo-200 transition-colors"
+            title="Inspect the captured creative and its research context"
+          >
+            Inspect
+          </button>
           <a
             href={`https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&q=${encodeURIComponent(ad.brand_name || '')}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded-md border border-gray-200 text-xs font-medium text-gray-500 hover:text-indigo-600 hover:border-indigo-200 transition-colors"
+            className="inline-flex w-full items-center justify-center gap-1 px-2 py-1 rounded-md border border-gray-200 text-xs font-medium text-gray-500 hover:text-indigo-600 hover:border-indigo-200 transition-colors"
             title="View all ads from this advertiser"
           >
             <ExternalLink size={11} />
@@ -532,7 +540,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
             <button
               type="button"
               onClick={() => onRemoveFromBoard(ad)}
-              className="inline-flex items-center justify-center gap-1 px-2 py-1 rounded-md border border-gray-200 text-xs font-medium text-gray-500 hover:text-red-500 hover:border-red-200 transition-colors"
+              className="inline-flex w-full items-center justify-center gap-1 px-2 py-1 rounded-md border border-gray-200 text-xs font-medium text-gray-500 hover:text-red-500 hover:border-red-200 transition-colors"
             >
               <X size={11} />
               Remove
@@ -541,7 +549,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
           <button
             type="button"
             onClick={() => onBlockPage(ad)}
-            className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded-md border border-gray-200 text-xs font-medium text-gray-500 hover:text-red-500 hover:border-red-200 transition-colors"
+            className="inline-flex w-full items-center justify-center gap-1 px-2 py-1 rounded-md border border-gray-200 text-xs font-medium text-gray-500 hover:text-red-500 hover:border-red-200 transition-colors"
             title="Block this advertiser"
           >
             <Ban size={11} />
