@@ -51,6 +51,7 @@ class DriveSyncService:
         self._package_folder_cache: Dict[str, Optional[str]] = {}
         self._strategy_package_folder_cache: Dict[str, Optional[str]] = {}
         self._backfill_mode = False
+        self._copy_packages_refreshed_in_sync: set[str] = set()
 
     def sync_once(self, backfill: bool = False, defer_copy_resolution: bool = False) -> Dict[str, Any]:
         result = {
@@ -67,6 +68,7 @@ class DriveSyncService:
 
         try:
             self._validate_tables()
+            self._copy_packages_refreshed_in_sync.clear()
             # Keep a manual backfill and the scheduler from racing the same
             # Drive checkpoint or uploading the same newly-seen media twice.
             acquired = self.db.execute(
@@ -379,7 +381,13 @@ class DriveSyncService:
                 self._strategy_package_folder_cache.clear()
                 self._folder_metadata_cache.clear()
                 try:
-                    result["updated"] += self._refresh_folder_copy_metadata(file_meta)
+                    metadata_folder = self._metadata_folder_for_copy_document(file_meta)
+                    if metadata_folder and metadata_folder not in self._copy_packages_refreshed_in_sync:
+                        self._copy_packages_refreshed_in_sync.add(metadata_folder)
+                        result["updated"] += self._refresh_folder_copy_metadata(
+                            file_meta,
+                            metadata_folder=metadata_folder,
+                        )
                 except Exception as exc:
                     # The scheduled incremental sync must fail closed per package
                     # too. A malformed or duplicate AD document cannot leave the

@@ -513,8 +513,10 @@ def test_incremental_sync_marks_failed_ad_copy_package_unverified():
     service._package_folder_cache = {}
     service._strategy_package_folder_cache = {}
     service._folder_metadata_cache = {}
+    service._copy_packages_refreshed_in_sync = set()
+    service._metadata_folder_for_copy_document = lambda file_meta: "package"
     marked = []
-    service._refresh_folder_copy_metadata = lambda file_meta: (_ for _ in ()).throw(RuntimeError("duplicate AD 1"))
+    service._refresh_folder_copy_metadata = lambda file_meta, **kwargs: (_ for _ in ()).throw(RuntimeError("duplicate AD 1"))
     service._mark_package_copy_unverified = lambda file_meta, reason: marked.append((file_meta["id"], reason))
     result = {"updated": 0, "errors": 0, "skipped": 0}
 
