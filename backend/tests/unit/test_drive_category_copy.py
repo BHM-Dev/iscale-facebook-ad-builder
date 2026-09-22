@@ -1135,6 +1135,220 @@ def test_package_copy_source_prefers_canonical_ad_copy_over_newer_winner_variati
     assert result["assets_by_drive_id"]["paint-ad1-feed"]["copy"]["headline"] == "Primary headline"
 
 
+def test_non_actionable_handoff_manifest_falls_back_to_canonical_ad_copy():
+    """A draft named like a handoff manifest must not hide usable package copy."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+
+    manifest = {
+        "id": "draft-manifest",
+        "name": "HANDOFF_MANIFEST.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T10:50:00Z",
+    }
+    canonical = {
+        "id": "canonical-copy",
+        "name": "03-Electrical-Ad-Copy.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T10:42:00Z",
+    }
+    media = {
+        "id": "electrical-ad1-feed",
+        "name": "03-ELEC-AD1-Identity-1x1.jpg",
+        "mimeType": "image/jpeg",
+        "_parent_folder_path": ["03 - Electrical Contractors", "1x1 Images"],
+    }
+    documents = {
+        "draft-manifest": "Batch notes only — copy will be added later.",
+        "canonical-copy": (
+            "AD 1 — Identity\nMETA HEADLINE\nCommercial Auto for Electricians\n"
+            "PRIMARY TEXT\nElectrician primary text.\nCTA: GET QUOTE\n"
+        ),
+    }
+    service._list_folder_subtree = lambda folder_id: [manifest, canonical, media]
+    service._download_text_file = lambda file_id: documents[file_id]
+
+    result = service._folder_copy_metadata("electrical-package")
+
+    assert result["_copy_source_drive_file_id"] == "canonical-copy"
+    assert result["assets_by_drive_id"]["electrical-ad1-feed"]["copy"]["headline"] == "Commercial Auto for Electricians"
+
+
+def test_incomplete_handoff_manifest_does_not_fall_back_to_canonical_ad_copy():
+    """A real but incomplete manifest may be in progress, so launch must stay blocked."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+
+    manifest = {
+        "id": "incomplete-manifest",
+        "name": "HANDOFF_MANIFEST.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T10:50:00Z",
+    }
+    canonical = {
+        "id": "canonical-copy",
+        "name": "03-Electrical-Ad-Copy.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T10:42:00Z",
+    }
+    media = {
+        "id": "electrical-ad1-feed",
+        "name": "03-ELEC-AD1-Identity-1x1.jpg",
+        "mimeType": "image/jpeg",
+        "_parent_folder_path": ["03 - Electrical Contractors", "1x1 Images"],
+    }
+    documents = {
+        "incomplete-manifest": "AD ELEC 01\n1x1: 03-ELEC-AD1-Identity-1x1.jpg\n",
+        "canonical-copy": (
+            "AD 1 — Identity\nMETA HEADLINE\nCommercial Auto for Electricians\n"
+            "PRIMARY TEXT\nElectrician primary text.\nCTA: GET QUOTE\n"
+        ),
+    }
+    service._list_folder_subtree = lambda folder_id: [manifest, canonical, media]
+    service._download_text_file = lambda file_id: documents[file_id]
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="incomplete entries"):
+        service._folder_copy_metadata("electrical-package")
+
+
+def test_self_contained_v2_handoff_manifest_matches_inline_copy_and_media():
+    """Production V2 manifests carry their own fields rather than a copy-file link."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+
+    manifest = {
+        "id": "v2-manifest",
+        "name": "03-ELEC-V2-HANDOFF-MANIFEST.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T12:03:00Z",
+    }
+    feed = {
+        "id": "v2-feed",
+        "name": "03-ELEC-V2-AD1-Identity-1x1.jpg",
+        "mimeType": "image/jpeg",
+        "_parent_folder_path": ["03 - Electrical Contractors v2", "1x1 Images"],
+    }
+    stories = {
+        "id": "v2-stories",
+        "name": "03-ELEC-V2-AD1-Identity-9x16.jpg",
+        "mimeType": "image/jpeg",
+        "_parent_folder_path": ["03 - Electrical Contractors v2", "9x16 Images"],
+    }
+    manifest_text = """PACKAGE: Commercial Van Insurance | Electrical Contractors v2
+FINAL HANDOFF MANIFEST — LAUNCHER COPY MAP
+
+Landing Page
+https://www.getbusinesscoverage.com/commercial-auto-v2
+
+Meta Button
+Get Quote
+
+## 03-ELEC-V2-AD1
+
+PRIMARY TEXT
+Electrician primary text.
+
+HEADLINE
+Commercial Van Insurance for Electricians
+
+DESCRIPTION
+Coverage for electricians on the road.
+
+1X1 IMAGE
+03-ELEC-V2-AD1-Identity-1x1.jpg
+
+9X16 IMAGE
+03-ELEC-V2-AD1-Identity-9x16.jpg
+"""
+    service._list_folder_subtree = lambda folder_id: [manifest, feed, stories]
+    service._download_text_file = lambda file_id: manifest_text
+
+    result = service._folder_copy_metadata("electrical-v2-package")
+
+    assert result["_copy_source_drive_file_id"] == "v2-manifest"
+    assert result["assets_by_drive_id"]["v2-feed"]["copy"]["headline"] == "Commercial Van Insurance for Electricians"
+    assert result["assets_by_drive_id"]["v2-feed"]["copy"]["primary_text"] == "Electrician primary text."
+    assert result["assets_by_drive_id"]["v2-stories"]["aspect"] == "9x16"
+
+
+def test_self_contained_v2_manifest_rejects_ambiguous_or_cross_ad_media():
+    """Inline maps are fail-closed when a declared filename is ambiguous or miswired."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+    manifest = {
+        "id": "v2-manifest",
+        "name": "03-ELEC-V2-HANDOFF-MANIFEST.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T12:03:00Z",
+    }
+    feed = {
+        "id": "v2-feed-a",
+        "name": "03-ELEC-V2-AD1-Identity-1x1.jpg",
+        "mimeType": "image/jpeg",
+    }
+    duplicate_feed = {**feed, "id": "v2-feed-b"}
+    stories = {
+        "id": "v2-stories",
+        "name": "03-ELEC-V2-AD1-Identity-9x16.jpg",
+        "mimeType": "image/jpeg",
+    }
+    manifest_text = """## 03-ELEC-V2-AD1
+PRIMARY TEXT
+Electrician primary text.
+HEADLINE
+Commercial Van Insurance for Electricians
+1X1 IMAGE
+03-ELEC-V2-AD1-Identity-1x1.jpg
+9X16 IMAGE
+03-ELEC-V2-AD1-Identity-9x16.jpg
+"""
+    service._list_folder_subtree = lambda folder_id: [manifest, feed, duplicate_feed, stories]
+    service._download_text_file = lambda file_id: manifest_text
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="ambiguous media"):
+        service._folder_copy_metadata("electrical-v2-package")
+
+
+def test_self_contained_v2_manifest_rejects_wrong_aspect_and_draft_sections():
+    """A V2 map cannot silently swap placements or ignore a trailing draft section."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+    manifest = {"id": "v2-manifest", "name": "04-LAND-V2-HANDOFF-MANIFEST.txt", "mimeType": "text/plain"}
+    feed = {"id": "feed", "name": "04-LAND-V2-AD1-Identity-1x1.jpg", "mimeType": "image/jpeg"}
+    stories = {"id": "stories", "name": "04-LAND-V2-AD1-Identity-9x16.jpg", "mimeType": "image/jpeg"}
+    manifest_text = """## 04-LAND-V2-AD1
+PRIMARY TEXT
+Landscaper primary text.
+HEADLINE
+Commercial Van Insurance for Landscapers
+1X1 IMAGE
+04-LAND-V2-AD1-Identity-9x16.jpg
+9X16 IMAGE
+04-LAND-V2-AD1-Identity-1x1.jpg
+
+## 04-LAND-V2-AD2 — Draft
+"""
+    service._list_folder_subtree = lambda folder_id: [manifest, feed, stories]
+    service._download_text_file = lambda file_id: manifest_text
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="wrong media aspect"):
+        service._folder_copy_metadata("landscaping-v2-package")
+
+    service._folder_metadata_cache = {}
+    service._download_text_file = lambda file_id: manifest_text.replace(
+        "04-LAND-V2-AD1-Identity-9x16.jpg\n9X16 IMAGE\n04-LAND-V2-AD1-Identity-1x1.jpg",
+        "04-LAND-V2-AD1-Identity-1x1.jpg\n9X16 IMAGE\n04-LAND-V2-AD1-Identity-9x16.jpg",
+    )
+    with pytest.raises(RuntimeError, match="inline AD 2 is missing its 1X1 image"):
+        service._folder_copy_metadata("landscaping-v2-package")
+
+
 def test_package_copy_source_priority_ignores_marker_words_embedded_in_other_tokens():
     """A canonical file's own version suffix or persona note (e.g. "_Variation2",
     "_ICPersonas") must not be mistaken for a real winner-variation or ICP/reference

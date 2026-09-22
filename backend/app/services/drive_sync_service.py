@@ -39,6 +39,10 @@ class ResolvedDrivePath:
     folder_path: str
 
 
+class NonActionableHandoffManifestError(RuntimeError):
+    """A manifest-shaped planning file has no entries and is not a copy source."""
+
+
 class DriveSyncService:
     """Incrementally sync Google Drive creative files into the existing R2 bucket."""
 
@@ -1483,6 +1487,7 @@ class DriveSyncService:
             (item for item in text_files if "handoff" in item.get("name", "").lower() and "manifest" in item.get("name", "").lower()),
             None,
         )
+        recoverable_manifest_error = None
         if manifest:
             try:
                 manifest_text = self._download_text_file(manifest["id"])
@@ -1491,16 +1496,92 @@ class DriveSyncService:
                 # would make the caller clear otherwise-valid matched tags.
                 raise RuntimeError(f"Could not read Drive handoff manifest {manifest.get('name')}") from exc
 
-            metadata = self._handoff_folder_copy_metadata(folder_id, folder_files, text_files, media_by_name, manifest_text)
-            metadata["_copy_source_drive_file_id"] = manifest.get("id")
-            metadata["_copy_source_drive_modified_time"] = manifest.get("modifiedTime")
-            metadata["_copy_source_drive_file_name"] = manifest.get("name")
-            self._folder_metadata_cache[folder_id] = metadata
-            return metadata
+            try:
+                metadata = self._handoff_folder_copy_metadata(
+                    folder_id, folder_files, text_files, media_by_name, manifest_text
+                )
+            except NonActionableHandoffManifestError as exc:
+                # A self-contained handoff map can use inline PRIMARY TEXT /
+                # HEADLINE / IMAGE fields rather than a separate copy-file
+                # reference. Parse that real format before treating a no-entry
+                # manifest as a harmless planning draft.
+                inline_blocks = list(re.finditer(
+                    r"^[ \t]*##[ \t]+\d{2}-[A-Z]{2,6}-V\d+-AD(\d+)\b[^\r\n]*$",
+                    manifest_text,
+                    re.IGNORECASE | re.MULTILINE,
+                ))
+                declared_media = []
+                declared_media_ids = set()
+                expected_numbers = set()
+                media_by_name = {}
+                for item in folder_files:
+                    if not self._is_supported_media(item.get("mimeType") or "", item.get("name") or ""):
+                        continue
+                    media_by_name.setdefault((item.get("name") or "").lower(), []).append(item)
+                for index, heading in enumerate(inline_blocks):
+                    expected_numbers.add(int(heading.group(1)))
+                    block = manifest_text[heading.end():inline_blocks[index + 1].start() if index + 1 < len(inline_blocks) else len(manifest_text)]
+                    declared_names = []
+                    for aspect in ("1X1", "9X16"):
+                        image = re.search(rf"^[ \t]*{aspect}[ \t]+IMAGE[ \t]*\r?\n[ \t]*([^\r\n]+)", block, re.IGNORECASE | re.MULTILINE)
+                        if not image:
+                            raise RuntimeError(f"Drive handoff manifest inline AD {heading.group(1)} is missing its {aspect} image") from exc
+                        declared_names.append((aspect, image.group(1).strip()))
+                    for aspect, name in declared_names:
+                        matching_media = media_by_name.get(name.lower(), [])
+                        if not matching_media:
+                            raise RuntimeError(f"Drive handoff manifest references missing media {name}") from exc
+                        if len(matching_media) != 1:
+                            raise RuntimeError(f"Drive handoff manifest references ambiguous media {name}") from exc
+                        media = matching_media[0]
+                        if self._ad_number_from_file_name(media.get("name") or "") != int(heading.group(1)):
+                            raise RuntimeError(f"Drive handoff manifest inline AD {heading.group(1)} references media from another ad") from exc
+                        if self._media_aspect(media) != aspect.lower():
+                            raise RuntimeError(f"Drive handoff manifest inline AD {heading.group(1)} declares {aspect} with the wrong media aspect") from exc
+                        if media.get("id") in declared_media_ids:
+                            raise RuntimeError(f"Drive handoff manifest declares media more than once: {name}") from exc
+                        declared_media_ids.add(media.get("id"))
+                        declared_media.append(media)
+                if len(expected_numbers) != len(inline_blocks):
+                    raise RuntimeError("Drive handoff manifest declares the same inline AD more than once") from exc
+                inline_sections = self._parse_ad_copy_doc(manifest_text)
+                if inline_blocks and set(inline_sections) != expected_numbers:
+                    raise RuntimeError("Drive handoff manifest has incomplete inline copy sections") from exc
+                inline_metadata = self._ad_numbered_folder_copy_metadata(folder_id, declared_media, manifest_text)
+                if inline_metadata.get("assets") or inline_metadata.get("assets_by_drive_id"):
+                    inline_metadata["_copy_source_drive_file_id"] = manifest.get("id")
+                    inline_metadata["_copy_source_drive_modified_time"] = manifest.get("modifiedTime")
+                    inline_metadata["_copy_source_drive_file_name"] = manifest.get("name")
+                    self._folder_metadata_cache[folder_id] = inline_metadata
+                    return inline_metadata
+
+                # Only a manifest with no recognized inline copy structure is
+                # safe to treat as planning material and fall back from. A
+                # malformed live map must stay blocked, not silently use older
+                # canonical copy.
+                if re.search(r"^\s*(?:PRIMARY\s+TEXT|HEADLINE|DESCRIPTION|1X1\s+IMAGE|9X16\s+IMAGE)\b", manifest_text, re.IGNORECASE | re.MULTILINE):
+                    raise RuntimeError(
+                        "Drive handoff manifest has inline copy fields but no complete matching entries"
+                    ) from exc
+                recoverable_manifest_error = exc
+                logger.warning(
+                    "Ignoring non-actionable Drive handoff manifest %s in package %s: %s",
+                    manifest.get("name"), folder_id, exc,
+                )
+            else:
+                metadata["_copy_source_drive_file_id"] = manifest.get("id")
+                metadata["_copy_source_drive_modified_time"] = manifest.get("modifiedTime")
+                metadata["_copy_source_drive_file_name"] = manifest.get("name")
+                self._folder_metadata_cache[folder_id] = metadata
+                return metadata
 
         copy_candidates = []
         unreadable_text_files = []
         for item in text_files:
+            if manifest and item.get("id") == manifest.get("id"):
+                # Once a no-entry planning manifest has been rejected, it is
+                # never eligible to be reclassified as a canonical copy file.
+                continue
             try:
                 candidate_text = self._download_text_file(item["id"])
             except Exception:
@@ -1545,6 +1626,9 @@ class DriveSyncService:
             metadata["_copy_source_drive_file_name"] = strategy_file.get("name")
             self._folder_metadata_cache[folder_id] = metadata
             return metadata
+
+        if recoverable_manifest_error:
+            raise recoverable_manifest_error
 
         if unreadable_text_files:
             # We cannot distinguish a harmless unreadable note from the only
@@ -1602,7 +1686,9 @@ class DriveSyncService:
         manifest_data = self._parse_handoff_manifest(manifest_text)
         entries = manifest_data.get("entries") or {}
         if not entries:
-            raise RuntimeError("Drive handoff manifest contained no copy entries")
+            raise NonActionableHandoffManifestError(
+                "Drive handoff manifest contained no copy entries"
+            )
         incomplete_entries = [
             copy_id for copy_id, entry in entries.items()
             if not entry.get("1x1") or not entry.get("9x16") or not entry.get("copy_file")
@@ -1877,14 +1963,20 @@ class DriveSyncService:
         # incremental path use the same tolerant parser.
         text_body = re.sub(r"[\ufeff\u200b\u200c\u200d]", "", text_body or "")
         text_body = text_body.replace("\u00a0", " ")
-        headings = list(re.finditer(r"^\s*AD\s+(\d+)\b.*$", text_body, re.IGNORECASE | re.MULTILINE))
+        headings = list(re.finditer(
+            r"^[ \t]*(?![^\n]*\.(?:txt|png|jpe?g|webp|gif|mp4)\s*$)(?:#{1,6}[ \t]*)?(?:[A-Z0-9]+[-_ \t]+)*AD[-_ \t]?(\d+)\b.*$",
+            text_body,
+            re.IGNORECASE | re.MULTILINE,
+        ))
         sections: Dict[int, Dict[str, Any]] = {}
         seen_numbers = set()
         # Joel's current docs use both a standalone ``Lander:`` line and a
         # compact title-line form (``... | Lander: example.com/path``).  The
         # latter is equally authoritative; retaining the anchor quietly drops
         # the destination URL during import.
-        landing_match = re.search(r"\bLander\s*:\s*(\S+)", text_body, re.IGNORECASE)
+        landing_match = re.search(r"\b(?:Lander|Landing\s+(?:Page|URL))\s*:?\s*(\S+)", text_body, re.IGNORECASE) or re.search(
+            r"^\s*Landing\s+(?:Page|URL)\s*\r?\n\s*(\S+)", text_body, re.IGNORECASE | re.MULTILINE
+        )
         landing_page = landing_match.group(1).strip() if landing_match else None
 
         for index, heading in enumerate(headings):
@@ -1904,11 +1996,19 @@ class DriveSyncService:
                 r"^\s*Headline\s*:\s*(.+?)\s*$",
                 block,
                 re.IGNORECASE | re.MULTILINE,
+            ) or re.search(
+                r"^\s*Headline\s*\r?\n\s*(.+?)\s*$",
+                block,
+                re.IGNORECASE | re.MULTILINE,
             )
             headline = self._clean_markdown_value(headline_match.group(1)) if headline_match else ""
 
             description_match = re.search(
                 r"^\s*Description\s*:\s*(.+?)\s*$",
+                block,
+                re.IGNORECASE | re.MULTILINE,
+            ) or re.search(
+                r"^\s*Description\s*\r?\n\s*(.+?)\s*$",
                 block,
                 re.IGNORECASE | re.MULTILINE,
             )
@@ -1917,13 +2017,20 @@ class DriveSyncService:
             primary_label = re.search(r"^\s*PRIMARY\s+TEXT\s*:?\s*$", block, re.IGNORECASE | re.MULTILINE)
             if primary_label:
                 primary_body = block[primary_label.end():]
-                primary_body = re.split(r"^\s*(?:CTA|IMAGE)\s*:", primary_body, maxsplit=1, flags=re.IGNORECASE | re.MULTILINE)[0]
+                primary_body = re.split(
+                    r"^\s*(?:CTA|HEADLINE|DESCRIPTION|(?:1X1|9X16)\s+IMAGE|IMAGE)\s*:?.*$",
+                    primary_body,
+                    maxsplit=1,
+                    flags=re.IGNORECASE | re.MULTILINE,
+                )[0]
             else:
                 dividers = list(re.finditer(r"^\s*={10,}\s*$", block, re.MULTILINE))
                 primary_body = block[dividers[0].end():dividers[1].start() if len(dividers) > 1 else len(block)] if dividers else ""
             primary_text = self._clean_markdown_value(primary_body)
 
             cta_match = re.search(r"^\s*CTA\s*:\s*(.+?)\s*$", block, re.IGNORECASE | re.MULTILINE)
+            if not cta_match:
+                cta_match = re.search(r"^\s*Meta\s+Button\s*\r?\n\s*(.+?)\s*$", text_body, re.IGNORECASE | re.MULTILINE)
             sections[number] = {
                 "headline": headline,
                 "primary_text": primary_text,
