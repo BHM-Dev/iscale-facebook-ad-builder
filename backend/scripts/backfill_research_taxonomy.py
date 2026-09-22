@@ -10,6 +10,16 @@ from app.api.v1.research import _infer_creative_taxonomy
 BATCH_SIZE = 250
 
 
+def taxonomy_update(ad):
+    """Return the safe deterministic update for one legacy ad, or None."""
+    if ad.taxonomy_source is not None:
+        return None
+    tags, cta_type = _infer_creative_taxonomy(ad.headline, ad.ad_copy, ad.cta_text)
+    if not tags and cta_type in (None, "unknown"):
+        return None
+    return {"creative_tags": tags, "cta_type": cta_type, "taxonomy_source": "rules_v1", "taxonomy_confidence": "low"}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true", help="persist eligible labels")
@@ -36,15 +46,13 @@ def main() -> None:
                 break
             last_id = batch[-1].id
             for ad in batch:
-                tags, cta_type = _infer_creative_taxonomy(ad.headline, ad.ad_copy, ad.cta_text)
-                if not tags and cta_type in (None, "unknown"):
+                update = taxonomy_update(ad)
+                if not update:
                     continue
                 changed += 1
                 if args.apply:
-                    ad.creative_tags = tags
-                    ad.cta_type = cta_type
-                    ad.taxonomy_source = "rules_v1"
-                    ad.taxonomy_confidence = "low"
+                    for field, value in update.items():
+                        setattr(ad, field, value)
             if args.apply:
                 db.commit()
             db.expunge_all()

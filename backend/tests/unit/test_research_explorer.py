@@ -1,6 +1,11 @@
 from types import SimpleNamespace
+from pathlib import Path
+import sys
 
 from app.api.v1.research import _infer_creative_taxonomy, _matches_research_vertical
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from backfill_research_taxonomy import taxonomy_update
 
 
 def test_taxonomy_rules_are_conservative_and_preserve_source_tags():
@@ -24,3 +29,12 @@ def test_commercial_catalog_does_not_show_obvious_broad_query_noise():
     noise = SimpleNamespace(brand_name="Example", headline="", ad_copy="Restaurant equipment now hiring", cta_text="")
     assert _matches_research_vertical(relevant, "commercial_insurance") is True
     assert _matches_research_vertical(noise, "commercial_insurance") is False
+
+
+def test_backfill_only_updates_untagged_rows_with_real_signal():
+    legacy = SimpleNamespace(taxonomy_source=None, headline="Stop overpaying", ad_copy="", cta_text="Get Quote")
+    existing = SimpleNamespace(taxonomy_source="capture", headline="Stop overpaying", ad_copy="", cta_text="Get Quote")
+    unknown = SimpleNamespace(taxonomy_source=None, headline="", ad_copy="", cta_text="Call now")
+    assert taxonomy_update(legacy)["taxonomy_source"] == "rules_v1"
+    assert taxonomy_update(existing) is None
+    assert taxonomy_update(unknown) is None
