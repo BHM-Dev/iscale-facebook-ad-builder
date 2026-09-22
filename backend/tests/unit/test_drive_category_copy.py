@@ -16,12 +16,12 @@ def test_copy_health_names_current_package_gaps_and_excludes_known_legacy_librar
         {
             "drive_file_id": "legacy", "file_name": "legacy.png",
             "folder_path": "Commercial Insurance - Legacy Images / Master",
-            "soft_tags": '{}',
+            "soft_tags": '{"copy_health_exclusion":"legacy_image_library"}',
         },
         {
             "drive_file_id": "original", "file_name": "florist-original.png",
             "folder_path": "Commercial Insurance / Florist / Original User Supplied Images",
-            "soft_tags": '{}',
+            "soft_tags": '{"copy_health_exclusion":"original_user_supplied_images"}',
         },
     ])
 
@@ -35,6 +35,33 @@ def test_copy_health_names_current_package_gaps_and_excludes_known_legacy_librar
     assert {item["reason"] for item in health["exclusions"]} == {
         "legacy image library", "original/source image library",
     }
+
+
+def test_copy_health_does_not_exclude_any_former_path_without_explicit_metadata():
+    for path in (
+        "Commercial Insurance Master - Abel / Old Package",
+        "Commercial Insurance - LEGACY IMAGES / Old Package",
+        "Commercial Insurance / Florist / Original User Supplied Images",
+    ):
+        health = DriveSyncService._build_copy_health_summary([
+            {"drive_file_id": path, "file_name": "old.png", "folder_path": path, "soft_tags": '{}'},
+        ])
+        assert health["excluded_assets"] == 0
+        assert health["exception_assets"] == 1
+
+
+def test_copy_health_hides_historical_path_from_exclusion_display():
+    health = DriveSyncService._build_copy_health_summary([
+        {
+            "drive_file_id": "historical", "file_name": "old.png",
+            "folder_path": "Commercial Insurance Master - Abel / Old Package",
+            "soft_tags": '{"copy_health_exclusion":"historical_legacy_import"}',
+        },
+    ])
+
+    assert health["exclusions"][0]["package"] == "Historical imported media (no active Drive folder)"
+    assert health["exclusions"][0]["sample_drive_file_ids"] == ["historical"]
+    assert health["exclusions"][0]["historical_paths"] == ["Commercial Insurance Master - Abel / Old Package"]
 
 
 def test_copy_health_separates_manual_copy_assets_from_broken_drive_copy():

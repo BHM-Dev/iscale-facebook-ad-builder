@@ -66,26 +66,22 @@ class DriveSyncService:
         image, an old source that disappeared, and an ambiguous pairing all
         surface as named exceptions in the same place.
         """
-        exclusions = (
-            ("commercial insurance - legacy images", "legacy image library"),
-            ("commercial insurance master - abel", "legacy master library"),
-            ("original user supplied images", "original/source image library"),
-        )
+        # Exclusions are deliberately explicit database metadata, never a
+        # folder-name heuristic. Drive folders can be renamed or removed while
+        # imported rows retain their old path; treating that historical string
+        # as current truth was what produced the phantom "Master - Abel"
+        # folder in the health report.
+        exclusion_reasons = {
+            "legacy_image_library": "legacy image library",
+            "historical_legacy_import": "historical legacy import (no active Drive folder)",
+            "original_user_supplied_images": "original/source image library",
+        }
         packages: Dict[str, Dict[str, Any]] = {}
         manual_copy_packages: Dict[str, Dict[str, Any]] = {}
         excluded: Dict[str, Dict[str, Any]] = {}
 
         for row in rows:
             folder_path = row.get("folder_path") or "Unfiled Drive assets"
-            path_key = folder_path.lower()
-            exclusion_reason = next((reason for token, reason in exclusions if token in path_key), None)
-            if exclusion_reason:
-                item = excluded.setdefault(folder_path, {
-                    "package": folder_path, "reason": exclusion_reason, "asset_count": 0,
-                })
-                item["asset_count"] += 1
-                continue
-
             raw_tags = row.get("soft_tags")
             invalid_tag_shape = False
             try:
@@ -99,6 +95,26 @@ class DriveSyncService:
             if not isinstance(tags, dict):
                 tags = {}
                 invalid_tag_shape = True
+            exclusion_reason = exclusion_reasons.get(tags.get("copy_health_exclusion"))
+            if exclusion_reason:
+                # Historical imports are not a current Drive package. Showing
+                # their stale pre-migration path sent users looking for a
+                # folder that no longer exists.
+                display_package = (
+                    "Historical imported media (no active Drive folder)"
+                    if tags.get("copy_health_exclusion") == "historical_legacy_import"
+                    else folder_path
+                )
+                item = excluded.setdefault(display_package, {
+                    "package": display_package, "reason": exclusion_reason, "asset_count": 0,
+                    "sample_drive_file_ids": [], "historical_paths": [],
+                })
+                item["asset_count"] += 1
+                if row.get("drive_file_id") and len(item["sample_drive_file_ids"]) < 10:
+                    item["sample_drive_file_ids"].append(row["drive_file_id"])
+                if tags.get("copy_health_exclusion") == "historical_legacy_import" and len(item["historical_paths"]) < 10:
+                    item["historical_paths"].append(folder_path)
+                continue
             copy = tags.get("copy") or {}
             if not isinstance(copy, dict):
                 copy = {}
