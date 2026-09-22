@@ -547,7 +547,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
         </div>
         <BoardSaveButton ad={ad} boards={boards} onAdd={onAddToBoard} onCreate={onCreateBoard} />
         {/* Secondary row */}
-        <div className="grid grid-cols-2 gap-2">
+        <div className={`grid gap-2 ${onRemoveFromBoard ? 'grid-cols-2' : 'grid-cols-3'}`}>
           <button
             type="button"
             onClick={() => onInspect(ad)}
