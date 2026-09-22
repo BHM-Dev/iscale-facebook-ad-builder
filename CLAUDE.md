@@ -21,6 +21,8 @@ This repo is worked on by both **Claude Code** and **OpenAI Codex**. Use the rig
 
 **Codex limitations:** No MCP servers (can't DM Golden, can't read Slack/Loom, can't control browser). For anything requiring those, switch to Claude Code.
 
+**Communication hard stop:** Do not send any message to `#media-buys` (`C08G7PJJ6NB`) unless Steven explicitly replaces this rule in a future request.
+
 ---
 
 ## Codex Quick Reference

@@ -38,6 +38,7 @@ Facebook ad builder used daily by Joel Welch (media buyer). Connects to Meta Ads
 ## Communication Permission
 
 - **Never send Slack messages, DMs, channel posts, deployment updates, review updates, or other team notifications without Steven's explicit approval first.** Approval must identify the exact recipient/channel and message purpose; when in doubt, do not send.
+- **Do not send any message to `#media-buys` (`C08G7PJJ6NB`).** This is an absolute project rule and remains in force unless Steven explicitly replaces it in a future request.
 - This rule overrides routine deployment/review communication defaults elsewhere in this file. Prepare the proposed message in chat and wait for approval instead.
 
 ## Continuation Rule
