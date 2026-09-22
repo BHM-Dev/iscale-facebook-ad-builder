@@ -32,7 +32,7 @@ from app.core.deps import get_db, get_current_user
 from app.models import AutoPauseRule, AutoPauseRuleLog, FacebookAdSet, normalize_account_id
 from app.services.facebook_service import FacebookService
 from app.services.slack_service import send_check_summary, send_rule_action_alert
-from app.api.v1.facebook import _assert_adset_allowed, _assert_account_allowed, _resolve_scoped_default_account
+from app.api.v1.facebook import _assert_adset_allowed, _assert_account_allowed, _assert_campaign_allowed, _resolve_scoped_default_account
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -688,6 +688,65 @@ def get_insights_bulk(
 
     _write_insights_bulk_cache(cache_key, result, request_started_at)
     return result
+
+
+@router.get('/state-performance')
+def get_state_performance(
+    campaign_id: str = Query(..., min_length=1),
+    ad_account_id: Optional[str] = Query(None),
+    date_preset: str = Query('last_7d'),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Read-only Meta state breakdown for one campaign and date window.
+
+    Revenue is intentionally absent: the app's attribution sources are not
+    state-granular, so this endpoint must not suggest state-level ROAS/profit.
+    """
+    ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
+    _assert_account_allowed(current_user, ad_account_id)
+    _assert_campaign_allowed(current_user, campaign_id, db)
+    if bool(date_from) != bool(date_to):
+        raise HTTPException(400, 'Provide both date_from and date_to for a custom range.')
+    try:
+        states = FacebookService().get_campaign_state_insights(
+            campaign_id=campaign_id,
+            ad_account_id=ad_account_id,
+            date_preset=date_preset,
+            date_from=date_from,
+            date_to=date_to,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    total_spend = sum(row['spend'] for row in states)
+    total_leads = sum(row['leads'] for row in states)
+    blended_cpl = round(total_spend / total_leads, 2) if total_leads else None
+    # A flag is evidence, never an automatic state exclusion. Require meaningful
+    # spend and a 50% CPL gap so one low-volume lead cannot look like a verdict.
+    for row in states:
+        row['spend_share'] = round(row['spend'] / total_spend, 4) if total_spend else 0
+        row['is_dragging'] = bool(
+            blended_cpl is not None
+            and row['spend'] >= 50
+            and row['leads'] >= 2
+            and row['cpl'] is not None
+            and row['cpl'] >= blended_cpl * 1.5
+        )
+    return {
+        'campaign_id': campaign_id,
+        'date_preset': date_preset,
+        'date_from': date_from,
+        'date_to': date_to,
+        'source': 'Meta Insights delivery breakdown',
+        'revenue_available': False,
+        'blended_cpl': blended_cpl,
+        'total_spend': round(total_spend, 2),
+        'total_leads': total_leads,
+        'states': states,
+    }
 
 
 @router.get("/ads-bulk")

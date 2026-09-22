@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2, Sparkles, Tag, ChevronLeft, BarChart2, ShieldAlert, DollarSign, Check, Search, Rocket } from 'lucide-react';
+import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2, Sparkles, Tag, ChevronLeft, BarChart2, ShieldAlert, DollarSign, Check, Search, Rocket, MapPin } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
@@ -1265,6 +1265,80 @@ function RemixDrawer({ creative, brands, onClose, onLaunchWizard }) {
   );
 }
 
+// ── State delivery diagnostic ──────────────────────────────────────────────────
+// Meta can report delivery by state, but our RedTrack/Everflow joins are not
+// state-granular. Keep this visually and semantically separate from ROAS/profit.
+function StatePerformancePanel({ campaignId, campaignName, adAccountId, datePreset, dateFrom, dateTo, timedFetch, buildDateParams }) {
+  const [open, setOpen] = useState(false);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const requestRef = useRef(0);
+
+  const load = useCallback(async () => {
+    if (!campaignId) return;
+    const requestId = ++requestRef.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const params = buildDateParams(datePreset, dateFrom, dateTo);
+      params.set('campaign_id', campaignId);
+      if (adAccountId) params.set('ad_account_id', adAccountId);
+      const res = await timedFetch(`${API_BASE}/auto-pause/state-performance?${params}`, {}, 25000);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `Unable to load state performance (${res.status})`);
+      }
+      const result = await res.json();
+      if (requestId === requestRef.current) setData(result);
+    } catch (err) {
+      if (requestId === requestRef.current) setError(err.name === 'AbortError' ? 'Request timed out — Meta is slow. Try again.' : err.message);
+    } finally {
+      if (requestId === requestRef.current) setLoading(false);
+    }
+  }, [adAccountId, buildDateParams, campaignId, dateFrom, datePreset, dateTo, timedFetch]);
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && !data && !loading) load();
+  };
+
+  return (
+    <div className="relative border-l border-slate-200 pl-3 text-right" onClick={e => e.stopPropagation()}>
+      <button type="button" onClick={toggle} disabled={!campaignId} className="ml-auto flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition-colors hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40" title={campaignId ? 'Inspect Meta delivery by state' : 'Campaign ID unavailable — sync this account first'}>
+        <MapPin size={12} /> States
+      </button>
+      {open && (
+        <div className="absolute right-6 mt-2 z-50 w-[min(700px,calc(100vw-3rem))] rounded-xl border border-gray-200 bg-white p-4 text-left shadow-xl" role="dialog" aria-label={`State performance for ${campaignName}`}>
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900">State performance</h3>
+              <p className="mt-0.5 text-xs text-gray-500">{campaignName} · Meta delivery only. Revenue and ROAS are not available by state.</p>
+            </div>
+            <button type="button" onClick={load} disabled={loading} className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 disabled:opacity-50">{loading ? 'Loading…' : 'Refresh'}</button>
+          </div>
+          {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>}
+          {loading && !data && <div className="py-8 text-center text-sm text-gray-400"><RefreshCw size={14} className="mr-1 inline animate-spin" />Loading state delivery…</div>}
+          {data && (
+            <>
+              <div className="mb-3 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-xs text-indigo-900">
+                Blended CPL: <strong>{data.blended_cpl != null ? formatMoney(data.blended_cpl) : '—'}</strong> · {formatMoney(data.total_spend)} spend · {data.total_leads.toLocaleString()} leads. A state is flagged only at $50+ spend, 2+ leads, and ≥1.5× the campaign CPL.
+              </div>
+              {data.states?.length ? <div className="max-h-80 overflow-y-auto rounded-lg border border-gray-100">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-gray-50 text-gray-500"><tr><th className="px-3 py-2 text-left font-medium">State</th><th className="px-3 py-2 text-right font-medium">Spend</th><th className="px-3 py-2 text-right font-medium">Leads</th><th className="px-3 py-2 text-right font-medium">CPL</th><th className="px-3 py-2 text-right font-medium">CTR</th><th className="px-3 py-2 text-right font-medium">Signal</th></tr></thead>
+                  <tbody>{data.states.map(row => <tr key={row.state} className={row.is_dragging ? 'bg-red-50' : 'border-t border-gray-100'}><td className="px-3 py-2 font-medium text-gray-800">{row.state}</td><td className="px-3 py-2 text-right">{formatMoney(row.spend)}</td><td className="px-3 py-2 text-right">{row.leads}</td><td className={`px-3 py-2 text-right font-semibold ${row.is_dragging ? 'text-red-700' : 'text-gray-800'}`}>{formatMoney(row.cpl)}</td><td className="px-3 py-2 text-right">{row.ctr != null ? `${Number(row.ctr).toFixed(2)}%` : '—'}</td><td className="px-3 py-2 text-right">{row.is_dragging ? <span className="rounded-full bg-red-100 px-2 py-0.5 font-semibold text-red-700">Review targeting</span> : <span className="text-gray-400">—</span>}</td></tr>)}</tbody>
+                </table>
+              </div> : <p className="py-5 text-center text-sm text-gray-400">No state-level delivery returned for this period.</p>}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function CampaignPerformance() {
   const navigate = useNavigate();
@@ -2395,7 +2469,7 @@ export default function CampaignPerformance() {
                 <div key={group.key} className="border-b border-gray-100 last:border-b-0">
                   <div
                     onClick={() => toggleCampaign(group.key)}
-                    className="w-full grid grid-cols-[minmax(360px,1fr)_96px_84px_96px_96px_124px] px-6 py-3 bg-slate-100/80 hover:bg-slate-100 transition-colors text-left border-b border-slate-200 border-l-4 border-l-slate-500"
+                    className="w-full grid grid-cols-[minmax(300px,1fr)_96px_84px_96px_96px_86px_124px] px-6 py-3 bg-slate-100/80 hover:bg-slate-100 transition-colors text-left border-b border-slate-200 border-l-4 border-l-slate-500"
                     role="button"
                     tabIndex={0}
                     onKeyDown={e => {
@@ -2434,6 +2508,17 @@ export default function CampaignPerformance() {
                         <span className="text-sm font-semibold text-gray-800">{value}</span>
                       </div>
                     ))}
+
+                    <StatePerformancePanel
+                      campaignId={group.fbCampaignId}
+                      campaignName={group.campaignName}
+                      adAccountId={adAccountId}
+                      datePreset={datePreset}
+                      dateFrom={datePreset === 'custom' ? dateFrom : null}
+                      dateTo={datePreset === 'custom' ? dateTo : null}
+                      timedFetch={timedFetch}
+                      buildDateParams={buildDateParams}
+                    />
 
                     <div className="border-l border-slate-200 pl-3 text-right" onClick={e => e.stopPropagation()}>
                       {group.fbCampaignId && (

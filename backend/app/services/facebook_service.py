@@ -1900,6 +1900,75 @@ class FacebookService:
             })
         return sorted(daily, key=lambda item: item['date'])
 
+    def get_campaign_state_insights(
+        self,
+        campaign_id: str,
+        ad_account_id: str = None,
+        date_preset: str = 'last_7d',
+        date_from: str = None,
+        date_to: str = None,
+    ) -> list[dict]:
+        """Return Meta delivery results by US state for one campaign.
+
+        This is deliberately a delivery diagnostic, not a profitability report:
+        RedTrack/Everflow do not currently attribute revenue at state grain.
+        Calling account insights once with a campaign filter avoids N ad-set calls
+        while preserving the active account scope used by Campaign Performance.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        account = self._get_account(ad_account_id)
+        fields = ['campaign_id', 'campaign_name', 'region', 'spend', 'impressions', 'reach', 'clicks', 'ctr', 'actions', 'cost_per_action_type']
+        params = {
+            'level': 'campaign',
+            'breakdowns': ['region'],
+            'filtering': [{'field': 'campaign.id', 'operator': 'IN', 'value': [str(campaign_id)]}],
+        }
+        if date_from and date_to:
+            params['time_range'] = {'since': date_from, 'until': date_to}
+        else:
+            params['date_preset'] = date_preset
+
+        try:
+            results = account.get_insights(fields, params)
+        except FacebookRequestError as e:
+            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
+            error = body.get('error', {}) if isinstance(body, dict) else {}
+            message = error.get('message') or str(e)
+            logger.error('Meta state insights error: %s', message)
+            raise RuntimeError(f'Facebook API: {message}') from e
+
+        lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
+        states = []
+        for row in results:
+            region = str(row.get('region') or '').strip()
+            if not region:
+                continue
+            spend = float(row.get('spend', 0) or 0)
+            leads = sum(
+                int(float(action.get('value', 0) or 0))
+                for action in (row.get('actions') or [])
+                if action.get('action_type') in lead_types
+            )
+            cpl = next((
+                float(item.get('value', 0) or 0)
+                for item in (row.get('cost_per_action_type') or [])
+                if item.get('action_type') in lead_types
+            ), None)
+            if cpl is None and leads and spend:
+                cpl = spend / leads
+            states.append({
+                'state': region,
+                'spend': round(spend, 2),
+                'leads': leads,
+                'cpl': round(cpl, 2) if cpl is not None else None,
+                'impressions': int(row.get('impressions', 0) or 0),
+                'reach': int(row.get('reach', 0) or 0),
+                'clicks': int(row.get('clicks', 0) or 0),
+                'ctr': round(float(row.get('ctr', 0) or 0), 4) if row.get('ctr') is not None else None,
+            })
+        return sorted(states, key=lambda item: item['spend'], reverse=True)
+
     def get_account_ad_status_bulk(self, ad_account_id: str = None) -> dict:
         """Return live child-ad delivery counts keyed by Meta ad set ID."""
         import logging

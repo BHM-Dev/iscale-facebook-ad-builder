@@ -362,3 +362,38 @@ class TestCreateCreativeDualPlacement:
         oss = params[AdCreative.Field.object_story_spec]
         assert oss["instagram_user_id"] == "legacy_ig_id"
         assert "instagram_actor_id" not in oss
+
+
+class TestCampaignStateInsights:
+    def test_state_breakdown_is_campaign_scoped_and_lead_gen_safe(self):
+        """State diagnosis must use Meta's supported region breakdown and never
+        infer revenue/ROAS from the account-level attribution cache."""
+        from app.services.facebook_service import FacebookService
+
+        account = MagicMock()
+        account.get_insights.return_value = [
+            {
+                'region': 'New York', 'spend': '180.00', 'impressions': '12000',
+                'reach': '9000', 'clicks': '140', 'ctr': '1.1667',
+                'actions': [{'action_type': 'lead', 'value': '3'}],
+                'cost_per_action_type': [{'action_type': 'lead', 'value': '60'}],
+            },
+            {
+                'region': 'California', 'spend': '100.00', 'impressions': '8000',
+                'reach': '6000', 'clicks': '120', 'ctr': '1.5',
+                'actions': [{'action_type': 'offsite_conversion.fb_pixel_lead', 'value': '4'}],
+                'cost_per_action_type': [],
+            },
+        ]
+        service = FacebookService.__new__(FacebookService)
+        service._get_account = MagicMock(return_value=account)
+
+        rows = service.get_campaign_state_insights('campaign_123', 'act_456', date_preset='last_7d')
+
+        assert [row['state'] for row in rows] == ['New York', 'California']
+        assert rows[0]['cpl'] == 60.0
+        assert rows[1]['cpl'] == 25.0
+        _, params = account.get_insights.call_args.args
+        assert params['level'] == 'campaign'
+        assert params['breakdowns'] == ['region']
+        assert params['filtering'] == [{'field': 'campaign.id', 'operator': 'IN', 'value': ['campaign_123']}]
