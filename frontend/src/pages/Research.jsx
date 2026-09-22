@@ -354,7 +354,7 @@ function BoardSaveButton({ ad, boards, onAdd, onCreate }) {
   );
 }
 
-function ResearchDetailDrawer({ ad, onClose, onBuild }) {
+function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect }) {
   const { authFetch } = useAuth();
   const [related, setRelated] = useState([]);
   useEffect(() => {
@@ -363,6 +363,11 @@ function ResearchDetailDrawer({ ad, onClose, onBuild }) {
     authFetch(`${API_URL}/research/scraped-ads/${ad.id}/related`).then(res => res.ok ? res.json() : []).then(items => { if (alive) setRelated(items); }).catch(() => { if (alive) setRelated([]); });
     return () => { alive = false; };
   }, [ad?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const handleKeyDown = event => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
   useEffect(() => {
     if (!ad) return undefined;
     const onKeyDown = (event) => { if (event.key === 'Escape') onClose(); };
@@ -379,7 +384,7 @@ function ResearchDetailDrawer({ ad, onClose, onBuild }) {
       <div className="mb-5 flex flex-wrap gap-2">{(ad.creative_tags || []).map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">{tag.replaceAll('_', ' ')}</span>)}{ad.cta_type && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">CTA: {ad.cta_type.replaceAll('_', ' ')}</span>}</div>
       {ad.headline && <h3 className="text-lg font-semibold leading-snug text-slate-900">{ad.headline}</h3>}{ad.ad_copy && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{ad.ad_copy}</p>}
       <dl className="mt-6 grid grid-cols-2 gap-3 border-t border-slate-100 pt-5 text-sm"><div><dt className="text-xs text-slate-400">Destination</dt><dd className="mt-1 truncate font-medium text-slate-700">{ad.destination_domain || 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Observed</dt><dd className="mt-1 font-medium text-slate-700">{ad.running_days != null ? `${ad.running_days} days` : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Last captured</dt><dd className="mt-1 font-medium text-slate-700">{ad.last_seen ? new Date(ad.last_seen).toLocaleDateString() : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Tag source</dt><dd className="mt-1 font-medium text-slate-700">{ad.taxonomy_source || 'Not tagged'}</dd></div></dl>
-      {related.length > 0 && <section className="mt-6 border-t border-slate-100 pt-5"><h3 className="text-sm font-semibold text-slate-900">Related patterns</h3><p className="mt-1 text-xs text-slate-400">Matched on visible creative metadata, not performance.</p><div className="mt-3 space-y-2">{related.map(item => <div key={item.id} className="rounded-lg border border-slate-100 p-3"><p className="truncate text-sm font-semibold text-slate-700">{item.brand_name || 'Unknown advertiser'}</p><p className="mt-1 text-xs text-slate-500">{item.match_reasons.join(' · ')}</p></div>)}</div></section>}
+      {related.length > 0 && <section className="mt-6 border-t border-slate-100 pt-5"><h3 className="text-sm font-semibold text-slate-900">Related patterns</h3><p className="mt-1 text-xs text-slate-400">Matched on visible creative metadata, not performance.</p><div className="mt-3 space-y-2">{related.map(item => <button type="button" key={item.id} onClick={() => onInspect(item)} className="w-full rounded-lg border border-slate-100 p-3 text-left hover:border-indigo-200 hover:bg-indigo-50/40"><p className="truncate text-sm font-semibold text-slate-700">{item.brand_name || 'Unknown advertiser'}</p><p className="mt-1 text-xs text-slate-500">{item.match_reasons.join(' · ')}</p></button>)}</div></section>}
       <div className="mt-7 flex gap-2"><button type="button" onClick={() => onBuild(ad)} className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"><Zap size={15}/>Use as Inspiration</button><a href={ad.ad_link} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center rounded-lg border border-slate-200 px-3 text-slate-600 hover:bg-slate-50"><ExternalLink size={16}/></a></div>
     </aside>
   </div>;
@@ -1807,7 +1812,7 @@ export default function Research() {
         importing={importingIntel}
         defaultQuery={activeVertical === 'auto_insurance' ? 'cheap auto insurance' : currentVerticalLabel}
       />
-      <ResearchDetailDrawer ad={detailAd} onClose={() => setDetailAd(null)} onBuild={(ad) => { setDetailAd(null); handleUseAsInspiration(ad); }} />
+      <ResearchDetailDrawer ad={detailAd} onClose={() => setDetailAd(null)} onInspect={setDetailAd} onBuild={(ad) => { setDetailAd(null); handleUseAsInspiration(ad); }} />
     </div>
   );
 }
