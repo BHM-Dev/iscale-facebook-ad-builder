@@ -33,3 +33,57 @@ def test_guard_accepts_single_linear_chain(tmp_path):
     heads, errors = validate_migration_graph(str(tmp_path))
     assert errors == []
     assert heads == {"head": "b_head.py"}
+
+
+def test_guard_ignores_lookalike_assignment_in_docstring(tmp_path):
+    # A docstring quoting a fake revision line must never be mistaken for
+    # the real top-level assignment below it.
+    (tmp_path / "a_real.py").write_text(
+        '"""\n'
+        'Some migration.\n'
+        'revision = "WRONGID"\n'
+        '"""\n'
+        'revision = "bbb222"\n'
+        'down_revision = "aaa111"\n',
+        encoding="utf-8",
+    )
+    write_migration(tmp_path, "a_base.py", "aaa111", None)
+    heads, errors = validate_migration_graph(str(tmp_path))
+    assert errors == []
+    assert heads == {"bbb222": "a_real.py"}
+
+
+def test_guard_accepts_hyphenated_revision_ids(tmp_path):
+    write_migration(tmp_path, "a_base.py", "abc-123", None)
+    heads, errors = validate_migration_graph(str(tmp_path))
+    assert errors == []
+    assert heads == {"abc-123": "a_base.py"}
+
+
+def test_guard_ignores_trailing_comment_on_down_revision_line(tmp_path):
+    (tmp_path / "a_base.py").write_text('revision = "aaa111"\ndown_revision = None\n', encoding="utf-8")
+    (tmp_path / "b_child.py").write_text(
+        'revision = "bbb222"\n'
+        'down_revision = "aaa111"  # noqa \'ccc333\' unused\n',
+        encoding="utf-8",
+    )
+    heads, errors = validate_migration_graph(str(tmp_path))
+    assert errors == []
+    assert heads == {"bbb222": "b_child.py"}
+
+
+def test_guard_handles_merge_migration_tuple_down_revision(tmp_path):
+    write_migration(tmp_path, "a_base.py", "aaa111", None)
+    write_migration(tmp_path, "b_base.py", "bbb222", None)
+    (tmp_path / "c_merge.py").write_text(
+        'revision = "ccc333"\ndown_revision = ("aaa111", "bbb222")\n', encoding="utf-8"
+    )
+    heads, errors = validate_migration_graph(str(tmp_path))
+    assert errors == []
+    assert heads == {"ccc333": "c_merge.py"}
+
+
+def test_guard_reports_unparseable_file(tmp_path):
+    (tmp_path / "a_broken.py").write_text("revision = 'unterminated\n", encoding="utf-8")
+    _, errors = validate_migration_graph(str(tmp_path))
+    assert any("a_broken.py: could not parse" in error for error in errors)

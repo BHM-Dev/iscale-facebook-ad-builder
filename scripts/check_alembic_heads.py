@@ -17,9 +17,9 @@ Usage (Claude Code hook — reads nothing from stdin, just exits + prints):
   Already wired up via .claude/settings.json PreToolUse hook.
 """
 
+import ast
 import json
 import os
-import re
 import sys
 
 # Resolve versions dir relative to this script's location so the check works
@@ -28,12 +28,36 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 VERSIONS_DIR = os.path.join(SCRIPT_DIR, "..", "backend", "alembic", "versions")
 
 
+def _string_literals(node: "ast.AST | None") -> list[str]:
+    """Pull revision id string(s) out of a Constant/Tuple/List AST node.
+
+    Handles ``None``, a plain string, and the tuple/list a merge migration
+    uses for ``down_revision``. Returns [] for anything else (e.g. a name or
+    expression this script doesn't need to understand).
+    """
+    if node is None:
+        return []
+    if isinstance(node, ast.Constant):
+        return [node.value] if isinstance(node.value, str) else []
+    if isinstance(node, (ast.Tuple, ast.List)):
+        ids: list[str] = []
+        for elt in node.elts:
+            ids.extend(_string_literals(elt))
+        return ids
+    return []
+
+
 def validate_migration_graph(versions_dir: str) -> tuple[dict[str, str], list[str]]:
     """Return heads and fatal graph errors for a migration directory.
 
-    Alembic itself can obscure a duplicate ``revision`` assignment because a
-    dict-like revision map keeps only one of the files. Detect it here before
-    it becomes an ambiguous deploy-time migration graph.
+    Parses each file's AST rather than regexing the source text. A regex
+    scan of the whole file can match a `revision = "..."`-looking line
+    inside a docstring or a trailing comment and silently use the wrong
+    id — exactly the class of bug that let a real duplicate-revision
+    migration slip through and break production. Reading only the
+    top-level `revision`/`down_revision` assignments via ast.parse can't
+    be fooled by comments or docstrings, and correctly extracts any string
+    value (including hyphenated ids) instead of only `\\w+`.
     """
     revisions: dict[str, str] = {}
     down_refs: set[str] = set()     # all IDs referenced as down_revision
@@ -48,28 +72,38 @@ def validate_migration_graph(versions_dir: str) -> tuple[dict[str, str], list[st
         except OSError:
             continue
 
-        # Alembic-generated files may use either `revision =` or the typed
-        # `revision: str =` form. The guard must understand both.
-        rev_match = re.search(r"^revision(?:\s*:\s*[^=]+)?\s*=\s*['\"](\w+)['\"]", content, re.M)
-        # down_revision can be None, a single string, or a tuple/list (merge migration)
-        down_match = re.search(
-            r"^down_revision(?:\s*:\s*[^=]+)?\s*=\s*([^\n]+)", content, re.M
-        )
+        try:
+            tree = ast.parse(content, filename=fname)
+        except SyntaxError as exc:
+            errors.append(f"{fname}: could not parse ({exc})")
+            continue
 
-        if not rev_match:
+        revision_id = None
+        down_revision_node = None
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                target, value = node.targets[0].id, node.value
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                target, value = node.target.id, node.value
+            else:
+                continue
+
+            if target == "revision":
+                ids = _string_literals(value)
+                if ids:
+                    revision_id = ids[0]
+            elif target == "down_revision":
+                down_revision_node = value
+
+        if revision_id is None:
             errors.append(f"{fname}: missing revision assignment")
             continue
-        revision = rev_match.group(1)
-        if revision in revisions:
-            errors.append(f"duplicate revision {revision}: {revisions[revision]} and {fname}")
+        if revision_id in revisions:
+            errors.append(f"duplicate revision {revision_id}: {revisions[revision_id]} and {fname}")
         else:
-            revisions[revision] = fname
+            revisions[revision_id] = fname
 
-        if down_match:
-            raw = down_match.group(1).strip()
-            # Extract all quoted revision IDs from the value
-            for r in re.findall(r"['\"](\w+)['\"]", raw):
-                down_refs.add(r)
+        down_refs.update(_string_literals(down_revision_node))
 
     missing_parents = sorted(down_refs - set(revisions))
     errors.extend(f"missing down_revision target: {revision}" for revision in missing_parents)
