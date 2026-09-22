@@ -109,7 +109,11 @@ def refresh_drive_copy_metadata(
         # Drive" even though the canonical document is current.  Backfill is
         # cheap for unchanged rows because _process_file skips their binaries;
         # it ingests only newly discovered/replaced media and closes this gap.
-        sync_result = service.sync_once(backfill=True)
+        # defer_copy_resolution=True is safe ONLY here, where refresh_copy_metadata()
+        # unconditionally runs next and re-derives copy tags for every matched
+        # package — sync-now's standalone backfill (no guaranteed follow-up)
+        # must not pass this, or unchanged rows silently stop picking up copy changes.
+        sync_result = service.sync_once(backfill=True, defer_copy_resolution=True)
         refresh_result = service.refresh_copy_metadata()
         for key in ("processed", "created", "updated", "skipped", "archived", "unmatched_brand", "errors"):
             refresh_result[key] = (refresh_result.get(key) or 0) + (sync_result.get(key) or 0)

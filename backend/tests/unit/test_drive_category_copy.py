@@ -1166,3 +1166,65 @@ def test_metadata_for_media_file_propagates_copy_source_file_name():
     assert bound["copy_source_drive_file_id"] == "copy-doc"
     assert bound["copy_source_drive_modified_time"] == "2026-09-22T10:00:00Z"
     assert bound["copy_source_drive_file_name"] == "Ad Copy.txt"
+
+
+def _process_file_test_service(backfill_mode):
+    """Minimal DriveSyncService double for exercising _process_file's unchanged-file branch."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._backfill_mode = backfill_mode
+    service._resolve_drive_path = lambda file_meta: type("R", (), {"brand_folder": "Brand", "folder_path": "p"})()
+    service._match_brand_id = lambda brand_folder: "brand-id"
+    resolution_calls = []
+    service._metadata_for_media_file = lambda file_meta, file_name: resolution_calls.append(file_name) or {}
+
+    class FakeDB:
+        def execute(self, *args, **kwargs):
+            class Result:
+                def mappings(self):
+                    return self
+
+                def first(self):
+                    return {
+                        "id": "row-1",
+                        "drive_modified_time": modified_time,
+                        "soft_tags": "{}",
+                    }
+            return Result()
+
+    service.db = FakeDB()
+    modified_time = service._parse_drive_time("2026-09-22T10:00:00Z")
+    return service, resolution_calls
+
+
+def test_defer_copy_resolution_skips_metadata_lookup_for_unchanged_files_in_backfill_mode():
+    """The combined refresh-copy-metadata endpoint sets _backfill_mode so an
+    immediately-following refresh_copy_metadata() pass can re-derive copy tags
+    more cheaply at the package level -- per-file resolution here would be
+    redundant and, on a large Drive, slow enough to make the UI look hung."""
+    service, resolution_calls = _process_file_test_service(backfill_mode=True)
+    result = {"skipped": 0, "updated": 0, "unmatched_brand": 0, "errors": 0}
+
+    service._process_file(
+        {"id": "media-1", "name": "AD1-1x1.jpg", "mimeType": "image/jpeg", "modifiedTime": "2026-09-22T10:00:00Z"},
+        result,
+    )
+
+    assert resolution_calls == []
+    assert result["updated"] == 1
+
+
+def test_standalone_backfill_still_resolves_copy_metadata_for_unchanged_files():
+    """sync-now?backfill=true (Creative Library's "Sync" button) has no
+    guaranteed refresh_copy_metadata() follow-up, so it must keep resolving
+    copy metadata per file here -- skipping it would silently stop existing,
+    unchanged rows from picking up copy document changes."""
+    service, resolution_calls = _process_file_test_service(backfill_mode=False)
+    result = {"skipped": 0, "updated": 0, "unmatched_brand": 0, "errors": 0}
+
+    service._process_file(
+        {"id": "media-1", "name": "AD1-1x1.jpg", "mimeType": "image/jpeg", "modifiedTime": "2026-09-22T10:00:00Z"},
+        result,
+    )
+
+    assert resolution_calls == ["AD1-1x1.jpg"]
+    assert result["updated"] == 1

@@ -52,7 +52,7 @@ class DriveSyncService:
         self._strategy_package_folder_cache: Dict[str, Optional[str]] = {}
         self._backfill_mode = False
 
-    def sync_once(self, backfill: bool = False) -> Dict[str, Any]:
+    def sync_once(self, backfill: bool = False, defer_copy_resolution: bool = False) -> Dict[str, Any]:
         result = {
             "processed": 0,
             "created": 0,
@@ -80,7 +80,14 @@ class DriveSyncService:
                 )
             drive = self._client()
             page_token = self._get_state_token()
-            self._backfill_mode = bool(backfill and page_token)
+            # Only defer per-file copy resolution when the caller guarantees a
+            # refresh_copy_metadata() pass immediately follows (today, only
+            # refresh_drive_copy_metadata's combined endpoint). A standalone
+            # backfill (sync-now?backfill=true, used by Creative Library's
+            # "Sync" button to backfill copy tags onto existing unchanged rows)
+            # has no such follow-up, so it must keep resolving copy metadata
+            # per file here or those rows silently stop picking up copy changes.
+            self._backfill_mode = bool(backfill and page_token and defer_copy_resolution)
 
             if backfill or not page_token:
                 start_token = self._get_start_page_token(drive)
