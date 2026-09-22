@@ -1060,11 +1060,6 @@ def _build_best_times(
 
         run_blocks = [block for block in blocks if block['status'] == 'run']
         avoid_blocks = [block for block in blocks if block['status'] == 'avoid']
-        best = max(run_blocks, key=lambda block: block['profit'], default=None)
-        if not best:
-            profitable_inconsistent = [block for block in blocks if block['status'] == 'inconsistent']
-            reason = profitable_inconsistent[0]['reason'] if profitable_inconsistent else 'No time block has enough repeatable evidence to recommend a schedule.'
-            return {'status': 'none', 'confidence': 'low', 'blocks': blocks, 'run_windows': [], 'avoid_windows': [], 'reason': reason}
 
         def make_windows(selected):
             windows = []
@@ -1077,8 +1072,14 @@ def _build_best_times(
                         windows.append({'group': group, 'start_hour': block['start'], 'end_hour': block['end']})
             return windows
 
-        run_windows = make_windows(run_blocks)
         avoid_windows = make_windows(avoid_blocks)
+        best = max(run_blocks, key=lambda block: block['profit'], default=None)
+        if not best:
+            profitable_inconsistent = [block for block in blocks if block['status'] == 'inconsistent']
+            reason = profitable_inconsistent[0]['reason'] if profitable_inconsistent else 'No time block has enough repeatable evidence to recommend a schedule.'
+            return {'status': 'none', 'confidence': 'low', 'blocks': blocks, 'run_windows': [], 'avoid_windows': avoid_windows, 'reason': reason}
+
+        run_windows = make_windows(run_blocks)
         run_label = ' · '.join(f"{window['group']} · {window['start_hour'] % 12 or 12}{' AM' if window['start_hour'] < 12 else ' PM'}–{window['end_hour'] % 12 or 12}{' AM' if window['end_hour'] % 24 < 12 else ' PM'} PT" for window in run_windows[:2])
         return {
             'status': 'run',

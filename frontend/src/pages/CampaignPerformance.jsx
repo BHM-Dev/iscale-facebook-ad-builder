@@ -133,6 +133,8 @@ function BestTimesGrid({ data }) {
         // certainty it doesn't have — a Medium/Low "Run" got copied into
         // Ads Manager dayparting in review as if it were High (Joel-perspective P0).
         const confident = isRun && recommendation.confidence === 'high';
+        const hasRunWindows = recommendation.run_windows?.length > 0;
+        const hasAvoidWindows = recommendation.avoid_windows?.length > 0;
         return <section className={`rounded-xl p-4 ${confident ? 'border-2 border-green-200 bg-green-50/60' : recommendation.status === 'none' ? 'border border-amber-200 bg-amber-50/60' : 'border border-gray-200 bg-gray-50'}`}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -143,7 +145,7 @@ function BestTimesGrid({ data }) {
         </div>
         {allocated && isRun && <p className="mt-2 text-[11px] font-semibold text-amber-800">Directional: RedTrack-shaped timing on allocated Everflow billing — treat as a scheduling test, not confirmed exact attribution.</p>}
         {!confident && isRun && <p className="mt-2 text-[11px] text-gray-500">{recommendation.confidence === 'medium' ? 'Medium' : 'Low'} confidence — do not apply this schedule in Meta yet; keep watching for more evidence.</p>}
-        {isRun && <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2"><div className="rounded-lg bg-white/80 p-3"><p className="text-[10px] font-bold uppercase text-green-700">Run</p><p className="mt-1 text-sm font-semibold text-gray-900">{scheduleLine(recommendation.run_windows)}</p></div><div className="rounded-lg bg-white/80 p-3"><p className="text-[10px] font-bold uppercase text-red-700">Avoid</p><p className="mt-1 text-sm font-semibold text-gray-900">{scheduleLine(recommendation.avoid_windows)}</p></div></div>}
+        {(hasRunWindows || hasAvoidWindows) && <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">{hasRunWindows && <div className="rounded-lg bg-white/80 p-3"><p className="text-[10px] font-bold uppercase text-green-700">Run</p><p className="mt-1 text-sm font-semibold text-gray-900">{scheduleLine(recommendation.run_windows)}</p></div>}{hasAvoidWindows && <div className="rounded-lg bg-white/80 p-3"><p className="text-[10px] font-bold uppercase text-red-700">Avoid</p><p className="mt-1 text-sm font-semibold text-gray-900">{scheduleLine(recommendation.avoid_windows)}</p></div>}</div>}
         {recommendation.profit != null && <p className="mt-3 text-xs font-medium text-gray-700">{allocated ? '≈' : ''}{formatMoney(recommendation.profit)} profit · {recommendation.roi != null ? `${recommendation.roi >= 0 ? '+' : ''}${Math.round(recommendation.roi * 100)}% ROI` : 'ROI unavailable'} · {recommendation.positive_bucket_count || 0} of {recommendation.evidence_bucket_count || 0} evidence buckets positive</p>}
         <p className="mt-2 text-xs leading-relaxed text-gray-600">{recommendation.reason}</p>
         {niche.level === 'Ad set' && <p className="mt-2 text-[11px] text-gray-500">Ad-set view is investigative; a well-supported campaign schedule should take priority.</p>}
