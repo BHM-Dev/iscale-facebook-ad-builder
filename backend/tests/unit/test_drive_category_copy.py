@@ -990,3 +990,39 @@ def test_ad_numbered_copy_metadata_fails_closed_for_incomplete_document():
     )
 
     assert result == {"assets": {}, "assets_by_drive_id": {}}
+
+
+def test_package_copy_source_prefers_canonical_ad_copy_over_newer_winner_variations():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+
+    primary = {
+        "id": "primary-copy",
+        "name": "01-Painting-Ad-Copy.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T10:42:21Z",
+    }
+    winner = {
+        "id": "winner-copy",
+        "name": "01-Painting-Winner-Variations-Ad-Copy.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T10:50:16Z",
+    }
+    media = {
+        "id": "paint-ad1-feed",
+        "name": "01-PAINT-AD1-Identity-1x1.jpg",
+        "mimeType": "image/png",
+        "_parent_folder_path": ["01 - Painting Contractors", "1x1 Images"],
+    }
+    documents = {
+        "primary-copy": "AD 1 — Identity\nMETA HEADLINE\nPrimary headline\nPRIMARY TEXT\nPrimary body\nCTA: Get My Rate Now\n",
+        "winner-copy": "AD 1 — Winner\nHeadline: Winner headline\n==========\nWinner body\n==========\n",
+    }
+    service._list_folder_subtree = lambda folder_id: [primary, winner, media]
+    service._download_text_file = lambda file_id: documents[file_id]
+
+    result = service._folder_copy_metadata("painting-package")
+
+    assert result["_copy_source_drive_file_id"] == "primary-copy"
+    assert result["_copy_source_drive_modified_time"] == "2026-09-22T10:42:21Z"
+    assert result["assets_by_drive_id"]["paint-ad1-feed"]["copy"]["headline"] == "Primary headline"

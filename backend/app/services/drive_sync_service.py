@@ -823,6 +823,8 @@ class DriveSyncService:
                 bound = self._bind_media_metadata_to_file(metadata, drive_file_id)
                 if folder_metadata.get("_copy_source_drive_file_id"):
                     bound["copy_source_drive_file_id"] = folder_metadata["_copy_source_drive_file_id"]
+                if folder_metadata.get("_copy_source_drive_modified_time"):
+                    bound["copy_source_drive_modified_time"] = folder_metadata["_copy_source_drive_modified_time"]
                 return bound
             warning = (folder_metadata.get("_copy_integrity_warnings") or {}).get(drive_file_id)
             if warning:
@@ -846,6 +848,8 @@ class DriveSyncService:
             return pending_refusal
         if folder_metadata.get("_copy_source_drive_file_id"):
             bound["copy_source_drive_file_id"] = folder_metadata["_copy_source_drive_file_id"]
+        if folder_metadata.get("_copy_source_drive_modified_time"):
+            bound["copy_source_drive_modified_time"] = folder_metadata["_copy_source_drive_modified_time"]
         return bound
 
     def _bind_media_metadata_to_file(self, metadata: Dict[str, Any], drive_file_id: Optional[str]) -> Dict[str, Any]:
@@ -945,6 +949,14 @@ class DriveSyncService:
                 refreshed_tags = self._bind_media_metadata_to_file(soft_tags, drive_file_id)
                 refreshed_tags["copy_source_drive_file_id"] = (
                     folder_metadata.get("_copy_source_drive_file_id") or file_meta.get("id")
+                )
+                refreshed_tags["copy_source_drive_modified_time"] = (
+                    folder_metadata.get("_copy_source_drive_modified_time")
+                    or file_meta.get("modifiedTime")
+                )
+                refreshed_tags["copy_source_drive_file_name"] = (
+                    folder_metadata.get("_copy_source_drive_file_name")
+                    or file_meta.get("name")
                 )
                 # A successful match is the ONLY thing that clears the blanket
                 # "unverified" mark refresh_copy_metadata sets before its walk.
@@ -1258,11 +1270,12 @@ class DriveSyncService:
 
             metadata = self._handoff_folder_copy_metadata(folder_id, folder_files, text_files, media_by_name, manifest_text)
             metadata["_copy_source_drive_file_id"] = manifest.get("id")
+            metadata["_copy_source_drive_modified_time"] = manifest.get("modifiedTime")
+            metadata["_copy_source_drive_file_name"] = manifest.get("name")
             self._folder_metadata_cache[folder_id] = metadata
             return metadata
 
-        strategy_file = None
-        strategy_text = ""
+        copy_candidates = []
         unreadable_text_files = []
         for item in text_files:
             try:
@@ -1270,18 +1283,29 @@ class DriveSyncService:
             except Exception:
                 unreadable_text_files.append(item.get("name") or item.get("id"))
                 continue
-            if (
-                self._looks_like_strategy_copy_doc(candidate_text)
-                or self._looks_like_category_copy_doc(candidate_text)
-                or self._looks_like_ad_copy_doc(candidate_text)
-            ):
-                strategy_file = item
-                strategy_text = candidate_text
-                break
+            source_kind = self._copy_document_kind(candidate_text)
+            if source_kind:
+                copy_candidates.append((item, candidate_text, source_kind))
+        strategy_file = None
+        strategy_text = ""
+        strategy_kind = None
+        if copy_candidates:
+            strategy_file, strategy_text, strategy_kind = max(
+                copy_candidates,
+                key=lambda candidate: self._copy_document_priority(candidate[0], candidate[2]),
+            )
+            ignored_candidates = [candidate[0].get("name") for candidate in copy_candidates if candidate[0].get("id") != strategy_file.get("id")]
+            if ignored_candidates:
+                logger.info(
+                    "Selected Drive copy source %s for package %s; ignored lower-priority candidates: %s",
+                    strategy_file.get("name"),
+                    folder_id,
+                    ", ".join(name for name in ignored_candidates if name),
+                )
         if strategy_file:
-            if self._looks_like_strategy_copy_doc(strategy_text):
+            if strategy_kind == "strategy":
                 metadata = self._strategy_folder_copy_metadata(folder_id, folder_files, media_by_name, strategy_text)
-            elif self._looks_like_category_copy_doc(strategy_text):
+            elif strategy_kind == "category":
                 category_media = [
                     item for item in folder_files
                     if self._is_supported_media(item.get("mimeType") or "", item.get("name") or "")
@@ -1294,6 +1318,8 @@ class DriveSyncService:
                 ]
                 metadata = self._ad_numbered_folder_copy_metadata(folder_id, ad_media, strategy_text)
             metadata["_copy_source_drive_file_id"] = strategy_file.get("id")
+            metadata["_copy_source_drive_modified_time"] = strategy_file.get("modifiedTime")
+            metadata["_copy_source_drive_file_name"] = strategy_file.get("name")
             self._folder_metadata_cache[folder_id] = metadata
             return metadata
 
@@ -1307,6 +1333,41 @@ class DriveSyncService:
 
         self._folder_metadata_cache[folder_id] = {"assets": {}}
         return self._folder_metadata_cache[folder_id]
+
+    def _copy_document_kind(self, text_body: str) -> Optional[str]:
+        """Return the parser kind for a complete, supported copy source."""
+        if self._looks_like_strategy_copy_doc(text_body):
+            return "strategy"
+        if self._looks_like_category_copy_doc(text_body):
+            return "category"
+        if self._looks_like_ad_copy_doc(text_body):
+            return "ad"
+        return None
+
+    @staticmethod
+    def _copy_document_priority(file_meta: Dict[str, Any], source_kind: str) -> tuple:
+        """Rank copy sources deterministically instead of trusting Drive order.
+
+        Packages commonly contain an ICP/reference document and one or more
+        alternate/winner variations beside the live copy file. The explicit
+        ``Ad Copy``/``Ad-Copy`` name is the canonical source for the package;
+        alternate and reference files remain discoverable but must not silently
+        replace it when they are newer.
+        """
+        name = (file_meta.get("name") or "").lower()
+        if "winner" in name or "variation" in name:
+            name_priority = 200
+        elif re.search(r"(?:ad[\s_-]*copy|copy[\s_-]*ad)", name):
+            name_priority = 300
+        elif any(token in name for token in ("icp", "reference", "strategy")):
+            name_priority = 100
+        else:
+            name_priority = 150
+        kind_priority = {"ad": 30, "category": 20, "strategy": 10}.get(source_kind, 0)
+        # Modified time is only a tie-breaker within the same semantic class.
+        # This lets Joel edit the canonical file without a newer alternate doc
+        # taking precedence, while still selecting the newest duplicate export.
+        return (name_priority, kind_priority, file_meta.get("modifiedTime") or "", file_meta.get("id") or "")
 
     def _handoff_folder_copy_metadata(self, folder_id, folder_files, text_files, media_by_name, manifest_text):
 
