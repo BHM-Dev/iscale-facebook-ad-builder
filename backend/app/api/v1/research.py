@@ -1251,6 +1251,7 @@ def get_vertical_browse_ads(
     cta_type: str | None = None,
     page_type: str | None = None,
     new_within_days: int | None = None,
+    needs_tagging: bool = False,
     limit: int = 500,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -1351,6 +1352,8 @@ def get_vertical_browse_ads(
         if not 1 <= new_within_days <= 90:
             raise HTTPException(status_code=400, detail="new_within_days must be between 1 and 90")
         query = query.filter(ScrapedAd.first_seen >= datetime.now(timezone.utc) - timedelta(days=new_within_days))
+    if needs_tagging:
+        query = query.filter(ScrapedAd.taxonomy_source.is_(None))
 
     if sort_by not in RESEARCH_SORT_OPTIONS:
         raise HTTPException(

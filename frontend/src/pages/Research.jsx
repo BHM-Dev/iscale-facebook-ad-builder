@@ -92,7 +92,7 @@ const withDerivedResearchStatus = (ad) => {
 
 const isUnknownMedia = (mediaType) => !['image', 'video', 'carousel'].includes((mediaType || '').toLowerCase());
 
-const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, activeOnly, sortBy }) => {
+const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, activeOnly, sortBy }) => {
   const advertiser = advertiserFilter.trim().toLowerCase();
   return sortResearchAds(ads.filter(ad => (
     (!angleFilter || ad.angle_tag === angleFilter) &&
@@ -102,6 +102,7 @@ const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, advertiserFilter
     (!ctaTypeFilter || ad.cta_type === ctaTypeFilter) &&
     (!pageTypeFilter || ad.page_type === pageTypeFilter) &&
     (!newOnly || !ad.first_seen || Date.now() - new Date(ad.first_seen).getTime() <= 7 * 24 * 60 * 60 * 1000) &&
+    (!needsTagging || !ad.taxonomy_source) &&
     (!activeOnly || withDerivedResearchStatus(ad).is_active)
   )), sortBy);
 };
@@ -773,6 +774,7 @@ export default function Research() {
   const [ctaTypeFilter, setCtaTypeFilter] = useState('');
   const [pageTypeFilter, setPageTypeFilter] = useState('');
   const [newOnly, setNewOnly] = useState(false);
+  const [needsTagging, setNeedsTagging] = useState(false);
   const [resultMode, setResultMode] = useState('browse');
   const [searchResultAds, setSearchResultAds] = useState([]);
   const [browseReloadKey, setBrowseReloadKey] = useState(0);
@@ -851,6 +853,7 @@ export default function Research() {
       if (ctaTypeFilter) params.set('cta_type', ctaTypeFilter);
       if (pageTypeFilter) params.set('page_type', pageTypeFilter);
       if (newOnly) params.set('new_within_days', '7');
+      if (needsTagging) params.set('needs_tagging', 'true');
       params.set('sort_by', sortBy);
       params.set('limit', '500');
 
@@ -1012,7 +1015,7 @@ export default function Research() {
       setBrowseError('');
       setSearchResultAds(normalized);
       setResultMode('search');
-      const filtered = filterResearchAds(normalized, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, activeOnly, sortBy });
+      const filtered = filterResearchAds(normalized, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, activeOnly, sortBy });
       setBrowseAds(filtered);
       showSuccess(`Search saved — ${filtered.length} matching ads shown`);
       loadBoards();
@@ -1031,12 +1034,12 @@ export default function Research() {
   useEffect(() => {
     if (!verticalConfig) return;
     if (resultMode === 'search') {
-      setBrowseAds(filterResearchAds(searchResultAds, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, activeOnly, sortBy }));
+      setBrowseAds(filterResearchAds(searchResultAds, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, activeOnly, sortBy }));
       return undefined;
     }
     const t = setTimeout(() => loadBrowseAds(), advertiserFilter ? 400 : 0);
     return () => clearTimeout(t);
-  }, [angleFilter, mediaTypeFilter, sortBy, activeOnly, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, resultMode, searchResultAds, browseReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [angleFilter, mediaTypeFilter, sortBy, activeOnly, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, resultMode, searchResultAds, browseReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Actions ──────────────────────────────────────────────────
   const handleRefresh = async ({ allowWhileClearing = false } = {}) => {
@@ -1298,10 +1301,10 @@ export default function Research() {
   }, [activeVertical, activeSubVertical, config, subVerticals]);
 
   const visibleSavedAds = activeBoardId ? boardAds : savedAds;
-  const hasActiveFilters = Boolean(angleFilter || mediaTypeFilter || creativeTagFilter || ctaTypeFilter || pageTypeFilter || activeOnly || newOnly || advertiserFilter);
+  const hasActiveFilters = Boolean(angleFilter || mediaTypeFilter || creativeTagFilter || ctaTypeFilter || pageTypeFilter || activeOnly || newOnly || needsTagging || advertiserFilter);
   const clearFilters = () => {
     setAngleFilter(''); setMediaTypeFilter(''); setCreativeTagFilter(''); setCtaTypeFilter('');
-    setPageTypeFilter(''); setActiveOnly(false); setNewOnly(false); setAdvertiserFilter('');
+    setPageTypeFilter(''); setActiveOnly(false); setNewOnly(false); setNeedsTagging(false); setAdvertiserFilter('');
   };
   const catalogSummary = useMemo(() => ({
     total: browseAds.length,
@@ -1603,6 +1606,10 @@ export default function Research() {
               <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap" title="First captured by this Research catalog in the last seven days">
                 <input type="checkbox" checked={newOnly} onChange={e => setNewOnly(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />
                 New captures
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap" title="No capture, analyst, or deterministic taxonomy has been recorded yet">
+                <input type="checkbox" checked={needsTagging} onChange={e => setNeedsTagging(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />
+                Needs tagging
               </label>
             </div>
 
