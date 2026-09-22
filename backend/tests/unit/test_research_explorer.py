@@ -2,7 +2,7 @@ from types import SimpleNamespace
 from pathlib import Path
 import sys
 
-from app.api.v1.research import _infer_creative_taxonomy, _matches_research_vertical, _related_pattern_score
+from app.api.v1.research import _cap_ads_per_advertiser, _infer_creative_taxonomy, _matches_research_vertical, _related_pattern_score
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from backfill_research_taxonomy import taxonomy_update
@@ -46,3 +46,16 @@ def test_related_pattern_score_is_explainable_and_not_a_performance_score():
     unrelated = SimpleNamespace(creative_tags=[], cta_type=None, media_type="image", destination_domain=None)
     assert _related_pattern_score(source, matching) == (7, ["theme: comparison", "CTA: get quote", "format: video"])
     assert _related_pattern_score(source, unrelated) is None
+
+
+def test_advertiser_cap_preserves_sorted_first_result_and_unknown_legacy_rows():
+    ads = [
+        SimpleNamespace(brand_name="Acme"),
+        SimpleNamespace(brand_name="acme"),
+        SimpleNamespace(brand_name="Bravo"),
+        SimpleNamespace(brand_name=None),
+        SimpleNamespace(brand_name=""),
+    ]
+    limited = _cap_ads_per_advertiser(ads, 1)
+    assert [ad.brand_name for ad in limited] == ["Acme", "Bravo", None, ""]
+    assert _cap_ads_per_advertiser(ads, None) == ads

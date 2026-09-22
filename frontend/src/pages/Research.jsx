@@ -95,9 +95,24 @@ const withDerivedResearchStatus = (ad) => {
 
 const isUnknownMedia = (mediaType) => !['image', 'video', 'carousel'].includes((mediaType || '').toLowerCase());
 
-const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, activeOnly, sortBy }) => {
+const capAdsPerAdvertiser = (ads, adsPerAdvertiser) => {
+  if (!adsPerAdvertiser) return ads;
+  const counts = new Map();
+  return ads.filter(ad => {
+    const advertiser = ad.brand_name?.trim().toLowerCase();
+    // Do not collapse unrelated legacy records simply because their advertiser
+    // was not captured. The cap is meaningful only when we know the advertiser.
+    if (!advertiser) return true;
+    const count = counts.get(advertiser) || 0;
+    if (count >= adsPerAdvertiser) return false;
+    counts.set(advertiser, count + 1);
+    return true;
+  });
+};
+
+const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, activeOnly, sortBy, adsPerAdvertiser }) => {
   const advertiser = advertiserFilter.trim().toLowerCase();
-  return sortResearchAds(ads.filter(ad => (
+  return capAdsPerAdvertiser(sortResearchAds(ads.filter(ad => (
     (!angleFilter || ad.angle_tag === angleFilter) &&
     (!mediaTypeFilter || (mediaTypeFilter === 'unknown' ? isUnknownMedia(ad.media_type) : ad.media_type === mediaTypeFilter)) &&
     (!advertiser || (ad.brand_name || '').toLowerCase().includes(advertiser)) &&
@@ -107,7 +122,7 @@ const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, advertiserFilter
     (!newOnly || !ad.first_seen || Date.now() - new Date(ad.first_seen).getTime() <= 7 * 24 * 60 * 60 * 1000) &&
     (!needsTagging || !ad.taxonomy_source) &&
     (!activeOnly || withDerivedResearchStatus(ad).is_active)
-  )), sortBy);
+  )), sortBy), adsPerAdvertiser);
 };
 
 const normalizeAdLibraryImport = (raw, activeVerticalLabel) => {
@@ -803,6 +818,7 @@ export default function Research() {
   const [pageTypeFilter, setPageTypeFilter] = useState('');
   const [newOnly, setNewOnly] = useState(false);
   const [needsTagging, setNeedsTagging] = useState(false);
+  const [adsPerAdvertiser, setAdsPerAdvertiser] = useState(0);
   const [resultMode, setResultMode] = useState('browse');
   const [searchResultAds, setSearchResultAds] = useState([]);
   const [browseReloadKey, setBrowseReloadKey] = useState(0);
@@ -889,6 +905,7 @@ export default function Research() {
       if (pageTypeFilter) params.set('page_type', pageTypeFilter);
       if (newOnly) params.set('new_within_days', '7');
       if (needsTagging) params.set('needs_tagging', 'true');
+      if (adsPerAdvertiser) params.set('ads_per_advertiser', String(adsPerAdvertiser));
       params.set('sort_by', sortBy);
       params.set('limit', '500');
 
@@ -1050,7 +1067,7 @@ export default function Research() {
       setBrowseError('');
       setSearchResultAds(normalized);
       setResultMode('search');
-      const filtered = filterResearchAds(normalized, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, activeOnly, sortBy });
+      const filtered = filterResearchAds(normalized, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, activeOnly, sortBy, adsPerAdvertiser });
       setBrowseAds(filtered);
       showSuccess(`Search saved — ${filtered.length} matching ads shown`);
       loadBoards();
@@ -1069,12 +1086,12 @@ export default function Research() {
   useEffect(() => {
     if (!verticalConfig) return;
     if (resultMode === 'search') {
-      setBrowseAds(filterResearchAds(searchResultAds, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, activeOnly, sortBy }));
+      setBrowseAds(filterResearchAds(searchResultAds, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, activeOnly, sortBy, adsPerAdvertiser }));
       return undefined;
     }
     const t = setTimeout(() => loadBrowseAds(), advertiserFilter ? 400 : 0);
     return () => clearTimeout(t);
-  }, [angleFilter, mediaTypeFilter, sortBy, activeOnly, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, resultMode, searchResultAds, browseReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [angleFilter, mediaTypeFilter, sortBy, activeOnly, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, adsPerAdvertiser, resultMode, searchResultAds, browseReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Actions ──────────────────────────────────────────────────
   const handleRefresh = async ({ allowWhileClearing = false } = {}) => {
@@ -1336,10 +1353,10 @@ export default function Research() {
   }, [activeVertical, activeSubVertical, config, subVerticals]);
 
   const visibleSavedAds = activeBoardId ? boardAds : savedAds;
-  const hasActiveFilters = Boolean(angleFilter || mediaTypeFilter || creativeTagFilter || ctaTypeFilter || pageTypeFilter || activeOnly || newOnly || needsTagging || advertiserFilter);
+  const hasActiveFilters = Boolean(angleFilter || mediaTypeFilter || creativeTagFilter || ctaTypeFilter || pageTypeFilter || activeOnly || newOnly || needsTagging || advertiserFilter || adsPerAdvertiser);
   const clearFilters = () => {
     setAngleFilter(''); setMediaTypeFilter(''); setCreativeTagFilter(''); setCtaTypeFilter('');
-    setPageTypeFilter(''); setActiveOnly(false); setNewOnly(false); setNeedsTagging(false); setAdvertiserFilter('');
+    setPageTypeFilter(''); setActiveOnly(false); setNewOnly(false); setNeedsTagging(false); setAdvertiserFilter(''); setAdsPerAdvertiser(0);
   };
   const inspectCreative = (ad) => {
     setDetailAd(ad);
@@ -1647,6 +1664,13 @@ export default function Research() {
                 <option value="longest_running">Longest running</option>
                 <option value="most_sightings">Captured most often</option>
                 <option value="multiple_versions">Multiple versions</option>
+              </select>
+
+              <select value={adsPerAdvertiser} onChange={e => setAdsPerAdvertiser(Number(e.target.value))} className="text-xs border-0 text-gray-600 bg-transparent focus:ring-0 cursor-pointer pr-6 py-0" title="Keep the gallery varied by limiting how many ads appear from each known advertiser">
+                <option value={0}>All per advertiser</option>
+                <option value={1}>1 per advertiser</option>
+                <option value={3}>3 per advertiser</option>
+                <option value={5}>5 per advertiser</option>
               </select>
 
               <div className="h-4 w-px bg-gray-200" />

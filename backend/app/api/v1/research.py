@@ -132,6 +132,25 @@ def _sort_research_ads(ads, sort_by):
     ))
 
 
+def _cap_ads_per_advertiser(ads, ads_per_advertiser):
+    """Keep a sorted catalog varied without discarding unknown legacy pages."""
+    if not ads_per_advertiser:
+        return ads
+    counts = {}
+    limited = []
+    for ad in ads:
+        advertiser = (ad.brand_name or "").strip().casefold()
+        if not advertiser:
+            limited.append(ad)
+            continue
+        count = counts.get(advertiser, 0)
+        if count >= ads_per_advertiser:
+            continue
+        counts[advertiser] = count + 1
+        limited.append(ad)
+    return limited
+
+
 def _serialize_scraped_ad(ad, board_item_id=None):
     # _parse_research_date normalizes timezone-aware DB values to naive UTC
     # before arithmetic, matching datetime.utcnow() below.
@@ -1262,6 +1281,7 @@ def get_vertical_browse_ads(
     page_type: str | None = None,
     new_within_days: int | None = None,
     needs_tagging: bool = False,
+    ads_per_advertiser: int | None = None,
     limit: int = 500,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -1364,6 +1384,8 @@ def get_vertical_browse_ads(
         query = query.filter(ScrapedAd.first_seen >= datetime.now(timezone.utc) - timedelta(days=new_within_days))
     if needs_tagging:
         query = query.filter(ScrapedAd.taxonomy_source.is_(None))
+    if ads_per_advertiser is not None and not 1 <= ads_per_advertiser <= 20:
+        raise HTTPException(status_code=400, detail="ads_per_advertiser must be between 1 and 20")
 
     if sort_by not in RESEARCH_SORT_OPTIONS:
         raise HTTPException(
@@ -1376,7 +1398,7 @@ def get_vertical_browse_ads(
         and (not selected_tags or any(tag in (ad.creative_tags or []) for tag in selected_tags))
         and _matches_research_vertical(ad, config_id)
     ]
-    ads = _sort_research_ads(current_ads, sort_by)[:limit]
+    ads = _cap_ads_per_advertiser(_sort_research_ads(current_ads, sort_by), ads_per_advertiser)[:limit]
 
     # Compute running duration; filter blacklisted advertisers and off-topic ads
     now = datetime.utcnow()
