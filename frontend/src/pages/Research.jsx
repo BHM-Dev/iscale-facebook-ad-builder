@@ -1512,6 +1512,7 @@ export default function Research() {
         ].map(([label, value]) => <div key={label} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5"><p className="text-lg font-bold tabular-nums text-slate-900">{browseLoading ? '—' : value}</p><p className="text-[11px] font-medium text-slate-500">{label}</p></div>)}
       </div>
       <p className="-mt-3 text-[11px] text-slate-400">Counts reflect the current vertical and any active filters, not the entire Research library.</p>
+      {!browseLoading && catalogSummary.total > 0 && catalogSummary.videoCount === 0 && <div className="-mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"><span>This view has no captured visual media yet. Import a Chrome Ad Library capture to unlock visual/video research.</span><button type="button" onClick={() => setShowImportModal(true)} className="font-semibold text-indigo-700 hover:text-indigo-900">Import visual captures</button></div>}
 
       {/* Two-column layout */}
       <div className="flex gap-5 items-start">
