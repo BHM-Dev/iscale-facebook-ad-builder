@@ -400,6 +400,30 @@ Second landscaping primary copy.
     assert sections[1]["description"] == "Coverage for lawn-care businesses."
 
 
+def test_ad_numbered_copy_doc_keeps_lander_on_compact_title_line():
+    service = DriveSyncService.__new__(DriveSyncService)
+    document = """NICHE 04 — PAINTING CONTRACTORS | Lander: getbusinesscoverage.com/commercial-auto-v2
+AD 1 — Identity
+Headline: Commercial Van Insurance for Painters
+====================================================
+Primary copy.
+====================================================
+"""
+
+    sections = service._parse_ad_copy_doc(document)
+
+    assert sections[1]["landing_page"] == "getbusinesscoverage.com/commercial-auto-v2"
+
+
+def test_cta_normalization_maps_real_drive_phrases_to_meta_enums():
+    service = DriveSyncService.__new__(DriveSyncService)
+
+    assert service._normalize_cta("Check My Coverage Now") == "GET_QUOTE"
+    assert service._normalize_cta("Get Covered Today") == "GET_QUOTE"
+    assert service._normalize_cta("Compare My Rates") == "GET_QUOTE"
+    assert service._normalize_cta("[None — organic post, no CTA button]") is None
+
+
 def test_ad_numbered_copy_metadata_pairs_explicit_ad_numbers_without_vertical_aliases():
     service = DriveSyncService.__new__(DriveSyncService)
     document = """NICHE 03 — ELECTRICAL CONTRACTORS | FRESH SET v2

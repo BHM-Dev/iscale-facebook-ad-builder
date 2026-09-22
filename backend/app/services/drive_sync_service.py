@@ -1775,7 +1775,11 @@ class DriveSyncService:
         headings = list(re.finditer(r"^\s*AD\s+(\d+)\b.*$", text_body, re.IGNORECASE | re.MULTILINE))
         sections: Dict[int, Dict[str, Any]] = {}
         seen_numbers = set()
-        landing_match = re.search(r"^\s*Lander\s*:\s*(\S+)", text_body, re.IGNORECASE | re.MULTILINE)
+        # Joel's current docs use both a standalone ``Lander:`` line and a
+        # compact title-line form (``... | Lander: example.com/path``).  The
+        # latter is equally authoritative; retaining the anchor quietly drops
+        # the destination URL during import.
+        landing_match = re.search(r"\bLander\s*:\s*(\S+)", text_body, re.IGNORECASE)
         landing_page = landing_match.group(1).strip() if landing_match else None
 
         for index, heading in enumerate(headings):
@@ -2487,6 +2491,9 @@ class DriveSyncService:
         'GET_YOUR_FREE_QUOTE': 'GET_QUOTE', 'GET_FREE_QUOTE': 'GET_QUOTE',
         'REQUEST_QUOTE': 'GET_QUOTE', 'REQUEST_A_QUOTE': 'GET_QUOTE',
         'GET_RATE_NOW': 'GET_QUOTE', 'GET_MY_RATE_NOW': 'GET_QUOTE',
+        'CHECK_MY_COVERAGE_NOW': 'GET_QUOTE',
+        'GET_COVERED_TODAY': 'GET_QUOTE',
+        'COMPARE_MY_RATES': 'GET_QUOTE',
     }
 
     def _normalize_cta(self, value: Optional[str]) -> Optional[str]:
@@ -2494,6 +2501,11 @@ class DriveSyncService:
             return None
         normalized = re.sub(r"[^A-Z0-9]+", "_", value.upper()).strip("_")
         if not normalized:
+            return None
+        # An organic-post note is intentionally not a Meta CTA. Returning
+        # None lets the launcher use its normal explicit CTA selection instead
+        # of sending a fabricated enum that Meta rejects.
+        if normalized in {"NONE", "NO_CTA", "NONE_ORGANIC_POST_NO_CTA_BUTTON"}:
             return None
         mapped = self._CTA_PHRASE_MAP.get(normalized)
         if mapped:

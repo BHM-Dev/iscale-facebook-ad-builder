@@ -99,34 +99,16 @@ def refresh_drive_copy_metadata(
     db: Session = Depends(get_db),
     _current_user: User = Depends(get_current_active_user),
 ):
-    """Sync Drive changes, then re-match imported media to active copy sources."""
+    """Re-match imported media to the current Drive copy sources.
+
+    This is intentionally independent of the incremental changes checkpoint.
+    A buyer pressing Refresh needs the current documents now; replaying a large
+    historic changes backlog can otherwise leave the button spinning before it
+    reaches the edit they just made.
+    """
     try:
         service = DriveSyncService(db)
-        # Drive's changes feed is the authoritative, low-latency path for a
-        # buyer's manual refresh. It processes every image/copy document that
-        # changed since the prior checkpoint and the text-document path
-        # re-matches the whole affected package. A full tree backfill here made
-        # one button click wait minutes while unrelated packages were walked;
-        # it belongs on the explicit maintenance sync endpoint, not in Joel's
-        # launch workflow.
-        sync_result = service.sync_once()
-        refresh_result = {
-            "processed": 0,
-            "created": 0,
-            "updated": 0,
-            "skipped": 0,
-            "archived": 0,
-            "unmatched_brand": 0,
-            "errors": 0,
-            "unverified": 0,
-            "next_page_token_saved": False,
-        }
-        for key in ("processed", "created", "updated", "skipped", "archived", "unmatched_brand", "errors"):
-            refresh_result[key] = (refresh_result.get(key) or 0) + (sync_result.get(key) or 0)
-        refresh_result["next_page_token_saved"] = bool(
-            refresh_result.get("next_page_token_saved") or sync_result.get("next_page_token_saved")
-        )
-        return refresh_result
+        return service.refresh_copy_metadata()
     except HTTPException:
         raise
     except Exception as exc:
