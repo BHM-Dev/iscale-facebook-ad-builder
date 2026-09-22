@@ -301,6 +301,48 @@ CTA: Get My Rate Now
     assert sections[1]["cta"] == "GET_QUOTE"
 
 
+def test_ad_numbered_copy_doc_maps_legacy_cvi_paint_filenames():
+    service = DriveSyncService.__new__(DriveSyncService)
+    document = """GBC — Painting Contractors
+Lander: https://www.getbusinesscoverage.com/commercial-auto-v2
+AD 1 — Identity
+META HEADLINE
+Commercial Van Insurance for Painters
+PRIMARY TEXT
+Painting primary copy.
+CTA: Get My Rate Now
+"""
+    media = [
+        {"id": "feed", "name": "CVI-PAINT-01-IDENTITY-1x1.png"},
+        {"id": "stories", "name": "CVI-PAINT-01-IDENTITY-9x16.png"},
+    ]
+
+    result = service._ad_numbered_folder_copy_metadata("painting", media, document)
+
+    assert result["assets"]["cvi-paint-01-identity-1x1.png"]["copy"]["headline"] == "Commercial Van Insurance for Painters"
+    assert result["assets"]["cvi-paint-01-identity-9x16.png"]["copy"]["primary_text"] == "Painting primary copy."
+    assert result["assets_by_drive_id"]["stories"]["copy_id"] == "AD-01"
+
+
+def test_ad_numbered_copy_doc_does_not_treat_other_cvi_families_as_painting_ads():
+    service = DriveSyncService.__new__(DriveSyncService)
+    document = """AD 1
+META HEADLINE
+Painting headline
+PRIMARY TEXT
+Painting primary copy.
+"""
+    media = [
+        {"id": "paint", "name": "CVI-PAINT-01.png"},
+        {"id": "other", "name": "CVI-ELECTRICAL-01.png"},
+    ]
+
+    result = service._ad_numbered_folder_copy_metadata("painting", media, document)
+
+    assert "cvi-paint-01.png" in result["assets"]
+    assert "cvi-electrical-01.png" not in result["assets"]
+
+
 def test_ad_numbered_copy_doc_detects_colon_label_variants():
     service = DriveSyncService.__new__(DriveSyncService)
     document = """AD 1 — Identity

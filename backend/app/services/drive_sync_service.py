@@ -1648,7 +1648,14 @@ class DriveSyncService:
     def _ad_number_from_file_name(self, file_name: str) -> Optional[int]:
         stem = os.path.splitext(file_name or "")[0]
         match = re.search(r"(?:^|[-_ ])AD\s*0?(\d{1,2})(?=$|[-_ ])", stem, re.IGNORECASE)
-        return int(match.group(1)) if match else None
+        if match:
+            return int(match.group(1))
+        # The Painting package uses the older CVI-PAINT-01 convention instead
+        # of spelling out AD before the number. Keep this fallback restricted
+        # to that known family so arbitrary CVI-prefixed files cannot inherit
+        # another package's copy. Accept both a suffix and an exact stem.
+        cvi_match = re.search(r"^CVI-PAINT-0?(\d{1,2})(?=$|[-_ ])", stem, re.IGNORECASE)
+        return int(cvi_match.group(1)) if cvi_match else None
 
     def _ad_numbered_folder_copy_metadata(self, folder_id, media_files, text_body):
         sections = self._parse_ad_copy_doc(text_body)

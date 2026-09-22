@@ -40,6 +40,11 @@ Facebook ad builder used daily by Joel Welch (media buyer). Connects to Meta Ads
 - **Never send Slack messages, DMs, channel posts, deployment updates, review updates, or other team notifications without Steven's explicit approval first.** Approval must identify the exact recipient/channel and message purpose; when in doubt, do not send.
 - This rule overrides routine deployment/review communication defaults elsewhere in this file. Prepare the proposed message in chat and wait for approval instead.
 
+## Continuation Rule
+
+- **Progress updates are not turn-ending messages.** If a task is still in progress, continue working after any commentary update and only stop when the requested outcome is complete, genuinely blocked, or requires an explicit user decision.
+- When Steven says not to pause for updates, work silently and continue through implementation, verification, and handoff.
+
 ## Infrastructure (Current — 2026-04-27 and later)
 
 - Env vars are set directly on the VPS by Golden. Never set them via Railway.
