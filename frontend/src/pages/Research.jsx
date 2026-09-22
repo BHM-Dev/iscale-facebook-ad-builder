@@ -819,6 +819,7 @@ export default function Research() {
   const [newOnly, setNewOnly] = useState(false);
   const [needsTagging, setNeedsTagging] = useState(false);
   const [adsPerAdvertiser, setAdsPerAdvertiser] = useState(0);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [resultMode, setResultMode] = useState('browse');
   const [searchResultAds, setSearchResultAds] = useState([]);
   const [browseReloadKey, setBrowseReloadKey] = useState(0);
@@ -1353,6 +1354,7 @@ export default function Research() {
   }, [activeVertical, activeSubVertical, config, subVerticals]);
 
   const visibleSavedAds = activeBoardId ? boardAds : savedAds;
+  const advancedFilterCount = [creativeTagFilter, ctaTypeFilter, pageTypeFilter, activeOnly, newOnly, needsTagging, adsPerAdvertiser].filter(Boolean).length;
   const hasActiveFilters = Boolean(angleFilter || mediaTypeFilter || creativeTagFilter || ctaTypeFilter || pageTypeFilter || activeOnly || newOnly || needsTagging || advertiserFilter || adsPerAdvertiser);
   const clearFilters = () => {
     setAngleFilter(''); setMediaTypeFilter(''); setCreativeTagFilter(''); setCtaTypeFilter('');
@@ -1638,18 +1640,6 @@ export default function Research() {
               </select>
 
               <div className="h-4 w-px bg-gray-200" />
-              <select value={creativeTagFilter} onChange={e => setCreativeTagFilter(e.target.value)} className="text-xs border-0 text-gray-600 bg-transparent focus:ring-0 cursor-pointer pr-6 py-0" title="Visible-copy theme labels; unknown ads remain visible by default">
-                <option value="">All themes</option>
-                <option value="testimonial">Testimonial</option><option value="problem_agitation">Problem agitation</option><option value="comparison">Comparison</option><option value="review">Review</option><option value="listicle">Listicle</option><option value="educational">Educational</option><option value="ugc">UGC</option>
-              </select>
-              <select value={ctaTypeFilter} onChange={e => setCtaTypeFilter(e.target.value)} className="text-xs border-0 text-gray-600 bg-transparent focus:ring-0 cursor-pointer pr-6 py-0">
-                <option value="">All CTAs</option><option value="get_quote">Get quote</option><option value="learn_more">Learn more</option><option value="sign_up">Sign up</option><option value="apply_now">Apply now</option><option value="contact_us">Contact us</option><option value="shop_now">Shop now</option>
-              </select>
-              <select value={pageTypeFilter} onChange={e => setPageTypeFilter(e.target.value)} className="text-xs border-0 text-gray-600 bg-transparent focus:ring-0 cursor-pointer pr-6 py-0">
-                <option value="">All destinations</option><option value="lead_form">Lead form</option><option value="advertorial">Advertorial</option><option value="ecommerce">Ecommerce</option><option value="homepage">Homepage</option>
-              </select>
-
-              <div className="h-4 w-px bg-gray-200" />
 
               <span className="text-xs text-gray-400 whitespace-nowrap" title="These are internal Ad Library capture signals, not spend, reach, or market prevalence.">
                 Sort by
@@ -1666,33 +1656,9 @@ export default function Research() {
                 <option value="multiple_versions">Multiple versions</option>
               </select>
 
-              <select value={adsPerAdvertiser} onChange={e => setAdsPerAdvertiser(Number(e.target.value))} className="text-xs border-0 text-gray-600 bg-transparent focus:ring-0 cursor-pointer pr-6 py-0" title="Keep the gallery varied by limiting how many ads appear from each known advertiser">
-                <option value={0}>All per advertiser</option>
-                <option value={1}>1 per advertiser</option>
-                <option value={3}>3 per advertiser</option>
-                <option value={5}>5 per advertiser</option>
-              </select>
-
-              <div className="h-4 w-px bg-gray-200" />
-
-              {/* Active only */}
-              <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap">
-                <input
-                  type="checkbox"
-                  checked={activeOnly}
-                  onChange={e => setActiveOnly(e.target.checked)}
-                  className="rounded text-indigo-600 focus:ring-indigo-500"
-                />
-                  Captured in last 30 days
-              </label>
-              <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap" title="First captured by this Research catalog in the last seven days">
-                <input type="checkbox" checked={newOnly} onChange={e => setNewOnly(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />
-                New captures
-              </label>
-              <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap" title="No theme or CTA label recorded yet">
-                <input type="checkbox" checked={needsTagging} onChange={e => setNeedsTagging(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />
-                Needs tagging
-              </label>
+              <button type="button" onClick={() => setShowAdvancedFilters(open => !open)} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors ${showAdvancedFilters || advancedFilterCount ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}`} aria-expanded={showAdvancedFilters}>
+                Filters{advancedFilterCount ? ` ${advancedFilterCount}` : ''}<ChevronDown size={13} className={showAdvancedFilters ? 'rotate-180 transition-transform' : 'transition-transform'} />
+              </button>
             </div>
 
             {/* Advertiser search */}
@@ -1705,6 +1671,7 @@ export default function Research() {
             />
             {hasActiveFilters && <button type="button" onClick={clearFilters} className="text-xs font-medium text-indigo-600 hover:text-indigo-800">Clear filters</button>}
           </div>
+          {showAdvancedFilters && <div className="-mt-3 rounded-b-xl border border-t-0 border-gray-200 bg-slate-50 px-4 py-3"><div className="flex flex-wrap items-center gap-3"><select value={creativeTagFilter} onChange={e => setCreativeTagFilter(e.target.value)} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600" title="Visible-copy theme labels; unknown ads remain visible by default"><option value="">All themes</option><option value="testimonial">Testimonial</option><option value="problem_agitation">Problem agitation</option><option value="comparison">Comparison</option><option value="review">Review</option><option value="listicle">Listicle</option><option value="educational">Educational</option><option value="ugc">UGC</option></select><select value={ctaTypeFilter} onChange={e => setCtaTypeFilter(e.target.value)} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600"><option value="">All CTAs</option><option value="get_quote">Get quote</option><option value="learn_more">Learn more</option><option value="sign_up">Sign up</option><option value="apply_now">Apply now</option><option value="contact_us">Contact us</option><option value="shop_now">Shop now</option></select><select value={pageTypeFilter} onChange={e => setPageTypeFilter(e.target.value)} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600"><option value="">All destinations</option><option value="lead_form">Lead form</option><option value="advertorial">Advertorial</option><option value="ecommerce">Ecommerce</option><option value="homepage">Homepage</option></select><select value={adsPerAdvertiser} onChange={e => setAdsPerAdvertiser(Number(e.target.value))} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600" title="Keep the gallery varied by limiting how many ads appear from each known advertiser"><option value={0}>All per advertiser</option><option value={1}>1 per advertiser</option><option value={3}>3 per advertiser</option><option value={5}>5 per advertiser</option></select><label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap"><input type="checkbox" checked={activeOnly} onChange={e => setActiveOnly(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />Captured in last 30 days</label><label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap" title="First captured by this Research catalog in the last seven days"><input type="checkbox" checked={newOnly} onChange={e => setNewOnly(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />New captures</label><label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap" title="No theme or CTA label recorded yet"><input type="checkbox" checked={needsTagging} onChange={e => setNeedsTagging(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />Needs tagging</label></div></div>}
 
           {refreshSummary?.first_error && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
