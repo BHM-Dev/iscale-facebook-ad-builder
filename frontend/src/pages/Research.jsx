@@ -37,6 +37,9 @@ const QUERY_PRESETS = [
   'Reverse mortgage — homeowner benefit',
 ];
 
+const RESEARCH_INITIAL_CARD_COUNT = 24;
+const RESEARCH_CARD_PAGE_SIZE = 24;
+
 const normalizeAdLibraryDate = (value) => {
   if (!value) return '';
   if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value;
@@ -767,6 +770,7 @@ export default function Research() {
   const homeServicesRef = useRef(null);
 
   const [browseAds, setBrowseAds] = useState([]);
+  const [visibleCardCount, setVisibleCardCount] = useState(RESEARCH_INITIAL_CARD_COUNT);
   const [savedAds, setSavedAds] = useState([]);
   const [savedAdIds, setSavedAdIds] = useState(new Set());
   const [query, setQuery] = useState('');
@@ -838,6 +842,13 @@ export default function Research() {
     loadBrowseAds();
     loadSavedAds();
   }, [activeVertical, activeSubVertical, verticalConfig]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep the first paint quick when a catalog or filter result contains many
+  // captures. More cards remain one click away; the summary always shows the
+  // full filtered count.
+  useEffect(() => {
+    setVisibleCardCount(RESEARCH_INITIAL_CARD_COUNT);
+  }, [browseAds]);
 
   // Close Home Services dropdown on outside click
   useEffect(() => {
@@ -1716,24 +1727,27 @@ export default function Research() {
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4">
-              {browseAds.map(ad => (
-                <AdCard
-                  key={ad.id}
-                  ad={ad}
-                  isSaved={savedAdIds.has(ad.id)}
-                  onSave={handleSave}
-                  onUnsave={handleUnsave}
-                  onUseAsInspiration={handleUseAsInspiration}
-                  onInspect={inspectCreative}
-                  onBlockPage={handleBlockPage}
-                  angleTags={angleTags}
-                  boards={boards}
-                  onAddToBoard={handleAddToBoard}
-                  onCreateBoard={handleCreateBoard}
-                />
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4">
+                {browseAds.slice(0, visibleCardCount).map(ad => (
+                  <AdCard
+                    key={ad.id}
+                    ad={ad}
+                    isSaved={savedAdIds.has(ad.id)}
+                    onSave={handleSave}
+                    onUnsave={handleUnsave}
+                    onUseAsInspiration={handleUseAsInspiration}
+                    onInspect={inspectCreative}
+                    onBlockPage={handleBlockPage}
+                    angleTags={angleTags}
+                    boards={boards}
+                    onAddToBoard={handleAddToBoard}
+                    onCreateBoard={handleCreateBoard}
+                  />
+                ))}
+              </div>
+              {browseAds.length > visibleCardCount && <div className="mt-5 flex flex-col items-center gap-2"><p className="text-xs text-slate-500">Showing {visibleCardCount} of {browseAds.length} matching captures</p><button type="button" onClick={() => setVisibleCardCount(count => Math.min(count + RESEARCH_CARD_PAGE_SIZE, browseAds.length))} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700">Show {Math.min(RESEARCH_CARD_PAGE_SIZE, browseAds.length - visibleCardCount)} more</button></div>}
+            </>
           )}
         </div>
 
