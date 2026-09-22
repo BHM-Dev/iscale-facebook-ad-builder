@@ -103,6 +103,26 @@ Joel thinks in Meta Ads Manager terms. Any UX that diverges from how Ads Manager
 
 ## Critical Technical Patterns
 
+### Drive Creative Sync — Required Diagnosis and Live Verification
+
+Use this runbook for any bug report involving Drive creative copy, headlines, URLs, the Drive picker, or the Refresh copy button. Do not declare a Drive-sync issue fixed based only on unit tests, logs, an API response, or a database query.
+
+1. **Classify the symptom correctly.** “No copy in Drive” is a matching/metadata diagnosis, not proof that a source document lacks copy. Inspect the exact Drive source document, image filename normalization, source-file IDs, and the persisted asset metadata before changing UI code.
+2. **Refresh narrowly, and record the target.** For selected launch assets, identify and record each `copy_source_drive_file_id`, then refresh only those source-document IDs. The picker’s Refresh copy request does this when selected assets carry source IDs. If any selected asset lacks one, the frontend deliberately falls back to `force_full_refresh`; report that fallback and its blast radius rather than treating it as a targeted success.
+3. **Keep failures isolated at every granularity.** Every per-file process, archive action, and targeted copy-source refresh must run in a DB savepoint. A malformed file, metadata issue, or DB constraint may increment the error count but cannot roll back valid work in the same batch. Current sync loops have this protection; retain/add it for copy-refresh loops before altering them.
+4. **Classify global Drive failures even if an endpoint returns partial success.** An expired credential, authorization failure, quota/outage, advisory-lock failure, or checkpoint failure is a global incident—not a normal per-file error. Do not accept HTTP 200 plus `errors > 0` as a successful target refresh until the error is tied to a non-target malformed/missing file.
+5. **Respect the current launch contract.** The current picker/launch flow requires a primary text and headline. Do not call a headline-less organic-post item complete unless the product is deliberately changed to support that format end to end; otherwise it remains a blocked launch asset.
+6. **Make refresh results request-scoped.** An unrelated concurrent picker fetch must never cause a successful targeted refresh to appear empty or flag healthy Drive rows as broken.
+7. **Separate browser cache from server state.** After a server-side refresh, test with a hard-reloaded/new browser session before diagnosing the picker. Cached browser state is not evidence of a production sync failure.
+8. **Use the mandatory production live-proof path.** Confirm the production URL, authenticated account, and deployed commit/version first. Then verify the exact affected asset end to end:
+
+   `Drive source filename/ID → target-specific refresh result (updated/errors) → persisted metadata on both Feed and Stories IDs (source ID + verified status) → hard-refreshed production Chrome picker → confirm correct Feed 1:1 and Stories 9:16 previews → select exact pair → confirm primary text, headline, CTA, and destination URL populate the launch row`
+
+   Record the source filename/ID, copy-source ID, refresh response, metadata result, and picker result in the handoff. Any error for the target source is a failed verification. The test must use a real affected image and stop before launch unless the user explicitly authorizes creating a Meta ad.
+9. **Keep errors observable without media-buying alerts.** Per-file errors must be counted/logged and surfaced through an approved non-`#media-buys` destination with a named owner. Confirm its configuration before relying on it. Never send Drive-sync alerts, deploy alerts, or any automated notification to `#media-buys` (`C08G7PJJ6NB`).
+
+**Release gate:** Any change to Drive sync, Drive-copy parsing, `AdCreativeStep.jsx`, or the Drive picker must include the live proof path above before being called complete. If no browser session is available, say the fix is backend-verified but not production-validated; do not imply it is fully fixed.
+
 ### Startup Sequence (memorize — any failure breaks login)
 
 ```
