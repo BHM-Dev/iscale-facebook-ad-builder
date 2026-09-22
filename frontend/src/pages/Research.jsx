@@ -1658,7 +1658,7 @@ export default function Research() {
 
           {/* Card gallery */}
           {browseLoading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4">
               {[1,2,3,4,5,6].map(i => <SkeletonCard key={i} />)}
             </div>
           ) : browseError ? (
@@ -1695,7 +1695,7 @@ export default function Research() {
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4">
               {browseAds.map(ad => (
                 <AdCard
                   key={ad.id}
