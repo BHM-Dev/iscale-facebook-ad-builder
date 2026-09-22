@@ -1478,6 +1478,17 @@ class DriveSyncService:
             key=lambda item: item.get("modifiedTime") or "",
             reverse=True,
         )
+        # Snapshot every text body exactly once for this package. Freshness
+        # decisions and subsequent parsing must operate on the same Drive
+        # version; downloading a chosen source again could otherwise let a
+        # mid-refresh edit/read failure silently fall back to older copy.
+        text_by_id: Dict[str, str] = {}
+        unreadable_text_by_id: Dict[str, Exception] = {}
+        for item in text_files:
+            try:
+                text_by_id[item["id"]] = self._download_text_file(item["id"])
+            except Exception as exc:
+                unreadable_text_by_id[item["id"]] = exc
         media_by_name = {
             (item.get("name") or "").lower(): item
             for item in folder_files
@@ -1487,14 +1498,79 @@ class DriveSyncService:
             (item for item in text_files if "handoff" in item.get("name", "").lower() and "manifest" in item.get("name", "").lower()),
             None,
         )
+        unreadable_launch_copy_candidates = [
+            item for item in text_files
+            if item.get("id") in unreadable_text_by_id
+            and re.search(r"(?:ad[\s_-]*copy|copy[\s_-]*ad)", item.get("name") or "", re.IGNORECASE)
+        ]
+        if not manifest and unreadable_launch_copy_candidates:
+            newest_unreadable = max(
+                unreadable_launch_copy_candidates,
+                key=lambda item: (item.get("modifiedTime") or "", item.get("id") or ""),
+            )
+            raise RuntimeError(
+                "Could not verify Drive copy source "
+                f"{newest_unreadable.get('name')}; package remains blocked until it can be read"
+            )
+        # A handoff manifest is precise when it is current, but it cannot make
+        # a later complete launch-copy document invisible.  The old resolver
+        # returned as soon as it found *any* manifest, so a package such as
+        # Horse & Stable kept an older handoff map even after its Ad Copy file
+        # was edited.  Compare recognized non-manifest sources first.  Prefer
+        # designated canonical Ad Copy over winner/alternate files, then use
+        # Drive's modifiedTime as the freshness decision within that semantic
+        # class. Strategy/reference material is not a launch-copy freshness
+        # override; it remains a fallback only when a package has no manifest
+        # or ad/category copy source at all.
+        #
+        # This probe deliberately validates the document shape before using it
+        # for precedence: a newer note/draft must never displace a complete
+        # launch source merely because its filename contains "copy".
+        newer_copy_candidate = None
+        if manifest:
+            non_manifest_candidates = []
+            for item in text_files:
+                name = (item.get("name") or "").lower()
+                if "handoff" in name and "manifest" in name:
+                    continue
+                candidate_text = text_by_id.get(item.get("id"))
+                if candidate_text is None:
+                    continue
+                source_kind = self._copy_document_kind(candidate_text)
+                if source_kind in {"ad", "category"} and self._copy_document_is_complete(candidate_text, source_kind):
+                    non_manifest_candidates.append((item, source_kind))
+            newer_unreadable = max(
+                unreadable_launch_copy_candidates,
+                key=lambda item: (item.get("modifiedTime") or "", item.get("id") or ""),
+                default=None,
+            )
+            if newer_unreadable and (newer_unreadable.get("modifiedTime") or "") > (manifest.get("modifiedTime") or ""):
+                raise RuntimeError(
+                    "Could not verify newer Drive copy source "
+                    f"{newer_unreadable.get('name')}; package remains blocked until it can be read"
+                )
+            if non_manifest_candidates:
+                newer_copy_candidate = max(
+                    non_manifest_candidates,
+                    key=lambda candidate: self._copy_document_priority(candidate[0], candidate[1]),
+                )
+                if (newer_copy_candidate[0].get("modifiedTime") or "") > (manifest.get("modifiedTime") or ""):
+                    logger.info(
+                        "Selecting newer Drive copy source %s over older handoff manifest %s for package %s",
+                        newer_copy_candidate[0].get("name"), manifest.get("name"), folder_id,
+                    )
+                    # Keep all manifests out of the normal document parser
+                    # below. A handoff file can itself resemble ad copy, but
+                    # it is not eligible once a newer valid launch-copy source
+                    # has won the freshness comparison.
+                    manifest = None
         recoverable_manifest_error = None
         if manifest:
-            try:
-                manifest_text = self._download_text_file(manifest["id"])
-            except Exception as exc:
+            manifest_text = text_by_id.get(manifest.get("id"))
+            if manifest_text is None:
                 # A refresh must fail closed: returning an empty mapping here
                 # would make the caller clear otherwise-valid matched tags.
-                raise RuntimeError(f"Could not read Drive handoff manifest {manifest.get('name')}") from exc
+                raise RuntimeError(f"Could not read Drive handoff manifest {manifest.get('name')}") from unreadable_text_by_id.get(manifest.get("id"))
 
             try:
                 metadata = self._handoff_folder_copy_metadata(
@@ -1578,17 +1654,19 @@ class DriveSyncService:
         copy_candidates = []
         unreadable_text_files = []
         for item in text_files:
-            if manifest and item.get("id") == manifest.get("id"):
-                # Once a no-entry planning manifest has been rejected, it is
-                # never eligible to be reclassified as a canonical copy file.
+            if "handoff" in (item.get("name") or "").lower() and "manifest" in (item.get("name") or "").lower():
+                # A handoff document is considered only by the manifest path
+                # above.  It must never be silently reclassified as generic ad
+                # copy after losing a freshness comparison or failing parsing.
                 continue
-            try:
-                candidate_text = self._download_text_file(item["id"])
-            except Exception:
+            candidate_text = text_by_id.get(item.get("id"))
+            if candidate_text is None:
                 unreadable_text_files.append(item.get("name") or item.get("id"))
                 continue
             source_kind = self._copy_document_kind(candidate_text)
-            if source_kind:
+            if source_kind and (
+                source_kind == "strategy" or self._copy_document_is_complete(candidate_text, source_kind)
+            ):
                 copy_candidates.append((item, candidate_text, source_kind))
         strategy_file = None
         strategy_text = ""
@@ -1650,6 +1728,36 @@ class DriveSyncService:
         if self._looks_like_ad_copy_doc(text_body):
             return "ad"
         return None
+
+    def _copy_document_is_complete(self, text_body: str, source_kind: str) -> bool:
+        """Require every declared launch section before a source can win by freshness.
+
+        The parsers deliberately omit malformed sections so incomplete drafts
+        never produce a misleading matched row. That tolerance must not make a
+        newer *partial* document eligible to replace a fully mapped manifest or
+        canonical copy file. A source is therefore fresh enough to win only
+        when each unique declared AD/category section has both required fields.
+        """
+        if source_kind == "ad":
+            normalized = re.sub(r"[\ufeff\u200b\u200c\u200d]", "", text_body or "").replace("\u00a0", " ")
+            headings = [
+                int(match.group(1))
+                for match in re.finditer(
+                    r"^[ \t]*(?![^\n]*\.(?:txt|png|jpe?g|webp|gif|mp4)\s*$)(?:#{1,6}[ \t]*)?(?:[A-Z0-9]+[-_ \t]+)*AD[-_ \t]?(\d+)\b.*$",
+                    normalized,
+                    re.IGNORECASE | re.MULTILINE,
+                )
+            ]
+            sections = self._parse_ad_copy_doc(normalized)
+            return bool(headings) and len(headings) == len(set(headings)) and set(headings) == set(sections)
+        if source_kind == "category":
+            headings = [
+                int(match.group(1))
+                for match in re.finditer(r"^\s*(\d+)\.\s+.+$", text_body or "", re.MULTILINE)
+            ]
+            sections = self._parse_category_copy_doc(text_body)
+            return bool(headings) and len(headings) == len(set(headings)) and set(headings) == set(sections)
+        return False
 
     @staticmethod
     def _copy_document_priority(file_meta: Dict[str, Any], source_kind: str) -> tuple:

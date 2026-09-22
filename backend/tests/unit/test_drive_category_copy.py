@@ -1135,6 +1135,259 @@ def test_package_copy_source_prefers_canonical_ad_copy_over_newer_winner_variati
     assert result["assets_by_drive_id"]["paint-ad1-feed"]["copy"]["headline"] == "Primary headline"
 
 
+def test_package_copy_source_uses_newer_ad_copy_over_older_handoff_manifest():
+    """Drive modifiedTime wins between complete manifests and launch-copy docs."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+
+    manifest = {
+        "id": "older-manifest",
+        "name": "PACKAGE-HANDOFF-MANIFEST.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T10:50:00Z",
+    }
+    newer_copy = {
+        "id": "newer-copy",
+        "name": "PACKAGE-Ad-Copy.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T10:55:00Z",
+    }
+    media = {
+        "id": "package-ad1-feed",
+        "name": "PACKAGE-AD1-Identity-1x1.jpg",
+        "mimeType": "image/jpeg",
+    }
+    documents = {
+        "older-manifest": """FINAL HANDOFF MANIFEST
+Landing Page
+https://example.com/old
+Meta Button
+Get Quote
+
+AD 1
+Primary Text
+Old body
+Headline
+Old headline
+1x1 Image
+PACKAGE-AD1-Identity-1x1.jpg
+9x16 Image
+PACKAGE-AD1-Identity-9x16.jpg
+""",
+        "newer-copy": """AD 1 — Identity
+META HEADLINE
+New headline
+PRIMARY TEXT
+New primary text
+CTA: GET QUOTE
+""",
+    }
+    service._list_folder_subtree = lambda folder_id: [manifest, newer_copy, media]
+    service._download_text_file = lambda file_id: documents[file_id]
+
+    result = service._folder_copy_metadata("package")
+
+    assert result["_copy_source_drive_file_id"] == "newer-copy"
+    assert result["_copy_source_drive_modified_time"] == "2026-09-22T10:55:00Z"
+    assert result["assets_by_drive_id"]["package-ad1-feed"]["copy"]["headline"] == "New headline"
+
+
+def test_partial_newer_ad_copy_cannot_displace_complete_handoff_manifest():
+    """Freshness never turns a one-good-section draft into the launch source."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+
+    manifest = {
+        "id": "complete-manifest",
+        "name": "PACKAGE-HANDOFF-MANIFEST.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T10:50:00Z",
+    }
+    partial_copy = {
+        "id": "partial-copy",
+        "name": "PACKAGE-Ad-Copy.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T10:55:00Z",
+    }
+    feed = {"id": "package-ad1-feed", "name": "PACKAGE-AD1-Identity-1x1.jpg", "mimeType": "image/jpeg"}
+    stories = {"id": "package-ad1-stories", "name": "PACKAGE-AD1-Identity-9x16.jpg", "mimeType": "image/jpeg"}
+    documents = {
+        "complete-manifest": """FINAL HANDOFF MANIFEST — LAUNCHER COPY MAP
+Landing Page
+https://example.com/current
+Meta Button
+Get Quote
+
+## PACKAGE-AD1
+PRIMARY TEXT
+Current primary text.
+HEADLINE
+Current headline
+1X1 IMAGE
+PACKAGE-AD1-Identity-1x1.jpg
+9X16 IMAGE
+PACKAGE-AD1-Identity-9x16.jpg
+""",
+        "partial-copy": """AD 1 — Complete
+META HEADLINE
+New headline
+PRIMARY TEXT
+New primary text
+
+AD 2 — Draft
+META HEADLINE
+Unfinished headline
+PRIMARY TEXT
+""",
+    }
+    service._list_folder_subtree = lambda folder_id: [manifest, partial_copy, feed, stories]
+    service._download_text_file = lambda file_id: documents[file_id]
+
+    result = service._folder_copy_metadata("package")
+
+    assert result["_copy_source_drive_file_id"] == "complete-manifest"
+    assert result["assets_by_drive_id"]["package-ad1-feed"]["copy"]["headline"] == "Current headline"
+
+
+def test_newer_strategy_document_cannot_displace_complete_handoff_manifest():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+    manifest = {
+        "id": "complete-manifest", "name": "PACKAGE-HANDOFF-MANIFEST.txt",
+        "mimeType": "text/plain", "modifiedTime": "2026-09-22T10:50:00Z",
+    }
+    strategy = {
+        "id": "newer-strategy", "name": "PACKAGE-ICP-and-Strategy.md",
+        "mimeType": "text/markdown", "modifiedTime": "2026-09-22T10:55:00Z",
+    }
+    feed = {"id": "package-ad1-feed", "name": "PACKAGE-AD1-Identity-1x1.jpg", "mimeType": "image/jpeg"}
+    stories = {"id": "package-ad1-stories", "name": "PACKAGE-AD1-Identity-9x16.jpg", "mimeType": "image/jpeg"}
+    documents = {
+        "complete-manifest": """FINAL HANDOFF MANIFEST — LAUNCHER COPY MAP
+Landing Page
+https://example.com/current
+Meta Button
+Get Quote
+
+## PACKAGE-AD1
+PRIMARY TEXT
+Current primary text.
+HEADLINE
+Current headline
+1X1 IMAGE
+PACKAGE-AD1-Identity-1x1.jpg
+9X16 IMAGE
+PACKAGE-AD1-Identity-9x16.jpg
+""",
+        "newer-strategy": "## AD-PACKAGE-01\nThis is newer planning material, not launch copy.\n",
+    }
+    service._list_folder_subtree = lambda folder_id: [manifest, strategy, feed, stories]
+    service._download_text_file = lambda file_id: documents[file_id]
+
+    result = service._folder_copy_metadata("package")
+
+    assert result["_copy_source_drive_file_id"] == "complete-manifest"
+
+
+def test_newer_unreadable_ad_copy_blocks_older_handoff_manifest():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+    manifest = {
+        "id": "complete-manifest", "name": "PACKAGE-HANDOFF-MANIFEST.txt",
+        "mimeType": "text/plain", "modifiedTime": "2026-09-22T10:50:00Z",
+    }
+    unreadable = {
+        "id": "unreadable-copy", "name": "PACKAGE-Ad-Copy.txt",
+        "mimeType": "text/plain", "modifiedTime": "2026-09-22T10:55:00Z",
+    }
+    manifest_text = """FINAL HANDOFF MANIFEST — LAUNCHER COPY MAP
+Landing Page
+https://example.com/current
+Meta Button
+Get Quote
+
+## PACKAGE-AD1
+PRIMARY TEXT
+Current primary text.
+HEADLINE
+Current headline
+1X1 IMAGE
+PACKAGE-AD1-Identity-1x1.jpg
+9X16 IMAGE
+PACKAGE-AD1-Identity-9x16.jpg
+"""
+    service._list_folder_subtree = lambda folder_id: [manifest, unreadable]
+
+    def download(file_id):
+        if file_id == "unreadable-copy":
+            raise TimeoutError("Drive read timed out")
+        return manifest_text
+
+    service._download_text_file = download
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="Could not verify newer Drive copy source"):
+        service._folder_copy_metadata("package")
+
+
+def test_unreadable_ad_copy_blocks_package_without_manifest_too():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+    unreadable = {
+        "id": "unreadable-copy", "name": "PACKAGE-Ad-Copy.txt",
+        "mimeType": "text/plain", "modifiedTime": "2026-09-22T10:55:00Z",
+    }
+    strategy = {
+        "id": "older-strategy", "name": "PACKAGE-Strategy.md",
+        "mimeType": "text/markdown", "modifiedTime": "2026-09-22T10:50:00Z",
+    }
+    service._list_folder_subtree = lambda folder_id: [unreadable, strategy]
+
+    def download(file_id):
+        if file_id == "unreadable-copy":
+            raise TimeoutError("Drive read timed out")
+        return "## AD-PACKAGE-01\nOlder strategy content\n"
+
+    service._download_text_file = download
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="Could not verify Drive copy source"):
+        service._folder_copy_metadata("package")
+
+
+def test_freshness_decision_reuses_the_validated_copy_snapshot():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+    manifest = {
+        "id": "older-manifest", "name": "PACKAGE-HANDOFF-MANIFEST.txt",
+        "mimeType": "text/plain", "modifiedTime": "2026-09-22T10:50:00Z",
+    }
+    newer_copy = {
+        "id": "newer-copy", "name": "PACKAGE-Ad-Copy.txt",
+        "mimeType": "text/plain", "modifiedTime": "2026-09-22T10:55:00Z",
+    }
+    media = {"id": "package-ad1-feed", "name": "PACKAGE-AD1-Identity-1x1.jpg", "mimeType": "image/jpeg"}
+    documents = {
+        "older-manifest": "Batch notes only — copy will be added later.",
+        "newer-copy": "AD 1 — Identity\nMETA HEADLINE\nNew headline\nPRIMARY TEXT\nNew primary text\nCTA: GET QUOTE\n",
+    }
+    reads = []
+    service._list_folder_subtree = lambda folder_id: [manifest, newer_copy, media]
+
+    def download(file_id):
+        reads.append(file_id)
+        return documents[file_id]
+
+    service._download_text_file = download
+
+    result = service._folder_copy_metadata("package")
+
+    assert result["_copy_source_drive_file_id"] == "newer-copy"
+    assert reads.count("newer-copy") == 1
+
+
 def test_non_actionable_handoff_manifest_falls_back_to_canonical_ad_copy():
     """A draft named like a handoff manifest must not hide usable package copy."""
     service = DriveSyncService.__new__(DriveSyncService)
