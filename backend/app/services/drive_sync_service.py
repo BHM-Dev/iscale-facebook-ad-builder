@@ -376,17 +376,13 @@ class DriveSyncService:
             result["skipped"] += 1
             return
 
-        resolved = self._resolve_drive_path(file_meta)
-        if not resolved:
-            result["skipped"] += 1
-            return
-
-        brand_id = self._match_brand_id(resolved.brand_folder)
-        if not brand_id:
-            logger.warning("Skipping Drive asset with unmatched brand folder: %s", resolved.brand_folder)
-            result["unmatched_brand"] += 1
-            return
-
+        # A manual copy refresh walks the current Drive tree so it can discover
+        # replacement files. Most rows are already imported, though, and
+        # resolving every existing file's parent chain turns a one-click
+        # metadata refresh into hundreds of sequential Drive requests. Check
+        # identity first: when the same unchanged Drive object is still present,
+        # its current filename is the only metadata we need to reconcile here.
+        # New or binary-modified files continue through the full path below.
         file_name = file_meta.get("name") or f"{drive_file_id}{mimetypes.guess_extension(mime_type) or ''}"
         media_format = "video" if mime_type.startswith("video/") else "image"
         existing = self.db.execute(
@@ -400,6 +396,39 @@ class DriveSyncService:
             {"drive_file_id": drive_file_id},
         ).mappings().first()
         modified_time = self._parse_drive_time(file_meta.get("modifiedTime"))
+        if (
+            self._backfill_mode
+            and existing
+            and existing["drive_modified_time"]
+            and existing["drive_modified_time"].replace(tzinfo=timezone.utc) == modified_time
+        ):
+            self.db.execute(
+                text(
+                    """
+                    UPDATE drive_assets
+                    SET format = :format,
+                        file_name = :file_name,
+                        archived = FALSE,
+                        synced_at = NOW()
+                    WHERE id = :id
+                    """
+                ),
+                {"id": existing["id"], "format": media_format, "file_name": file_name},
+            )
+            result["updated"] += 1
+            return
+
+        resolved = self._resolve_drive_path(file_meta)
+        if not resolved:
+            result["skipped"] += 1
+            return
+
+        brand_id = self._match_brand_id(resolved.brand_folder)
+        if not brand_id:
+            logger.warning("Skipping Drive asset with unmatched brand folder: %s", resolved.brand_folder)
+            result["unmatched_brand"] += 1
+            return
+
         if existing and existing["drive_modified_time"] and existing["drive_modified_time"].replace(tzinfo=timezone.utc) == modified_time:
             # Google can rename or move an existing Drive file without changing
             # the timestamp we previously stored (notably after an in-place
