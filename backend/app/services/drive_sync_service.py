@@ -1153,11 +1153,27 @@ class DriveSyncService:
             return 0
         folder_metadata = self._folder_copy_metadata(metadata_folder, force=True)
         updated = 0
-        refresh_assets = folder_metadata.get("assets_by_drive_id") or folder_metadata.get("assets", {})
+        # Category/AD parsers key their trustworthy mappings by Drive ID,
+        # while strategy-copy parsers can expose filename-keyed mappings. A
+        # merged package may legitimately contain both. Do not use `or` here:
+        # a non-empty ID map used to make every strategy asset disappear from
+        # the refresh pass.
+        refresh_assets = []
+        seen_refresh_ids = set()
+        for fallback_name, soft_tags in (folder_metadata.get("assets_by_drive_id") or {}).items():
+            refresh_assets.append((soft_tags.get("file_name") or fallback_name, soft_tags))
+            seen_refresh_ids.update(
+                soft_tags.get("drive_file_ids")
+                or ([soft_tags.get("drive_file_id")] if soft_tags.get("drive_file_id") else [])
+            )
+        for fallback_name, soft_tags in (folder_metadata.get("assets") or {}).items():
+            candidate_ids = soft_tags.get("drive_file_ids") or ([soft_tags.get("drive_file_id")] if soft_tags.get("drive_file_id") else [])
+            if candidate_ids and all(drive_file_id in seen_refresh_ids for drive_file_id in candidate_ids):
+                continue
+            refresh_assets.append((soft_tags.get("file_name") or fallback_name, soft_tags))
+            seen_refresh_ids.update(candidate_ids)
         matched_media_ids = set()
-        for file_name, soft_tags in refresh_assets.items():
-            if folder_metadata.get("assets_by_drive_id"):
-                file_name = soft_tags.get("file_name") or file_name
+        for file_name, soft_tags in refresh_assets:
             drive_file_ids = soft_tags.get("drive_file_ids") or ([soft_tags.get("drive_file_id")] if soft_tags.get("drive_file_id") else [])
             if not drive_file_ids:
                 # A manifest names this file (via its 1x1:/9x16: entry) but no media
@@ -1175,14 +1191,18 @@ class DriveSyncService:
                 matched_media_ids.add(drive_file_id)
                 refreshed_tags = self._bind_media_metadata_to_file(soft_tags, drive_file_id)
                 refreshed_tags["copy_source_drive_file_id"] = (
-                    folder_metadata.get("_copy_source_drive_file_id") or file_meta.get("id")
+                    refreshed_tags.get("copy_source_drive_file_id")
+                    or folder_metadata.get("_copy_source_drive_file_id")
+                    or file_meta.get("id")
                 )
                 refreshed_tags["copy_source_drive_modified_time"] = (
-                    folder_metadata.get("_copy_source_drive_modified_time")
+                    refreshed_tags.get("copy_source_drive_modified_time")
+                    or folder_metadata.get("_copy_source_drive_modified_time")
                     or file_meta.get("modifiedTime")
                 )
                 refreshed_tags["copy_source_drive_file_name"] = (
-                    folder_metadata.get("_copy_source_drive_file_name")
+                    refreshed_tags.get("copy_source_drive_file_name")
+                    or folder_metadata.get("_copy_source_drive_file_name")
                     or file_meta.get("name")
                 )
                 # A successful match is the ONLY thing that clears the blanket
@@ -1565,6 +1585,29 @@ class DriveSyncService:
                     # has won the freshness comparison.
                     manifest = None
         recoverable_manifest_error = None
+        incomplete_manifest_error = None
+        if manifest:
+            # A handoff parser can mistake the "Recommended Ad Set Structure"
+            # table at the end of a document for incomplete entries. That is
+            # not a media map. Let complete sibling sources take over only if
+            # they later prove they cover every asset in this package.
+            try:
+                self._handoff_folder_copy_metadata(
+                    folder_id, folder_files, text_files, media_by_name,
+                    text_by_id.get(manifest.get("id"), ""),
+                )
+            except RuntimeError as exc:
+                has_inline_ad_blocks = bool(re.search(
+                    r"^[ \t]*##[ \t]+(?:[A-Z0-9]+[-_ \t]+)*AD[-_ \t]?\d+\b",
+                    text_by_id.get(manifest.get("id"), ""),
+                    re.IGNORECASE | re.MULTILINE,
+                ))
+                if (
+                    has_inline_ad_blocks
+                    and str(exc).startswith("Drive handoff manifest has incomplete entries:")
+                ):
+                    incomplete_manifest_error = exc
+                    manifest = None
         if manifest:
             manifest_text = text_by_id.get(manifest.get("id"))
             if manifest_text is None:
@@ -1668,42 +1711,78 @@ class DriveSyncService:
                 source_kind == "strategy" or self._copy_document_is_complete(candidate_text, source_kind)
             ):
                 copy_candidates.append((item, candidate_text, source_kind))
-        strategy_file = None
-        strategy_text = ""
-        strategy_kind = None
         if copy_candidates:
-            strategy_file, strategy_text, strategy_kind = max(
+            # A package can contain non-overlapping launch batches (for
+            # example, an original A1-D5 export beside newer winner
+            # variations). Choosing one package-wide source silently strands
+            # the other batch. Merge their mappings per Drive file; explicit
+            # source priority still resolves any genuine overlap.
+            media_files = [
+                item for item in folder_files
+                if self._is_supported_media(item.get("mimeType") or "", item.get("name") or "")
+            ]
+            metadata = {"assets": {}, "assets_by_drive_id": {}}
+            for source_file, source_text, source_kind in sorted(
                 copy_candidates,
                 key=lambda candidate: self._copy_document_priority(candidate[0], candidate[2]),
-            )
-            ignored_candidates = [candidate[0].get("name") for candidate in copy_candidates if candidate[0].get("id") != strategy_file.get("id")]
-            if ignored_candidates:
-                logger.info(
-                    "Selected Drive copy source %s for package %s; ignored lower-priority candidates: %s",
-                    strategy_file.get("name"),
-                    folder_id,
-                    ", ".join(name for name in ignored_candidates if name),
+            ):
+                if source_kind == "strategy":
+                    source_metadata = self._strategy_folder_copy_metadata(
+                        folder_id, folder_files, media_by_name, source_text
+                    )
+                elif source_kind == "category":
+                    source_metadata = self._category_folder_copy_metadata(
+                        folder_id, media_files, source_text
+                    )
+                else:
+                    source_metadata = self._ad_numbered_folder_copy_metadata(
+                        folder_id, media_files, source_text
+                    )
+                for key, tags in (source_metadata.get("assets") or {}).items():
+                    tagged = dict(tags)
+                    tagged["copy_source_drive_file_id"] = source_file.get("id")
+                    tagged["copy_source_drive_modified_time"] = source_file.get("modifiedTime")
+                    tagged["copy_source_drive_file_name"] = source_file.get("name")
+                    metadata["assets"][key] = tagged
+                    # Normalize filename-keyed strategy mappings into the
+                    # Drive-ID index as well. That makes the source priority
+                    # established by this sorted loop authoritative even when
+                    # another parser type maps the same physical media file.
+                    # Entries without a trustworthy ID remain filename-only.
+                    for drive_file_id in tagged.get("drive_file_ids") or ([tagged.get("drive_file_id")] if tagged.get("drive_file_id") else []):
+                        metadata["assets_by_drive_id"][drive_file_id] = tagged
+                for drive_file_id, tags in (source_metadata.get("assets_by_drive_id") or {}).items():
+                    tagged = dict(tags)
+                    tagged["copy_source_drive_file_id"] = source_file.get("id")
+                    tagged["copy_source_drive_modified_time"] = source_file.get("modifiedTime")
+                    tagged["copy_source_drive_file_name"] = source_file.get("name")
+                    metadata["assets_by_drive_id"][drive_file_id] = tagged
+                if source_metadata.get("_copy_integrity_warnings"):
+                    metadata.setdefault("_copy_integrity_warnings", {}).update(
+                        source_metadata["_copy_integrity_warnings"]
+                    )
+
+            if metadata["assets_by_drive_id"]:
+                if incomplete_manifest_error:
+                    expected_media_ids = {item.get("id") for item in media_files if item.get("id")}
+                    if not expected_media_ids.issubset(metadata["assets_by_drive_id"]):
+                        raise incomplete_manifest_error
+                    logger.warning(
+                        "Ignoring incomplete Drive handoff manifest in package %s because complete sibling copy sources cover every media asset",
+                        folder_id,
+                    )
+                primary_source, _, _ = max(
+                    copy_candidates,
+                    key=lambda candidate: self._copy_document_priority(candidate[0], candidate[2]),
                 )
-        if strategy_file:
-            if strategy_kind == "strategy":
-                metadata = self._strategy_folder_copy_metadata(folder_id, folder_files, media_by_name, strategy_text)
-            elif strategy_kind == "category":
-                category_media = [
-                    item for item in folder_files
-                    if self._is_supported_media(item.get("mimeType") or "", item.get("name") or "")
-                ]
-                metadata = self._category_folder_copy_metadata(folder_id, category_media, strategy_text)
-            else:
-                ad_media = [
-                    item for item in folder_files
-                    if self._is_supported_media(item.get("mimeType") or "", item.get("name") or "")
-                ]
-                metadata = self._ad_numbered_folder_copy_metadata(folder_id, ad_media, strategy_text)
-            metadata["_copy_source_drive_file_id"] = strategy_file.get("id")
-            metadata["_copy_source_drive_modified_time"] = strategy_file.get("modifiedTime")
-            metadata["_copy_source_drive_file_name"] = strategy_file.get("name")
-            self._folder_metadata_cache[folder_id] = metadata
-            return metadata
+                metadata["_copy_source_drive_file_id"] = primary_source.get("id")
+                metadata["_copy_source_drive_modified_time"] = primary_source.get("modifiedTime")
+                metadata["_copy_source_drive_file_name"] = primary_source.get("name")
+                self._folder_metadata_cache[folder_id] = metadata
+                return metadata
+
+        if incomplete_manifest_error:
+            raise incomplete_manifest_error
 
         if recoverable_manifest_error:
             raise recoverable_manifest_error
@@ -1751,11 +1830,12 @@ class DriveSyncService:
             sections = self._parse_ad_copy_doc(normalized)
             return bool(headings) and len(headings) == len(set(headings)) and set(headings) == set(sections)
         if source_kind == "category":
+            normalized = re.sub(r"[\ufeff\u200b\u200c\u200d]", "", text_body or "").replace("\u00a0", " ")
             headings = [
                 int(match.group(1))
-                for match in re.finditer(r"^\s*(\d+)\.\s+.+$", text_body or "", re.MULTILINE)
+                for match in re.finditer(r"^\s*(\d+)\.\s+.+$", normalized, re.MULTILINE)
             ]
-            sections = self._parse_category_copy_doc(text_body)
+            sections = self._parse_category_copy_doc(normalized)
             return bool(headings) and len(headings) == len(set(headings)) and set(headings) == set(sections)
         return False
 
@@ -1908,7 +1988,17 @@ class DriveSyncService:
             re.search(r"^\s*PRIMARY\s+TEXT\s*:?\s*$", normalized_body, re.IGNORECASE | re.MULTILINE)
             or re.search(r"^\s*={10,}\s*$", normalized_body, re.MULTILINE)
         )
-        return bool(has_headline_label and has_primary_label and self._parse_ad_copy_doc(normalized_body))
+        # Some established export files put the body directly below
+        # ``Headline: ...`` instead of adding a PRIMARY TEXT label. The AD
+        # heading still bounds each block, so accept that compact layout only
+        # when it has a non-label body line; `_parse_ad_copy_doc` remains the
+        # completeness gate.
+        has_compact_body = bool(re.search(
+            r"^\s*Headline\s*:\s*.+?\r?\n\s*(?!Description\b|CTA\b|(?:1X1|9X16)\s+IMAGE\b)(\S.+)$",
+            normalized_body,
+            re.IGNORECASE | re.MULTILINE,
+        ))
+        return bool(has_headline_label and (has_primary_label or has_compact_body) and self._parse_ad_copy_doc(normalized_body))
 
     _CATEGORY_ALIASES = {
         1: ("landscaping", "landscaper", "landscapers", "field service", "lawn care", "outdoor crew"),
@@ -1937,6 +2027,14 @@ class DriveSyncService:
     )
 
     def _parse_category_copy_doc(self, text_body: str) -> Dict[int, Dict[str, Any]]:
+        # Text copied from Google Docs can place a BOM directly before the first
+        # numbered category heading.  Unlike a visible character, that mark is
+        # not removed by the heading regex and silently drops just the first
+        # section of an otherwise complete document (the Broad Testing
+        # landscaping pair exposed this in production).  Normalize it at the
+        # parsing boundary, as the AD-numbered parser already does.
+        text_body = re.sub(r"[\ufeff\u200b\u200c\u200d]", "", text_body or "")
+        text_body = text_body.replace("\u00a0", " ")
         headings = list(re.finditer(r"^\s*(\d+)\.\s+(.+?)\s*$", text_body, re.MULTILINE))
         sections: Dict[int, Dict[str, Any]] = {}
         for index, heading in enumerate(headings):
@@ -2133,7 +2231,21 @@ class DriveSyncService:
                 )[0]
             else:
                 dividers = list(re.finditer(r"^\s*={10,}\s*$", block, re.MULTILINE))
-                primary_body = block[dividers[0].end():dividers[1].start() if len(dividers) > 1 else len(block)] if dividers else ""
+                if dividers:
+                    primary_body = block[dividers[0].end():dividers[1].start() if len(dividers) > 1 else len(block)]
+                elif headline_match and re.match(r"^\s*Headline\s*:", headline_match.group(0), re.IGNORECASE):
+                    # Compact export: the primary text is the prose following
+                    # the inline headline, terminated by the next structured
+                    # field within this already AD-bounded block.
+                    primary_body = block[headline_match.end():]
+                    primary_body = re.split(
+                        r"^\s*(?:CTA|DESCRIPTION|(?:1X1|9X16)\s+IMAGE|IMAGE)\s*:?.*$",
+                        primary_body,
+                        maxsplit=1,
+                        flags=re.IGNORECASE | re.MULTILINE,
+                    )[0]
+                else:
+                    primary_body = ""
             primary_text = self._clean_markdown_value(primary_body)
 
             cta_match = re.search(r"^\s*CTA\s*:\s*(.+?)\s*$", block, re.IGNORECASE | re.MULTILINE)
@@ -2177,7 +2289,21 @@ class DriveSyncService:
         # to that known family so arbitrary CVI-prefixed files cannot inherit
         # another package's copy. Accept both a suffix and an exact stem.
         cvi_match = re.search(r"^CVI-PAINT-0?(\d{1,2})(?=$|[-_ ])", stem, re.IGNORECASE)
-        return int(cvi_match.group(1)) if cvi_match else None
+        if cvi_match:
+            return int(cvi_match.group(1))
+        # General Commercial Auto's original launch export predates the
+        # AD-01 filename convention: its paired files are A1…A5, B1…B4,
+        # C1…C4 and D1…D5 while its source document numbers them AD 01…18.
+        # This mapping is deliberately constrained to a leading legacy set
+        # token, so a random "A1" elsewhere cannot borrow package copy.
+        legacy_set = re.search(r"^([A-D])([1-5])(?=$|[-_ ])", stem, re.IGNORECASE)
+        if legacy_set:
+            # The historical sets are deliberately uneven: A has five ads,
+            # B and C have four each, and D has five. Do not use alphabetic
+            # position × five here or C/D would inherit the next ad's copy.
+            set_offsets = {"A": 0, "B": 5, "C": 9, "D": 13}
+            return set_offsets[legacy_set.group(1).upper()] + int(legacy_set.group(2))
+        return None
 
     def _ad_creative_pair_key(self, file_name: str) -> str:
         """Return the visual identity shared by a feed/stories export.

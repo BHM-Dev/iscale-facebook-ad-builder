@@ -21,6 +21,25 @@ Restaurant copy.
     assert not service._category_matches("restaurant-1x1.png", sections[1]["category"], 1)
 
 
+def test_category_copy_doc_tolerates_google_export_mark_before_first_heading():
+    service = DriveSyncService.__new__(DriveSyncService)
+    document = """\ufeff1. LANDSCAPING AND FIELD SERVICE
+Headline: Landscapers: See What You're Overpaying
+Primary text:
+Landscaping copy.
+"""
+    media = [
+        {"id": "feed", "name": "BT-LANDSCAPING-FIELD-SERVICE-01-1x1.png"},
+        {"id": "stories", "name": "BT-LANDSCAPING-FIELD-SERVICE-01-9x16.png"},
+    ]
+
+    result = service._category_folder_copy_metadata("broad-testing", media, document)
+
+    assert set(result["assets_by_drive_id"]) == {"feed", "stories"}
+    assert result["assets_by_drive_id"]["feed"]["copy"]["headline"] == "Landscapers: See What You're Overpaying"
+    assert service._copy_document_is_complete(document, "category")
+
+
 def test_category_copy_doc_extracts_optional_description_without_leaking_into_primary():
     service = DriveSyncService.__new__(DriveSyncService)
     document = """4. RESTAURANT AND FOOD SERVICE
@@ -322,6 +341,37 @@ CTA: Get My Rate Now
     assert result["assets"]["cvi-paint-01-identity-1x1.png"]["copy"]["headline"] == "Commercial Van Insurance for Painters"
     assert result["assets"]["cvi-paint-01-identity-9x16.png"]["copy"]["primary_text"] == "Painting primary copy."
     assert result["assets_by_drive_id"]["stories"]["copy_id"] == "AD-01"
+
+
+def test_ad_numbered_copy_doc_maps_compact_general_auto_legacy_set_names():
+    service = DriveSyncService.__new__(DriveSyncService)
+    document = """AD 01 — Original Set A1
+Headline: Is Your Work Van Actually Covered?
+Your work van has been running jobs for years.
+
+DESCRIPTION
+One accident can change everything.
+
+AD 06 — Original Set B1
+Headline: The Van Is How You Eat.
+The van is how you pay the mortgage.
+"""
+    media = [
+        {"id": "a1-feed", "name": "A1-Van-Denial-Scenario.png", "_parent_folder_name": "1x1 Images"},
+        {"id": "a1-story", "name": "A1-Van-Denial-Scenario-9x16.png", "_parent_folder_name": "9x16 Images"},
+        {"id": "b1-feed", "name": "B1-Van-Identity.png", "_parent_folder_name": "1x1 Images"},
+        {"id": "b1-story", "name": "B1-Van-Identity-9x16.png", "_parent_folder_name": "9x16 Images"},
+        {"id": "c1-feed", "name": "C1-GenAuto-Gap-Education.png", "_parent_folder_name": "1x1 Images"},
+        {"id": "d1-feed", "name": "D1-GenAuto-Comparison.png", "_parent_folder_name": "1x1 Images"},
+    ]
+
+    result = service._ad_numbered_folder_copy_metadata("general-auto", media, document)
+
+    assert result["assets_by_drive_id"]["a1-feed"]["copy_id"] == "AD-01"
+    assert result["assets_by_drive_id"]["b1-story"]["copy_id"] == "AD-06"
+    assert result["assets_by_drive_id"]["a1-story"]["copy"]["primary_text"] == "Your work van has been running jobs for years."
+    assert service._ad_number_from_file_name("C1-GenAuto-Gap-Education.png") == 10
+    assert service._ad_number_from_file_name("D1-GenAuto-Comparison.png") == 14
 
 
 def test_ad_numbered_copy_doc_does_not_treat_other_cvi_families_as_painting_ads():
@@ -677,6 +727,33 @@ def test_successful_copy_refresh_clears_stale_unverified_mark():
     # must clear it too or a filename mismatch fixed in Drive stays blocked forever.
     assert writes["media-1"]["copy_integrity_issue"] is False
     assert writes["media-1"]["copy_integrity_reason"] is None
+
+
+def test_copy_refresh_includes_filename_keyed_strategy_assets_alongside_id_keyed_assets():
+    service = DriveSyncService.__new__(DriveSyncService)
+    writes = {}
+    service._resolve_drive_path = lambda file_meta: type("R", (), {"brand_folder": "Brand", "folder_path": "p"})()
+    service._match_brand_id = lambda brand_folder: "brand-id"
+    service._find_strategy_package_folder = lambda file_meta: "package"
+    service._find_package_folder = lambda file_meta: "package"
+    service._folder_copy_metadata = lambda folder_id, force=False: {
+        "assets_by_drive_id": {
+            "ad-media": {"file_name": "AD1-1x1.jpg", "drive_file_id": "ad-media", "copy_id": "AD-01"},
+        },
+        "assets": {
+            "strategy-1x1.jpg": {"file_name": "strategy-1x1.jpg", "drive_file_id": "strategy-media", "copy_id": "STRATEGY-01"},
+        },
+        "_copy_source_drive_file_id": "copy-doc",
+    }
+    service._write_merged_soft_tags = lambda drive_file_id, tags: (writes.__setitem__(drive_file_id, tags), 1)[1]
+    service._mark_unmatched_package_assets_unverified = lambda package_folder, matched: None
+
+    updated = service._refresh_folder_copy_metadata(
+        {"id": "copy-doc", "name": "Ad Copy.txt", "mimeType": "text/plain", "parents": ["package"]}
+    )
+
+    assert updated == 2
+    assert set(writes) == {"ad-media", "strategy-media"}
 
 
 def test_copy_refresh_uses_resolved_package_when_brand_name_is_not_registered():
@@ -1133,6 +1210,78 @@ def test_package_copy_source_prefers_canonical_ad_copy_over_newer_winner_variati
     assert result["_copy_source_drive_file_id"] == "primary-copy"
     assert result["_copy_source_drive_modified_time"] == "2026-09-22T10:42:21Z"
     assert result["assets_by_drive_id"]["paint-ad1-feed"]["copy"]["headline"] == "Primary headline"
+
+
+def test_package_copy_sources_merge_disjoint_launch_batches_with_per_asset_provenance():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+    canonical = {
+        "id": "canonical-copy",
+        "name": "General-Auto-Ad-Copy.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T10:54:48Z",
+    }
+    winner = {
+        "id": "winner-copy",
+        "name": "General-Auto-Winner-Variations-Ad-Copy.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T10:55:00Z",
+    }
+    legacy_feed = {"id": "legacy-feed", "name": "A1-Van-Denial-Scenario-1x1.png", "mimeType": "image/png"}
+    legacy_story = {"id": "legacy-story", "name": "A1-Van-Denial-Scenario-9x16.png", "mimeType": "image/png"}
+    winner_feed = {"id": "winner-feed", "name": "GCA-AD2-Winner-1x1.jpg", "mimeType": "image/jpeg"}
+    winner_story = {"id": "winner-story", "name": "GCA-AD2-Winner-9x16.jpg", "mimeType": "image/jpeg"}
+    documents = {
+        "canonical-copy": """AD 01 — Original Set A1
+Headline: Legacy headline
+Legacy primary text.
+""",
+        "winner-copy": """AD 2 — Winner
+META HEADLINE
+Winner headline
+PRIMARY TEXT
+Winner primary text.
+""",
+    }
+    service._list_folder_subtree = lambda folder_id: [canonical, winner, legacy_feed, legacy_story, winner_feed, winner_story]
+    service._download_text_file = lambda file_id: documents[file_id]
+
+    result = service._folder_copy_metadata("general-auto")
+
+    assert set(result["assets_by_drive_id"]) == {"legacy-feed", "legacy-story", "winner-feed", "winner-story"}
+    assert result["assets_by_drive_id"]["legacy-feed"]["copy_source_drive_file_id"] == "canonical-copy"
+    assert result["assets_by_drive_id"]["winner-feed"]["copy_source_drive_file_id"] == "winner-copy"
+    assert result["assets_by_drive_id"]["winner-story"]["copy"]["headline"] == "Winner headline"
+
+
+def test_package_copy_sources_apply_priority_to_overlapping_strategy_and_ad_media():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+    strategy = {
+        "id": "strategy-copy", "name": "ICP Strategy.txt", "mimeType": "text/plain", "modifiedTime": "2026-09-22T10:55:00Z",
+    }
+    canonical = {
+        "id": "canonical-copy", "name": "Package-Ad-Copy.txt", "mimeType": "text/plain", "modifiedTime": "2026-09-22T10:54:00Z",
+    }
+    media = {"id": "same-media", "name": "AD-LAND-01-Identity-1x1.jpg", "mimeType": "image/jpeg"}
+    documents = {
+        "strategy-copy": """## AD-LAND-01
+**Meta headline:** Strategy headline
+**Primary text:** Strategy body
+""",
+        "canonical-copy": """1. LANDSCAPING
+Headline: Canonical headline
+Primary text:
+Canonical body
+""",
+    }
+    service._list_folder_subtree = lambda folder_id: [strategy, canonical, media]
+    service._download_text_file = lambda file_id: documents[file_id]
+
+    result = service._folder_copy_metadata("overlap-package")
+
+    assert result["assets_by_drive_id"]["same-media"]["copy"]["headline"] == "Canonical headline"
+    assert result["assets_by_drive_id"]["same-media"]["copy_source_drive_file_id"] == "canonical-copy"
 
 
 def test_package_copy_source_uses_newer_ad_copy_over_older_handoff_manifest():
