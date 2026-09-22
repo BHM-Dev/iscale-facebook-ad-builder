@@ -1026,3 +1026,62 @@ def test_package_copy_source_prefers_canonical_ad_copy_over_newer_winner_variati
     assert result["_copy_source_drive_file_id"] == "primary-copy"
     assert result["_copy_source_drive_modified_time"] == "2026-09-22T10:42:21Z"
     assert result["assets_by_drive_id"]["paint-ad1-feed"]["copy"]["headline"] == "Primary headline"
+
+
+def test_package_copy_source_priority_ignores_marker_words_embedded_in_other_tokens():
+    """A canonical file's own version suffix or persona note (e.g. "_Variation2",
+    "_ICPersonas") must not be mistaken for a real winner-variation or ICP/reference
+    doc just because the marker word appears as a substring."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+
+    canonical = {
+        "id": "canonical-copy",
+        "name": "AdCopy_Variation2.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T10:00:00Z",
+    }
+    persona_note = {
+        "id": "persona-note",
+        "name": "AdCopy_ICPersonas.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T09:00:00Z",
+    }
+    media = {
+        "id": "roof-ad1-feed",
+        "name": "01-ROOF-AD1-Identity-1x1.jpg",
+        "mimeType": "image/png",
+        "_parent_folder_path": ["01 - Roofing", "1x1 Images"],
+    }
+    documents = {
+        "canonical-copy": "AD 1 — Identity\nMETA HEADLINE\nCanonical headline\nPRIMARY TEXT\nCanonical body\nCTA: Get My Rate Now\n",
+        "persona-note": "AD 1 — Note\nHeadline: Persona headline\n==========\nPersona body\n==========\n",
+    }
+    service._list_folder_subtree = lambda folder_id: [canonical, persona_note, media]
+    service._download_text_file = lambda file_id: documents[file_id]
+
+    result = service._folder_copy_metadata("roofing-package")
+
+    assert result["_copy_source_drive_file_id"] == "canonical-copy"
+    assert result["assets_by_drive_id"]["roof-ad1-feed"]["copy"]["headline"] == "Canonical headline"
+
+
+def test_metadata_for_media_file_propagates_copy_source_file_name():
+    """copy_source_drive_file_name must reach the bound asset on the normal sync
+    path (_metadata_for_media_file), not only via the refresh-tags path."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._find_package_folder = lambda file_meta: "package"
+    service._folder_copy_metadata = lambda folder_id, force=False: {
+        "assets_by_drive_id": {
+            "media-1": {"file_name": "AD1-1x1.jpg", "drive_file_ids": ["media-1"], "copy_id": "AD-01"}
+        },
+        "_copy_source_drive_file_id": "copy-doc",
+        "_copy_source_drive_modified_time": "2026-09-22T10:00:00Z",
+        "_copy_source_drive_file_name": "Ad Copy.txt",
+    }
+
+    bound = service._metadata_for_media_file({"id": "media-1"}, "AD1-1x1.jpg")
+
+    assert bound["copy_source_drive_file_id"] == "copy-doc"
+    assert bound["copy_source_drive_modified_time"] == "2026-09-22T10:00:00Z"
+    assert bound["copy_source_drive_file_name"] == "Ad Copy.txt"

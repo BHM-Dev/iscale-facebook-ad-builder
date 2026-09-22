@@ -825,6 +825,8 @@ class DriveSyncService:
                     bound["copy_source_drive_file_id"] = folder_metadata["_copy_source_drive_file_id"]
                 if folder_metadata.get("_copy_source_drive_modified_time"):
                     bound["copy_source_drive_modified_time"] = folder_metadata["_copy_source_drive_modified_time"]
+                if folder_metadata.get("_copy_source_drive_file_name"):
+                    bound["copy_source_drive_file_name"] = folder_metadata["_copy_source_drive_file_name"]
                 return bound
             warning = (folder_metadata.get("_copy_integrity_warnings") or {}).get(drive_file_id)
             if warning:
@@ -850,6 +852,8 @@ class DriveSyncService:
             bound["copy_source_drive_file_id"] = folder_metadata["_copy_source_drive_file_id"]
         if folder_metadata.get("_copy_source_drive_modified_time"):
             bound["copy_source_drive_modified_time"] = folder_metadata["_copy_source_drive_modified_time"]
+        if folder_metadata.get("_copy_source_drive_file_name"):
+            bound["copy_source_drive_file_name"] = folder_metadata["_copy_source_drive_file_name"]
         return bound
 
     def _bind_media_metadata_to_file(self, metadata: Dict[str, Any], drive_file_id: Optional[str]) -> Dict[str, Any]:
@@ -1355,11 +1359,16 @@ class DriveSyncService:
         replace it when they are newer.
         """
         name = (file_meta.get("name") or "").lower()
-        if "winner" in name or "variation" in name:
+        # Tokenize on non-alphanumeric separators so a marker word only counts
+        # when it stands alone (e.g. "Winner-Variations-Ad-Copy.txt"), not when
+        # it's embedded in an unrelated token (e.g. "AdCopy_Variation2.txt" or
+        # "AdCopy_ICPersonas.txt" naming a canonical file's version/persona).
+        tokens = set(re.split(r"[^a-z0-9]+", name))
+        if tokens & {"winner", "winners", "variation", "variations"}:
             name_priority = 200
         elif re.search(r"(?:ad[\s_-]*copy|copy[\s_-]*ad)", name):
             name_priority = 300
-        elif any(token in name for token in ("icp", "reference", "strategy")):
+        elif tokens & {"icp", "reference", "references", "strategy"}:
             name_priority = 100
         else:
             name_priority = 150
