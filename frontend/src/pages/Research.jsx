@@ -445,7 +445,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
       {(media || videoPreview) && (
         <button type="button" onClick={() => onInspect(ad)} className="relative rounded-lg overflow-hidden bg-gray-100 -mx-4 -mt-4 mb-1 aspect-[4/3] text-left" aria-label="Inspect captured creative">
           {media ? <img src={media} alt="" className="w-full h-full object-cover transition-transform duration-500 hover:scale-[1.02]" onError={(e) => { e.target.style.display = 'none'; }} />
-            : !videoPreviewFailed ? <video muted playsInline preload="metadata" className="w-full h-full object-cover" onError={() => setVideoPreviewFailed(true)}><source src={videoPreview} /></video>
+            : !videoPreviewFailed ? <video muted loop playsInline preload="metadata" className="w-full h-full object-cover" onMouseEnter={event => event.currentTarget.play().catch(() => {})} onMouseLeave={event => { event.currentTarget.pause(); event.currentTarget.currentTime = 0; }} onError={() => setVideoPreviewFailed(true)}><source src={videoPreview} /></video>
               : <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-slate-900 text-white"><Video size={28} /><span className="text-xs font-semibold">Video capture · inspect to review</span></div>}
           {ad.media_type === 'video' && <span className="absolute left-3 bottom-3 inline-flex items-center gap-1.5 rounded-full bg-black/75 px-2.5 py-1 text-[11px] font-semibold text-white"><Play size={12} fill="currentColor" /> Video{ad.video_length_seconds ? ` · ${ad.video_length_seconds}s` : ''}</span>}
         </button>
