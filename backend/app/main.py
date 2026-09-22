@@ -376,16 +376,28 @@ async def startup_event():
             db = SessionLocal()
             try:
                 from app.services.drive_sync_service import DriveSyncService
+                from app.services import slack_service
                 result = DriveSyncService(db).sync_once()
                 changed = result.get("created", 0) + result.get("updated", 0) + result.get("archived", 0)
+                errors = result.get("errors", 0)
                 print(
                     "✅ Drive creative sync: "
                     f"{result.get('processed', 0)} processed, {result.get('created', 0)} created, "
                     f"{result.get('updated', 0)} updated, {result.get('archived', 0)} archived, "
-                    f"{result.get('skipped', 0)} skipped"
+                    f"{result.get('skipped', 0)} skipped, {errors} errors"
                 )
                 if not changed:
                     print("ℹ️  Drive creative sync: no asset changes")
+                if errors:
+                    # Per-file failures are isolated (drive_sync_service._process_file_isolated /
+                    # _archive_by_drive_id_isolated) and no longer raise out of sync_once, so they
+                    # would otherwise go unreported. Surface them explicitly instead of only the
+                    # aggregate count above.
+                    print(f"⚠️  Drive creative sync: {errors} file(s) failed and were isolated (see warnings above)")
+                    slack_service.send_drive_sync_alert(
+                        f"{errors} file(s) failed during isolated sync",
+                        "Check backend logs for the affected Drive file names/ids.",
+                    )
             except Exception as exc:
                 print(f"⚠️  Drive creative sync error: {exc}")
             finally:

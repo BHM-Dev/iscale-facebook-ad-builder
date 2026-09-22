@@ -1338,3 +1338,139 @@ def test_drive_sync_routes_keep_their_intended_service_composition(monkeypatch):
         payload=DriveCopyRefreshRequest(), db=db, _current_user=object()
     )["processed"] == 2
     assert calls[-1] == ("refresh_all", {})
+
+
+class _SavepointTrackingDB:
+    """Tracks begin_nested()/commit()/rollback() calls so a test can assert a
+    real savepoint was used per file, not just a bare try/except."""
+
+    def __init__(self):
+        self.committed = False
+        self.rolled_back = False
+        self.nested_entries = 0
+        self.nested_exits = []
+
+    def execute(self, *args, **kwargs):
+        class Result:
+            def scalar(self):
+                return True
+
+        return Result()
+
+    def begin_nested(self):
+        db = self
+
+        class Savepoint:
+            def __enter__(self):
+                db.nested_entries += 1
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                db.nested_exits.append(exc_type)
+                return False
+
+        return Savepoint()
+
+    def commit(self):
+        self.committed = True
+
+    def rollback(self):
+        self.rolled_back = True
+
+
+def test_archive_by_drive_id_isolated_uses_savepoint_and_records_error():
+    """A failing archive must roll back only its own savepoint, not raise."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._archive_by_drive_id = lambda drive_file_id: (
+        (_ for _ in ()).throw(RuntimeError("db constraint violated")) if drive_file_id == "bad" else 1
+    )
+    service.db = _SavepointTrackingDB()
+    result = {"errors": 0}
+
+    archived_good = service._archive_by_drive_id_isolated("good", result)
+    archived_bad = service._archive_by_drive_id_isolated("bad", result)
+
+    assert archived_good == 1
+    assert archived_bad == 0
+    assert result["errors"] == 1
+    # A savepoint must be opened for each archive attempt, and the failing one
+    # must exit with its exception recorded (proving isolation actually ran
+    # through begin_nested(), not a bare try/except around _archive_by_drive_id).
+    assert service.db.nested_entries == 2
+    assert service.db.nested_exits == [None, RuntimeError]
+
+
+def test_sync_once_isolates_a_bad_removed_and_trashed_file_and_commits_good_changes():
+    """Deletion/trashed-file events must get the same per-item isolation as
+    active file processing: one bad removal or bad trashed-file archive must
+    not roll back a good removal, a good trashed archive, or a good file."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._copy_packages_refreshed_in_sync = set()
+    service._validate_tables = lambda: None
+    service._get_state_token = lambda: "existing-checkpoint"
+
+    class FakeChangesRequest:
+        def __init__(self, response):
+            self._response = response
+
+        def execute(self):
+            return self._response
+
+    class FakeChanges:
+        def list(self, **kwargs):
+            return FakeChangesRequest(
+                {
+                    "changes": [
+                        {"removed": True, "fileId": "bad-removed"},
+                        {"removed": True, "fileId": "good-removed"},
+                        {"file": {"id": "bad-trashed", "name": "bad-trashed.jpg", "trashed": True}},
+                        {"file": {"id": "good-trashed", "name": "good-trashed.jpg", "trashed": True}},
+                        {"file": {"id": "good-file", "name": "good-file.jpg"}},
+                    ],
+                    "nextPageToken": None,
+                    "newStartPageToken": "next-checkpoint",
+                }
+            )
+
+    class FakeDrive:
+        def changes(self):
+            return FakeChanges()
+
+    service._client = lambda: FakeDrive()
+    service._set_state_token = lambda token: setattr(service, "_saved_token", token)
+
+    archived = []
+
+    def fake_archive_by_drive_id(drive_file_id):
+        if drive_file_id and drive_file_id.startswith("bad"):
+            raise RuntimeError(f"could not archive {drive_file_id}")
+        archived.append(drive_file_id)
+        return 1
+
+    processed = []
+
+    def fake_process_file(file_meta, result):
+        if file_meta["id"].startswith("bad"):
+            raise RuntimeError(f"could not process {file_meta['id']}")
+        processed.append(file_meta["id"])
+
+    service._archive_by_drive_id = fake_archive_by_drive_id
+    service._process_file = fake_process_file
+    service._mark_package_copy_unverified = lambda file_meta, reason: None
+    service.db = _SavepointTrackingDB()
+
+    result = service.sync_once(backfill=False)
+
+    # The two bad events (one removed, one trashed) are isolated: everything
+    # else in the same batch still lands.
+    assert archived == ["good-removed", "good-trashed"]
+    assert processed == ["good-file"]
+    assert result["errors"] == 2
+    assert result["archived"] == 2
+    assert service._saved_token == "next-checkpoint"
+    assert service.db.committed is True
+    assert service.db.rolled_back is False
+    # 5 changes total: 4 archive attempts (2 removed + 2 trashed) go through
+    # _archive_by_drive_id_isolated's savepoint; the 1 real file goes through
+    # _process_file_isolated's savepoint.
+    assert service.db.nested_entries == 5
