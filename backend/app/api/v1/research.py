@@ -1195,6 +1195,38 @@ def update_strategy_notes(
     return {"id": ad_id, **{field: getattr(ad, field) for field in allowed}}
 
 
+@router.get("/scraped-ads/{ad_id}/related")
+def get_related_research_ads(
+    ad_id: str,
+    limit: int = 6,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return explainable related patterns, never a fabricated performance rank."""
+    from app.models import ScrapedAd
+    source = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Ad not found")
+    source_tags = set(source.creative_tags or [])
+    candidates = db.query(ScrapedAd).filter(ScrapedAd.id != source.id).all()
+    scored = []
+    for candidate in candidates:
+        shared_tags = sorted(source_tags & set(candidate.creative_tags or []))
+        reasons = [f"theme: {tag.replace('_', ' ')}" for tag in shared_tags]
+        if source.cta_type and source.cta_type == candidate.cta_type:
+            reasons.append(f"CTA: {source.cta_type.replace('_', ' ')}")
+        if source.media_type and source.media_type == candidate.media_type:
+            reasons.append(f"format: {source.media_type}")
+        if source.destination_domain and source.destination_domain == candidate.destination_domain:
+            reasons.append("same destination")
+        if not reasons:
+            continue
+        score = len(shared_tags) * 4 + (2 if source.cta_type and source.cta_type == candidate.cta_type else 0) + (1 if source.media_type and source.media_type == candidate.media_type else 0) + (1 if source.destination_domain and source.destination_domain == candidate.destination_domain else 0)
+        scored.append((score, candidate, reasons))
+    scored.sort(key=lambda item: (-item[0], _parse_research_date(item[1].last_seen) or datetime.min))
+    return [{**_serialize_scraped_ad(ad), "match_reasons": reasons} for _, ad, reasons in scored[:max(1, min(limit, 12))]]
+
+
 @router.get("/config-verticals/{config_id}/browse-ads")
 def get_vertical_browse_ads(
     config_id: str,
