@@ -161,6 +161,7 @@ def _serialize_scraped_ad(ad, board_item_id=None):
         "taxonomy_confidence": ad.taxonomy_confidence,
         "is_saved": ad.is_saved,
         "created_at": _serialize_research_datetime(ad.created_at),
+        "first_seen": _serialize_research_datetime(ad.first_seen),
         "last_seen": _serialize_research_datetime(ad.last_seen),
     }
     if board_item_id is not None:
@@ -1249,6 +1250,7 @@ def get_vertical_browse_ads(
     creative_tags: str | None = None,
     cta_type: str | None = None,
     page_type: str | None = None,
+    new_within_days: int | None = None,
     limit: int = 500,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -1345,6 +1347,10 @@ def get_vertical_browse_ads(
         if page_type not in RESEARCH_PAGE_TYPES:
             raise HTTPException(status_code=400, detail=f"Unknown page_type: {page_type}")
         query = query.filter(ScrapedAd.page_type == page_type)
+    if new_within_days is not None:
+        if not 1 <= new_within_days <= 90:
+            raise HTTPException(status_code=400, detail="new_within_days must be between 1 and 90")
+        query = query.filter(ScrapedAd.first_seen >= datetime.now(timezone.utc) - timedelta(days=new_within_days))
 
     if sort_by not in RESEARCH_SORT_OPTIONS:
         raise HTTPException(
@@ -1418,6 +1424,7 @@ def get_vertical_browse_ads(
             "taxonomy_confidence": ad.taxonomy_confidence,
             "is_saved": ad.is_saved,
             "last_seen": _serialize_research_datetime(ad.last_seen),
+            "first_seen": _serialize_research_datetime(ad.first_seen),
         })
 
     return result
