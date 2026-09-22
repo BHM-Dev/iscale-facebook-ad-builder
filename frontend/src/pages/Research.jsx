@@ -1298,6 +1298,12 @@ export default function Research() {
   }, [activeVertical, activeSubVertical, config, subVerticals]);
 
   const visibleSavedAds = activeBoardId ? boardAds : savedAds;
+  const catalogSummary = useMemo(() => ({
+    total: browseAds.length,
+    newCount: browseAds.filter(ad => ad.first_seen && Date.now() - new Date(ad.first_seen).getTime() <= 7 * 24 * 60 * 60 * 1000).length,
+    videoCount: browseAds.filter(ad => ad.media_type === 'video').length,
+    taggedCount: browseAds.filter(ad => (ad.creative_tags || []).length > 0).length,
+  }), [browseAds]);
 
   // ── Render ────────────────────────────────────────────────────
     return (
@@ -1462,6 +1468,15 @@ export default function Research() {
             </div>
           )}
         </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Research catalog summary">
+        {[
+          ['Captured examples', catalogSummary.total],
+          ['New this week', catalogSummary.newCount],
+          ['Video examples', catalogSummary.videoCount],
+          ['Theme tagged', catalogSummary.taggedCount],
+        ].map(([label, value]) => <div key={label} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5"><p className="text-lg font-bold tabular-nums text-slate-900">{browseLoading ? '—' : value}</p><p className="text-[11px] font-medium text-slate-500">{label}</p></div>)}
       </div>
 
       {/* Two-column layout */}
