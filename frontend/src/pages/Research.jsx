@@ -1553,16 +1553,8 @@ export default function Research() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Research catalog summary">
-        {[
-          ['Captured examples', catalogSummary.total],
-          ['New this week', catalogSummary.newCount],
-          ['Video examples', catalogSummary.videoCount],
-          ['Theme tagged', catalogSummary.taggedCount],
-        ].map(([label, value]) => <div key={label} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5"><p className="text-lg font-bold tabular-nums text-slate-900">{browseLoading ? '—' : value}</p><p className="text-[11px] font-medium text-slate-500">{label}</p></div>)}
-      </div>
-      <p className="-mt-3 text-[11px] text-slate-400">Counts reflect the current vertical and any active filters, not the entire Research library.</p>
-      {!browseLoading && catalogSummary.total > 0 && catalogSummary.mediaCount === 0 && <div className="-mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"><span>This view has no captured visual media yet. Import a Chrome Ad Library capture to unlock visual/video research.</span><button type="button" onClick={() => setShowImportModal(true)} className="font-semibold text-indigo-700 hover:text-indigo-900">Import visual captures</button></div>}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500" aria-label="Research catalog summary"><span className="font-semibold text-slate-800">{browseLoading ? 'Loading captures…' : `${catalogSummary.total} captured examples`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.newCount} new this week`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.videoCount} video`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.taggedCount} theme tagged`}</span><span className="text-slate-300">·</span><span className="text-slate-400">Current vertical + filters</span></div>
+      {!browseLoading && catalogSummary.total > 0 && catalogSummary.mediaCount === 0 && <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"><span>This view has no captured visual media yet. Import a Chrome Ad Library capture to unlock visual/video research.</span><button type="button" onClick={() => setShowImportModal(true)} className="font-semibold text-indigo-700 hover:text-indigo-900">Import visual captures</button></div>}
 
       {/* Two-column layout */}
       <div className="flex gap-5 items-start">
