@@ -209,6 +209,7 @@ class DriveSyncService:
             self._mark_all_copy_assets_unverified(
                 "No current recognized Drive copy source was found during refresh"
             )
+            refreshed_package_folders = set()
             for file_meta in self._initial_folder_walk(drive):
                 if not self._is_text_file(file_meta.get("mimeType") or "", file_meta.get("name", "")):
                     continue
@@ -232,7 +233,21 @@ class DriveSyncService:
                 self._strategy_package_folder_cache.clear()
                 self._folder_metadata_cache.clear()
                 try:
-                    result["updated"] += self._refresh_folder_copy_metadata(file_meta)
+                    metadata_folder = self._metadata_folder_for_copy_document(file_meta)
+                    if not metadata_folder or metadata_folder in refreshed_package_folders:
+                        continue
+                    # A package can keep a current copy document beside drafts,
+                    # ICP notes, and an older export. _folder_copy_metadata
+                    # selects the canonical source for the package itself, so
+                    # processing every recognized document only repeats the
+                    # same recursive Drive walk several times. One refresh per
+                    # package keeps the button responsive without changing
+                    # which source wins.
+                    refreshed_package_folders.add(metadata_folder)
+                    result["updated"] += self._refresh_folder_copy_metadata(
+                        file_meta,
+                        metadata_folder=metadata_folder,
+                    )
                 except Exception as exc:
                     # Do not roll the whole refresh back and keep last week's
                     # copy silently launchable. Mark only this package's prior
@@ -967,7 +982,21 @@ class DriveSyncService:
         )
         return result.rowcount or 0
 
-    def _refresh_folder_copy_metadata(self, file_meta: Dict[str, Any]) -> int:
+    def _metadata_folder_for_copy_document(self, file_meta: Dict[str, Any]) -> Optional[str]:
+        """Resolve the one package folder whose canonical copy this doc may refresh."""
+        doc_name = (file_meta.get("name") or "").lower()
+        is_handoff_manifest = "handoff" in doc_name and "manifest" in doc_name
+        return (
+            self._find_package_folder(file_meta) or self._find_strategy_package_folder(file_meta)
+            if is_handoff_manifest
+            else self._find_strategy_package_folder(file_meta) or self._find_package_folder(file_meta)
+        )
+
+    def _refresh_folder_copy_metadata(
+        self,
+        file_meta: Dict[str, Any],
+        metadata_folder: Optional[str] = None,
+    ) -> int:
         parents = file_meta.get("parents") or []
         if not parents:
             return 0
@@ -998,17 +1027,11 @@ class DriveSyncService:
         # doc's own media is never matched and stays unverified forever. Content
         # matching (_find_strategy_package_folder) resolves those docs correctly, so
         # prefer it for anything that is not a handoff manifest.
-        doc_name = (file_meta.get("name") or "").lower()
-        is_handoff_manifest = "handoff" in doc_name and "manifest" in doc_name
-        # Both branches keep the other resolver as a fallback: a doc whose filename
-        # merely happens to contain both tokens ("Creative-Handoff-Manifest-Strategy
-        # -Notes.md") is not a manifest to _folder_copy_metadata either, and would
-        # otherwise silently resolve to nothing.
-        metadata_folder = (
-            self._find_package_folder(file_meta) or self._find_strategy_package_folder(file_meta)
-            if is_handoff_manifest
-            else self._find_strategy_package_folder(file_meta) or self._find_package_folder(file_meta)
-        )
+        # Both resolver branches keep the other as a fallback: a document whose
+        # filename merely contains both "handoff" and "manifest" may still be
+        # a strategy document. Callers that already grouped the refresh by its
+        # package pass the resolved folder directly to avoid a second tree walk.
+        metadata_folder = metadata_folder or self._metadata_folder_for_copy_document(file_meta)
         if not metadata_folder:
             return 0
         folder_metadata = self._folder_copy_metadata(metadata_folder, force=True)
