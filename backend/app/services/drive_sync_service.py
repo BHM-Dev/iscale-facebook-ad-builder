@@ -1665,7 +1665,15 @@ class DriveSyncService:
     def _ad_numbered_folder_copy_metadata(self, folder_id, media_files, text_body):
         sections = self._parse_ad_copy_doc(text_body)
         if not sections:
-            raise RuntimeError("Drive AD-numbered copy document contained no complete copy sections")
+            # An incomplete draft can still reach this lower-level resolver
+            # through an incremental media sync. It is not a valid source of
+            # copy, but it must not crash the whole Drive sync or trigger the
+            # Slack "Google Drive creative sync failed" alert.
+            logger.warning(
+                "Ignoring Drive AD-numbered copy document with no complete copy sections for package %s",
+                folder_id,
+            )
+            return {"assets": {}, "assets_by_drive_id": {}}
 
         candidates_by_ad: Dict[int, List[Any]] = {}
         for item in media_files:

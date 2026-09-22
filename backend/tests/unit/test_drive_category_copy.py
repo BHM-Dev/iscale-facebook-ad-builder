@@ -978,3 +978,15 @@ def test_package_container_fails_closed_when_drive_raises():
 
     # Must not propagate: this runs inside the sync loop and would kill the run.
     assert service._is_package_container("anything")
+
+
+def test_ad_numbered_copy_metadata_fails_closed_for_incomplete_document():
+    service = DriveSyncService.__new__(DriveSyncService)
+
+    result = service._ad_numbered_folder_copy_metadata(
+        "painting-package",
+        [{"id": "feed", "name": "CVI-PAINT-01-IDENTITY-1x1.png"}],
+        "AD 1 — Draft\nMETA HEADLINE\n\nPRIMARY TEXT\n",
+    )
+
+    assert result == {"assets": {}, "assets_by_drive_id": {}}
