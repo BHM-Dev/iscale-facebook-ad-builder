@@ -102,19 +102,25 @@ def refresh_drive_copy_metadata(
     """Sync Drive changes, then re-match imported media to active copy sources."""
     try:
         service = DriveSyncService(db)
-        # A copy refresh must reconcile the current Drive inventory before it
-        # evaluates copy tags.  An incremental changes token can be older than
-        # the asset rows (for example after a Drive re-export creates new file
-        # IDs), which leaves the picker showing stale images as "No copy in
-        # Drive" even though the canonical document is current.  Backfill is
-        # cheap for unchanged rows because _process_file skips their binaries;
-        # it ingests only newly discovered/replaced media and closes this gap.
-        # defer_copy_resolution=True is safe ONLY here, where refresh_copy_metadata()
-        # unconditionally runs next and re-derives copy tags for every matched
-        # package — sync-now's standalone backfill (no guaranteed follow-up)
-        # must not pass this, or unchanged rows silently stop picking up copy changes.
-        sync_result = service.sync_once(backfill=True, defer_copy_resolution=True)
-        refresh_result = service.refresh_copy_metadata()
+        # Drive's changes feed is the authoritative, low-latency path for a
+        # buyer's manual refresh. It processes every image/copy document that
+        # changed since the prior checkpoint and the text-document path
+        # re-matches the whole affected package. A full tree backfill here made
+        # one button click wait minutes while unrelated packages were walked;
+        # it belongs on the explicit maintenance sync endpoint, not in Joel's
+        # launch workflow.
+        sync_result = service.sync_once()
+        refresh_result = {
+            "processed": 0,
+            "created": 0,
+            "updated": 0,
+            "skipped": 0,
+            "archived": 0,
+            "unmatched_brand": 0,
+            "errors": 0,
+            "unverified": 0,
+            "next_page_token_saved": False,
+        }
         for key in ("processed", "created", "updated", "skipped", "archived", "unmatched_brand", "errors"):
             refresh_result[key] = (refresh_result.get(key) or 0) + (sync_result.get(key) or 0)
         refresh_result["next_page_token_saved"] = bool(
