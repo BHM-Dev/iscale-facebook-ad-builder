@@ -547,6 +547,41 @@ Primary.
     assert result["assets_by_drive_id"]["feed-a"]["copy_pairing_status"] == "ambiguous"
 
 
+def test_ad_numbered_copy_metadata_pairs_each_named_visual_under_one_ad_section():
+    """Replacement exports can retain an older winner beside the current pair.
+
+    The shared AD number selects the copy, while the rest of the filename
+    selects the actual Feed/Stories visual pair.  Both complete pairs must stay
+    selectable instead of being marked ambiguous merely because they use the
+    same AD copy block.
+    """
+    service = DriveSyncService.__new__(DriveSyncService)
+    document = """AD 1 — Identity
+META HEADLINE
+Commercial Van Insurance for Painters
+PRIMARY TEXT
+Painting primary copy.
+"""
+    media = [
+        {"id": "identity-feed", "name": "01-PAINT-AD1-Identity-1x1.jpg", "_parent_folder_name": "1x1 Images"},
+        {"id": "identity-story", "name": "01-PAINT-AD1-Identity-9x16.jpg", "_parent_folder_name": "9x16 Images"},
+        {"id": "winner-feed", "name": "01-PAINT-AD1-AdjusterQuestion-1x1.jpg", "_parent_folder_name": "1x1 Images"},
+        {"id": "winner-story", "name": "01-PAINT-AD1-AdjusterQuestion-9x16.jpg", "_parent_folder_name": "9x16 Images"},
+    ]
+
+    result = service._ad_numbered_folder_copy_metadata("painting", media, document)
+
+    identity = result["assets_by_drive_id"]
+    assert identity["identity-feed"]["copy_id"] == identity["identity-story"]["copy_id"]
+    assert identity["winner-feed"]["copy_id"] == identity["winner-story"]["copy_id"]
+    assert identity["identity-feed"]["copy_id"] != identity["winner-feed"]["copy_id"]
+    assert all(
+        identity[asset_id]["copy_pairing_status"] == "paired"
+        for asset_id in ("identity-feed", "identity-story", "winner-feed", "winner-story")
+    )
+    assert identity["identity-feed"]["copy"]["headline"] == "Commercial Van Insurance for Painters"
+
+
 def test_ad_numbered_copy_metadata_blocks_unknown_placement_from_auto_duplication():
     service = DriveSyncService.__new__(DriveSyncService)
     document = """AD 1 — Identity
@@ -563,7 +598,7 @@ Primary.
     assert result["assets_by_drive_id"]["unknown"]["copy_pairing_status"] == "ambiguous"
 
 
-def test_ad_numbered_copy_metadata_marks_a_valid_pair_ambiguous_when_an_unknown_extra_exists():
+def test_ad_numbered_copy_metadata_keeps_a_valid_pair_when_an_unknown_extra_exists():
     service = DriveSyncService.__new__(DriveSyncService)
     document = """AD 1 — Identity
 META HEADLINE
@@ -579,11 +614,10 @@ Primary.
 
     result = service._ad_numbered_folder_copy_metadata("package", media, document)
 
-    assert all(
-        result["assets_by_drive_id"][asset_id]["copy_pairing_status"] == "ambiguous"
-        for asset_id in ("feed", "stories", "extra")
-    )
-    assert len({result["assets_by_drive_id"][asset_id]["copy_id"] for asset_id in ("feed", "stories", "extra")}) == 3
+    assert result["assets_by_drive_id"]["feed"]["copy_pairing_status"] == "paired"
+    assert result["assets_by_drive_id"]["stories"]["copy_pairing_status"] == "paired"
+    assert result["assets_by_drive_id"]["feed"]["copy_id"] == result["assets_by_drive_id"]["stories"]["copy_id"]
+    assert result["assets_by_drive_id"]["extra"]["copy_pairing_status"] == "ambiguous"
 
 
 def test_successful_copy_refresh_clears_stale_unverified_mark():

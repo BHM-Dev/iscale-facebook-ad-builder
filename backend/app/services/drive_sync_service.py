@@ -380,6 +380,8 @@ class DriveSyncService:
             result["unmatched_brand"] += 1
             return
 
+        file_name = file_meta.get("name") or f"{drive_file_id}{mimetypes.guess_extension(mime_type) or ''}"
+        media_format = "video" if mime_type.startswith("video/") else "image"
         existing = self.db.execute(
             text(
                 """
@@ -392,22 +394,45 @@ class DriveSyncService:
         ).mappings().first()
         modified_time = self._parse_drive_time(file_meta.get("modifiedTime"))
         if existing and existing["drive_modified_time"] and existing["drive_modified_time"].replace(tzinfo=timezone.utc) == modified_time:
+            # Google can rename or move an existing Drive file without changing
+            # the timestamp we previously stored (notably after an in-place
+            # creative export).  A backfill used to treat that as wholly
+            # unchanged, leaving the picker with obsolete CVI filenames even
+            # though the same Drive IDs now point at Joel's replacement assets.
+            # Keep the R2 binary -- it has not changed -- but always reconcile
+            # the current Drive metadata.
+            self.db.execute(
+                text(
+                    """
+                    UPDATE drive_assets
+                    SET brand_id = :brand_id,
+                        format = :format,
+                        folder_path = :folder_path,
+                        file_name = :file_name,
+                        archived = FALSE,
+                        synced_at = NOW()
+                    WHERE id = :id
+                    """
+                ),
+                {
+                    "id": existing["id"],
+                    "brand_id": brand_id,
+                    "format": media_format,
+                    "folder_path": resolved.folder_path,
+                    "file_name": file_name,
+                },
+            )
             if self._backfill_mode:
                 # The explicit copy-refresh pass that follows a backfill walks
                 # all current copy documents. Do not recursively resolve the
                 # package for every unchanged image here; on a large Drive that
                 # turns a metadata reconciliation into a multi-minute binary
                 # sync and makes the UI appear hung.
-                self.db.execute(
-                    text("UPDATE drive_assets SET archived = FALSE, synced_at = NOW() WHERE id = :id"),
-                    {"id": existing["id"]},
-                )
-                result["skipped"] += 1
+                result["updated"] += 1
                 return
             # Drive metadata can change without the binary changing (for
             # example, a copy doc or manifest is added after image upload).
             # Refresh tags so existing rows can backfill placement/copy data.
-            file_name = file_meta.get("name") or f"{drive_file_id}{mimetypes.guess_extension(mime_type) or ''}"
             soft_tags = self._metadata_for_media_file(file_meta, file_name)
             if soft_tags:
                 try:
@@ -432,13 +457,11 @@ class DriveSyncService:
                     text("UPDATE drive_assets SET archived = FALSE WHERE id = :id"),
                     {"id": existing["id"]},
                 )
-            result["skipped"] += 1
+            result["updated"] += 1
             return
 
         content = self._download_file(drive_file_id)
-        file_name = file_meta.get("name") or f"{drive_file_id}{mimetypes.guess_extension(mime_type) or ''}"
         r2_key = self._upload_to_r2(content, file_name, mime_type)
-        media_format = "video" if mime_type.startswith("video/") else "image"
         soft_tags = self._metadata_for_media_file(file_meta, file_name)
 
         params = {
@@ -1765,6 +1788,20 @@ class DriveSyncService:
         cvi_match = re.search(r"^CVI-PAINT-0?(\d{1,2})(?=$|[-_ ])", stem, re.IGNORECASE)
         return int(cvi_match.group(1)) if cvi_match else None
 
+    def _ad_creative_pair_key(self, file_name: str) -> str:
+        """Return the visual identity shared by a feed/stories export.
+
+        AD-numbered packages can deliberately contain more than one visual for
+        the same copy section (for example ``AD1-Identity`` and
+        ``AD1-AdjusterQuestion``).  The AD number tells us which copy applies;
+        it is not enough to pair every file in that section with every other
+        file.  Remove only the placement token, preserving the rest of the
+        filename so that each uniquely named Feed/Stories pair stays intact.
+        """
+        stem = os.path.splitext(file_name or "")[0].lower()
+        stem = re.sub(r"(?:^|[-_ ])(?:1x1|9x16)(?=$|[-_ ])", " ", stem, flags=re.IGNORECASE)
+        return re.sub(r"[-_\s]+", " ", stem).strip()
+
     def _ad_numbered_folder_copy_metadata(self, folder_id, media_files, text_body):
         sections = self._parse_ad_copy_doc(text_body)
         if not sections:
@@ -1790,30 +1827,52 @@ class DriveSyncService:
         assets: Dict[str, Dict[str, Any]] = {}
         assets_by_drive_id: Dict[str, Dict[str, Any]] = {}
         for ad_number, candidates in candidates_by_ad.items():
-            by_aspect: Dict[str, List[Any]] = {"1x1": [], "9x16": [], "unknown": []}
+            candidates_by_identity: Dict[str, List[Any]] = {}
             for candidate in candidates:
-                by_aspect[candidate[2]].append(candidate)
-            # A stray export with no known placement makes the AD number
-            # ambiguous too. Treating the known 1x1/9x16 files as a valid
-            # pair while indexing that third file would both conceal the
-            # ambiguity and attempt to assign it a missing paired copy ID.
-            paired = (
-                len(by_aspect["1x1"]) == 1
-                and len(by_aspect["9x16"]) == 1
-                and not by_aspect["unknown"]
-            )
+                candidates_by_identity.setdefault(self._ad_creative_pair_key(candidate[1]), []).append(candidate)
+
+            # A package may have multiple complete visual pairs for one AD
+            # section. Pair each unique visual identity independently; a second
+            # concept must not turn the first into an ambiguous, blocked row.
+            # Incomplete/unknown identities remain explicit singles and retain
+            # the prior fail-closed EXTRA IDs.
+            valid_pairs: Dict[str, List[Any]] = {}
+            ambiguous_candidates: List[Any] = []
+            for identity, identity_candidates in candidates_by_identity.items():
+                by_aspect: Dict[str, List[Any]] = {"1x1": [], "9x16": [], "unknown": []}
+                for candidate in identity_candidates:
+                    by_aspect[candidate[2]].append(candidate)
+                if (
+                    identity
+                    and len(by_aspect["1x1"]) == 1
+                    and len(by_aspect["9x16"]) == 1
+                    and not by_aspect["unknown"]
+                ):
+                    valid_pairs[identity] = identity_candidates
+                else:
+                    ambiguous_candidates.extend(identity_candidates)
+
             copy_ids_by_drive_id = {}
-            if paired:
-                for candidate in (*by_aspect["1x1"], *by_aspect["9x16"]):
-                    copy_ids_by_drive_id[candidate[0].get("id")] = f"AD-{ad_number:02d}"
-            else:
-                for extra_index, candidate in enumerate(sorted(candidates, key=lambda entry: (
-                    entry[2], entry[1].lower(), str(entry[0].get("id") or "")
-                )), start=1):
-                    copy_ids_by_drive_id[candidate[0].get("id")] = f"AD-{ad_number:02d}-EXTRA-{extra_index}"
+            pairing_status_by_drive_id = {}
+            for identity, pair in valid_pairs.items():
+                # Preserve the historic AD-01 ID for the simple one-pair case;
+                # add the visual identity only where it distinguishes multiple
+                # valid pairs under the same AD number.
+                copy_id = (
+                    f"AD-{ad_number:02d}"
+                    if len(valid_pairs) == 1
+                    else f"AD-{ad_number:02d}-{re.sub(r'[^a-z0-9]+', '-', identity).strip('-')}"
+                )
+                for candidate in pair:
+                    copy_ids_by_drive_id[candidate[0].get("id")] = copy_id
+                    pairing_status_by_drive_id[candidate[0].get("id")] = "paired"
+            for extra_index, candidate in enumerate(sorted(ambiguous_candidates, key=lambda entry: (
+                entry[2], entry[1].lower(), str(entry[0].get("id") or "")
+            )), start=1):
+                copy_ids_by_drive_id[candidate[0].get("id")] = f"AD-{ad_number:02d}-EXTRA-{extra_index}"
+                pairing_status_by_drive_id[candidate[0].get("id")] = "ambiguous"
 
             section = sections[ad_number]
-            pairing_status = "paired" if paired else "ambiguous"
             for item, file_name, aspect in candidates:
                 metadata = {
                     "copy_id": copy_ids_by_drive_id[item.get("id")],
@@ -1827,7 +1886,7 @@ class DriveSyncService:
                     "landing_page": section["landing_page"],
                     "cta": section["cta"],
                     "source": "ad_numbered_copy_doc",
-                    "copy_pairing_status": pairing_status,
+                    "copy_pairing_status": pairing_status_by_drive_id[item.get("id")],
                     "drive_file_id": item.get("id"),
                     "package_folder_id": folder_id,
                     "file_name": file_name,
