@@ -28,14 +28,16 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 VERSIONS_DIR = os.path.join(SCRIPT_DIR, "..", "backend", "alembic", "versions")
 
 
-def find_heads(versions_dir: str) -> dict[str, str]:
-    """Return a dict of {revision_id: filename} for every migration head.
+def validate_migration_graph(versions_dir: str) -> tuple[dict[str, str], list[str]]:
+    """Return heads and fatal graph errors for a migration directory.
 
-    A head is any revision that no other migration lists as its down_revision.
-    A healthy chain has exactly one head.
+    Alembic itself can obscure a duplicate ``revision`` assignment because a
+    dict-like revision map keeps only one of the files. Detect it here before
+    it becomes an ambiguous deploy-time migration graph.
     """
-    revisions: dict[str, str] = {}  # revision_id -> filename
+    revisions: dict[str, str] = {}
     down_refs: set[str] = set()     # all IDs referenced as down_revision
+    errors: list[str] = []
 
     for fname in sorted(os.listdir(versions_dir)):
         if not fname.endswith(".py"):
@@ -46,22 +48,32 @@ def find_heads(versions_dir: str) -> dict[str, str]:
         except OSError:
             continue
 
-        rev_match = re.search(r"^revision\s*[=:]\s*['\"](\w+)['\"]", content, re.M)
+        # Alembic-generated files may use either `revision =` or the typed
+        # `revision: str =` form. The guard must understand both.
+        rev_match = re.search(r"^revision(?:\s*:\s*[^=]+)?\s*=\s*['\"](\w+)['\"]", content, re.M)
         # down_revision can be None, a single string, or a tuple/list (merge migration)
         down_match = re.search(
-            r"^down_revision\s*[=:]\s*([^\n]+)", content, re.M
+            r"^down_revision(?:\s*:\s*[^=]+)?\s*=\s*([^\n]+)", content, re.M
         )
 
-        if rev_match:
-            revisions[rev_match.group(1)] = fname
+        if not rev_match:
+            errors.append(f"{fname}: missing revision assignment")
+            continue
+        revision = rev_match.group(1)
+        if revision in revisions:
+            errors.append(f"duplicate revision {revision}: {revisions[revision]} and {fname}")
+        else:
+            revisions[revision] = fname
 
         if down_match:
             raw = down_match.group(1).strip()
             # Extract all quoted revision IDs from the value
-            for r in re.findall(r"['\"](\w{12})['\"]", raw):
+            for r in re.findall(r"['\"](\w+)['\"]", raw):
                 down_refs.add(r)
 
-    return {r: revisions[r] for r in revisions if r not in down_refs}
+    missing_parents = sorted(down_refs - set(revisions))
+    errors.extend(f"missing down_revision target: {revision}" for revision in missing_parents)
+    return {r: revisions[r] for r in revisions if r not in down_refs}, errors
 
 
 def main() -> None:
@@ -70,7 +82,12 @@ def main() -> None:
         sys.stderr.write(f"check_alembic_heads: versions dir not found at {VERSIONS_DIR}\n")
         sys.exit(0)
 
-    heads = find_heads(VERSIONS_DIR)
+    heads, errors = validate_migration_graph(VERSIONS_DIR)
+
+    if errors:
+        message = "🚨 Alembic migration graph is invalid — push blocked.\n\n" + "\n".join(f"  • {error}" for error in errors)
+        print(json.dumps({"continue": False, "stopReason": message}))
+        sys.exit(1)
 
     if len(heads) <= 1:
         # Single head (or no migrations at all) — chain is healthy
