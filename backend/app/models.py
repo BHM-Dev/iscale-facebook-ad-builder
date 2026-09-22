@@ -613,7 +613,7 @@ class ScrapedAd(Base):
     creative_intel = Column(JSON, nullable=True)  # Capture notes, volume signals, source metadata
     volume_score = Column(Integer, nullable=True)  # Directional score, not spend/impression truth
     first_seen = Column(DateTime(timezone=True), server_default=func.now())  # First time ad was scraped
-    last_seen = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())  # Last time ad was seen
+    last_seen = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True)  # Last time ad was seen
     seen_count = Column(Integer, default=1)  # Number of times this ad has been encountered in scrapes
     search_id = Column(String, ForeignKey('saved_searches.id', ondelete='CASCADE'), nullable=True)  # Link to search
     facebook_page_id = Column(String, ForeignKey('facebook_pages.id', ondelete='SET NULL'), nullable=True)
@@ -629,8 +629,8 @@ class ScrapedAd(Base):
     # Searchable creative taxonomy. These stay nullable: a missing capture is
     # not evidence that an ad has no theme, CTA, or usable preview.
     creative_tags = Column(JSON, nullable=True)
-    cta_type = Column(String, nullable=True)
-    page_type = Column(String, nullable=True)
+    cta_type = Column(String, nullable=True, index=True)
+    page_type = Column(String, nullable=True, index=True)
     video_length_seconds = Column(Integer, nullable=True)
     media_preview_url = Column(String, nullable=True)
     media_width = Column(Integer, nullable=True)
