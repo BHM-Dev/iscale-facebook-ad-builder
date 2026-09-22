@@ -1506,7 +1506,7 @@ class DriveSyncService:
                 # reference. Parse that real format before treating a no-entry
                 # manifest as a harmless planning draft.
                 inline_blocks = list(re.finditer(
-                    r"^[ \t]*##[ \t]+\d{2}-[A-Z]{2,6}-V\d+-AD(\d+)\b[^\r\n]*$",
+                    r"^[ \t]*##[ \t]+(?:[A-Z0-9]+[-_ \t]+)*AD[-_ \t]?(\d+)\b[^\r\n]*$",
                     manifest_text,
                     re.IGNORECASE | re.MULTILINE,
                 ))

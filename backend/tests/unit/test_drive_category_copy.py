@@ -1273,6 +1273,46 @@ Coverage for electricians on the road.
     assert result["assets_by_drive_id"]["v2-stories"]["aspect"] == "9x16"
 
 
+def test_self_contained_handoff_manifest_matches_non_v2_religious_ids():
+    """Inline manifests use many package ID families, not only V2 IDs."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+    manifest = {
+        "id": "religious-manifest",
+        "name": "RO-PROP-HANDOFF-MANIFEST.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T12:00:15.894Z",
+    }
+    feed = {"id": "religious-feed", "name": "RO-PROP-AD1-ThreeAsset-1x1.jpg", "mimeType": "image/jpeg"}
+    stories = {"id": "religious-stories", "name": "RO-PROP-AD1-ThreeAsset-9x16.png", "mimeType": "image/png"}
+    manifest_text = """FINAL HANDOFF MANIFEST — LAUNCHER COPY MAP
+Landing Page
+https://www.getbusinesscoverage.com/quote-v2
+Meta Button
+Get Quote
+
+## RO-PROP-AD1
+PRIMARY TEXT
+Your church has stood through decades.
+HEADLINE
+Religious Organization Insurance
+DESCRIPTION
+One storm can raise more than one property question.
+1X1 IMAGE
+RO-PROP-AD1-ThreeAsset-1x1.jpg
+9X16 IMAGE
+RO-PROP-AD1-ThreeAsset-9x16.png
+"""
+    service._list_folder_subtree = lambda folder_id: [manifest, feed, stories]
+    service._download_text_file = lambda file_id: manifest_text
+
+    result = service._folder_copy_metadata("religious-property-package")
+
+    assert result["_copy_source_drive_file_id"] == "religious-manifest"
+    assert result["assets_by_drive_id"]["religious-feed"]["copy"]["headline"] == "Religious Organization Insurance"
+    assert result["assets_by_drive_id"]["religious-stories"]["copy"]["primary_text"] == "Your church has stood through decades."
+
+
 def test_self_contained_v2_manifest_rejects_ambiguous_or_cross_ad_media():
     """Inline maps are fail-closed when a declared filename is ambiguous or miswired."""
     service = DriveSyncService.__new__(DriveSyncService)
