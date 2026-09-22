@@ -95,7 +95,7 @@ class DriveSyncService:
                 start_token = self._get_start_page_token(drive)
                 files = self._initial_folder_walk(drive)
                 for file_meta in files:
-                    self._process_file(file_meta, result)
+                    self._process_file_isolated(file_meta, result)
                 result["processed"] += len(files)
                 # A backfill re-reads current metadata, but it must not advance
                 # past change events (especially deletions) that occurred after
@@ -123,9 +123,9 @@ class DriveSyncService:
                         for change in response.get("changes", []):
                             result["processed"] += 1
                             if change.get("removed"):
-                                result["archived"] += self._archive_by_drive_id(change.get("fileId"))
+                                result["archived"] += self._archive_by_drive_id_isolated(change.get("fileId"), result)
                             elif change.get("file"):
-                                self._process_file(change["file"], result)
+                                self._process_file_isolated(change["file"], result)
                         replay_token = response.get("nextPageToken")
                         final_token = response.get("newStartPageToken") or final_token
                     self._set_state_token(final_token)
@@ -149,13 +149,13 @@ class DriveSyncService:
                 for change in response.get("changes", []):
                     result["processed"] += 1
                     if change.get("removed"):
-                        result["archived"] += self._archive_by_drive_id(change.get("fileId"))
+                        result["archived"] += self._archive_by_drive_id_isolated(change.get("fileId"), result)
                         continue
                     file_meta = change.get("file") or {}
                     if file_meta.get("trashed"):
-                        result["archived"] += self._archive_by_drive_id(file_meta.get("id"))
+                        result["archived"] += self._archive_by_drive_id_isolated(file_meta.get("id"), result)
                         continue
-                    self._process_file(file_meta, result)
+                    self._process_file_isolated(file_meta, result)
 
                 if response.get("newStartPageToken"):
                     self._set_state_token(response["newStartPageToken"])
@@ -169,6 +169,44 @@ class DriveSyncService:
             logger.exception("Drive creative sync failed")
             slack_service.send_drive_sync_alert(type(exc).__name__, str(exc))
             raise
+
+    def _process_file_isolated(self, file_meta: Dict[str, Any], result: Dict[str, Any]) -> None:
+        """Contain a bad Drive object without abandoning prior batch work."""
+        try:
+            # Database failures poison a PostgreSQL transaction until rollback.
+            # A savepoint is therefore essential—not merely try/except—so an
+            # invalid row can be rolled back while prior and later files retain
+            # their changes for the batch's final commit.
+            with self.db.begin_nested():
+                self._process_file(file_meta, result)
+        except Exception as exc:
+            result["errors"] += 1
+            logger.warning(
+                "Drive sync failed to process %s: %s",
+                file_meta.get("name") or file_meta.get("id") or "unknown file",
+                exc,
+            )
+            # This method is intentionally best-effort: a malformed file can
+            # fail before its package is resolvable, in which case the marker
+            # safely logs and returns without masking the original failure.
+            try:
+                self._mark_package_copy_unverified(file_meta, str(exc))
+            except Exception:
+                logger.warning(
+                    "Could not mark Drive package unverified after processing failure for %s",
+                    file_meta.get("name") or file_meta.get("id") or "unknown file",
+                    exc_info=True,
+                )
+
+    def _archive_by_drive_id_isolated(self, drive_file_id: Optional[str], result: Dict[str, Any]) -> int:
+        """Give deletion events the same savepoint isolation as active files."""
+        try:
+            with self.db.begin_nested():
+                return self._archive_by_drive_id(drive_file_id)
+        except Exception as exc:
+            result["errors"] += 1
+            logger.warning("Drive sync failed to archive removed file %s: %s", drive_file_id or "unknown file", exc)
+            return 0
 
     def refresh_copy_metadata(self) -> Dict[str, Any]:
         """Refresh copy tags without reprocessing every Drive media binary.

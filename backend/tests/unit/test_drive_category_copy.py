@@ -1254,3 +1254,87 @@ def test_standalone_backfill_still_resolves_copy_metadata_for_unchanged_files():
 
     assert resolution_calls == ["AD1-1x1.jpg"]
     assert result["updated"] == 1
+
+
+def test_sync_once_isolates_a_bad_file_and_commits_successful_files():
+    """One malformed Drive object must not roll back the rest of a backfill."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._copy_packages_refreshed_in_sync = set()
+    service._validate_tables = lambda: None
+    service._client = lambda: object()
+    service._get_state_token = lambda: "checkpoint"
+    service._get_start_page_token = lambda drive: "start"
+    service._initial_folder_walk = lambda drive: [{"id": "bad", "name": "bad.jpg"}, {"id": "good", "name": "good.jpg"}]
+    processed = []
+    service._process_file = lambda file_meta, result: (
+        (_ for _ in ()).throw(RuntimeError("bad file")) if file_meta["id"] == "bad" else processed.append(file_meta["id"])
+    )
+    unverified = []
+    service._mark_package_copy_unverified = lambda file_meta, reason: unverified.append(file_meta["id"])
+
+    class Result:
+        def scalar(self):
+            return True
+
+    class FakeDB:
+        committed = False
+        rolled_back = False
+        def execute(self, *args, **kwargs):
+            return Result()
+        class Savepoint:
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+        def begin_nested(self):
+            return self.Savepoint()
+        def commit(self):
+            self.committed = True
+        def rollback(self):
+            self.rolled_back = True
+
+    service.db = FakeDB()
+    result = service.sync_once(backfill=True)
+
+    assert processed == ["good"]
+    assert unverified == ["bad"]
+    assert result["errors"] == 1
+    assert result["processed"] == 2
+    assert service.db.committed is True
+    assert service.db.rolled_back is False
+
+
+def test_drive_sync_routes_keep_their_intended_service_composition(monkeypatch):
+    """Pin endpoint wiring so a future refactor cannot silently swap paths."""
+    from app.api.v1 import drive_assets as route_module
+    from app.schemas.drive_assets import DriveCopyRefreshRequest
+
+    calls = []
+
+    class FakeService:
+        def __init__(self, db):
+            calls.append(("init", db))
+        def sync_once(self, **kwargs):
+            calls.append(("sync_once", kwargs))
+            return {"processed": 1}
+        def refresh_copy_metadata(self):
+            calls.append(("refresh_all", {}))
+            return {"processed": 2}
+        def refresh_copy_metadata_for_sources(self, source_ids):
+            calls.append(("refresh_sources", source_ids))
+            return {"processed": 3}
+
+    monkeypatch.setattr(route_module, "DriveSyncService", FakeService)
+    db = object()
+    assert route_module.sync_drive_assets_now(backfill=True, db=db, _current_user=object())["processed"] == 1
+    assert calls[-1] == ("sync_once", {"backfill": True})
+
+    assert route_module.refresh_drive_copy_metadata(
+        payload=DriveCopyRefreshRequest(source_file_ids=["copy-doc"]), db=db, _current_user=object()
+    )["processed"] == 3
+    assert calls[-1] == ("refresh_sources", ["copy-doc"])
+
+    assert route_module.refresh_drive_copy_metadata(
+        payload=DriveCopyRefreshRequest(), db=db, _current_user=object()
+    )["processed"] == 2
+    assert calls[-1] == ("refresh_all", {})
