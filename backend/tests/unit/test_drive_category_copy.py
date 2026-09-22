@@ -1,6 +1,73 @@
 from app.services.drive_sync_service import DriveSyncService, GOOGLE_DOC_MIME
 
 
+def test_copy_health_names_current_package_gaps_and_excludes_known_legacy_libraries():
+    health = DriveSyncService._build_copy_health_summary([
+        {
+            "drive_file_id": "ready", "file_name": "AD-01-1x1.png",
+            "folder_path": "Commercial Insurance / Electrical Contractors / Current",
+            "soft_tags": '{"copy":{"headline":"Current headline","primary_text":"Current body"}}',
+        },
+        {
+            "drive_file_id": "missing", "file_name": "AD-02-1x1.png",
+            "folder_path": "Commercial Insurance / Electrical Contractors / Current",
+            "soft_tags": '{"copy":{}}',
+        },
+        {
+            "drive_file_id": "legacy", "file_name": "legacy.png",
+            "folder_path": "Commercial Insurance - Legacy Images / Master",
+            "soft_tags": '{}',
+        },
+        {
+            "drive_file_id": "original", "file_name": "florist-original.png",
+            "folder_path": "Commercial Insurance / Florist / Original User Supplied Images",
+            "soft_tags": '{}',
+        },
+    ])
+
+    assert health["current_assets"] == 2
+    assert health["ready_assets"] == 1
+    assert health["exception_assets"] == 1
+    assert health["packages_with_exceptions"] == 1
+    assert health["exceptions"][0]["package"].endswith("Electrical Contractors / Current")
+    assert health["exceptions"][0]["exception_assets"][0]["file_name"] == "AD-02-1x1.png"
+    assert health["excluded_assets"] == 2
+    assert {item["reason"] for item in health["exclusions"]} == {
+        "legacy image library", "original/source image library",
+    }
+
+
+def test_copy_health_separates_manual_copy_assets_from_broken_drive_copy():
+    health = DriveSyncService._build_copy_health_summary([
+        {"drive_file_id": "manual", "file_name": "manual.png", "folder_path": "Current Package", "soft_tags": '{"copy_mode":"manual"}'},
+    ])
+
+    assert health["exception_assets"] == 0
+    assert health["manual_copy_assets"] == 1
+
+
+def test_copy_health_treats_unverified_and_ambiguous_copy_as_launch_exceptions():
+    health = DriveSyncService._build_copy_health_summary([
+        {
+            "drive_file_id": "unverified", "file_name": "AD-03-1x1.png", "folder_path": "Current Package",
+            "soft_tags": '{"copy":{"headline":"H","primary_text":"B"},"copy_refresh_status":"unverified","copy_pairing_status":"ambiguous"}',
+        },
+    ])
+
+    reasons = health["exceptions"][0]["exception_assets"][0]["reasons"]
+    assert "copy source is unverified" in reasons
+    assert "ambiguous Feed/Stories pairing" in reasons
+
+
+def test_copy_health_tolerates_non_object_soft_tag_json():
+    health = DriveSyncService._build_copy_health_summary([
+        {"drive_file_id": "scalar", "file_name": "AD-04.png", "folder_path": "Current Package", "soft_tags": '[]'},
+    ])
+
+    assert health["exception_assets"] == 1
+    assert health["exceptions"][0]["exception_assets"][0]["reasons"] == ["malformed copy metadata"]
+
+
 def test_category_copy_doc_matches_category_and_placement():
     service = DriveSyncService.__new__(DriveSyncService)
     document = """1. LANDSCAPING AND FIELD SERVICE
@@ -1927,6 +1994,9 @@ def test_sync_once_isolates_a_bad_file_and_commits_successful_files():
     )
     unverified = []
     service._mark_package_copy_unverified = lambda file_meta, reason: unverified.append(file_meta["id"])
+    service.get_copy_health_summary = lambda: {
+        "exception_assets": 0, "packages_with_exceptions": 0, "exceptions": [],
+    }
 
     class Result:
         def scalar(self):
@@ -1979,6 +2049,12 @@ def test_drive_sync_routes_keep_their_intended_service_composition(monkeypatch):
         def refresh_copy_metadata_for_sources(self, source_ids):
             calls.append(("refresh_sources", source_ids))
             return {"processed": 3}
+        def get_copy_health_summary(self):
+            calls.append(("copy_health", {}))
+            return {
+                "current_assets": 1, "ready_assets": 1, "exception_assets": 0,
+                "packages_with_exceptions": 0, "exceptions": [], "excluded_assets": 0, "exclusions": [],
+            }
 
     monkeypatch.setattr(route_module, "DriveSyncService", FakeService)
     db = object()
@@ -1994,6 +2070,14 @@ def test_drive_sync_routes_keep_their_intended_service_composition(monkeypatch):
         payload=DriveCopyRefreshRequest(), db=db, _current_user=object()
     )["processed"] == 2
     assert calls[-1] == ("refresh_all", {})
+
+    class FakeResponse:
+        headers = {}
+
+    monkeypatch.setattr(route_module, "_table_exists", lambda db, table_name: True)
+    health = route_module.get_drive_copy_health(response=FakeResponse(), db=db, _current_user=object())
+    assert health["exception_assets"] == 0
+    assert calls[-1] == ("copy_health", {})
 
 
 class _SavepointTrackingDB:
@@ -2113,6 +2197,9 @@ def test_sync_once_isolates_a_bad_removed_and_trashed_file_and_commits_good_chan
     service._archive_by_drive_id = fake_archive_by_drive_id
     service._process_file = fake_process_file
     service._mark_package_copy_unverified = lambda file_meta, reason: None
+    service.get_copy_health_summary = lambda: {
+        "exception_assets": 0, "packages_with_exceptions": 0, "exceptions": [],
+    }
     service.db = _SavepointTrackingDB()
 
     result = service.sync_once(backfill=False)

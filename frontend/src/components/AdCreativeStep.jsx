@@ -1020,12 +1020,35 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.detail || 'Could not refresh Drive copy');
-            const refreshMessage = data.errors
-                ? `Copy refresh completed with ${data.errors} source file${data.errors === 1 ? '' : 's'} requiring repair. Those packages are blocked until their current Drive copy refreshes successfully.`
+            const health = data.copy_health || {};
+            // A source-less selected asset requires the maintenance fallback.
+            // That scan may report unrelated document failures, which must not
+            // be presented as a failure of Joel's selected batch.
+            const batchSourceErrors = hasAssetWithoutSource ? 0 : (data.errors || 0);
+            // The endpoint audits the whole library, but this button is a
+            // batch action. Do not make Joel repair a different package before
+            // launching a batch whose selected/current assets are healthy.
+            const refreshAssetIdSet = new Set(refreshAssetIds);
+            const refreshDriveFileIdSet = new Set(refreshAssetIds
+                .map(assetId => assetById.get(assetId)?.drive_file_id)
+                .filter(Boolean));
+            const namedExceptions = (health.exceptions || []).flatMap(item =>
+                (item.exception_assets || [])
+                    .filter(asset => refreshDriveFileIdSet.has(asset.drive_file_id))
+                    .map(asset => ({ package: item.package, ...asset }))
+            ).slice(0, 3).map(asset => {
+                const reason = (asset.reasons || []).join('; ');
+                return `${asset.package} — ${asset.file_name}${reason ? `: ${reason}` : ''}`;
+            });
+            const refreshMessage = batchSourceErrors
+                ? `Copy refresh completed with ${batchSourceErrors} source file${batchSourceErrors === 1 ? '' : 's'} requiring repair. Those packages are blocked until their current Drive copy refreshes successfully.`
                 : `Drive copy refreshed for ${data.updated || 0} asset${data.updated === 1 ? '' : 's'} and synchronized with active Drive rows.`;
             const refreshedAssets = await fetchDriveAssets({ throwOnError: true });
             const refreshedGroups = buildDriveAssetGroups(refreshedAssets || []);
-            const unverifiedGroups = refreshedGroups.filter(group => group.copyRefreshUnverified).length;
+            const unverifiedGroups = refreshedGroups.filter(group =>
+                group.copyRefreshUnverified
+                && group.assets.some(asset => refreshAssetIdSet.has(asset.id))
+            ).length;
             const refreshedGroupById = new Map(refreshedGroups.map(group => [group.id, group]));
             const refreshedGroupByAssetId = new Map(
                 refreshedGroups.flatMap(group => group.assets.map(asset => [asset.id, group]))
@@ -1066,7 +1089,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             // unverified total is useful to the library page but would double-
             // count a paired creative here and include unrelated packages.
             const unverifiedCount = unverifiedGroups;
-            if (data.errors || unverifiedCount) {
+            if (batchSourceErrors || unverifiedCount || namedExceptions.length) {
                 // Two distinct counts, kept as two sentences: `data.errors` is
                 // source files that failed to parse; unverifiedCount is groups
                 // whose match still isn't confirmed (which can include a group
@@ -1078,6 +1101,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         `Separately, ${unverifiedCount} creative${unverifiedCount === 1 ? '' : 's'} `
                         + `${unverifiedCount === 1 ? 'is' : 'are'} still unverified after this refresh and blocked from launch.`
                     );
+                }
+                if (namedExceptions.length) {
+                    parts.push(`Copy health needs repair in: ${namedExceptions.join(' | ')}.`);
                 }
                 showWarning(parts.join(' '));
             } else {

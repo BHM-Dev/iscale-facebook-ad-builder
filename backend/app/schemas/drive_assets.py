@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -33,6 +33,19 @@ class DriveSyncResult(BaseModel):
     errors: int = 0
     unverified: int = 0
     next_page_token_saved: bool = False
+    copy_health: Optional[Dict[str, Any]] = None
+
+
+class DriveCopyHealth(BaseModel):
+    current_assets: int
+    ready_assets: int
+    exception_assets: int
+    packages_with_exceptions: int
+    exceptions: List[Dict[str, Any]] = Field(default_factory=list)
+    manual_copy_assets: int = 0
+    manual_copy_packages: List[Dict[str, Any]] = Field(default_factory=list)
+    excluded_assets: int
+    exclusions: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class DriveCopyRefreshRequest(BaseModel):

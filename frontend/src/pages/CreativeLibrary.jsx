@@ -83,7 +83,16 @@ export default function CreativeLibrary() {
       if (!res.ok) {
         throw new Error(data.detail || 'Drive sync failed');
       }
-      showSuccess(`Drive sync complete: ${data.created || 0} new, ${data.updated || 0} updated, ${data.archived || 0} archived`);
+      const exceptions = data.copy_health?.exceptions || [];
+      const exclusions = data.copy_health?.exclusions || [];
+      const manualCopyAssets = data.copy_health?.manual_copy_assets || 0;
+      const exclusionNames = exclusions.slice(0, 3).map(item => `${item.package} (${item.reason})`).join('; ');
+      if (exceptions.length) {
+        const names = exceptions.slice(0, 3).map(item => item.package).join('; ');
+        showWarning(`Drive sync complete, but ${data.copy_health.exception_assets} asset${data.copy_health.exception_assets === 1 ? '' : 's'} need copy repair in: ${names}${exceptions.length > 3 ? ' (and more)' : ''}.${manualCopyAssets ? ` ${manualCopyAssets} asset${manualCopyAssets === 1 ? '' : 's'} intentionally require manual copy.` : ''}${exclusionNames ? ` Intentional exclusions: ${exclusionNames}${exclusions.length > 3 ? ' (and more)' : ''}.` : ''}`);
+      } else {
+        showSuccess(`Drive sync complete: ${data.created || 0} new, ${data.updated || 0} updated, ${data.archived || 0} archived${manualCopyAssets ? `. ${manualCopyAssets} asset${manualCopyAssets === 1 ? '' : 's'} intentionally require manual copy` : ''}${exclusionNames ? `. Intentional exclusions: ${exclusionNames}${exclusions.length > 3 ? ' (and more)' : ''}` : ''}`);
+      }
       await fetchAssets();
     } catch (error) {
       showError(error.message || 'Drive sync failed');
@@ -101,8 +110,13 @@ export default function CreativeLibrary() {
         throw new Error(data.detail || 'Copy metadata refresh failed');
       }
       await fetchAssets();
-      if (data.errors || data.unverified) {
-        showWarning(`Copy refresh completed with ${data.errors || 0} source file${data.errors === 1 ? '' : 's'} requiring repair; ${data.unverified || 0} Drive asset${data.unverified === 1 ? '' : 's'} remain unverified.`);
+      const exceptions = data.copy_health?.exceptions || [];
+      if (data.errors || data.unverified || exceptions.length) {
+        const exclusions = data.copy_health?.exclusions || [];
+        const manualCopyAssets = data.copy_health?.manual_copy_assets || 0;
+        const names = exceptions.slice(0, 3).map(item => item.package).join('; ');
+        const exclusionNames = exclusions.slice(0, 3).map(item => `${item.package} (${item.reason})`).join('; ');
+        showWarning(`Copy refresh completed with ${data.errors || 0} source file${data.errors === 1 ? '' : 's'} requiring repair; ${data.unverified || 0} Drive asset${data.unverified === 1 ? '' : 's'} remain unverified; ${data.copy_health?.exception_assets || 0} asset${data.copy_health?.exception_assets === 1 ? '' : 's'} need copy or pairing repair.${names ? ` Packages: ${names}${exceptions.length > 3 ? ' (and more)' : ''}.` : ''}${manualCopyAssets ? ` ${manualCopyAssets} asset${manualCopyAssets === 1 ? '' : 's'} intentionally require manual copy.` : ''}${exclusionNames ? ` Intentional exclusions: ${exclusionNames}${exclusions.length > 3 ? ' (and more)' : ''}.` : ''}`);
       } else {
         showSuccess(`Copy matches refreshed: ${data.updated || 0} assets updated`);
       }

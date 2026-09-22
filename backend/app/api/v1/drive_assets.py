@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_current_active_user
 from app.database import get_db
 from app.models import User
-from app.schemas.drive_assets import DriveAsset, DriveCopyRefreshRequest, DriveSyncResult
+from app.schemas.drive_assets import DriveAsset, DriveCopyHealth, DriveCopyRefreshRequest, DriveSyncResult
 from app.services.drive_sync_service import DriveSyncService
 
 router = APIRouter()
@@ -101,6 +101,19 @@ def sync_drive_assets_now(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.get("/copy-health", response_model=DriveCopyHealth)
+def get_drive_copy_health(
+    response: Response,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_active_user),
+):
+    """Expose named copy exceptions after every sync or manual refresh."""
+    response.headers["Cache-Control"] = "no-store"
+    if not _table_exists(db, "drive_assets"):
+        raise HTTPException(status_code=503, detail="Drive asset table is not installed yet.")
+    return DriveSyncService(db).get_copy_health_summary()
+
+
 @router.post("/refresh-copy-metadata", response_model=DriveSyncResult)
 def refresh_drive_copy_metadata(
     payload: DriveCopyRefreshRequest = Body(default_factory=DriveCopyRefreshRequest),
@@ -117,7 +130,7 @@ def refresh_drive_copy_metadata(
     try:
         service = DriveSyncService(db)
         if payload.skip_full_refresh:
-            return DriveSyncResult()
+            return DriveSyncResult(copy_health=service.get_copy_health_summary())
         if payload.source_file_ids and not payload.force_full_refresh:
             return service.refresh_copy_metadata_for_sources(payload.source_file_ids)
         return service.refresh_copy_metadata()

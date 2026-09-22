@@ -57,6 +57,129 @@ class DriveSyncService:
         self._backfill_mode = False
         self._copy_packages_refreshed_in_sync: set[str] = set()
 
+    @staticmethod
+    def _build_copy_health_summary(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Return an explicit, package-level view of launchable Drive copy.
+
+        This deliberately audits the stored library after a sync rather than
+        trusting the count of documents parsed in that sync.  A newly uploaded
+        image, an old source that disappeared, and an ambiguous pairing all
+        surface as named exceptions in the same place.
+        """
+        exclusions = (
+            ("commercial insurance - legacy images", "legacy image library"),
+            ("commercial insurance master - abel", "legacy master library"),
+            ("original user supplied images", "original/source image library"),
+        )
+        packages: Dict[str, Dict[str, Any]] = {}
+        manual_copy_packages: Dict[str, Dict[str, Any]] = {}
+        excluded: Dict[str, Dict[str, Any]] = {}
+
+        for row in rows:
+            folder_path = row.get("folder_path") or "Unfiled Drive assets"
+            path_key = folder_path.lower()
+            exclusion_reason = next((reason for token, reason in exclusions if token in path_key), None)
+            if exclusion_reason:
+                item = excluded.setdefault(folder_path, {
+                    "package": folder_path, "reason": exclusion_reason, "asset_count": 0,
+                })
+                item["asset_count"] += 1
+                continue
+
+            raw_tags = row.get("soft_tags")
+            invalid_tag_shape = False
+            try:
+                tags = json.loads(raw_tags) if isinstance(raw_tags, str) else (raw_tags or {})
+            except (TypeError, json.JSONDecodeError):
+                tags = {}
+                invalid_tag_shape = True
+            # ``soft_tags`` is a JSON object by contract, but health reporting
+            # must never make an otherwise successful sync fail because an old
+            # row contains a JSON scalar or array.
+            if not isinstance(tags, dict):
+                tags = {}
+                invalid_tag_shape = True
+            copy = tags.get("copy") or {}
+            if not isinstance(copy, dict):
+                copy = {}
+            reasons = []
+            has_complete_copy = bool(str(copy.get("headline") or "").strip() and str(copy.get("primary_text") or "").strip())
+            is_manual_copy_candidate = (
+                not has_complete_copy
+                and tags.get("copy_mode") == "manual"
+                and tags.get("copy_refresh_status") != "unverified"
+                and tags.get("copy_integrity_issue") is not True
+                and tags.get("copy_pairing_status") != "ambiguous"
+                and not invalid_tag_shape
+            )
+            if not has_complete_copy and not is_manual_copy_candidate:
+                reasons.append("malformed copy metadata" if invalid_tag_shape else "missing complete headline and primary text")
+            if tags.get("copy_refresh_status") == "unverified":
+                reasons.append("copy source is unverified")
+            if tags.get("copy_integrity_issue") is True:
+                reasons.append(str(tags.get("copy_integrity_reason") or "copy integrity issue"))
+            if tags.get("copy_pairing_status") == "ambiguous":
+                reasons.append("ambiguous Feed/Stories pairing")
+
+            package = packages.setdefault(folder_path, {
+                "package": folder_path, "asset_count": 0, "ready_asset_count": 0,
+                "exception_assets": [],
+            })
+            package["asset_count"] += 1
+            if is_manual_copy_candidate:
+                manual = manual_copy_packages.setdefault(folder_path, {
+                    "package": folder_path, "asset_count": 0,
+                })
+                manual["asset_count"] += 1
+            if reasons:
+                package["exception_assets"].append({
+                    "drive_file_id": row.get("drive_file_id"),
+                    "file_name": row.get("file_name") or "Unnamed Drive asset",
+                    "reasons": reasons,
+                })
+            else:
+                package["ready_asset_count"] += 1
+
+        broken_packages = [
+            package for package in packages.values() if package["exception_assets"]
+        ]
+        exception_assets = sum(len(package["exception_assets"]) for package in broken_packages)
+        return {
+            "current_assets": sum(package["asset_count"] for package in packages.values()),
+            "ready_assets": sum(package["ready_asset_count"] for package in packages.values()),
+            "exception_assets": exception_assets,
+            "packages_with_exceptions": len(broken_packages),
+            "exceptions": broken_packages,
+            "manual_copy_assets": sum(item["asset_count"] for item in manual_copy_packages.values()),
+            "manual_copy_packages": list(manual_copy_packages.values()),
+            "excluded_assets": sum(item["asset_count"] for item in excluded.values()),
+            "exclusions": list(excluded.values()),
+        }
+
+    def get_copy_health_summary(self) -> Dict[str, Any]:
+        """Audit current packages, keeping intentional legacy libraries visible."""
+        rows = self.db.execute(
+            text(
+                """
+                SELECT drive_file_id, file_name, folder_path, soft_tags
+                FROM drive_assets
+                WHERE COALESCE(archived, FALSE) = FALSE
+                """
+            )
+        ).mappings().all()
+        health = self._build_copy_health_summary([dict(row) for row in rows])
+        if health["exception_assets"]:
+            logger.warning(
+                "Drive copy health found %s unresolved asset(s) across %s package(s): %s",
+                health["exception_assets"], health["packages_with_exceptions"],
+                "; ".join(item["package"] for item in health["exceptions"]),
+            )
+        return health
+
+    def _attach_copy_health(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        result["copy_health"] = self.get_copy_health_summary()
+        return result
+
     def sync_once(self, backfill: bool = False, defer_copy_resolution: bool = False) -> Dict[str, Any]:
         result = {
             "processed": 0,
@@ -134,6 +257,7 @@ class DriveSyncService:
                         final_token = response.get("newStartPageToken") or final_token
                     self._set_state_token(final_token)
                     result["next_page_token_saved"] = True
+                result = self._attach_copy_health(result)
                 self.db.commit()
                 return result
 
@@ -166,6 +290,7 @@ class DriveSyncService:
                     result["next_page_token_saved"] = True
                 next_token = response.get("nextPageToken")
 
+            result = self._attach_copy_health(result)
             self.db.commit()
             return result
         except Exception as exc:
@@ -314,6 +439,7 @@ class DriveSyncService:
                 ).scalar()
                 or 0
             )
+            result = self._attach_copy_health(result)
             self.db.commit()
             return result
         except Exception as exc:
@@ -381,6 +507,7 @@ class DriveSyncService:
                     result["errors"] += 1
                     logger.warning("Could not refresh Drive copy source %s: %s", source_file_id, exc)
                     self._mark_copy_source_unverified(source_file_id, str(exc))
+            result = self._attach_copy_health(result)
             self.db.commit()
             return result
         except Exception:
