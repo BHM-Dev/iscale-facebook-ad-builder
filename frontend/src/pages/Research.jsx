@@ -1621,7 +1621,7 @@ export default function Research() {
                 <input type="checkbox" checked={newOnly} onChange={e => setNewOnly(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />
                 New captures
               </label>
-              <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap" title="No capture, analyst, or deterministic taxonomy has been recorded yet">
+              <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap" title="No theme or CTA label recorded yet">
                 <input type="checkbox" checked={needsTagging} onChange={e => setNeedsTagging(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />
                 Needs tagging
               </label>
