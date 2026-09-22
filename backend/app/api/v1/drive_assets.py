@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -24,6 +24,7 @@ def _table_exists(db: Session, table_name: str) -> bool:
 
 @router.get("", response_model=List[DriveAsset])
 def list_drive_assets(
+    response: Response,
     brand_id: Optional[str] = None,
     product_id: Optional[str] = None,
     format: Optional[str] = Query(default=None, pattern="^(image|video)$"),
@@ -31,6 +32,12 @@ def list_drive_assets(
     db: Session = Depends(get_db),
     _current_user: User = Depends(get_current_active_user),
 ):
+    # The picker reads this immediately after a copy refresh.  Without an
+    # explicit response policy, browsers may reuse a heuristic-cached GET and
+    # render stale copy metadata even though the refresh committed correctly.
+    # This is operational launch state, so it must never be cached by a client
+    # or intermediary.
+    response.headers["Cache-Control"] = "no-store"
     if not _table_exists(db, "drive_assets"):
         raise HTTPException(
             status_code=503,

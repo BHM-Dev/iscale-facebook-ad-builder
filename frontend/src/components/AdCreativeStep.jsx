@@ -947,7 +947,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         setDriveLibraryLoading(true);
         setDriveLibraryError(null);
         try {
-            const res = await authFetch(`${API_URL}/drive-assets`);
+            // Copy refresh writes metadata server-side, then immediately calls
+            // this reader. The response also declares Cache-Control: no-store,
+            // but make the caller's intent explicit: the library is operational
+            // state, not a cacheable catalog, and every open/refresh must read
+            // the current server rows.
+            const res = await authFetch(`${API_URL}/drive-assets`, { cache: 'no-store' });
             if (!res.ok) {
                 // 503 means the migration hasn't landed yet — surface that plainly
                 // rather than a generic failure.
