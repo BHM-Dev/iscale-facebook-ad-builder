@@ -355,7 +355,7 @@ function BoardSaveButton({ ad, boards, onAdd, onCreate }) {
   );
 }
 
-function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onNotesSaved, boards, onAddToBoard, onCreateBoard }) {
+function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onBack, canGoBack, onNotesSaved, boards, onAddToBoard, onCreateBoard }) {
   const { authFetch } = useAuth();
   const { showError, showSuccess } = useToast();
   const [related, setRelated] = useState([]);
@@ -392,7 +392,7 @@ function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onNotesSaved, b
   };
   return <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/30 backdrop-blur-sm" onClick={onClose}>
     <aside className="h-full w-full max-w-xl overflow-y-auto bg-white p-6 shadow-2xl" onClick={event => event.stopPropagation()} aria-label="Creative detail">
-      <div className="mb-5 flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wider text-indigo-600">Creative detail</p><h2 className="mt-1 text-xl font-bold text-slate-900">{ad.brand_name || 'Unknown advertiser'}</h2></div><button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X size={20}/></button></div>
+      <div className="mb-5 flex items-start justify-between gap-4"><div className="flex items-start gap-2">{canGoBack && <button type="button" onClick={onBack} className="mt-0.5 rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Back to previous creative">←</button>}<div><p className="text-xs font-semibold uppercase tracking-wider text-indigo-600">Creative detail</p><h2 className="mt-1 text-xl font-bold text-slate-900">{ad.brand_name || 'Unknown advertiser'}</h2></div></div><button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X size={20}/></button></div>
       {(media || videoPreview) && <div className="relative mb-5 aspect-[4/3] overflow-hidden rounded-xl bg-slate-100">{ad.media_type === 'video' && videoPreview ? <video controls muted playsInline preload="metadata" poster={media || undefined} className="h-full w-full object-cover" onError={() => setVideoFailed(true)}><source src={videoPreview} />Your browser cannot preview this captured video.</video> : <img src={media} alt="Competitor creative" className="h-full w-full object-cover" onError={e => { e.target.style.display = 'none'; }} />}{ad.media_type === 'video' && <span className="absolute bottom-3 left-3 pointer-events-none inline-flex items-center gap-1 rounded-full bg-black/75 px-3 py-1.5 text-xs font-semibold text-white"><Play size={13} fill="currentColor"/> Video{ad.video_length_seconds ? ` · ${ad.video_length_seconds}s` : ''}</span>}</div>}
       <div className="mb-5 flex flex-wrap gap-2">{(ad.creative_tags || []).map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">{tag.replaceAll('_', ' ')}</span>)}{ad.cta_type && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">CTA: {ad.cta_type.replaceAll('_', ' ')}</span>}</div>
       {ad.headline && <h3 className="text-lg font-semibold leading-snug text-slate-900">{ad.headline}</h3>}{ad.ad_copy && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{ad.ad_copy}</p>}
@@ -775,6 +775,7 @@ export default function Research() {
   const [showClearModal, setShowClearModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [detailAd, setDetailAd] = useState(null);
+  const [detailHistory, setDetailHistory] = useState([]);
   const [importingIntel, setImportingIntel] = useState(false);
   const [clearing, setClearing] = useState(false);
 
@@ -1320,6 +1321,16 @@ export default function Research() {
     setAngleFilter(''); setMediaTypeFilter(''); setCreativeTagFilter(''); setCtaTypeFilter('');
     setPageTypeFilter(''); setActiveOnly(false); setNewOnly(false); setNeedsTagging(false); setAdvertiserFilter('');
   };
+  const inspectCreative = (ad) => {
+    setDetailAd(ad);
+    setDetailHistory(prev => [...prev.filter(item => item.id !== ad.id), ad]);
+  };
+  const closeDetail = () => { setDetailAd(null); setDetailHistory([]); };
+  const goBackInDetail = () => setDetailHistory(prev => {
+    const next = prev.slice(0, -1);
+    setDetailAd(next[next.length - 1] || null);
+    return next;
+  });
   const catalogSummary = useMemo(() => ({
     total: browseAds.length,
     newCount: browseAds.filter(ad => ad.first_seen && Date.now() - new Date(ad.first_seen).getTime() <= 7 * 24 * 60 * 60 * 1000).length,
@@ -1500,6 +1511,7 @@ export default function Research() {
           ['Theme tagged', catalogSummary.taggedCount],
         ].map(([label, value]) => <div key={label} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5"><p className="text-lg font-bold tabular-nums text-slate-900">{browseLoading ? '—' : value}</p><p className="text-[11px] font-medium text-slate-500">{label}</p></div>)}
       </div>
+      <p className="-mt-3 text-[11px] text-slate-400">Counts reflect the current vertical and any active filters, not the entire Research library.</p>
 
       {/* Two-column layout */}
       <div className="flex gap-5 items-start">
@@ -1692,7 +1704,7 @@ export default function Research() {
                   onSave={handleSave}
                   onUnsave={handleUnsave}
                   onUseAsInspiration={handleUseAsInspiration}
-                  onInspect={setDetailAd}
+                  onInspect={inspectCreative}
                   onBlockPage={handleBlockPage}
                   angleTags={angleTags}
                   boards={boards}
@@ -1783,7 +1795,7 @@ export default function Research() {
                   onSave={handleSave}
                   onUnsave={handleUnsave}
                   onUseAsInspiration={handleUseAsInspiration}
-                  onInspect={setDetailAd}
+                  onInspect={inspectCreative}
                   onBlockPage={handleBlockPage}
                   angleTags={angleTags}
                   boards={boards}
@@ -1797,7 +1809,7 @@ export default function Research() {
                   ad={ad}
                   onUnsave={handleUnsave}
                   onUseAsInspiration={handleUseAsInspiration}
-                  onInspect={setDetailAd}
+                  onInspect={inspectCreative}
                   boards={boards}
                   onAddToBoard={handleAddToBoard}
                   onCreateBoard={handleCreateBoard}
@@ -1854,7 +1866,7 @@ export default function Research() {
         importing={importingIntel}
         defaultQuery={activeVertical === 'auto_insurance' ? 'cheap auto insurance' : currentVerticalLabel}
       />
-      <ResearchDetailDrawer ad={detailAd} onClose={() => setDetailAd(null)} onInspect={setDetailAd} onNotesSaved={handleStrategyNotesSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onBuild={(ad) => { setDetailAd(null); handleUseAsInspiration(ad); }} />
+      <ResearchDetailDrawer ad={detailAd} onClose={closeDetail} onInspect={inspectCreative} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onNotesSaved={handleStrategyNotesSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
     </div>
   );
 }
