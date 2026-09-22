@@ -31,4 +31,5 @@ class DriveSyncResult(BaseModel):
     archived: int = 0
     unmatched_brand: int = 0
     errors: int = 0
+    unverified: int = 0
     next_page_token_saved: bool = False

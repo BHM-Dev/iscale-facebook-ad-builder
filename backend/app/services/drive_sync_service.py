@@ -60,6 +60,7 @@ class DriveSyncService:
             "archived": 0,
             "unmatched_brand": 0,
             "errors": 0,
+            "unverified": 0,
             "next_page_token_saved": False,
         }
 
@@ -174,6 +175,7 @@ class DriveSyncService:
             "archived": 0,
             "unmatched_brand": 0,
             "errors": 0,
+            "unverified": 0,
             "next_page_token_saved": False,
         }
         try:
@@ -231,6 +233,19 @@ class DriveSyncService:
                     result["errors"] += 1
                     logger.warning("Could not refresh Drive copy metadata for %s: %s", file_meta.get("name"), exc)
                     self._mark_package_copy_unverified(file_meta, str(exc))
+            result["unverified"] = int(
+                self.db.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM drive_assets
+                        WHERE archived = FALSE
+                          AND COALESCE(NULLIF(soft_tags, '')::jsonb ->> 'copy_refresh_status', '') = 'unverified'
+                        """
+                    )
+                ).scalar()
+                or 0
+            )
             self.db.commit()
             return result
         except Exception as exc:
@@ -1842,14 +1857,19 @@ class DriveSyncService:
 
     def _strategy_folder_copy_metadata(self, folder_id, folder_files, media_by_name, text_body):
         blocks = self._parse_strategy_copy_doc(text_body)
-        invalid_blocks = [
-            copy_id for copy_id, block in blocks.items()
-            if not block.get("headline", "").strip() or not block.get("primary_text", "").strip()
-        ]
-        if not blocks or invalid_blocks:
+        # Refresh the valid AD blocks independently. One unfinished block should
+        # not prevent Joel's completed ads in the same strategy document from
+        # receiving their updated copy. Any media belonging to an incomplete
+        # block is deliberately left out of the refreshed mapping; the caller's
+        # unmatched-asset pass then marks its previous match unverified.
+        complete_blocks = {
+            copy_id: block
+            for copy_id, block in blocks.items()
+            if block.get("headline", "").strip() and block.get("primary_text", "").strip()
+        }
+        if not complete_blocks:
             raise RuntimeError(
                 "Drive strategy document has missing headline or primary text"
-                + (f" for: {', '.join(sorted(invalid_blocks))}" if invalid_blocks else "")
             )
         assets: Dict[str, Dict[str, Any]] = {}
         for item in media_by_name.values():
@@ -1866,7 +1886,7 @@ class DriveSyncService:
                 continue
             code_match = re.match(r"^(AD-[A-Z0-9]+-\d{2})-", file_name, re.IGNORECASE)
             prefix = code_match.group(1).upper() if code_match else ""
-            block = blocks.get(prefix)
+            block = complete_blocks.get(prefix)
             if not block:
                 continue
             aspect = aspect_match.group(1).lower()

@@ -529,12 +529,44 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // preserved across Back/Next instead of regenerating. Flagged in
     // retroactive review as an implicit contract worth documenting explicitly.
     const permutationInputKey = JSON.stringify({
-        creatives: creativeData.creatives,
+        // Drive copy refreshes must update the current rows without rebuilding
+        // the whole manifest. Structural changes still regenerate; per-Drive
+        // copy changes are synchronized by driveCopySyncKey below.
+        creatives: (creativeData.creatives || []).map(creative => {
+            if (creative.source !== 'drive') return creative;
+            const structure = { ...creative };
+            [
+                'headline',
+                'body',
+                'description',
+                'cta',
+                'ctaSource',
+                'websiteUrl',
+                'category',
+                'manualCopyFields',
+                'driveCopyIntegrityIssue',
+                'driveCopyRefusedForOtherFile',
+                'driveCopyIntegrityReason',
+            ].forEach(field => delete structure[field]);
+            return structure;
+        }),
         headlines: creativeData.headlines,
         bodies: creativeData.bodies,
         description: creativeData.description,
         websiteUrl: creativeData.websiteUrl,
     });
+
+    const driveCopySyncKey = JSON.stringify((creativeData.creatives || [])
+        .filter(creative => creative.source === 'drive')
+        .map(creative => ({
+            id: creative.id,
+            headline: creative.headline || '',
+            body: creative.body || '',
+            description: creative.description || '',
+            cta: creative.cta || '',
+            ctaSource: creative.ctaSource || '',
+            websiteUrl: creative.websiteUrl || '',
+        })));
 
     // Initialize ads based on creatives - generate all permutations
     React.useEffect(() => {
@@ -672,6 +704,31 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // explicit "Rename current ads" action so manual names are never wiped.
     }, [permutationInputKey, campaignData.name, adsetData.name]);
 
+    // A Drive refresh changes copy, not the media/permutation structure. Sync
+    // those values into the existing review rows so exclusions, names, and
+    // row-level edits survive the refresh.
+    React.useEffect(() => {
+        if (!adsData.length) return;
+        const creativesById = new Map((creativeData.creatives || []).map(creative => [creative.id, creative]));
+        setAdsData(prev => prev.map(ad => {
+            const creative = creativesById.get(ad.creativeId);
+            if (creative?.source !== 'drive') return ad;
+            const manual = {
+                ...(creative.manualCopyFields || {}),
+                ...(ad.manualCopyFields || {}),
+            };
+            return {
+                ...ad,
+                headlineOverride: manual.headline ? ad.headlineOverride : creative.headline || '',
+                bodyOverride: manual.body ? ad.bodyOverride : creative.body || '',
+                descriptionOverride: manual.description ? ad.descriptionOverride : creative.description || '',
+                ctaOverride: manual.cta ? ad.ctaOverride : creative.cta || '',
+                ctaSource: manual.cta ? ad.ctaSource : creative.ctaSource || '',
+                websiteUrlOverride: manual.websiteUrl ? ad.websiteUrlOverride : creative.websiteUrl || '',
+            };
+        }));
+    }, [driveCopySyncKey]);
+
     // Format detection — drives multi-adset launch logic
     const feedAds    = adsData.filter(ad => (ad.format || 'feed') !== 'stories');
     const storiesAds = adsData.filter(ad => ad.format === 'stories');
@@ -770,7 +827,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             : driveManifestUsesExistingAdset
                 ? 'selected existing ad set'
                 : '1 shared new ad set';
-        return { ad, index, creative, headline, body, description, websiteUrl, cta, ctaSource: ad.ctaSource || creative?.ctaSource || 'Creative card', category, copyReady, adsetName, destinationLabel, outcome: manifestLaunchOutcome(ad) };
+        const driveCopyIntegrityIssue = isDriveCreative && Boolean(creative?.driveCopyIntegrityIssue);
+        return { ad, index, creative, headline, body, description, websiteUrl, cta, ctaSource: ad.ctaSource || creative?.ctaSource || 'Creative card', category, copyReady: copyReady && !driveCopyIntegrityIssue, driveCopyIntegrityIssue, adsetName, destinationLabel, outcome: manifestLaunchOutcome(ad) };
     });
     const manifestCategories = [...new Set(manifestRows.map(row => row.category))].sort((a, b) => a.localeCompare(b));
     const visibleManifestRows = manifestRows.filter(row => {
@@ -916,11 +974,11 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         }
         setAdsData(prev => prev.map(ad => {
             if (ad.id !== row.ad.id) return ad;
-            if (field === 'headline') return { ...ad, headlineOverride: value };
-            if (field === 'body') return { ...ad, bodyOverride: value };
-            if (field === 'description') return { ...ad, descriptionOverride: value };
-            if (field === 'websiteUrl') return { ...ad, websiteUrlOverride: value };
-            if (field === 'cta') return { ...ad, ctaOverride: value, ctaSource: 'Manual row edit' };
+            if (field === 'headline') return { ...ad, headlineOverride: value, manualCopyFields: { ...(ad.manualCopyFields || {}), headline: true } };
+            if (field === 'body') return { ...ad, bodyOverride: value, manualCopyFields: { ...(ad.manualCopyFields || {}), body: true } };
+            if (field === 'description') return { ...ad, descriptionOverride: value, manualCopyFields: { ...(ad.manualCopyFields || {}), description: true } };
+            if (field === 'websiteUrl') return { ...ad, websiteUrlOverride: value, manualCopyFields: { ...(ad.manualCopyFields || {}), websiteUrl: true } };
+            if (field === 'cta') return { ...ad, ctaOverride: value, ctaSource: 'Manual row edit', manualCopyFields: { ...(ad.manualCopyFields || {}), cta: true } };
             return ad;
         }));
     };
@@ -1007,7 +1065,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             const cta = Object.prototype.hasOwnProperty.call(ad, 'ctaOverride') && (isDriveManifest || Boolean(ad.ctaOverride))
                 ? ad.ctaOverride
                 : creative?.cta || '';
-            return !headline || !body || !isValidDestinationUrl(websiteUrl) || !isValidMetaCta(cta);
+            return Boolean(creative.driveCopyIntegrityIssue)
+                || !headline || !body || !isValidDestinationUrl(websiteUrl) || !isValidMetaCta(cta);
         }) : [];
         if (incompleteManifestRows.length > 0) {
             showWarning(`${incompleteManifestRows.length} selected ad pair${incompleteManifestRows.length !== 1 ? 's are' : ' is'} missing a valid Primary Text, Headline, Meta CTA, or http(s) destination URL. Open the affected row and complete it before launch.`);

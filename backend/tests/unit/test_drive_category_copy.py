@@ -547,6 +547,29 @@ def test_successful_copy_refresh_clears_stale_unverified_mark():
     assert writes["media-1"]["copy_integrity_reason"] is None
 
 
+def test_strategy_copy_refresh_keeps_complete_ads_when_another_ad_is_incomplete():
+    service = DriveSyncService.__new__(DriveSyncService)
+    document = """## AD-CL-01 — Complete
+**Meta headline:** Complete headline
+**Primary text:** Complete primary text
+
+## AD-CL-02 — Still being edited
+**Meta headline:**
+**Primary text:**
+"""
+    media = [
+        {"id": "complete", "name": "AD-CL-01-1x1.png"},
+        {"id": "incomplete", "name": "AD-CL-02-1x1.png"},
+    ]
+
+    result = service._strategy_folder_copy_metadata(
+        "package", media, {item["name"].lower(): item for item in media}, document
+    )
+
+    assert list(result["assets"]) == ["ad-cl-01-1x1.png"]
+    assert result["assets"]["ad-cl-01-1x1.png"]["copy"]["headline"] == "Complete headline"
+
+
 def test_strategy_doc_in_package_root_does_not_adopt_sibling_handoff_package():
     """_find_package_folder only recognizes a package by a handoff manifest, and its
     depth guard assumes the walk began at a media file one level below the package

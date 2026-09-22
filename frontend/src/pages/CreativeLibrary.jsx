@@ -38,7 +38,7 @@ function groupAssets(assets) {
 
 export default function CreativeLibrary() {
   const { brands } = useBrands();
-  const { showSuccess, showError } = useToast();
+  const { showSuccess, showWarning, showError } = useToast();
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -100,8 +100,12 @@ export default function CreativeLibrary() {
       if (!res.ok) {
         throw new Error(data.detail || 'Copy metadata refresh failed');
       }
-      showSuccess(`Copy matches refreshed: ${data.updated || 0} assets updated`);
       await fetchAssets();
+      if (data.errors || data.unverified) {
+        showWarning(`Copy refresh completed with ${data.errors || 0} source file${data.errors === 1 ? '' : 's'} requiring repair; ${data.unverified || 0} Drive asset${data.unverified === 1 ? '' : 's'} remain unverified.`);
+      } else {
+        showSuccess(`Copy matches refreshed: ${data.updated || 0} assets updated`);
+      }
     } catch (error) {
       showError(error.message || 'Copy metadata refresh failed');
     } finally {

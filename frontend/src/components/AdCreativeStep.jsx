@@ -981,11 +981,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             const refreshMessage = data.errors
                 ? `Copy refresh completed with ${data.errors} source file${data.errors === 1 ? '' : 's'} requiring repair. Those packages are blocked until their current Drive copy refreshes successfully.`
                 : `Drive copy refreshed for ${data.updated || 0} asset${data.updated === 1 ? '' : 's'} and synchronized with active Drive rows.`;
-            if (data.errors) {
-                showWarning(refreshMessage);
-            }
             const refreshedAssets = await fetchDriveAssets({ throwOnError: true });
             const refreshedGroups = buildDriveAssetGroups(refreshedAssets || []);
+            const unverifiedGroups = refreshedGroups.filter(group => group.copyRefreshUnverified).length;
             const refreshedGroupById = new Map(refreshedGroups.map(group => [group.id, group]));
             const refreshedGroupByAssetId = new Map(
                 refreshedGroups.flatMap(group => group.assets.map(asset => [asset.id, group]))
@@ -1000,23 +998,53 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         ...creative,
                         driveCopyIntegrityIssue: true,
                     };
-                    const matchedCopy = hasCompleteCopy(group.copy || {}) ? group.copy : {};
+                    const sourceCopyComplete = hasCompleteCopy(group.copy || {});
+                    const matchedCopy = sourceCopyComplete ? group.copy : {};
+                    const manualCopyFields = creative.manualCopyFields || {};
                     return {
                         ...creative,
                         driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || group.copyPairingAmbiguous || false,
                         driveCopyRefusedForOtherFile: group.copyRefusedForOtherFile || false,
                         driveCopyIntegrityReason: group.copyIntegrityReason || null,
                         category: group.category || creative.category,
-                        headline: matchedCopy.headline || '',
-                        body: matchedCopy.primary_text || '',
-                        description: matchedCopy.description || '',
-                        cta: group.cta || '',
-                        websiteUrl: group.landingPage || '',
+                        // A refresh can legitimately return an incomplete match
+                        // while Joel is still repairing a Drive source. Do not
+                        // erase copy he already entered in this launch session;
+                        // the integrity flag still blocks launch until the source
+                        // is verified.
+                        headline: manualCopyFields.headline ? creative.headline || '' : (matchedCopy.headline || (sourceCopyComplete ? '' : creative.headline || '')),
+                        body: manualCopyFields.body ? creative.body || '' : (matchedCopy.primary_text || (sourceCopyComplete ? '' : creative.body || '')),
+                        description: manualCopyFields.description ? creative.description || '' : (matchedCopy.description || (sourceCopyComplete ? '' : creative.description || '')),
+                        cta: manualCopyFields.cta ? creative.cta || '' : (group.cta || (sourceCopyComplete ? '' : creative.cta || '')),
+                        websiteUrl: manualCopyFields.websiteUrl ? creative.websiteUrl || '' : (group.landingPage || (sourceCopyComplete ? '' : creative.websiteUrl || '')),
                     };
                 }),
             }));
-            if (!data.errors) showSuccess(refreshMessage);
+            // Count creative groups, not raw Feed/Stories assets. The backend's
+            // unverified total is useful to the library page but would double-
+            // count a paired creative here and include unrelated packages.
+            const unverifiedCount = unverifiedGroups;
+            if (data.errors || unverifiedCount) {
+                showWarning(
+                    `${refreshMessage} ${unverifiedCount} creative${unverifiedCount === 1 ? '' : 's'} still need${unverifiedCount === 1 ? 's' : ''} a complete Drive copy source.`
+                );
+            } else {
+                showSuccess(refreshMessage);
+            }
         } catch (err) {
+            // The request may have committed on the server before the browser
+            // lost the response. Fail closed for this session so Joel cannot
+            // launch last-known copy without a confirmed refresh result.
+            setCreativeData(prev => ({
+                ...prev,
+                creatives: (prev.creatives || []).map(creative => creative.source === 'drive'
+                    ? {
+                        ...creative,
+                        driveCopyIntegrityIssue: true,
+                        driveCopyIntegrityReason: 'Drive copy refresh was not confirmed. Refresh again before launching.',
+                    }
+                    : creative),
+            }));
             showError(err.message || 'Could not refresh Drive copy');
         } finally {
             setRefreshingDriveCopy(false);
@@ -1809,7 +1837,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         setCreativeData(prev => ({
             ...prev,
             creatives: (prev.creatives || []).map(creative => (
-                creative.id === id ? { ...creative, [field]: value } : creative
+                creative.id === id
+                    ? { ...creative, [field]: value, manualCopyFields: { ...(creative.manualCopyFields || {}), [field]: true } }
+                    : creative
             ))
         }));
     };
