@@ -66,6 +66,24 @@ def _matches_research_vertical(ad, config_id):
     return any(term in text for term in commercial) and not any(term in text for term in obvious_noise)
 
 
+def _related_pattern_score(source, candidate):
+    """Return an explainable metadata match score and reasons, or None."""
+    shared_tags = sorted(set(source.creative_tags or []) & set(candidate.creative_tags or []))
+    reasons = [f"theme: {tag.replace('_', ' ')}" for tag in shared_tags]
+    same_cta = bool(source.cta_type and source.cta_type == candidate.cta_type)
+    same_format = bool(source.media_type and source.media_type == candidate.media_type)
+    same_destination = bool(source.destination_domain and source.destination_domain == candidate.destination_domain)
+    if same_cta:
+        reasons.append(f"CTA: {source.cta_type.replace('_', ' ')}")
+    if same_format:
+        reasons.append(f"format: {source.media_type}")
+    if same_destination:
+        reasons.append("same destination")
+    if not reasons:
+        return None
+    return len(shared_tags) * 4 + (2 if same_cta else 0) + int(same_format) + int(same_destination), reasons
+
+
 def _parse_research_date(value):
     if not value:
         return None
@@ -1208,7 +1226,6 @@ def get_related_research_ads(
     source = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
     if not source:
         raise HTTPException(status_code=404, detail="Ad not found")
-    source_tags = set(source.creative_tags or [])
     # Bounded to the most recently seen rows so this stays cheap regardless of
     # how large scraped_ads grows — a full-table scan here (as an earlier
     # version of this endpoint did) is the exact query pattern already
@@ -1222,17 +1239,10 @@ def get_related_research_ads(
     )
     scored = []
     for candidate in candidates:
-        shared_tags = sorted(source_tags & set(candidate.creative_tags or []))
-        reasons = [f"theme: {tag.replace('_', ' ')}" for tag in shared_tags]
-        if source.cta_type and source.cta_type == candidate.cta_type:
-            reasons.append(f"CTA: {source.cta_type.replace('_', ' ')}")
-        if source.media_type and source.media_type == candidate.media_type:
-            reasons.append(f"format: {source.media_type}")
-        if source.destination_domain and source.destination_domain == candidate.destination_domain:
-            reasons.append("same destination")
-        if not reasons:
+        match = _related_pattern_score(source, candidate)
+        if not match:
             continue
-        score = len(shared_tags) * 4 + (2 if source.cta_type and source.cta_type == candidate.cta_type else 0) + (1 if source.media_type and source.media_type == candidate.media_type else 0) + (1 if source.destination_domain and source.destination_domain == candidate.destination_domain else 0)
+        score, reasons = match
         scored.append((score, candidate, reasons))
     scored.sort(key=lambda item: (-item[0], _parse_research_date(item[1].last_seen) or datetime.min))
     return [{**_serialize_scraped_ad(ad), "match_reasons": reasons} for _, ad, reasons in scored[:max(1, min(limit, 12))]]
