@@ -381,6 +381,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // before that id exists. The Facebook Page ID cache is intentionally NOT scoped this
     // way — a brand's Page is stable across its niches on the same account.
     const campaignCacheId = campaignData?.fbCampaignId || campaignData?.id || 'new';
+    const currentCreatives = creativeData.creatives || [];
+    const hasDriveCreative = currentCreatives.some(creative => creative.source === 'drive');
+    const hasNonDriveCreative = currentCreatives.some(creative => creative.source !== 'drive');
+    const isMixedCreativeBatch = hasDriveCreative && hasNonDriveCreative;
+    // Drive rows own their copy. Hide global fallback fields only when every
+    // current row is Drive-sourced; a mixed batch still needs one-time fields
+    // for its manual rows.
+    const allCreativesAreDriveSourced = currentCreatives.length > 0 && !hasNonDriveCreative;
     // Recomputed on every render off creativeData directly (not memoized on a
     // dependency array) — this step's whole job is showing the count change on every
     // keystroke/upload, and the computation itself is three array lengths, not worth
@@ -3059,12 +3067,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 )}
 
                 {/* Body Text */}
-                {!isMatchImport && !creativeData.creatives?.some(c => c.source === 'drive') && (
+                {!isMatchImport && !allCreativesAreDriveSourced && (
                 <details className="rounded-lg border border-gray-200 bg-gray-50/70 p-3" open>
-                    <summary className="cursor-pointer text-sm font-semibold text-gray-700">Primary Text Variations</summary>
+                    <summary className="cursor-pointer text-sm font-semibold text-gray-700">{isMixedCreativeBatch ? 'Shared fallback Primary Text' : 'Primary Text Variations'}</summary>
+                    {isMixedCreativeBatch && <p className="mt-1 text-xs text-gray-500">Applies only to the non-Drive rows that do not have their own copy.</p>}
                     <div className="flex items-center justify-between mb-2">
                         <label className="block text-sm font-medium text-gray-700">
-                            Primary Text *
+                            {isMixedCreativeBatch ? 'Shared fallback Primary Text' : 'Primary Text *'}
                         </label>
                         {creativeData.bodies.length < 3 && (
                             <button
@@ -3116,12 +3125,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 )}
 
                 {/* Headline */}
-                {!isMatchImport && !creativeData.creatives?.some(c => c.source === 'drive') && (
+                {!isMatchImport && !allCreativesAreDriveSourced && (
                 <details className="rounded-lg border border-gray-200 bg-gray-50/70 p-3" open>
-                    <summary className="cursor-pointer text-sm font-semibold text-gray-700">Headline Variations</summary>
+                    <summary className="cursor-pointer text-sm font-semibold text-gray-700">{isMixedCreativeBatch ? 'Shared fallback Headline' : 'Headline Variations'}</summary>
+                    {isMixedCreativeBatch && <p className="mt-1 text-xs text-gray-500">Applies only to the non-Drive rows that do not have their own copy.</p>}
                     <div className="flex items-center justify-between mb-2">
                         <label className="block text-sm font-medium text-gray-700">
-                            Headline *
+                            {isMixedCreativeBatch ? 'Shared fallback Headline' : 'Headline *'}
                         </label>
                         {creativeData.headlines.length < 3 && (
                             <button
@@ -3173,10 +3183,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 )}
 
                 {/* Description */}
-                {!isMatchImport && !creativeData.creatives?.some(c => c.source === 'drive') && (
+                {!isMatchImport && !allCreativesAreDriveSourced && (
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Description
+                        {isMixedCreativeBatch ? 'Shared fallback Description' : 'Description'}
                     </label>
                     <input
                         type="text"
@@ -3243,10 +3253,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 )}
 
                 {/* Call to Action — Match Import gets CTA per-row from the CSV (defaults to LEARN_MORE) */}
-                {!isMatchImport && !creativeData.creatives?.some(c => c.source === 'drive') && (
+                {!isMatchImport && !allCreativesAreDriveSourced && (
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Call to Action *
+                        {isMixedCreativeBatch ? 'Shared fallback Call to Action' : 'Call to Action *'}
                     </label>
                     <select
                         value={creativeData.cta}
@@ -3261,9 +3271,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 )}
 
                 {/* Website URL */}
-                {!creativeData.creatives?.some(c => c.source === 'drive') && <div>
+                {!allCreativesAreDriveSourced && <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Website URL (Landing Page) *
+                        {isMixedCreativeBatch ? 'Shared fallback Website URL' : 'Website URL (Landing Page) *'}
                     </label>
                     <input
                         type="url"
