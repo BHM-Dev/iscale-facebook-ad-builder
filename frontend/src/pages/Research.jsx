@@ -355,7 +355,7 @@ function BoardSaveButton({ ad, boards, onAdd, onCreate }) {
   );
 }
 
-function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onBack, canGoBack, onNotesSaved, boards, onAddToBoard, onCreateBoard }) {
+function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onExploreAdvertiser, onBack, canGoBack, onNotesSaved, boards, onAddToBoard, onCreateBoard }) {
   const { authFetch } = useAuth();
   const { showError, showSuccess } = useToast();
   const [related, setRelated] = useState([]);
@@ -399,7 +399,7 @@ function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onBack, canGoBa
       <dl className="mt-6 grid grid-cols-2 gap-3 border-t border-slate-100 pt-5 text-sm"><div><dt className="text-xs text-slate-400">Destination</dt><dd className="mt-1 truncate font-medium text-slate-700">{ad.destination_domain || 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Observed</dt><dd className="mt-1 font-medium text-slate-700">{ad.running_days != null ? `${ad.running_days} days` : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Last captured</dt><dd className="mt-1 font-medium text-slate-700">{ad.last_seen ? new Date(ad.last_seen).toLocaleDateString() : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Tag source</dt><dd className="mt-1 font-medium text-slate-700">{ad.taxonomy_source || 'Not tagged'}</dd></div></dl>
       <section className="mt-6 border-t border-slate-100 pt-5"><h3 className="text-sm font-semibold text-slate-900">Strategic notes</h3><p className="mt-1 text-xs text-slate-400">Your interpretation is passed to Remix as context, never competitor copy.</p><label className="mt-3 block text-xs font-medium text-slate-600">Hook pattern<input value={notes.hook_type} onChange={e => setNotes(prev => ({ ...prev, hook_type: e.target.value }))} placeholder="e.g. Cost shock" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></label><label className="mt-3 block text-xs font-medium text-slate-600">Why this pattern works<textarea value={notes.promise} onChange={e => setNotes(prev => ({ ...prev, promise: e.target.value }))} placeholder="The promise or reason to test this structure" className="mt-1 min-h-20 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></label><button type="button" onClick={saveNotes} disabled={savingNotes} className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">{savingNotes ? 'Saving…' : 'Save strategic notes'}</button></section>
       {related.length > 0 && <section className="mt-6 border-t border-slate-100 pt-5"><h3 className="text-sm font-semibold text-slate-900">Related patterns</h3><p className="mt-1 text-xs text-slate-400">Matched on visible creative metadata, not performance.</p><div className="mt-3 space-y-2">{related.map(item => <button type="button" key={item.id} onClick={() => onInspect(item)} className="w-full rounded-lg border border-slate-100 p-3 text-left hover:border-indigo-200 hover:bg-indigo-50/40"><p className="truncate text-sm font-semibold text-slate-700">{item.brand_name || 'Unknown advertiser'}</p><p className="mt-1 text-xs text-slate-500">{item.match_reasons.join(' · ')}</p></button>)}</div></section>}
-      <div className="mt-7 flex gap-2"><button type="button" onClick={() => onBuild(ad)} className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"><Zap size={15}/>Use as Inspiration</button><a href={ad.ad_link} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center rounded-lg border border-slate-200 px-3 text-slate-600 hover:bg-slate-50"><ExternalLink size={16}/></a></div>
+      <div className="mt-7 grid grid-cols-2 gap-2"><button type="button" onClick={() => onBuild(ad)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"><Zap size={15}/>Use as Inspiration</button>{ad.brand_name && <button type="button" onClick={() => onExploreAdvertiser(ad.brand_name)} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-semibold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"><span>Explore advertiser</span></button>}<a href={ad.ad_link} target="_blank" rel="noreferrer" className="col-span-2 inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><ExternalLink size={15}/>View in Meta Ad Library</a></div>
       <div className="mt-2"><BoardSaveButton ad={ad} boards={boards} onAdd={onAddToBoard} onCreate={onCreateBoard} /></div>
     </aside>
   </div>;
@@ -1331,6 +1331,16 @@ export default function Research() {
     setDetailAd(next[next.length - 1] || null);
     return next;
   });
+  const exploreAdvertiser = (advertiser) => {
+    // Related-pattern inspection can begin from either Browse or a one-time
+    // keyword search. Move back to the durable catalog before applying the
+    // advertiser filter, while retaining the analyst's other filters.
+    setActiveBoardId(null);
+    setResultMode('browse');
+    setSearchResultAds([]);
+    setAdvertiserFilter(advertiser);
+    closeDetail();
+  };
   const catalogSummary = useMemo(() => ({
     total: browseAds.length,
     newCount: browseAds.filter(ad => ad.first_seen && Date.now() - new Date(ad.first_seen).getTime() <= 7 * 24 * 60 * 60 * 1000).length,
@@ -1867,7 +1877,7 @@ export default function Research() {
         importing={importingIntel}
         defaultQuery={activeVertical === 'auto_insurance' ? 'cheap auto insurance' : currentVerticalLabel}
       />
-      <ResearchDetailDrawer ad={detailAd} onClose={closeDetail} onInspect={inspectCreative} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onNotesSaved={handleStrategyNotesSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
+      <ResearchDetailDrawer ad={detailAd} onClose={closeDetail} onInspect={inspectCreative} onExploreAdvertiser={exploreAdvertiser} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onNotesSaved={handleStrategyNotesSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
     </div>
   );
 }
