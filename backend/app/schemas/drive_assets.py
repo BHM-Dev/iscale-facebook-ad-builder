@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DriveAsset(BaseModel):
@@ -33,3 +33,14 @@ class DriveSyncResult(BaseModel):
     errors: int = 0
     unverified: int = 0
     next_page_token_saved: bool = False
+
+
+class DriveCopyRefreshRequest(BaseModel):
+    """Known source documents for a batch-scoped Creative-step refresh."""
+
+    # A bulk launch can legitimately span more than 50 source documents. The
+    # server processes them sequentially under its sync lock, so imposing an
+    # arbitrary request cap would turn a valid batch into a false 422 failure.
+    source_file_ids: List[str] = Field(default_factory=list)
+    force_full_refresh: bool = False
+    skip_full_refresh: bool = False

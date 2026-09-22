@@ -983,7 +983,36 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const refreshDriveCopyMatches = async () => {
         setRefreshingDriveCopy(true);
         try {
-            const res = await authFetch(`${API_URL}/drive-assets/refresh-copy-metadata`, { method: 'POST' });
+            // Refresh only the source docs used by this batch whenever they are
+            // known.  A global Drive crawl made a simple Joel copy edit wait on
+            // unrelated packages; assets with no prior source intentionally use
+            // the backend's maintenance fallback instead.
+            const assetById = new Map((driveAssets || []).map(asset => [asset.id, asset]));
+            const existingCreativeAssetIds = (creativeData.creatives || [])
+                .filter(creative => creative.source === 'drive')
+                .flatMap(creative => creative.driveAssetIds || [])
+            const pickerAssetIds = [...selectedDriveAssetIds]
+                .flatMap(groupId => driveGroupById.get(groupId)?.assets || [])
+                .map(asset => asset.id)
+            const refreshAssetIds = [...new Set([...existingCreativeAssetIds, ...pickerAssetIds])];
+            const sourceFileIds = [...new Set(refreshAssetIds
+                .map(assetId => parseDriveTags(assetById.get(assetId)).copy_source_drive_file_id)
+                .filter(Boolean))];
+            const hasAssetWithoutSource = refreshAssetIds.some(
+                assetId => !parseDriveTags(assetById.get(assetId)).copy_source_drive_file_id
+            );
+            const res = await authFetch(`${API_URL}/drive-assets/refresh-copy-metadata`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                // If any selected/current row lacks a known source, use the
+                // comprehensive path so a mixed batch cannot report success
+                // while silently leaving that row stale.
+                body: JSON.stringify({
+                    source_file_ids: sourceFileIds,
+                    force_full_refresh: hasAssetWithoutSource,
+                    skip_full_refresh: refreshAssetIds.length === 0,
+                }),
+            });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.detail || 'Could not refresh Drive copy');
             const refreshMessage = data.errors

@@ -279,6 +279,73 @@ class DriveSyncService:
             logger.exception("Drive copy metadata refresh failed")
             raise
 
+    def refresh_copy_metadata_for_sources(self, source_file_ids: List[str]) -> Dict[str, Any]:
+        """Refresh only the current batch's known copy documents.
+
+        The Creative step already knows which Drive document supplied its
+        selected assets.  Re-reading those documents makes Joel's button a
+        package operation (seconds) instead of a whole-library crawl (minutes).
+        An empty source list deliberately retains ``refresh_copy_metadata`` as
+        the maintenance fallback for rows that have never had copy attached.
+        """
+        result = {
+            "processed": 0, "created": 0, "updated": 0, "skipped": 0,
+            "archived": 0, "unmatched_brand": 0, "errors": 0,
+            "unverified": 0, "next_page_token_saved": False,
+        }
+        unique_ids = list(dict.fromkeys(file_id for file_id in source_file_ids if file_id))
+        if not unique_ids:
+            return result
+        try:
+            self._validate_tables()
+            acquired = self.db.execute(
+                text("SELECT pg_try_advisory_xact_lock(hashtext(:lock_key))"),
+                {"lock_key": "drive_asset_sync"},
+            ).scalar()
+            if not acquired:
+                raise HTTPException(
+                    status_code=409,
+                    detail="A Drive sync is already running. Wait for it to finish, then refresh copy matches again.",
+                )
+            drive = self._client()
+            for source_file_id in unique_ids:
+                try:
+                    file_meta = drive.files().get(
+                        fileId=source_file_id,
+                        fields="id,name,mimeType,parents,modifiedTime,trashed,size,webViewLink",
+                        supportsAllDrives=True,
+                    ).execute()
+                    result["processed"] += 1
+                    if file_meta.get("trashed") or not self._is_text_file(
+                        file_meta.get("mimeType") or "", file_meta.get("name", "")
+                    ):
+                        self._mark_copy_source_unverified(
+                            source_file_id, "Current Drive copy source is unavailable or is no longer a text document"
+                        )
+                        result["errors"] += 1
+                        continue
+                    self._package_folder_cache.clear()
+                    self._strategy_package_folder_cache.clear()
+                    self._folder_metadata_cache.clear()
+                    metadata_folder = self._metadata_folder_for_copy_document(file_meta)
+                    if not metadata_folder:
+                        self._mark_copy_source_unverified(source_file_id, "Could not resolve the Drive package for this copy source")
+                        result["errors"] += 1
+                        continue
+                    result["updated"] += self._refresh_folder_copy_metadata(
+                        file_meta, metadata_folder=metadata_folder
+                    )
+                except Exception as exc:
+                    result["errors"] += 1
+                    logger.warning("Could not refresh Drive copy source %s: %s", source_file_id, exc)
+                    self._mark_copy_source_unverified(source_file_id, str(exc))
+            self.db.commit()
+            return result
+        except Exception:
+            self.db.rollback()
+            logger.exception("Targeted Drive copy refresh failed")
+            raise
+
     def _client(self):
         if self._drive:
             return self._drive

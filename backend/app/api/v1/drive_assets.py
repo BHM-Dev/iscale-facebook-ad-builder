@@ -1,13 +1,13 @@
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_active_user
 from app.database import get_db
 from app.models import User
-from app.schemas.drive_assets import DriveAsset, DriveSyncResult
+from app.schemas.drive_assets import DriveAsset, DriveCopyRefreshRequest, DriveSyncResult
 from app.services.drive_sync_service import DriveSyncService
 
 router = APIRouter()
@@ -96,6 +96,7 @@ def sync_drive_assets_now(
 
 @router.post("/refresh-copy-metadata", response_model=DriveSyncResult)
 def refresh_drive_copy_metadata(
+    payload: DriveCopyRefreshRequest = Body(default_factory=DriveCopyRefreshRequest),
     db: Session = Depends(get_db),
     _current_user: User = Depends(get_current_active_user),
 ):
@@ -108,6 +109,10 @@ def refresh_drive_copy_metadata(
     """
     try:
         service = DriveSyncService(db)
+        if payload.skip_full_refresh:
+            return DriveSyncResult()
+        if payload.source_file_ids and not payload.force_full_refresh:
+            return service.refresh_copy_metadata_for_sources(payload.source_file_ids)
         return service.refresh_copy_metadata()
     except HTTPException:
         raise
