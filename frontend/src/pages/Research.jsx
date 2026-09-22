@@ -355,20 +355,19 @@ function BoardSaveButton({ ad, boards, onAdd, onCreate }) {
   );
 }
 
-function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect }) {
+function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onNotesSaved }) {
   const { authFetch } = useAuth();
+  const { showError, showSuccess } = useToast();
   const [related, setRelated] = useState([]);
+  const [notes, setNotes] = useState({ hook_type: '', promise: '' });
+  const [savingNotes, setSavingNotes] = useState(false);
   useEffect(() => {
     if (!ad?.id) return undefined;
     let alive = true;
     authFetch(`${API_URL}/research/scraped-ads/${ad.id}/related`).then(res => res.ok ? res.json() : []).then(items => { if (alive) setRelated(items); }).catch(() => { if (alive) setRelated([]); });
     return () => { alive = false; };
   }, [ad?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const handleKeyDown = event => { if (event.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  useEffect(() => { setNotes({ hook_type: ad?.hook_type || '', promise: ad?.promise || '' }); }, [ad?.id]);
   useEffect(() => {
     if (!ad) return undefined;
     const onKeyDown = (event) => { if (event.key === 'Escape') onClose(); };
@@ -378,6 +377,15 @@ function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect }) {
   if (!ad) return null;
   const media = ad.thumbnail_url || ad.media_url;
   const videoPreview = ad.media_preview_url || (ad.video_urls || [])[0];
+  const saveNotes = async () => {
+    setSavingNotes(true);
+    try {
+      const response = await authFetch(`${API_URL}/research/scraped-ads/${ad.id}/strategy-notes`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(notes) });
+      if (!response.ok) throw new Error('Could not save notes');
+      onNotesSaved(ad.id, await response.json());
+      showSuccess('Strategic notes saved');
+    } catch (error) { showError(error.message || 'Could not save notes'); } finally { setSavingNotes(false); }
+  };
   return <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/30 backdrop-blur-sm" onClick={onClose}>
     <aside className="h-full w-full max-w-xl overflow-y-auto bg-white p-6 shadow-2xl" onClick={event => event.stopPropagation()} aria-label="Creative detail">
       <div className="mb-5 flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wider text-indigo-600">Creative detail</p><h2 className="mt-1 text-xl font-bold text-slate-900">{ad.brand_name || 'Unknown advertiser'}</h2></div><button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X size={20}/></button></div>
@@ -385,6 +393,7 @@ function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect }) {
       <div className="mb-5 flex flex-wrap gap-2">{(ad.creative_tags || []).map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">{tag.replaceAll('_', ' ')}</span>)}{ad.cta_type && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">CTA: {ad.cta_type.replaceAll('_', ' ')}</span>}</div>
       {ad.headline && <h3 className="text-lg font-semibold leading-snug text-slate-900">{ad.headline}</h3>}{ad.ad_copy && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{ad.ad_copy}</p>}
       <dl className="mt-6 grid grid-cols-2 gap-3 border-t border-slate-100 pt-5 text-sm"><div><dt className="text-xs text-slate-400">Destination</dt><dd className="mt-1 truncate font-medium text-slate-700">{ad.destination_domain || 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Observed</dt><dd className="mt-1 font-medium text-slate-700">{ad.running_days != null ? `${ad.running_days} days` : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Last captured</dt><dd className="mt-1 font-medium text-slate-700">{ad.last_seen ? new Date(ad.last_seen).toLocaleDateString() : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Tag source</dt><dd className="mt-1 font-medium text-slate-700">{ad.taxonomy_source || 'Not tagged'}</dd></div></dl>
+      <section className="mt-6 border-t border-slate-100 pt-5"><h3 className="text-sm font-semibold text-slate-900">Strategic notes</h3><p className="mt-1 text-xs text-slate-400">Your interpretation is passed to Remix as context, never competitor copy.</p><label className="mt-3 block text-xs font-medium text-slate-600">Hook pattern<input value={notes.hook_type} onChange={e => setNotes(prev => ({ ...prev, hook_type: e.target.value }))} placeholder="e.g. Cost shock" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></label><label className="mt-3 block text-xs font-medium text-slate-600">Why this pattern works<textarea value={notes.promise} onChange={e => setNotes(prev => ({ ...prev, promise: e.target.value }))} placeholder="The promise or reason to test this structure" className="mt-1 min-h-20 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></label><button type="button" onClick={saveNotes} disabled={savingNotes} className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">{savingNotes ? 'Saving…' : 'Save strategic notes'}</button></section>
       {related.length > 0 && <section className="mt-6 border-t border-slate-100 pt-5"><h3 className="text-sm font-semibold text-slate-900">Related patterns</h3><p className="mt-1 text-xs text-slate-400">Matched on visible creative metadata, not performance.</p><div className="mt-3 space-y-2">{related.map(item => <button type="button" key={item.id} onClick={() => onInspect(item)} className="w-full rounded-lg border border-slate-100 p-3 text-left hover:border-indigo-200 hover:bg-indigo-50/40"><p className="truncate text-sm font-semibold text-slate-700">{item.brand_name || 'Unknown advertiser'}</p><p className="mt-1 text-xs text-slate-500">{item.match_reasons.join(' · ')}</p></button>)}</div></section>}
       <div className="mt-7 flex gap-2"><button type="button" onClick={() => onBuild(ad)} className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"><Zap size={15}/>Use as Inspiration</button><a href={ad.ad_link} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center rounded-lg border border-slate-200 px-3 text-slate-600 hover:bg-slate-50"><ExternalLink size={16}/></a></div>
     </aside>
@@ -1840,7 +1849,7 @@ export default function Research() {
         importing={importingIntel}
         defaultQuery={activeVertical === 'auto_insurance' ? 'cheap auto insurance' : currentVerticalLabel}
       />
-      <ResearchDetailDrawer ad={detailAd} onClose={() => setDetailAd(null)} onInspect={setDetailAd} onBuild={(ad) => { setDetailAd(null); handleUseAsInspiration(ad); }} />
+      <ResearchDetailDrawer ad={detailAd} onClose={() => setDetailAd(null)} onInspect={setDetailAd} onNotesSaved={handleStrategyNotesSaved} onBuild={(ad) => { setDetailAd(null); handleUseAsInspiration(ad); }} />
     </div>
   );
 }
