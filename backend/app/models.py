@@ -626,6 +626,17 @@ class ScrapedAd(Base):
     funnel_stage = Column(String, nullable=True)
     pacing = Column(String, nullable=True)
     numbers_used = Column(String, nullable=True)
+    # Searchable creative taxonomy. These stay nullable: a missing capture is
+    # not evidence that an ad has no theme, CTA, or usable preview.
+    creative_tags = Column(JSON, nullable=True)
+    cta_type = Column(String, nullable=True)
+    page_type = Column(String, nullable=True)
+    video_length_seconds = Column(Integer, nullable=True)
+    media_preview_url = Column(String, nullable=True)
+    media_width = Column(Integer, nullable=True)
+    media_height = Column(Integer, nullable=True)
+    taxonomy_source = Column(String, nullable=True)
+    taxonomy_confidence = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     saved_search = relationship("SavedSearch", back_populates="ads")

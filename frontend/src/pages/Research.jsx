@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Ban, FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, Zap, X, Upload, BookOpen, Video, BarChart3 } from 'lucide-react';
+import { Ban, FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, Zap, X, Upload, BookOpen, Video, BarChart3, Play } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -92,12 +92,15 @@ const withDerivedResearchStatus = (ad) => {
 
 const isUnknownMedia = (mediaType) => !['image', 'video', 'carousel'].includes((mediaType || '').toLowerCase());
 
-const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, advertiserFilter, activeOnly, sortBy }) => {
+const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, activeOnly, sortBy }) => {
   const advertiser = advertiserFilter.trim().toLowerCase();
   return sortResearchAds(ads.filter(ad => (
     (!angleFilter || ad.angle_tag === angleFilter) &&
     (!mediaTypeFilter || (mediaTypeFilter === 'unknown' ? isUnknownMedia(ad.media_type) : ad.media_type === mediaTypeFilter)) &&
     (!advertiser || (ad.brand_name || '').toLowerCase().includes(advertiser)) &&
+    (!creativeTagFilter || (ad.creative_tags || []).includes(creativeTagFilter)) &&
+    (!ctaTypeFilter || ad.cta_type === ctaTypeFilter) &&
+    (!pageTypeFilter || ad.page_type === pageTypeFilter) &&
     (!activeOnly || withDerivedResearchStatus(ad).is_active)
   )), sortBy);
 };
@@ -161,6 +164,11 @@ const normalizeAdLibraryImport = (raw, activeVerticalLabel) => {
           is_multiple_versions: Boolean(ad.multiple_versions ?? ad.is_multiple_versions),
           video_urls: ad.video_urls || adVideos,
           thumbnail_url: ad.thumbnail_url || ad.media_url || '',
+          creative_tags: ad.creative_tags || [],
+          cta_type: ad.cta_type || '',
+          page_type: ad.page_type || '',
+          video_length_seconds: ad.video_length_seconds ?? null,
+          media_preview_url: ad.media_preview_url || adVideos[0] || '',
           creative_intel: {
             visible_copy_preview: preview,
             imported_from_chrome: true,
@@ -349,14 +357,15 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-sm transition-shadow flex flex-col gap-3">
       {/* Facebook CDN media URLs are temporary; hide expired thumbnails without disrupting the card. */}
-      {ad.media_url && (
-        <div className="rounded-lg overflow-hidden bg-gray-100 -mx-4 -mt-4 mb-1">
+      {(ad.thumbnail_url || ad.media_url) && (
+        <div className="relative rounded-lg overflow-hidden bg-gray-100 -mx-4 -mt-4 mb-1 aspect-[4/3]">
           <img
-            src={ad.media_url}
+            src={ad.thumbnail_url || ad.media_url}
             alt=""
-            className="w-full object-cover max-h-48"
+            className="w-full h-full object-cover transition-transform duration-500 hover:scale-[1.02]"
             onError={(e) => { e.target.parentElement.style.display = 'none'; }}
           />
+          {ad.media_type === 'video' && <span className="absolute left-3 bottom-3 inline-flex items-center gap-1.5 rounded-full bg-black/75 px-2.5 py-1 text-[11px] font-semibold text-white"><Play size={12} fill="currentColor" /> Video{ad.video_length_seconds ? ` · ${ad.video_length_seconds}s` : ''}</span>}
         </div>
       )}
 
@@ -401,6 +410,12 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
 
       {/* Body */}
       <BodyText text={ad.ad_copy} />
+
+      {(ad.creative_tags?.length || ad.cta_type || ad.page_type) && <div className="flex flex-wrap gap-1.5">
+        {(ad.creative_tags || []).slice(0, 3).map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700">{tag.replaceAll('_', ' ')}</span>)}
+        {ad.cta_type && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600">{ad.cta_type.replaceAll('_', ' ')}</span>}
+        {ad.page_type && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600">{ad.page_type}</span>}
+      </div>}
 
       {/* Tags + duration */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -716,6 +731,9 @@ export default function Research() {
   const [sortBy, setSortBy] = useState('newest_seen');
   const [activeOnly, setActiveOnly] = useState(false);
   const [advertiserFilter, setAdvertiserFilter] = useState('');
+  const [creativeTagFilter, setCreativeTagFilter] = useState('');
+  const [ctaTypeFilter, setCtaTypeFilter] = useState('');
+  const [pageTypeFilter, setPageTypeFilter] = useState('');
   const [resultMode, setResultMode] = useState('browse');
   const [searchResultAds, setSearchResultAds] = useState([]);
   const [browseReloadKey, setBrowseReloadKey] = useState(0);
@@ -790,6 +808,9 @@ export default function Research() {
       if (mediaTypeFilter) params.set('media_type', mediaTypeFilter);
       if (activeOnly) params.set('active_only', 'true');
       if (advertiserFilter.trim()) params.set('advertiser', advertiserFilter.trim());
+      if (creativeTagFilter) params.set('creative_tags', creativeTagFilter);
+      if (ctaTypeFilter) params.set('cta_type', ctaTypeFilter);
+      if (pageTypeFilter) params.set('page_type', pageTypeFilter);
       params.set('sort_by', sortBy);
       params.set('limit', '500');
 
@@ -951,7 +972,7 @@ export default function Research() {
       setBrowseError('');
       setSearchResultAds(normalized);
       setResultMode('search');
-      const filtered = filterResearchAds(normalized, { angleFilter, mediaTypeFilter, advertiserFilter, activeOnly, sortBy });
+      const filtered = filterResearchAds(normalized, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, activeOnly, sortBy });
       setBrowseAds(filtered);
       showSuccess(`Search saved — ${filtered.length} matching ads shown`);
       loadBoards();
@@ -970,12 +991,12 @@ export default function Research() {
   useEffect(() => {
     if (!verticalConfig) return;
     if (resultMode === 'search') {
-      setBrowseAds(filterResearchAds(searchResultAds, { angleFilter, mediaTypeFilter, advertiserFilter, activeOnly, sortBy }));
+      setBrowseAds(filterResearchAds(searchResultAds, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, activeOnly, sortBy }));
       return undefined;
     }
     const t = setTimeout(() => loadBrowseAds(), advertiserFilter ? 400 : 0);
     return () => clearTimeout(t);
-  }, [angleFilter, mediaTypeFilter, sortBy, activeOnly, advertiserFilter, resultMode, searchResultAds, browseReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [angleFilter, mediaTypeFilter, sortBy, activeOnly, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, resultMode, searchResultAds, browseReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Actions ──────────────────────────────────────────────────
   const handleRefresh = async ({ allowWhileClearing = false } = {}) => {
@@ -1188,6 +1209,12 @@ export default function Research() {
       funnel_stage: ad.funnel_stage,
       pacing: ad.pacing,
       numbers_used: ad.numbers_used,
+      creative_tags: ad.creative_tags || [],
+      cta_type: ad.cta_type,
+      page_type: ad.page_type,
+      video_length_seconds: ad.video_length_seconds,
+      taxonomy_source: ad.taxonomy_source,
+      taxonomy_confidence: ad.taxonomy_confidence,
       source: 'research',
     }));
     navigate('/ad-remix');
@@ -1470,6 +1497,18 @@ export default function Research() {
                 <option value="video">Videos</option>
                 <option value="carousel">Carousels</option>
                 <option value="unknown">Unknown format</option>
+              </select>
+
+              <div className="h-4 w-px bg-gray-200" />
+              <select value={creativeTagFilter} onChange={e => setCreativeTagFilter(e.target.value)} className="text-xs border-0 text-gray-600 bg-transparent focus:ring-0 cursor-pointer pr-6 py-0" title="Visible-copy theme labels; unknown ads remain visible by default">
+                <option value="">All themes</option>
+                <option value="testimonial">Testimonial</option><option value="problem_agitation">Problem agitation</option><option value="comparison">Comparison</option><option value="review">Review</option><option value="listicle">Listicle</option><option value="educational">Educational</option><option value="ugc">UGC</option>
+              </select>
+              <select value={ctaTypeFilter} onChange={e => setCtaTypeFilter(e.target.value)} className="text-xs border-0 text-gray-600 bg-transparent focus:ring-0 cursor-pointer pr-6 py-0">
+                <option value="">All CTAs</option><option value="get_quote">Get quote</option><option value="learn_more">Learn more</option><option value="sign_up">Sign up</option><option value="apply_now">Apply now</option><option value="contact_us">Contact us</option><option value="shop_now">Shop now</option>
+              </select>
+              <select value={pageTypeFilter} onChange={e => setPageTypeFilter(e.target.value)} className="text-xs border-0 text-gray-600 bg-transparent focus:ring-0 cursor-pointer pr-6 py-0">
+                <option value="">All destinations</option><option value="lead_form">Lead form</option><option value="advertorial">Advertorial</option><option value="ecommerce">Ecommerce</option><option value="homepage">Homepage</option>
               </select>
 
               <div className="h-4 w-px bg-gray-200" />

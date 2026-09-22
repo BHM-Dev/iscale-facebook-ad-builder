@@ -35,6 +35,15 @@ class ScrapedAdBase(BaseModel):
     thumbnail_url: Optional[str] = None
     creative_intel: Optional[Dict[str, Any]] = None
     volume_score: Optional[int] = None
+    creative_tags: Optional[List[str]] = Field(default=None, max_length=12)
+    cta_type: Optional[str] = None
+    page_type: Optional[str] = None
+    video_length_seconds: Optional[int] = Field(default=None, ge=0)
+    media_preview_url: Optional[str] = None
+    media_width: Optional[int] = Field(default=None, ge=1)
+    media_height: Optional[int] = Field(default=None, ge=1)
+    taxonomy_source: Optional[str] = None
+    taxonomy_confidence: Optional[str] = None
 
 class ScrapedAdCreate(ScrapedAdBase):
     pass
@@ -180,6 +189,13 @@ class AdLibraryImportAd(BaseModel):
     video_urls: Optional[List[str]] = Field(default=None, max_length=10)
     thumbnail_url: Optional[str] = Field(default=None, max_length=2000)
     creative_intel: Optional[Dict[str, Any]] = None
+    creative_tags: Optional[List[str]] = Field(default=None, max_length=12)
+    cta_type: Optional[str] = Field(default=None, max_length=100)
+    page_type: Optional[str] = Field(default=None, max_length=100)
+    video_length_seconds: Optional[int] = Field(default=None, ge=0)
+    media_preview_url: Optional[str] = Field(default=None, max_length=2000)
+    media_width: Optional[int] = Field(default=None, ge=1)
+    media_height: Optional[int] = Field(default=None, ge=1)
 
 
 class AdLibraryImportRequest(BaseModel):

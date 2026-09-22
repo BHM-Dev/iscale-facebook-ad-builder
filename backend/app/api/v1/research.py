@@ -24,6 +24,46 @@ MAX_AD_LIBRARY_TEXT_CHARS = 5000
 MAX_AD_LIBRARY_CREATIVE_INTEL_CHARS = 12000
 RESEARCH_MEDIA_TYPES = {"image", "video", "carousel", "unknown"}
 RESEARCH_SORT_OPTIONS = {"longest_running", "newest_seen", "most_sightings", "multiple_versions"}
+RESEARCH_CREATIVE_TAGS = {"testimonial", "problem_agitation", "transformation", "comparison", "review", "listicle", "founder", "educational", "statistic", "ugc", "comment_response"}
+RESEARCH_CTA_TYPES = {"learn_more", "get_quote", "sign_up", "apply_now", "contact_us", "shop_now", "unknown"}
+RESEARCH_PAGE_TYPES = {"lead_form", "advertorial", "ecommerce", "homepage", "unknown"}
+
+
+def _infer_creative_taxonomy(headline, ad_copy, cta_text, supplied_tags=None):
+    """Conservative, explainable enrichment for Chrome/API captures.
+
+    We only add deterministic labels from visible text; all others remain
+    unknown so the filter never pretends a classifier saw more than it did.
+    """
+    text = " ".join(filter(None, [headline, ad_copy])).lower()
+    tags = [tag for tag in (supplied_tags or []) if tag in RESEARCH_CREATIVE_TAGS]
+    rules = {
+        "testimonial": ("testimonial", "customer story", "what our customers say"),
+        "problem_agitation": ("tired of", "stop overpaying", "struggling with"),
+        "comparison": ("vs.", "versus", "compare", "instead of"),
+        "review": ("review", "rated", "stars"),
+        "listicle": ("top 5", "top five", "ways to", "reasons why"),
+        "founder": ("our founder", "i started", "we started"),
+        "educational": ("how to", "what is", "guide to"),
+        "statistic": ("%", "percent", "out of 10"),
+        "ugc": ("i tried", "my experience", "honestly"),
+    }
+    for tag, phrases in rules.items():
+        if tag not in tags and any(phrase in text for phrase in phrases):
+            tags.append(tag)
+    cta = (cta_text or "").strip().lower().replace(" ", "_")
+    cta_map = {"learn_more": "learn_more", "get_quote": "get_quote", "sign_up": "sign_up", "apply_now": "apply_now", "contact_us": "contact_us", "shop_now": "shop_now"}
+    return tags or None, cta_map.get(cta, "unknown" if cta else None)
+
+
+def _matches_research_vertical(ad, config_id):
+    """Last-line quality gate for legacy broad captures already in the catalog."""
+    if config_id != "commercial_insurance":
+        return True
+    text = " ".join(filter(None, [ad.brand_name, ad.headline, ad.ad_copy, ad.cta_text])).lower()
+    commercial = ("business insurance", "commercial insurance", "general liability", "workers comp", "workers compensation", "business owners policy", "commercial auto", "business coverage", "liability insurance")
+    obvious_noise = ("restaurant equipment", "now hiring", "lease type", "med spa", "hot-dog", "jewelry design", "tabletops")
+    return any(term in text for term in commercial) and not any(term in text for term in obvious_noise)
 
 
 def _parse_research_date(value):
@@ -110,6 +150,15 @@ def _serialize_scraped_ad(ad, board_item_id=None):
         "funnel_stage": ad.funnel_stage,
         "pacing": ad.pacing,
         "numbers_used": ad.numbers_used,
+        "creative_tags": ad.creative_tags or [],
+        "cta_type": ad.cta_type,
+        "page_type": ad.page_type,
+        "video_length_seconds": ad.video_length_seconds,
+        "media_preview_url": ad.media_preview_url,
+        "media_width": ad.media_width,
+        "media_height": ad.media_height,
+        "taxonomy_source": ad.taxonomy_source,
+        "taxonomy_confidence": ad.taxonomy_confidence,
         "is_saved": ad.is_saved,
         "created_at": _serialize_research_datetime(ad.created_at),
         "last_seen": _serialize_research_datetime(ad.last_seen),
@@ -967,6 +1016,9 @@ def import_ad_library_capture(
             media_type == "video" or bool(video_urls),
         )
         creative_intel = dict(incoming.creative_intel or {})
+        creative_tags, inferred_cta_type = _infer_creative_taxonomy(
+            incoming.headline, incoming.ad_copy, incoming.cta_text, incoming.creative_tags,
+        )
         creative_intel.update(
             {
                 "capture_source": "chrome_ad_library",
@@ -1029,6 +1081,15 @@ def import_ad_library_capture(
         ad.thumbnail_url = incoming.thumbnail_url or incoming.media_url
         ad.creative_intel = creative_intel
         ad.volume_score = volume_score
+        ad.creative_tags = creative_tags
+        ad.cta_type = incoming.cta_type or inferred_cta_type
+        ad.page_type = incoming.page_type
+        ad.video_length_seconds = incoming.video_length_seconds
+        ad.media_preview_url = incoming.media_preview_url or (video_urls[0] if video_urls else None)
+        ad.media_width = incoming.media_width
+        ad.media_height = incoming.media_height
+        ad.taxonomy_source = "capture" if incoming.creative_tags or incoming.cta_type else ("rules_v1" if creative_tags or inferred_cta_type else None)
+        ad.taxonomy_confidence = "source" if incoming.creative_tags or incoming.cta_type else ("low" if creative_tags or inferred_cta_type else None)
         ad.search_id = saved_search.id
         if fb_page:
             ad.facebook_page_id = fb_page.id
@@ -1142,6 +1203,9 @@ def get_vertical_browse_ads(
     active_only: bool = False,
     advertiser: str | None = None,
     sort_by: str = "newest_seen",
+    creative_tags: str | None = None,
+    cta_type: str | None = None,
+    page_type: str | None = None,
     limit: int = 500,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -1226,6 +1290,18 @@ def get_vertical_browse_ads(
     if active_only:
         cutoff = datetime.now(timezone.utc) - timedelta(days=30)
         query = query.filter(ScrapedAd.last_seen >= cutoff)
+    selected_tags = [tag for tag in (creative_tags or "").split(",") if tag]
+    unknown_tags = set(selected_tags) - RESEARCH_CREATIVE_TAGS
+    if unknown_tags:
+        raise HTTPException(status_code=400, detail=f"Unknown creative tag(s): {', '.join(sorted(unknown_tags))}")
+    if cta_type:
+        if cta_type not in RESEARCH_CTA_TYPES:
+            raise HTTPException(status_code=400, detail=f"Unknown cta_type: {cta_type}")
+        query = query.filter(ScrapedAd.cta_type == cta_type)
+    if page_type:
+        if page_type not in RESEARCH_PAGE_TYPES:
+            raise HTTPException(status_code=400, detail=f"Unknown page_type: {page_type}")
+        query = query.filter(ScrapedAd.page_type == page_type)
 
     if sort_by not in RESEARCH_SORT_OPTIONS:
         raise HTTPException(
@@ -1234,7 +1310,9 @@ def get_vertical_browse_ads(
         )
     current_ads = [
         ad for ad in query.all()
-        if not ad.brand_name or ad.brand_name.lower() not in blacklisted_names
+        if (not ad.brand_name or ad.brand_name.lower() not in blacklisted_names)
+        and (not selected_tags or any(tag in (ad.creative_tags or []) for tag in selected_tags))
+        and _matches_research_vertical(ad, config_id)
     ]
     ads = _sort_research_ads(current_ads, sort_by)[:limit]
 
@@ -1286,6 +1364,15 @@ def get_vertical_browse_ads(
             "funnel_stage": ad.funnel_stage,
             "pacing": ad.pacing,
             "numbers_used": ad.numbers_used,
+            "creative_tags": ad.creative_tags or [],
+            "cta_type": ad.cta_type,
+            "page_type": ad.page_type,
+            "video_length_seconds": ad.video_length_seconds,
+            "media_preview_url": ad.media_preview_url,
+            "media_width": ad.media_width,
+            "media_height": ad.media_height,
+            "taxonomy_source": ad.taxonomy_source,
+            "taxonomy_confidence": ad.taxonomy_confidence,
             "is_saved": ad.is_saved,
             "last_seen": _serialize_research_datetime(ad.last_seen),
         })
