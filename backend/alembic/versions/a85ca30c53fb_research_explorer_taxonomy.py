@@ -1,13 +1,20 @@
 """add research explorer taxonomy and media catalog fields
 
-Revision ID: a2b3c4d5e6f7
-Revises: z1a2b3c4d5e6
+Revision ID: a85ca30c53fb
+Revises: i9j7k5l3m1n9
 Create Date: 2026-09-21
+
+The original commit picked revision id a2b3c4d5e6f7, which already belonged
+to a2b3c4d5e6f7_add_pacing_and_numbers_used_to_scraped_ads.py (a genuine
+hash collision), and pointed down_revision at z1a2b3c4d5e6 instead of the
+actual current head. Both caused `alembic heads` to report multiple heads
+and break the auto-deploy. i9j7k5l3m1n9 is the confirmed single head as of
+the last successfully deployed develop commit (b25ce0d).
 """
 from alembic import op
 
-revision = "a2b3c4d5e6f7"
-down_revision = "z1a2b3c4d5e6"
+revision = "a85ca30c53fb"
+down_revision = "i9j7k5l3m1n9"
 branch_labels = None
 depends_on = None
 
