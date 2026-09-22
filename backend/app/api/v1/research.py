@@ -1088,8 +1088,9 @@ def import_ad_library_capture(
         ad.media_preview_url = incoming.media_preview_url or (video_urls[0] if video_urls else None)
         ad.media_width = incoming.media_width
         ad.media_height = incoming.media_height
-        ad.taxonomy_source = "capture" if incoming.creative_tags or incoming.cta_type else ("rules_v1" if creative_tags or inferred_cta_type else None)
-        ad.taxonomy_confidence = "source" if incoming.creative_tags or incoming.cta_type else ("low" if creative_tags or inferred_cta_type else None)
+        rules_matched = bool(creative_tags) or bool(inferred_cta_type and inferred_cta_type != "unknown")
+        ad.taxonomy_source = "capture" if incoming.creative_tags or incoming.cta_type else ("rules_v1" if rules_matched else None)
+        ad.taxonomy_confidence = "source" if incoming.creative_tags or incoming.cta_type else ("low" if rules_matched else None)
         ad.search_id = saved_search.id
         if fb_page:
             ad.facebook_page_id = fb_page.id

@@ -363,7 +363,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
             src={ad.thumbnail_url || ad.media_url}
             alt=""
             className="w-full h-full object-cover transition-transform duration-500 hover:scale-[1.02]"
-            onError={(e) => { e.target.parentElement.style.display = 'none'; }}
+            onError={(e) => { e.target.style.display = 'none'; }}
           />
           {ad.media_type === 'video' && <span className="absolute left-3 bottom-3 inline-flex items-center gap-1.5 rounded-full bg-black/75 px-2.5 py-1 text-[11px] font-semibold text-white"><Play size={12} fill="currentColor" /> Video{ad.video_length_seconds ? ` · ${ad.video_length_seconds}s` : ''}</span>}
         </div>
