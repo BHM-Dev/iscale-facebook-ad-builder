@@ -353,12 +353,27 @@ function BoardSaveButton({ ad, boards, onAdd, onCreate }) {
   );
 }
 
-function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage, angleTags, boards, onAddToBoard, onCreateBoard, onRemoveFromBoard }) {
+function ResearchDetailDrawer({ ad, onClose, onBuild }) {
+  if (!ad) return null;
+  const media = ad.thumbnail_url || ad.media_url;
+  return <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/30 backdrop-blur-sm" onClick={onClose}>
+    <aside className="h-full w-full max-w-xl overflow-y-auto bg-white p-6 shadow-2xl" onClick={event => event.stopPropagation()} aria-label="Creative detail">
+      <div className="mb-5 flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wider text-indigo-600">Creative detail</p><h2 className="mt-1 text-xl font-bold text-slate-900">{ad.brand_name || 'Unknown advertiser'}</h2></div><button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X size={20}/></button></div>
+      {media && <div className="relative mb-5 aspect-[4/3] overflow-hidden rounded-xl bg-slate-100"><img src={media} alt="Competitor creative" className="h-full w-full object-cover" onError={e => { e.target.style.display = 'none'; }} />{ad.media_type === 'video' && <span className="absolute bottom-3 left-3 inline-flex items-center gap-1 rounded-full bg-black/75 px-3 py-1.5 text-xs font-semibold text-white"><Play size={13} fill="currentColor"/> Video{ad.video_length_seconds ? ` · ${ad.video_length_seconds}s` : ''}</span>}</div>}
+      <div className="mb-5 flex flex-wrap gap-2">{(ad.creative_tags || []).map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">{tag.replaceAll('_', ' ')}</span>)}{ad.cta_type && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">CTA: {ad.cta_type.replaceAll('_', ' ')}</span>}</div>
+      {ad.headline && <h3 className="text-lg font-semibold leading-snug text-slate-900">{ad.headline}</h3>}{ad.ad_copy && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{ad.ad_copy}</p>}
+      <dl className="mt-6 grid grid-cols-2 gap-3 border-t border-slate-100 pt-5 text-sm"><div><dt className="text-xs text-slate-400">Destination</dt><dd className="mt-1 truncate font-medium text-slate-700">{ad.destination_domain || 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Observed</dt><dd className="mt-1 font-medium text-slate-700">{ad.running_days != null ? `${ad.running_days} days` : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Last captured</dt><dd className="mt-1 font-medium text-slate-700">{ad.last_seen ? new Date(ad.last_seen).toLocaleDateString() : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Tag source</dt><dd className="mt-1 font-medium text-slate-700">{ad.taxonomy_source || 'Not tagged'}</dd></div></dl>
+      <div className="mt-7 flex gap-2"><button type="button" onClick={() => onBuild(ad)} className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"><Zap size={15}/>Build from this pattern</button><a href={ad.ad_link} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center rounded-lg border border-slate-200 px-3 text-slate-600 hover:bg-slate-50"><ExternalLink size={16}/></a></div>
+    </aside>
+  </div>;
+}
+
+function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, onBlockPage, angleTags, boards, onAddToBoard, onCreateBoard, onRemoveFromBoard }) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-sm transition-shadow flex flex-col gap-3">
       {/* Facebook CDN media URLs are temporary; hide expired thumbnails without disrupting the card. */}
       {(ad.thumbnail_url || ad.media_url) && (
-        <div className="relative rounded-lg overflow-hidden bg-gray-100 -mx-4 -mt-4 mb-1 aspect-[4/3]">
+        <button type="button" onClick={() => onInspect(ad)} className="relative rounded-lg overflow-hidden bg-gray-100 -mx-4 -mt-4 mb-1 aspect-[4/3] text-left">
           <img
             src={ad.thumbnail_url || ad.media_url}
             alt=""
@@ -366,7 +381,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onBlockPage
             onError={(e) => { e.target.style.display = 'none'; }}
           />
           {ad.media_type === 'video' && <span className="absolute left-3 bottom-3 inline-flex items-center gap-1.5 rounded-full bg-black/75 px-2.5 py-1 text-[11px] font-semibold text-white"><Play size={12} fill="currentColor" /> Video{ad.video_length_seconds ? ` · ${ad.video_length_seconds}s` : ''}</span>}
-        </div>
+        </button>
       )}
 
       {/* Header: status dot + advertiser */}
@@ -722,6 +737,7 @@ export default function Research() {
   const [refreshSummary, setRefreshSummary] = useState(null);
   const [showClearModal, setShowClearModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [detailAd, setDetailAd] = useState(null);
   const [importingIntel, setImportingIntel] = useState(false);
   const [clearing, setClearing] = useState(false);
 
@@ -1606,6 +1622,7 @@ export default function Research() {
                   onSave={handleSave}
                   onUnsave={handleUnsave}
                   onUseAsInspiration={handleUseAsInspiration}
+                  onInspect={setDetailAd}
                   onBlockPage={handleBlockPage}
                   angleTags={angleTags}
                   boards={boards}
@@ -1696,6 +1713,7 @@ export default function Research() {
                   onSave={handleSave}
                   onUnsave={handleUnsave}
                   onUseAsInspiration={handleUseAsInspiration}
+                  onInspect={setDetailAd}
                   onBlockPage={handleBlockPage}
                   angleTags={angleTags}
                   boards={boards}
@@ -1709,6 +1727,7 @@ export default function Research() {
                   ad={ad}
                   onUnsave={handleUnsave}
                   onUseAsInspiration={handleUseAsInspiration}
+                  onInspect={setDetailAd}
                   boards={boards}
                   onAddToBoard={handleAddToBoard}
                   onCreateBoard={handleCreateBoard}
@@ -1765,6 +1784,7 @@ export default function Research() {
         importing={importingIntel}
         defaultQuery={activeVertical === 'auto_insurance' ? 'cheap auto insurance' : currentVerticalLabel}
       />
+      <ResearchDetailDrawer ad={detailAd} onClose={() => setDetailAd(null)} onBuild={(ad) => { setDetailAd(null); handleUseAsInspiration(ad); }} />
     </div>
   );
 }
