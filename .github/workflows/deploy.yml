@@ -133,7 +133,9 @@ jobs:
     # `always()` runs this regardless of how the dependencies ended; the
     # condition then reports anything that is not a clean success. A run someone
     # cancelled by hand also pings, which is correct — the commit is not live.
-    if: ${{ always() && (needs.deploy.result != 'success' || needs.verify.result != 'success') }}
+    # Slack delivery is explicitly paused. Keep the job definition (and its
+    # failure details in the Actions log) but never invoke the webhook.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - name: Announce the failure

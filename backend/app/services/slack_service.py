@@ -2,7 +2,7 @@
 
 Requires two env vars (both optional — notifications are silently skipped if absent):
   SLACK_BOT_TOKEN    — Bot token (xoxb-...)
-  SLACK_ALERT_CHANNEL — Channel ID to post alerts to (default: C08G7PJJ6NB)
+  SLACK_ALERT_CHANNEL — legacy alert destination (delivery is paused)
 """
 
 import logging
@@ -27,6 +27,11 @@ def _channel() -> str:
     return os.getenv("SLACK_ALERT_CHANNEL", DEFAULT_CHANNEL)
 
 
+def _media_buys_alerts_enabled() -> bool:
+    """Hard stop for #media-buys, while preserving explicitly retargeted alerts."""
+    return _channel() != DEFAULT_CHANNEL
+
+
 def send_rule_action_alert(
     action: str,
     adset_name: str,
@@ -40,6 +45,9 @@ def send_rule_action_alert(
 
     Silently no-ops if SLACK_BOT_TOKEN is not configured.
     """
+    if not _media_buys_alerts_enabled():
+        logger.info("#media-buys rule alert suppressed by notification pause")
+        return
     token = _token()
     if not token:
         logger.debug("SLACK_BOT_TOKEN not set — skipping rule action alert")
@@ -138,6 +146,9 @@ def send_token_expiry_alert(days_left, expires_on: str, is_valid: bool) -> None:
         )
 
     channel = os.getenv("SLACK_TOKEN_ALERT_CHANNEL", STEVE_DM)
+    if channel == DEFAULT_CHANNEL:
+        logger.info("#media-buys token alert suppressed by notification pause")
+        return
     try:
         resp = httpx.post(
             SLACK_API_URL,
@@ -173,6 +184,9 @@ def send_check_summary(
     caught in pre-push review (code-auditor: real live budget changes could
     happen with zero Slack roll-up if nothing was also paused that same cycle).
     """
+    if not _media_buys_alerts_enabled():
+        logger.info("#media-buys rule summary suppressed by notification pause")
+        return
     token = _token()
     if not token:
         return
@@ -229,6 +243,9 @@ def send_offer_performance_alert(alerts: list) -> None:
     ambiguously if severities differ. Silently no-ops if SLACK_BOT_TOKEN is
     not configured or alerts is empty.
     """
+    if not _media_buys_alerts_enabled():
+        logger.info("#media-buys offer-performance alert suppressed by notification pause")
+        return
     token = _token()
     if not token:
         logger.debug("SLACK_BOT_TOKEN not set — skipping offer performance alert")
@@ -294,6 +311,9 @@ def send_offer_performance_monitor_down_alert(error: str) -> None:
     this (offer_performance_service.py) so an extended outage doesn't spam.
     Silently no-ops if SLACK_BOT_TOKEN is not configured.
     """
+    if not _media_buys_alerts_enabled():
+        logger.info("#media-buys monitor alert suppressed by notification pause")
+        return
     token = _token()
     if not token:
         logger.debug("SLACK_BOT_TOKEN not set — skipping offer performance monitor-down alert")
@@ -321,6 +341,9 @@ def send_offer_performance_monitor_down_alert(error: str) -> None:
 
 def send_drive_sync_alert(summary: str, detail: str = "") -> None:
     """Post a loud alert for Drive creative sync failures."""
+    if not _media_buys_alerts_enabled():
+        logger.info("#media-buys Drive sync alert suppressed by notification pause")
+        return
     token = _token()
     if not token:
         logger.warning("Drive sync alert skipped because SLACK_BOT_TOKEN is not set: %s", summary)
