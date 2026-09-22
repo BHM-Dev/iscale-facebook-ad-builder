@@ -1409,17 +1409,22 @@ class DriveSyncService:
         META HEADLINE / PRIMARY TEXT labels or a compact Headline: plus prose
         layout, rather than the category-doc fields above.
         """
-        return bool(
-            re.search(r"^\s*AD\s+\d+\b", text_body, re.IGNORECASE | re.MULTILINE)
-            and (
-                re.search(r"^\s*META\s+HEADLINE\s*:?\s*$", text_body, re.IGNORECASE | re.MULTILINE)
-                or re.search(r"^\s*Headline\s*:", text_body, re.IGNORECASE | re.MULTILINE)
-            )
-            and (
-                re.search(r"^\s*PRIMARY\s+TEXT\s*:?\s*$", text_body, re.IGNORECASE | re.MULTILINE)
-                or re.search(r"^\s*={10,}\s*$", text_body, re.MULTILINE)
-            )
+        # Drive packages often retain an older ICP/draft markdown file beside
+        # the current copy file. Those drafts may contain AD headings and field
+        # labels but no complete headline/body pair. Do not classify them as an
+        # authoritative source: doing so makes refresh call the AD parser and
+        # raise "no complete copy sections" before it reaches the real file.
+        if not re.search(r"^\s*AD\s+\d+\b", text_body, re.IGNORECASE | re.MULTILINE):
+            return False
+        has_headline_label = bool(
+            re.search(r"^\s*META\s+HEADLINE\s*:?\s*$", text_body, re.IGNORECASE | re.MULTILINE)
+            or re.search(r"^\s*Headline\s*:", text_body, re.IGNORECASE | re.MULTILINE)
         )
+        has_primary_label = bool(
+            re.search(r"^\s*PRIMARY\s+TEXT\s*:?\s*$", text_body, re.IGNORECASE | re.MULTILINE)
+            or re.search(r"^\s*={10,}\s*$", text_body, re.MULTILINE)
+        )
+        return bool(has_headline_label and has_primary_label and self._parse_ad_copy_doc(text_body))
 
     _CATEGORY_ALIASES = {
         1: ("landscaping", "landscaper", "landscapers", "field service", "lawn care", "outdoor crew"),

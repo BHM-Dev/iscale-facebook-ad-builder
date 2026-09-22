@@ -421,6 +421,18 @@ Final primary copy.
     assert service._parse_ad_copy_doc(document) == {}
 
 
+def test_ad_numbered_copy_detector_ignores_incomplete_draft_documents():
+    service = DriveSyncService.__new__(DriveSyncService)
+    draft = """Painting Contractors — ICP + 5 Ads
+AD 1 — Identity
+Notes for the draft only.
+AD 2 — Claim Denied
+Potential headline ideas, no final copy yet.
+"""
+
+    assert not service._looks_like_ad_copy_doc(draft)
+
+
 def test_ad_numbered_copy_doc_resolves_a_package_from_sibling_media():
     service = DriveSyncService.__new__(DriveSyncService)
     service._strategy_package_folder_cache = {}
