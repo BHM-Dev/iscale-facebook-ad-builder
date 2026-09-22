@@ -13,6 +13,21 @@ on:
   # So a failed deploy can be re-run without an empty commit.
   workflow_dispatch:
 
+# Without this, two pushes landing within the same ~30s (a real pattern during
+# a fast iteration burst) each spawn a full, independent run of this workflow,
+# and both run `docker compose up -d --build` against the same VPS containers
+# at the same time. Docker's container-recreate step is not safe against that:
+# it fails with "cannot remove container ... container is running: stop the
+# container before removing or force remove" — confirmed live 2026-09-22,
+# twice in one afternoon, both times a newer push landing mid-deploy of an
+# older one. Serializing on one group per branch, with cancel-in-progress,
+# means a superseded deploy is cancelled rather than left to race the newer
+# one for the same containers — there was never a reason to finish deploying
+# a commit a newer push already obsoletes.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
