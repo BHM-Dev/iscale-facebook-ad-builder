@@ -39,6 +39,17 @@ const QUERY_PRESETS = [
 
 const RESEARCH_INITIAL_CARD_COUNT = 24;
 const RESEARCH_CARD_PAGE_SIZE = 24;
+const RESEARCH_SAVED_VIEWS_KEY = 'adbuilder.research.saved-views.v1';
+
+const readSavedResearchViews = () => {
+  if (typeof window === 'undefined') return [];
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(RESEARCH_SAVED_VIEWS_KEY) || '[]');
+    return Array.isArray(saved) ? saved.filter(view => view?.id && view?.name && view?.filters) : [];
+  } catch (_) {
+    return [];
+  }
+};
 
 const normalizeAdLibraryDate = (value) => {
   if (!value) return '';
@@ -820,6 +831,9 @@ export default function Research() {
   const [needsTagging, setNeedsTagging] = useState(false);
   const [adsPerAdvertiser, setAdsPerAdvertiser] = useState(0);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [savedViews, setSavedViews] = useState(readSavedResearchViews);
+  const [savingView, setSavingView] = useState(false);
+  const [newViewName, setNewViewName] = useState('');
   const [resultMode, setResultMode] = useState('browse');
   const [searchResultAds, setSearchResultAds] = useState([]);
   const [browseReloadKey, setBrowseReloadKey] = useState(0);
@@ -859,6 +873,15 @@ export default function Research() {
     loadBrowseAds();
     loadSavedAds();
   }, [activeVertical, activeSubVertical, verticalConfig]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(RESEARCH_SAVED_VIEWS_KEY, JSON.stringify(savedViews));
+    } catch (_) {
+      // Private or storage-restricted browser contexts can still use Research;
+      // they simply will not persist view presets between page loads.
+    }
+  }, [savedViews]);
 
   // Keep the first paint quick when a catalog or filter result contains many
   // captures. More cards remain one click away; the summary always shows the
@@ -1360,6 +1383,33 @@ export default function Research() {
     setAngleFilter(''); setMediaTypeFilter(''); setCreativeTagFilter(''); setCtaTypeFilter('');
     setPageTypeFilter(''); setActiveOnly(false); setNewOnly(false); setNeedsTagging(false); setAdvertiserFilter(''); setAdsPerAdvertiser(0);
   };
+  const currentViewFilters = () => ({
+    activeVertical, activeSubVertical, angleFilter, mediaTypeFilter, sortBy,
+    activeOnly, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter,
+    newOnly, needsTagging, adsPerAdvertiser,
+  });
+  const saveCurrentView = () => {
+    const name = newViewName.trim();
+    if (!name) return;
+    setSavedViews(views => [{ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name, filters: currentViewFilters() }, ...views].slice(0, 12));
+    setNewViewName('');
+    setSavingView(false);
+    showSuccess(`Saved view “${name}”`);
+  };
+  const applySavedView = (view) => {
+    const filters = view.filters || {};
+    setActiveVertical(filters.activeVertical || activeVertical);
+    setActiveSubVertical(filters.activeSubVertical || null);
+    setAngleFilter(filters.angleFilter || ''); setMediaTypeFilter(filters.mediaTypeFilter || '');
+    setSortBy(filters.sortBy || 'newest_seen'); setActiveOnly(Boolean(filters.activeOnly));
+    setAdvertiserFilter(filters.advertiserFilter || ''); setCreativeTagFilter(filters.creativeTagFilter || '');
+    setCtaTypeFilter(filters.ctaTypeFilter || ''); setPageTypeFilter(filters.pageTypeFilter || '');
+    setNewOnly(Boolean(filters.newOnly)); setNeedsTagging(Boolean(filters.needsTagging));
+    setAdsPerAdvertiser(Number(filters.adsPerAdvertiser) || 0);
+    setResultMode('browse'); setSearchResultAds([]); closeDetail();
+    showSuccess(`Applied view “${view.name}”`);
+  };
+  const deleteSavedView = (viewId) => setSavedViews(views => views.filter(view => view.id !== viewId));
   const inspectCreative = (ad) => {
     setDetailAd(ad);
     setDetailHistory(prev => [...prev.filter(item => item.id !== ad.id), ad]);
@@ -1664,7 +1714,9 @@ export default function Research() {
             {hasActiveFilters && <button type="button" onClick={clearFilters} className="text-xs font-medium text-indigo-600 hover:text-indigo-800">Clear filters</button>}
           </div>
           {showAdvancedFilters && <div className="-mt-3 rounded-b-xl border border-t-0 border-gray-200 bg-slate-50 px-4 py-3"><div className="flex flex-wrap items-center gap-3"><select value={creativeTagFilter} onChange={e => setCreativeTagFilter(e.target.value)} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600" title="Visible-copy theme labels; unknown ads remain visible by default"><option value="">All themes</option><option value="testimonial">Testimonial</option><option value="problem_agitation">Problem agitation</option><option value="comparison">Comparison</option><option value="review">Review</option><option value="listicle">Listicle</option><option value="educational">Educational</option><option value="ugc">UGC</option></select><select value={ctaTypeFilter} onChange={e => setCtaTypeFilter(e.target.value)} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600"><option value="">All CTAs</option><option value="get_quote">Get quote</option><option value="learn_more">Learn more</option><option value="sign_up">Sign up</option><option value="apply_now">Apply now</option><option value="contact_us">Contact us</option><option value="shop_now">Shop now</option></select><select value={pageTypeFilter} onChange={e => setPageTypeFilter(e.target.value)} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600"><option value="">All destinations</option><option value="lead_form">Lead form</option><option value="advertorial">Advertorial</option><option value="ecommerce">Ecommerce</option><option value="homepage">Homepage</option></select><select value={adsPerAdvertiser} onChange={e => setAdsPerAdvertiser(Number(e.target.value))} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600" title="Keep the gallery varied by limiting how many ads appear from each known advertiser"><option value={0}>All per advertiser</option><option value={1}>1 per advertiser</option><option value={3}>3 per advertiser</option><option value={5}>5 per advertiser</option></select><label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap"><input type="checkbox" checked={activeOnly} onChange={e => setActiveOnly(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />Captured in last 30 days</label><label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap" title="First captured by this Research catalog in the last seven days"><input type="checkbox" checked={newOnly} onChange={e => setNewOnly(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />New captures</label><label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap" title="No theme or CTA label recorded yet"><input type="checkbox" checked={needsTagging} onChange={e => setNeedsTagging(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />Needs tagging</label></div></div>}
+          {showAdvancedFilters && <div className="-mt-2 flex flex-wrap items-center gap-2 text-xs"><span className="text-slate-400">Save this view</span>{savingView ? <><input autoFocus value={newViewName} onChange={event => setNewViewName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') saveCurrentView(); if (event.key === 'Escape') { setSavingView(false); setNewViewName(''); } }} placeholder="e.g. Video winners" className="w-40 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs" /><button type="button" onClick={saveCurrentView} disabled={!newViewName.trim()} className="rounded-lg bg-indigo-600 px-2.5 py-1.5 font-semibold text-white disabled:opacity-50">Save</button><button type="button" onClick={() => { setSavingView(false); setNewViewName(''); }} className="px-1.5 py-1 text-slate-500 hover:text-slate-800">Cancel</button></> : <button type="button" onClick={() => setSavingView(true)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-medium text-slate-700 hover:border-indigo-200 hover:text-indigo-700">Save current view</button>}</div>}
           {advertiserFilter && <div className="-mt-2 flex min-w-0 items-center gap-2 text-xs text-slate-500"><span className="flex-shrink-0">Scoped to</span><button type="button" onClick={() => setAdvertiserFilter('')} className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-1 font-medium text-indigo-700 hover:bg-indigo-100" title="Clear advertiser scope"><span className="truncate">{advertiserFilter}</span><X size={12} className="flex-shrink-0" /></button></div>}
+          {savedViews.length > 0 && <div className="-mt-2 flex flex-wrap items-center gap-1.5 text-xs"><span className="mr-1 text-slate-400">Saved views</span>{savedViews.map(view => <span key={view.id} className="inline-flex max-w-full items-center rounded-full border border-slate-200 bg-white text-slate-600"><button type="button" onClick={() => applySavedView(view)} className="max-w-[180px] truncate px-2.5 py-1 hover:text-indigo-700">{view.name}</button><button type="button" onClick={() => deleteSavedView(view.id)} className="border-l border-slate-100 px-1.5 py-1 text-slate-400 hover:text-red-500" aria-label={`Delete saved view ${view.name}`}><X size={11} /></button></span>)}</div>}
 
           {refreshSummary?.first_error && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
