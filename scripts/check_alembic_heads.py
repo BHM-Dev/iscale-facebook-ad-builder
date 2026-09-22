@@ -47,6 +47,45 @@ def _string_literals(node: "ast.AST | None") -> list[str]:
     return []
 
 
+def _find_cycle(revision_parents: dict[str, list[str]]) -> list[str] | None:
+    """DFS with a gray/black color mark to find a cycle in the down_revision graph.
+
+    heads = revisions - down_refs alone cannot detect a cycle: every node in a
+    cycle is somebody's down_revision, so none of them are ever excluded from
+    being a head candidate by that set-difference, and a pure cycle with no
+    other branch leaves `heads` empty -- read by main() as "0 or 1 heads,
+    chain is healthy." Walking the down_revision edges explicitly is the only
+    way to catch that.
+    """
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {revision: WHITE for revision in revision_parents}
+    path: list[str] = []
+
+    def visit(node: str) -> list[str] | None:
+        color[node] = GRAY
+        path.append(node)
+        for parent in revision_parents.get(node, []):
+            if parent not in color:
+                continue  # dangling parent is reported separately
+            if color[parent] == GRAY:
+                cycle_start = path.index(parent)
+                return path[cycle_start:] + [parent]
+            if color[parent] == WHITE:
+                found = visit(parent)
+                if found:
+                    return found
+        path.pop()
+        color[node] = BLACK
+        return None
+
+    for revision in revision_parents:
+        if color[revision] == WHITE:
+            found = visit(revision)
+            if found:
+                return found
+    return None
+
+
 def validate_migration_graph(versions_dir: str) -> tuple[dict[str, str], list[str]]:
     """Return heads and fatal graph errors for a migration directory.
 
@@ -61,6 +100,7 @@ def validate_migration_graph(versions_dir: str) -> tuple[dict[str, str], list[st
     """
     revisions: dict[str, str] = {}
     down_refs: set[str] = set()     # all IDs referenced as down_revision
+    revision_parents: dict[str, list[str]] = {}  # revision -> its down_revision id(s)
     errors: list[str] = []
 
     for fname in sorted(os.listdir(versions_dir)):
@@ -103,10 +143,18 @@ def validate_migration_graph(versions_dir: str) -> tuple[dict[str, str], list[st
         else:
             revisions[revision_id] = fname
 
-        down_refs.update(_string_literals(down_revision_node))
+        parent_ids = _string_literals(down_revision_node)
+        revision_parents[revision_id] = parent_ids
+        down_refs.update(parent_ids)
 
     missing_parents = sorted(down_refs - set(revisions))
     errors.extend(f"missing down_revision target: {revision}" for revision in missing_parents)
+
+    cycle = _find_cycle(revision_parents)
+    if cycle:
+        cycle_desc = " -> ".join(f"{r} ({revisions.get(r, '?')})" for r in cycle)
+        errors.append(f"cycle detected in down_revision chain: {cycle_desc}")
+
     return {r: revisions[r] for r in revisions if r not in down_refs}, errors
 
 

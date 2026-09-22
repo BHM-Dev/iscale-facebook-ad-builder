@@ -48,6 +48,26 @@ def test_related_pattern_score_is_explainable_and_not_a_performance_score():
     assert _related_pattern_score(source, unrelated) is None
 
 
+def test_related_pattern_score_rejects_cross_vertical_matches_on_generic_signals_alone():
+    """A shared CTA and media format alone must not imply relevance -- neither
+    ScrapedAd nor this endpoint tracks vertical, so this is the only guard
+    against e.g. a home-services ad surfacing as "related" to a commercial-
+    insurance ad purely because both use "get_quote" + "video"."""
+    commercial_insurance = SimpleNamespace(creative_tags=[], cta_type="get_quote", media_type="video", destination_domain="quote.example.com")
+    home_services = SimpleNamespace(creative_tags=[], cta_type="get_quote", media_type="video", destination_domain="booking.example.com")
+    assert _related_pattern_score(commercial_insurance, home_services) is None
+
+    # Same generic signals, but a real content-level match (shared tag) still counts.
+    tagged_candidate = SimpleNamespace(creative_tags=["problem_agitation"], cta_type="get_quote", media_type="video", destination_domain="booking.example.com")
+    commercial_insurance.creative_tags = ["problem_agitation"]
+    assert _related_pattern_score(commercial_insurance, tagged_candidate) is not None
+
+    # Same generic signals, but a shared landing destination still counts too.
+    commercial_insurance.creative_tags = []
+    same_destination_candidate = SimpleNamespace(creative_tags=[], cta_type="get_quote", media_type="video", destination_domain="quote.example.com")
+    assert _related_pattern_score(commercial_insurance, same_destination_candidate) is not None
+
+
 def test_advertiser_cap_preserves_sorted_first_result_and_unknown_legacy_rows():
     ads = [
         SimpleNamespace(brand_name="Acme"),

@@ -87,3 +87,30 @@ def test_guard_reports_unparseable_file(tmp_path):
     (tmp_path / "a_broken.py").write_text("revision = 'unterminated\n", encoding="utf-8")
     _, errors = validate_migration_graph(str(tmp_path))
     assert any("a_broken.py: could not parse" in error for error in errors)
+
+
+def test_guard_rejects_two_node_cycle(tmp_path):
+    # heads = revisions - down_refs alone can't see this: A's down_revision
+    # is B and B's down_revision is A, so both are somebody's down_revision
+    # and neither is ever excluded from being a "head" by that set-difference
+    # -- heads comes back empty, which main() previously read as "0 or 1
+    # heads, chain is healthy." A corrupted, cyclic migration graph must be
+    # rejected, not silently reported as safe to push.
+    write_migration(tmp_path, "a_first.py", "aaa111", "bbb222")
+    write_migration(tmp_path, "b_second.py", "bbb222", "aaa111")
+    heads, errors = validate_migration_graph(str(tmp_path))
+    assert heads == {}
+    assert any("cycle detected" in error for error in errors)
+
+
+def test_guard_rejects_longer_cycle_off_a_valid_branch(tmp_path):
+    # A real head (c) exists alongside an unrelated 3-node cycle (x -> y ->
+    # z -> x) that isn't reachable from any valid head -- the cycle must
+    # still be caught even though a plausible-looking single head is found.
+    write_migration(tmp_path, "a_base.py", "aaa", None)
+    write_migration(tmp_path, "c_head.py", "ccc", "aaa")
+    write_migration(tmp_path, "x.py", "xxx", "zzz")
+    write_migration(tmp_path, "y.py", "yyy", "xxx")
+    write_migration(tmp_path, "z.py", "zzz", "yyy")
+    _, errors = validate_migration_graph(str(tmp_path))
+    assert any("cycle detected" in error for error in errors)

@@ -958,12 +958,20 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             if (!Array.isArray(data)) {
                 throw new Error('Drive library returned an invalid response');
             }
-            if (requestId !== driveFetchRequestRef.current) return [];
+            // A caller that awaits its own explicit result (throwOnError — used
+            // only by the Drive copy refresh) needs the data THIS call actually
+            // fetched, regardless of whether a later, unrelated fetchDriveAssets
+            // call (the step-mount effect, the library modal, the retry button)
+            // has since bumped the shared ref. Discarding a superseded-but-
+            // successful fetch as `[]` here made refreshDriveCopyMatches treat
+            // a real, successful refresh as if it had found no matches at all,
+            // silently flagging every Drive creative with driveCopyIntegrityIssue.
+            if (requestId !== driveFetchRequestRef.current && !throwOnError) return [];
             const assets = data;
             setDriveAssets(assets);
             return assets;
         } catch (err) {
-            if (requestId !== driveFetchRequestRef.current) return [];
+            if (requestId !== driveFetchRequestRef.current && !throwOnError) return [];
             setDriveLibraryError(err.message || 'Failed to load Drive Creative Library');
             if (throwOnError) throw err;
             return [];
@@ -1025,9 +1033,19 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             // count a paired creative here and include unrelated packages.
             const unverifiedCount = unverifiedGroups;
             if (data.errors || unverifiedCount) {
-                showWarning(
-                    `${refreshMessage} ${unverifiedCount} creative${unverifiedCount === 1 ? '' : 's'} still need${unverifiedCount === 1 ? 's' : ''} a complete Drive copy source.`
-                );
+                // Two distinct counts, kept as two sentences: `data.errors` is
+                // source files that failed to parse; unverifiedCount is groups
+                // whose match still isn't confirmed (which can include a group
+                // with complete copy but an unresolved Feed/Stories pairing —
+                // not the same thing as "missing copy," so don't say that).
+                const parts = [refreshMessage];
+                if (unverifiedCount) {
+                    parts.push(
+                        `Separately, ${unverifiedCount} creative${unverifiedCount === 1 ? '' : 's'} `
+                        + `${unverifiedCount === 1 ? 'is' : 'are'} still unverified after this refresh and blocked from launch.`
+                    );
+                }
+                showWarning(parts.join(' '));
             } else {
                 showSuccess(refreshMessage);
             }
@@ -1041,11 +1059,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     ? {
                         ...creative,
                         driveCopyIntegrityIssue: true,
-                        driveCopyIntegrityReason: 'Drive copy refresh was not confirmed. Refresh again before launching.',
+                        driveCopyIntegrityReason: 'Drive copy refresh was not confirmed, so every Drive-sourced ad in this batch is blocked from launch as a precaution — not just the one(s) that caused the failure. Click "Refresh Drive copy" again; this clears once a refresh completes successfully.',
                     }
                     : creative),
             }));
-            showError(err.message || 'Could not refresh Drive copy');
+            showError(
+                `${err.message || 'Could not refresh Drive copy'} — every Drive-sourced ad in this batch is now blocked `
+                + 'from launch until you refresh again successfully (not just the one(s) affected by this error).'
+            );
         } finally {
             setRefreshingDriveCopy(false);
         }

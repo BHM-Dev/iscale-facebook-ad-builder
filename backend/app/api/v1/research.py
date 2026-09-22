@@ -79,7 +79,14 @@ def _related_pattern_score(source, candidate):
         reasons.append(f"format: {source.media_type}")
     if same_destination:
         reasons.append("same destination")
-    if not reasons:
+    # A shared CTA or media format alone is too generic to imply relevance —
+    # "get_quote" + "video" matches across completely unrelated verticals
+    # (e.g. a home-services ad "related" to a commercial-insurance ad) since
+    # neither the ScrapedAd model nor this endpoint tracks vertical/config.
+    # Require at least one specific, content-derived signal (a shared
+    # creative tag or the same landing destination) before a generic signal
+    # is allowed to count at all.
+    if not shared_tags and not same_destination:
         return None
     return len(shared_tags) * 4 + (2 if same_cta else 0) + int(same_format) + int(same_destination), reasons
 

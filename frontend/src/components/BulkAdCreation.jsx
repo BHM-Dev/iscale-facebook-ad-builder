@@ -713,10 +713,17 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         setAdsData(prev => prev.map(ad => {
             const creative = creativesById.get(ad.creativeId);
             if (creative?.source !== 'drive') return ad;
-            const manual = {
-                ...(creative.manualCopyFields || {}),
-                ...(ad.manualCopyFields || {}),
-            };
+            // Only a row-level edit (Joel typing directly into this Review row,
+            // via updateManifestField) should keep the row's own override and
+            // skip the sync. creative.manualCopyFields means "protect this
+            // creative's field from being clobbered by a Drive *refresh*" — it
+            // says nothing about whether this row already reflects that edit,
+            // so it must not block the row from picking up creative.<field>
+            // here. Treating it as a skip condition too silently dropped a
+            // Creative-step edit made after ads were already generated: the
+            // row kept its old pre-edit override and that stale copy shipped
+            // to Meta with no error shown.
+            const manual = ad.manualCopyFields || {};
             return {
                 ...ad,
                 headlineOverride: manual.headline ? ad.headlineOverride : creative.headline || '',
@@ -828,7 +835,11 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 ? 'selected existing ad set'
                 : '1 shared new ad set';
         const driveCopyIntegrityIssue = isDriveCreative && Boolean(creative?.driveCopyIntegrityIssue);
-        return { ad, index, creative, headline, body, description, websiteUrl, cta, ctaSource: ad.ctaSource || creative?.ctaSource || 'Creative card', category, copyReady: copyReady && !driveCopyIntegrityIssue, driveCopyIntegrityIssue, adsetName, destinationLabel, outcome: manifestLaunchOutcome(ad) };
+        const driveCopyIntegrityReason = driveCopyIntegrityIssue
+            ? (creative?.driveCopyIntegrityReason
+                || 'This row’s Drive copy source needs repair or a fresh refresh — go back to Ad Creative and re-run "Refresh Drive copy" after fixing it. Editing the fields here will not clear this.')
+            : null;
+        return { ad, index, creative, headline, body, description, websiteUrl, cta, ctaSource: ad.ctaSource || creative?.ctaSource || 'Creative card', category, copyReady: copyReady && !driveCopyIntegrityIssue, driveCopyIntegrityIssue, driveCopyIntegrityReason, adsetName, destinationLabel, outcome: manifestLaunchOutcome(ad) };
     });
     const manifestCategories = [...new Set(manifestRows.map(row => row.category))].sort((a, b) => a.localeCompare(b));
     const visibleManifestRows = manifestRows.filter(row => {
@@ -2096,7 +2107,17 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                                         <div className="text-xs text-gray-400">{row.destinationLabel}</div>
                                                     </div>
                                                     <div className="hidden md:block">
-                                                        <span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${protectedRow || excludedRow ? 'bg-gray-100 text-gray-600' : row.copyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{protectedRow ? 'Protected — excluded from retry' : excludedRow ? 'Excluded from launch' : row.copyReady ? 'Ready' : 'Needs copy'}</span>
+                                                        <span
+                                                            title={row.driveCopyIntegrityIssue ? row.driveCopyIntegrityReason : undefined}
+                                                            className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${protectedRow || excludedRow ? 'bg-gray-100 text-gray-600' : row.copyReady ? 'bg-emerald-100 text-emerald-700' : row.driveCopyIntegrityIssue ? 'bg-indigo-100 text-indigo-800' : 'bg-amber-100 text-amber-800'}`}
+                                                        >{protectedRow ? 'Protected — excluded from retry' : excludedRow ? 'Excluded from launch' : row.copyReady ? 'Ready' : row.driveCopyIntegrityIssue ? 'Drive copy needs repair' : 'Needs copy'}</span>
+                                                        {(protectedRow || excludedRow) && row.driveCopyIntegrityIssue && (
+                                                            // The gray Excluded/Protected badge above hides the repair
+                                                            // signal — without this, Joel re-includes a row assuming
+                                                            // it's ready and gets ambushed by the same issue that was
+                                                            // never shown to him while it was excluded.
+                                                            <span title={row.driveCopyIntegrityReason} className="mt-1 inline-flex rounded-full bg-indigo-100 px-2 py-1 text-[11px] font-semibold text-indigo-800">Drive copy still needs repair</span>
+                                                        )}
                                                         {row.outcome && <span className={`mt-1 inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${row.outcome.cls}`}>{row.outcome.label}</span>}
                                                     </div>
                                                     <button type="button" onClick={(event) => { event.stopPropagation(); setSelectedManifestAdId(row.ad.id); setEditDrawerOpen(true); }} className="text-right text-xs font-semibold text-amber-700 hover:text-amber-900">Open →</button>
@@ -2226,9 +2247,18 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                                 {outcome.label}
                                             </span>
                                         )}
+                                        {(protectedRow || !included) && row.driveCopyIntegrityIssue && (
+                                            // Same reasoning as the manifest-table badge: the gray
+                                            // Protected/Excluded label above must not hide that this
+                                            // row will still be blocked if re-included.
+                                            <span title={row.driveCopyIntegrityReason} className="text-xs px-2 py-0.5 rounded-full font-medium bg-indigo-100 text-indigo-800">Drive copy still needs repair</span>
+                                        )}
                                         {!protectedRow && included && !outcome && (
-                                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${row.copyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>
-                                                {row.copyReady ? 'Ready' : 'Needs copy'}
+                                            <span
+                                                title={row.driveCopyIntegrityIssue ? row.driveCopyIntegrityReason : undefined}
+                                                className={`text-xs px-2 py-0.5 rounded-full font-medium ${row.copyReady ? 'bg-emerald-100 text-emerald-700' : row.driveCopyIntegrityIssue ? 'bg-indigo-100 text-indigo-800' : 'bg-amber-100 text-amber-800'}`}
+                                            >
+                                                {row.copyReady ? 'Ready' : row.driveCopyIntegrityIssue ? 'Drive copy needs repair' : 'Needs copy'}
                                             </span>
                                         )}
                                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
@@ -2624,7 +2654,10 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                         <p className="mt-0.5 truncate text-[11px] text-gray-500">Identity: {creativeData.pageName || creativeData.pageId || 'Page not confirmed'} · Instagram {creativeData.instagramId || 'not linked'} · {selectedManifestRow.ad.dualPlacement ? (drawerExistingTargetStatus === 'unverified' ? 'Placement contract not verified' : drawerExistingTargetStatus === 'verified-facebook-only' ? 'Facebook Feed + Facebook Stories' : 'Facebook Feed + Instagram Stream/Stories/Reels') : selectedManifestRow.ad.format === 'stories' ? (drawerExistingTargetStatus === 'unverified' ? 'Stories/Reels placement not verified' : 'Stories + Reels') : 'Feed'}</p>
                                     </div>
                                     <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                                        <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${manifestExcludedAdIds.has(selectedManifestRow.ad.id) || protectedReconciliationIdSet.has(selectedManifestRow.ad.id) ? 'bg-gray-100 text-gray-600' : selectedManifestRow.copyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{manifestExcludedAdIds.has(selectedManifestRow.ad.id) || protectedReconciliationIdSet.has(selectedManifestRow.ad.id) ? 'Excluded' : selectedManifestRow.copyReady ? 'Ready' : 'Needs copy'}</span>
+                                        <span
+                                            title={selectedManifestRow.driveCopyIntegrityIssue ? selectedManifestRow.driveCopyIntegrityReason : undefined}
+                                            className={`rounded-full px-2 py-1 text-[10px] font-semibold ${manifestExcludedAdIds.has(selectedManifestRow.ad.id) || protectedReconciliationIdSet.has(selectedManifestRow.ad.id) ? 'bg-gray-100 text-gray-600' : selectedManifestRow.copyReady ? 'bg-emerald-100 text-emerald-700' : selectedManifestRow.driveCopyIntegrityIssue ? 'bg-indigo-100 text-indigo-800' : 'bg-amber-100 text-amber-800'}`}
+                                        >{manifestExcludedAdIds.has(selectedManifestRow.ad.id) || protectedReconciliationIdSet.has(selectedManifestRow.ad.id) ? 'Excluded' : selectedManifestRow.copyReady ? 'Ready' : selectedManifestRow.driveCopyIntegrityIssue ? 'Drive copy needs repair' : 'Needs copy'}</span>
                                         {selectedManifestRow.outcome && <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${selectedManifestRow.outcome.cls}`}>{selectedManifestRow.outcome.label}</span>}
                                         <div className="flex items-center rounded-md border border-gray-200 bg-gray-50">
                                             <button
@@ -2661,6 +2694,18 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                         {protectedReconciliationIdSet.has(selectedManifestRow.ad.id)
                                             ? 'This row reached Meta or may have reached Meta and is permanently excluded from retry for this batch. Verify it in Ads Manager before starting a fresh batch.'
                                             : 'This ad is excluded from launch. Your edits are saved, but it will remain out of this launch until you include it again.'}
+                                    </div>
+                                )}
+                                {selectedManifestRow.driveCopyIntegrityIssue && (
+                                    // Stacks below the excluded/protected banner rather than being
+                                    // hidden by it — this issue still blocks the row the moment it's
+                                    // re-included, so Joel needs to see it now, not get ambushed later.
+                                    // Editing fields below does NOT clear driveCopyIntegrityIssue —
+                                    // it only clears on a confirmed Drive refresh that resolves the
+                                    // source. Say that explicitly here so Joel doesn't retype copy
+                                    // and then wonder why the row still won't launch.
+                                    <div className="border-b border-indigo-200 bg-indigo-50 px-4 py-3 text-xs font-semibold leading-5 text-indigo-900">
+                                        {selectedManifestRow.driveCopyIntegrityReason}
                                     </div>
                                 )}
                                 {/* key forces a remount + fade on every ad switch — a fast click
