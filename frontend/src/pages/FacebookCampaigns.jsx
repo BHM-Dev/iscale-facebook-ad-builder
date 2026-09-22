@@ -517,7 +517,12 @@ const FacebookCampaignWizardInner = () => {
                                         type="button"
                                         onClick={() => goToStep(step.id)}
                                         disabled={!isCompleted}
-                                        title={isBlocked ? 'Complete the steps above first' : undefined}
+                                        title={isBlocked
+                                            ? 'Complete the steps above first'
+                                            : isCompleted
+                                                ? `Edit ${step.label} — your current selections stay saved`
+                                                : undefined}
+                                        aria-label={isCompleted ? `Edit ${step.label}; current selections stay saved` : step.label}
                                         className={`w-full flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${isCurrent ? 'bg-amber-50 border border-amber-200' : isCompleted ? 'hover:bg-gray-50 cursor-pointer' : 'cursor-default'}`}
                                     >
                                         <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${isCompleted || isCurrent ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-400'}`}>

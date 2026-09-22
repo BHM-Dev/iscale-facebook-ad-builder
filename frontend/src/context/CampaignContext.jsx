@@ -23,16 +23,18 @@ const defaultEndTime = () => {
     return `${year}-${month}-${day}T23:59`;
 };
 
-// Helper: default start time = tomorrow at 1:00 AM
+// Match Meta's launch behavior: a new ad set starts now unless the buyer
+// deliberately schedules it. Round up a minute so the datetime-local control
+// never renders a time that has already passed by the time it is submitted.
 const defaultStartTime = () => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(1, 0, 0, 0);
-    const year = tomorrow.getFullYear();
-    const month = String(tomorrow.getMonth() + 1).padStart(2, '0');
-    const day = String(tomorrow.getDate()).padStart(2, '0');
-    const hours = String(tomorrow.getHours()).padStart(2, '0');
-    const minutes = String(tomorrow.getMinutes()).padStart(2, '0');
+    const now = new Date();
+    now.setSeconds(0, 0);
+    now.setMinutes(now.getMinutes() + 1);
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
     return `${year}-${month}-${day}T${hours}:${minutes}`;
 };
 
@@ -86,7 +88,10 @@ export const createDefaultAdsetData = () => ({
     advantageAudience: 0, // 0 = Off, 1 = On
     startTime: defaultStartTime(),
     pixelId: '',
-    conversionEvent: 'PURCHASE',
+    // This is a lead-generation launcher. A buyer can still deliberately pick
+    // another pixel event, but a fresh ad set must not quietly optimize for a
+    // retail purchase event.
+    conversionEvent: 'LEAD',
     attributionSetting: '7d_click',
     status: 'PAUSED',
     fbAdsetId: null,
@@ -117,7 +122,7 @@ export const CampaignProvider = ({ children }) => {
         bodies: [''], // Start with 1 field
         headlines: [''], // Start with 1 field
         description: '',
-        cta: 'LEARN_MORE',
+        cta: 'GET_QUOTE',
         websiteUrl: '',
         pageId: '',
         // A Page belongs to an ad account. Keeping the owner alongside the ID

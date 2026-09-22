@@ -494,35 +494,58 @@ class DriveSyncService:
             drive = self._client()
             for source_file_id in unique_ids:
                 try:
-                    file_meta = drive.files().get(
-                        fileId=source_file_id,
-                        fields="id,name,mimeType,parents,modifiedTime,trashed,size,webViewLink",
-                        supportsAllDrives=True,
-                    ).execute()
-                    result["processed"] += 1
-                    if file_meta.get("trashed") or not self._is_text_file(
-                        file_meta.get("mimeType") or "", file_meta.get("name", "")
-                    ):
-                        self._mark_copy_source_unverified(
-                            source_file_id, "Current Drive copy source is unavailable or is no longer a text document"
+                    # A malformed package or database constraint on one source
+                    # must not poison the transaction for every remaining
+                    # source in a buyer's scoped Refresh copy batch.
+                    with self.db.begin_nested():
+                        file_meta = drive.files().get(
+                            fileId=source_file_id,
+                            fields="id,name,mimeType,parents,modifiedTime,trashed,size,webViewLink",
+                            supportsAllDrives=True,
+                        ).execute()
+                        result["processed"] += 1
+                        if file_meta.get("trashed") or not self._is_text_file(
+                            file_meta.get("mimeType") or "", file_meta.get("name", "")
+                        ):
+                            raise RuntimeError("Current Drive copy source is unavailable or is no longer a text document")
+                        self._package_folder_cache.clear()
+                        self._strategy_package_folder_cache.clear()
+                        self._folder_metadata_cache.clear()
+                        metadata_folder = self._metadata_folder_for_copy_document(file_meta)
+                        if not metadata_folder:
+                            raise RuntimeError("Could not resolve the Drive package for this copy source")
+                        result["updated"] += self._refresh_folder_copy_metadata(
+                            file_meta, metadata_folder=metadata_folder
                         )
-                        result["errors"] += 1
-                        continue
-                    self._package_folder_cache.clear()
-                    self._strategy_package_folder_cache.clear()
-                    self._folder_metadata_cache.clear()
-                    metadata_folder = self._metadata_folder_for_copy_document(file_meta)
-                    if not metadata_folder:
-                        self._mark_copy_source_unverified(source_file_id, "Could not resolve the Drive package for this copy source")
-                        result["errors"] += 1
-                        continue
-                    result["updated"] += self._refresh_folder_copy_metadata(
-                        file_meta, metadata_folder=metadata_folder
-                    )
                 except Exception as exc:
                     result["errors"] += 1
                     logger.warning("Could not refresh Drive copy source %s: %s", source_file_id, exc)
-                    self._mark_copy_source_unverified(source_file_id, str(exc))
+                    try:
+                        with self.db.begin_nested():
+                            self._mark_copy_source_unverified(source_file_id, str(exc))
+                    except Exception as mark_exc:
+                        # Persist the fail-closed marker through an independent
+                        # session before escalating. The outer batch will roll
+                        # back its successful source updates, but this durable
+                        # marker must survive so another tab cannot launch the
+                        # stale source after a reload.
+                        emergency_db = Session(bind=self.db.get_bind())
+                        try:
+                            with emergency_db.begin():
+                                emergency_service = DriveSyncService(emergency_db)
+                                for batch_source_id in unique_ids:
+                                    emergency_service._mark_copy_source_unverified(
+                                        batch_source_id,
+                                        f"Refresh batch failed and normal block write failed: {exc}",
+                                    )
+                        finally:
+                            emergency_db.close()
+                        # The original marker failure remains a global DB
+                        # failure: roll back the normal batch after the durable
+                        # independent-session block has been written.
+                        raise RuntimeError(
+                            f"Could not mark failed Drive copy source {source_file_id} unverified"
+                        ) from mark_exc
             result = self._attach_copy_health(result)
             self.db.commit()
             return result

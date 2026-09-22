@@ -450,6 +450,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const [showNeedsCopyDriveOnly, setShowNeedsCopyDriveOnly] = useState(false);
     const [driveSectionOverrides, setDriveSectionOverrides] = useState({});
     const [driveParentOverrides, setDriveParentOverrides] = useState({});
+    const [selectedDriveParentKey, setSelectedDriveParentKey] = useState(null);
     // Reset on open: as component state this survived closing the modal, so a
     // buyer returning the next day met a 7-tile library with the format pills
     // still reading "All 288" and nothing indicating a filter was on.
@@ -644,6 +645,27 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         });
     }, [driveSections]);
 
+    // Present folders as a stable left rail. If a search or filter removes the
+    // active folder, choose the first remaining folder instead of showing an
+    // unexplained empty workspace.
+    useEffect(() => {
+        if (!driveParents.some(parent => parent.key === selectedDriveParentKey)) {
+            setSelectedDriveParentKey(driveParents[0]?.key || null);
+        }
+    }, [driveParents, selectedDriveParentKey]);
+    const visibleDriveParents = selectedDriveParentKey
+        ? driveParents.filter(parent => parent.key === selectedDriveParentKey)
+        : driveParents;
+
+    // The global toolbar's "Select all" / "Select first N" must operate on
+    // exactly what the rail is showing. Without this, they silently reach
+    // across every other folder's assets while the grid shows only one.
+    const visibleDriveAssetGroups = useMemo(() => {
+        if (!selectedDriveParentKey) return driveAssetGroups;
+        const activeParent = driveParents.find(parent => parent.key === selectedDriveParentKey);
+        return activeParent ? activeParent.groups : driveAssetGroups;
+    }, [driveAssetGroups, driveParents, selectedDriveParentKey]);
+
     // Expansion is derived, with an explicit per-section override on top. A
     // plain state Set plus an effect to sync it against search/filter changes
     // is the shape that loops; this cannot.
@@ -760,8 +782,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // the blocked filter was on, and every one of those 7 is by definition
     // unselectable -- the click selected nothing and threw a warning toast.
     const eligibleVisibleDriveGroupCount = useMemo(
-        () => driveAssetGroups.filter(group => !isDriveGroupSelectionBlocked(group)).length,
-        [driveAssetGroups],
+        () => visibleDriveAssetGroups.filter(group => !isDriveGroupSelectionBlocked(group)).length,
+        [visibleDriveAssetGroups],
     );
 
     // Keep the full group index separate from the visible filtered list. A
@@ -1174,9 +1196,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     };
 
     // Bulk-select shortcuts — clicking through 50 tiles one at a time was the
-    // direct complaint. All three operate on driveAssetGroups in its CURRENT
-    // filtered/searched order, so "select first N" means "first N of whatever
-    // you're currently looking at," not the full unfiltered library.
+    // direct complaint. All three operate on visibleDriveAssetGroups, i.e.
+    // whatever folder the rail currently has selected (or every folder, if
+    // none is pinned) in its CURRENT filtered/searched order — "select first
+    // N" means "first N of whatever you're currently looking at."
     const [driveSelectCount, setDriveSelectCount] = useState('');
 
     // All three ADD to whatever is already selected rather than replacing it —
@@ -1184,13 +1207,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // picks could be silently wiped by a later "Select first N," with no
     // warning. "Clear selection" is the one explicit way to actually reset.
     const selectAllVisibleDriveAssets = () => {
-        const blockedCount = driveAssetGroups.filter(isDriveGroupSelectionBlocked).length;
+        const blockedCount = visibleDriveAssetGroups.filter(isDriveGroupSelectionBlocked).length;
         if (blockedCount) {
             showWarning(String(blockedCount) + ' Drive creative' + (blockedCount !== 1 ? 's were' : ' was') + ' skipped because their pair or copy source needs repair.');
         }
         setSelectedDriveAssetIds(prev => {
             const next = new Set(prev);
-            driveAssetGroups.filter(group => !isDriveGroupSelectionBlocked(group)).forEach(group => next.add(group.id));
+            visibleDriveAssetGroups.filter(group => !isDriveGroupSelectionBlocked(group)).forEach(group => next.add(group.id));
             return next;
         });
     };
@@ -1202,9 +1225,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const selectFirstNDriveAssets = () => {
         const n = parseInt(driveSelectCount, 10);
         if (!Number.isFinite(n) || n <= 0) return;
-        const positionalScope = driveAssetGroups.slice(0, n);
+        const positionalScope = visibleDriveAssetGroups.slice(0, n);
         const blockedInScope = positionalScope.filter(isDriveGroupSelectionBlocked);
-        const eligibleSelection = driveAssetGroups.filter(group => !isDriveGroupSelectionBlocked(group)).slice(0, n);
+        const eligibleSelection = visibleDriveAssetGroups.filter(group => !isDriveGroupSelectionBlocked(group)).slice(0, n);
         const positionalIds = new Set(positionalScope.map(group => group.id));
         const backfilled = eligibleSelection.filter(group => !positionalIds.has(group.id));
         if (blockedInScope.length) {
@@ -1368,7 +1391,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 : clearStaleGlobalCopy && !copyFieldsTouched.description ? '' : prev.description;
             const nextCta = firstWithCopy?.cta && !copyFieldsTouched.cta
                 ? firstWithCopy.cta
-                : clearStaleGlobalCopy && !copyFieldsTouched.cta ? 'LEARN_MORE' : (prev.cta || 'LEARN_MORE');
+                : clearStaleGlobalCopy && !copyFieldsTouched.cta ? 'GET_QUOTE' : (prev.cta || 'GET_QUOTE');
             const nextWebsiteUrl = (firstWithCopy?.landingPage || firstDefaultUrl) && !copyFieldsTouched.websiteUrl
                 ? (firstWithCopy?.landingPage || firstDefaultUrl)
                 : clearStaleGlobalCopy && !copyFieldsTouched.websiteUrl ? '' : prev.websiteUrl;
@@ -1377,7 +1400,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 safeLocalStorageSet(`defaultHeadlines_${selectedAdAccount.id}_${campaignCacheId}`, JSON.stringify(nextHeadlines || ['']));
                 safeLocalStorageSet(`defaultBodies_${selectedAdAccount.id}_${campaignCacheId}`, JSON.stringify(nextBodies || ['']));
                 safeLocalStorageSet(`defaultDescription_${selectedAdAccount.id}_${campaignCacheId}`, nextDescription || '');
-                safeLocalStorageSet(`defaultCta_${selectedAdAccount.id}_${campaignCacheId}`, nextCta || 'LEARN_MORE');
+                safeLocalStorageSet(`defaultCta_${selectedAdAccount.id}_${campaignCacheId}`, nextCta || 'GET_QUOTE');
                 safeLocalStorageSet(`defaultUrl_${selectedAdAccount.id}_${campaignCacheId}`, nextWebsiteUrl || '');
             }
 
@@ -1602,7 +1625,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 // Pre-fill copy fields from the first library ad if not already set
                 headlines: prev.headlines[0] ? prev.headlines : (pending[0]?.headline ? [pending[0].headline] : prev.headlines),
                 bodies: prev.bodies[0] ? prev.bodies : (pending[0]?.body ? [pending[0].body] : prev.bodies),
-                cta: prev.cta || pending[0]?.cta || 'LEARN_MORE'
+                cta: prev.cta || pending[0]?.cta || 'GET_QUOTE'
             }));
 
             showSuccess(`${newCreatives.length} image${newCreatives.length !== 1 ? 's' : ''} loaded from Generated Ads library`);
@@ -1660,7 +1683,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             headlines: savedHeadlines || [''],
             bodies: savedBodies || [''],
             description: savedDescription || '',
-            cta: savedCta || 'LEARN_MORE'
+            cta: savedCta || 'GET_QUOTE'
         }));
         setCopyFieldsTouched({
             headlines: false,
@@ -2648,6 +2671,15 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             <Layers size={12} /> Feed + Stories linked
                                         </div>
                                     )}
+                                    <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); removeCreative(creative.id); }}
+                                        className={`absolute right-2 ${creative.dualPlacement ? 'top-10' : 'top-2'} rounded-full bg-white/95 p-1.5 text-red-600 shadow-sm ring-1 ring-black/5 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500`}
+                                        aria-label={`Remove ${creative.name || 'creative'}`}
+                                        title="Remove creative"
+                                    >
+                                        <Trash2 size={15} />
+                                    </button>
                                     <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
                                         {/* Duplicate-as-opposite-placement doesn't apply once a creative
                                             already carries both a feed and a stories image — it's not a
@@ -2663,13 +2695,6 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                 {(creative.format || 'feed') === 'stories' ? 'Dupe as Feed' : 'Dupe as Stories'}
                                             </button>
                                         )}
-                                        <button
-                                            onClick={() => removeCreative(creative.id)}
-                                            className="p-2 bg-red-500 text-white rounded-full hover:bg-red-600 transform scale-90 hover:scale-100 transition-all"
-                                            title="Remove media"
-                                        >
-                                            <Trash2 size={16} />
-                                        </button>
                                     </div>
                                     {/* Reposition the smart-crop when the default center cut
                                         removes something important — re-crops from the original
@@ -3030,46 +3055,16 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 />
                 )}
 
-                {/* URL Input (Optional fallback) */}
-                    <div className="mt-2">
-                        <p className="text-sm text-gray-500 mb-1">Or paste a media URL (image or video):</p>
-                        <input
-                            type="text"
-                            placeholder="https://example.com/image.jpg or https://example.com/video.mp4"
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent text-sm"
-                            onBlur={(e) => {
-                                if (e.target.value) {
-                                    const url = e.target.value.toLowerCase();
-                                    const isVideo = url.endsWith('.mp4') || url.endsWith('.mov') || url.endsWith('.webm') || url.endsWith('.avi');
-                                    const newCreative = {
-                                        id: `creative_url_${Date.now()}`,
-                                        previewUrl: e.target.value,
-                                        imageUrl: isVideo ? undefined : e.target.value,
-                                        videoUrl: isVideo ? e.target.value : undefined,
-                                        name: isVideo ? 'Video from URL' : 'Image from URL',
-                                        mediaType: isVideo ? 'video' : 'image',
-                                        format: 'feed'
-                                    };
-                                    setCreativeData(prev => ({
-                                        ...prev,
-                                        creatives: [...(prev.creatives || []), newCreative]
-                                    }));
-                                    e.target.value = ''; // Clear input
-                                }
-                            }}
-                        />
-                    </div>
                 </div>
                 )}
 
                 {/* Body Text */}
-                {!isMatchImport && (
-                <details className="rounded-lg border border-gray-200 bg-gray-50/70 p-3" open={!creativeData.creatives?.some(c => c.source === 'drive' || c.headline || c.body)}>
-                    <summary className="cursor-pointer text-sm font-semibold text-gray-700">Shared fallback Primary Text <span className="font-normal text-gray-400">(rarely needed)</span></summary>
-                    <p className="mt-1 text-xs text-gray-500">Used only for non-Drive creatives that do not have per-ad copy.</p>
+                {!isMatchImport && !creativeData.creatives?.some(c => c.source === 'drive') && (
+                <details className="rounded-lg border border-gray-200 bg-gray-50/70 p-3" open>
+                    <summary className="cursor-pointer text-sm font-semibold text-gray-700">Primary Text Variations</summary>
                     <div className="flex items-center justify-between mb-2">
                         <label className="block text-sm font-medium text-gray-700">
-                            {creativeData.creatives?.some(c => c.source === 'drive' || c.headline || c.body) ? 'Shared fallback Primary Text' : 'Primary Text *'}
+                            Primary Text *
                         </label>
                         {creativeData.bodies.length < 3 && (
                             <button
@@ -3121,13 +3116,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 )}
 
                 {/* Headline */}
-                {!isMatchImport && (
-                <details className="rounded-lg border border-gray-200 bg-gray-50/70 p-3" open={!creativeData.creatives?.some(c => c.source === 'drive' || c.headline || c.body)}>
-                    <summary className="cursor-pointer text-sm font-semibold text-gray-700">Shared fallback Headline <span className="font-normal text-gray-400">(rarely needed)</span></summary>
-                    <p className="mt-1 text-xs text-gray-500">Used only for non-Drive creatives that do not have per-ad copy.</p>
+                {!isMatchImport && !creativeData.creatives?.some(c => c.source === 'drive') && (
+                <details className="rounded-lg border border-gray-200 bg-gray-50/70 p-3" open>
+                    <summary className="cursor-pointer text-sm font-semibold text-gray-700">Headline Variations</summary>
                     <div className="flex items-center justify-between mb-2">
                         <label className="block text-sm font-medium text-gray-700">
-                            {creativeData.creatives?.some(c => c.source === 'drive' || c.headline || c.body) ? 'Shared fallback Headline' : 'Headline *'}
+                            Headline *
                         </label>
                         {creativeData.headlines.length < 3 && (
                             <button
@@ -3179,7 +3173,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 )}
 
                 {/* Description */}
-                {!isMatchImport && (
+                {!isMatchImport && !creativeData.creatives?.some(c => c.source === 'drive') && (
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                         Description
@@ -3249,10 +3243,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 )}
 
                 {/* Call to Action — Match Import gets CTA per-row from the CSV (defaults to LEARN_MORE) */}
-                {!isMatchImport && (
+                {!isMatchImport && !creativeData.creatives?.some(c => c.source === 'drive') && (
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                        {creativeData.creatives?.some(c => c.source === 'drive' || c.cta) ? 'Shared fallback Call to Action' : 'Call to Action *'}
+                        Call to Action *
                     </label>
                     <select
                         value={creativeData.cta}
@@ -3263,14 +3257,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             <option key={cta} value={cta}>{cta.replace(/_/g, ' ')}</option>
                         ))}
                     </select>
-                    {creativeData.creatives?.some(c => c.source === 'drive' || c.cta) && <p className="mt-1 text-xs text-gray-500">Applies only to non-Drive rows without their own CTA.</p>}
                 </div>
                 )}
 
                 {/* Website URL */}
-                <div>
+                {!creativeData.creatives?.some(c => c.source === 'drive') && <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                        {creativeData.creatives?.some(c => c.source === 'drive' || c.websiteUrl) ? 'Shared fallback Website URL' : 'Website URL (Landing Page) *'}
+                        Website URL (Landing Page) *
                     </label>
                     <input
                         type="url"
@@ -3279,8 +3272,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         placeholder="https://yourwebsite.com/landing"
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                     />
-                    {creativeData.creatives?.some(c => c.source === 'drive' || c.websiteUrl) && <p className="mt-1 text-xs text-gray-500">Applies only to non-Drive rows without their own destination URL.</p>}
-                </div>
+                </div>}
 
                 {isMatchImport && (
                     <p className="text-sm text-gray-500 -mt-2">
@@ -3293,7 +3285,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 BulkAdCreation's nav bar: this step's form is long, and "Next Step"
                 shouldn't require scrolling all the way down to find, especially on
                 mobile. -mx-6/px-6 cancels the parent workspace card's own p-6. */}
-            <div className="mt-10 flex justify-between items-center sticky bottom-0 -mx-6 bg-white border-t border-gray-200 px-6 py-4 shadow-[0_-4px_12px_-4px_rgba(0,0,0,0.08)]">
+            <div className="mt-10 flex justify-between items-center sticky bottom-0 z-10 -mx-6 bg-white border-t border-gray-200 px-6 py-4 shadow-[0_-4px_12px_-4px_rgba(0,0,0,0.08)]">
                 <button
                     onClick={onBack}
                     className="px-6 py-3 text-gray-600 hover:text-gray-800 font-medium"
@@ -3554,15 +3546,15 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                         </div>
                                     );
                                 })()}
-                                {driveSelectCount && driveAssetGroups.length > 0 && (() => {
+                                {driveSelectCount && visibleDriveAssetGroups.length > 0 && (() => {
                                     const n = parseInt(driveSelectCount, 10);
                                     if (!Number.isFinite(n) || n <= 0) return null;
-                                    const eligible = driveAssetGroups.filter(group => !isDriveGroupSelectionBlocked(group));
+                                    const eligible = visibleDriveAssetGroups.filter(group => !isDriveGroupSelectionBlocked(group));
                                     const willSelect = eligible.slice(0, n);
-                                    const blockedInScope = driveAssetGroups.length - eligible.length;
+                                    const blockedInScope = visibleDriveAssetGroups.length - eligible.length;
                                     return (
                                         <span className="text-[11px] text-gray-500">
-                                            Will select <strong className="text-gray-900 font-semibold">{willSelect.length}</strong> of {driveAssetGroups.length} matching
+                                            Will select <strong className="text-gray-900 font-semibold">{willSelect.length}</strong> of {visibleDriveAssetGroups.length} matching
                                             {blockedInScope > 0 ? <span className="text-amber-700"> ({blockedInScope} blocked)</span> : null}
                                         </span>
                                     );
@@ -3615,7 +3607,29 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     <button type="button" onClick={() => setAllDriveSections(false)} className="rounded border border-gray-300 px-2 py-0.5 hover:bg-gray-50">Collapse all</button>
                                 </div>
                             )}
-                            {driveParents.map(parent => {
+                            <div className="grid gap-3 md:grid-cols-[220px_1fr]">
+                                <aside className="max-h-[54vh] overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-2" aria-label="Drive folders">
+                                    <div className="mb-1 px-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Folders</div>
+                                    {driveParents.map(parent => {
+                                        const selected = parent.key === selectedDriveParentKey;
+                                        const selectedCount = parent.groups.filter(group => selectedDriveAssetIds.has(group.id)).length;
+                                        return (
+                                            <button
+                                                key={parent.key}
+                                                type="button"
+                                                onClick={() => setSelectedDriveParentKey(parent.key)}
+                                                className={`mb-1 flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-xs transition-colors ${selected ? 'bg-white font-semibold text-gray-900 shadow-sm ring-1 ring-amber-300' : 'text-gray-700 hover:bg-white'}`}
+                                                title={parent.key}
+                                            >
+                                                <FolderOpen size={14} className={`mt-0.5 shrink-0 ${selected ? 'text-amber-600' : 'text-gray-400'}`} />
+                                                <span className="min-w-0 flex-1 truncate">{parent.key}</span>
+                                                <span className="shrink-0 text-gray-400">{selectedCount > 0 ? `${selectedCount}/${parent.groups.length}` : parent.groups.length}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </aside>
+                                <div className="min-w-0">
+                            {visibleDriveParents.map(parent => {
                                 const parentExpanded = isParentExpanded(parent);
                                 const parentSelected = parent.groups.filter(group => selectedDriveAssetIds.has(group.id)).length;
                                 const parentAllSelected = parentFullySelected(parent);
@@ -3853,6 +3867,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 </div>
                                 );
                             })}
+                                </div>
+                            </div>
                             </>
                         )}
                     </div>

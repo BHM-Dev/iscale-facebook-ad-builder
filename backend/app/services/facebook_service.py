@@ -1489,6 +1489,10 @@ class FacebookService:
         params = {
             AdCreative.Field.name: creative_name,
             AdCreative.Field.object_story_spec: object_story_spec,
+            # Keep every newly-created creative out of Meta's multi-advertiser
+            # placements. This is an AdCreative-level enrollment, separate from
+            # Advantage+ creative features, and must be set at creation time.
+            'contextual_multi_ads': {'enroll_status': 'OPT_OUT'},
         }
         # Opt-in only: preserve today's behavior exactly when the UI sends no
         # enabled enhancement flags. The allow-list mirrors the current SDK's

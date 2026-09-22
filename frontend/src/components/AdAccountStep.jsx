@@ -148,7 +148,7 @@ const AdAccountStep = ({ onNext }) => {
                         />
 
                         {showDropdown && filteredAccounts.length > 0 && (
-                            <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                            <div className="absolute z-30 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
                                 {filteredAccounts.map(account => (
                                     <div
                                         key={account.id}
@@ -166,7 +166,7 @@ const AdAccountStep = ({ onNext }) => {
                         )}
 
                         {showDropdown && searchQuery && filteredAccounts.length === 0 && (
-                            <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg p-4 text-gray-500 text-sm">
+                            <div className="absolute z-30 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg p-4 text-gray-500 text-sm">
                                 No accounts match "{searchQuery}"
                             </div>
                         )}
@@ -225,7 +225,7 @@ const AdAccountStep = ({ onNext }) => {
 
             {/* Persistent workspace navigation — the account list can be long, so
                 advancing should remain one click away instead of below the fold. */}
-            <div className="sticky bottom-0 z-20 -mx-6 mt-10 flex justify-end border-t border-gray-200 bg-white px-6 py-4 shadow-[0_-4px_12px_-4px_rgba(0,0,0,0.08)]">
+            <div className="sticky bottom-0 z-10 -mx-6 mt-10 flex justify-end border-t border-gray-200 bg-white px-6 py-4 shadow-[0_-4px_12px_-4px_rgba(0,0,0,0.08)]">
                 <button
                     onClick={handleNext}
                     disabled={!selectedAdAccount}

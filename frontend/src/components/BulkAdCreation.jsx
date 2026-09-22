@@ -55,7 +55,7 @@ const formatNamingDate = () => new Date().toLocaleDateString('en-US', { month: '
 
 // 'LEARN_MORE' -> 'Learn More' — same values BulkAdCreation already sends to Meta
 // (AdCreativeStep.jsx's CTA_OPTIONS), just title-cased for a native-looking button.
-const formatCtaLabel = (cta) => (cta || 'LEARN_MORE')
+const formatCtaLabel = (cta) => (cta || 'GET_QUOTE')
     .split('_')
     .map(word => word.charAt(0) + word.slice(1).toLowerCase())
     .join(' ');
@@ -1837,6 +1837,16 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
                 <h3 className="font-semibold text-blue-900 mb-2">Summary</h3>
                 <div className="text-sm text-blue-800 space-y-1">
+                    <div className="rounded-md border border-blue-200 bg-white/70 px-3 py-2 text-blue-950">
+                        <strong>Meta will create {activeAds.length} paused ad{activeAds.length !== 1 ? 's' : ''}</strong>
+                        {perMediaModeActive
+                            ? ` across ${new Set(activeAds.map(ad => ad.creativeId)).size} new ad set${new Set(activeAds.map(ad => ad.creativeId)).size !== 1 ? 's' : ''}.`
+                            : adsetData.isExisting
+                                ? ' in the selected existing ad set.'
+                                : isMixedFormat && !driveManifestHasDualPlacement
+                                    ? ' across 2 new ad sets (Feed and Stories/Reels).'
+                                    : ' in 1 new ad set.'}
+                    </div>
                     <div><strong>Campaign:</strong> {campaignData.name}</div>
                     {campaignData.budgetType === 'CBO' && (
                         <div><strong>Campaign Budget:</strong> {campaignData.budgetScheduleType === 'LIFETIME'

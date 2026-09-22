@@ -7,15 +7,13 @@ import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorag
 import NamingTemplateField from './NamingTemplateField';
 
 const OPTIMIZATION_GOALS = [
-    { value: 'OFFSITE_CONVERSIONS', label: 'Sales/Purchases', description: 'Optimize for conversions on your website' },
-    { value: 'LINK_CLICKS', label: 'Traffic/Clicks', description: 'Get more clicks to your website' },
-    { value: 'LANDING_PAGE_VIEWS', label: 'Landing Page Views', description: 'Get more landing page views' },
-    { value: 'IMPRESSIONS', label: 'Brand Awareness', description: 'Maximize impressions' },
-    { value: 'REACH', label: 'Unique Reach', description: 'Reach unique people' },
-    { value: 'POST_ENGAGEMENT', label: 'Engagement', description: 'Get more post engagement' },
-    { value: 'THRUPLAY', label: 'Video Completion', description: 'Optimize for video views' },
-    { value: 'VIDEO_VIEWS', label: '3s Video Views', description: 'Get 3-second video views' },
-    { value: 'LEAD_GENERATION', label: 'Lead Ads', description: 'Collect leads with lead forms' }
+    // These are the website lead-generation choices this launcher can actually
+    // create end-to-end. Calls, messaging, and Instant Form lead goals need a
+    // different destination/form contract and are intentionally not offered as
+    // dead-end choices here.
+    { value: 'OFFSITE_CONVERSIONS', label: 'Maximize number of leads', description: 'Optimize toward your pixel Lead event' },
+    { value: 'LANDING_PAGE_VIEWS', label: 'Maximize landing page views', description: 'Find people likely to wait for your landing page to load' },
+    { value: 'LINK_CLICKS', label: 'Maximize link clicks', description: 'Find people likely to click through to your landing page' },
 ];
 
 const CONVERSION_EVENTS = [
@@ -136,6 +134,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
     const [pixelsError, setPixelsError] = useState(null);
     const [isTargetingOpen, setIsTargetingOpen] = useState(false);
     const [isScheduleOpen, setIsScheduleOpen] = useState(true);
+    const [showRestrictionDetails, setShowRestrictionDetails] = useState(false);
     const [countrySearch, setCountrySearch] = useState('');
     const [locationResults, setLocationResults] = useState([]);
     const [isSearchingLocations, setIsSearchingLocations] = useState(false);
@@ -261,25 +260,10 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
         return () => { cancelled = true; };
     }, [mode, selectedAdAccount, campaignData.fbCampaignId, campaignData.id]);
 
-    // Defaults Conversion Event to match the campaign's real objective — found
-    // live 2026-09-15: a new ad set under a Leads-objective (OUTCOME_LEADS)
-    // campaign still defaulted Conversion Event to PURCHASE. Optimization Goal
-    // itself correctly stays OFFSITE_CONVERSIONS regardless (see the
-    // ATTRIBUTION_SETTINGS comment above — every real BHM ad set uses that
-    // goal even under "Leads"-labeled campaigns; that part isn't the bug), but
-    // the pixel event a Leads campaign actually fires is "Lead", not
-    // "Purchase". Never touches an existing ad set restored from its own real
-    // values (isExisting check). Infers "untouched" from the value still
-    // being exactly the PURCHASE default rather than a real touched flag —
-    // same proxy this file's other new-ad-set defaults (pixel, schedule) use.
-    // Known edge case, not fixed here: if a user picks PURCHASE deliberately
-    // on a Leads campaign, then goes Back and Forward through the wizard
-    // without changing the objective (remounting this component), the guard
-    // can't tell that apart from "never touched" and will reset it to LEAD.
-    // Same asymmetry the other direction — changing the objective AWAY from
-    // Leads after this has already fired leaves conversionEvent stuck on
-    // LEAD. Both require deliberate Back/Forward navigation to hit; a real
-    // touched flag would close this properly if it becomes a real complaint.
+    // Backward-compatible migration for drafts created before LEAD became the
+    // default: a Leads campaign with the old untouched PURCHASE default is
+    // corrected on revisit. Existing ad sets and any other explicit event are
+    // never changed.
     useEffect(() => {
         if (mode !== 'new' || campaignData.objective !== 'OUTCOME_LEADS') return;
         setAdsetData(prev => {
@@ -287,6 +271,21 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
                 return prev;
             }
             return { ...prev, conversionEvent: 'LEAD' };
+        });
+    }, [mode, campaignData.objective]);
+
+    // The reverse case: createDefaultAdsetData() now seeds every brand-new ad
+    // set with conversionEvent 'LEAD' (this launcher is lead-gen first), but a
+    // non-Leads objective (e.g. OUTCOME_SALES) still needs 'PURCHASE'. Only
+    // touches the untouched default, never an explicit choice or an existing
+    // ad set — same proxy as the migration effect above.
+    useEffect(() => {
+        if (mode !== 'new' || campaignData.objective === 'OUTCOME_LEADS') return;
+        setAdsetData(prev => {
+            if (prev.isExisting || prev.optimizationGoal !== 'OFFSITE_CONVERSIONS' || prev.conversionEvent !== 'LEAD') {
+                return prev;
+            }
+            return { ...prev, conversionEvent: 'PURCHASE' };
         });
     }, [mode, campaignData.objective]);
 
@@ -673,15 +672,22 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
 
                     {/* HEC targeting restriction banner */}
                     {isHECRestricted && (
-                        <div className="p-4 bg-amber-50 border border-amber-300 rounded-xl text-sm text-amber-900">
-                            <div className="font-semibold mb-1">Targeting restrictions apply (Special Ad Category)</div>
-                            <ul className="list-disc list-inside space-y-0.5 text-amber-800">
-                                <li>Age range is fixed at 18–65+ (custom ranges not allowed)</li>
-                                <li>Gender targeting is disabled (all genders only)</li>
-                                <li>City and DMA/metro targeting are blocked — use country or state/region only</li>
-                                <li>Location exclusions are not allowed</li>
-                            </ul>
-                            <p className="mt-2 text-xs text-amber-700">These restrictions are enforced by Meta for Housing, Employment, and Financial Products &amp; Services campaigns. Restricted settings will be automatically stripped before launch.</p>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                            <span className="font-semibold">Meta Special Ad Category restrictions are on</span>
+                            <span className="text-amber-800">Age, gender, city/DMA, and location exclusions are unavailable.</span>
+                            <button
+                                type="button"
+                                onClick={() => setShowRestrictionDetails(current => !current)}
+                                className="font-semibold text-amber-800 underline hover:text-amber-950"
+                                aria-expanded={showRestrictionDetails}
+                            >
+                                {showRestrictionDetails ? 'Hide details' : 'See details'}
+                            </button>
+                            {showRestrictionDetails && (
+                                <p className="basis-full border-t border-amber-200 pt-2 text-amber-800">
+                                    Meta fixes age to 18–65+, requires all genders, and only allows country or state/region targeting. These limits apply to Housing, Employment, and Financial Products &amp; Services campaigns.
+                                </p>
+                            )}
                         </div>
                     )}
 
@@ -1003,7 +1009,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
                                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                                     />
                                     <p className="mt-1 text-xs text-gray-500">
-                                        Defaults to tomorrow at 1:00 AM.
+                                        Defaults to the current time, like Meta. Change it only when you want a scheduled launch.
                                     </p>
                                 </div>
 
@@ -1022,6 +1028,15 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
                                                 {goal.label} - {goal.description}
                                             </option>
                                         ))}
+                                        {/* An existing ad set can carry a goal this launcher no longer
+                                            offers for new ad sets (Brand Awareness, Video Views, etc).
+                                            Render it so the select never silently blanks and a save
+                                            can't accidentally overwrite it with an unrelated goal. */}
+                                        {adsetData.optimizationGoal && !OPTIMIZATION_GOALS.some(goal => goal.value === adsetData.optimizationGoal) && (
+                                            <option value={adsetData.optimizationGoal}>
+                                                {adsetData.optimizationGoal} (not editable here — set in Ads Manager)
+                                            </option>
+                                        )}
                                     </select>
                                 </div>
 
