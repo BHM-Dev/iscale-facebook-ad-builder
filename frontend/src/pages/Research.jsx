@@ -1298,6 +1298,11 @@ export default function Research() {
   }, [activeVertical, activeSubVertical, config, subVerticals]);
 
   const visibleSavedAds = activeBoardId ? boardAds : savedAds;
+  const hasActiveFilters = Boolean(angleFilter || mediaTypeFilter || creativeTagFilter || ctaTypeFilter || pageTypeFilter || activeOnly || newOnly || advertiserFilter);
+  const clearFilters = () => {
+    setAngleFilter(''); setMediaTypeFilter(''); setCreativeTagFilter(''); setCtaTypeFilter('');
+    setPageTypeFilter(''); setActiveOnly(false); setNewOnly(false); setAdvertiserFilter('');
+  };
   const catalogSummary = useMemo(() => ({
     total: browseAds.length,
     newCount: browseAds.filter(ad => ad.first_seen && Date.now() - new Date(ad.first_seen).getTime() <= 7 * 24 * 60 * 60 * 1000).length,
@@ -1609,6 +1614,7 @@ export default function Research() {
               placeholder="Filter by advertiser…"
               className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-indigo-400 focus:border-transparent w-44"
             />
+            {hasActiveFilters && <button type="button" onClick={clearFilters} className="text-xs font-medium text-indigo-600 hover:text-indigo-800">Clear filters</button>}
           </div>
 
           {refreshSummary?.first_error && (
