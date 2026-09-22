@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Deterministically enrich existing Research rows; safe to run repeatedly."""
 import argparse
+from collections import Counter
 
 from app.database import SessionLocal
 from app.models import ScrapedAd
@@ -26,6 +27,8 @@ def main() -> None:
     args = parser.parse_args()
     db = SessionLocal()
     changed = 0
+    themes = Counter()
+    ctas = Counter()
     try:
         # Keyset-paginated by id rather than a single yield_per generator held
         # open across commits (mixing a streamed cursor with mid-loop commits
@@ -50,13 +53,21 @@ def main() -> None:
                 if not update:
                     continue
                 changed += 1
+                themes.update(update["creative_tags"] or [])
+                if update["cta_type"]:
+                    ctas.update([update["cta_type"]])
                 if args.apply:
                     for field, value in update.items():
                         setattr(ad, field, value)
             if args.apply:
                 db.commit()
             db.expunge_all()
-        print(f"{'Updated' if args.apply else 'Would update'} {changed} research ads")
+        action = "Updated" if args.apply else "Would update"
+        print(f"{action} {changed} research ads")
+        if themes:
+            print("Themes: " + ", ".join(f"{tag}={count}" for tag, count in themes.most_common()))
+        if ctas:
+            print("CTAs: " + ", ".join(f"{cta}={count}" for cta, count in ctas.most_common()))
     finally:
         db.close()
 
