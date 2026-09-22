@@ -361,6 +361,8 @@ function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onNotesSaved, b
   const [related, setRelated] = useState([]);
   const [notes, setNotes] = useState({ hook_type: '', promise: '' });
   const [savingNotes, setSavingNotes] = useState(false);
+  const [videoFailed, setVideoFailed] = useState(false);
+  useEffect(() => { setVideoFailed(false); }, [ad?.id]);
   useEffect(() => {
     if (!ad?.id) return undefined;
     let alive = true;
@@ -376,7 +378,9 @@ function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onNotesSaved, b
   }, [ad, onClose]);
   if (!ad) return null;
   const media = ad.thumbnail_url || ad.media_url;
-  const videoPreview = ad.media_preview_url || (ad.video_urls || [])[0];
+  // Meta CDN video URLs expire within minutes to hours (same as media_url) —
+  // never assume a captured video_urls/media_preview_url is still playable.
+  const videoPreview = !videoFailed && (ad.media_preview_url || (ad.video_urls || [])[0]);
   const saveNotes = async () => {
     setSavingNotes(true);
     try {
@@ -389,7 +393,7 @@ function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onNotesSaved, b
   return <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/30 backdrop-blur-sm" onClick={onClose}>
     <aside className="h-full w-full max-w-xl overflow-y-auto bg-white p-6 shadow-2xl" onClick={event => event.stopPropagation()} aria-label="Creative detail">
       <div className="mb-5 flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wider text-indigo-600">Creative detail</p><h2 className="mt-1 text-xl font-bold text-slate-900">{ad.brand_name || 'Unknown advertiser'}</h2></div><button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X size={20}/></button></div>
-      {(media || videoPreview) && <div className="relative mb-5 aspect-[4/3] overflow-hidden rounded-xl bg-slate-100">{ad.media_type === 'video' && videoPreview ? <video controls muted playsInline preload="metadata" poster={media || undefined} className="h-full w-full object-cover"><source src={videoPreview} />Your browser cannot preview this captured video.</video> : <img src={media} alt="Competitor creative" className="h-full w-full object-cover" onError={e => { e.target.style.display = 'none'; }} />}{ad.media_type === 'video' && <span className="absolute bottom-3 left-3 pointer-events-none inline-flex items-center gap-1 rounded-full bg-black/75 px-3 py-1.5 text-xs font-semibold text-white"><Play size={13} fill="currentColor"/> Video{ad.video_length_seconds ? ` · ${ad.video_length_seconds}s` : ''}</span>}</div>}
+      {(media || videoPreview) && <div className="relative mb-5 aspect-[4/3] overflow-hidden rounded-xl bg-slate-100">{ad.media_type === 'video' && videoPreview ? <video controls muted playsInline preload="metadata" poster={media || undefined} className="h-full w-full object-cover" onError={() => setVideoFailed(true)}><source src={videoPreview} />Your browser cannot preview this captured video.</video> : <img src={media} alt="Competitor creative" className="h-full w-full object-cover" onError={e => { e.target.style.display = 'none'; }} />}{ad.media_type === 'video' && <span className="absolute bottom-3 left-3 pointer-events-none inline-flex items-center gap-1 rounded-full bg-black/75 px-3 py-1.5 text-xs font-semibold text-white"><Play size={13} fill="currentColor"/> Video{ad.video_length_seconds ? ` · ${ad.video_length_seconds}s` : ''}</span>}</div>}
       <div className="mb-5 flex flex-wrap gap-2">{(ad.creative_tags || []).map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">{tag.replaceAll('_', ' ')}</span>)}{ad.cta_type && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">CTA: {ad.cta_type.replaceAll('_', ' ')}</span>}</div>
       {ad.headline && <h3 className="text-lg font-semibold leading-snug text-slate-900">{ad.headline}</h3>}{ad.ad_copy && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{ad.ad_copy}</p>}
       <dl className="mt-6 grid grid-cols-2 gap-3 border-t border-slate-100 pt-5 text-sm"><div><dt className="text-xs text-slate-400">Destination</dt><dd className="mt-1 truncate font-medium text-slate-700">{ad.destination_domain || 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Observed</dt><dd className="mt-1 font-medium text-slate-700">{ad.running_days != null ? `${ad.running_days} days` : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Last captured</dt><dd className="mt-1 font-medium text-slate-700">{ad.last_seen ? new Date(ad.last_seen).toLocaleDateString() : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Tag source</dt><dd className="mt-1 font-medium text-slate-700">{ad.taxonomy_source || 'Not tagged'}</dd></div></dl>
