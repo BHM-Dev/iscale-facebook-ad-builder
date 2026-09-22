@@ -50,6 +50,7 @@ class DriveSyncService:
         self._folder_metadata_cache: Dict[str, Dict[str, Any]] = {}
         self._package_folder_cache: Dict[str, Optional[str]] = {}
         self._strategy_package_folder_cache: Dict[str, Optional[str]] = {}
+        self._backfill_mode = False
 
     def sync_once(self, backfill: bool = False) -> Dict[str, Any]:
         result = {
@@ -79,6 +80,7 @@ class DriveSyncService:
                 )
             drive = self._client()
             page_token = self._get_state_token()
+            self._backfill_mode = bool(backfill and page_token)
 
             if backfill or not page_token:
                 start_token = self._get_start_page_token(drive)
@@ -390,6 +392,18 @@ class DriveSyncService:
         ).mappings().first()
         modified_time = self._parse_drive_time(file_meta.get("modifiedTime"))
         if existing and existing["drive_modified_time"] and existing["drive_modified_time"].replace(tzinfo=timezone.utc) == modified_time:
+            if self._backfill_mode:
+                # The explicit copy-refresh pass that follows a backfill walks
+                # all current copy documents. Do not recursively resolve the
+                # package for every unchanged image here; on a large Drive that
+                # turns a metadata reconciliation into a multi-minute binary
+                # sync and makes the UI appear hung.
+                self.db.execute(
+                    text("UPDATE drive_assets SET archived = FALSE, synced_at = NOW() WHERE id = :id"),
+                    {"id": existing["id"]},
+                )
+                result["skipped"] += 1
+                return
             # Drive metadata can change without the binary changing (for
             # example, a copy doc or manifest is added after image upload).
             # Refresh tags so existing rows can backfill placement/copy data.
