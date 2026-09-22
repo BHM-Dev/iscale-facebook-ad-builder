@@ -102,7 +102,14 @@ def refresh_drive_copy_metadata(
     """Sync Drive changes, then re-match imported media to active copy sources."""
     try:
         service = DriveSyncService(db)
-        sync_result = service.sync_once()
+        # A copy refresh must reconcile the current Drive inventory before it
+        # evaluates copy tags.  An incremental changes token can be older than
+        # the asset rows (for example after a Drive re-export creates new file
+        # IDs), which leaves the picker showing stale images as "No copy in
+        # Drive" even though the canonical document is current.  Backfill is
+        # cheap for unchanged rows because _process_file skips their binaries;
+        # it ingests only newly discovered/replaced media and closes this gap.
+        sync_result = service.sync_once(backfill=True)
         refresh_result = service.refresh_copy_metadata()
         for key in ("processed", "created", "updated", "skipped", "archived", "unmatched_brand", "errors"):
             refresh_result[key] = (refresh_result.get(key) or 0) + (sync_result.get(key) or 0)
