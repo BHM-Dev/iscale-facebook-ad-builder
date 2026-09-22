@@ -356,6 +356,24 @@ Primary copy.
     assert service._parse_ad_copy_doc(document)[1]["primary_text"] == "Primary copy."
 
 
+def test_ad_numbered_copy_doc_tolerates_google_export_formatting_marks():
+    service = DriveSyncService.__new__(DriveSyncService)
+    document = """\ufeffGBC — Painting Contractors
+AD\u00a01 — Identity
+META HEADLINE:
+Commercial Van Insurance for Painters
+PRIMARY TEXT:
+\u200bPainting primary copy from Joel.
+CTA: Get My Rate Now
+"""
+
+    sections = service._parse_ad_copy_doc(document)
+
+    assert service._looks_like_ad_copy_doc(document)
+    assert sections[1]["headline"] == "Commercial Van Insurance for Painters"
+    assert sections[1]["primary_text"] == "Painting primary copy from Joel."
+
+
 def test_ad_numbered_copy_doc_parses_compact_v2_format():
     service = DriveSyncService.__new__(DriveSyncService)
     document = """NICHE 04 — LANDSCAPING CONTRACTORS | FRESH SET v2

@@ -1494,17 +1494,18 @@ class DriveSyncService:
         # labels but no complete headline/body pair. Do not classify them as an
         # authoritative source: doing so makes refresh call the AD parser and
         # raise "no complete copy sections" before it reaches the real file.
-        if not re.search(r"^\s*AD\s+\d+\b", text_body, re.IGNORECASE | re.MULTILINE):
+        normalized_body = re.sub(r"[\ufeff\u200b\u200c\u200d]", "", text_body or "").replace("\u00a0", " ")
+        if not re.search(r"^\s*AD\s+\d+\b", normalized_body, re.IGNORECASE | re.MULTILINE):
             return False
         has_headline_label = bool(
-            re.search(r"^\s*META\s+HEADLINE\s*:?\s*$", text_body, re.IGNORECASE | re.MULTILINE)
-            or re.search(r"^\s*Headline\s*:", text_body, re.IGNORECASE | re.MULTILINE)
+            re.search(r"^\s*META\s+HEADLINE\s*:?\s*$", normalized_body, re.IGNORECASE | re.MULTILINE)
+            or re.search(r"^\s*Headline\s*:", normalized_body, re.IGNORECASE | re.MULTILINE)
         )
         has_primary_label = bool(
-            re.search(r"^\s*PRIMARY\s+TEXT\s*:?\s*$", text_body, re.IGNORECASE | re.MULTILINE)
-            or re.search(r"^\s*={10,}\s*$", text_body, re.MULTILINE)
+            re.search(r"^\s*PRIMARY\s+TEXT\s*:?\s*$", normalized_body, re.IGNORECASE | re.MULTILINE)
+            or re.search(r"^\s*={10,}\s*$", normalized_body, re.MULTILINE)
         )
-        return bool(has_headline_label and has_primary_label and self._parse_ad_copy_doc(text_body))
+        return bool(has_headline_label and has_primary_label and self._parse_ad_copy_doc(normalized_body))
 
     _CATEGORY_ALIASES = {
         1: ("landscaping", "landscaper", "landscapers", "field service", "lawn care", "outdoor crew"),
@@ -1659,6 +1660,14 @@ class DriveSyncService:
         headline and body is omitted, so a draft can never produce a misleading
         Copy matched tag.
         """
+        # Google Docs/text exports occasionally carry a BOM or zero-width
+        # formatting characters from pasted content.  Those characters are
+        # invisible to Joel but make an otherwise valid `AD 1` heading fail the
+        # anchored parser, which then looks like a document with no complete
+        # sections.  Normalize them once at the boundary so refresh and the
+        # incremental path use the same tolerant parser.
+        text_body = re.sub(r"[\ufeff\u200b\u200c\u200d]", "", text_body or "")
+        text_body = text_body.replace("\u00a0", " ")
         headings = list(re.finditer(r"^\s*AD\s+(\d+)\b.*$", text_body, re.IGNORECASE | re.MULTILINE))
         sections: Dict[int, Dict[str, Any]] = {}
         seen_numbers = set()
