@@ -601,6 +601,35 @@ def test_successful_copy_refresh_clears_stale_unverified_mark():
     assert writes["media-1"]["copy_integrity_reason"] is None
 
 
+def test_copy_refresh_uses_resolved_package_when_brand_name_is_not_registered():
+    """A copy source can be valid even when its Drive brand folder was renamed."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._resolve_drive_path = lambda file_meta: type("R", (), {"brand_folder": "Renamed Brand", "folder_path": "package"})()
+    service._match_brand_id = lambda brand_folder: None
+    service._find_strategy_package_folder = lambda file_meta: "package"
+    service._find_package_folder = lambda file_meta: None
+    service._folder_copy_metadata = lambda folder_id, force=False: {
+        "assets_by_drive_id": {
+            "media-1": {
+                "file_name": "CVI-PAINT-01-IDENTITY-1x1.png",
+                "drive_file_ids": ["media-1"],
+                "copy_id": "AD-01",
+            }
+        },
+        "_copy_source_drive_file_id": "copy-doc",
+    }
+    writes = {}
+    service._write_merged_soft_tags = lambda drive_file_id, tags: (writes.__setitem__(drive_file_id, tags), 1)[1]
+    service._mark_unmatched_package_assets_unverified = lambda package_folder, matched: None
+
+    updated = service._refresh_folder_copy_metadata(
+        {"id": "copy-doc", "name": "01-Painting-Ad-Copy.txt", "mimeType": "text/plain", "parents": ["ad-copy-folder"]}
+    )
+
+    assert updated == 1
+    assert writes["media-1"]["copy_refresh_status"] == "verified"
+
+
 def test_strategy_copy_refresh_keeps_complete_ads_when_another_ad_is_incomplete():
     service = DriveSyncService.__new__(DriveSyncService)
     document = """## AD-CL-01 — Complete

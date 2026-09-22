@@ -903,7 +903,17 @@ class DriveSyncService:
             return 0
         brand_id = self._match_brand_id(resolved.brand_folder)
         if not brand_id:
-            return 0
+            # Copy documents are resolved to an exact package folder below the
+            # configured Drive root.  Unlike media ingestion, refresh does not
+            # need a brand row to safely update the existing package assets: the
+            # package_folder_id is the binding key used below.  A renamed or
+            # newly-created brand folder therefore must not make Joel's current
+            # copy invisible after a refresh.  Keep the lookup for diagnostics,
+            # but let the package resolver remain authoritative here.
+            logger.warning(
+                "Refreshing Drive copy for brand folder %s with no matching brand row; using resolved package folder",
+                resolved.brand_folder,
+            )
 
         # Only a handoff manifest names its own package by filename, which is the
         # single thing _find_package_folder recognizes. Its "has_media and depth >= 1"
