@@ -34,6 +34,12 @@ const INTELLIGENCE_PRESETS = [
 ];
 const INTELLIGENCE_PRESET_VALUES = new Set(INTELLIGENCE_PRESETS.map(p => p.value));
 
+function intelligencePresetLabel(presetOption, intelligenceView) {
+  if (intelligenceView === 'geography' && presetOption.value === 'weekdays_mtd') return 'Weekdays (last 14d)';
+  if (intelligenceView === 'geography' && presetOption.value === 'weekends_mtd') return 'Weekends (last 14d)';
+  return presetOption.label;
+}
+
 function resolveIntelligencePreset(pageDatePreset, explicitPreset) {
   if (explicitPreset && INTELLIGENCE_PRESET_VALUES.has(explicitPreset)) return explicitPreset;
   if (pageDatePreset && INTELLIGENCE_PRESET_VALUES.has(pageDatePreset)) return pageDatePreset;
@@ -503,7 +509,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                     : 'bg-gray-100 text-gray-600 border border-transparent hover:bg-gray-200'
                 }`}
               >
-                {p.label}
+                {intelligencePresetLabel(p, intelligenceView)}
               </button>
             ))}
           </div>

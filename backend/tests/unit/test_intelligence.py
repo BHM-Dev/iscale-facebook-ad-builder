@@ -3,7 +3,7 @@
 from datetime import date, datetime
 
 import app.api.v1.intelligence as intelligence
-from app.api.v1.intelligence import BEST_TIMES_DAYPARTS, _build_best_times, _build_geography_watchlist, _extract_niche, _redtrack_adset_id, _redtrack_offer_matches, _resolve_preset
+from app.api.v1.intelligence import BEST_TIMES_DAYPARTS, _build_best_times, _build_geography_watchlist, _clamp_geography_day_filter_window, _extract_niche, _redtrack_adset_id, _redtrack_offer_matches, _resolve_preset
 
 
 def test_best_times_dayparts_is_reusable_not_a_single_use_generator():
@@ -76,6 +76,33 @@ def test_resolve_preset_uses_redtrack_calendar(monkeypatch):
     assert _resolve_preset('today', None, None)[:2] == ('2026-09-19', '2026-09-19')
     assert _resolve_preset('yesterday', None, None)[:2] == ('2026-09-18', '2026-09-18')
     assert _resolve_preset('this_month', None, None)[:2] == ('2026-09-01', '2026-09-19')
+
+
+def test_geography_day_filter_window_is_capped_at_14_days_and_preserves_month_start():
+    assert _clamp_geography_day_filter_window(
+        '2026-09-01', '2026-09-23', 'weekday'
+    ) == ('2026-09-10', '2026-09-23', 'Weekdays (last 14d)')
+    assert _clamp_geography_day_filter_window(
+        '2026-09-01', '2026-09-05', 'weekend'
+    ) == ('2026-09-01', '2026-09-05', 'Weekends (last 14d)')
+
+
+def test_geography_day_filter_clamp_does_not_change_other_filters():
+    assert _clamp_geography_day_filter_window(
+        '2026-09-01', '2026-09-23', 'all'
+    ) == ('2026-09-01', '2026-09-23', '')
+
+
+def test_shared_mtd_presets_remain_month_to_date_for_other_callers(monkeypatch):
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 9, 23, tzinfo=tz)
+
+    monkeypatch.setattr(intelligence, 'datetime', FixedDateTime)
+
+    assert _resolve_preset('weekdays_mtd', None, None)[:2] == ('2026-09-01', '2026-09-23')
+    assert _resolve_preset('weekends_mtd', None, None)[:2] == ('2026-09-01', '2026-09-23')
 
 
 def test_redtrack_adset_join_prefers_matching_sub2_over_nonmatching_p_sub2():

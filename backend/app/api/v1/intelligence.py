@@ -142,6 +142,23 @@ def _resolve_preset(
     return str(today - timedelta(days=6)), str(today), "all", "Last 7 days"
 
 
+def _clamp_geography_day_filter_window(
+    resolved_from: str,
+    resolved_to: str,
+    day_filter: str,
+) -> tuple[str, str, str]:
+    """Limit geography's weekday/weekend window without changing shared presets."""
+    if day_filter not in {"weekday", "weekend"}:
+        return resolved_from, resolved_to, ""
+
+    start = date.fromisoformat(resolved_from)
+    end = date.fromisoformat(resolved_to)
+    month_start = end.replace(day=1)
+    clamped_start = max(start, month_start, end - timedelta(days=13))
+    label = "Weekdays (last 14d)" if day_filter == "weekday" else "Weekends (last 14d)"
+    return str(clamped_start), resolved_to, label
+
+
 def _fetch_meta_insights(ad_account_id: Optional[str], date_from: str, date_to: str, day_filter: str) -> dict:
     """
     Fetch Meta ad set insights. When day_filter is weekday/weekend, uses
@@ -1353,10 +1370,13 @@ def geography_watchlist(
 
     ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     resolved_from, resolved_to, day_filter, preset_label = _resolve_preset(preset, date_from, date_to)
-    # weekdays_mtd/weekends_mtd resolve to the SAME resolved_from/resolved_to
-    # (both month-start-to-today) and differ only by day_filter — omitting it
-    # here would let "Weekends MTD" serve a cached "Weekdays MTD" result (or
-    # vice versa) within the TTL. Same 4-tuple shape as _BEST_TIMES_RESULT_CACHE.
+    if day_filter != "all":
+        resolved_from, resolved_to, preset_label = _clamp_geography_day_filter_window(
+            resolved_from, resolved_to, day_filter
+        )
+    # Keep day_filter in the key so weekday and weekend results never share a
+    # cached payload. The clamped dates also scope the cache to the effective
+    # 14-day geography window.
     cache_key = (str(ad_account_id or ''), resolved_from, resolved_to, day_filter)
     result = None if refresh else _get_cached_geography(cache_key)
     try:
