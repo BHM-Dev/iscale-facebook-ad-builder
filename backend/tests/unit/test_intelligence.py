@@ -3,7 +3,7 @@
 from datetime import date, datetime
 
 import app.api.v1.intelligence as intelligence
-from app.api.v1.intelligence import BEST_TIMES_DAYPARTS, _build_best_times, _build_geography_watchlist, _clamp_geography_day_filter_window, _extract_niche, _redtrack_adset_id, _redtrack_offer_matches, _resolve_preset
+from app.api.v1.intelligence import BEST_TIMES_DAYPARTS, _build_best_times, _build_geography_watchlist, _clamp_geography_day_filter_window, _extract_niche, _platform_geography_watchlist, _redtrack_adset_id, _redtrack_offer_matches, _resolve_preset
 
 
 def test_best_times_dayparts_is_reusable_not_a_single_use_generator():
@@ -103,6 +103,28 @@ def test_shared_mtd_presets_remain_month_to_date_for_other_callers(monkeypatch):
 
     assert _resolve_preset('weekdays_mtd', None, None)[:2] == ('2026-09-01', '2026-09-23')
     assert _resolve_preset('weekends_mtd', None, None)[:2] == ('2026-09-01', '2026-09-23')
+
+
+def test_platform_geography_matches_redtrack_sub2_and_everflow_sub3_to_campaigns():
+    result = _platform_geography_watchlist(
+        [
+            {'sub2': '123456789012', 'region': 'Texas', 'conv_time': '2026-09-20T12:00:00-07:00', 'revenue': '42.00'},
+        ],
+        [
+            {'sub3': '123456789012', 'region': 'Texas', 'conversion_date': '2026-09-20T19:00:00+00:00', 'revenue': '38.00', 'offer': 'Get Business Coverage'},
+        ],
+        {'123456789012': {'campaign_id': 'campaign-1', 'campaign_name': 'Commercial Insurance'}},
+        offer_names={'Get Business Coverage'},
+    )
+
+    assert result['source_mode'] == 'platform'
+    assert result['source_label'] == 'RedTrack + Everflow'
+    state = result['campaigns'][0]['states'][0]
+    assert state['state'] == 'Texas'
+    assert state['conversions'] == 1
+    assert state['revenue'] == 38.0
+    assert state['redtrack_revenue'] == 42.0
+    assert state['everflow_revenue'] == 38.0
 
 
 def test_redtrack_adset_join_prefers_matching_sub2_over_nonmatching_p_sub2():

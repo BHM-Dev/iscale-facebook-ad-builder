@@ -28,7 +28,7 @@ from app.core.deps import get_current_active_user, get_db, require_permission
 from app.api.v1.facebook import _resolve_scoped_default_account
 from app.models import User, FacebookAdSet, normalize_account_id
 from app.services.redtrack_service import RedTrackService, today_in_rt_tz
-from app.services.everflow_service import CONVERSION_DATE_FIELDS, EVERFLOW_TZ_BY_ID, EverflowService
+from app.services.everflow_service import CONVERSION_DATE_FIELDS, DEFAULT_TIMEZONE_ID, EVERFLOW_TZ_BY_ID, EverflowService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -672,6 +672,209 @@ def _build_geography_watchlist(rows: list[dict]) -> dict:
         'campaigns': watchlist,
         'flagged_campaign_count': len(watchlist),
         'flagged_state_count': sum(item['flagged_state_count'] for item in watchlist),
+    }
+
+
+def _platform_geo_value(row: dict) -> str:
+    """Return a vendor geo field normalized to the Geography state label."""
+    for field in ('region', 'state', 'geo_region'):
+        value = str(row.get(field) or '').strip()
+        if value:
+            return value
+    return ''
+
+
+def _platform_geography_watchlist(
+    redtrack_rows: list[dict],
+    everflow_rows: list[dict],
+    adset_map: dict[str, dict],
+    offer_names: Optional[set[str]] = None,
+    day_filter: str = 'all',
+) -> dict:
+    """Build state performance from RedTrack/Everflow conversion geo.
+
+    RedTrack provides the most useful attribution grain for the conversion
+    timestamp and ``sub2`` Meta ad-set join. Everflow is the billable revenue
+    corroborator and uses ``sub3`` for the same join. Neither source provides
+    state-level Meta spend, so this result intentionally reports observed
+    conversions/revenue rather than inventing a state CPL or targeting action.
+    """
+    allowed_offers = {name.casefold() for name in offer_names or set() if name}
+    campaigns: dict[str, dict] = {}
+    redtrack_state_rows = 0
+    everflow_state_rows = 0
+
+    def campaign_for(adset_id: str) -> Optional[dict]:
+        identity = adset_map.get(adset_id)
+        if not identity:
+            return None
+        campaign_id = str(identity.get('campaign_id') or '').strip()
+        if not campaign_id:
+            return None
+        return identity
+
+    def add_row(
+        source: str,
+        row: dict,
+        adset_id: str,
+        state: str,
+        revenue: Decimal,
+    ) -> None:
+        nonlocal redtrack_state_rows, everflow_state_rows
+        identity = campaign_for(adset_id)
+        if not identity or not state:
+            return
+        if source == 'redtrack':
+            redtrack_state_rows += 1
+        else:
+            everflow_state_rows += 1
+        campaign_id = str(identity['campaign_id'])
+        campaign = campaigns.setdefault(campaign_id, {
+            'campaign_id': campaign_id,
+            'campaign_name': identity.get('campaign_name') or campaign_id,
+            'states': {},
+            'total_conversions': 0,
+            'total_revenue': Decimal('0'),
+        })
+        state_metrics = campaign['states'].setdefault(state, {
+            'state': state,
+            'conversions': 0,
+            'revenue': Decimal('0'),
+            'redtrack_conversions': 0,
+            'redtrack_revenue': Decimal('0'),
+            'everflow_conversions': 0,
+            'everflow_revenue': Decimal('0'),
+            'adset_ids': set(),
+        })
+        state_metrics['conversions'] += 1
+        state_metrics['revenue'] += revenue
+        state_metrics[f'{source}_conversions'] += 1
+        state_metrics[f'{source}_revenue'] += revenue
+        state_metrics['adset_ids'].add(adset_id)
+
+    for row in redtrack_rows:
+        adset_id = _redtrack_adset_id(row, set(adset_map))
+        when = _redtrack_datetime(row, REDTRACK_TZ)
+        if not adset_id or not when or not _day_filter_allows(when.weekday(), day_filter):
+            continue
+        if allowed_offers and not _redtrack_offer_matches(row, allowed_offers):
+            # Rows without an offer label remain usable when the ad-set ID is
+            # an exact account match; the Meta ad-set boundary is authoritative.
+            has_offer = any(row.get(field) not in (None, '') for field in ('offer_name', 'offer', 'offerName'))
+            if has_offer:
+                continue
+        add_row('redtrack', row, adset_id, _platform_geo_value(row), _redtrack_revenue(row))
+
+    for row in everflow_rows:
+        if allowed_offers and EverflowService._offer_name(row).casefold() not in allowed_offers:
+            continue
+        adset_id = str(row.get('sub3') or '').strip()
+        when = _conversion_datetime(row, EVERFLOW_TZ_BY_ID[DEFAULT_TIMEZONE_ID])
+        if not adset_id or not when or not _day_filter_allows(when.weekday(), day_filter):
+            continue
+        add_row('everflow', row, adset_id, _platform_geo_value(row), Decimal(str(row.get('revenue') or 0)))
+
+    output_campaigns = []
+    for campaign in campaigns.values():
+        states = []
+        for state in campaign['states'].values():
+            # RedTrack and Everflow describe the same conversion stream. Do
+            # not sum their revenue: Everflow is the billable source when it
+            # has a matching state, while RedTrack is the attribution
+            # corroborator and fallback when Everflow is unavailable.
+            state['conversions'] = state['redtrack_conversions'] or state['everflow_conversions']
+            state['revenue'] = state['everflow_revenue'] if state['everflow_conversions'] else state['redtrack_revenue']
+            state['revenue'] = float(state['revenue'].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+            state['redtrack_revenue'] = float(state['redtrack_revenue'].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+            state['everflow_revenue'] = float(state['everflow_revenue'].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+            state['adset_count'] = len(state.pop('adset_ids'))
+            state['is_dragging'] = False
+            state['excess_cost'] = 0
+            states.append(state)
+        if not states:
+            continue
+        states.sort(key=lambda item: (-item['revenue'], -item['conversions'], item['state']))
+        campaign['states'] = states
+        campaign['flagged_states'] = states
+        campaign['flagged_state_count'] = len(states)
+        campaign['total_conversions'] = sum(item['conversions'] for item in states)
+        campaign['total_revenue'] = round(sum(item['revenue'] for item in states), 2)
+        campaign['total_spend'] = None
+        campaign['total_leads'] = campaign['total_conversions']
+        campaign['blended_cpl'] = None
+        campaign['priority_excess_cost'] = campaign['total_revenue']
+        output_campaigns.append(campaign)
+
+    output_campaigns.sort(key=lambda item: (-item['total_revenue'], item['campaign_name'].casefold()))
+    sources = []
+    if redtrack_state_rows:
+        sources.append('RedTrack')
+    if everflow_state_rows:
+        sources.append('Everflow')
+    return {
+        'campaigns': output_campaigns,
+        'flagged_campaign_count': len(output_campaigns),
+        'flagged_state_count': sum(item['flagged_state_count'] for item in output_campaigns),
+        'source_mode': 'platform',
+        'source_label': ' + '.join(sources) if sources else 'RedTrack / Everflow',
+        'source_rows': {
+            'redtrack': redtrack_state_rows,
+            'everflow': everflow_state_rows,
+        },
+    }
+
+
+def _fetch_platform_geography(
+    ad_account_id: Optional[str],
+    date_from: str,
+    date_to: str,
+    day_filter: str,
+) -> Optional[dict]:
+    """Fetch vendor geo rows plus the Meta ad-set identity map.
+
+    Returns None when the identity read fails, allowing the caller to retain
+    Meta's region-breakdown fallback for non-restricted categories.
+    """
+    from app.services.facebook_service import FacebookService
+
+    meta_service = FacebookService()
+    redtrack = RedTrackService()
+    everflow = EverflowService()
+    if not redtrack.is_configured() and not everflow.is_configured():
+        return None
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        adsets_future = executor.submit(meta_service.get_adsets, ad_account_id)
+        redtrack_future = executor.submit(redtrack.get_raw_conversions, date_from, date_to) if redtrack.is_configured() else None
+        everflow_future = executor.submit(everflow.get_raw_conversions, date_from, date_to, DEFAULT_TIMEZONE_ID) if everflow.is_configured() else None
+        try:
+            adsets = adsets_future.result()
+        except Exception as exc:
+            logger.warning('Platform geography identity read failed: %s', exc)
+            return None
+
+        adset_map = {}
+        for adset in adsets or []:
+            adset_id = str(adset.get('id') or '').strip()
+            campaign = adset.get('campaign') or {}
+            campaign_id = str(adset.get('campaign_id') or '').strip()
+            if adset_id and campaign_id:
+                adset_map[adset_id] = {
+                    'campaign_id': campaign_id,
+                    'campaign_name': campaign.get('name') or campaign_id,
+                    'adset_name': adset.get('name') or adset_id,
+                }
+        try:
+            redtrack_rows = redtrack_future.result() if redtrack_future else []
+            everflow_rows = everflow_future.result() if everflow_future else []
+        except Exception as exc:
+            logger.warning('Platform geography source read failed: %s', exc)
+            return None
+
+    return {
+        'redtrack_rows': redtrack_rows,
+        'everflow_rows': everflow_rows,
+        'adset_map': adset_map,
+        'source_configured': redtrack.is_configured() or everflow.is_configured(),
     }
 
 
@@ -1379,15 +1582,35 @@ def geography_watchlist(
     # 14-day geography window.
     cache_key = (str(ad_account_id or ''), resolved_from, resolved_to, day_filter)
     result = None if refresh else _get_cached_geography(cache_key)
+    source = 'Meta Insights delivery breakdown'
+    revenue_available = False
+    if result and result.get('source_mode') == 'platform':
+        source = result.get('source_label') or source
+        revenue_available = True
     try:
         if result is None:
-            rows = FacebookService().get_account_campaign_state_insights(
-                ad_account_id=ad_account_id,
-                date_from=resolved_from,
-                date_to=resolved_to,
-                day_filter=day_filter,
+            platform_geo = _fetch_platform_geography(
+                ad_account_id, resolved_from, resolved_to, day_filter
             )
-            result = _build_geography_watchlist(rows)
+            if platform_geo and platform_geo['source_configured']:
+                offer_names = _everflow_offers_for_account(ad_account_id)
+                result = _platform_geography_watchlist(
+                    platform_geo['redtrack_rows'],
+                    platform_geo['everflow_rows'],
+                    platform_geo['adset_map'],
+                    offer_names=offer_names,
+                    day_filter=day_filter,
+                )
+                source = result['source_label']
+                revenue_available = True
+            else:
+                rows = FacebookService().get_account_campaign_state_insights(
+                    ad_account_id=ad_account_id,
+                    date_from=resolved_from,
+                    date_to=resolved_to,
+                    day_filter=day_filter,
+                )
+                result = _build_geography_watchlist(rows)
             _GEOGRAPHY_RESULT_CACHE[cache_key] = (result, time.monotonic())
     except RuntimeError as exc:
         raise HTTPException(502, str(exc)) from exc
@@ -1399,8 +1622,8 @@ def geography_watchlist(
         'date_from': resolved_from,
         'date_to': resolved_to,
         'day_filter': day_filter,
-        'source': 'Meta Insights delivery breakdown',
-        'revenue_available': False,
+        'source': source,
+        'revenue_available': revenue_available,
         **result,
     }
 
