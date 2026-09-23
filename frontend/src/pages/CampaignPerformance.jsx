@@ -646,7 +646,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
 
               {intelligenceView === 'geography' && (
                 <div className="mb-5 rounded-xl border border-violet-100 bg-white p-3">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-sm font-semibold text-gray-900">Geography</h3><p className="mt-0.5 text-[11px] text-gray-500">Meta delivery only · campaign × state · no state-level revenue or ROAS.</p></div><button type="button" onClick={() => loadGeography(preset, customFrom, customTo, true)} disabled={geographyLoading || (preset === 'custom' && (!customFrom || !customTo))} className="text-xs text-violet-600 hover:text-violet-800 disabled:opacity-40">{geographyLoading ? 'Loading…' : 'Refresh'}</button></div>
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-sm font-semibold text-gray-900">Geography</h3><p className="mt-0.5 text-[11px] text-gray-500">Campaign × state · spend from Meta, revenue from RedTrack/Everflow.</p></div><button type="button" onClick={() => loadGeography(preset, customFrom, customTo, true)} disabled={geographyLoading || (preset === 'custom' && (!customFrom || !customTo))} className="text-xs text-violet-600 hover:text-violet-800 disabled:opacity-40">{geographyLoading ? 'Loading…' : 'Refresh'}</button></div>
                   <GeographyWatchlist data={geographyData} loading={geographyLoading} error={geographyError} onRefresh={() => loadGeography(preset, customFrom, customTo, true)} />
                 </div>
               )}
