@@ -1392,6 +1392,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         const firstWithCopy = groupsWithCopy[0] || selectedGroups.find(group => group.landingPage || group.cta);
         const firstCopy = firstWithCopy?.copy || {};
         const firstDefaultUrl = selectedGroups.map(defaultUrlForDriveGroup).find(Boolean) || '';
+        // A launch has exactly one destination. Never choose the first Drive
+        // package's URL by accident when a multi-category selection contains
+        // different landing pages; leave the global field blank so Joel makes
+        // that routing decision explicitly.
+        const selectedDestinationUrls = [...new Set(selectedGroups
+            .map(group => normalizeDestinationUrl(group.landingPage || defaultUrlForDriveGroup(group) || ''))
+            .filter(Boolean))];
+        const hasConflictingDriveDestinations = selectedDestinationUrls.length > 1;
         setCreativeData(prev => {
             const nextHeadlines = firstCopy.headline && !copyFieldsTouched.headlines
                 ? [firstCopy.headline]
@@ -1405,7 +1413,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             const nextCta = firstWithCopy?.cta && !copyFieldsTouched.cta
                 ? firstWithCopy.cta
                 : clearStaleGlobalCopy && !copyFieldsTouched.cta ? 'GET_QUOTE' : (prev.cta || 'GET_QUOTE');
-            const nextWebsiteUrl = (firstWithCopy?.landingPage || firstDefaultUrl) && !copyFieldsTouched.websiteUrl
+            const nextWebsiteUrl = hasConflictingDriveDestinations
+                ? ''
+                : (firstWithCopy?.landingPage || firstDefaultUrl) && !copyFieldsTouched.websiteUrl
                 ? (firstWithCopy?.landingPage || firstDefaultUrl)
                 : clearStaleGlobalCopy && !copyFieldsTouched.websiteUrl ? '' : prev.websiteUrl;
 
@@ -1427,6 +1437,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 websiteUrl: nextWebsiteUrl
             };
         });
+        if (hasConflictingDriveDestinations) {
+            showWarning('These Drive selections contain different destination URLs. Choose one Website URL for the full launch before continuing.');
+        }
         if (unmatchedGroups.length > 0) {
             const pairMismatchCount = unmatchedGroups.filter(group => group.copyIntegrityIssue || group.copyRefreshUnverified).length;
             const missingCopyCount = unmatchedGroups.length - pairMismatchCount;
@@ -2246,17 +2259,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             }
         }
 
-        const missingCreativeUrl = creativeData.creatives.find(c => (
-            c.source === 'drive' ? !c.websiteUrl?.trim() : !creativeData.websiteUrl?.trim() && !c.websiteUrl?.trim()
-        ));
-        if (missingCreativeUrl) {
-            focusCopyCreative(missingCreativeUrl.id);
-            showWarning(`The destination URL for ${missingCreativeUrl.name || 'one selected ad'} is missing. Add it before continuing.`);
+        if (!isMatchImport && !creativeData.websiteUrl?.trim()) {
+            showWarning('Add one destination URL for this launch before continuing. It will apply to every ad row.');
             return;
         }
 
-        // Validate the global URL when it is used by any non-Drive creative.
-        if (creativeData.websiteUrl) {
+        // One destination applies to every row in this launch. Drive supplies
+        // per-ad copy, but never a hidden, conflicting landing-page override.
+        if (!isMatchImport && creativeData.websiteUrl) {
             try {
                 if (!isValidDestinationUrl(creativeData.websiteUrl)) {
                     showWarning('Please enter a valid URL starting with http:// or https://');
@@ -2266,15 +2276,6 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 showWarning('Please enter a valid URL (e.g., https://example.com)');
                 return;
             }
-        }
-
-        const invalidCreativeUrl = creativeData.creatives.find(c => c.websiteUrl && (() => {
-            return !isValidDestinationUrl(c.websiteUrl);
-        })());
-        if (invalidCreativeUrl) {
-            focusCopyCreative(invalidCreativeUrl.id);
-            showWarning(`The destination URL for ${invalidCreativeUrl.name || 'one selected ad'} is invalid. Fix it before continuing.`);
-            return;
         }
 
         if (loadingPages) {
@@ -2562,9 +2563,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         </p>
                     )}
 
-                    {/* Upload Area */}
+                    {/* Upload is a secondary source beside Drive and Generated Ads,
+                        not the visual focal point of the Creative step. */}
                     <div
-                        className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors mb-4 ${isDragging ? 'border-amber-500 bg-amber-50' : 'border-gray-300 hover:border-amber-500'
+                        className={`border border-dashed rounded-lg px-4 py-3 transition-colors mb-4 ${isDragging ? 'border-amber-500 bg-amber-50' : 'border-gray-300 hover:border-amber-500'
                             }`}
                         onDragEnter={handleDragEnter}
                         onDragOver={handleDragOver}
@@ -2579,16 +2581,15 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             className="hidden"
                             id="ad-media-upload"
                         />
-                        <label htmlFor="ad-media-upload" className="cursor-pointer flex flex-col items-center">
-                            <div className="flex gap-2 mb-2">
-                                <Image className={`${isDragging ? 'text-amber-500' : 'text-gray-400'}`} size={28} />
-                                <Film className={`${isDragging ? 'text-amber-500' : 'text-gray-400'}`} size={28} />
+                        <label htmlFor="ad-media-upload" className="cursor-pointer flex flex-wrap items-center justify-center gap-2 text-sm">
+                            <div className="flex gap-1">
+                                <Image className={`${isDragging ? 'text-amber-500' : 'text-gray-400'}`} size={18} />
+                                <Film className={`${isDragging ? 'text-amber-500' : 'text-gray-400'}`} size={18} />
                             </div>
                             <span className={`font-medium ${isDragging ? 'text-amber-700' : 'text-gray-600'}`}>
                                 {isDragging ? 'Drop files here' : 'Click to upload images or videos'}
                             </span>
-                            <span className="text-sm text-gray-400 mt-1">or drag and drop</span>
-                            <span className="text-xs text-amber-500 mt-2 bg-amber-50 px-2 py-1 rounded">Supports multiple files • Videos up to 500MB</span>
+                            <span className="text-xs text-gray-400">or drag and drop · videos up to 500MB</span>
                         </label>
                     </div>
 
@@ -2601,13 +2602,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         const selectedHeadline = selectedCreative.headline || (!selectedIsDrive ? creativeData.headlines?.[0] || '' : '');
                         const selectedDescription = selectedCreative.description || (!selectedIsDrive ? creativeData.description || '' : '');
                         const selectedCta = selectedCreative.cta || (!selectedIsDrive ? creativeData.cta || '' : '');
-                        const selectedUrl = selectedCreative.websiteUrl || (!selectedIsDrive ? creativeData.websiteUrl || '' : '');
                         const rowIssues = (creative) => {
                             const isDrive = creative.source === 'drive';
                             const headline = (creative.headline || (!isDrive && creativeData.headlines?.[0]) || '').trim();
                             const body = (creative.body || (!isDrive && creativeData.bodies?.[0]) || '').trim();
                             const cta = (creative.cta || (!isDrive && creativeData.cta) || '').trim();
-                            const url = creative.websiteUrl || (!isDrive && creativeData.websiteUrl) || '';
+                            const url = creativeData.websiteUrl || '';
                             const description = creative.description || (!isDrive && creativeData.description) || '';
                             const issues = [];
                             if (!body) issues.push('Primary text');
@@ -2631,7 +2631,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                     </div>
                                     <span className="shrink-0 rounded-full border border-indigo-200 bg-white px-2 py-1 text-[11px] font-semibold text-indigo-700">{creativeData.creatives.length} ads</span>
                                 </div>
-                                <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+                                <div className="grid items-start gap-5 xl:grid-cols-[minmax(440px,0.9fr)_minmax(560px,1.35fr)]">
                                     <div className="max-h-[660px] overflow-y-auto rounded-xl border border-gray-200 bg-white">
                                         <div className="hidden grid-cols-[76px_minmax(0,1fr)_110px_36px] gap-3 border-b border-gray-200 bg-gray-50 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500 md:grid">
                                             <span>Creative</span><span>Ad / copy</span><span className="text-right">Status</span><span className="sr-only">Remove</span>
@@ -2642,9 +2642,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             const copyReady = issues.length === 0;
                                             const displayHeadline = creative.headline || (!creative.source || creative.source !== 'drive' ? creativeData.headlines?.[0] || '' : '');
                                             return (
-                                                <div ref={(element) => { copyRowRefs.current[creative.id] = element; }} key={`copy-row-${creative.id}`} className={`grid w-full grid-cols-[minmax(0,1fr)_36px] gap-3 border-b border-gray-100 px-4 py-3 transition-colors ${selected ? 'bg-amber-50 shadow-[inset_3px_0_0_0_#d97706]' : 'hover:bg-gray-50'}`}>
-                                                    <button type="button" onClick={() => setSelectedCopyCreativeId(creative.id)} onMouseEnter={(event) => { if (creative.mediaType !== 'video') { const previewWidth = creative.dualPlacement && creative.secondaryImageUrl ? 780 : 400; const previewHeight = 560; const availableWidth = Math.min(previewWidth, window.innerWidth - 24); const availableHeight = Math.min(previewHeight, window.innerHeight - 24); setHoveredCreativePreview({ ...creative, x: Math.max(12, Math.min(event.clientX + 18, window.innerWidth - availableWidth - 12)), y: Math.max(12, Math.min(event.clientY + 18, window.innerHeight - availableHeight - 12)) }); } }} onMouseLeave={() => setHoveredCreativePreview(current => current?.id === creative.id ? null : current)} className="grid min-w-0 grid-cols-[62px_minmax(0,1fr)] gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500 md:grid-cols-[76px_minmax(0,1fr)_110px]" title={creative.mediaType !== 'video' ? 'Hover to inspect this creative at a larger size' : undefined}>
-                                                    <div className="flex h-14 w-[72px] gap-0.5 overflow-hidden rounded-md border border-gray-200 bg-gray-100 p-0.5">
+                                                <div ref={(element) => { copyRowRefs.current[creative.id] = element; }} key={`copy-row-${creative.id}`} className={`grid min-h-[104px] w-full grid-cols-[minmax(0,1fr)_40px] gap-4 border-b border-gray-100 px-5 py-4 transition-colors ${selected ? 'bg-amber-50 shadow-[inset_3px_0_0_0_#d97706]' : 'hover:bg-gray-50'}`}>
+                                                    <button type="button" onClick={() => setSelectedCopyCreativeId(creative.id)} onMouseEnter={(event) => { if (creative.mediaType !== 'video') { const previewWidth = creative.dualPlacement && creative.secondaryImageUrl ? 780 : 400; const previewHeight = 560; const availableWidth = Math.min(previewWidth, window.innerWidth - 24); const availableHeight = Math.min(previewHeight, window.innerHeight - 24); setHoveredCreativePreview({ ...creative, x: Math.max(12, Math.min(event.clientX + 18, window.innerWidth - availableWidth - 12)), y: Math.max(12, Math.min(event.clientY + 18, window.innerHeight - availableHeight - 12)) }); } }} onMouseLeave={() => setHoveredCreativePreview(current => current?.id === creative.id ? null : current)} className="grid min-w-0 grid-cols-[100px_minmax(0,1fr)] gap-4 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500 md:grid-cols-[116px_minmax(0,1fr)_132px]" title={creative.mediaType !== 'video' ? 'Hover to inspect this creative at a larger size' : undefined}>
+                                                    <div className="flex h-20 w-[108px] gap-1 overflow-hidden rounded-md border border-gray-200 bg-gray-100 p-1">
                                                         {creative.previewUrl && <img src={creative.previewUrl} alt="Feed creative" className={creative.dualPlacement && creative.secondaryImageUrl ? 'w-1/2 object-contain' : 'w-full object-contain'} />}
                                                         {creative.dualPlacement && creative.secondaryImageUrl && <img src={creative.secondaryImageUrl} alt="Stories creative" className="w-1/2 object-contain" />}
                                                     </div>
@@ -2666,9 +2666,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h4 className="truncate text-sm font-bold text-gray-900">Ad {selectedIndex + 1} · {selectedCreative.name || 'Untitled creative'}</h4><p className="mt-0.5 text-xs text-gray-500">{selectedCreative.dualPlacement ? 'Feed + Stories pair' : 'Single placement'}</p>{!selectedCopyReady && <p className="mt-1 text-xs font-medium text-amber-800">Needs: {selectedIssues.join(', ')}</p>}</div><span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${selectedCopyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{selectedCopyReady ? 'Ready' : 'Needs attention'}</span></div>
                                         </div>
                                         <div className="max-h-[610px] space-y-3 overflow-y-auto p-4">
-                                            <div className="flex h-52 gap-2 overflow-hidden rounded-lg bg-gray-100 p-2">
-                                                {selectedCreative.previewUrl && <img src={selectedCreative.previewUrl} alt="Feed preview" className={selectedCreative.dualPlacement && selectedCreative.secondaryImageUrl ? 'w-1/2 object-contain' : 'w-full object-contain'} />}
-                                                {selectedCreative.dualPlacement && selectedCreative.secondaryImageUrl && <img src={selectedCreative.secondaryImageUrl} alt="Stories preview" className="w-1/2 object-contain" />}
+                                            <div className={`flex justify-center gap-3 overflow-hidden rounded-lg bg-gray-100 p-3 ${selectedCreative.dualPlacement ? 'min-h-[360px]' : (selectedCreative.format || 'feed') === 'stories' ? 'h-[460px]' : 'aspect-square max-h-[480px]'}`}>
+                                                {selectedCreative.previewUrl && <figure className={selectedCreative.dualPlacement ? 'flex min-w-0 flex-1 flex-col items-center' : 'flex h-full min-w-0 items-center justify-center'}><img src={selectedCreative.previewUrl} alt="Selected creative preview" className="h-full max-w-full object-contain" />{selectedCreative.dualPlacement && <figcaption className="pt-1 text-[11px] text-gray-500">Feed (1:1)</figcaption>}</figure>}
+                                                {selectedCreative.dualPlacement && selectedCreative.secondaryImageUrl && <figure className="flex min-w-0 flex-1 flex-col items-center"><img src={selectedCreative.secondaryImageUrl} alt="Stories creative preview" className="h-full max-w-full object-contain" /><figcaption className="pt-1 text-[11px] text-gray-500">Stories (9:16)</figcaption></figure>}
                                             </div>
                                             <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                                                 <div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-gray-800">Media placement</span><span className="text-[11px] text-gray-500">{selectedCreative.dualPlacement ? 'Feed + Stories linked' : (selectedCreative.format || 'feed') === 'stories' ? 'Stories & Reels (9:16)' : 'Feed (1:1)'}</span></div>
@@ -2693,7 +2693,6 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             <label className="block text-xs font-semibold text-gray-700">Headline *<input value={selectedHeadline} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'headline', event.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100 ${selectedHeadline.length > HEADLINE_LIMIT ? 'border-red-400' : 'border-gray-300'}`} /><span className={`mt-1 block text-right text-[11px] ${charCountClass(selectedHeadline.length, HEADLINE_WARN, HEADLINE_LIMIT)}`}>{selectedHeadline.length} / {HEADLINE_LIMIT}</span></label>
                                             <label className="block text-xs font-semibold text-gray-700">Description <span className="font-normal text-gray-400">(optional)</span><input value={selectedDescription} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'description', event.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100 ${selectedDescription.length > DESC_LIMIT ? 'border-red-400' : 'border-gray-300'}`} /><span className={`mt-1 block text-right text-[11px] ${charCountClass(selectedDescription.length, DESC_LIMIT, DESC_LIMIT)}`}>{selectedDescription.length} / {DESC_LIMIT}</span></label>
                                             <label className="block text-xs font-semibold text-gray-700">Meta CTA *<select value={selectedCta} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'cta', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100"><option value="">Select a CTA...</option>{CTA_OPTIONS.map(option => <option key={option} value={option}>{option.replace(/_/g, ' ')}</option>)}</select></label>
-                                            <label className="block text-xs font-semibold text-gray-700">Destination URL *<input type="url" value={selectedUrl} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'websiteUrl', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
                                         </div>
                                     </aside>
                                 </div>
@@ -2874,14 +2873,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                 <option value="">Select a CTA...</option>
                                                 {CTA_OPTIONS.map(option => <option key={option} value={option}>{option.replace(/_/g, ' ')}</option>)}
                                             </select>
-                                            <label className="block text-[11px] font-semibold text-gray-600 mt-2 mb-1">Destination URL *</label>
-                                            <input
-                                                type="url"
-                                                value={creative.websiteUrl ?? ''}
-                                                onChange={(e) => updateCreativeCopy(creative.id, 'websiteUrl', e.target.value)}
-                                                placeholder="https://example.com/landing-page"
-                                                className="w-full rounded-md border border-gray-300 px-2.5 py-2 text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                            />
+                                            <p className="mt-2 text-[11px] text-gray-500">Destination URL is set once for the full launch below.</p>
                                         </div>
                                     );
                                 })}
@@ -3113,10 +3105,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 </div>
                 )}
 
-                {/* Website URL */}
-                {!allCreativesAreDriveSourced && <div>
+                {/* One global landing page prevents row-level URL drift. */}
+                {!isMatchImport && <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                        {isMixedCreativeBatch ? 'Shared fallback Website URL' : 'Website URL (Landing Page) *'}
+                        Website URL (applies to every ad) *
                     </label>
                     <input
                         type="url"

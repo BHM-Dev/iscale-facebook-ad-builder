@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, Target, Users, Image as ImageIcon, CreditCard, Megaphone, CheckCircle2, RefreshCw, ChevronDown } from 'lucide-react';
+import { Check, Target, Users, Image as ImageIcon, CreditCard, Megaphone, CheckCircle2, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { CampaignProvider, useCampaign } from '../context/CampaignContext';
 import { useToast } from '../context/ToastContext';
 import AdAccountStep from '../components/AdAccountStep';
@@ -55,11 +55,7 @@ const SummaryRow = ({ label, value }) => (
     </div>
 );
 
-const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaignData, adsetData, creativeData, launchSummary }) => {
-    // The launch plan is useful reference material, but its expanded rail
-    // competes with the creative editor for vertical space. Start compact and
-    // let Joel expand it only when he needs to inspect the setup.
-    const [isExpanded, setIsExpanded] = useState(false);
+const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaignData, adsetData, creativeData, launchSummary, isExpanded, onToggle }) => {
     const creativeSource = batchMode === 'match-import'
         ? 'Naming Convention Import'
         : creativeData?.creatives?.length
@@ -70,17 +66,20 @@ const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaig
         <div>
             <button
                 type="button"
-                onClick={() => setIsExpanded(expanded => !expanded)}
+                onClick={onToggle}
                 aria-expanded={isExpanded}
-                className="flex w-full items-center justify-between gap-3 rounded-md px-1 py-1 text-left hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                className={`flex w-full items-center rounded-md py-1 text-left hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-amber-500 ${isExpanded ? 'justify-between px-1 gap-3' : 'justify-center px-0'}`}
+                title={isExpanded ? 'Collapse Launch Plan' : 'Expand Launch Plan'}
             >
-                <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Launch Plan</span>
-                <span className="flex items-center gap-2 text-xs font-medium text-gray-500">
+                {isExpanded && <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Launch Plan</span>}
+                <span className={`flex items-center text-xs font-medium text-gray-500 ${isExpanded ? 'gap-2' : ''}`}>
+                    {!isExpanded ? <ChevronLeft size={18} /> : null}
+                    {isExpanded && <>
                     {launchSummary.totalAds ?? '—'} ads
-                    <ChevronDown size={16} className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                    <ChevronRight size={16} />
+                    </>}
                 </span>
             </button>
-            {!isExpanded && <p className="mt-1 px-1 text-xs text-gray-500">Expand to review account, placement, and launch details.</p>}
             {isExpanded && <>
             <div className="divide-y divide-gray-100">
                 <SummaryRow label="Account" value={selectedAdAccount?.name} />
@@ -134,6 +133,7 @@ const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaig
 
 const FacebookCampaignWizardInner = () => {
     const [currentStep, setCurrentStep] = useState(1);
+    const [isLaunchPlanExpanded, setIsLaunchPlanExpanded] = useState(false);
     const [batchMode, setBatchMode] = useState('combinations'); // 'combinations' | 'match-import'
     const [formData, setFormData] = useState({
         adAccountId: null,
@@ -520,7 +520,7 @@ const FacebookCampaignWizardInner = () => {
                 the summary rail into a mobile drawer is Phase 1B — for now it just
                 stacks full-width under the workspace, which keeps every screen size
                 free of horizontal overflow. */}
-            <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[190px_minmax(0,1fr)_260px]">
+            <div className={`grid grid-cols-1 items-start gap-5 ${isLaunchPlanExpanded ? 'lg:grid-cols-[190px_minmax(0,1fr)_260px]' : 'lg:grid-cols-[190px_minmax(0,1fr)_44px]'}`}>
                 {/* Desktop step rail */}
                 <div className="hidden lg:block bg-white rounded-xl shadow-sm border border-gray-200 p-4 lg:sticky lg:top-4">
                     <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Launch Steps</div>
@@ -684,7 +684,7 @@ const FacebookCampaignWizardInner = () => {
                 </div>
 
                 {/* Launch Plan summary rail */}
-                <div className="min-w-0 bg-white rounded-xl border border-gray-200 p-4 shadow-sm lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+                <div className={`min-w-0 bg-white rounded-xl border border-gray-200 shadow-sm lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto ${isLaunchPlanExpanded ? 'p-4' : 'p-2'}`}>
                     <LaunchSummaryPanel
                         currentStep={currentStep}
                         batchMode={batchMode}
@@ -693,6 +693,8 @@ const FacebookCampaignWizardInner = () => {
                         adsetData={adsetData}
                         creativeData={creativeData}
                         launchSummary={launchSummary}
+                        isExpanded={isLaunchPlanExpanded}
+                        onToggle={() => setIsLaunchPlanExpanded(expanded => !expanded)}
                     />
                 </div>
             </div>

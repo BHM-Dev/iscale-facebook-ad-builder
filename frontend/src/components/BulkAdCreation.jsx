@@ -126,7 +126,7 @@ const buildPerMediaAdsetName = (baseName, creative, index) => {
 const BulkAdCreation = ({ onNext, onBack }) => {
     const { showWarning, showError, showSuccess } = useToast();
     const { authFetch } = useAuth();
-    const { campaignData, adsetData, creativeData, adsData, setAdsData, selectedAdAccount, setLaunchSummary } = useCampaign();
+    const { campaignData, adsetData, creativeData, setCreativeData, adsData, setAdsData, selectedAdAccount, setLaunchSummary } = useCampaign();
     const [loading, setLoading] = useState(false);
     const launchInFlightRef = React.useRef(false);
     const [progress, setProgress] = useState({ current: 0, total: 0, status: '' });
@@ -547,7 +547,6 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         headlines: creativeData.headlines,
         bodies: creativeData.bodies,
         description: creativeData.description,
-        websiteUrl: creativeData.websiteUrl,
     });
 
     const driveCopySyncKey = JSON.stringify((creativeData.creatives || [])
@@ -651,9 +650,10 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             descriptionOverride: creative.source === 'drive'
                                 ? creative.description || ''
                                 : creative.description || creativeData.description || '',
-                            websiteUrlOverride: creative.source === 'drive'
-                                ? creative.websiteUrl || ''
-                                : creative.websiteUrl || creativeData.websiteUrl || '',
+                            // Destination is intentionally batch-global. Drive can
+                            // provide per-row copy, but never a hidden landing-page
+                            // override that differs from the URL Joel sees here.
+                            websiteUrlOverride: creativeData.websiteUrl || '',
                             ctaOverride: creative.cta || '',
                             ctaSource: creative.ctaSource || '',
                             mediaType: creative.mediaType || 'image',
@@ -725,7 +725,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 descriptionOverride: manual.description ? ad.descriptionOverride : creative.description || '',
                 ctaOverride: manual.cta ? ad.ctaOverride : creative.cta || '',
                 ctaSource: manual.cta ? ad.ctaSource : creative.ctaSource || '',
-                websiteUrlOverride: manual.websiteUrl ? ad.websiteUrlOverride : creative.websiteUrl || '',
+                websiteUrlOverride: creativeData.websiteUrl || '',
             };
         }));
     }, [driveCopySyncKey]);
@@ -823,11 +823,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         const description = Object.prototype.hasOwnProperty.call(ad, 'descriptionOverride')
             ? ad.descriptionOverride || ''
             : creative?.description ?? creativeData.description ?? '';
-        const websiteUrl = Object.prototype.hasOwnProperty.call(ad, 'websiteUrlOverride')
-            ? ad.websiteUrlOverride || ''
-            : creative?.source === 'drive'
-                ? creative.websiteUrl || ''
-                : creative?.websiteUrl || creativeData.websiteUrl || '';
+        const websiteUrl = creativeData.websiteUrl || '';
         const ctaOverrideIsAuthoritative = Object.prototype.hasOwnProperty.call(ad, 'ctaOverride')
             && (isDriveCreative || Boolean(ad.ctaOverride));
         const cta = ctaOverrideIsAuthoritative
@@ -1020,27 +1016,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             showWarning('Enter a complete destination URL starting with http:// or https:// before applying it.');
             return;
         }
-        const eligibleIds = new Set(adsData
-            .filter(ad => !manifestExcludedAdIds.has(ad.id) && !protectedReconciliationIdSet.has(ad.id))
-            .map(ad => ad.id));
-        // A row whose current destination is non-empty and different is a
-        // real overwrite of something Joel (or a prior Drive match) set
-        // deliberately — confirm before silently replacing it. A row that's
-        // blank or already this exact URL needs no confirmation; that's the
-        // common, harmless case this control exists for.
-        const differingRows = manifestRows.filter(row => eligibleIds.has(row.ad.id)
-            && row.websiteUrl
-            && row.websiteUrl !== normalized);
-        if (differingRows.length > 0) {
-            setCampaignWideUrlPendingApply({ normalized, eligibleIds, differingRows });
-            return;
-        }
-        setAdsData(prev => prev.map(ad => eligibleIds.has(ad.id)
-            ? { ...ad, websiteUrlOverride: normalized, manualCopyFields: { ...(ad.manualCopyFields || {}), websiteUrl: true } }
-            : ad
-        ));
+        setCreativeData(prev => ({ ...prev, websiteUrl: normalized }));
         setCampaignWideUrl(normalized);
-        showSuccess(`Applied one destination URL to ${eligibleIds.size} selected ad${eligibleIds.size === 1 ? '' : 's'}.`);
+        showSuccess('Updated the single destination URL for every ad in this launch.');
     };
 
     const confirmApplyCampaignWideUrl = () => {
@@ -1131,9 +1109,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             if (creative?.source !== 'drive') return false;
             const headline = (ad.headlineOverride || '').trim();
             const body = (ad.bodyOverride || '').trim();
-            const websiteUrl = (Object.prototype.hasOwnProperty.call(ad, 'websiteUrlOverride')
-                ? ad.websiteUrlOverride
-                : creative?.websiteUrl) || '';
+            const websiteUrl = creativeData.websiteUrl || '';
             const cta = Object.prototype.hasOwnProperty.call(ad, 'ctaOverride') && (isDriveManifest || Boolean(ad.ctaOverride))
                 ? ad.ctaOverride
                 : creative?.cta || '';
@@ -1689,11 +1665,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         cta: Object.prototype.hasOwnProperty.call(ad, 'ctaOverride') && (specificCreative?.source === 'drive' || Boolean(ad.ctaOverride))
                             ? ad.ctaOverride
                             : (specificCreative?.cta || creativeData.cta),
-                        websiteUrl: Object.prototype.hasOwnProperty.call(ad, 'websiteUrlOverride')
-                            ? ad.websiteUrlOverride
-                            : (specificCreative?.source === 'drive'
-                                ? specificCreative?.websiteUrl
-                                : (specificCreative?.websiteUrl || creativeData.websiteUrl))
+                        websiteUrl: creativeData.websiteUrl
                     };
 
                     if (!creativeData.pageId) {
@@ -1880,12 +1852,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             {isDriveManifest && (
                 <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4">
                     <div className="mb-2 text-sm font-semibold text-blue-900">Campaign-wide destination URL</div>
-                    <p className="mb-3 text-xs text-blue-800">Paste one RedTrack or landing-page URL and apply it to every selected ad — this replaces the full URL on every row, including any that already point somewhere different. RedTrack sub-tracking macros (like {'{{ad.id}}'}) still differentiate per ad even when the literal URL is identical. You can still edit an individual row afterward.</p>
+                    <p className="mb-3 text-xs text-blue-800">One RedTrack or landing-page URL applies to every ad. RedTrack sub-tracking macros (like {'{{ad.id}}'}) still differentiate each ad without creating row-level URL overrides.</p>
                     <div className="flex flex-col gap-2 sm:flex-row">
-                        <input type="url" value={campaignWideUrl} onChange={(event) => setCampaignWideUrl(normalizeDestinationUrl(event.target.value))} placeholder="https://tracking.example.com/..." className="min-w-0 flex-1 rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200" />
-                        <button type="button" onClick={applyCampaignWideUrl} className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800">Apply to selected ads</button>
+                        <input type="url" value={campaignWideUrl || creativeData.websiteUrl || ''} onChange={(event) => setCampaignWideUrl(normalizeDestinationUrl(event.target.value))} placeholder="https://tracking.example.com/..." className="min-w-0 flex-1 rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200" />
+                        <button type="button" onClick={applyCampaignWideUrl} className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800">Update launch URL</button>
                     </div>
-                    <p className="mt-2 text-[11px] text-blue-700">Will apply to {campaignWideUrlEligibleCount} selected ad{campaignWideUrlEligibleCount === 1 ? '' : 's'}{campaignWideUrlEligibleCount !== adsData.length ? ` (${adsData.length - campaignWideUrlEligibleCount} excluded/protected)` : ''}.</p>
+                    <p className="mt-2 text-[11px] text-blue-700">Applies to all {adsData.length} ad{adsData.length === 1 ? '' : 's'} in this launch.</p>
                 </div>
             )}
             {reconciliationPendingRecords.length > 0 && (
@@ -2442,9 +2414,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                         // (~line 680) — matching it exactly, not just the
                                         // two-tier headline/body shape, since cta has its own
                                         // separate ad.ctaOverride tier the others don't.
-                                        const websiteUrl = Object.prototype.hasOwnProperty.call(ad, 'websiteUrlOverride')
-                                            ? ad.websiteUrlOverride
-                                            : creative?.websiteUrl || creativeData.websiteUrl;
+                                        const websiteUrl = creativeData.websiteUrl;
                                         const cta = Object.prototype.hasOwnProperty.call(ad, 'ctaOverride') && (creative?.source === 'drive' || Boolean(ad.ctaOverride))
                                             ? ad.ctaOverride
                                             : creative?.cta || creativeData.cta;
@@ -2826,7 +2796,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                     <label className="block text-xs font-semibold text-gray-700">Primary text *<textarea rows="4" value={selectedManifestRow.body} onChange={(event) => updateManifestField(selectedManifestRow, 'body', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
                                     <label className="block text-xs font-semibold text-gray-700">Headline *<input value={selectedManifestRow.headline} onChange={(event) => updateManifestField(selectedManifestRow, 'headline', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
                                     <label className="block text-xs font-semibold text-gray-700">Description <span className="font-normal text-gray-400">(optional)</span><input value={selectedManifestRow.description} onChange={(event) => updateManifestField(selectedManifestRow, 'description', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
-                                    <label className="block text-xs font-semibold text-gray-700">Destination URL *<input value={selectedManifestRow.websiteUrl} onChange={(event) => updateManifestField(selectedManifestRow, 'websiteUrl', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
+                                    <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs leading-5 text-gray-600">Destination URL is set once in Ad Creative and applies to every ad in this launch.</p>
                                     <label className="block text-xs font-semibold text-gray-700">Meta CTA * <span className="font-normal text-gray-400">({selectedManifestRow.ctaSource})</span><select value={selectedManifestRow.cta} onChange={(event) => updateManifestField(selectedManifestRow, 'cta', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100"><option value="">Select a CTA...</option>{[...META_CTA_OPTIONS].map(cta => <option key={cta} value={cta}>{formatCtaLabel(cta)}</option>)}</select></label>
                                     <label className="block text-xs font-semibold text-gray-700">Ad name<input value={selectedManifestRow.ad.name} onChange={(event) => updateManifestField(selectedManifestRow, 'name', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
                                 </div>
