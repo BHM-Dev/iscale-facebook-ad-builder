@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ad Builder Overview Prototype</title>
+  <style>
+    :root { --ink:#172033; --muted:#718096; --line:#e6eaf0; --blue:#315efb; --red:#dc3c4c; --orange:#e98a27; --green:#18875b; --bg:#f6f8fb; }
+    * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--ink); font:14px Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; }
+    .toolbar { position:sticky; top:0; z-index:2; display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:9px 18px; background:#111827; color:#fff; font-size:12px; }
+    .toolbar strong { color:#93c5fd; } .toolbar span { color:#cbd5e1; } .toolbar button { margin-left:auto; border:0; border-radius:6px; padding:5px 9px; cursor:pointer; }
+    main { max-width:1240px; margin:0 auto; padding:30px 24px 48px; } .head { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:22px; }
+    h1 { margin:0 0 5px; font-size:26px; } h2 { margin:0; font-size:15px; } p { margin:0; color:var(--muted); }
+    .controls { display:flex; gap:8px; align-items:center; } select, .btn { border:1px solid var(--line); background:#fff; border-radius:8px; padding:9px 11px; color:var(--ink); } .btn { cursor:pointer; }
+    .grid { display:grid; gap:14px; } .kpis { grid-template-columns:repeat(5,1fr); margin-bottom:18px; } .two { grid-template-columns:1fr 1.35fr; margin-bottom:18px; } .card { background:#fff; border:1px solid var(--line); border-radius:12px; box-shadow:0 2px 8px #1f29370a; overflow:hidden; }
+    .kpi { padding:16px; } .label { color:var(--muted); text-transform:uppercase; letter-spacing:.07em; font-size:10px; font-weight:700; } .value { font-size:25px; font-weight:750; margin-top:6px; } .delta { font-size:11px; color:var(--green); margin-top:3px; }
+    .cardhead { display:flex; justify-content:space-between; align-items:center; padding:14px 16px; border-bottom:1px solid var(--line); } .cardhead small { color:var(--muted); } .attention { border-top:4px solid var(--orange); } .trend { border-top:4px solid var(--blue); }
+    .issue { display:grid; grid-template-columns:10px 1fr auto; gap:10px; align-items:center; padding:13px 16px; border-bottom:1px solid #f0f2f5; } .dot { width:8px; height:8px; border-radius:50%; background:var(--orange); } .dot.red { background:var(--red); } .issue b { display:block; font-size:13px; } .issue span { color:var(--muted); font-size:11px; } .action { border:1px solid #f0c9ca; background:#fff7f7; color:var(--red); border-radius:6px; padding:5px 8px; font-size:11px; cursor:pointer; }
+    .chart { height:177px; padding:18px 18px 10px; background:linear-gradient(180deg,#f7f9ff,#fff); position:relative; } .chart:before { content:""; position:absolute; inset:22px 18px 28px; background:repeating-linear-gradient(to bottom, transparent 0 37px, #e8edf7 38px 39px); } svg { position:relative; width:100%; height:100%; } .tabs { display:flex; gap:5px; } .tab { border:0; background:#eef2ff; color:#315efb; border-radius:6px; padding:5px 7px; font-size:10px; cursor:pointer; } .tab.muted { background:#f3f4f6; color:#6b7280; }
+    .tablewrap { overflow:auto; } table { width:100%; border-collapse:collapse; min-width:720px; } th, td { padding:12px 16px; text-align:right; border-bottom:1px solid #f0f2f5; } th:first-child, td:first-child { text-align:left; } th { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.06em; } td { font-size:12px; } td strong { display:block; } td small { color:var(--muted); } .green { color:var(--green); font-weight:700; }
+    .health summary { cursor:pointer; padding:15px 16px; font-weight:700; list-style:none; } .health summary::-webkit-details-marker { display:none; } .health p { padding:0 16px 16px; font-size:12px; }
+    .footer { text-align:center; margin-top:20px; color:var(--muted); font-size:11px; } @media(max-width:850px){ main{padding:22px 14px}.head{display:block}.controls{margin-top:14px}.kpis{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}.kpi:last-child{grid-column:span 2} }
+  </style>
+</head>
+<body>
+  <div class="toolbar"><strong>BUILD: dashboard-overview-mvp</strong><span>STATE: prototype</span><span>EVENTS: 0</span><span>ROUTE: /</span><button onclick="resetDemo()">Reset</button></div>
+  <main>
+    <div class="head"><div><h1>Overview</h1><p>DIN Auto Insurance · 18 active ad sets</p></div><div class="controls"><select><option>Last 7 Days</option><option>Last 30 Days</option></select><button class="btn" onclick="sync(this)">↻ Sync</button><button class="btn">Refresh</button></div></div>
+    <section class="grid kpis">
+      <div class="card kpi"><div class="label">Spend</div><div class="value">$12,420</div><div class="delta">↑ 8% vs prior period</div></div>
+      <div class="card kpi"><div class="label">Leads</div><div class="value">183</div><div class="delta">↑ 14% vs prior period</div></div>
+      <div class="card kpi"><div class="label">Blended CPL</div><div class="value">$67.87</div><div class="delta">↓ 5% vs prior period</div></div>
+      <div class="card kpi"><div class="label">RT Revenue</div><div class="value">$18,900</div><div class="delta">↑ 11% vs prior period</div></div>
+      <div class="card kpi"><div class="label">RT ROAS</div><div class="value">1.52x</div><div class="delta">↑ 7% vs prior period</div></div>
+    </section>
+    <section class="grid two">
+      <div class="card attention"><div class="cardhead"><h2>Needs Attention</h2><small>3 items</small></div>
+        <div class="issue"><i class="dot red"></i><div><b>High CPL · Commercial</b><span>$94.20 CPL · $1,284 spend</span></div><button class="action">Pause</button></div>
+        <div class="issue"><i class="dot"></i><div><b>Frequency rising · Auto</b><span>3.1 frequency · monitor fatigue</span></div><button class="action">View</button></div>
+        <div class="issue"><i class="dot"></i><div><b>No recent leads · Mortgage</b><span>$460 spend · 0 leads</span></div><button class="action">View</button></div>
+        <div class="cardhead"><small>All issues are also available in Performance</small><a href="#" style="color:#315efb;font-size:11px">See all 3 →</a></div>
+      </div>
+      <div class="card trend"><div class="cardhead"><div><h2>Performance Trend</h2><small>Last 7 Days · daily view</small></div><div class="tabs"><button class="tab" onclick="metric('Spend',this)">Spend</button><button class="tab muted" onclick="metric('Leads',this)">Leads</button><button class="tab muted" onclick="metric('CPL',this)">CPL</button></div></div>
+        <div class="chart"><svg viewBox="0 0 700 170" preserveAspectRatio="none"><polyline points="0,135 85,118 170,127 255,80 340,99 425,62 510,76 595,38 700,48" fill="none" stroke="#315efb" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="700" cy="48" r="5" fill="#315efb"/></svg></div>
+      </div>
+    </section>
+    <section class="card" style="margin-bottom:18px"><div class="cardhead"><h2>Top Performers</h2><a href="#" style="color:#18875b;font-size:11px">View all in Performance →</a></div><div class="tablewrap"><table><thead><tr><th>Ad set</th><th>Spend</th><th>CPL</th><th>ROAS</th><th>Freq</th><th>Action</th></tr></thead><tbody><tr><td><strong>Commercial · Religious Organizations</strong><small>DIN | Leads | CBO</small></td><td>$2,840</td><td>$32.18</td><td class="green">2.44x</td><td>1.8</td><td><button class="action" style="color:#18875b;border-color:#bde5d2;background:#f3fff8">+20%</button> <button class="action" style="color:#315efb;border-color:#cbd7ff;background:#f5f7ff">Quick Generate</button></td></tr><tr><td><strong>Auto · Cheap Quote</strong><small>DIN | Leads | CBO</small></td><td>$1,920</td><td>$38.42</td><td class="green">1.88x</td><td>2.1</td><td><button class="action" style="color:#18875b;border-color:#bde5d2;background:#f3fff8">+20%</button></td></tr></tbody></table></div></section>
+    <section class="card" style="margin-bottom:18px"><div class="cardhead"><h2>Performance by Niche</h2><small>Last 7 Days</small></div><div class="tablewrap"><table><thead><tr><th>Niche</th><th>Ad sets</th><th>Spend</th><th>Revenue</th><th>ROAS</th><th>CPL</th><th>Leads</th></tr></thead><tbody><tr><td><strong>Commercial Insurance</strong></td><td>7</td><td>$5,420</td><td>$10,880</td><td class="green">2.01x</td><td>$42.18</td><td>128</td></tr><tr><td><strong>Auto Insurance</strong></td><td>9</td><td>$5,760</td><td>$7,240</td><td class="green">1.26x</td><td>$54.34</td><td>106</td></tr></tbody></table></div></section>
+    <details class="card health"><summary>Account Health <span style="float:right;color:#718096;font-weight:400">CAPI quality · sync status · diagnostics ▾</span></summary><p>CAPI Match Quality remains available here without competing with the daily optimization workflow. Expand to inspect pixels, freshness, and performance by pixel.</p></details>
+    <div class="footer">Prototype recommendation: frontend-first hierarchy change; no migration required for Phase 1.</div>
+  </main>
+  <script>
+    function sync(button){ button.textContent='✓ Synced'; setTimeout(()=>button.textContent='↻ Sync',900); }
+    function metric(name,button){ document.querySelectorAll('.tab').forEach(b=>b.classList.add('muted')); button.classList.remove('muted'); document.querySelector('.toolbar span:nth-of-type(2)').textContent='EVENTS: metric_'+name.toLowerCase(); }
+    function resetDemo(){ document.querySelector('.toolbar span:nth-of-type(2)').textContent='EVENTS: 0'; document.querySelector('.health').removeAttribute('open'); }
+  </script>
+</body>
+</html>

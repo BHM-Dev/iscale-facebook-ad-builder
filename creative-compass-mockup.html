@@ -1,0 +1,585 @@
+<title>Creative Compass</title>
+<style>
+  :root {
+    --bg: #f6f7fb;
+    --surface: #ffffff;
+    --surface-2: #fbfbfe;
+    --border: #e3e6ef;
+    --text: #12151c;
+    --text-muted: #667085;
+    --text-faint: #98a1b3;
+    --accent: #4f46e5;
+    --accent-soft: #eef0fd;
+    --accent-strong: #4338ca;
+    --success: #059669;
+    --success-soft: #e7f6f0;
+    --warning: #b45309;
+    --warning-soft: #fdf1e0;
+    --danger: #dc2626;
+    --danger-soft: #fde9e9;
+    --neutral-chip: #eef0f4;
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+    color-scheme: light;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b0e15;
+      --surface: #12151f;
+      --surface-2: #161a26;
+      --border: #262b3a;
+      --text: #e9eaf2;
+      --text-muted: #9aa1b5;
+      --text-faint: #6b7186;
+      --accent: #818cf8;
+      --accent-soft: #1e2140;
+      --accent-strong: #a5b0fb;
+      --success: #34d399;
+      --success-soft: #10261f;
+      --warning: #fbbf5c;
+      --warning-soft: #2c2110;
+      --danger: #f87171;
+      --danger-soft: #2c1414;
+      --neutral-chip: #1c2030;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.4);
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0b0e15;
+    --surface: #12151f;
+    --surface-2: #161a26;
+    --border: #262b3a;
+    --text: #e9eaf2;
+    --text-muted: #9aa1b5;
+    --text-faint: #6b7186;
+    --accent: #818cf8;
+    --accent-soft: #1e2140;
+    --accent-strong: #a5b0fb;
+    --success: #34d399;
+    --success-soft: #10261f;
+    --warning: #fbbf5c;
+    --warning-soft: #2c2110;
+    --danger: #f87171;
+    --danger-soft: #2c1414;
+    --neutral-chip: #1c2030;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.4);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+    padding: 20px 16px 48px;
+  }
+
+  .num {
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+
+  /* ---------- Header ---------- */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .title-block h1 {
+    font-size: 20px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin: 0 0 2px;
+  }
+  .title-block p { margin: 0; color: var(--text-muted); font-size: 13px; }
+
+  .account-chip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 7px 12px;
+    box-shadow: var(--shadow);
+    font-size: 12.5px;
+  }
+  .account-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); flex-shrink: 0; }
+  .account-chip .acct-name { font-weight: 600; }
+  .account-chip .acct-id { color: var(--text-faint); font-family: "JetBrains Mono", monospace; font-size: 11px; }
+
+  .daterange {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 7px 12px; font-size: 12.5px; color: var(--text-muted); box-shadow: var(--shadow);
+  }
+
+  /* ---------- Compass ---------- */
+  .section-label {
+    display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px;
+  }
+  .section-label h2 { font-size: 13px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin: 0; }
+  .section-label .hint { font-size: 12px; color: var(--text-faint); }
+
+  .compass-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 12px;
+  }
+  @media (max-width: 980px) { .compass-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 480px) { .compass-grid { grid-template-columns: 1fr; } }
+
+  .ccard {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: var(--shadow);
+    position: relative;
+    overflow: hidden;
+  }
+  .ccard::before {
+    content: "";
+    position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: var(--stripe, var(--border));
+  }
+  .ccard.danger { --stripe: var(--danger); }
+  .ccard.success { --stripe: var(--success); }
+  .ccard.accent { --stripe: var(--accent); }
+  .ccard.warning { --stripe: var(--warning); }
+  .ccard.neutral { --stripe: var(--text-faint); }
+
+  .cc-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .cc-count { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+  .cc-label { font-size: 12.5px; font-weight: 600; color: var(--text); }
+  .cc-sub { font-size: 11.5px; color: var(--text-muted); }
+
+  .cc-rule {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 9px;
+    line-height: 1.4;
+  }
+  .cc-rule b { color: var(--text); font-weight: 600; }
+
+  .cc-example {
+    display: flex; flex-direction: column; gap: 2px;
+    padding-top: 8px; border-top: 1px dashed var(--border);
+  }
+  .cc-example .ex-name { font-size: 12px; font-weight: 600; }
+  .cc-example .ex-metric { font-size: 11.5px; color: var(--text-muted); }
+
+  .cc-action {
+    margin-top: auto;
+    align-self: flex-start;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .cc-action:hover { color: var(--accent-strong); }
+  .cc-action svg { width: 12px; height: 12px; }
+
+  .icon-badge {
+    width: 26px; height: 26px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--stripe, var(--neutral-chip));
+    opacity: 0.16;
+    position: absolute; top: 12px; right: 12px;
+  }
+
+  /* ---------- View-by row ---------- */
+  .viewby-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  }
+  .tabs { display: flex; gap: 4px; background: var(--neutral-chip); padding: 3px; border-radius: 10px; }
+  .tab {
+    font-size: 12.5px; font-weight: 600; color: var(--text-muted);
+    padding: 6px 12px; border-radius: 8px; cursor: pointer; border: none; background: none;
+    white-space: nowrap;
+  }
+  .tab.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+
+  .mode-toggle {
+    display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted);
+  }
+  .mode-switch {
+    display: flex; background: var(--neutral-chip); border-radius: 8px; padding: 3px; gap: 2px;
+  }
+  .mode-btn {
+    font-size: 11.5px; font-weight: 600; padding: 5px 10px; border-radius: 6px; border: none; cursor: pointer;
+    background: none; color: var(--text-muted);
+  }
+  .mode-btn.active { background: var(--surface); color: var(--accent); box-shadow: var(--shadow); }
+
+  /* ---------- Table ---------- */
+  .table-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .table-scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; min-width: 640px; }
+  thead th {
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-faint);
+    font-weight: 650;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  thead th.num-col, td.num-col { text-align: right; }
+  tbody td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--surface-2); }
+
+  .ad-cell { display: flex; align-items: center; gap: 10px; white-space: normal; min-width: 220px; }
+  .thumb {
+    width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--accent-soft), var(--neutral-chip));
+    border: 1px solid var(--border);
+  }
+  .ad-name { font-weight: 600; font-size: 12.5px; }
+  .ad-meta { font-size: 11px; color: var(--text-faint); }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 650; padding: 3px 9px; border-radius: 999px;
+  }
+  .pill.active { background: var(--success-soft); color: var(--success); }
+  .pill.paused { background: var(--neutral-chip); color: var(--text-muted); }
+  .pill.watch { background: var(--warning-soft); color: var(--warning); }
+
+  .roas-up { color: var(--success); font-weight: 650; }
+  .roas-down { color: var(--danger); font-weight: 650; }
+
+  .row-action {
+    font-size: 12px; font-weight: 650; color: var(--accent); background: var(--accent-soft);
+    border: none; border-radius: 7px; padding: 6px 11px; cursor: pointer;
+  }
+  .row-action:hover { background: var(--accent); color: #fff; }
+
+  .analysis-col { display: none; }
+  body.analysis .analysis-col { display: table-cell; }
+
+  .footnote {
+    font-size: 11.5px; color: var(--text-faint); text-align: center; padding: 4px 4px 0;
+  }
+</style>
+
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="title-block">
+      <h1>Campaign Performance</h1>
+      <p>Creative Compass — what needs a decision today</p>
+    </div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      <div class="account-chip">
+        <span class="account-dot"></span>
+        <span class="acct-name">RHO 4 – Commercial (New CAPI)</span>
+        <span class="acct-id">act_737291135429748</span>
+      </div>
+      <div class="daterange">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+        Sep 2 – Sep 15
+      </div>
+    </div>
+  </div>
+
+  <!-- COMPASS -->
+  <div>
+    <div class="section-label">
+      <h2>Creative Compass</h2>
+      <span class="hint">rules shown next to every count — nothing opaque</span>
+    </div>
+    <div class="compass-grid">
+
+      <div class="ccard danger">
+        <div class="cc-top">
+          <div>
+            <div class="cc-count">4</div>
+            <div class="cc-label">Needs attention</div>
+          </div>
+        </div>
+        <div class="cc-rule">CPL <b>above $85</b> or RT ROAS <b>below 1.0</b>, min $50 spend</div>
+        <div class="cc-example">
+          <div class="ex-name">Religious Orgs — H2B1 — Broad</div>
+          <div class="ex-metric num">$142 spend · CPL $118 · 0.6 ROAS</div>
+        </div>
+        <button class="cc-action">Inspect <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg></button>
+      </div>
+
+      <div class="ccard success">
+        <div class="cc-top">
+          <div>
+            <div class="cc-count">3</div>
+            <div class="cc-label">Winners</div>
+          </div>
+        </div>
+        <div class="cc-rule">Min <b>$200 spend</b> and RT ROAS <b>above 1.3</b></div>
+        <div class="cc-example">
+          <div class="ex-name">Dealer Plates — H1B3 — Auto</div>
+          <div class="ex-metric num">$612 spend · CPL $34 · 2.1 ROAS</div>
+        </div>
+        <button class="cc-action">Remix <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg></button>
+      </div>
+
+      <div class="ccard accent">
+        <div class="cc-top">
+          <div>
+            <div class="cc-count">2</div>
+            <div class="cc-label">Scaling</div>
+          </div>
+        </div>
+        <div class="cc-rule">Spend <b>up 40%+</b> over prior 7 days, still efficient</div>
+        <div class="cc-example">
+          <div class="ex-name">GBC — Price Anchor — H3</div>
+          <div class="ex-metric num">$980 spend · CPL $41 · 1.6 ROAS</div>
+        </div>
+        <button class="cc-action">View economics <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg></button>
+      </div>
+
+      <div class="ccard warning">
+        <div class="cc-top">
+          <div>
+            <div class="cc-count">6</div>
+            <div class="cc-label">High potential</div>
+          </div>
+        </div>
+        <div class="cc-rule">CTR <b>above 2.0%</b>, under <b>$75 spent</b> so far</div>
+        <div class="cc-example">
+          <div class="ex-name">Trojan COI — Fast Angle</div>
+          <div class="ex-metric num">$61 spend · 2.4% CTR · 3 leads</div>
+        </div>
+        <button class="cc-action">Give budget <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg></button>
+      </div>
+
+      <div class="ccard neutral">
+        <div class="cc-top">
+          <div>
+            <div class="cc-count">9</div>
+            <div class="cc-label">Launched recently</div>
+          </div>
+        </div>
+        <div class="cc-rule">Live for <b>14 days or less</b> — still gathering signal</div>
+        <div class="cc-example">
+          <div class="ex-name">Barber Shops — Fresh Creative</div>
+          <div class="ex-metric num">$28 spend · 5 days live</div>
+        </div>
+        <button class="cc-action">Monitor <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg></button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- VIEW BY + TABLE -->
+  <div style="display:flex; flex-direction:column; gap:12px;">
+    <div class="viewby-row">
+      <div class="tabs" role="tablist" aria-label="View by">
+        <button class="tab active">By ad</button>
+        <button class="tab">By ad set</button>
+        <button class="tab">By headline</button>
+        <button class="tab">By copy</button>
+        <button class="tab">By landing page</button>
+      </div>
+      <div class="mode-toggle">
+        Table density
+        <div class="mode-switch">
+          <button class="mode-btn active" id="btn-decision">Decision</button>
+          <button class="mode-btn" id="btn-analysis">Analysis</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="table-card">
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Ad</th>
+              <th>Status</th>
+              <th class="num-col">Spend</th>
+              <th class="num-col">Leads</th>
+              <th class="num-col">CPL</th>
+              <th class="num-col">RT Revenue</th>
+              <th class="num-col">RT ROAS</th>
+              <th class="num-col analysis-col">CTR</th>
+              <th class="num-col analysis-col">Phone rate</th>
+              <th class="num-col analysis-col">Acceptance</th>
+              <th class="num-col analysis-col">RPU</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <div class="ad-cell">
+                  <div class="thumb"></div>
+                  <div>
+                    <div class="ad-name">Dealer Plates — H1B3 — Auto</div>
+                    <div class="ad-meta">Auto Dealerships · Broad</div>
+                  </div>
+                </div>
+              </td>
+              <td><span class="pill active">Active</span></td>
+              <td class="num-col num">$612.40</td>
+              <td class="num-col num">18</td>
+              <td class="num-col num">$34.02</td>
+              <td class="num-col num">$1,296</td>
+              <td class="num-col num roas-up">2.11x</td>
+              <td class="num-col num analysis-col">2.8%</td>
+              <td class="num-col num analysis-col">61%</td>
+              <td class="num-col num analysis-col">44%</td>
+              <td class="num-col num analysis-col">$72</td>
+              <td><button class="row-action">Remix</button></td>
+            </tr>
+            <tr>
+              <td>
+                <div class="ad-cell">
+                  <div class="thumb"></div>
+                  <div>
+                    <div class="ad-name">GBC — Price Anchor — H3</div>
+                    <div class="ad-meta">Commercial Insurance · Broad</div>
+                  </div>
+                </div>
+              </td>
+              <td><span class="pill active">Active</span></td>
+              <td class="num-col num">$980.10</td>
+              <td class="num-col num">24</td>
+              <td class="num-col num">$40.84</td>
+              <td class="num-col num">$1,568</td>
+              <td class="num-col num roas-up">1.60x</td>
+              <td class="num-col num analysis-col">2.1%</td>
+              <td class="num-col num analysis-col">58%</td>
+              <td class="num-col num analysis-col">39%</td>
+              <td class="num-col num analysis-col">$65</td>
+              <td><button class="row-action">Inspect</button></td>
+            </tr>
+            <tr>
+              <td>
+                <div class="ad-cell">
+                  <div class="thumb"></div>
+                  <div>
+                    <div class="ad-name">Trojan COI — Fast Angle</div>
+                    <div class="ad-meta">Commercial Insurance · Interest</div>
+                  </div>
+                </div>
+              </td>
+              <td><span class="pill watch">Watch</span></td>
+              <td class="num-col num">$61.20</td>
+              <td class="num-col num">3</td>
+              <td class="num-col num">$20.40</td>
+              <td class="num-col num">$204</td>
+              <td class="num-col num roas-up">3.33x</td>
+              <td class="num-col num analysis-col">2.4%</td>
+              <td class="num-col num analysis-col">67%</td>
+              <td class="num-col num analysis-col">50%</td>
+              <td class="num-col num analysis-col">$68</td>
+              <td><button class="row-action">Give budget</button></td>
+            </tr>
+            <tr>
+              <td>
+                <div class="ad-cell">
+                  <div class="thumb"></div>
+                  <div>
+                    <div class="ad-name">Religious Orgs — H2B1 — Broad</div>
+                    <div class="ad-meta">Commercial Insurance · Broad</div>
+                  </div>
+                </div>
+              </td>
+              <td><span class="pill active">Active</span></td>
+              <td class="num-col num">$142.00</td>
+              <td class="num-col num">1</td>
+              <td class="num-col num">$142.00</td>
+              <td class="num-col num">$85</td>
+              <td class="num-col num roas-down">0.60x</td>
+              <td class="num-col num analysis-col">0.9%</td>
+              <td class="num-col num analysis-col">22%</td>
+              <td class="num-col num analysis-col">18%</td>
+              <td class="num-col num analysis-col">$85</td>
+              <td><button class="row-action">Pause</button></td>
+            </tr>
+            <tr>
+              <td>
+                <div class="ad-cell">
+                  <div class="thumb"></div>
+                  <div>
+                    <div class="ad-name">Barber Shops — Fresh Creative</div>
+                    <div class="ad-meta">Barber Shops · Broad</div>
+                  </div>
+                </div>
+              </td>
+              <td><span class="pill paused">Learning</span></td>
+              <td class="num-col num">$28.00</td>
+              <td class="num-col num">0</td>
+              <td class="num-col num">—</td>
+              <td class="num-col num">—</td>
+              <td class="num-col num">—</td>
+              <td class="num-col num analysis-col">1.4%</td>
+              <td class="num-col num analysis-col">—</td>
+              <td class="num-col num analysis-col">—</td>
+              <td class="num-col num analysis-col">—</td>
+              <td><button class="row-action">Monitor</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="footnote">Illustrative figures for this mockup — not a live pull from RHO 4.</div>
+  </div>
+
+</div>
+
+<script>
+  (function () {
+    var decisionBtn = document.getElementById('btn-decision');
+    var analysisBtn = document.getElementById('btn-analysis');
+    decisionBtn.addEventListener('click', function () {
+      document.body.classList.remove('analysis');
+      decisionBtn.classList.add('active');
+      analysisBtn.classList.remove('active');
+    });
+    analysisBtn.addEventListener('click', function () {
+      document.body.classList.add('analysis');
+      analysisBtn.classList.add('active');
+      decisionBtn.classList.remove('active');
+    });
+    var tabs = document.querySelectorAll('.tab');
+    tabs.forEach(function (t) {
+      t.addEventListener('click', function () {
+        tabs.forEach(function (o) { o.classList.remove('active'); });
+        t.classList.add('active');
+      });
+    });
+  })();
+</script>
