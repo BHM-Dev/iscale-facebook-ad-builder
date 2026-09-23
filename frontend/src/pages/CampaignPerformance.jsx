@@ -224,13 +224,82 @@ function CreativeCompass({ buckets, onOpenAdset, dateRangeLabel }) {
   );
 }
 
+function geographyStateRoas(state) {
+  return state.roas ?? (Number(state.spend) > 0 ? Number(state.revenue || 0) / Number(state.spend) : null);
+}
+
+function geographyStateGroups(states = []) {
+  return states.reduce((groups, state) => {
+    const spend = Number(state.spend || 0);
+    const roas = geographyStateRoas(state);
+    const group = spend >= 50 && roas != null && roas < 1 ? 'problem' : spend >= 50 && roas != null && roas >= 1 ? 'profitable' : 'unproven';
+    groups[group].push(state);
+    return groups;
+  }, { problem: [], profitable: [], unproven: [] });
+}
+
+function GeographyDetails({ campaign, platformMode, expandedStateGroups, onToggleGroup }) {
+  const groups = geographyStateGroups(campaign.states);
+  const renderPlatformTable = (states, showAdsets) => (
+    <div className="overflow-x-auto rounded-lg border border-gray-100">
+      <table className="w-full min-w-[560px] text-xs">
+        <thead className="bg-gray-50 text-gray-500"><tr><th className="px-3 py-2 text-left font-medium">State / ad set</th><th className="px-3 py-2 text-right font-medium">Spend</th><th className="px-3 py-2 text-right font-medium">Revenue</th><th className="px-3 py-2 text-right font-medium">ROAS</th></tr></thead>
+        <tbody>{states.flatMap(state => {
+          const stateRoas = geographyStateRoas(state);
+          const rows = [<tr key={`${state.state}-summary`} className="border-t border-gray-100 bg-violet-50/40"><td className="px-3 py-2 font-semibold text-gray-800">{state.state} <span className="font-normal text-gray-500">· {state.conversions} conv.</span></td><td className="px-3 py-2 text-right font-semibold text-gray-800">{formatMoney(state.spend)}</td><td className="px-3 py-2 text-right font-semibold text-gray-800">{formatMoney(state.revenue)}</td><td className={`px-3 py-2 text-right text-base font-bold ${stateRoas != null && stateRoas < 1 ? 'text-red-700' : 'text-emerald-700'}`}>{stateRoas != null ? `${Number(stateRoas).toFixed(2)}x` : '—'}</td></tr>];
+          if (showAdsets) rows.push(...(state.adsets || []).map(adset => <tr key={`${state.state}-${adset.adset_id}`} className="border-t border-gray-100"><td className="px-3 py-2 pl-7 text-gray-600">↳ {adset.adset_name} <span className="text-gray-400">· {adset.conversions} conv.</span></td><td className="px-3 py-2 text-right text-gray-400">—</td><td className="px-3 py-2 text-right text-gray-700">{formatMoney(adset.revenue)}</td><td className="px-3 py-2 text-right text-gray-400">—</td></tr>));
+          return rows;
+        })}</tbody>
+      </table>
+    </div>
+  );
+  if (!platformMode) {
+    return <div className="overflow-x-auto rounded-lg border border-gray-100"><table className="w-full min-w-[700px] text-xs"><thead className="bg-gray-50 text-gray-500"><tr><th className="px-3 py-2 text-left font-medium">State</th><th className="px-3 py-2 text-right font-medium">Spend</th><th className="px-3 py-2 text-right font-medium">Leads</th><th className="px-3 py-2 text-right font-medium">CPL</th><th className="px-3 py-2 text-right font-medium">Estimated excess</th><th className="px-3 py-2 text-right font-medium">Status</th></tr></thead><tbody>{campaign.states.map(state => <tr key={state.state} className={`border-t border-gray-100 ${state.is_dragging ? 'bg-red-50/60' : ''}`}><td className="px-3 py-2 font-medium text-gray-800">{state.state}</td><td className="px-3 py-2 text-right text-gray-700">{formatMoney(state.spend)}</td><td className="px-3 py-2 text-right text-gray-700">{state.leads}</td><td className={`px-3 py-2 text-right font-semibold ${state.is_dragging ? 'text-red-700' : 'text-gray-800'}`}>{formatMoney(state.cpl)}</td><td className="px-3 py-2 text-right text-gray-700">{state.is_dragging ? formatMoney(state.excess_cost) : '—'}</td><td className="px-3 py-2 text-right">{state.is_dragging ? <span className="rounded-full bg-red-100 px-2 py-0.5 font-semibold text-red-700">Review targeting</span> : <span className="text-gray-400">No signal</span>}</td></tr>)}</tbody></table></div>;
+  }
+  const renderGroup = (group, label, description, openByDefault = false) => {
+    const states = groups[group];
+    if (!states.length) return null;
+    const key = `${campaign.campaign_id}:${group}`;
+    const open = openByDefault || expandedStateGroups.has(key);
+    return <div className="rounded-lg border border-gray-100 overflow-hidden"><button type="button" onClick={() => !openByDefault && onToggleGroup(campaign.campaign_id, group)} className={`w-full flex items-center justify-between gap-3 px-3 py-2 text-left ${group === 'problem' ? 'bg-red-50 text-red-800' : group === 'profitable' ? 'bg-emerald-50 text-emerald-800' : 'bg-gray-50 text-gray-700'}`} aria-expanded={open}><span className="text-xs font-semibold">{label} · {states.length}</span><span className="flex items-center gap-2 text-[11px] font-normal"><span>{description}</span>{!openByDefault && <ChevronDown size={14} className={open ? 'rotate-180' : ''} />}</span></button>{open && <div className="p-2">{renderPlatformTable(states, group === 'problem')}</div>}</div>;
+  };
+  return <div className="space-y-2">{renderGroup('problem', 'Problem states', 'ROAS below 1.00x with $50+ spend', true)}{renderGroup('profitable', 'Profitable states', 'ROAS at or above 1.00x')}{renderGroup('unproven', 'Low-volume / unproven states', 'Under $50 spend or no ROAS')}</div>;
+}
+
 function GeographyWatchlist({ data, loading, error, onRefresh }) {
   const [expandedCampaignId, setExpandedCampaignId] = useState(null);
+  const [expandedStateGroups, setExpandedStateGroups] = useState(new Set());
   if (loading && !data) return <div className="h-48 rounded-xl bg-gray-50 animate-pulse" />;
   if (error) return <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-4 text-sm text-red-700"><p className="font-semibold">Geography diagnostics unavailable</p><p className="mt-1">{error}</p><button type="button" onClick={onRefresh} className="mt-3 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-red-700 ring-1 ring-red-200 hover:bg-red-100">Retry</button></div>;
   if (!data) return null;
   const platformMode = data.source_mode === 'platform';
   if (!data.campaigns?.length) return <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-8 text-center"><p className="text-sm font-semibold text-gray-700">{platformMode ? 'No matched state conversion data' : 'No state delivery signals need review'}</p><p className="mt-1 text-xs text-gray-500">{platformMode ? 'RedTrack/Everflow returned no geo rows that matched a Meta ad set in this period.' : 'A signal needs $50+ spend, 2+ leads, and a CPL at least 1.5× its campaign’s blended CPL.'}</p></div>;
+  const geographySummary = data.campaigns.reduce((summary, campaign) => {
+    const groups = geographyStateGroups(campaign.states);
+    summary.problem += groups.problem.length;
+    summary.profitable += groups.profitable.length;
+    summary.unproven += groups.unproven.length;
+    return summary;
+  }, { problem: 0, profitable: 0, unproven: 0 });
+  const toggleStateGroup = (campaignId, group) => {
+    const key = `${campaignId}:${group}`;
+    setExpandedStateGroups(current => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+  if (platformMode) return <div className="space-y-3">
+    <div className="rounded-xl border border-violet-100 bg-violet-50 px-4 py-3 text-xs text-violet-900"><span className="font-semibold">{geographySummary.problem} problem state{geographySummary.problem !== 1 ? 's' : ''} · {geographySummary.profitable} profitable · {geographySummary.unproven} low-volume/unproven</span>. Spend is Meta's campaign × state delivery cost; revenue is RedTrack/Everflow. ROAS is revenue ÷ spend.</div>
+    {data.campaigns.map(campaign => {
+      const expanded = expandedCampaignId === campaign.campaign_id;
+      const groups = geographyStateGroups(campaign.states);
+      return <section key={campaign.campaign_id} className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+        <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-4"><div className="min-w-0"><p className="font-semibold text-sm text-gray-900 break-words">{campaign.campaign_name || campaign.campaign_id}</p><p className="mt-1 text-xs text-gray-500">{campaign.total_conversions.toLocaleString()} conversions · {formatMoney(campaign.total_revenue)} revenue · {formatMoney(campaign.total_spend)} spend · {campaign.total_roas != null ? `${campaign.total_roas.toFixed(2)}x ROAS` : 'ROAS —'}</p><p className="mt-2 text-xs text-gray-500">{groups.problem.length} problem · {groups.profitable.length} profitable · {groups.unproven.length} low-volume/unproven states</p></div><button type="button" onClick={() => setExpandedCampaignId(expanded ? null : campaign.campaign_id)} className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700" aria-expanded={expanded}>{expanded ? 'Hide states' : 'Inspect states'} <ChevronDown size={14} className={expanded ? 'rotate-180' : ''} /></button></div>
+        {expanded && <div className="border-t border-gray-100 px-4 py-3"><p className="mb-3 text-[11px] text-gray-500">Problem states and their ad-set revenue detail are shown first. Profitable and low-volume states are grouped below so a 50-state campaign stays readable.</p><GeographyDetails campaign={campaign} platformMode expandedStateGroups={expandedStateGroups} onToggleGroup={toggleStateGroup} /></div>}
+      </section>;
+    })}
+  </div>;
   return <div className="space-y-3">
     <div className="rounded-xl border border-violet-100 bg-violet-50 px-4 py-3 text-xs text-violet-900"><span className="font-semibold">{data.flagged_state_count} state{data.flagged_state_count !== 1 ? 's' : ''} across {data.flagged_campaign_count} campaign{data.flagged_campaign_count !== 1 ? 's' : ''} matched.</span> {platformMode ? (data.source_rows?.meta_spend ? "Spend is Meta's own per-state delivery data. Revenue is RedTrack/Everflow — Meta doesn't see post-click conversions. ROAS divides that revenue by Meta's spend." : "Meta's spend data didn't load this time (revenue below is still real) — Refresh to retry.") : 'These are CPL signals from Meta, not state-level revenue or an instruction to exclude anyone.'}</div>
     {data.campaigns.map(campaign => {
@@ -504,7 +573,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
           {/* Backdrop */}
           <div className="absolute inset-0 bg-black/30 pointer-events-auto" onClick={toggleOpen} />
           {/* Drawer */}
-          <div className="relative w-full max-w-3xl bg-white shadow-2xl pointer-events-auto flex flex-col h-full overflow-y-auto">
+          <div className="relative w-full max-w-5xl bg-white shadow-2xl pointer-events-auto flex flex-col h-full overflow-y-auto">
             <div className="px-6 py-4 flex items-center justify-between bg-violet-50/40 border-b border-violet-100">
               <h2 className="font-semibold text-gray-900 flex items-center gap-2">
                 <Sparkles size={16} className="text-violet-500" />
