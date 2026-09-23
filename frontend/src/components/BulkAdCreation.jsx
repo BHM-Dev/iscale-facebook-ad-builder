@@ -24,6 +24,7 @@ import {
     fingerprintReconciliationPackage,
 } from '../lib/reconciliationScope';
 import NamingTemplateField from './NamingTemplateField';
+import { isValidDestinationUrl, normalizeDestinationUrl } from '../lib/destinationUrl';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -36,18 +37,6 @@ const displayDomain = (url) => {
         return new URL(url).hostname.replace(/^www\./, '');
     } catch {
         return url;
-    }
-};
-
-// The API only accepts absolute http(s) destinations. Validate this in the
-// Review step too: a row's URL can be edited after the Creative-step check,
-// and image upload must never be the first time an invalid URL is discovered.
-const isValidDestinationUrl = (value) => {
-    try {
-        const parsed = new URL(String(value || '').trim());
-        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-    } catch {
-        return false;
     }
 };
 
@@ -417,6 +406,11 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // copy assignment or needing to rebuild the Drive selection.
     const [manifestSearch, setManifestSearch] = useState('');
     const [manifestCategory, setManifestCategory] = useState('all');
+    const [campaignWideUrl, setCampaignWideUrl] = useState('');
+    // Holds { normalized, eligibleIds, differingRows } while the confirm modal
+    // is open for a bulk apply that would overwrite an already-different URL
+    // on at least one row — null the rest of the time.
+    const [campaignWideUrlPendingApply, setCampaignWideUrlPendingApply] = useState(null);
     const [manifestExcludedAdIds, setManifestExcludedAdIds] = useState(() => new Set(
         (adsData || []).filter(ad => ad.excludedFromLaunch).map(ad => ad.id)
     ));
@@ -988,10 +982,58 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             if (field === 'headline') return { ...ad, headlineOverride: value, manualCopyFields: { ...(ad.manualCopyFields || {}), headline: true } };
             if (field === 'body') return { ...ad, bodyOverride: value, manualCopyFields: { ...(ad.manualCopyFields || {}), body: true } };
             if (field === 'description') return { ...ad, descriptionOverride: value, manualCopyFields: { ...(ad.manualCopyFields || {}), description: true } };
-            if (field === 'websiteUrl') return { ...ad, websiteUrlOverride: value, manualCopyFields: { ...(ad.manualCopyFields || {}), websiteUrl: true } };
+            if (field === 'websiteUrl') return { ...ad, websiteUrlOverride: normalizeDestinationUrl(value), manualCopyFields: { ...(ad.manualCopyFields || {}), websiteUrl: true } };
             if (field === 'cta') return { ...ad, ctaOverride: value, ctaSource: 'Manual row edit', manualCopyFields: { ...(ad.manualCopyFields || {}), cta: true } };
             return ad;
         }));
+    };
+
+    // Eligible = would actually be touched by an Apply click right now — the
+    // same filter applyCampaignWideUrl uses. Shown live in the box so Joel
+    // knows the blast radius before he clicks, not just from the toast after.
+    const campaignWideUrlEligibleCount = adsData
+        .filter(ad => !manifestExcludedAdIds.has(ad.id) && !protectedReconciliationIdSet.has(ad.id))
+        .length;
+
+    const applyCampaignWideUrl = () => {
+        const normalized = normalizeDestinationUrl(campaignWideUrl);
+        if (!isValidDestinationUrl(normalized)) {
+            showWarning('Enter a complete destination URL starting with http:// or https:// before applying it.');
+            return;
+        }
+        const eligibleIds = new Set(adsData
+            .filter(ad => !manifestExcludedAdIds.has(ad.id) && !protectedReconciliationIdSet.has(ad.id))
+            .map(ad => ad.id));
+        // A row whose current destination is non-empty and different is a
+        // real overwrite of something Joel (or a prior Drive match) set
+        // deliberately — confirm before silently replacing it. A row that's
+        // blank or already this exact URL needs no confirmation; that's the
+        // common, harmless case this control exists for.
+        const differingRows = manifestRows.filter(row => eligibleIds.has(row.ad.id)
+            && row.websiteUrl
+            && row.websiteUrl !== normalized);
+        if (differingRows.length > 0) {
+            setCampaignWideUrlPendingApply({ normalized, eligibleIds, differingRows });
+            return;
+        }
+        setAdsData(prev => prev.map(ad => eligibleIds.has(ad.id)
+            ? { ...ad, websiteUrlOverride: normalized, manualCopyFields: { ...(ad.manualCopyFields || {}), websiteUrl: true } }
+            : ad
+        ));
+        setCampaignWideUrl(normalized);
+        showSuccess(`Applied one destination URL to ${eligibleIds.size} selected ad${eligibleIds.size === 1 ? '' : 's'}.`);
+    };
+
+    const confirmApplyCampaignWideUrl = () => {
+        if (!campaignWideUrlPendingApply) return;
+        const { normalized, eligibleIds } = campaignWideUrlPendingApply;
+        setAdsData(prev => prev.map(ad => eligibleIds.has(ad.id)
+            ? { ...ad, websiteUrlOverride: normalized, manualCopyFields: { ...(ad.manualCopyFields || {}), websiteUrl: true } }
+            : ad
+        ));
+        setCampaignWideUrl(normalized);
+        showSuccess(`Applied one destination URL to ${eligibleIds.size} selected ad${eligibleIds.size === 1 ? '' : 's'}.`);
+        setCampaignWideUrlPendingApply(null);
     };
 
     const updateAdName = (index, name) => {
@@ -1816,6 +1858,17 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     return (
         <div>
             <h2 className="text-2xl font-bold mb-2">{isDriveManifest ? (driveManifestCreatesSeparateAdsets ? 'Review bulk ad sets' : 'Review bulk ads') : 'Review & Launch Ads'}</h2>
+            {isDriveManifest && (
+                <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4">
+                    <div className="mb-2 text-sm font-semibold text-blue-900">Campaign-wide destination URL</div>
+                    <p className="mb-3 text-xs text-blue-800">Paste one RedTrack or landing-page URL and apply it to every selected ad — this replaces the full URL on every row, including any that already point somewhere different. RedTrack sub-tracking macros (like {'{{ad.id}}'}) still differentiate per ad even when the literal URL is identical. You can still edit an individual row afterward.</p>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                        <input type="url" value={campaignWideUrl} onChange={(event) => setCampaignWideUrl(normalizeDestinationUrl(event.target.value))} placeholder="https://tracking.example.com/..." className="min-w-0 flex-1 rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200" />
+                        <button type="button" onClick={applyCampaignWideUrl} className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800">Apply to selected ads</button>
+                    </div>
+                    <p className="mt-2 text-[11px] text-blue-700">Will apply to {campaignWideUrlEligibleCount} selected ad{campaignWideUrlEligibleCount === 1 ? '' : 's'}{campaignWideUrlEligibleCount !== adsData.length ? ` (${adsData.length - campaignWideUrlEligibleCount} excluded/protected)` : ''}.</p>
+                </div>
+            )}
             {reconciliationPendingRecords.length > 0 && (
                 <div className="mb-5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                     <strong>This ad account has an unresolved launch.</strong> Reconcile it before creating new ads.
@@ -2617,6 +2670,27 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 <div className="mt-5 flex gap-3">
                                     <button type="button" onClick={() => setShowReconciliationConfirm(false)} className="flex-1 rounded-lg border border-gray-200 px-4 py-2.5 font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
                                         <button type="button" onClick={clearReconciliationBlock} className="flex-1 rounded-lg bg-amber-600 px-4 py-2.5 font-semibold text-white hover:bg-amber-700">Reset and exclude rows</button>
+                                </div>
+                            </div>
+                        </div>
+                        );
+                    })()}
+
+                    {campaignWideUrlPendingApply && (() => {
+                        const { normalized, eligibleIds, differingRows } = campaignWideUrlPendingApply;
+                        return (
+                        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="campaign-wide-url-confirm-title">
+                            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+                                <h2 id="campaign-wide-url-confirm-title" className="text-lg font-bold text-gray-900">Replace {differingRows.length} row{differingRows.length !== 1 ? 's' : ''} that already point somewhere else?</h2>
+                                <p className="mt-2 text-sm leading-6 text-gray-600">This applies <span className="font-semibold text-gray-900 break-all">{normalized}</span> to all {eligibleIds.size} selected ads. {differingRows.length} of them currently have a different destination URL set — that gets overwritten too.</p>
+                                <ul className="mt-3 max-h-32 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700 space-y-0.5">
+                                    {differingRows.map(row => (
+                                        <li key={row.ad.id} className="truncate">• {row.ad.name || `Row ${row.index + 1}`} — currently {row.websiteUrl}</li>
+                                    ))}
+                                </ul>
+                                <div className="mt-5 flex gap-3">
+                                    <button type="button" onClick={() => setCampaignWideUrlPendingApply(null)} className="flex-1 rounded-lg border border-gray-200 px-4 py-2.5 font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
+                                    <button type="button" onClick={confirmApplyCampaignWideUrl} className="flex-1 rounded-lg bg-blue-700 px-4 py-2.5 font-semibold text-white hover:bg-blue-800">Replace and apply to all {eligibleIds.size}</button>
                                 </div>
                             </div>
                         </div>

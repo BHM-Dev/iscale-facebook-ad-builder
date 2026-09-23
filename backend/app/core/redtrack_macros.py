@@ -51,6 +51,8 @@ $3,254 of Everflow revenue unattributed in the August P&L.
 """
 from urllib.parse import urlsplit, parse_qsl
 
+from app.core.destination_url import normalize_destination_url
+
 # key -> Meta dynamic URL macro (literal braces, expanded by Meta at delivery)
 REDTRACK_MACROS = {
     "sub1": "{{ad.id}}",
@@ -68,11 +70,15 @@ def build_redtrack_url_tags(website_url: str) -> str:
     """
     if not website_url or not isinstance(website_url, str):
         return ""
-    stripped = website_url.strip()
-    if not stripped.lower().startswith(("http://", "https://")):
+    stripped = normalize_destination_url(website_url)
+    try:
+        parsed_url = urlsplit(stripped)
+    except ValueError:
+        return ""
+    if parsed_url.scheme.lower() not in {"http", "https"} or not parsed_url.netloc:
         return ""
 
-    parts = urlsplit(stripped)
+    parts = parsed_url
     existing = {}
     for key, value in parse_qsl(parts.query, keep_blank_values=True):
         existing.setdefault(key, []).append(value)

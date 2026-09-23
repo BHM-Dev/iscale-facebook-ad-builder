@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image
 import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
+import { isValidDestinationUrl, normalizeDestinationUrl } from '../lib/destinationUrl';
 import { cropImageToAspect } from '../lib/imageCrop';
 import { useBrands } from '../context/BrandContext';
 import CreativeEnhancementsPanel from './CreativeEnhancementsPanel';
@@ -2239,8 +2240,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         // Validate the global URL when it is used by any non-Drive creative.
         if (creativeData.websiteUrl) {
             try {
-                const url = new URL(creativeData.websiteUrl);
-                if (!url.protocol.startsWith('http')) {
+                if (!isValidDestinationUrl(creativeData.websiteUrl)) {
                     showWarning('Please enter a valid URL starting with http:// or https://');
                     return;
                 }
@@ -2251,7 +2251,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         }
 
         const invalidCreativeUrl = creativeData.creatives.find(c => c.websiteUrl && (() => {
-            try { return !new URL(c.websiteUrl).protocol.startsWith('http'); } catch { return true; }
+            return !isValidDestinationUrl(c.websiteUrl);
         })());
         if (invalidCreativeUrl) {
             focusCopyCreative(invalidCreativeUrl.id);
@@ -2799,7 +2799,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             if (!body) issues.push('Primary text');
                             if (!headline) issues.push('Headline');
                             if (!CTA_OPTIONS.includes(cta)) issues.push('CTA');
-                            try { if (!new URL(url).protocol.startsWith('http')) issues.push('URL'); } catch { issues.push('URL'); }
+                            if (!isValidDestinationUrl(url)) issues.push('URL');
                             if (creative.driveCopyIntegrityIssue) issues.push(creative.driveCopyRefusedForOtherFile ? 'Drive copy not matched' : 'Drive pair');
                             if (body.length > BODY_LIMIT) issues.push('Primary text length');
                             if (headline.length > HEADLINE_LIMIT) issues.push('Headline length');
@@ -3278,7 +3278,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     <input
                         type="url"
                         value={creativeData.websiteUrl}
-                        onChange={(e) => handleInputChange('websiteUrl', e.target.value)}
+                        onChange={(e) => handleInputChange('websiteUrl', normalizeDestinationUrl(e.target.value))}
                         placeholder="https://yourwebsite.com/landing"
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                     />

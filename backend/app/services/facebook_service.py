@@ -1403,8 +1403,10 @@ class FacebookService:
         lead_gen_form_id = creative_data.get('lead_gen_form_id')
 
         # For lead gen creatives, website_url is not required
-        if not lead_gen_form_id and (not website_url or not website_url.startswith('http')):
-            raise ValueError('website_url must be a valid URL (e.g. https://example.com)')
+        if not lead_gen_form_id:
+            from app.core.destination_url import is_valid_destination_url
+            if not is_valid_destination_url(website_url):
+                raise ValueError('Destination URL must be a complete http:// or https:// URL.')
 
         # NOTE: RedTrack tracking macros ({{ad.id}} etc.) are NOT injected into the
         # destination link — Meta only expands them in the creative's `url_tags` field
