@@ -586,12 +586,23 @@ _BEST_TIMES_RESULT_CACHE_TTL_SECONDS = 15 * 60
 _GEOGRAPHY_RESULT_CACHE: dict[tuple[str, str, str, str], tuple[dict, float]] = {}
 _GEOGRAPHY_RESULT_CACHE_TTL_SECONDS = 5 * 60
 
+_NICHE_PROFITABILITY_RESULT_CACHE: dict[tuple[str, str, str, str], tuple[dict, float]] = {}
+_NICHE_PROFITABILITY_RESULT_CACHE_TTL_SECONDS = 5 * 60
+
 
 def _get_cached_best_times(cache_key: tuple[str, str, str, str]) -> Optional[dict]:
     cached = _BEST_TIMES_RESULT_CACHE.get(cache_key)
     if cached and (time.monotonic() - cached[1]) < _BEST_TIMES_RESULT_CACHE_TTL_SECONDS:
         return cached[0]
     _BEST_TIMES_RESULT_CACHE.pop(cache_key, None)
+    return None
+
+
+def _get_cached_niche_profitability(cache_key: tuple[str, str, str, str]) -> Optional[dict]:
+    cached = _NICHE_PROFITABILITY_RESULT_CACHE.get(cache_key)
+    if cached and (time.monotonic() - cached[1]) < _NICHE_PROFITABILITY_RESULT_CACHE_TTL_SECONDS:
+        return cached[0]
+    _NICHE_PROFITABILITY_RESULT_CACHE.pop(cache_key, None)
     return None
 
 
@@ -1675,11 +1686,22 @@ def niche_profitability(
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     ad_account_id: Optional[str] = Query(None),
+    refresh: bool = Query(False),
     current_user: User = Depends(require_permission("pnl:read")),
     db: Session = Depends(get_db),
 ):
     ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     resolved_from, resolved_to, day_filter, preset_label = _resolve_preset(preset, date_from, date_to)
+
+    # Cached like geography/best-times: the panel now prefetches this in the
+    # background on every account/date change (not just when opened), so an
+    # uncached live Meta call here risks the same per-account rate limit
+    # ("User request limit reached", code 17) already seen on
+    # act_521142087204815.
+    cache_key = (str(ad_account_id or ''), resolved_from, resolved_to, day_filter)
+    cached = None if refresh else _get_cached_niche_profitability(cache_key)
+    if cached is not None:
+        return cached
 
     try:
         meta_data = _fetch_meta_insights(ad_account_id, resolved_from, resolved_to, day_filter)
@@ -1706,7 +1728,7 @@ def niche_profitability(
     tracking_warning = _build_tracking_warning(rows)
     summary = _build_summary(action_queue)
 
-    return {
+    result = {
         "question_set":      "niche_profitability",
         "preset":            preset,
         "date_from":         resolved_from,
@@ -1718,6 +1740,8 @@ def niche_profitability(
         "summary":           summary,
         "rows":              rows,
     }
+    _NICHE_PROFITABILITY_RESULT_CACHE[cache_key] = (result, time.monotonic())
+    return result
 
 
 @router.get('/geography-watchlist')

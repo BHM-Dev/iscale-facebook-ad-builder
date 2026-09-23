@@ -297,7 +297,14 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
         setData(result);
       }
     } catch (e) {
-      if (requestId === intelligenceRequestRef.current) setError(e.message || 'Failed to load intelligence data');
+      if (requestId === intelligenceRequestRef.current) {
+        setError(e.message || 'Failed to load intelligence data');
+        // This fetch now also fires in the background while the panel is
+        // closed (findings badge prefetch) — without this log a failure
+        // here (e.g. a Meta rate limit) would be completely invisible,
+        // since setError only renders inside the open panel body.
+        console.error('Campaign Intelligence fetch failed:', e);
+      }
     } finally {
       if (requestId === intelligenceRequestRef.current) setLoading(false);
     }
@@ -358,7 +365,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
   const toggleOpen = useCallback(() => {
     setOpen(current => {
       const next = !current;
-      if (next && loadedPresetRef.current !== preset) {
+      if (next && loadedPresetRef.current !== preset && !loading) {
         loadIntelligence(preset, customFrom, customTo);
       }
       if (next && intelligenceView === 'best-times' && !bestTimesData) {
@@ -369,7 +376,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
       }
       return next;
     });
-  }, [preset, customFrom, customTo, intelligenceView, bestTimesData, geographyData, loadIntelligence, loadBestTimes, loadGeography]);
+  }, [preset, customFrom, customTo, intelligenceView, bestTimesData, geographyData, loading, loadIntelligence, loadBestTimes, loadGeography]);
 
   useEffect(() => {
     if (!initialOpen) return;
