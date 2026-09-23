@@ -631,7 +631,44 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                     )}
                   </p>
                   <div className="text-violet-900">
-                    <p className="text-sm font-semibold leading-relaxed">{intelligenceView === 'best-times' ? 'When should I run this campaign? Review the recommended Meta schedule below.' : intelligenceView === 'geography' ? 'Where is delivery dragging? Start with the few campaign-state signals that clear the evidence threshold.' : panelData.summary}</p>
+                    {intelligenceView === 'niche' && panelData.action_queue ? (
+                      (() => {
+                        const LANES = [
+                          { key: 'scale', label: 'Scale', dot: 'bg-green-500', pill: 'bg-green-100 text-green-800' },
+                          { key: 'cut_or_pause', label: 'Cut / Pause', dot: 'bg-red-500', pill: 'bg-red-100 text-red-800' },
+                          { key: 'watch', label: 'Watch', dot: 'bg-amber-500', pill: 'bg-amber-100 text-amber-800' },
+                          { key: 'tracking_check', label: 'Tracking', dot: 'bg-yellow-500', pill: 'bg-yellow-100 text-yellow-800' },
+                        ];
+                        const counts = panelData.action_queue.counts || {};
+                        const topLane = LANES.find(lane => panelData.action_queue[lane.key]?.length);
+                        const topItem = topLane ? panelData.action_queue[topLane.key][0] : null;
+                        return (
+                          <>
+                            {topItem && (
+                              <p className="text-sm font-semibold leading-relaxed">
+                                <span className="text-violet-500 font-normal">Start here → </span>
+                                {topItem.niche}
+                                {topItem.action_label ? <span className="text-violet-700"> · {topItem.action_label}</span> : null}
+                              </p>
+                            )}
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {LANES.map(lane => {
+                                const count = counts[lane.key] ?? panelData.action_queue[lane.key]?.length ?? 0;
+                                if (!count) return null;
+                                return (
+                                  <span key={lane.key} className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${lane.pill}`}>
+                                    <span className={`h-1.5 w-1.5 rounded-full ${lane.dot}`} />
+                                    {count} {lane.label}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </>
+                        );
+                      })()
+                    ) : (
+                      <p className="text-sm font-semibold leading-relaxed">{intelligenceView === 'best-times' ? 'When should I run this campaign? Review the recommended Meta schedule below.' : intelligenceView === 'geography' ? 'Where is delivery dragging? Start with the few campaign-state signals that clear the evidence threshold.' : panelData.summary}</p>
+                    )}
                   </div>
                 </div>
               </div>
