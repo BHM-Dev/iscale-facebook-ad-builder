@@ -531,6 +531,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // selection/inspection pattern as the final Review step: compact rows on
     // the left, with one focused editable record in the rail on the right.
     const [selectedCopyCreativeId, setSelectedCopyCreativeId] = useState(null);
+    // The compact row thumbnail is deliberately only a locator. On hover, show
+    // the actual creative at a useful review size, like Ads Manager's ad-table
+    // preview, without bringing back the redundant media-card grid.
+    const [hoveredCreativePreview, setHoveredCreativePreview] = useState(null);
     const copyEditorRef = useRef(null);
     const copyRowRefs = useRef({});
     useEffect(() => {
@@ -1937,9 +1941,23 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     };
 
     const removeCreative = (id) => {
+        // An original automatically-created Feed/Stories pair is one buyer
+        // decision. Removing that original must not silently leave its
+        // `_autodupe` counterpart to launch as an orphaned ad. Removing the
+        // auto-created half itself remains an intentional single-placement
+        // action.
+        const idsToRemove = new Set([id]);
+        if (!id.endsWith('_autodupe')) idsToRemove.add(`${id}_autodupe`);
+        // Keep the inspector pointed at a real row when its current row is
+        // removed. The effect below is a safety net; setting it here avoids a
+        // one-render flash of the deleted creative in the inspector.
+        if (selectedCopyCreativeId === id) {
+            setSelectedCopyCreativeId(creativeData.creatives.find(creative => !idsToRemove.has(creative.id))?.id || null);
+        }
+        if (hoveredCreativePreview?.id === id) setHoveredCreativePreview(null);
         setCreativeData(prev => ({
             ...prev,
-            creatives: prev.creatives.filter(c => c.id !== id)
+            creatives: prev.creatives.filter(c => !idsToRemove.has(c.id))
         }));
     };
 
@@ -2574,210 +2592,6 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         </label>
                     </div>
 
-                    {/* Media Grid */}
-                    {creativeData.creatives && creativeData.creatives.length > 0 && (
-                        <div className="mb-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800 flex items-center justify-between gap-3 flex-wrap">
-                            <span>
-                                <strong>Placement tag:</strong> Each image defaults to <span className="font-semibold text-blue-700">Feed (1:1)</span>. Click the pill on any card to switch it to <span className="font-semibold text-purple-700">Stories (9:16)</span>. Use the copy icon to duplicate an image for the opposite placement.
-                                {autoDupeStories && ' With auto-duplicate on above, new single images already come in as a Feed + Stories pair — remove either card if you only want one.'}
-                            </span>
-                            {creativeData.creatives.some(c => c.id.endsWith('_autodupe')) && (
-                                <button
-                                    type="button"
-                                    onClick={removeAutoDupedCreatives}
-                                    className="shrink-0 text-xs font-semibold text-blue-700 underline hover:text-blue-900"
-                                >
-                                    Remove all auto-added Stories/Feed duplicates
-                                </button>
-                            )}
-                        </div>
-                    )}
-                    {/* Aggregate crop-batch banner — a dense bulk grid (e.g. a
-                        50-image Drive add) reads as a wall of per-card spinners
-                        with no way to tell "still working" from "stuck" at a
-                        glance; this gives the batch a single visible number.
-                        Progress-only while in flight; separately, a persistent
-                        failure summary + one-click retry-all once anything
-                        fails, so Joel isn't hunting red banners card by card
-                        (joel-perspective follow-up on the smart-crop feature). */}
-                    {croppingCount > 0 && (
-                        <div className="mb-3 px-3 py-2 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-800 flex items-center gap-2">
-                            <Loader className="animate-spin shrink-0" size={14} />
-                            Cropping Feed/Stories versions — {cropBatchProgress.done} of {cropBatchProgress.total} done
-                        </div>
-                    )}
-                    {cropFailedCount > 0 && (
-                        <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-800 flex items-center justify-between gap-3 flex-wrap">
-                            <span>
-                                <strong>{cropFailedCount}</strong> Feed/Stories crop{cropFailedCount !== 1 ? 's' : ''} failed — showing the uncropped image on those cards.
-                            </span>
-                            <button
-                                type="button"
-                                onClick={retryAllFailedCrops}
-                                className="shrink-0 text-xs font-semibold text-red-700 underline hover:text-red-900"
-                            >
-                                Retry all {cropFailedCount} failed crop{cropFailedCount !== 1 ? 's' : ''}
-                            </button>
-                        </div>
-                    )}
-                    {creativeData.creatives && creativeData.creatives.length > 0 && (
-                        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3 mb-4">
-                            {creativeData.creatives.map((creative) => (
-                                <div key={creative.id} className="relative group border rounded-lg overflow-hidden aspect-square bg-gray-100">
-                                    {creative.mediaType === 'video' ? (
-                                        <video
-                                            src={creative.previewUrl}
-                                            className="w-full h-full object-cover"
-                                            muted
-                                            playsInline
-                                            onMouseEnter={(e) => e.target.play()}
-                                            onMouseLeave={(e) => { e.target.pause(); e.target.currentTime = 0; }}
-                                        />
-                                    ) : (
-                                        <img
-                                            src={creative.previewUrl}
-                                            alt={creative.name}
-                                            className="w-full h-full object-cover"
-                                        />
-                                    )}
-                                    {/* In-flight state for the real server-side crop
-                                        (requestSmartCrop) — the card already shows the
-                                        uncropped source as a placeholder underneath, this
-                                        overlay just makes clear it's not final yet. */}
-                                    {creative.cropping && (
-                                        <div className="absolute inset-0 bg-black bg-opacity-50 flex flex-col items-center justify-center gap-1.5 text-white text-xs">
-                                            <Loader className="animate-spin" size={20} />
-                                            Cropping for {(creative.format || 'feed') === 'stories' ? 'Stories' : 'Feed'}...
-                                        </div>
-                                    )}
-                                    {creative.cropFailed && (
-                                        <div className="absolute inset-x-0 top-0 bg-red-600 text-white text-[11px] px-2 py-1 flex items-center justify-between gap-2">
-                                            <span>Crop failed — showing uncropped image</span>
-                                            <button
-                                                type="button"
-                                                onClick={(e) => { e.stopPropagation(); recropCreative(creative.id, creative.cropAnchor); }}
-                                                className="underline font-semibold shrink-0"
-                                            >
-                                                Retry
-                                            </button>
-                                        </div>
-                                    )}
-                                    {/* Media type badge */}
-                                    <div className="absolute top-2 left-2">
-                                        {creative.mediaType === 'video' ? (
-                                            <span className="bg-purple-600 text-white text-xs px-2 py-1 rounded flex items-center gap-1">
-                                                <Film size={12} /> Video
-                                            </span>
-                                        ) : (
-                                            <span className="bg-blue-600 text-white text-xs px-2 py-1 rounded flex items-center gap-1">
-                                                <Image size={12} /> Image
-                                            </span>
-                                        )}
-                                    </div>
-                                    {creative.dualPlacement && (
-                                        <div className="absolute top-2 right-2 bg-purple-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm flex items-center gap-1">
-                                            <Layers size={12} /> Feed + Stories linked
-                                        </div>
-                                    )}
-                                    <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); removeCreative(creative.id); }}
-                                        className={`absolute right-2 ${creative.dualPlacement ? 'top-10' : 'top-2'} rounded-full bg-white/95 p-1.5 text-red-600 shadow-sm ring-1 ring-black/5 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500`}
-                                        aria-label={`Remove ${creative.name || 'creative'}`}
-                                        title="Remove creative"
-                                    >
-                                        <Trash2 size={15} />
-                                    </button>
-                                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
-                                        {/* Duplicate-as-opposite-placement doesn't apply once a creative
-                                            already carries both a feed and a stories image — it's not a
-                                            single asset being reused at a second placement, it's already
-                                            both. */}
-                                        {!creative.dualPlacement && (
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); duplicateCreative(creative.id); }}
-                                                className="flex items-center gap-1 px-2 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-xs font-medium transform scale-90 hover:scale-100 transition-all"
-                                                title={`Duplicate as ${(creative.format || 'feed') === 'stories' ? 'Feed (1:1)' : 'Stories (9:16)'}`}
-                                            >
-                                                <Copy size={13} />
-                                                {(creative.format || 'feed') === 'stories' ? 'Dupe as Feed' : 'Dupe as Stories'}
-                                            </button>
-                                        )}
-                                    </div>
-                                    {/* Reposition the smart-crop when the default center cut
-                                        removes something important — re-crops from the original
-                                        source (cropSourceFile/cropSourceUrl), never the current
-                                        already-cropped result, so this never compounds. Labels use
-                                        cropAxis returned by the backend (which axis it ACTUALLY
-                                        trimmed, from the real source dimensions vs. target ratio)
-                                        rather than guessing from the Feed/Stories format label — a
-                                        landscape photo duped to square Feed still trims WIDTH, so
-                                        format alone doesn't reliably predict the axis
-                                        (code-auditor pre-push review, MEDIUM). Always visible
-                                        (not hover-only) since a bulk grid makes a hover-only
-                                        control easy to never discover (joel-perspective, P1). */}
-                                    {creative.cropAnchor && creative.cropAxis && creative.cropAxis !== 'none' && !creative.cropping && !creative.cropFailed && (
-                                        <div
-                                            className="absolute bottom-6 left-0 right-0 flex items-center justify-center gap-1 px-1.5 py-1"
-                                            onClick={(e) => e.stopPropagation()}
-                                        >
-                                            {['start', 'center', 'end'].map(anchor => {
-                                                const isVertical = creative.cropAxis === 'height';
-                                                const labels = isVertical
-                                                    ? { start: 'Top', center: 'Mid', end: 'Bot' }
-                                                    : { start: 'Left', center: 'Ctr', end: 'Right' };
-                                                return (
-                                                    <button
-                                                        key={anchor}
-                                                        type="button"
-                                                        onClick={() => recropCreative(creative.id, anchor)}
-                                                        className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shadow-sm ${
-                                                            creative.cropAnchor === anchor
-                                                                ? 'bg-amber-500 text-white'
-                                                                : 'bg-white/70 text-gray-700 hover:bg-white'
-                                                        }`}
-                                                        title={`Re-crop anchored to ${labels[anchor]}`}
-                                                    >
-                                                        {labels[anchor]}
-                                                    </button>
-                                                );
-                                            })}
-                                        </div>
-                                    )}
-                                    <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 text-white text-xs flex items-center gap-1 px-1.5 py-1">
-                                        <span className="truncate flex-1 min-w-0">{creative.name}</span>
-                                        {creative.dualPlacement ? (
-                                            // Not a toggle — this creative already carries both a feed
-                                            // and a stories image via secondaryImageUrl, shown together
-                                            // in Meta as one ad. Nothing to switch between.
-                                            <span
-                                                className="flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold leading-tight bg-purple-500"
-                                                title="Feed (1:1) + Stories (9:16) — one ad, Meta shows the right image per placement"
-                                            >
-                                                1:1 + 9:16
-                                            </span>
-                                        ) : (
-                                            <button
-                                                type="button"
-                                                onClick={(e) => { e.stopPropagation(); toggleCreativeFormat(creative.id); }}
-                                                className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold leading-tight transition-colors ${
-                                                    (creative.format || 'feed') === 'stories'
-                                                        ? 'bg-purple-500 hover:bg-purple-400'
-                                                        : 'bg-blue-600 hover:bg-blue-500'
-                                                }`}
-                                                title={(creative.format || 'feed') === 'stories'
-                                                    ? 'Stories & Reels (9:16) — click to switch to Feed'
-                                                    : 'Feed (1:1) — click to switch to Stories & Reels (9:16)'}
-                                            >
-                                                {(creative.format || 'feed') === 'stories' ? '9:16' : '1:1'}
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                )}
-
                     {!isMatchImport && creativeData.creatives?.length > 0 && (() => {
                         const selectedCreative = creativeData.creatives.find(creative => creative.id === selectedCopyCreativeId)
                             || creativeData.creatives[0];
@@ -2819,8 +2633,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 </div>
                                 <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
                                     <div className="max-h-[660px] overflow-y-auto rounded-xl border border-gray-200 bg-white">
-                                        <div className="hidden grid-cols-[76px_minmax(0,1fr)_110px] gap-3 border-b border-gray-200 bg-gray-50 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500 md:grid">
-                                            <span>Creative</span><span>Ad / copy</span><span className="text-right">Status</span>
+                                        <div className="hidden grid-cols-[76px_minmax(0,1fr)_110px_36px] gap-3 border-b border-gray-200 bg-gray-50 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500 md:grid">
+                                            <span>Creative</span><span>Ad / copy</span><span className="text-right">Status</span><span className="sr-only">Remove</span>
                                         </div>
                                         {creativeData.creatives.map((creative, index) => {
                                             const selected = creative.id === selectedCreative.id;
@@ -2828,7 +2642,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             const copyReady = issues.length === 0;
                                             const displayHeadline = creative.headline || (!creative.source || creative.source !== 'drive' ? creativeData.headlines?.[0] || '' : '');
                                             return (
-                                                <button ref={(element) => { copyRowRefs.current[creative.id] = element; }} key={`copy-row-${creative.id}`} type="button" onClick={() => setSelectedCopyCreativeId(creative.id)} className={`grid w-full grid-cols-[62px_minmax(0,1fr)] gap-3 border-b border-gray-100 px-4 py-3 text-left transition-colors md:grid-cols-[76px_minmax(0,1fr)_110px] ${selected ? 'bg-amber-50 shadow-[inset_3px_0_0_0_#d97706]' : 'hover:bg-gray-50'}`}>
+                                                <div ref={(element) => { copyRowRefs.current[creative.id] = element; }} key={`copy-row-${creative.id}`} className={`grid w-full grid-cols-[minmax(0,1fr)_36px] gap-3 border-b border-gray-100 px-4 py-3 transition-colors ${selected ? 'bg-amber-50 shadow-[inset_3px_0_0_0_#d97706]' : 'hover:bg-gray-50'}`}>
+                                                    <button type="button" onClick={() => setSelectedCopyCreativeId(creative.id)} onMouseEnter={(event) => { if (creative.mediaType !== 'video') { const previewWidth = creative.dualPlacement && creative.secondaryImageUrl ? 780 : 400; const previewHeight = 560; const availableWidth = Math.min(previewWidth, window.innerWidth - 24); const availableHeight = Math.min(previewHeight, window.innerHeight - 24); setHoveredCreativePreview({ ...creative, x: Math.max(12, Math.min(event.clientX + 18, window.innerWidth - availableWidth - 12)), y: Math.max(12, Math.min(event.clientY + 18, window.innerHeight - availableHeight - 12)) }); } }} onMouseLeave={() => setHoveredCreativePreview(current => current?.id === creative.id ? null : current)} className="grid min-w-0 grid-cols-[62px_minmax(0,1fr)] gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500 md:grid-cols-[76px_minmax(0,1fr)_110px]" title={creative.mediaType !== 'video' ? 'Hover to inspect this creative at a larger size' : undefined}>
                                                     <div className="flex h-14 w-[72px] gap-0.5 overflow-hidden rounded-md border border-gray-200 bg-gray-100 p-0.5">
                                                         {creative.previewUrl && <img src={creative.previewUrl} alt="Feed creative" className={creative.dualPlacement && creative.secondaryImageUrl ? 'w-1/2 object-contain' : 'w-full object-contain'} />}
                                                         {creative.dualPlacement && creative.secondaryImageUrl && <img src={creative.secondaryImageUrl} alt="Stories creative" className="w-1/2 object-contain" />}
@@ -2836,9 +2651,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     <div className="min-w-0">
                                                         <div className="truncate text-sm font-semibold text-gray-900">Ad {index + 1} · {creative.name || 'Untitled creative'}</div>
                                                         <div className="mt-0.5 truncate text-xs text-gray-500">{creative.dualPlacement ? 'Feed + Stories pair' : (creative.format || 'feed') === 'stories' ? 'Stories & Reels' : 'Feed'} · {displayHeadline || 'No headline yet'}</div>
+                                                        {creative.cropping && <div className="mt-0.5 text-[11px] font-medium text-indigo-700">Cropping placement…</div>}
+                                                        {creative.cropFailed && <div className="mt-0.5 text-[11px] font-medium text-red-700">Crop failed — select row to retry</div>}
                                                     </div>
                                                     <div className="hidden text-right md:block"><span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${copyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{copyReady ? 'Ready' : `Needs ${issues[0]}`}</span></div>
-                                                </button>
+                                                    </button>
+                                                    <button type="button" onClick={(event) => { event.stopPropagation(); removeCreative(creative.id); }} className="self-start rounded-md p-2 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-500" aria-label={`Delete Ad ${index + 1}: ${creative.name || 'Untitled creative'}`} title={creative.id.endsWith('_autodupe') ? 'Delete this placement' : 'Delete ad row and its linked auto-created placement'}><Trash2 size={17} /></button>
+                                                </div>
                                             );
                                         })}
                                     </div>
@@ -2850,6 +2669,20 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             <div className="flex h-52 gap-2 overflow-hidden rounded-lg bg-gray-100 p-2">
                                                 {selectedCreative.previewUrl && <img src={selectedCreative.previewUrl} alt="Feed preview" className={selectedCreative.dualPlacement && selectedCreative.secondaryImageUrl ? 'w-1/2 object-contain' : 'w-full object-contain'} />}
                                                 {selectedCreative.dualPlacement && selectedCreative.secondaryImageUrl && <img src={selectedCreative.secondaryImageUrl} alt="Stories preview" className="w-1/2 object-contain" />}
+                                            </div>
+                                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                                <div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-gray-800">Media placement</span><span className="text-[11px] text-gray-500">{selectedCreative.dualPlacement ? 'Feed + Stories linked' : (selectedCreative.format || 'feed') === 'stories' ? 'Stories & Reels (9:16)' : 'Feed (1:1)'}</span></div>
+                                                {selectedCreative.cropping && <p className="mt-2 text-xs font-medium text-indigo-700">Cropping this placement. It must finish before launch.</p>}
+                                                {selectedCreative.cropFailed && <div className="mt-2 flex items-center justify-between gap-2 rounded-md bg-red-50 px-2 py-1.5 text-xs text-red-800"><span>Crop failed; the uncropped image cannot launch.</span><button type="button" onClick={() => recropCreative(selectedCreative.id, selectedCreative.cropAnchor || 'center')} className="shrink-0 font-semibold underline">Retry crop</button></div>}
+                                                {!selectedCreative.dualPlacement && (
+                                                    <div className="mt-2 flex flex-wrap gap-2">
+                                                        <button type="button" onClick={() => toggleCreativeFormat(selectedCreative.id)} className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100">Switch to {(selectedCreative.format || 'feed') === 'stories' ? 'Feed (1:1)' : 'Stories (9:16)'}</button>
+                                                        <button type="button" onClick={() => duplicateCreative(selectedCreative.id)} className="rounded-md border border-indigo-200 bg-white px-2 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-50">Add {(selectedCreative.format || 'feed') === 'stories' ? 'Feed' : 'Stories'} placement</button>
+                                                    </div>
+                                                )}
+                                                {selectedCreative.cropAnchor && selectedCreative.cropAxis && selectedCreative.cropAxis !== 'none' && !selectedCreative.cropping && !selectedCreative.cropFailed && (
+                                                    <div className="mt-2 flex items-center gap-1"><span className="mr-1 text-[11px] text-gray-500">Reposition crop:</span>{['start', 'center', 'end'].map(anchor => { const labels = selectedCreative.cropAxis === 'height' ? { start: 'Top', center: 'Mid', end: 'Bot' } : { start: 'Left', center: 'Ctr', end: 'Right' }; return <button key={anchor} type="button" onClick={() => recropCreative(selectedCreative.id, anchor)} className={`rounded px-2 py-1 text-[11px] font-semibold ${selectedCreative.cropAnchor === anchor ? 'bg-amber-500 text-white' : 'bg-white text-gray-700 ring-1 ring-gray-300 hover:bg-gray-100'}`}>{labels[anchor]}</button>; })}</div>
+                                                )}
                                             </div>
                                             {!selectedIsDrive && (!selectedCreative.body || !selectedCreative.headline || !selectedCreative.description || !selectedCreative.cta || !selectedCreative.websiteUrl) && <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-800">Showing shared fallback values for this non-Drive row. Editing any field makes this row independent.</p>}
                                             {selectedCreative.driveCopyIntegrityIssue && <button type="button" onClick={() => { setSelectedDriveAssetIds(new Set()); setDriveSearchTerm(''); setDriveRepairPairId(selectedCreative.drivePairId || null); setDriveFormatFilter(''); setShowDriveLibraryModal(true); }} className={`w-full rounded-lg border px-3 py-2 text-left text-xs font-semibold ${selectedCreative.driveCopyRefusedForOtherFile ? 'border-red-300 bg-red-50 text-red-900 hover:bg-red-100' : 'border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'}`}>{selectedCreative.driveCopyRefusedForOtherFile ? 'Show this creative in the picker' : 'Open Drive to repair this pair'}</button>}
@@ -2864,6 +2697,16 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                         </div>
                                     </aside>
                                 </div>
+                                {hoveredCreativePreview && (
+                                    <div className="pointer-events-none fixed z-50 max-w-[calc(100vw-24px)] rounded-xl border border-gray-300 bg-white p-2 shadow-2xl" style={{ left: hoveredCreativePreview.x, top: hoveredCreativePreview.y }} aria-hidden="true">
+                                        <p className="mb-2 max-w-[calc(100vw-48px)] truncate px-1 text-xs font-semibold text-gray-700">{hoveredCreativePreview.name || 'Creative preview'}</p>
+                                        <div className="flex max-h-[calc(100vh-84px)] max-w-[calc(100vw-48px)] flex-wrap gap-2 overflow-hidden rounded-lg bg-gray-100 p-1">
+                                            {hoveredCreativePreview.previewUrl && <figure><img src={hoveredCreativePreview.previewUrl} alt="" className="max-h-[calc(100vh-130px)] max-w-[370px] object-contain" /><figcaption className="px-1 pt-1 text-[10px] text-gray-500">Feed (1:1)</figcaption></figure>}
+                                            {hoveredCreativePreview.dualPlacement && hoveredCreativePreview.secondaryImageUrl && <figure><img src={hoveredCreativePreview.secondaryImageUrl} alt="" className="max-h-[calc(100vh-130px)] max-w-[370px] object-contain" /><figcaption className="px-1 pt-1 text-[10px] text-gray-500">Stories (9:16)</figcaption></figure>}
+                                        </div>
+                                        <p className="px-1 pt-2 text-[11px] text-gray-500">Large creative preview</p>
+                                    </div>
+                                )}
                             </section>
                         );
                     })()}
