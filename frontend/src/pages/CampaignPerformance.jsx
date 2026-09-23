@@ -270,6 +270,10 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
   const bestTimesRequestRef = useRef(0);
   const geographyRequestRef = useRef(0);
 
+  const actionCounts = data?.action_queue?.counts || {};
+  const findingCount = (actionCounts.scale || 0) + (actionCounts.cut_or_pause || 0) + (actionCounts.tracking_check || 0);
+  const hasFindings = findingCount > 0 || data?.tracking_warning?.has_warning;
+
   const loadIntelligence = useCallback(async (nextPreset = preset, nextFrom = customFrom, nextTo = customTo) => {
     const requestId = ++intelligenceRequestRef.current;
     setLoading(true);
@@ -389,6 +393,11 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
       loadIntelligence(preset, customFrom, customTo);
       if (intelligenceView === 'best-times') loadBestTimes(preset, customFrom, customTo);
       if (intelligenceView === 'geography') loadGeography(preset, customFrom, customTo);
+    } else if (!userSelectedPresetRef.current) {
+      const nextPreset = resolveIntelligencePreset(pageDatePreset, initialPreset);
+      const nextFrom = nextPreset === 'custom' ? (pageDateFrom || '') : '';
+      const nextTo = nextPreset === 'custom' ? (pageDateTo || '') : '';
+      loadIntelligence(nextPreset, nextFrom, nextTo);
     }
   }, [adAccountId, pageDatePreset, pageDateFrom, pageDateTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -475,8 +484,9 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
 
   return (
     <>
-      <button type="button" onClick={toggleOpen} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-violet-200 bg-violet-50 text-violet-700 text-xs font-semibold hover:bg-violet-100 transition-colors">
+      <button type="button" onClick={toggleOpen} className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-semibold transition-colors ${hasFindings ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100' : 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100'}`} title={hasFindings ? `${findingCount} intelligence finding${findingCount === 1 ? '' : 's'} to review` : 'Review campaign intelligence'}>
         <Sparkles size={14} /> Campaign Intelligence
+        {hasFindings && <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">{findingCount > 9 ? '9+' : findingCount}</span>}
       </button>
 
       {open && (
