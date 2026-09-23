@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, Target, Users, Image as ImageIcon, CreditCard, Megaphone, CheckCircle2, RefreshCw } from 'lucide-react';
+import { Check, Target, Users, Image as ImageIcon, CreditCard, Megaphone, CheckCircle2, RefreshCw, ChevronDown } from 'lucide-react';
 import { CampaignProvider, useCampaign } from '../context/CampaignContext';
 import { useToast } from '../context/ToastContext';
 import AdAccountStep from '../components/AdAccountStep';
@@ -56,6 +56,10 @@ const SummaryRow = ({ label, value }) => (
 );
 
 const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaignData, adsetData, creativeData, launchSummary }) => {
+    // The launch plan is useful reference material, but its expanded rail
+    // competes with the creative editor for vertical space. Start compact and
+    // let Joel expand it only when he needs to inspect the setup.
+    const [isExpanded, setIsExpanded] = useState(false);
     const creativeSource = batchMode === 'match-import'
         ? 'Naming Convention Import'
         : creativeData?.creatives?.length
@@ -64,7 +68,20 @@ const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaig
 
     return (
         <div>
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Launch Plan</div>
+            <button
+                type="button"
+                onClick={() => setIsExpanded(expanded => !expanded)}
+                aria-expanded={isExpanded}
+                className="flex w-full items-center justify-between gap-3 rounded-md px-1 py-1 text-left hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Launch Plan</span>
+                <span className="flex items-center gap-2 text-xs font-medium text-gray-500">
+                    {launchSummary.totalAds ?? '—'} ads
+                    <ChevronDown size={16} className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                </span>
+            </button>
+            {!isExpanded && <p className="mt-1 px-1 text-xs text-gray-500">Expand to review account, placement, and launch details.</p>}
+            {isExpanded && <>
             <div className="divide-y divide-gray-100">
                 <SummaryRow label="Account" value={selectedAdAccount?.name} />
                 <SummaryRow label="Campaign" value={campaignData?.name} />
@@ -110,6 +127,7 @@ const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaig
                     </span>
                 </div>
             </div>
+            </>}
         </div>
     );
 };
