@@ -127,6 +127,35 @@ def test_platform_geography_matches_redtrack_sub2_and_everflow_sub3_to_campaigns
     assert state['everflow_revenue'] == 38.0
 
 
+def test_platform_geography_pairs_conversions_and_revenue_from_the_same_source():
+    """A state's conversions and revenue must come from one vendor, not mixed.
+
+    RedTrack sees 2 conversions here; Everflow only matched 1 of them. Picking
+    conversions from whichever source has any (RedTrack, 2) while picking
+    revenue from Everflow (its 1 conversion's revenue) would imply a
+    per-conversion revenue neither source actually reported.
+    """
+    result = _platform_geography_watchlist(
+        [
+            {'sub2': '123456789012', 'region': 'Texas', 'conv_time': '2026-09-20T12:00:00-07:00', 'revenue': '20.00'},
+            {'sub2': '123456789012', 'region': 'Texas', 'conv_time': '2026-09-20T13:00:00-07:00', 'revenue': '20.00'},
+        ],
+        [
+            {'sub3': '123456789012', 'region': 'Texas', 'conversion_date': '2026-09-20T19:00:00+00:00', 'revenue': '38.00', 'offer': 'Get Business Coverage'},
+        ],
+        {'123456789012': {'campaign_id': 'campaign-1', 'campaign_name': 'Commercial Insurance'}},
+        offer_names={'Get Business Coverage'},
+    )
+
+    state = result['campaigns'][0]['states'][0]
+    assert state['redtrack_conversions'] == 2
+    assert state['everflow_conversions'] == 1
+    # Everflow has a match, so BOTH fields come from Everflow — never
+    # RedTrack's conversion count next to Everflow's revenue.
+    assert state['conversions'] == 1
+    assert state['revenue'] == 38.0
+
+
 def test_redtrack_adset_join_prefers_matching_sub2_over_nonmatching_p_sub2():
     assert _redtrack_adset_id(
         {'p_sub2': 'campaign-123', 'sub2': '987654321'},

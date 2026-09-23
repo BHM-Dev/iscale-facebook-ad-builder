@@ -693,6 +693,10 @@ def _platform_geography_watchlist(
 ) -> dict:
     """Build state performance from RedTrack/Everflow conversion geo.
 
+    Available for every Meta ad account, not just ones on the Switchboard
+    Everflow allow-list (Steve's call, 2026-09-23) — RedTrack is a real,
+    directional revenue source here even where no Everflow offer mapping
+    exists, unlike the P&L page's stricter "Everflow-only" billing rule.
     RedTrack provides the most useful attribution grain for the conversion
     timestamp and ``sub2`` Meta ad-set join. Everflow is the billable revenue
     corroborator and uses ``sub3`` for the same join. Neither source provides
@@ -781,9 +785,18 @@ def _platform_geography_watchlist(
             # RedTrack and Everflow describe the same conversion stream. Do
             # not sum their revenue: Everflow is the billable source when it
             # has a matching state, while RedTrack is the attribution
-            # corroborator and fallback when Everflow is unavailable.
-            state['conversions'] = state['redtrack_conversions'] or state['everflow_conversions']
-            state['revenue'] = state['everflow_revenue'] if state['everflow_conversions'] else state['redtrack_revenue']
+            # corroborator and fallback when Everflow is unavailable. Pick
+            # BOTH conversions and revenue from the SAME source per state —
+            # picking them independently (conversions from whichever source
+            # has any, revenue from whichever source is preferred) could pair
+            # one vendor's conversion count with the other vendor's revenue,
+            # implying a per-conversion revenue that matches neither source.
+            if state['everflow_conversions']:
+                state['conversions'] = state['everflow_conversions']
+                state['revenue'] = state['everflow_revenue']
+            else:
+                state['conversions'] = state['redtrack_conversions']
+                state['revenue'] = state['redtrack_revenue']
             state['revenue'] = float(state['revenue'].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
             state['redtrack_revenue'] = float(state['redtrack_revenue'].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
             state['everflow_revenue'] = float(state['everflow_revenue'].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
@@ -863,11 +876,30 @@ def _fetch_platform_geography(
                     'campaign_name': campaign.get('name') or campaign_id,
                     'adset_name': adset.get('name') or adset_id,
                 }
-        try:
-            redtrack_rows = redtrack_future.result() if redtrack_future else []
-            everflow_rows = everflow_future.result() if everflow_future else []
-        except Exception as exc:
-            logger.warning('Platform geography source read failed: %s', exc)
+        # Degrade per-source rather than discarding both: one vendor's API
+        # hiccup shouldn't drop a working second source's real revenue. Track
+        # failures explicitly — an empty row list can also mean "no
+        # conversions this period," which is a valid result, not a failure.
+        redtrack_rows, redtrack_failed = [], False
+        if redtrack_future:
+            try:
+                redtrack_rows = redtrack_future.result()
+            except Exception as exc:
+                logger.warning('Platform geography RedTrack read failed: %s', exc)
+                redtrack_failed = True
+        everflow_rows, everflow_failed = [], False
+        if everflow_future:
+            try:
+                everflow_rows = everflow_future.result()
+            except Exception as exc:
+                logger.warning('Platform geography Everflow read failed: %s', exc)
+                everflow_failed = True
+        configured_sources = bool(redtrack_future) + bool(everflow_future)
+        failed_sources = redtrack_failed + everflow_failed
+        if configured_sources and failed_sources == configured_sources:
+            # Every configured source failed outright — fall back to Meta's
+            # delivery-only diagnostic instead of returning an empty result
+            # that looks identical to "nothing to review this period."
             return None
 
     return {
@@ -1566,8 +1598,11 @@ def geography_watchlist(
 ):
     """Return state-delivery investigations grouped by campaign.
 
-    State delivery does not join to RedTrack/Everflow revenue. The result is
-    intentionally a review queue, never an automatic exclusion recommendation.
+    Prefers RedTrack/Everflow conversion-geo (real revenue, see
+    _platform_geography_watchlist) when either is configured, falling back to
+    Meta's region-breakdown delivery-only diagnostic otherwise. Either way the
+    result is intentionally a review queue, never an automatic exclusion
+    recommendation.
     """
     from app.services.facebook_service import FacebookService
 
