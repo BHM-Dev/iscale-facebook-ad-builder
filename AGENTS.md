@@ -57,6 +57,11 @@ Facebook ad builder used daily by Joel Welch (media buyer). Connects to Meta Ads
 - `SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS` — pending. JSON map of Meta account id to exact Switchboard offer names, e.g. `{"act_...":["Get Business Coverage"]}`. Required so commercial, auto, and eventually home-services revenue stay tied to the matching Meta spend account.
 - `SLACK_BOT_TOKEN` — confirm status with Golden.
 
+## Switchboard Everflow Portal
+
+- Logged-in affiliate reporting portal: `https://pura-vida.everflowclient.io/reporting/offers?report=%24timezone_id%3A90%26currency_id%3DUSD%26from%3D2026-09-21%26to%3D2026-09-21%26columns%40%24column%3Doffer%3B%3B%26query%24filters%40%3B%26exclusions%40%3B%26metric_filters%40%3B%26user_metrics%40%3B%26settings%24`
+- Use this portal for Switchboard/Everflow offer, conversion, and geo investigations. Never store credentials or API keys here.
+
 ---
 
 ## Joel's Daily Workflow (what he does every day)
