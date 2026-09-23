@@ -115,24 +115,48 @@ def test_platform_geography_matches_redtrack_sub2_and_everflow_sub3_to_campaigns
         ],
         {'123456789012': {'campaign_id': 'campaign-1', 'campaign_name': 'Commercial Insurance'}},
         offer_names={'Get Business Coverage'},
-        redtrack_spend_rows=[
-            {'sub2': '123456789012', 'region': 'Texas', 'cost': '100.00'},
+        meta_spend_rows=[
+            {'campaign_id': 'campaign-1', 'campaign_name': 'Commercial Insurance', 'state': 'Texas', 'spend': '100.00'},
         ],
     )
 
     assert result['source_mode'] == 'platform'
-    assert result['source_label'] == 'RedTrack + Everflow'
+    assert result['source_label'] == 'RedTrack + Everflow (revenue) + Meta (spend)'
     state = result['campaigns'][0]['states'][0]
     assert state['state'] == 'Texas'
     assert state['conversions'] == 1
     assert state['revenue'] == 38.0
     assert state['redtrack_revenue'] == 42.0
     assert state['everflow_revenue'] == 38.0
+    # Spend is Meta's own state breakdown, not RedTrack's inferred split.
     assert state['spend'] == 100.0
     assert state['roas'] == 0.38
+    # Per-adset rows carry revenue detail only — Meta's spend breakdown is
+    # campaign x state, not campaign x state x adset.
     assert state['adsets'][0]['adset_name'] == '123456789012'
-    assert state['adsets'][0]['spend'] == 100.0
-    assert state['adsets'][0]['roas'] == 0.38
+    assert state['adsets'][0]['revenue'] == 38.0
+    assert 'spend' not in state['adsets'][0]
+    assert 'roas' not in state['adsets'][0]
+
+
+def test_platform_geography_meta_spend_join_needs_no_adset_identity():
+    """Meta's own state spend joins by campaign_id directly — no ad-set map
+    entry required, unlike the RedTrack/Everflow revenue join."""
+    result = _platform_geography_watchlist(
+        [], [], {},
+        meta_spend_rows=[
+            {'campaign_id': 'campaign-9', 'campaign_name': 'Auto Insurance', 'state': 'Ohio', 'spend': '50.00'},
+        ],
+    )
+
+    campaign = result['campaigns'][0]
+    assert campaign['campaign_name'] == 'Auto Insurance'
+    state = campaign['states'][0]
+    assert state['spend'] == 50.0
+    assert state['conversions'] == 0
+    assert state['revenue'] == 0.0
+    # No conversions but real spend — ROAS is a real, if bleak, 0.0, not None.
+    assert state['roas'] == 0.0
 
 
 def test_platform_geography_pairs_conversions_and_revenue_from_the_same_source():
