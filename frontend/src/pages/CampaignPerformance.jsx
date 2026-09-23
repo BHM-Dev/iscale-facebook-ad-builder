@@ -273,6 +273,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
   const actionCounts = data?.action_queue?.counts || {};
   const findingCount = (actionCounts.scale || 0) + (actionCounts.cut_or_pause || 0) + (actionCounts.tracking_check || 0);
   const hasFindings = findingCount > 0 || data?.tracking_warning?.has_warning;
+  const findingBadge = findingCount > 9 ? '9+' : findingCount;
 
   const loadIntelligence = useCallback(async (nextPreset = preset, nextFrom = customFrom, nextTo = customTo) => {
     const requestId = ++intelligenceRequestRef.current;
@@ -491,9 +492,9 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
 
   return (
     <>
-      <button type="button" onClick={toggleOpen} className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-semibold transition-colors ${hasFindings ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100' : 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100'}`} title={hasFindings ? `${findingCount} intelligence finding${findingCount === 1 ? '' : 's'} to review` : 'Review campaign intelligence'}>
+      <button type="button" onClick={toggleOpen} className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-semibold transition-colors ${hasFindings ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100' : 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100'}`} title={hasFindings ? `${findingBadge} intelligence finding${findingCount === 1 ? '' : 's'} to review` : 'Review campaign intelligence'}>
         <Sparkles size={14} /> Campaign Intelligence
-        {hasFindings && <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">{findingCount > 9 ? '9+' : findingCount}</span>}
+        {hasFindings && <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">{findingBadge}</span>}
       </button>
 
       {open && (
