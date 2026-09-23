@@ -1928,9 +1928,22 @@ class FacebookService:
             params['time_range'] = {'since': date_from, 'until': date_to}
         else:
             params['date_preset'] = date_preset
+        # A region breakdown paginates on multi-state campaigns; the SDK's
+        # Cursor exhausts every page on iteration, so don't cap it below what
+        # a real campaign could return.
+        params['limit'] = 200
 
         try:
-            results = account.get_insights(fields, params)
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(account.get_insights, fields, params)
+                try:
+                    results = list(future.result(timeout=20))  # 20s hard cap on Meta API
+                except FuturesTimeout:
+                    logger.error('Meta state insights timed out after 20s')
+                    raise RuntimeError('Meta API timeout — try again in a moment')
+        except RuntimeError:
+            raise
         except FacebookRequestError as e:
             body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
             error = body.get('error', {}) if isinstance(body, dict) else {}
