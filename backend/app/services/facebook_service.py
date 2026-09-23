@@ -1922,7 +1922,10 @@ class FacebookService:
         account = self._get_account(ad_account_id)
         # `region` is returned by Meta as a breakdown value, not a selectable
         # Insights field. Including it in `fields` makes the whole request fail.
-        fields = ['campaign_id', 'campaign_name', 'spend', 'impressions', 'reach', 'clicks', 'ctr', 'actions', 'cost_per_action_type']
+        # ctr/cost_per_action_type are deliberately omitted: both cpl and ctr
+        # are recomputed below from the aggregated totals, so requesting
+        # Meta's per-row versions only adds payload size for no benefit.
+        fields = ['campaign_id', 'campaign_name', 'spend', 'impressions', 'reach', 'clicks', 'actions']
         params = {
             'level': 'campaign',
             'breakdowns': ['region'],
@@ -1937,17 +1940,26 @@ class FacebookService:
             # Meta only exposes weekday/weekend selection through daily rows.
             # We aggregate the included days back to campaign × state below.
             params['time_increment'] = 1
-        # A region breakdown paginates on multi-state campaigns; the SDK's
-        # Cursor exhausts every page on iteration, so don't cap it below what
-        # a real campaign could return.
-        params['limit'] = 200
+        # A region breakdown paginates on multi-state campaigns; the account-
+        # wide (no campaign_id) path can be dozens of campaigns × ~50 regions
+        # × up to 31 daily rows, so keep the per-page cost down with a wider
+        # page. The SDK's Cursor exhausts every page on iteration.
+        params['limit'] = 500
+
+        def _fetch_all_pages():
+            # Materializing the cursor (walking every page) must happen INSIDE
+            # the timed thread — future.result(timeout=...) only bounds the
+            # first page, since get_insights() returns a lazily-paginating
+            # Cursor. Without this, a large account-wide/daily query could run
+            # for minutes past the declared timeout while still "passing" it.
+            return list(account.get_insights(fields, params))
 
         try:
             from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
             with ThreadPoolExecutor(max_workers=1) as ex:
-                future = ex.submit(account.get_insights, fields, params)
+                future = ex.submit(_fetch_all_pages)
                 try:
-                    results = list(future.result(timeout=20))  # 20s hard cap on Meta API
+                    results = future.result(timeout=20)  # 20s hard cap on Meta API, all pages included
                 except FuturesTimeout:
                     logger.error('Meta state insights timed out after 20s')
                     raise RuntimeError('Meta API timeout — try again in a moment')
@@ -1995,13 +2007,21 @@ class FacebookService:
             total['spend'] += spend
             total['leads'] += leads
             total['impressions'] += int(row.get('impressions', 0) or 0)
-            total['reach'] += int(row.get('reach', 0) or 0)
+            # reach counts unique people, so it isn't additive across days —
+            # only sum it on the single-period path. day_filter != 'all'
+            # necessarily means multiple daily rows are being merged per
+            # state, so leave reach at 0/unreliable there rather than
+            # silently overcounting.
+            if day_filter == 'all':
+                total['reach'] += int(row.get('reach', 0) or 0)
             total['clicks'] += int(row.get('clicks', 0) or 0)
         states = []
         for total in state_totals.values():
             total['spend'] = round(total['spend'], 2)
             total['cpl'] = round(total['spend'] / total['leads'], 2) if total['leads'] else None
             total['ctr'] = round((total['clicks'] / total['impressions']) * 100, 4) if total['impressions'] else None
+            if day_filter != 'all':
+                total['reach'] = None
             states.append(total)
         return sorted(states, key=lambda item: item['spend'], reverse=True)
 

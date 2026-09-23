@@ -566,7 +566,7 @@ _BEST_TIMES_RESULT_CACHE_TTL_SECONDS = 15 * 60
 # Geography is a delivery diagnostic and can be revisited several times while
 # a buyer compares campaigns. Reuse the same completed account-level Meta read
 # briefly instead of turning a table scan into repeated region-breakdown calls.
-_GEOGRAPHY_RESULT_CACHE: dict[tuple[str, str, str], tuple[dict, float]] = {}
+_GEOGRAPHY_RESULT_CACHE: dict[tuple[str, str, str, str], tuple[dict, float]] = {}
 _GEOGRAPHY_RESULT_CACHE_TTL_SECONDS = 5 * 60
 
 
@@ -578,7 +578,7 @@ def _get_cached_best_times(cache_key: tuple[str, str, str, str]) -> Optional[dic
     return None
 
 
-def _get_cached_geography(cache_key: tuple[str, str, str]) -> Optional[dict]:
+def _get_cached_geography(cache_key: tuple[str, str, str, str]) -> Optional[dict]:
     cached = _GEOGRAPHY_RESULT_CACHE.get(cache_key)
     if cached and (time.monotonic() - cached[1]) < _GEOGRAPHY_RESULT_CACHE_TTL_SECONDS:
         return cached[0]
@@ -1353,7 +1353,11 @@ def geography_watchlist(
 
     ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     resolved_from, resolved_to, day_filter, preset_label = _resolve_preset(preset, date_from, date_to)
-    cache_key = (str(ad_account_id or ''), resolved_from, resolved_to)
+    # weekdays_mtd/weekends_mtd resolve to the SAME resolved_from/resolved_to
+    # (both month-start-to-today) and differ only by day_filter — omitting it
+    # here would let "Weekends MTD" serve a cached "Weekdays MTD" result (or
+    # vice versa) within the TTL. Same 4-tuple shape as _BEST_TIMES_RESULT_CACHE.
+    cache_key = (str(ad_account_id or ''), resolved_from, resolved_to, day_filter)
     result = None if refresh else _get_cached_geography(cache_key)
     try:
         if result is None:

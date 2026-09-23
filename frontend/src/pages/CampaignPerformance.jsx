@@ -527,12 +527,18 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                 onClick={() => {
                   loadIntelligence('custom', customFrom, customTo);
                   if (intelligenceView === 'best-times') loadBestTimes('custom', customFrom, customTo);
-                  if (intelligenceView === 'geography') loadGeography('custom', customFrom, customTo);
                   else {
                     bestTimesRequestRef.current += 1;
                     setBestTimesData(null);
                     setBestTimesError(null);
                     setBestTimesLoading(false);
+                  }
+                  if (intelligenceView === 'geography') loadGeography('custom', customFrom, customTo);
+                  else {
+                    geographyRequestRef.current += 1;
+                    setGeographyData(null);
+                    setGeographyError(null);
+                    setGeographyLoading(false);
                   }
                 }}
                 disabled={!customFrom || !customTo}

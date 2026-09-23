@@ -437,9 +437,11 @@ class TestCampaignStateInsights:
 
         rows = service.get_account_campaign_state_insights(ad_account_id='act_456', date_from='2026-09-19', date_to='2026-09-21', day_filter='weekend')
 
+        # reach is unique-people, not additive across days — the day-filtered
+        # path must not sum it into a misleading total.
         assert rows == [{
             'campaign_id': 'campaign_123', 'campaign_name': 'Car Rental', 'state': 'New York',
-            'spend': 150.0, 'leads': 3, 'impressions': 10000, 'reach': 7500, 'clicks': 125,
+            'spend': 150.0, 'leads': 3, 'impressions': 10000, 'reach': None, 'clicks': 125,
             'cpl': 50.0, 'ctr': 1.25,
         }]
         _, params = account.get_insights.call_args.args
