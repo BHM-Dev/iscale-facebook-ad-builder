@@ -1918,7 +1918,9 @@ class FacebookService:
         import logging
         logger = logging.getLogger(__name__)
         account = self._get_account(ad_account_id)
-        fields = ['campaign_id', 'campaign_name', 'region', 'spend', 'impressions', 'reach', 'clicks', 'ctr', 'actions', 'cost_per_action_type']
+        # `region` is returned by Meta as a breakdown value, not a selectable
+        # Insights field. Including it in `fields` makes the whole request fail.
+        fields = ['campaign_id', 'campaign_name', 'spend', 'impressions', 'reach', 'clicks', 'ctr', 'actions', 'cost_per_action_type']
         params = {
             'level': 'campaign',
             'breakdowns': ['region'],

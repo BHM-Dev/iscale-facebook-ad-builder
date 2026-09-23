@@ -393,7 +393,8 @@ class TestCampaignStateInsights:
         assert [row['state'] for row in rows] == ['New York', 'California']
         assert rows[0]['cpl'] == 60.0
         assert rows[1]['cpl'] == 25.0
-        _, params = account.get_insights.call_args.args
+        fields, params = account.get_insights.call_args.args
+        assert 'region' not in fields
         assert params['level'] == 'campaign'
         assert params['breakdowns'] == ['region']
         assert params['filtering'] == [{'field': 'campaign.id', 'operator': 'IN', 'value': ['campaign_123']}]
