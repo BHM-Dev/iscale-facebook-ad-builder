@@ -3,7 +3,7 @@
 from datetime import date, datetime
 
 import app.api.v1.intelligence as intelligence
-from app.api.v1.intelligence import BEST_TIMES_DAYPARTS, _build_best_times, _extract_niche, _redtrack_adset_id, _redtrack_offer_matches, _resolve_preset
+from app.api.v1.intelligence import BEST_TIMES_DAYPARTS, _build_best_times, _build_geography_watchlist, _extract_niche, _redtrack_adset_id, _redtrack_offer_matches, _resolve_preset
 
 
 def test_best_times_dayparts_is_reusable_not_a_single_use_generator():
@@ -15,6 +15,25 @@ def test_best_times_dayparts_is_reusable_not_a_single_use_generator():
     assert isinstance(BEST_TIMES_DAYPARTS, tuple)
     assert len(list(BEST_TIMES_DAYPARTS)) == 12
     assert len(list(BEST_TIMES_DAYPARTS)) == 12  # second pass must not be empty
+
+
+def test_geography_watchlist_only_surfaces_conservative_campaign_signals():
+    result = _build_geography_watchlist([
+        {'campaign_id': 'campaign-a', 'campaign_name': 'Car Rental', 'state': 'New York', 'spend': 180, 'leads': 3, 'cpl': 60, 'ctr': 1.1},
+        {'campaign_id': 'campaign-a', 'campaign_name': 'Car Rental', 'state': 'Florida', 'spend': 120, 'leads': 6, 'cpl': 20, 'ctr': 1.5},
+        # High CPL but too little delivery evidence to enter a buyer queue.
+        {'campaign_id': 'campaign-b', 'campaign_name': 'Low volume test', 'state': 'Texas', 'spend': 18, 'leads': 2, 'cpl': 9, 'ctr': 1.0},
+        {'campaign_id': 'campaign-b', 'campaign_name': 'Low volume test', 'state': 'Ohio', 'spend': 20, 'leads': 8, 'cpl': 2.5, 'ctr': 1.4},
+    ])
+
+    assert result['flagged_campaign_count'] == 1
+    assert result['flagged_state_count'] == 1
+    campaign = result['campaigns'][0]
+    assert campaign['campaign_name'] == 'Car Rental'
+    assert campaign['blended_cpl'] == 33.33
+    assert campaign['flagged_states'][0]['state'] == 'New York'
+    assert campaign['flagged_states'][0]['is_dragging'] is True
+    assert campaign['flagged_states'][0]['excess_cost'] == 80.0
 
 
 def test_extract_niche_skips_date_prefixed_ad_set_segments():

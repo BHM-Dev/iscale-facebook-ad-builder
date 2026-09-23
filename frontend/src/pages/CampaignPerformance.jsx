@@ -207,6 +207,30 @@ function CreativeCompass({ buckets, onOpenAdset, dateRangeLabel }) {
   );
 }
 
+function GeographyWatchlist({ data, loading, error, onRefresh }) {
+  const [expandedCampaignId, setExpandedCampaignId] = useState(null);
+
+  if (loading && !data) return <div className="h-48 rounded-xl bg-gray-50 animate-pulse" />;
+  if (error) return <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-4 text-sm text-red-700"><p className="font-semibold">Geography diagnostics unavailable</p><p className="mt-1">{error}</p><button type="button" onClick={onRefresh} className="mt-3 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-red-700 ring-1 ring-red-200 hover:bg-red-100">Retry</button></div>;
+  if (!data) return null;
+  if (!data.campaigns?.length) return <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-8 text-center"><p className="text-sm font-semibold text-gray-700">No state delivery signals need review</p><p className="mt-1 text-xs text-gray-500">A signal needs $50+ spend, 2+ leads, and a CPL at least 1.5× its campaign’s blended CPL.</p></div>;
+
+  return <div className="space-y-3">
+    <div className="rounded-xl border border-violet-100 bg-violet-50 px-4 py-3 text-xs text-violet-900"><span className="font-semibold">{data.flagged_state_count} state{data.flagged_state_count !== 1 ? 's' : ''} across {data.flagged_campaign_count} campaign{data.flagged_campaign_count !== 1 ? 's' : ''} need a delivery review.</span> These are CPL signals from Meta, not state-level revenue or an instruction to exclude anyone.</div>
+    {data.campaigns.map(campaign => {
+      const expanded = expandedCampaignId === campaign.campaign_id;
+      const statesLabel = campaign.flagged_states.map(state => state.state).join(', ');
+      return <section key={campaign.campaign_id} className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+        <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-4">
+          <div className="min-w-0"><p className="font-semibold text-sm text-gray-900 break-words">{campaign.campaign_name || campaign.campaign_id}</p><p className="mt-1 text-xs text-gray-500">Campaign CPL {formatMoney(campaign.blended_cpl)} · {formatMoney(campaign.total_spend)} spend · {campaign.total_leads.toLocaleString()} leads</p><p className="mt-2 text-xs text-red-700"><span className="font-semibold">Review:</span> {statesLabel}</p></div>
+          <button type="button" onClick={() => setExpandedCampaignId(expanded ? null : campaign.campaign_id)} className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700" aria-expanded={expanded}>{expanded ? 'Hide states' : 'Inspect states'} <ChevronDown size={14} className={expanded ? 'rotate-180' : ''} /></button>
+        </div>
+        {expanded && <div className="border-t border-gray-100 px-4 py-3"><p className="mb-2 text-[11px] text-gray-500">Compare delivery first, then make any targeting change in Meta deliberately. “Estimated excess” is only the CPL gap versus this campaign’s blended CPL—not profit.</p><div className="overflow-x-auto rounded-lg border border-gray-100"><table className="w-full min-w-[580px] text-xs"><thead className="bg-gray-50 text-gray-500"><tr><th className="px-3 py-2 text-left font-medium">State</th><th className="px-3 py-2 text-right font-medium">Spend</th><th className="px-3 py-2 text-right font-medium">Leads</th><th className="px-3 py-2 text-right font-medium">CPL</th><th className="px-3 py-2 text-right font-medium">Estimated excess</th><th className="px-3 py-2 text-right font-medium">Status</th></tr></thead><tbody>{campaign.states.map(state => <tr key={state.state} className={`border-t border-gray-100 ${state.is_dragging ? 'bg-red-50/60' : ''}`}><td className="px-3 py-2 font-medium text-gray-800">{state.state}</td><td className="px-3 py-2 text-right text-gray-700">{formatMoney(state.spend)}</td><td className="px-3 py-2 text-right text-gray-700">{state.leads}</td><td className={`px-3 py-2 text-right font-semibold ${state.is_dragging ? 'text-red-700' : 'text-gray-800'}`}>{formatMoney(state.cpl)}</td><td className="px-3 py-2 text-right text-gray-700">{state.is_dragging ? formatMoney(state.excess_cost) : '—'}</td><td className="px-3 py-2 text-right">{state.is_dragging ? <span className="rounded-full bg-red-100 px-2 py-0.5 font-semibold text-red-700">Review targeting</span> : <span className="text-gray-400">No signal</span>}</td></tr>)}</tbody></table></div></div>}
+      </section>;
+    })}
+  </div>;
+}
+
 function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, pageDateTo, initialOpen = false, initialPreset = null }) {
   const resolvedInitialPreset = resolveIntelligencePreset(pageDatePreset, initialPreset);
   const [open, setOpen] = useState(initialOpen);
@@ -218,12 +242,16 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
   const [bestTimesData, setBestTimesData] = useState(null);
   const [bestTimesLoading, setBestTimesLoading] = useState(false);
   const [bestTimesError, setBestTimesError] = useState(null);
+  const [geographyData, setGeographyData] = useState(null);
+  const [geographyLoading, setGeographyLoading] = useState(false);
+  const [geographyError, setGeographyError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const loadedPresetRef = useRef(null);
   const userSelectedPresetRef = useRef(false);
   const intelligenceRequestRef = useRef(0);
   const bestTimesRequestRef = useRef(0);
+  const geographyRequestRef = useRef(0);
 
   const loadIntelligence = useCallback(async (nextPreset = preset, nextFrom = customFrom, nextTo = customTo) => {
     const requestId = ++intelligenceRequestRef.current;
@@ -251,6 +279,32 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
       if (requestId === intelligenceRequestRef.current) setError(e.message || 'Failed to load intelligence data');
     } finally {
       if (requestId === intelligenceRequestRef.current) setLoading(false);
+    }
+  }, [adAccountId, preset, customFrom, customTo]);
+
+  const loadGeography = useCallback(async (nextPreset = preset, nextFrom = customFrom, nextTo = customTo, refresh = false) => {
+    const requestId = ++geographyRequestRef.current;
+    setGeographyLoading(true);
+    setGeographyError(null);
+    try {
+      const params = new URLSearchParams({ preset: nextPreset });
+      if (adAccountId) params.set('ad_account_id', adAccountId);
+      if (nextPreset === 'custom') {
+        params.set('date_from', nextFrom);
+        params.set('date_to', nextTo);
+      }
+      if (refresh) params.set('refresh', 'true');
+      const res = await authFetch(`${API_BASE}/intelligence/geography-watchlist?${params}`);
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.detail || `Error ${res.status}`);
+      }
+      const result = await res.json();
+      if (requestId === geographyRequestRef.current) setGeographyData(result);
+    } catch (e) {
+      if (requestId === geographyRequestRef.current) setGeographyError(e.message || 'Failed to load geography diagnostics');
+    } finally {
+      if (requestId === geographyRequestRef.current) setGeographyLoading(false);
     }
   }, [adAccountId, preset, customFrom, customTo]);
 
@@ -289,9 +343,12 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
       if (next && intelligenceView === 'best-times' && !bestTimesData) {
         loadBestTimes(preset, customFrom, customTo);
       }
+      if (next && intelligenceView === 'geography' && !geographyData) {
+        loadGeography(preset, customFrom, customTo);
+      }
       return next;
     });
-  }, [preset, customFrom, customTo, intelligenceView, bestTimesData, loadIntelligence, loadBestTimes]);
+  }, [preset, customFrom, customTo, intelligenceView, bestTimesData, geographyData, loadIntelligence, loadBestTimes, loadGeography]);
 
   useEffect(() => {
     if (!initialOpen) return;
@@ -301,15 +358,20 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
   useEffect(() => {
     intelligenceRequestRef.current += 1;
     bestTimesRequestRef.current += 1;
+    geographyRequestRef.current += 1;
     loadedPresetRef.current = null;
     setData(null);
     setError(null);
     setBestTimesData(null);
     setBestTimesError(null);
     setBestTimesLoading(false);
+    setGeographyData(null);
+    setGeographyError(null);
+    setGeographyLoading(false);
     if (open) {
       loadIntelligence(preset, customFrom, customTo);
       if (intelligenceView === 'best-times') loadBestTimes(preset, customFrom, customTo);
+      if (intelligenceView === 'geography') loadGeography(preset, customFrom, customTo);
     }
   }, [adAccountId, pageDatePreset, pageDateFrom, pageDateTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -335,6 +397,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
     if ((open || initialOpen) && loadedPresetRef.current !== key) {
       loadIntelligence(nextPreset, nextFrom, nextTo);
       if (intelligenceView === 'best-times') loadBestTimes(nextPreset, nextFrom, nextTo);
+      if (intelligenceView === 'geography') loadGeography(nextPreset, nextFrom, nextTo);
     }
   }, [pageDatePreset, pageDateFrom, pageDateTo, initialPreset, open, initialOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -348,10 +411,14 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
       setError(null);
       intelligenceRequestRef.current += 1;
       bestTimesRequestRef.current += 1;
+      geographyRequestRef.current += 1;
       setLoading(false);
       setBestTimesLoading(false);
       setBestTimesData(null);
       setBestTimesError(null);
+      setGeographyData(null);
+      setGeographyError(null);
+      setGeographyLoading(false);
       setBestTimesLoading(false);
       return;
     }
@@ -366,12 +433,19 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
       setBestTimesError(null);
       setBestTimesLoading(false);
     }
+    if (open && intelligenceView === 'geography') loadGeography(nextPreset, '', '');
+    else {
+      geographyRequestRef.current += 1;
+      setGeographyData(null);
+      setGeographyError(null);
+      setGeographyLoading(false);
+    }
   };
 
   // Best Times owns its own date window (it defaults to 30 days for a
   // meaningful hourly sample). Do not keep showing the niche view's old
   // seven-day label above an already-loaded timing result.
-  const panelData = (intelligenceView === 'best-times' && bestTimesData) || data || {
+  const panelData = (intelligenceView === 'best-times' && bestTimesData) || (intelligenceView === 'geography' && geographyData) || data || {
     preset_label: preset,
     date_from: customFrom || '—',
     date_to: customTo || '—',
@@ -400,16 +474,16 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
               <h2 className="font-semibold text-gray-900 flex items-center gap-2">
                 <Sparkles size={16} className="text-violet-500" />
                 Campaign Intelligence
-                <span className="text-xs font-normal text-gray-400">{intelligenceView === 'best-times' ? 'hourly timing by niche' : 'Action queue · tracking checks · niche decisions'}</span>
+                <span className="text-xs font-normal text-gray-400">{intelligenceView === 'best-times' ? 'hourly timing by niche' : intelligenceView === 'geography' ? 'state delivery diagnostics by campaign' : 'Action queue · tracking checks · niche decisions'}</span>
               </h2>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => { loadIntelligence(preset, customFrom, customTo); if (intelligenceView === 'best-times' && (preset !== 'custom' || (customFrom && customTo))) loadBestTimes(preset, customFrom, customTo, true); }}
-                  disabled={loading || bestTimesLoading || (preset === 'custom' && (!customFrom || !customTo))}
+                  onClick={() => { if (intelligenceView === 'geography') loadGeography(preset, customFrom, customTo, true); else { loadIntelligence(preset, customFrom, customTo); if (intelligenceView === 'best-times' && (preset !== 'custom' || (customFrom && customTo))) loadBestTimes(preset, customFrom, customTo, true); } }}
+                  disabled={loading || bestTimesLoading || geographyLoading || (preset === 'custom' && (!customFrom || !customTo))}
                   className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-40"
                   title="Refresh intelligence"
                 >
-                  <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+                  <RefreshCw size={14} className={(loading || bestTimesLoading || geographyLoading) ? 'animate-spin' : ''} />
                 </button>
                 <button onClick={toggleOpen} className="text-gray-400 hover:text-gray-600 p-1">
                   <X size={18} />
@@ -453,6 +527,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                 onClick={() => {
                   loadIntelligence('custom', customFrom, customTo);
                   if (intelligenceView === 'best-times') loadBestTimes('custom', customFrom, customTo);
+                  if (intelligenceView === 'geography') loadGeography('custom', customFrom, customTo);
                   else {
                     bestTimesRequestRef.current += 1;
                     setBestTimesData(null);
@@ -475,7 +550,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
             </div>
           )}
 
-          {!loading && error && intelligenceView !== 'best-times' && (
+          {!loading && error && intelligenceView === 'niche' && (
             <div className="py-6 flex flex-col items-center gap-3">
               <p className="text-sm text-red-500">{error}</p>
               <div className="flex items-center gap-2">
@@ -499,20 +574,20 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
               its 30-day sample. Keep its own loading/error surface mounted
               during that request instead of replacing the panel with a blank
               empty state. */}
-          {!loading && (data || intelligenceView === 'best-times' || bestTimesData || bestTimesError) && ( !error || intelligenceView === 'best-times') && (
+          {!loading && (data || intelligenceView === 'best-times' || intelligenceView === 'geography' || bestTimesData || bestTimesError || geographyData || geographyError) && ( !error || intelligenceView !== 'niche') && (
             <>
               <div className="bg-violet-50 border border-violet-100 rounded-xl p-4 mb-4 flex gap-3">
                 <Sparkles size={16} className="text-violet-500 flex-shrink-0 mt-0.5" />
                 <div className="min-w-0">
                   <p className="text-xs font-semibold text-violet-800 mb-1">
                     {panelData.preset_label}
-                    <span className="ml-2 font-normal text-violet-500">· {formatDateShort(panelData.date_from)}–{formatDateShort(panelData.date_to)}{intelligenceView === 'best-times' ? ` · ${panelData.timezone || 'PT'}` : ' · grain: niches'}</span>
+                    <span className="ml-2 font-normal text-violet-500">· {formatDateShort(panelData.date_from)}–{formatDateShort(panelData.date_to)}{intelligenceView === 'best-times' ? ` · ${panelData.timezone || 'PT'}` : intelligenceView === 'geography' ? ' · grain: campaign × state' : ' · grain: niches'}</span>
                     {panelData.day_filter !== 'all' && (
                       <span className="ml-2 font-normal text-violet-500">· {panelData.day_filter} days only</span>
                     )}
                   </p>
                   <div className="text-violet-900">
-                    <p className="text-sm font-semibold leading-relaxed">{intelligenceView === 'best-times' ? 'When should I run this campaign? Review the recommended Meta schedule below.' : panelData.summary}</p>
+                    <p className="text-sm font-semibold leading-relaxed">{intelligenceView === 'best-times' ? 'When should I run this campaign? Review the recommended Meta schedule below.' : intelligenceView === 'geography' ? 'Where is delivery dragging? Start with the few campaign-state signals that clear the evidence threshold.' : panelData.summary}</p>
                   </div>
                 </div>
               </div>
@@ -529,6 +604,10 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                     loadBestTimes(preset, customFrom, customTo);
                   }
                 }} className={`px-3 py-1.5 rounded-md text-xs font-semibold ${intelligenceView === 'best-times' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500'}`}>Best Times</button>
+                <button type="button" onClick={() => {
+                  setIntelligenceView('geography');
+                  if (!geographyData && (preset !== 'custom' || (customFrom && customTo))) loadGeography(preset, customFrom, customTo);
+                }} className={`px-3 py-1.5 rounded-md text-xs font-semibold ${intelligenceView === 'geography' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500'}`}>Geography</button>
               </div>
 
               {intelligenceView === 'best-times' && (
@@ -540,7 +619,14 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                 </div>
               )}
 
-              {panelData.action_queue && intelligenceView !== 'best-times' && (
+              {intelligenceView === 'geography' && (
+                <div className="mb-5 rounded-xl border border-violet-100 bg-white p-3">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-sm font-semibold text-gray-900">Geography</h3><p className="mt-0.5 text-[11px] text-gray-500">Meta delivery only · campaign × state · no state-level revenue or ROAS.</p></div><button type="button" onClick={() => loadGeography(preset, customFrom, customTo, true)} disabled={geographyLoading || (preset === 'custom' && (!customFrom || !customTo))} className="text-xs text-violet-600 hover:text-violet-800 disabled:opacity-40">{geographyLoading ? 'Loading…' : 'Refresh'}</button></div>
+                  <GeographyWatchlist data={geographyData} loading={geographyLoading} error={geographyError} onRefresh={() => loadGeography(preset, customFrom, customTo, true)} />
+                </div>
+              )}
+
+              {panelData.action_queue && intelligenceView === 'niche' && (
                 <div className="mb-4">
                   <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Action Queue</div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
@@ -577,7 +663,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                 </div>
               )}
 
-              {panelData.tracking_warning?.has_warning && intelligenceView !== 'best-times' && (
+              {panelData.tracking_warning?.has_warning && intelligenceView === 'niche' && (
                 <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs text-yellow-800">
                   {data.tracking_warning.message}
                 </div>
@@ -586,7 +672,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
               {/* Best Times has a different response shape (campaigns/adsets,
                   not niche-profitability rows). Check the active view first so
                   a successful timing response can never dereference rows. */}
-              {intelligenceView !== 'best-times' && panelData.rows?.length > 0 && (
+              {intelligenceView === 'niche' && panelData.rows?.length > 0 && (
                 <div className="overflow-x-auto rounded-xl border border-gray-100">
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 border-b border-gray-100">
@@ -647,7 +733,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                 </div>
               )}
 
-              {panelData.day_filter !== 'all' && intelligenceView !== 'best-times' && (
+              {panelData.day_filter !== 'all' && intelligenceView === 'niche' && (
                 <p className="text-xs text-gray-400 mt-2">
                   RedTrack revenue uses full date range (not day-filtered) — ROI is approximate.
                 </p>
@@ -655,7 +741,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
             </>
           )}
 
-          {!loading && !error && !data && intelligenceView !== 'best-times' && (
+          {!loading && !error && !data && intelligenceView === 'niche' && (
             <p className="text-sm text-gray-400 text-center py-4">Open or select a preset to load intelligence.</p>
           )}
             </div>

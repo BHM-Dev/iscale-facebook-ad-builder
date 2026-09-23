@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 from facebook_business.adobjects.user import User
 import time
+from datetime import datetime
 
 # Load .env from project root (parent of backend)
 env_path = Path(__file__).resolve().parent.parent.parent.parent / '.env'
@@ -1900,20 +1901,21 @@ class FacebookService:
             })
         return sorted(daily, key=lambda item: item['date'])
 
-    def get_campaign_state_insights(
+    def get_account_campaign_state_insights(
         self,
-        campaign_id: str,
         ad_account_id: str = None,
         date_preset: str = 'last_7d',
         date_from: str = None,
         date_to: str = None,
+        campaign_id: str = None,
+        day_filter: str = 'all',
     ) -> list[dict]:
-        """Return Meta delivery results by US state for one campaign.
+        """Return Meta delivery results by state, grouped by campaign.
 
         This is deliberately a delivery diagnostic, not a profitability report:
         RedTrack/Everflow do not currently attribute revenue at state grain.
-        Calling account insights once with a campaign filter avoids N ad-set calls
-        while preserving the active account scope used by Campaign Performance.
+        With no ``campaign_id`` filter this makes one account-level Insights
+        request, avoiding an N-campaign request fan-out for Intelligence.
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -1924,12 +1926,17 @@ class FacebookService:
         params = {
             'level': 'campaign',
             'breakdowns': ['region'],
-            'filtering': [{'field': 'campaign.id', 'operator': 'IN', 'value': [str(campaign_id)]}],
         }
+        if campaign_id:
+            params['filtering'] = [{'field': 'campaign.id', 'operator': 'IN', 'value': [str(campaign_id)]}]
         if date_from and date_to:
             params['time_range'] = {'since': date_from, 'until': date_to}
         else:
             params['date_preset'] = date_preset
+        if day_filter != 'all':
+            # Meta only exposes weekday/weekend selection through daily rows.
+            # We aggregate the included days back to campaign × state below.
+            params['time_increment'] = 1
         # A region breakdown paginates on multi-state campaigns; the SDK's
         # Cursor exhausts every page on iteration, so don't cap it below what
         # a real campaign could return.
@@ -1954,8 +1961,17 @@ class FacebookService:
             raise RuntimeError(f'Facebook API: {message}') from e
 
         lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
-        states = []
+        state_totals = {}
         for row in results:
+            if day_filter != 'all':
+                try:
+                    weekday = datetime.strptime(str(row.get('date_start') or ''), '%Y-%m-%d').weekday()
+                except ValueError:
+                    continue
+                if day_filter == 'weekday' and weekday > 4:
+                    continue
+                if day_filter == 'weekend' and weekday < 5:
+                    continue
             region = str(row.get('region') or '').strip()
             if not region:
                 continue
@@ -1965,24 +1981,47 @@ class FacebookService:
                 for action in (row.get('actions') or [])
                 if action.get('action_type') in lead_types
             )
-            cpl = next((
-                float(item.get('value', 0) or 0)
-                for item in (row.get('cost_per_action_type') or [])
-                if item.get('action_type') in lead_types
-            ), None)
-            if cpl is None and leads and spend:
-                cpl = spend / leads
-            states.append({
+            key = (str(row.get('campaign_id') or ''), region)
+            total = state_totals.setdefault(key, {
+                'campaign_id': key[0],
+                'campaign_name': str(row.get('campaign_name') or ''),
                 'state': region,
-                'spend': round(spend, 2),
-                'leads': leads,
-                'cpl': round(cpl, 2) if cpl is not None else None,
-                'impressions': int(row.get('impressions', 0) or 0),
-                'reach': int(row.get('reach', 0) or 0),
-                'clicks': int(row.get('clicks', 0) or 0),
-                'ctr': round(float(row.get('ctr', 0) or 0), 4) if row.get('ctr') is not None else None,
+                'spend': 0.0,
+                'leads': 0,
+                'impressions': 0,
+                'reach': 0,
+                'clicks': 0,
             })
+            total['spend'] += spend
+            total['leads'] += leads
+            total['impressions'] += int(row.get('impressions', 0) or 0)
+            total['reach'] += int(row.get('reach', 0) or 0)
+            total['clicks'] += int(row.get('clicks', 0) or 0)
+        states = []
+        for total in state_totals.values():
+            total['spend'] = round(total['spend'], 2)
+            total['cpl'] = round(total['spend'] / total['leads'], 2) if total['leads'] else None
+            total['ctr'] = round((total['clicks'] / total['impressions']) * 100, 4) if total['impressions'] else None
+            states.append(total)
         return sorted(states, key=lambda item: item['spend'], reverse=True)
+
+    def get_campaign_state_insights(
+        self,
+        campaign_id: str,
+        ad_account_id: str = None,
+        date_preset: str = 'last_7d',
+        date_from: str = None,
+        date_to: str = None,
+    ) -> list[dict]:
+        """Return state delivery for one campaign using the shared bulk query."""
+        return self.get_account_campaign_state_insights(
+            ad_account_id=ad_account_id,
+            date_preset=date_preset,
+            date_from=date_from,
+            date_to=date_to,
+            campaign_id=campaign_id,
+            day_filter='all',
+        )
 
     def get_account_ad_status_bulk(self, ad_account_id: str = None) -> dict:
         """Return live child-ad delivery counts keyed by Meta ad set ID."""

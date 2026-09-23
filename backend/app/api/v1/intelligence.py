@@ -563,6 +563,11 @@ _ACCOUNT_TIMEZONE_CACHE_TTL_SECONDS = 6 * 60 * 60
 # bypasses this short-lived cache.
 _BEST_TIMES_RESULT_CACHE: dict[tuple[str, str, str, str], tuple[dict, float]] = {}
 _BEST_TIMES_RESULT_CACHE_TTL_SECONDS = 15 * 60
+# Geography is a delivery diagnostic and can be revisited several times while
+# a buyer compares campaigns. Reuse the same completed account-level Meta read
+# briefly instead of turning a table scan into repeated region-breakdown calls.
+_GEOGRAPHY_RESULT_CACHE: dict[tuple[str, str, str], tuple[dict, float]] = {}
+_GEOGRAPHY_RESULT_CACHE_TTL_SECONDS = 5 * 60
 
 
 def _get_cached_best_times(cache_key: tuple[str, str, str, str]) -> Optional[dict]:
@@ -571,6 +576,86 @@ def _get_cached_best_times(cache_key: tuple[str, str, str, str]) -> Optional[dic
         return cached[0]
     _BEST_TIMES_RESULT_CACHE.pop(cache_key, None)
     return None
+
+
+def _get_cached_geography(cache_key: tuple[str, str, str]) -> Optional[dict]:
+    cached = _GEOGRAPHY_RESULT_CACHE.get(cache_key)
+    if cached and (time.monotonic() - cached[1]) < _GEOGRAPHY_RESULT_CACHE_TTL_SECONDS:
+        return cached[0]
+    _GEOGRAPHY_RESULT_CACHE.pop(cache_key, None)
+    return None
+
+
+def _build_geography_watchlist(rows: list[dict]) -> dict:
+    """Turn state delivery rows into conservative, campaign-level review items.
+
+    This does not attempt state revenue or causal attribution. A state appears
+    only when it clears the same spend/lead/CPL guardrail as the campaign-row
+    diagnostic, so the queue remains a short list of investigations.
+    """
+    campaigns: dict[str, dict] = {}
+    for row in rows:
+        campaign_id = str(row.get('campaign_id') or '').strip()
+        if not campaign_id:
+            continue
+        campaign = campaigns.setdefault(campaign_id, {
+            'campaign_id': campaign_id,
+            'campaign_name': str(row.get('campaign_name') or campaign_id),
+            'states': [],
+            'total_spend': Decimal('0'),
+            'total_leads': 0,
+        })
+        spend = Decimal(str(row.get('spend') or 0))
+        leads = int(row.get('leads') or 0)
+        campaign['total_spend'] += spend
+        campaign['total_leads'] += leads
+        campaign['states'].append({
+            'state': str(row.get('state') or ''),
+            'spend': float(spend),
+            'leads': leads,
+            'cpl': row.get('cpl'),
+            'ctr': row.get('ctr'),
+        })
+
+    watchlist = []
+    for campaign in campaigns.values():
+        total_spend = campaign['total_spend']
+        total_leads = campaign['total_leads']
+        blended_cpl = (total_spend / total_leads) if total_leads else None
+        flagged_states = []
+        for state in campaign['states']:
+            cpl = Decimal(str(state['cpl'])) if state['cpl'] is not None else None
+            is_dragging = bool(
+                blended_cpl is not None
+                and state['spend'] >= 50
+                and state['leads'] >= 2
+                and cpl is not None
+                and cpl >= blended_cpl * Decimal('1.5')
+            )
+            # The difference from blended CPL is an investigation priority,
+            # not a claim of recoverable profit or a targeting instruction.
+            excess_cost = max(Decimal('0'), Decimal(str(state['spend'])) - (Decimal(state['leads']) * blended_cpl)) if is_dragging else Decimal('0')
+            state['is_dragging'] = is_dragging
+            state['excess_cost'] = float(excess_cost.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+            if is_dragging:
+                flagged_states.append(state)
+        if not flagged_states:
+            continue
+        flagged_states.sort(key=lambda item: (-item['excess_cost'], -item['spend'], item['state']))
+        campaign['states'].sort(key=lambda item: (-item['spend'], item['state']))
+        campaign['blended_cpl'] = float(blended_cpl.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)) if blended_cpl is not None else None
+        campaign['total_spend'] = float(total_spend.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+        campaign['flagged_state_count'] = len(flagged_states)
+        campaign['flagged_states'] = flagged_states
+        campaign['priority_excess_cost'] = sum(item['excess_cost'] for item in flagged_states)
+        watchlist.append(campaign)
+
+    watchlist.sort(key=lambda item: (-item['priority_excess_cost'], -item['total_spend'], item['campaign_name'].casefold()))
+    return {
+        'campaigns': watchlist,
+        'flagged_campaign_count': len(watchlist),
+        'flagged_state_count': sum(item['flagged_state_count'] for item in watchlist),
+    }
 
 
 def _get_account_timezone_cached(account, ad_account_id: Optional[str]) -> Optional[str]:
@@ -1247,6 +1332,52 @@ def niche_profitability(
         "tracking_warning":  tracking_warning,
         "summary":           summary,
         "rows":              rows,
+    }
+
+
+@router.get('/geography-watchlist')
+def geography_watchlist(
+    preset: str = Query('last_7d'),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    ad_account_id: Optional[str] = Query(None),
+    refresh: bool = Query(False),
+    current_user: User = Depends(require_permission('pnl:read')),
+):
+    """Return state-delivery investigations grouped by campaign.
+
+    State delivery does not join to RedTrack/Everflow revenue. The result is
+    intentionally a review queue, never an automatic exclusion recommendation.
+    """
+    from app.services.facebook_service import FacebookService
+
+    ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
+    resolved_from, resolved_to, day_filter, preset_label = _resolve_preset(preset, date_from, date_to)
+    cache_key = (str(ad_account_id or ''), resolved_from, resolved_to)
+    result = None if refresh else _get_cached_geography(cache_key)
+    try:
+        if result is None:
+            rows = FacebookService().get_account_campaign_state_insights(
+                ad_account_id=ad_account_id,
+                date_from=resolved_from,
+                date_to=resolved_to,
+                day_filter=day_filter,
+            )
+            result = _build_geography_watchlist(rows)
+            _GEOGRAPHY_RESULT_CACHE[cache_key] = (result, time.monotonic())
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+    return {
+        'question_set': 'geography_watchlist',
+        'preset': preset,
+        'preset_label': preset_label,
+        'date_from': resolved_from,
+        'date_to': resolved_to,
+        'day_filter': day_filter,
+        'source': 'Meta Insights delivery breakdown',
+        'revenue_available': False,
+        **result,
     }
 
 

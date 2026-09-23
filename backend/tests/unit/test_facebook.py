@@ -398,3 +398,49 @@ class TestCampaignStateInsights:
         assert params['level'] == 'campaign'
         assert params['breakdowns'] == ['region']
         assert params['filtering'] == [{'field': 'campaign.id', 'operator': 'IN', 'value': ['campaign_123']}]
+
+    def test_account_state_breakdown_uses_one_unfiltered_campaign_query(self):
+        from app.services.facebook_service import FacebookService
+
+        account = MagicMock()
+        account.get_insights.return_value = [{
+            'campaign_id': 'campaign_123', 'campaign_name': 'Car Rental',
+            'region': 'New York', 'spend': '120.00', 'impressions': '8000',
+            'reach': '6000', 'clicks': '100', 'ctr': '1.25',
+            'actions': [{'action_type': 'lead', 'value': '3'}],
+            'cost_per_action_type': [{'action_type': 'lead', 'value': '40'}],
+        }]
+        service = FacebookService.__new__(FacebookService)
+        service._get_account = MagicMock(return_value=account)
+
+        rows = service.get_account_campaign_state_insights(ad_account_id='act_456', date_from='2026-09-01', date_to='2026-09-20')
+
+        assert rows[0]['campaign_id'] == 'campaign_123'
+        assert rows[0]['campaign_name'] == 'Car Rental'
+        fields, params = account.get_insights.call_args.args
+        assert 'region' not in fields
+        assert params['breakdowns'] == ['region']
+        assert params['level'] == 'campaign'
+        assert 'filtering' not in params
+
+    def test_account_state_breakdown_aggregates_weekend_rows_only(self):
+        from app.services.facebook_service import FacebookService
+
+        account = MagicMock()
+        account.get_insights.return_value = [
+            {'campaign_id': 'campaign_123', 'campaign_name': 'Car Rental', 'region': 'New York', 'date_start': '2026-09-19', 'spend': '60', 'impressions': '4000', 'reach': '3000', 'clicks': '50', 'actions': [{'action_type': 'lead', 'value': '1'}]},
+            {'campaign_id': 'campaign_123', 'campaign_name': 'Car Rental', 'region': 'New York', 'date_start': '2026-09-20', 'spend': '90', 'impressions': '6000', 'reach': '4500', 'clicks': '75', 'actions': [{'action_type': 'lead', 'value': '2'}]},
+            {'campaign_id': 'campaign_123', 'campaign_name': 'Car Rental', 'region': 'New York', 'date_start': '2026-09-21', 'spend': '150', 'impressions': '10000', 'reach': '7500', 'clicks': '125', 'actions': [{'action_type': 'lead', 'value': '6'}]},
+        ]
+        service = FacebookService.__new__(FacebookService)
+        service._get_account = MagicMock(return_value=account)
+
+        rows = service.get_account_campaign_state_insights(ad_account_id='act_456', date_from='2026-09-19', date_to='2026-09-21', day_filter='weekend')
+
+        assert rows == [{
+            'campaign_id': 'campaign_123', 'campaign_name': 'Car Rental', 'state': 'New York',
+            'spend': 150.0, 'leads': 3, 'impressions': 10000, 'reach': 7500, 'clicks': 125,
+            'cpl': 50.0, 'ctr': 1.25,
+        }]
+        _, params = account.get_insights.call_args.args
+        assert params['time_increment'] == 1
