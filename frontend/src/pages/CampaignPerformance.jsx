@@ -34,10 +34,21 @@ const INTELLIGENCE_PRESETS = [
 ];
 const INTELLIGENCE_PRESET_VALUES = new Set(INTELLIGENCE_PRESETS.map(p => p.value));
 
-function intelligencePresetLabel(presetOption, intelligenceView) {
-  if (intelligenceView === 'geography' && presetOption.value === 'weekdays_mtd') return 'Weekdays (last 14d)';
-  if (intelligenceView === 'geography' && presetOption.value === 'weekends_mtd') return 'Weekends (last 14d)';
-  return presetOption.label;
+// Geography clamps Weekdays/Weekends MTD to a rolling window (currently 14
+// days — see _clamp_geography_day_filter_window in intelligence.py) because
+// the full month-to-date, account-wide, per-day, per-state query times out on
+// large accounts. The clamp window is a backend constant, not something this
+// file should re-guess: once the real result for a preset has loaded, use its
+// own preset_label (the actual resolved window) instead of a static string
+// that would silently drift if the backend's cap ever changes. Before data
+// loads, "~14d" is an approximation, not a promise.
+function intelligencePresetLabel(presetOption, intelligenceView, geographyData) {
+  if (intelligenceView !== 'geography') return presetOption.label;
+  if (presetOption.value !== 'weekdays_mtd' && presetOption.value !== 'weekends_mtd') return presetOption.label;
+  if (geographyData?.preset === presetOption.value && geographyData?.preset_label) {
+    return geographyData.preset_label;
+  }
+  return presetOption.value === 'weekdays_mtd' ? 'Weekdays (~14d)' : 'Weekends (~14d)';
 }
 
 function resolveIntelligencePreset(pageDatePreset, explicitPreset) {
@@ -503,13 +514,16 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
               <button
                 key={p.value}
                 onClick={() => handlePreset(p.value)}
+                title={intelligenceView === 'geography' && (p.value === 'weekdays_mtd' || p.value === 'weekends_mtd')
+                  ? 'Capped to a rolling window (not full month-to-date) — a month-wide, per-day, per-state Meta query is too large to complete reliably. Best Times and Niche use true MTD.'
+                  : undefined}
                 className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
                   preset === p.value
                     ? 'bg-violet-100 text-violet-700 border border-violet-200'
                     : 'bg-gray-100 text-gray-600 border border-transparent hover:bg-gray-200'
                 }`}
               >
-                {intelligencePresetLabel(p, intelligenceView)}
+                {intelligencePresetLabel(p, intelligenceView, geographyData)}
               </button>
             ))}
           </div>
