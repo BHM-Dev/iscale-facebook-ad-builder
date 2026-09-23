@@ -45,6 +45,10 @@ Facebook ad builder used daily by Joel Welch (media buyer). Connects to Meta Ads
 
 - **Progress updates are not turn-ending messages.** If a task is still in progress, continue working after any commentary update and only stop when the requested outcome is complete, genuinely blocked, or requires an explicit user decision.
 - When Steven says not to pause for updates, work silently and continue through implementation, verification, and handoff.
+- **Active-build default:** Feedback such as “what do you think?”, “reviewing this,” or a new concern about the current feature is part of the active implementation task. Continue with the code change, tests, and live validation unless Steven explicitly says “analysis only,” “do not change code,” or otherwise withdraws implementation scope.
+- **No premature handoff:** Never end a turn with only an assessment, recommendation, or proposed next step when an in-scope implementation remains. A status update is not a handoff and must be followed by continued work in the same turn.
+- **Completion gate:** Before ending an implementation turn, verify: (1) requested behavior is implemented, (2) relevant tests/build checks pass, (3) live proof is run when production behavior is in scope, and (4) any remaining blocker is stated with the exact approval or external-state change required. If any gate is incomplete, keep working or report the concrete blocker instead of presenting the task as complete.
+- **Interpretation rule:** If the user asks a question inside an active build thread, answer it while continuing the build; do not treat the question as a replacement for the build unless the user explicitly says it replaces the task.
 
 ## Infrastructure (Current — 2026-04-27 and later)
 
