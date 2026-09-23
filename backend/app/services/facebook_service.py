@@ -12,7 +12,21 @@ from dotenv import load_dotenv
 from pathlib import Path
 from facebook_business.adobjects.user import User
 import time
+import threading
 from datetime import datetime
+from requests.exceptions import RequestException
+
+
+# Geography's daily, state-level view can fan out into many Insight pages.
+# Keep its dedicated SDK session bounded so the outer UI timeout never leaves
+# an unbounded requests socket running in a worker thread.
+STATE_INSIGHTS_CONNECT_TIMEOUT_SECONDS = 5
+STATE_INSIGHTS_READ_TIMEOUT_SECONDS = 15
+STATE_INSIGHTS_FETCH_DEADLINE_SECONDS = 18
+STATE_INSIGHTS_RESULT_TIMEOUT_SECONDS = 20
+_STATE_INSIGHTS_INFLIGHT_KEYS: dict[str, tuple[object, float]] = {}
+_STATE_INSIGHTS_INFLIGHT_LOCK = threading.Lock()
+STATE_INSIGHTS_INFLIGHT_TTL_SECONDS = 30
 
 # Load .env from project root (parent of backend)
 env_path = Path(__file__).resolve().parent.parent.parent.parent / '.env'
@@ -390,6 +404,36 @@ class FacebookService:
             return self.account
             
         raise Exception("No Ad Account ID provided and no default account set.")
+
+    def _get_state_insights_account(self, ad_account_id=None):
+        """Return an account and its owned bounded session for Geography only.
+
+        The normal service API intentionally remains unchanged because launch
+        and mutation operations have different timing needs.  This diagnostic
+        endpoint is safe to fail quickly, and Meta's SDK forwards this session
+        timeout directly to ``requests`` for every paginated Insights call.
+        """
+        resolved_account_id = ad_account_id or getattr(self, 'ad_account_id', None)
+        if not resolved_account_id or not getattr(self, 'access_token', None):
+            # Keeps lightweight unit-test service instances and the legacy
+            # no-explicit-account path compatible with _get_account.
+            return self._get_account(ad_account_id), None
+
+        from facebook_business.session import FacebookSession
+
+        normalized_id = str(resolved_account_id)
+        if not normalized_id.startswith('act_'):
+            normalized_id = f'act_{normalized_id}'
+        session = FacebookSession(
+            getattr(self, 'app_id', None),
+            getattr(self, 'app_secret', None),
+            self.access_token,
+            timeout=(
+                STATE_INSIGHTS_CONNECT_TIMEOUT_SECONDS,
+                STATE_INSIGHTS_READ_TIMEOUT_SECONDS,
+            ),
+        )
+        return AdAccount(normalized_id, api=FacebookAdsApi(session)), session
 
     def get_campaigns(self, ad_account_id=None, effective_status=None):
         """Fetch campaigns from the ad account.
@@ -1919,7 +1963,7 @@ class FacebookService:
         """
         import logging
         logger = logging.getLogger(__name__)
-        account = self._get_account(ad_account_id)
+        account, state_session = self._get_state_insights_account(ad_account_id)
         # `region` is returned by Meta as a breakdown value, not a selectable
         # Insights field. Including it in `fields` makes the whole request fail.
         # ctr/cost_per_action_type are deliberately omitted: both cpl and ctr
@@ -1946,23 +1990,101 @@ class FacebookService:
         # page. The SDK's Cursor exhausts every page on iteration.
         params['limit'] = 500
 
+        request_key = ':'.join((
+            str(ad_account_id or ''),
+            str(date_from or date_preset),
+            str(date_to or ''),
+            str(campaign_id or ''),
+            day_filter,
+        ))
+        request_token = object()
+        request_started_at = time.monotonic()
+        with _STATE_INSIGHTS_INFLIGHT_LOCK:
+            active_request = _STATE_INSIGHTS_INFLIGHT_KEYS.get(request_key)
+            if active_request and request_started_at - active_request[1] < STATE_INSIGHTS_INFLIGHT_TTL_SECONDS:
+                raise RuntimeError('Geography refresh is still finishing — try again in a moment')
+            # A transport can theoretically stay active beyond requests'
+            # inactivity timeout. Expire only its guard, not the process: this
+            # lets the buyer recover after a bounded wait without allowing a
+            # stale worker to release a newer request's guard.
+            _STATE_INSIGHTS_INFLIGHT_KEYS[request_key] = (request_token, request_started_at)
+
+        fetch_deadline = time.monotonic() + STATE_INSIGHTS_FETCH_DEADLINE_SECONDS
+
         def _fetch_all_pages():
             # Materializing the cursor (walking every page) must happen INSIDE
             # the timed thread — future.result(timeout=...) only bounds the
             # first page, since get_insights() returns a lazily-paginating
             # Cursor. Without this, a large account-wide/daily query could run
             # for minutes past the declared timeout while still "passing" it.
-            return list(account.get_insights(fields, params))
+            try:
+                cursor = iter(account.get_insights(fields, params))
+                results = []
+                while True:
+                    # Stop before asking the SDK cursor for another page. The
+                    # session-level timeout above bounds an in-flight page,
+                    # and this deadline prevents a fast multi-page crawl from
+                    # carrying on after the caller has received a timeout.
+                    if time.monotonic() >= fetch_deadline:
+                        raise RuntimeError('Meta API timeout — try again in a moment')
+                    try:
+                        results.append(next(cursor))
+                    except StopIteration:
+                        return results
+            finally:
+                # Dedicated Geography sessions must not accumulate sockets on
+                # retries. A timed worker closes this when it exits.
+                if state_session and getattr(state_session, 'requests', None):
+                    state_session.requests.close()
+                with _STATE_INSIGHTS_INFLIGHT_LOCK:
+                    active_request = _STATE_INSIGHTS_INFLIGHT_KEYS.get(request_key)
+                    if active_request and active_request[0] is request_token:
+                        _STATE_INSIGHTS_INFLIGHT_KEYS.pop(request_key, None)
 
         try:
             from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-            with ThreadPoolExecutor(max_workers=1) as ex:
+            try:
+                ex = ThreadPoolExecutor(max_workers=1)
                 future = ex.submit(_fetch_all_pages)
-                try:
-                    results = future.result(timeout=20)  # 20s hard cap on Meta API, all pages included
-                except FuturesTimeout:
-                    logger.error('Meta state insights timed out after 20s')
-                    raise RuntimeError('Meta API timeout — try again in a moment')
+            except Exception:
+                # No worker will run its finally block if submission itself
+                # fails, so release the retry guard and its owned session.
+                if state_session and getattr(state_session, 'requests', None):
+                    state_session.requests.close()
+                with _STATE_INSIGHTS_INFLIGHT_LOCK:
+                    active_request = _STATE_INSIGHTS_INFLIGHT_KEYS.get(request_key)
+                    if active_request and active_request[0] is request_token:
+                        _STATE_INSIGHTS_INFLIGHT_KEYS.pop(request_key, None)
+                raise
+            try:
+                results = future.result(timeout=STATE_INSIGHTS_RESULT_TIMEOUT_SECONDS)
+            except FuturesTimeout:
+                # Do not use a ``with ThreadPoolExecutor`` block here. Its
+                # implicit shutdown(wait=True) waits for a hung SDK request,
+                # turning this 20-second cap into an indefinitely spinning UI.
+                cancelled = future.cancel()
+                ex.shutdown(wait=False, cancel_futures=True)
+                if cancelled:
+                    # A not-yet-started worker will never run its finally.
+                    with _STATE_INSIGHTS_INFLIGHT_LOCK:
+                        active_request = _STATE_INSIGHTS_INFLIGHT_KEYS.get(request_key)
+                        if active_request and active_request[0] is request_token:
+                            _STATE_INSIGHTS_INFLIGHT_KEYS.pop(request_key, None)
+                logger.error('Meta state insights timed out after %ss', STATE_INSIGHTS_RESULT_TIMEOUT_SECONDS)
+                raise RuntimeError('Meta API timeout — try again in a moment')
+            except RequestException as exc:
+                # SDK transport failures are not FacebookRequestError objects;
+                # make them retryable rather than leaking a generic 500.
+                ex.shutdown(wait=True)
+                logger.warning('Meta state insights transport failure: %s', exc)
+                raise RuntimeError('Meta connection timed out — try again in a moment') from exc
+            except Exception:
+                # future.result raised only after this worker finished, so a
+                # normal join cannot reintroduce the hung-request failure.
+                ex.shutdown(wait=True)
+                raise
+            else:
+                ex.shutdown(wait=True)
         except RuntimeError:
             raise
         except FacebookRequestError as e:

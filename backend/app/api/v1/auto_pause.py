@@ -719,7 +719,9 @@ def get_state_performance(
             date_to=date_to,
         )
     except RuntimeError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        # Meta delivery reads can time out or be temporarily unavailable;
+        # that is upstream availability, not a malformed buyer request.
+        raise HTTPException(502, str(exc)) from exc
 
     total_spend = sum(row['spend'] for row in states)
     total_leads = sum(row['leads'] for row in states)

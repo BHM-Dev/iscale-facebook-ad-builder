@@ -365,6 +365,117 @@ class TestCreateCreativeDualPlacement:
 
 
 class TestCampaignStateInsights:
+    def test_state_breakdown_uses_its_own_bounded_meta_session(self):
+        """A Geography refresh must not inherit an unbounded shared SDK session."""
+        from app.services.facebook_service import FacebookService
+
+        service = FacebookService.__new__(FacebookService)
+        service.access_token = 'token'
+
+        with patch('facebook_business.session.FacebookSession') as session_class, patch(
+            'app.services.facebook_service.FacebookAdsApi'
+        ) as api_class, patch('app.services.facebook_service.AdAccount') as account_class:
+            account, session = service._get_state_insights_account('456')
+
+        session_class.assert_called_once_with(
+            None, None, 'token', timeout=(5, 15)
+        )
+        api_class.assert_called_once_with(session_class.return_value)
+        account_class.assert_called_once_with('act_456', api=api_class.return_value)
+        assert account is account_class.return_value
+        assert session is session_class.return_value
+
+    def test_state_breakdown_uses_default_account_with_bounded_session(self):
+        from app.services.facebook_service import FacebookService
+
+        service = FacebookService.__new__(FacebookService)
+        service.access_token = 'token'
+        service.ad_account_id = '789'
+
+        with patch('facebook_business.session.FacebookSession'), patch(
+            'app.services.facebook_service.FacebookAdsApi'
+        ) as api_class, patch('app.services.facebook_service.AdAccount') as account_class:
+            service._get_state_insights_account()
+
+        account_class.assert_called_once_with('act_789', api=api_class.return_value)
+
+    def test_state_breakdown_timeout_does_not_wait_for_hung_worker(self):
+        """A timed-out daily region cursor must return control immediately.
+
+        ThreadPoolExecutor's context-manager shutdown waits for a running
+        worker, which previously left the Geography view loading forever after
+        its advertised 20-second timeout.
+        """
+        import threading
+        import time
+        from app.services import facebook_service
+        from app.services.facebook_service import FacebookService
+
+        entered = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+        account = MagicMock()
+
+        def slow_insights(_fields, _params):
+            entered.set()
+            release.wait(timeout=1)
+            finished.set()
+            return []
+
+        account.get_insights.side_effect = slow_insights
+
+        service = FacebookService.__new__(FacebookService)
+        service._get_state_insights_account = MagicMock(return_value=(account, None))
+
+        started = time.monotonic()
+        try:
+            with patch.object(facebook_service, 'STATE_INSIGHTS_RESULT_TIMEOUT_SECONDS', 0.01), pytest.raises(
+                RuntimeError, match='Meta API timeout'
+            ):
+                service.get_account_campaign_state_insights(
+                    ad_account_id='act_456', date_from='2026-09-01', date_to='2026-09-20', day_filter='weekday'
+                )
+            assert time.monotonic() - started < 0.2
+            assert entered.wait(timeout=0.2)
+            with pytest.raises(RuntimeError, match='still finishing'):
+                service.get_account_campaign_state_insights(
+                    ad_account_id='act_456', date_from='2026-09-01', date_to='2026-09-20', day_filter='weekday'
+                )
+        finally:
+            release.set()
+        assert finished.wait(timeout=1)
+
+    def test_state_breakdown_stops_before_fetching_another_page_after_deadline(self):
+        """The worker must not keep walking cursor pages after the UI deadline."""
+        import time
+        from app.services import facebook_service
+        from app.services.facebook_service import FacebookService
+
+        page_fetches = []
+
+        class SlowCursor:
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                page_fetches.append(True)
+                if len(page_fetches) > 1:
+                    raise AssertionError('cursor fetched a page after its deadline')
+                time.sleep(0.02)
+                return {'region': 'New York'}
+
+        account = MagicMock()
+        account.get_insights.return_value = SlowCursor()
+        service = FacebookService.__new__(FacebookService)
+        service._get_state_insights_account = MagicMock(return_value=(account, None))
+
+        with patch.object(facebook_service, 'STATE_INSIGHTS_FETCH_DEADLINE_SECONDS', 0.01), patch.object(
+            facebook_service, 'STATE_INSIGHTS_RESULT_TIMEOUT_SECONDS', 1
+        ), pytest.raises(RuntimeError, match='Meta API timeout'):
+            service.get_account_campaign_state_insights(ad_account_id='act_456')
+
+        assert len(page_fetches) == 1
+
     def test_state_breakdown_is_campaign_scoped_and_lead_gen_safe(self):
         """State diagnosis must use Meta's supported region breakdown and never
         infer revenue/ROAS from the account-level attribution cache."""
