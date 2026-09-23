@@ -416,7 +416,17 @@ class FacebookService:
         resolved_account_id = ad_account_id or getattr(self, 'ad_account_id', None)
         if not resolved_account_id or not getattr(self, 'access_token', None):
             # Keeps lightweight unit-test service instances and the legacy
-            # no-explicit-account path compatible with _get_account.
+            # no-explicit-account path compatible with _get_account. In
+            # production this should never trigger (access_token/account are
+            # always resolved before this call) — if it does, Geography is
+            # silently back on the unbounded shared session this method
+            # exists to avoid, so make that visible rather than a quiet
+            # fallback the next incident has to rediscover from scratch.
+            import logging
+            logging.getLogger(__name__).warning(
+                'Geography state insights falling back to the unbounded shared session '
+                '(missing ad_account_id or access_token) — the bounded-timeout fix does not apply here.'
+            )
             return self._get_account(ad_account_id), None
 
         from facebook_business.session import FacebookSession

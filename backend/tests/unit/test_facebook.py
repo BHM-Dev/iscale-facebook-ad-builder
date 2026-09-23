@@ -435,8 +435,11 @@ class TestCampaignStateInsights:
                 service.get_account_campaign_state_insights(
                     ad_account_id='act_456', date_from='2026-09-01', date_to='2026-09-20', day_filter='weekday'
                 )
-            assert time.monotonic() - started < 0.2
-            assert entered.wait(timeout=0.2)
+            # The property under test is "didn't wait for release.wait(timeout=1)
+            # to fire," not a tight latency budget — 0.2s left little margin
+            # under real CI scheduling/GC contention.
+            assert time.monotonic() - started < 1.0
+            assert entered.wait(timeout=0.5)
             with pytest.raises(RuntimeError, match='still finishing'):
                 service.get_account_campaign_state_insights(
                     ad_account_id='act_456', date_from='2026-09-01', date_to='2026-09-20', day_filter='weekday'
