@@ -764,7 +764,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const driveManifestUsesExistingAdset = Boolean(isDriveManifest && adsetData.isExisting);
     const driveManifestCreatesSeparateAdsets = Boolean(isDriveManifest && perMediaModeActive);
     const driveManifestHasDualPlacement = Boolean(isDriveManifest && activeAds.some(ad => ad.dualPlacement));
-    const existingPlacementStatus = driveManifestUsesExistingAdset && driveManifestHasDualPlacement
+    // handleSubmit's own safety gate (below, in the submit handler) has no
+    // isDriveManifest condition — it blocks ANY existing-ad-set batch with a
+    // dual-placement or all-stories creative, Drive-sourced or not. The
+    // visible gate must match that exactly, or a manual batch can look
+    // launchable while still being refused (silently, from Joel's POV) the
+    // moment he clicks.
+    const batchHasDualPlacement = activeAds.some(ad => ad.dualPlacement);
+    const existingPlacementStatus = adsetData.isExisting && batchHasDualPlacement
         ? existingDualPlacementStatus(adsetData.targeting, creativeData.instagramId)
         : null;
     const existingStoriesStatus = adsetData.isExisting && allStoriesFormat
@@ -774,15 +781,15 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // The submit handler already refuses an unverified existing placement
     // contract, but leaving the button enabled makes a blocked batch look
     // launchable and forces Joel to discover the block by clicking it.
-    const placementLaunchStatus = driveManifestUsesExistingAdset
-        ? driveManifestHasDualPlacement
+    const placementLaunchStatus = adsetData.isExisting
+        ? batchHasDualPlacement
             ? existingPlacementStatus
             : allStoriesFormat
                 ? existingStoriesStatus
                 : null
         : null;
     const placementLaunchBlocked = placementLaunchStatus === 'unverified';
-    const manifestPlacementSummary = driveManifestHasDualPlacement
+    const manifestPlacementSummary = batchHasDualPlacement
         ? existingPlacementStatus === 'unverified'
             ? 'Placement contract not verified'
             : existingPlacementStatus === 'verified-facebook-only'
@@ -1951,10 +1958,10 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     {excludedAdIds.size > 0 && (
                         <div><strong>Excluded:</strong> {excludedAdIds.size} ad{excludedAdIds.size !== 1 ? 's' : ''} removed from this batch</div>
                     )}
-                    {driveManifestUsesExistingAdset && driveManifestHasDualPlacement && (
+                    {adsetData.isExisting && batchHasDualPlacement && (
                         <div className={`mt-2 rounded px-2 py-1.5 text-xs font-medium ${existingPlacementStatus === 'unverified' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-800'}`}>
                             {existingPlacementStatus === 'unverified'
-                                ? 'Placement contract not verified — launch is blocked until this existing ad set is limited to the supplied Feed + Stories placements.'
+                                ? 'Placement contract not verified — launch is blocked. Go back and choose a different, placement-compatible existing ad set (or create a new one) for these paired creatives.'
                                 : existingPlacementStatus === 'verified-facebook-only'
                                     ? 'Placement verified: Facebook Feed + Stories only. Instagram is not enabled on this existing ad set.'
                                     : 'Placement verified: Facebook Feed + Stories and Instagram Stream, Stories, and Reels.'}
@@ -1995,7 +2002,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         </div>
                     )}
                     {allStoriesFormat && !perMediaModeActive && (
-                        <div className="mt-1 text-blue-700 font-medium">📱 All creatives are 9:16 — {existingStoriesStatus === 'verified-facebook-only' ? 'existing ad set targets Facebook Stories only' : 'ad set will target Stories & Reels only'}</div>
+                        <div className={`mt-1 font-medium ${existingStoriesStatus === 'unverified' ? 'text-amber-700' : 'text-blue-700'}`}>📱 All creatives are 9:16 — {existingStoriesStatus === 'unverified' ? 'placement contract not verified — launch is blocked. Go back and choose a Stories/Reels-compatible existing ad set (or create a new one).' : existingStoriesStatus === 'verified-facebook-only' ? 'existing ad set targets Facebook Stories only' : 'ad set will target Stories & Reels only'}</div>
                     )}
                     {perMediaModeActive && (() => {
                         // Same "state the literal computed outcome in one sentence" pattern
