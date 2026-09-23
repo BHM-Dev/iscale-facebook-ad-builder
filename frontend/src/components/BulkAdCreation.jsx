@@ -770,6 +770,18 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const existingStoriesStatus = adsetData.isExisting && allStoriesFormat
         ? existingStoriesPlacementStatus(adsetData.targeting, creativeData.instagramId)
         : null;
+    // Keep the visible launch control aligned with handleSubmit's safety gate.
+    // The submit handler already refuses an unverified existing placement
+    // contract, but leaving the button enabled makes a blocked batch look
+    // launchable and forces Joel to discover the block by clicking it.
+    const placementLaunchStatus = driveManifestUsesExistingAdset
+        ? driveManifestHasDualPlacement
+            ? existingPlacementStatus
+            : allStoriesFormat
+                ? existingStoriesStatus
+                : null
+        : null;
+    const placementLaunchBlocked = placementLaunchStatus === 'unverified';
     const manifestPlacementSummary = driveManifestHasDualPlacement
         ? existingPlacementStatus === 'unverified'
             ? 'Placement contract not verified'
@@ -2587,10 +2599,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                         handleSubmit();
                                     }
                                 }}
-                                disabled={loading || activeAds.length === 0}
+                                disabled={loading || activeAds.length === 0 || placementLaunchBlocked}
                                 className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                             >
-                                {isDriveManifest && driveManifestCreatesSeparateAdsets
+                                {placementLaunchBlocked
+                                    ? 'Choose compatible ad set before launching'
+                                    : isDriveManifest && driveManifestCreatesSeparateAdsets
                                     ? `Create ${activeAds.length} paused ad${activeAds.length !== 1 ? 's' : ''} in ${activeAds.length} new ad set${activeAds.length !== 1 ? 's' : ''} on Facebook`
                                     : `Create ${activeAds.length} paused ad${activeAds.length !== 1 ? 's' : ''} on Facebook`}
                             </button>
