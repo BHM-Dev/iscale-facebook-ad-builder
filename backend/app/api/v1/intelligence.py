@@ -690,6 +690,7 @@ def _platform_geography_watchlist(
     adset_map: dict[str, dict],
     offer_names: Optional[set[str]] = None,
     day_filter: str = 'all',
+    redtrack_spend_rows: Optional[list[dict]] = None,
 ) -> dict:
     """Build state performance from RedTrack/Everflow conversion geo.
 
@@ -699,14 +700,15 @@ def _platform_geography_watchlist(
     exists, unlike the P&L page's stricter "Everflow-only" billing rule.
     RedTrack provides the most useful attribution grain for the conversion
     timestamp and ``sub2`` Meta ad-set join. Everflow is the billable revenue
-    corroborator and uses ``sub3`` for the same join. Neither source provides
-    state-level Meta spend, so this result intentionally reports observed
-    conversions/revenue rather than inventing a state CPL or targeting action.
+    corroborator and uses ``sub3`` for the same join. RedTrack's grouped
+    ``region,sub2`` report supplies the state-level spend used for observed
+    platform ROAS (revenue / spend).
     """
     allowed_offers = {name.casefold() for name in offer_names or set() if name}
     campaigns: dict[str, dict] = {}
     redtrack_state_rows = 0
     everflow_state_rows = 0
+    redtrack_spend_rows_count = 0
 
     def campaign_for(adset_id: str) -> Optional[dict]:
         identity = adset_map.get(adset_id)
@@ -717,21 +719,10 @@ def _platform_geography_watchlist(
             return None
         return identity
 
-    def add_row(
-        source: str,
-        row: dict,
-        adset_id: str,
-        state: str,
-        revenue: Decimal,
-    ) -> None:
-        nonlocal redtrack_state_rows, everflow_state_rows
+    def campaign_state_for(adset_id: str, state: str) -> Optional[dict]:
         identity = campaign_for(adset_id)
         if not identity or not state:
-            return
-        if source == 'redtrack':
-            redtrack_state_rows += 1
-        else:
-            everflow_state_rows += 1
+            return None
         campaign_id = str(identity['campaign_id'])
         campaign = campaigns.setdefault(campaign_id, {
             'campaign_id': campaign_id,
@@ -748,13 +739,78 @@ def _platform_geography_watchlist(
             'redtrack_revenue': Decimal('0'),
             'everflow_conversions': 0,
             'everflow_revenue': Decimal('0'),
+            'spend': Decimal('0'),
             'adset_ids': set(),
+            'adsets': {},
         })
+        adset = state_metrics['adsets'].setdefault(adset_id, {
+            'adset_id': adset_id,
+            'adset_name': (adset_map.get(adset_id) or {}).get('adset_name') or adset_id,
+            'conversions': 0,
+            'revenue': Decimal('0'),
+            'redtrack_conversions': 0,
+            'redtrack_revenue': Decimal('0'),
+            'everflow_conversions': 0,
+            'everflow_revenue': Decimal('0'),
+            'spend': Decimal('0'),
+        })
+        return {'campaign': campaign, 'state': state_metrics, 'adset': adset}
+
+    def add_spend(adset_id: str, state: str, spend: Decimal) -> None:
+        nonlocal redtrack_spend_rows_count
+        target = campaign_state_for(adset_id, state)
+        if not target:
+            return
+        redtrack_spend_rows_count += 1
+        target['state']['spend'] += spend
+        target['state']['adset_ids'].add(adset_id)
+        target['adset']['spend'] += spend
+
+    def add_row(
+        source: str,
+        row: dict,
+        adset_id: str,
+        state: str,
+        revenue: Decimal,
+    ) -> None:
+        nonlocal redtrack_state_rows, everflow_state_rows
+        identity = campaign_for(adset_id)
+        if not identity or not state:
+            return
+        if source == 'redtrack':
+            redtrack_state_rows += 1
+        else:
+            everflow_state_rows += 1
+        target = campaign_state_for(adset_id, state)
+        if not target:
+            return
+        state_metrics = target['state']
+        adset_metrics = target['adset']
         state_metrics['conversions'] += 1
         state_metrics['revenue'] += revenue
         state_metrics[f'{source}_conversions'] += 1
         state_metrics[f'{source}_revenue'] += revenue
         state_metrics['adset_ids'].add(adset_id)
+        adset_metrics['conversions'] += 1
+        adset_metrics['revenue'] += revenue
+        adset_metrics[f'{source}_conversions'] += 1
+        adset_metrics[f'{source}_revenue'] += revenue
+
+    for row in redtrack_spend_rows or []:
+        adset_id = str(row.get('sub2') or '').strip()
+        state = _platform_geo_value(row)
+        if not adset_id or not state:
+            continue
+        if day_filter != 'all':
+            when = _redtrack_datetime(row, REDTRACK_TZ)
+            if not when or not _day_filter_allows(when.weekday(), day_filter):
+                continue
+        try:
+            spend = Decimal(str(row.get('cost') or 0))
+        except (InvalidOperation, TypeError, ValueError):
+            spend = Decimal('0')
+        if spend.is_finite() and spend >= 0:
+            add_spend(adset_id, state, spend)
 
     for row in redtrack_rows:
         adset_id = _redtrack_adset_id(row, set(adset_map))
@@ -797,6 +853,25 @@ def _platform_geography_watchlist(
             else:
                 state['conversions'] = state['redtrack_conversions']
                 state['revenue'] = state['redtrack_revenue']
+            adset_metrics_by_id = state.get('adsets', {})
+            state['adsets'] = []
+            for adset in adset_metrics_by_id.values() if isinstance(adset_metrics_by_id, dict) else []:
+                if adset['everflow_conversions']:
+                    adset['conversions'] = adset['everflow_conversions']
+                    adset['revenue'] = adset['everflow_revenue']
+                else:
+                    adset['conversions'] = adset['redtrack_conversions']
+                    adset['revenue'] = adset['redtrack_revenue']
+                spend = adset['spend']
+                adset['spend'] = float(spend.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+                adset['revenue'] = float(adset['revenue'].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+                adset['roas'] = round(adset['revenue'] / adset['spend'], 2) if adset['spend'] > 0 else None
+                adset['profit'] = round(adset['revenue'] - adset['spend'], 2)
+                state['adsets'].append(adset)
+            state['adsets'].sort(key=lambda item: (-item['spend'], -item['revenue'], item['adset_name'].casefold()))
+            state['spend'] = float(state['spend'].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+            state['roas'] = round(float(state['revenue']) / state['spend'], 2) if state['spend'] > 0 else None
+            state['profit'] = round(float(state['revenue']) - state['spend'], 2)
             state['revenue'] = float(state['revenue'].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
             state['redtrack_revenue'] = float(state['redtrack_revenue'].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
             state['everflow_revenue'] = float(state['everflow_revenue'].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
@@ -806,13 +881,15 @@ def _platform_geography_watchlist(
             states.append(state)
         if not states:
             continue
-        states.sort(key=lambda item: (-item['revenue'], -item['conversions'], item['state']))
+        states.sort(key=lambda item: (-item['spend'], -item['revenue'], item['state']))
         campaign['states'] = states
         campaign['flagged_states'] = states
         campaign['flagged_state_count'] = len(states)
         campaign['total_conversions'] = sum(item['conversions'] for item in states)
         campaign['total_revenue'] = round(sum(item['revenue'] for item in states), 2)
-        campaign['total_spend'] = None
+        campaign['total_spend'] = round(sum(item['spend'] for item in states), 2)
+        campaign['total_roas'] = round(campaign['total_revenue'] / campaign['total_spend'], 2) if campaign['total_spend'] > 0 else None
+        campaign['total_profit'] = round(campaign['total_revenue'] - campaign['total_spend'], 2)
         campaign['total_leads'] = campaign['total_conversions']
         campaign['blended_cpl'] = None
         campaign['priority_excess_cost'] = campaign['total_revenue']
@@ -820,7 +897,7 @@ def _platform_geography_watchlist(
 
     output_campaigns.sort(key=lambda item: (-item['total_revenue'], item['campaign_name'].casefold()))
     sources = []
-    if redtrack_state_rows:
+    if redtrack_state_rows or redtrack_spend_rows_count:
         sources.append('RedTrack')
     if everflow_state_rows:
         sources.append('Everflow')
@@ -833,6 +910,7 @@ def _platform_geography_watchlist(
         'source_rows': {
             'redtrack': redtrack_state_rows,
             'everflow': everflow_state_rows,
+            'redtrack_spend': redtrack_spend_rows_count,
         },
     }
 
@@ -855,9 +933,15 @@ def _fetch_platform_geography(
     everflow = EverflowService()
     if not redtrack.is_configured() and not everflow.is_configured():
         return None
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=4) as executor:
         adsets_future = executor.submit(meta_service.get_adsets, ad_account_id)
         redtrack_future = executor.submit(redtrack.get_raw_conversions, date_from, date_to) if redtrack.is_configured() else None
+        redtrack_spend_future = executor.submit(
+            redtrack.get_geo_spend_report,
+            date_from,
+            date_to,
+            day_filter != 'all',
+        ) if redtrack.is_configured() else None
         everflow_future = executor.submit(everflow.get_raw_conversions, date_from, date_to, DEFAULT_TIMEZONE_ID) if everflow.is_configured() else None
         try:
             adsets = adsets_future.result()
@@ -887,6 +971,13 @@ def _fetch_platform_geography(
             except Exception as exc:
                 logger.warning('Platform geography RedTrack read failed: %s', exc)
                 redtrack_failed = True
+        redtrack_spend_rows, redtrack_spend_failed = [], False
+        if redtrack_spend_future:
+            try:
+                redtrack_spend_rows = redtrack_spend_future.result()
+            except Exception as exc:
+                logger.warning('Platform geography RedTrack spend read failed: %s', exc)
+                redtrack_spend_failed = True
         everflow_rows, everflow_failed = [], False
         if everflow_future:
             try:
@@ -895,7 +986,7 @@ def _fetch_platform_geography(
                 logger.warning('Platform geography Everflow read failed: %s', exc)
                 everflow_failed = True
         configured_sources = bool(redtrack_future) + bool(everflow_future)
-        failed_sources = redtrack_failed + everflow_failed
+        failed_sources = (redtrack_failed and redtrack_spend_failed) + everflow_failed
         if configured_sources and failed_sources == configured_sources:
             # Every configured source failed outright — fall back to Meta's
             # delivery-only diagnostic instead of returning an empty result
@@ -904,6 +995,7 @@ def _fetch_platform_geography(
 
     return {
         'redtrack_rows': redtrack_rows,
+        'redtrack_spend_rows': redtrack_spend_rows,
         'everflow_rows': everflow_rows,
         'adset_map': adset_map,
         'source_configured': redtrack.is_configured() or everflow.is_configured(),
@@ -1039,7 +1131,7 @@ def _conversion_datetime(row: dict, timezone: ZoneInfo) -> Optional[datetime]:
 
 
 def _redtrack_datetime(row: dict, timezone: ZoneInfo) -> Optional[datetime]:
-    for field in ('conv_time', 'track_time', 'conversion_time', 'created_at'):
+    for field in ('conv_time', 'track_time', 'conversion_time', 'created_at', 'date'):
         value = row.get(field)
         if value in (None, ''):
             continue
@@ -1635,6 +1727,7 @@ def geography_watchlist(
                     platform_geo['adset_map'],
                     offer_names=offer_names,
                     day_filter=day_filter,
+                    redtrack_spend_rows=platform_geo.get('redtrack_spend_rows', []),
                 )
                 source = result['source_label']
                 revenue_available = True

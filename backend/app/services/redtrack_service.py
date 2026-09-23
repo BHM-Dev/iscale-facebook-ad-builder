@@ -186,6 +186,7 @@ class RedTrackService:
         """
         if not self.is_configured():
             return {}
+
         try:
             resp = httpx.get(
                 f"{BASE_URL}/report",
@@ -222,6 +223,49 @@ class RedTrackService:
         except Exception as e:
             logger.error("RedTrack fetch error: %s", e)
             return {}
+
+    def get_geo_spend_report(
+        self,
+        date_from: str,
+        date_to: str,
+        include_date: bool = False,
+    ) -> list[dict]:
+        """Return RedTrack spend grouped by state and Meta ad set.
+
+        RedTrack's ``region`` + ``sub2`` report is the joinable source for
+        state-level spend: ``sub2`` is the Meta ad-set ID and ``cost`` is the
+        delivery spend. ``include_date`` is available for callers that need
+        to apply a weekday/weekend filter locally.
+        """
+        if not self.is_configured():
+            return []
+        group = "region,sub2,date" if include_date else "region,sub2"
+        try:
+            resp = httpx.get(
+                f"{BASE_URL}/report",
+                headers=self._headers(),
+                params={
+                    **self._auth_params(),
+                    "date_from": date_from,
+                    "date_to": date_to,
+                    "group": group,
+                },
+                timeout=20,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+            rows = payload if isinstance(payload, list) else payload.get("data", [])
+            logger.info(
+                "RedTrack geo spend: fetched %d rows (%s → %s, group=%s)",
+                len(rows), date_from, date_to, group,
+            )
+            return rows if isinstance(rows, list) else []
+        except httpx.HTTPStatusError as e:
+            logger.error("RedTrack geo spend HTTP error: %s %s", e.response.status_code, e.response.text)
+            return []
+        except Exception as e:
+            logger.error("RedTrack geo spend fetch error: %s", e)
+            return []
 
     def get_raw_conversions(
         self,

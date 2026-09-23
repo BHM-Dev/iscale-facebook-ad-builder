@@ -115,6 +115,9 @@ def test_platform_geography_matches_redtrack_sub2_and_everflow_sub3_to_campaigns
         ],
         {'123456789012': {'campaign_id': 'campaign-1', 'campaign_name': 'Commercial Insurance'}},
         offer_names={'Get Business Coverage'},
+        redtrack_spend_rows=[
+            {'sub2': '123456789012', 'region': 'Texas', 'cost': '100.00'},
+        ],
     )
 
     assert result['source_mode'] == 'platform'
@@ -125,6 +128,11 @@ def test_platform_geography_matches_redtrack_sub2_and_everflow_sub3_to_campaigns
     assert state['revenue'] == 38.0
     assert state['redtrack_revenue'] == 42.0
     assert state['everflow_revenue'] == 38.0
+    assert state['spend'] == 100.0
+    assert state['roas'] == 0.38
+    assert state['adsets'][0]['adset_name'] == '123456789012'
+    assert state['adsets'][0]['spend'] == 100.0
+    assert state['adsets'][0]['roas'] == 0.38
 
 
 def test_platform_geography_pairs_conversions_and_revenue_from_the_same_source():
