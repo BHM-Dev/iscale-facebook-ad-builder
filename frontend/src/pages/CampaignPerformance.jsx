@@ -2290,6 +2290,12 @@ export default function CampaignPerformance() {
             <ShieldAlert size={14} />
             + Add Rule
           </button>
+          <CampaignIntelligencePanel
+            adAccountId={adAccountId}
+            pageDatePreset={datePreset}
+            pageDateFrom={dateFrom}
+            pageDateTo={dateTo}
+          />
           <button
             onClick={syncAll}
             disabled={syncing || syncingRT}
@@ -2370,12 +2376,6 @@ export default function CampaignPerformance() {
 
       <div className="px-5 pb-5 space-y-4 mt-1">
       <CreativeCompass buckets={compassBuckets} onOpenAdset={openCompassAdset} dateRangeLabel={dateRangeLabel} />
-      <CampaignIntelligencePanel
-        adAccountId={adAccountId}
-        pageDatePreset={datePreset}
-        pageDateFrom={dateFrom}
-        pageDateTo={dateTo}
-      />
 
       {/* Ad Set Performance Table */}
       <div className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-clip">
