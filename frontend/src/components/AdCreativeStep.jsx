@@ -1,7 +1,7 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { ChevronDown, ChevronRight, Upload, X, Loader, Trash2, Copy, Film, Image, BookOpen, Check, Layers, FolderOpen, Maximize2, Search, ExternalLink } from 'lucide-react';
+import { ChevronDown, ChevronRight, X, Loader, Trash2, Copy, BookOpen, Check, Layers, FolderOpen, Maximize2, Search, ExternalLink } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
@@ -389,7 +389,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const showGlobalCopyFallbacks = !isMatchImport && currentCreatives.length === 0;
     // Recomputed on every render off creativeData directly (not memoized on a
     // dependency array) — this step's whole job is showing the count change on every
-    // keystroke/upload, and the computation itself is three array lengths, not worth
+    // keystroke/selection, and the computation itself is three array lengths, not worth
     // the staleness risk of a memo dependency list drifting from the real fields.
     const variationCount = countCreativeVariations(creativeData);
 
@@ -415,19 +415,6 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const pageFetchRequestRef = useRef(0);
 
     const [manualPageEntry, setManualPageEntry] = useState(false);
-    const [isDragging, setIsDragging] = useState(false);
-    // Defaults ON per Joel's actual ask — he wants Feed (1:1) and Stories (9:16)
-    // launched together as the normal case, not something he has to remember to
-    // click "Dupe as Stories" for on every single image. Persisted across
-    // sessions like the other per-Joel creative preferences (overlayLogoUrl,
-    // overlayOfferLine) so it doesn't reset every time he opens the wizard.
-    const [autoDupeStories, setAutoDupeStories] = useState(
-        () => safeLocalStorageGet('autoDupeStoriesDefault') !== 'false'
-    );
-    const handleAutoDupeStoriesChange = (checked) => {
-        setAutoDupeStories(checked);
-        safeLocalStorageSet('autoDupeStoriesDefault', checked ? 'true' : 'false');
-    };
 
     // Generated Ads library modal
     const [showLibraryModal, setShowLibraryModal] = useState(false);
@@ -830,18 +817,16 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     );
 
     // Raw file count — "N assets" in the footer label. Distinct from how many
-    // CREATIVE entries actually land in creativeData.creatives (a real tagged
-    // pair merges 2 assets into 1 creative; an auto-duped single expands 1
-    // asset into 2) — that count is driveSelectionMediaCount below.
+    // CREATIVE entries actually land in creativeData.creatives: a real tagged
+    // Feed/Stories pair merges into one dual-placement creative.
     const driveSelectionAssetCount = useMemo(
         () => [...selectedDriveAssetIds].reduce((sum, id) => sum + (driveGroupById.get(id)?.isPair ? 2 : 1), 0),
         [selectedDriveAssetIds, driveGroupById]
     );
     // Mirrors addDriveSelectionToCreatives's exact branching so the pre-add
-    // "N total ad combinations" preview can't drift from what actually lands
-    // in creativeData.creatives — pre-push review (code-auditor: HIGH) found
-    // the old shared driveSelectionAssetCount undercounted by up to 2x here
-    // once autoDupeStories could expand a single unpaired image into two.
+    // count cannot drift from what actually lands in creativeData.creatives.
+    // A single Drive file remains native to its detected placement; only an
+    // explicit Feed/Stories pair becomes a dual-placement creative.
     const driveSelectionMediaCount = useMemo(() => {
         return [...selectedDriveAssetIds].reduce((sum, id) => {
             const group = driveGroupById.get(id);
@@ -851,12 +836,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 && group.storiesAsset?.format !== 'video';
             if (canMergeAsPair) return sum + 1; // one dualPlacement creative
             if (group.isPair) return sum + 2; // video-fallback: two real distinct creatives already
-            const asset = group.displayAsset;
-            if (!asset) return sum;
-            const wouldAutoDupe = autoDupeStories && asset.format !== 'video';
-            return sum + (wouldAutoDupe ? 2 : 1);
+            return group.displayAsset ? sum + 1 : sum;
         }, 0);
-    }, [selectedDriveAssetIds, driveGroupById, autoDupeStories]);
+    }, [selectedDriveAssetIds, driveGroupById]);
     const driveSelectionProjectedAdCount = useMemo(() => {
         const selectedGroups = [...selectedDriveAssetIds].map(id => driveGroupById.get(id)).filter(Boolean);
         // Every selected group stays in the editor now, including unmatched
@@ -865,10 +847,19 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         // multiplied by the shared variant fields.
         return selectedGroups.reduce((sum, group) => {
             const canMergeAsPair = group.isPair && group.feedAsset?.format !== 'video' && group.storiesAsset?.format !== 'video';
-            const mediaCount = canMergeAsPair ? 1 : group.isPair ? 2 : (autoDupeStories && group.displayAsset?.format !== 'video' ? 2 : 1);
+            const mediaCount = canMergeAsPair ? 1 : group.isPair ? 2 : group.displayAsset ? 1 : 0;
             return sum + mediaCount;
         }, 0);
-    }, [selectedDriveAssetIds, driveGroupById, autoDupeStories]);
+    }, [selectedDriveAssetIds, driveGroupById]);
+    const driveSelectionPlacementSummary = useMemo(() => {
+        return [...selectedDriveAssetIds].reduce((summary, id) => {
+            const group = driveGroupById.get(id);
+            if (!group || group.isPair || !group.displayAsset) return summary;
+            if (driveAssetPlacement(group.displayAsset) === 'stories') summary.storiesOnly += 1;
+            else summary.feedOnly += 1;
+            return summary;
+        }, { feedOnly: 0, storiesOnly: 0 });
+    }, [selectedDriveAssetIds, driveGroupById]);
 
     // Aggregate crop-batch state — drives the "cropping N of M" banner and the
     // failed-crop count/retry-all control on the media grid. `cropping` is set
@@ -876,7 +867,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // client-side concurrency queue in imageCrop.js even starts its network
     // request), so the size of a just-started batch is fully visible in
     // creativeData immediately — no separate bookkeeping needed at the
-    // trigger sites (bulk Drive add, auto-dupe on upload, manual duplicate).
+    // trigger sites (manual duplicate).
     const croppingCreatives = useMemo(
         () => creativeData.creatives.filter(c => c.cropping),
         [creativeData.creatives]
@@ -1333,7 +1324,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 // its missing opposite placement from the same image.
                 const asset = group.displayAsset;
                 if (!asset) return [];
-                return applyAutoStoriesDupe({
+                return [{
                     id: `drive_${asset.id}`,
                     file: null,
                     previewUrl: asset.r2_key,
@@ -1355,15 +1346,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     cta: groupCta,
                     ctaSource: group.cta ? 'Drive' : groupCta ? 'Creative default' : '',
                     websiteUrl: groupWebsiteUrl,
-                    skipAutoStoriesDupe: true,
                     missingOppositePlacement: true,
-                });
+                }];
             }
 
             // group.isPair but couldn't merge into one dualPlacement creative above
             // (one side is a video) — both real placements already exist as their
-            // own distinct assets here, so never auto-dupe this branch; that would
-            // add a redundant third entry rather than filling a real gap.
+            // own distinct assets here, so add neither a duplicate nor a crop.
             return [group.feedAsset, group.storiesAsset].filter(Boolean).map(asset => ({
                 id: `drive_${asset.id}`,
                 file: null,
@@ -1537,62 +1526,6 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         setShowLibraryModal(false);
     };
 
-    const handleDragEnter = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsDragging(true);
-    };
-
-    const handleDragOver = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsDragging(true);
-    };
-
-    const handleDragLeave = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        // Only set dragging to false if leaving the drop zone entirely
-        if (e.currentTarget.contains(e.relatedTarget)) return;
-        setIsDragging(false);
-    };
-
-    const handleDrop = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsDragging(false);
-
-        const files = Array.from(e.dataTransfer.files);
-        if (files.length === 0) return;
-
-        // Filter for images and videos
-        const mediaFiles = files.filter(file =>
-            ALLOWED_IMAGE_TYPES.includes(file.type) || ALLOWED_VIDEO_TYPES.includes(file.type)
-        );
-
-        if (mediaFiles.length === 0) {
-            showWarning('Please drop image or video files only');
-            return;
-        }
-
-        const newCreatives = mediaFiles.flatMap(file => {
-            const isVideo = ALLOWED_VIDEO_TYPES.includes(file.type);
-            return applyAutoStoriesDupe({
-                id: `creative_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                file,
-                previewUrl: URL.createObjectURL(file),
-                name: file.name,
-                mediaType: isVideo ? 'video' : 'image',
-                format: 'feed'
-            });
-        });
-
-        setCreativeData(prev => ({
-            ...prev,
-            creatives: [...(prev.creatives || []), ...newCreatives]
-        }));
-    };
-
     // Prepopulate Creative Name with Ad Set Name if empty
     useEffect(() => {
         if (adsetData?.name && !creativeData.creativeName) {
@@ -1600,7 +1533,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         }
     }, [adsetData?.name]);
 
-    // Clear uploaded Ad Media when this mount belongs to a genuinely different
+    // Clear selected ad media when this mount belongs to a genuinely different
     // campaign than whatever `creatives` currently sit in shared CampaignContext
     // state (same leak class as the text-field cache effect below, applied to
     // images/videos). Creatives have no localStorage cache to reload from — File/
@@ -1949,28 +1882,6 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         }
     };
 
-    const handleMediaUpload = (e) => {
-        const files = Array.from(e.target.files);
-        if (files.length === 0) return;
-
-        const newCreatives = files.flatMap(file => {
-            const isVideo = ALLOWED_VIDEO_TYPES.includes(file.type);
-            return applyAutoStoriesDupe({
-                id: `creative_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                file,
-                previewUrl: URL.createObjectURL(file),
-                name: file.name,
-                mediaType: isVideo ? 'video' : 'image',
-                format: 'feed'
-            });
-        });
-
-        setCreativeData(prev => ({
-            ...prev,
-            creatives: [...(prev.creatives || []), ...newCreatives]
-        }));
-    };
-
     const removeCreative = (id) => {
         // An original automatically-created Feed/Stories pair is one buyer
         // decision. Removing that original must not silently leave its
@@ -2006,19 +1917,6 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         }));
     };
 
-    // Recovery path for "I bulk-added a batch with auto-dupe on and actually
-    // wanted Feed-only" — unchecking the toggle only stops FUTURE adds, it
-    // can't undo what's already in the grid, and removing N duplicates one at
-    // a time defeats the whole point of a bulk workflow (pre-push review,
-    // joel-perspective: P2). Only strips the auto-created half of each pair —
-    // the original upload/selection stays.
-    const removeAutoDupedCreatives = () => {
-        setCreativeData(prev => ({
-            ...prev,
-            creatives: prev.creatives.filter(c => !c.id.endsWith('_autodupe'))
-        }));
-    };
-
     const toggleCreativeFormat = (id) => {
         setCreativeData(prev => ({
             ...prev,
@@ -2030,13 +1928,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         }));
     };
 
-    // Shared by applyAutoStoriesDupe and duplicateCreative — strips any
-    // existing trailing " (Feed)"/" (Stories)" before appending the new one,
-    // so duplicating an already-duplicated card (manually copying an
-    // auto-duped half, or re-duplicating a manual duplicate) can't stack into
-    // "file.jpg (Stories) (Feed)". Verified reachable via the UI's own Copy
-    // button (pre-push review follow-up, code-auditor: LOW) since only the
-    // real merged Drive pair is excluded from it, not an auto-duped half.
+    // Strip an existing trailing placement suffix before appending the new one
+    // so repeated manual copies never become "file.jpg (Stories) (Feed)".
     const namePlacementSuffix = (name, format) => {
         const base = (name || '').replace(/ \((Feed|Stories)\)$/, '');
         return `${base} (${format === 'stories' ? 'Stories' : 'Feed'})`;
@@ -2079,50 +1972,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         }
     };
 
-    // Applied at every point a new SINGLE-placement image creative is added
-    // (manual upload, drag-drop, a Drive selection that isn't already a real
-    // tagged pair) — when autoDupeStories is on, immediately gives it the
-    // opposite-placement duplicate this used to require a manual "Dupe as
-    // Stories" click for, one image at a time. Skips videos (dual-placement
-    // is image-only, per create_creative's own docstring) and anything
-    // already carrying both placements (dualPlacement: true — a real tagged
-    // Feed+Stories pair already covers both, duplicating it again would just
-    // create a redundant third entry).
-    //
-    // The duplicate is added immediately with the uncropped source image as a
-    // placeholder (cropping: true) so the grid never blocks on the network
-    // round-trip — requestSmartCrop swaps in the real cropped result in place
-    // moments later. Steve's own call: reusing the same image untouched (the
-    // original version of this feature) wasn't good enough — a photo composed
-    // for square Feed can look cropped/stretched wrong in a 9:16 frame with no
-    // real crop applied, so this always produces an actual correctly-cropped
-    // image server-side rather than just relabeling the source.
-    const applyAutoStoriesDupe = (creative) => {
-        if (!autoDupeStories || creative.skipAutoStoriesDupe || creative.mediaType === 'video' || creative.dualPlacement) {
-            return [creative];
-        }
-        const flippedFormat = (creative.format || 'feed') === 'stories' ? 'feed' : 'stories';
-        const dupeId = `${creative.id}_autodupe`;
-        const duplicate = {
-            ...creative,
-            id: dupeId,
-            format: flippedFormat,
-            name: namePlacementSuffix(creative.name, flippedFormat),
-            cropping: true,
-            cropFailed: false,
-            cropAnchor: 'center',
-            cropSourceFile: creative.file || null,
-            cropSourceUrl: creative.file ? null : (creative.imageUrl || creative.previewUrl),
-        };
-        requestSmartCrop(dupeId, { file: creative.file, url: duplicate.cropSourceUrl }, flippedFormat, 'center');
-        return [creative, duplicate];
-    };
-
     // Duplicate a creative and pre-toggle its format (feed → stories, stories → feed)
-    // — the manual "Copy" button, still here for autoDupeStories-off batches or
-    // adding an extra placement by hand. Goes through the same real smart-crop as
-    // the automatic path (see applyAutoStoriesDupe above) rather than the plain
-    // image-reuse this used to do.
+    // using the real smart-crop path rather than simply relabeling the image.
     const duplicateCreative = (id) => {
         const original = creativeData.creatives.find(c => c.id === id);
         if (!original) return;
@@ -2144,11 +1995,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             ...original,
             id: dupeId,
             format: flippedFormat,
-            // Same disambiguation as applyAutoStoriesDupe above — otherwise
-            // this manual duplicate is only tellable apart from the original
+            // This manual duplicate is only tellable apart from the original
             // by which ad set it lands in. namePlacementSuffix strips any
-            // suffix already there first, so duplicating an auto-duped or
-            // already-duplicated card can't stack into "(Stories) (Feed)".
+            // suffix already there first, so repeated copies cannot stack.
             name: namePlacementSuffix(original.name, flippedFormat),
             cropping: original.mediaType !== 'video',
             cropFailed: false,
@@ -2192,7 +2041,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         // so skip straight to the fields this mode actually collects.
         if (!isMatchImport) {
             if (!creativeData.creatives || creativeData.creatives.length === 0) {
-                showWarning('Please upload at least one image or video');
+                showWarning('Add at least one creative from Drive Library or Generated Ads');
                 return;
             }
 
@@ -2362,39 +2211,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 <>
                     <h2 className="text-2xl font-bold mb-6">Ad Creative - Standard Ads</h2>
                     <p className="text-gray-600 mb-3">
-                        This creates standard (non-Dynamic) ads. Each image you upload becomes one separate ad on Facebook.
+                        This creates standard (non-Dynamic) ads. Each selected creative becomes a separate ad on Facebook.
                     </p>
-                    {/* Live variation counter — updates as media/headlines/bodies are added below,
-                        instead of only surfacing this math once the user reaches Review. Mirrors
-                        the exact computation BulkAdCreation.jsx's Review screen uses. */}
-                    <div className="sticky top-2 z-10 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-6 text-sm text-amber-900 shadow-sm">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                            <span className="font-mono font-semibold">
-                                {variationCount.media} MEDIA × {variationCount.headlines} HEADLINE{variationCount.headlines !== 1 ? 'S' : ''} × {variationCount.bodies} BOD{variationCount.bodies !== 1 ? 'IES' : 'Y'}
-                            </span>
-                            <span>=</span>
-                            <span className="font-mono font-bold text-amber-950">
-                                {variationCount.total} ad{variationCount.total !== 1 ? 's' : ''}
-                            </span>
-                        </div>
-                        {variationCount.total === 0 && (() => {
-                            // Name the specific missing field(s) rather than a generic
-                            // "add all three" line — a headline/body that's whitespace-only
-                            // (not literally empty) also filters to 0 here, which a generic
-                            // message wouldn't explain to someone who thinks they already
-                            // filled it in.
-                            const missing = [
-                                variationCount.media === 0 && 'an image or video',
-                                variationCount.headlines === 0 && 'a headline',
-                                variationCount.bodies === 0 && 'body text',
-                            ].filter(Boolean);
-                            return (
-                                <p className="mt-1 text-xs text-amber-700">
-                                    Missing: {missing.join(', ')}.
-                                </p>
-                            );
-                        })()}
-                    </div>
                 </>
             )}
 
@@ -2470,17 +2288,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     )}
                 </div>
 
-                {/* Media Upload (Images + Videos) — Match Import gets these per-row from the CSV/image folder */}
+                {/* Creative sources — Match Import gets these per-row from the CSV/image folder */}
                 {!isMatchImport && (
                 <div>
-                    {/* Creative source chooser — Drive is the primary bulk-launch workflow so it
-                        gets top billing; Generated Ads and Upload/manual stay first-class, not
-                        buried. Hierarchy change only: every source below still does exactly what
-                        it did before (same modals, same upload input). */}
                     <div className="mb-4">
                         <h3 className="text-base font-semibold text-gray-900">Choose your creative source</h3>
-                        <p className="text-sm text-gray-500 mb-3">Select from an existing library, upload new media, or build the combinations manually.</p>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <p className="text-sm text-gray-500 mb-3">Select approved creative from Drive or reuse an ad already generated in Ad Builder. New files should be added to the shared Drive package before this step.</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div className="relative">
                                 {showDriveLibraryHint && (
                                     <div className="absolute left-0 bottom-full z-10 mb-2 w-64 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-left text-xs text-indigo-900 shadow-md">
@@ -2527,93 +2341,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 </span>
                             </button>
 
-                            <button
-                                type="button"
-                                onClick={() => document.getElementById('ad-media-upload')?.click()}
-                                className="text-left rounded-xl border-2 border-gray-200 bg-white hover:border-amber-300 hover:bg-amber-50 transition-colors p-4"
-                            >
-                                <div className="flex items-center gap-2 text-gray-700 font-semibold">
-                                    <Image size={18} />
-                                    Upload or build manually
-                                </div>
-                                <p className="text-xs text-gray-500 mt-1 mb-3">Add new media and enter copy yourself</p>
-                                <span className="inline-flex items-center text-sm font-semibold text-gray-700 bg-gray-50 rounded-md px-2.5 py-1 border border-gray-200">
-                                    Upload media
-                                </span>
-                            </button>
                         </div>
-                    </div>
-
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Ad Media (Images or Videos) *
-                    </label>
-
-                    {/* Defaults ON — Joel wants Feed + Stories launched together as the
-                        normal case, not an extra click per image. Applies to every new
-                        single-placement image from here on (upload, drag-drop, and a
-                        Drive pick that isn't already a real tagged pair) — including
-                        bulk adds, so selecting 50 unpaired Drive images with this on
-                        adds 100 media entries, not 50. Never touches images already
-                        added, a real Feed+Stories pair, or videos. Persists across
-                        sessions (see autoDupeStoriesDefault above) — the OFF-state
-                        notice right below exists specifically because of that: a state
-                        set once and forgotten needs to be at least as visible as the
-                        ON state, or it's a silent "why did Stories placements go quiet"
-                        surprise weeks later (pre-push review, joel-perspective: P1). */}
-                    <label className="flex items-center gap-2 mb-1 text-sm text-gray-600 cursor-pointer select-none">
-                        <input
-                            type="checkbox"
-                            checked={autoDupeStories}
-                            onChange={(e) => handleAutoDupeStoriesChange(e.target.checked)}
-                            className="rounded border-gray-300 text-amber-600 focus:ring-amber-500"
-                        />
-                        Automatically create the matching Stories (9:16) version for each new image
-                    </label>
-                    {autoDupeStories ? (
-                        <p className="mb-3 text-xs text-gray-400">
-                            Reuses the same image for both — a photo composed for square Feed may look cropped or
-                            stretched in the vertical Stories frame. Check the Stories card before launching, or
-                            remove it with its "x" if it doesn't work.
-                        </p>
-                    ) : (
-                        <p className="mb-3 flex flex-wrap items-center gap-2 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-                            <span>Off — new images will be Feed-only. Nothing launches to Instagram/Facebook Stories until you turn this back on or duplicate one by hand.</span>
-                            {creativeData.creatives.some(c => c.id.endsWith('_autodupe')) && (
-                                <button type="button" onClick={removeAutoDupedCreatives} className="shrink-0 rounded-full border border-amber-300 bg-white px-2 py-0.5 font-semibold text-amber-800 hover:bg-amber-100">
-                                    Remove auto-added Stories duplicates already in this batch
-                                </button>
-                            )}
-                        </p>
-                    )}
-
-                    {/* Upload is a secondary source beside Drive and Generated Ads,
-                        not the visual focal point of the Creative step. */}
-                    <div
-                        className={`border border-dashed rounded-lg px-4 py-3 transition-colors mb-4 ${isDragging ? 'border-amber-500 bg-amber-50' : 'border-gray-300 hover:border-amber-500'
-                            }`}
-                        onDragEnter={handleDragEnter}
-                        onDragOver={handleDragOver}
-                        onDragLeave={handleDragLeave}
-                        onDrop={handleDrop}
-                    >
-                        <input
-                            type="file"
-                            accept="image/*,video/*"
-                            multiple
-                            onChange={handleMediaUpload}
-                            className="hidden"
-                            id="ad-media-upload"
-                        />
-                        <label htmlFor="ad-media-upload" className="cursor-pointer flex flex-wrap items-center justify-center gap-2 text-sm">
-                            <div className="flex gap-1">
-                                <Image className={`${isDragging ? 'text-amber-500' : 'text-gray-400'}`} size={18} />
-                                <Film className={`${isDragging ? 'text-amber-500' : 'text-gray-400'}`} size={18} />
-                            </div>
-                            <span className={`font-medium ${isDragging ? 'text-amber-700' : 'text-gray-600'}`}>
-                                {isDragging ? 'Drop files here' : 'Click to upload images or videos'}
-                            </span>
-                            <span className="text-xs text-gray-400">or drag and drop · videos up to 500MB</span>
-                        </label>
                     </div>
 
                     {!isMatchImport && creativeData.creatives?.length > 0 && (() => {
@@ -3772,7 +3500,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 <>
                                     <span> · {driveSelectionAssetCount} source asset{driveSelectionAssetCount !== 1 ? 's' : ''}</span>
                                     <span className="font-semibold text-gray-900"> · {driveSelectionProjectedAdCount} creative{driveSelectionProjectedAdCount !== 1 ? 's' : ''} will be added</span>
-                                    <span className="block text-[11px] text-gray-500">→ {variationCount.total + driveSelectionProjectedAdCount} ads total after adding{autoDupeStories ? ' · unpaired images may add both Feed and Stories versions' : ''}</span>
+                                    {(driveSelectionPlacementSummary.feedOnly > 0 || driveSelectionPlacementSummary.storiesOnly > 0) && (
+                                        <span className="block text-[11px] font-medium text-amber-700">
+                                            {driveSelectionPlacementSummary.feedOnly > 0 && `${driveSelectionPlacementSummary.feedOnly} Feed-only`}
+                                            {driveSelectionPlacementSummary.feedOnly > 0 && driveSelectionPlacementSummary.storiesOnly > 0 && ' · '}
+                                            {driveSelectionPlacementSummary.storiesOnly > 0 && `${driveSelectionPlacementSummary.storiesOnly} Stories-only`} — no missing placement will be created automatically
+                                        </span>
+                                    )}
                                 </>
                             ) : (
                                 <span className="text-gray-400"> · Select assets to add</span>
