@@ -407,3 +407,82 @@ research/discovery UX (including a genuinely strong brand-monitoring dashboard, 
 ours on taxonomy depth and saved-ad organization, both of which are cheap, well-understood fixes, not a
 moat — the actual moats (the 13M-ad / 400K-brand / 144K-shop corpus itself, and the 234K-brand trending
 leaderboard) are exactly the parts of this review marked "not recommended."
+
+## 12. September 24, 2026 — commercial-insurance seed pull (trial exhausted)
+
+This is a one-time, operator-led corpus pull from the active GetHookd trial, intended to seed BHM's
+Research experience rather than establish a paid GetHookd dependency. Six high-relevance brands were
+tracked. The source's `Winning` / `Growing` labels are directional creative-discovery signals, **not**
+verified conversion or profitability claims.
+
+| Brand | Current ads observed | Highest-value pattern captured |
+| --- | ---: | --- |
+| Compare Commercial Insurance Quotes | 125 | Segment-specific rate-relief: LLC owners, trucking/DOT, general liability, commercial property, NEMT. Repeated promise: compare in about two minutes. |
+| Progressive Truck Insurance | 60 | Trucking coverage proof: up to $2M primary liability, quote in as little as 8 minutes, roadside/cargo, and ELD-led savings. |
+| Hiscox Insurance | 167 | Trust plus low-friction purchase: America's leading small-business insurer, 600K businesses, easy claims, policy online in minutes. |
+| biBerk Business Insurance | 120 | Landing-page segmentation is the insight: general business, contractors, and trucking have distinct paid-social paths and campaign labels. |
+| Simply Business US | 139 | Simple savings prompt: “Could you be getting business insurance for less?” paired with a quick-quote CTA. Snapshot is dated Aug. 9 and should be treated as historical. |
+| GEICO / Root / Progressive | 889 / 264 / 1,490 | Auto benchmark: authority + savings (GEICO), switching/save-up-to-$109 per month (Root), and distinct landing-page families for savings, name-your-price, and comparison (Progressive). |
+
+### Cross-brand conclusion
+
+The durable commercial pattern is not headline novelty. It is a clear audience-to-landing-page match,
+then one of three evidence forms: **lower rate**, **fast quote**, or **credible protection/trust**.
+The most repeatable BHM seed angles are therefore:
+
+1. `segment + same coverage / lower rate` — e.g. LLC owners, contractors, trucking, NEMT.
+2. `speed + low-friction quote` — use only supportable time claims; competitors cluster around 2–8 minutes.
+3. `coverage proof + operational reassurance` — liability limits, roadside/cargo, claims support, and
+   business-count proof where substantiated.
+
+### Recommended product follow-through
+
+Build a small one-time **external-research importer** for the existing Research page, not a recurring
+GetHookd integration: paste or upload normalized rows for `source`, `brand`, `vertical`, `segment`,
+`headline`, `primary_text`, `cta`, `landing_url`, `format`, `first_seen`, and `source_signal`. Display
+`source_signal` as directional and keep its label separate from BHM performance. That gives Joel a
+durable, searchable commercial-insurance seed library after the trial ends, with no API key, subscription,
+or monitoring cost.
+
+## 13. September 24, 2026 — final scoped source capture
+
+The remaining trial balance was used only where the result added a distinct, usable pattern to the agreed
+scope: commercial insurance, home services (gutters first; roofing/windows adjacent), and auto-insurance
+aggregators. These are **source signals**, not BHM revenue, profit, or proof that a specific claim may be
+used. Preserve the structure and the audience/offer fit; create original claims and creative.
+
+| Source | Scope | Signal observed | Reusable research takeaway |
+| --- | --- | --- | --- |
+| SmartFinancial | Commercial insurance | 15 current ads; all current traffic routed to a commercial fast-quote page. Its leading contractor hook was: "Contractors, if you don't have insurance, you don't get paid." | Start with the operational consequence, then offer comparison/availability—not a generic "buy insurance" message. |
+| Compare Commercial Insurance Quotes | Commercial insurance | 125 current ads; strong segment families for LLC, trucking/DOT, GL, property, and NEMT; compare-in-minutes proposition. | Build segment-specific ad/landing pairs, each with a coverage question and a fast, bounded quote promise. |
+| Rescue Roofing Houston | Home services / roofing | 146 current ads, 470 total; 60% video. 98% of current ads drive to one roof-replacement landing page. Winning family: "50-Year Warranty" plus "Full Roof Replacement For $7,000!" | A single concrete offer, proof asset/warranty, and a tightly focused landing page can support substantial creative iteration. Do not reuse unsupported pricing or warranty claims. |
+| Rain Gutter Pros | Home services / gutters | 18 current ads, primarily carousel. Winning offer: free proof/estimate, licensed/insured/5-star proof, and damage-avoidance framing. | For gutters, lead with a visible homeowner problem and free inspection/estimate; stack local credibility before the form. |
+| Insurify | Auto-insurance aggregator | 286 current / 2,394 total; 53% carousel, 24% video. A large portion of the live set concentrates on a single car-insurance route. | The aggregator advantage is breadth of creative around a disciplined destination/funnel, not a carrier brand claim. |
+| OTTO Insurance | Auto-insurance aggregator | 496 current / 7,188 total; 71% carousel. Auto routes use multiple affiliate IDs against the same destination family. Several long-running winners use no-down-payment / overpayment relief. | Preserve attribution and partner-route structure from day one; test affordability and comparison angles, but substantiate eligibility/pricing claims. |
+| SmarterAuto | Auto-insurance aggregator | 285 current / 3,003 total; 79% video. 73% of active traffic routes to one `best-match-auto-insurance` funnel, with CTA and state-title variants (e.g., “Could Massachusetts drivers actually save on auto insurance?”). Leading hooks are concrete household/usage triggers: low daily mileage and two-car households. | Use one core matching funnel with controlled CTA/state wrappers. Segment the hook around a verifiable driver condition instead of emulating a carrier’s broad brand promise. |
+| HomeBuddy.com | Home services / gutter lead generation | 698 current / 53,234 total; 67% static, 28% video. Winning gutter family has run 86 days: “Here’s The Cost To Cover 150 Feet Of Gutters In 1 Day,” framed as no-cleaning, home-value protection, local pricing, and 410K+ homeowner social proof. | The relevant insight is not the brand—it's a price-framed gutter-guard offer, homeowner-value proof, and a tracked marketplace route. Validate every pricing, installation, and proof claim independently. |
+| RigCover.com | Commercial-insurance aggregator | Direct Meta source (page ID `61585543093855`) reveals deep segment-specific live creative: security firms, tree services, rideshare, owner-operators, dump trucks, charter buses, mobile mechanics, and religious organizations. Common promise: compare 50–100+ carriers in about two minutes, then connect to an agent. | RigCover is a primary commercial reference. Its strongest reusable structure is `specific business type → operational risk or lost-income consequence → comparison market mechanism → fast quote`. Do not reuse its dollar, carrier-count, or customer-count claims without proof. |
+
+### What stays out of the library
+
+- **RigCover** is now resolved through its exact Meta page ID (`61585543093855`) and is queued in
+  GetHookd Brand Spy. Its initial data fetch was still in progress at capture time; the live Meta source
+  supplied the usable creative and routing evidence above.
+- **HomeBuddy / LeafFilter** is now resolved as `HomeBuddy.com` through page ID `927136097325358` and
+  actively tracked in GetHookd. Its landing routes retain Meta campaign/ad-set/ad/placement macros—an
+  unusually clear example of the attribution fields our own future home-services paths should preserve.
+- Carrier-led auto ads (GEICO, Root, Progressive) are retained only as market context; they must not drive
+  BHM's own angle selection. Insurify and OTTO are the primary aggregator references.
+- A two-credit pull for “My Affordable Trucker Insurance” was excluded after inspection: it routes to
+  trucker life-insurance content, not commercial trucking insurance. It adds no scoped library item.
+- Next Insurance (Meta page ID `1582973568662187`) was tracked but its GetHookd snapshot showed zero
+  active ads and no active landing pages. Keep it as an inactive reference only; it should not seed the
+  current commercial creative library.
+
+### Final operating recommendation
+
+Use this one-time corpus to populate the new external importer after it is deployed, then keep the library
+fresh through a lightweight weekly operator routine: save 3–5 newly observed ads per active vertical,
+record the source and observed date, label any platform score as directional, and retire stale entries
+rather than implying they remain live. No GetHookd API, stored credential, or recurring vendor cost is
+required.

@@ -205,3 +205,31 @@ class AdLibraryImportRequest(BaseModel):
     sort_mode: str = Field(default="total_impressions_desc", max_length=100)
     source_url: Optional[str] = Field(default=None, max_length=2000)
     ads: List[AdLibraryImportAd] = Field(max_length=200)
+
+
+class ExternalResearchImportAd(BaseModel):
+    """A normalized competitor-ad row from an operator-owned external source.
+
+    This intentionally avoids vendor-specific fields. Sources such as a paid
+    research trial are transient; the useful long-term asset is the reviewed
+    creative record in our own Research library.
+    """
+    external_id: Optional[str] = Field(default=None, max_length=300)
+    brand_name: str = Field(min_length=1, max_length=300)
+    headline: Optional[str] = Field(default=None, max_length=5000)
+    primary_text: Optional[str] = Field(default=None, max_length=5000)
+    cta: Optional[str] = Field(default=None, max_length=500)
+    landing_url: Optional[str] = Field(default=None, max_length=2000)
+    format: Optional[str] = Field(default=None, max_length=50)
+    first_seen: Optional[str] = Field(default=None, max_length=100)
+    segment: Optional[str] = Field(default=None, max_length=300)
+    source_signal: Optional[str] = Field(default=None, max_length=1000)
+    creative_tags: Optional[List[str]] = Field(default=None, max_length=12)
+
+
+class ExternalResearchImportRequest(BaseModel):
+    source: str = Field(min_length=1, max_length=100)
+    vertical: str = Field(default="Commercial Insurance", min_length=1, max_length=200)
+    query: str = Field(default="external competitor research", max_length=500)
+    source_url: Optional[str] = Field(default=None, max_length=2000)
+    ads: List[ExternalResearchImportAd] = Field(min_length=1, max_length=200)

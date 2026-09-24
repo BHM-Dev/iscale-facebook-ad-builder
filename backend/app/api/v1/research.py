@@ -5,12 +5,14 @@ from typing import List, Tuple
 from datetime import datetime, timezone
 import hashlib
 import json
+from urllib.parse import urlparse
 from app.database import get_db
 from app.core.deps import get_current_active_user
 from app.models import User
 from app.schemas.research import (
     AdSearchRequest, ScrapedAdResponse, ScrapedAdCreate, ScrapedAdSearchResult, SavedSearchResponse,
     BrandScrapeCreate, BrandScrapeResponse, BrandScrapeListResponse, AdLibraryImportRequest,
+    ExternalResearchImportRequest,
     ResearchBoardCreate, ResearchBoardItemCreate, ResearchBoardResponse, ResearchBoardItemResponse
 )
 from app.services.research_service import ResearchService
@@ -27,6 +29,41 @@ RESEARCH_SORT_OPTIONS = {"longest_running", "newest_seen", "most_sightings", "mu
 RESEARCH_CREATIVE_TAGS = {"testimonial", "problem_agitation", "transformation", "comparison", "review", "listicle", "founder", "educational", "statistic", "ugc", "comment_response"}
 RESEARCH_CTA_TYPES = {"learn_more", "get_quote", "sign_up", "apply_now", "contact_us", "shop_now", "unknown"}
 RESEARCH_PAGE_TYPES = {"lead_form", "advertorial", "ecommerce", "homepage", "unknown"}
+
+
+def _normalize_external_url(value: str | None) -> str:
+    """Return a browser-safe HTTP(S) URL, preserving invalid values as empty."""
+    candidate = (value or "").strip()
+    if not candidate:
+        return ""
+    parsed = urlparse(candidate)
+    if parsed.scheme in {"http", "https"}:
+        return candidate
+    if candidate.startswith("//"):
+        return f"https:{candidate}"
+    if parsed.scheme or candidate.startswith(("/", "#", "?")):
+        return ""
+    return f"https://{candidate}"
+
+
+def _external_destination_domain(value: str | None) -> str | None:
+    """Extract a hostname from full or scheme-less external landing URLs."""
+    normalized = _normalize_external_url(value)
+    return urlparse(normalized).hostname or None
+
+
+def _resolve_external_import_vertical(value: str) -> str | None:
+    """Map an import vertical to a Browse-reachable configured label."""
+    from app.core.vertical_config import VERTICAL_KEYWORD_SETS
+
+    labels = {config["label"] for config in VERTICAL_KEYWORD_SETS.values()}
+    labels.update(
+        sub_vertical["label"]
+        for config in VERTICAL_KEYWORD_SETS.values()
+        for sub_vertical in config.get("sub_verticals", {}).values()
+    )
+    normalized_labels = {label.casefold(): label for label in labels}
+    return normalized_labels.get(value.strip().casefold())
 
 
 def _infer_creative_taxonomy(headline, ad_copy, cta_text, supplied_tags=None):
@@ -169,6 +206,7 @@ def _serialize_scraped_ad(ad, board_item_id=None):
         "headline": ad.headline,
         "ad_copy": ad.ad_copy,
         "cta_text": ad.cta_text,
+        "platform": ad.platform,
         "platforms": ad.platforms,
         "media_type": ad.media_type,
         "media_url": ad.media_url,
@@ -1175,6 +1213,138 @@ def import_ad_library_capture(
     }
 
 
+@router.post("/external-import")
+def import_external_research(
+    request: ExternalResearchImportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Import reviewed competitor rows from a transient external research source.
+
+    Signals from a vendor are kept as source context only. They are never
+    converted into BHM spend, impression, conversion, or profit claims.
+    """
+    from app.models import ScrapedAd, SavedSearch, Vertical, FacebookPage
+
+    vertical_label = _resolve_external_import_vertical(request.vertical)
+    if not vertical_label:
+        raise HTTPException(
+            status_code=422,
+            detail="vertical must match a configured Research vertical or Home Services sub-vertical",
+        )
+
+    source_url = _normalize_external_url(request.source_url)
+    missing_source_rows = [index + 1 for index, ad in enumerate(request.ads) if not (ad.landing_url or source_url)]
+    if missing_source_rows:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Each row needs landing_url when source_url is omitted (rows: {missing_source_rows})",
+        )
+
+    vertical = db.query(Vertical).filter(Vertical.name == vertical_label).first()
+    if not vertical:
+        vertical = Vertical(name=vertical_label, description="Imported external competitor research")
+        db.add(vertical)
+        db.flush()
+
+    saved_search = SavedSearch(
+        query=request.query,
+        country="US",
+        vertical_id=vertical.id,
+        search_type="external_research_import",
+        schedule_config={"source": request.source, "source_url": source_url or None},
+        is_active=False,
+        last_run=datetime.utcnow(),
+        ads_requested=len(request.ads),
+        ads_returned=len(request.ads),
+        ads_new=0,
+        ads_duplicate=0,
+    )
+    db.add(saved_search)
+    db.flush()
+
+    imported = updated = 0
+    page_counts: dict[str, int] = {}
+    source_key = request.source.strip().casefold()
+
+    for incoming in request.ads:
+        landing_url = _normalize_external_url(incoming.landing_url)
+        normalized = "|".join([
+            source_key, incoming.external_id or "", incoming.brand_name.strip().casefold(),
+            (incoming.headline or "").strip().casefold(), (incoming.primary_text or "").strip().casefold(), landing_url.casefold(),
+        ])
+        external_id = incoming.external_id or f"external:{hashlib.sha256(normalized.encode()).hexdigest()[:32]}"
+        destination_domain = _external_destination_domain(landing_url)
+        creative_tags, inferred_cta_type = _infer_creative_taxonomy(
+            incoming.headline, incoming.primary_text, incoming.cta, incoming.creative_tags,
+        )
+        fb_page = db.query(FacebookPage).filter(FacebookPage.page_name == incoming.brand_name).first()
+        if not fb_page:
+            fb_page = FacebookPage(page_name=incoming.brand_name, total_ads=0, vertical_id=vertical.id)
+            db.add(fb_page)
+            db.flush()
+        page_counts[incoming.brand_name] = page_counts.get(incoming.brand_name, 0) + 1
+
+        ad = db.query(ScrapedAd).filter(ScrapedAd.external_id == external_id).first()
+        if ad:
+            updated += 1
+            ad.last_seen = datetime.utcnow()
+            ad.seen_count = (ad.seen_count or 0) + 1
+        else:
+            imported += 1
+            ad = ScrapedAd(
+                external_id=external_id,
+                ad_link=landing_url or source_url,
+                content_hash=hashlib.sha256(normalized.encode()).hexdigest(),
+                search_id=saved_search.id,
+            )
+            db.add(ad)
+
+        ad.brand_name = incoming.brand_name.strip()
+        ad.headline = _truncate_text(incoming.headline)
+        ad.ad_copy = _truncate_text(incoming.primary_text)
+        ad.cta_text = incoming.cta
+        ad.platform = "external"
+        ad.start_date = incoming.first_seen
+        ad.media_type = incoming.format.lower().strip() if incoming.format else None
+        ad.destination_domain = destination_domain
+        ad.source_query = request.query
+        ad.creative_intel = _bounded_json({
+            "capture_source": "external_research_import",
+            "research_source": request.source.strip(),
+            "source_url": source_url or None,
+            "source_signal": incoming.source_signal,
+            "segment": incoming.segment,
+            "imported_by_user_id": current_user.id,
+            "signal_disclaimer": "Directional source context; not verified BHM performance.",
+        })
+        ad.creative_tags = creative_tags
+        ad.cta_type = inferred_cta_type
+        ad.taxonomy_source = "external_import" if incoming.creative_tags else ("rules_v1" if creative_tags else None)
+        ad.taxonomy_confidence = "source" if incoming.creative_tags else ("low" if creative_tags else None)
+        ad.search_id = saved_search.id
+        ad.facebook_page_id = fb_page.id
+
+    saved_search.ads_new = imported
+    saved_search.ads_duplicate = updated
+    db.flush()
+    for page_name in page_counts:
+        page = db.query(FacebookPage).filter(FacebookPage.page_name == page_name).first()
+        if page:
+            page.total_ads = db.query(ScrapedAd).filter(ScrapedAd.facebook_page_id == page.id).count()
+            page.last_seen = datetime.utcnow()
+    db.commit()
+    return {
+        "search_id": saved_search.id,
+        "source": request.source,
+        "vertical": vertical_label,
+        "imported": imported,
+        "updated": updated,
+        "total": imported + updated,
+        "message": f"Imported {imported} new external research rows, updated {updated} existing rows",
+    }
+
+
 @router.post("/scraped-ads/{ad_id}/save")
 def save_scraped_ad_with_angle(
     ad_id: str,
@@ -1430,6 +1600,7 @@ def get_vertical_browse_ads(
             "headline": ad.headline,
             "ad_copy": ad.ad_copy,
             "cta_text": ad.cta_text,
+            "platform": ad.platform,
             "ad_link": ad.ad_link,
             "media_url": ad.media_url,
             "media_type": ad.media_type,

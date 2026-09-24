@@ -210,6 +210,29 @@ const normalizeAdLibraryImport = (raw, activeVerticalLabel) => {
   };
 };
 
+const normalizeExternalResearchImport = (raw, activeVerticalLabel) => {
+  const sourceAds = Array.isArray(raw) ? raw : (raw.ads || raw.rows || []);
+  return {
+    source: (Array.isArray(raw) ? 'External research' : raw.source) || 'External research',
+    vertical: (Array.isArray(raw) ? null : raw.vertical) || activeVerticalLabel || 'Commercial Insurance',
+    query: (Array.isArray(raw) ? null : raw.query) || 'external competitor research',
+    source_url: Array.isArray(raw) ? null : (raw.source_url || ''),
+    ads: sourceAds.map((ad) => ({
+      external_id: ad.external_id || ad.id || '',
+      brand_name: ad.brand_name || ad.brand || ad.advertiser || '',
+      headline: ad.headline || '',
+      primary_text: ad.primary_text || ad.ad_copy || ad.copy || '',
+      cta: ad.cta || ad.cta_text || '',
+      landing_url: ad.landing_url || ad.destination_url || ad.url || '',
+      format: ad.format || ad.media_type || '',
+      first_seen: normalizeAdLibraryDate(ad.first_seen || ad.start_date || ''),
+      segment: ad.segment || ad.audience || '',
+      source_signal: ad.source_signal || ad.performance_signal || ad.signal || '',
+      creative_tags: ad.creative_tags || [],
+    })).filter(ad => ad.brand_name),
+  };
+};
+
 function AngleBadge({ tag }) {
   if (!tag) return null;
   return (
@@ -423,12 +446,12 @@ function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onExploreAdvert
     <aside className="h-full w-full max-w-xl overflow-y-auto bg-white p-6 shadow-2xl" onClick={event => event.stopPropagation()} aria-label="Creative detail">
       <div className="mb-5 flex items-start justify-between gap-4"><div className="min-w-0 flex items-start gap-2">{canGoBack && <button type="button" onClick={onBack} className="mt-0.5 rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Back to previous related creative">←</button>}<div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-wider text-indigo-600">Creative detail{resultPosition ? ` · ${resultPosition.current} of ${resultPosition.total}` : ''}</p><h2 className="mt-1 truncate text-xl font-bold text-slate-900" title={ad.brand_name || 'Unknown advertiser'}>{ad.brand_name || 'Unknown advertiser'}</h2></div></div><div className="flex flex-shrink-0 items-center gap-1"><button type="button" onClick={onPreviousResult} disabled={!canGoPrevious} className="rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30">Previous</button><button type="button" onClick={onNextResult} disabled={!canGoNext} className="rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30">Next</button><button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X size={20}/></button></div></div>
       {(media || videoPreview) && <div className="relative mb-5 aspect-[4/3] overflow-hidden rounded-xl bg-slate-100">{ad.media_type === 'video' && videoPreview ? <video controls muted playsInline preload="metadata" poster={media || undefined} className="h-full w-full object-cover" onError={() => setVideoFailed(true)}><source src={videoPreview} />Your browser cannot preview this captured video.</video> : <img src={media} alt="Competitor creative" className="h-full w-full object-cover" onError={e => { e.target.style.display = 'none'; }} />}{ad.media_type === 'video' && <span className="absolute bottom-3 left-3 pointer-events-none inline-flex items-center gap-1 rounded-full bg-black/75 px-3 py-1.5 text-xs font-semibold text-white"><Play size={13} fill="currentColor"/> Video{ad.video_length_seconds ? ` · ${ad.video_length_seconds}s` : ''}</span>}</div>}
-      <div className="mb-5 flex flex-wrap gap-2">{(ad.creative_tags || []).map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">{tag.replaceAll('_', ' ')}</span>)}{ad.cta_type && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">CTA: {ad.cta_type.replaceAll('_', ' ')}</span>}</div>
+      <div className="mb-5 flex flex-wrap gap-2">{ad.creative_intel?.research_source && <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">Source: {ad.creative_intel.research_source}</span>}{(ad.creative_tags || []).map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">{tag.replaceAll('_', ' ')}</span>)}{ad.cta_type && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">CTA: {ad.cta_type.replaceAll('_', ' ')}</span>}</div>
       {ad.headline && <h3 className="text-lg font-semibold leading-snug text-slate-900">{ad.headline}</h3>}{ad.ad_copy && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{ad.ad_copy}</p>}
-      <dl className="mt-6 grid grid-cols-2 gap-3 border-t border-slate-100 pt-5 text-sm"><div><dt className="text-xs text-slate-400">Destination</dt><dd className="mt-1 truncate font-medium text-slate-700">{ad.destination_domain || 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Observed</dt><dd className="mt-1 font-medium text-slate-700">{ad.running_days != null ? `${ad.running_days} days` : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Last captured</dt><dd className="mt-1 font-medium text-slate-700">{ad.last_seen ? new Date(ad.last_seen).toLocaleDateString() : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Tag source</dt><dd className="mt-1 font-medium text-slate-700">{ad.taxonomy_source || 'Not tagged'}</dd></div></dl>
+      <dl className="mt-6 grid grid-cols-2 gap-3 border-t border-slate-100 pt-5 text-sm"><div><dt className="text-xs text-slate-400">Destination</dt><dd className="mt-1 truncate font-medium text-slate-700">{ad.destination_domain || 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Observed</dt><dd className="mt-1 font-medium text-slate-700">{ad.running_days != null ? `${ad.running_days} days` : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Last captured</dt><dd className="mt-1 font-medium text-slate-700">{ad.last_seen ? new Date(ad.last_seen).toLocaleDateString() : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Tag source</dt><dd className="mt-1 font-medium text-slate-700">{ad.taxonomy_source || 'Not tagged'}</dd></div>{ad.creative_intel?.source_signal && <div className="col-span-2"><dt className="text-xs text-slate-400">Source signal</dt><dd className="mt-1 text-xs font-medium text-amber-800">{ad.creative_intel.source_signal} <span className="font-normal text-slate-400">· directional source context</span></dd></div>}</dl>
       <section className="mt-6 border-t border-slate-100 pt-5"><h3 className="text-sm font-semibold text-slate-900">Strategic notes</h3><p className="mt-1 text-xs text-slate-400">Your interpretation is passed to Remix as context, never competitor copy.</p><label className="mt-3 block text-xs font-medium text-slate-600">Hook pattern<input value={notes.hook_type} onChange={e => setNotes(prev => ({ ...prev, hook_type: e.target.value }))} placeholder="e.g. Cost shock" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></label><label className="mt-3 block text-xs font-medium text-slate-600">Why this pattern works<textarea value={notes.promise} onChange={e => setNotes(prev => ({ ...prev, promise: e.target.value }))} placeholder="The promise or reason to test this structure" className="mt-1 min-h-20 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></label><button type="button" onClick={saveNotes} disabled={savingNotes} className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">{savingNotes ? 'Saving…' : 'Save strategic notes'}</button></section>
       {related.length > 0 && <section className="mt-6 border-t border-slate-100 pt-5"><h3 className="text-sm font-semibold text-slate-900">Related patterns</h3><p className="mt-1 text-xs text-slate-400">Matched on visible creative metadata, not performance.</p><div className="mt-3 space-y-2">{related.map(item => <button type="button" key={item.id} onClick={() => onInspect(item)} className="w-full rounded-lg border border-slate-100 p-3 text-left hover:border-indigo-200 hover:bg-indigo-50/40"><p className="truncate text-sm font-semibold text-slate-700">{item.brand_name || 'Unknown advertiser'}</p><p className="mt-1 text-xs text-slate-500">{item.match_reasons.join(' · ')}</p></button>)}</div></section>}
-      <div className="mt-7 grid grid-cols-2 gap-2"><button type="button" onClick={() => onBuild(ad)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"><Zap size={15}/>Use as Inspiration</button>{ad.brand_name && <button type="button" onClick={() => onExploreAdvertiser(ad.brand_name)} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-semibold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"><span>Explore advertiser</span></button>}<a href={ad.ad_link} target="_blank" rel="noreferrer" className="col-span-2 inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><ExternalLink size={15}/>View in Meta Ad Library</a></div>
+      <div className="mt-7 grid grid-cols-2 gap-2"><button type="button" onClick={() => onBuild(ad)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"><Zap size={15}/>Use as Inspiration</button>{ad.brand_name && <button type="button" onClick={() => onExploreAdvertiser(ad.brand_name)} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-semibold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"><span>Explore advertiser</span></button>}<a href={ad.ad_link} target="_blank" rel="noreferrer" className="col-span-2 inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><ExternalLink size={15}/>{ad.platform === 'external' ? 'Open source link' : 'View in Meta Ad Library'}</a></div>
       <div className="mt-2"><BoardSaveButton ad={ad} boards={boards} onAdd={onAddToBoard} onCreate={onCreateBoard} /></div>
     </aside>
   </div>;
@@ -438,6 +461,9 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
   const [videoPreviewFailed, setVideoPreviewFailed] = useState(false);
   const media = ad.thumbnail_url || ad.media_url;
   const videoPreview = ad.media_preview_url || (ad.video_urls || [])[0];
+  const advertiserUrl = ad.platform === 'external'
+    ? ad.ad_link
+    : `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&q=${encodeURIComponent(ad.brand_name || '')}`;
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-sm transition-shadow flex flex-col gap-3">
       {/* Facebook CDN media URLs are temporary. A video-only capture can still
@@ -474,8 +500,9 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
             {ad.platforms.join(' · ')}
           </span>
         )}
+        {ad.creative_intel?.research_source && <span className="text-xs font-medium text-amber-700" title="Imported external research source; any signal is directional only">{ad.creative_intel.research_source}</span>}
         <a
-          href={`https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&q=${encodeURIComponent(ad.brand_name || '')}`}
+          href={advertiserUrl}
           target="_blank"
           rel="noopener noreferrer"
           className="text-xs font-semibold text-gray-700 hover:text-indigo-600 truncate flex items-center gap-0.5"
@@ -557,14 +584,14 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
             Inspect
           </button>
           <a
-            href={`https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&q=${encodeURIComponent(ad.brand_name || '')}`}
+            href={advertiserUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex w-full items-center justify-center gap-1 px-2 py-1 rounded-md border border-gray-200 text-xs font-medium text-gray-500 hover:text-indigo-600 hover:border-indigo-200 transition-colors"
-            title="View all ads from this advertiser"
+            title={ad.platform === 'external' ? 'Open the captured source link' : 'View all ads from this advertiser'}
           >
             <ExternalLink size={11} />
-            View all ads
+            {ad.platform === 'external' ? 'Open source' : 'View all ads'}
           </a>
           {onRemoveFromBoard && (
             <button
@@ -783,6 +810,43 @@ function AdLibraryImportModal({ open, onClose, onImport, importing, defaultQuery
   );
 }
 
+function ExternalResearchImportModal({ open, onClose, onImport, importing, defaultVertical }) {
+  const [payloadText, setPayloadText] = useState('');
+  if (!open) return null;
+  const close = () => { setPayloadText(''); onClose(); };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-2xl rounded-xl bg-white p-6 shadow-xl">
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">Import External Research</h3>
+            <p className="mt-1 text-sm text-gray-500">Bring reviewed competitor rows from any temporary research source into the durable Research library.</p>
+          </div>
+          <button type="button" onClick={close} className="p-1 text-gray-400 hover:text-gray-600" aria-label="Close external research import"><X size={18} /></button>
+        </div>
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <p className="font-semibold">Source labels stay directional</p>
+          <p className="mt-1">A source signal such as “Winning” or “Growing” is kept as vendor context only. It never becomes BHM performance, spend, revenue, or profit data.</p>
+        </div>
+        <textarea
+          value={payloadText}
+          onChange={e => setPayloadText(e.target.value)}
+          placeholder={JSON.stringify({ source: 'GetHookd', vertical: defaultVertical || 'Commercial Insurance', query: 'commercial insurance', ads: [{ brand_name: 'Example insurer', headline: 'Get a policy online in minutes', primary_text: 'Reviewed competitor copy', cta: 'Get Quote', landing_url: 'https://example.com/quote', format: 'carousel', first_seen: '2026-09-24', segment: 'Small business', source_signal: 'Winning — directional source signal' }] }, null, 2)}
+          className="h-64 w-full rounded-lg border border-gray-200 p-3 font-mono text-xs focus:border-transparent focus:ring-2 focus:ring-indigo-400"
+        />
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <p className="text-xs text-gray-400">Required per row: <code>brand_name</code>. Up to 200 rows; media is intentionally not copied.</p>
+          <div className="flex gap-2">
+            <button type="button" onClick={close} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
+            <button type="button" onClick={() => onImport(payloadText)} disabled={importing || !payloadText.trim()} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"><Upload size={15} />{importing ? 'Importing...' : 'Import Research'}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ────────────────────────────────────────────────────
 export default function Research() {
   const { authFetch } = useAuth();
@@ -813,6 +877,7 @@ export default function Research() {
   const [refreshSummary, setRefreshSummary] = useState(null);
   const [showClearModal, setShowClearModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showExternalImportModal, setShowExternalImportModal] = useState(false);
   const [detailAd, setDetailAd] = useState(null);
   const [detailHistory, setDetailHistory] = useState([]);
   const [importingIntel, setImportingIntel] = useState(false);
@@ -1302,6 +1367,27 @@ export default function Research() {
     }
   };
 
+  const handleExternalResearchImport = async (payloadText) => {
+    setImportingIntel(true);
+    try {
+      const payload = normalizeExternalResearchImport(JSON.parse(payloadText), currentVerticalLabel);
+      if (!payload.ads.length) throw new Error('No rows with brand_name found in pasted JSON');
+      const res = await authFetch(`${API_URL}/research/external-import`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(result.detail || 'External research import failed');
+      showSuccess(result.message || `Imported ${payload.ads.length} external research rows`);
+      setShowExternalImportModal(false);
+      loadBrowseAds();
+      loadSavedAds();
+    } catch (e) {
+      showError(e.message || 'External research import failed');
+    } finally {
+      setImportingIntel(false);
+    }
+  };
+
   const handleUseAsInspiration = (ad) => {
     localStorage.setItem('pendingResearchInspiration', JSON.stringify({
       headline: ad.headline,
@@ -1484,6 +1570,16 @@ export default function Research() {
             >
               <Upload size={14} />
               Import Intel
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowExternalImportModal(true)}
+              disabled={refreshing || clearing || queryLoading}
+              className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Import reviewed rows from an external research source"
+            >
+              <Upload size={14} />
+              External Research
             </button>
             <button
               type="button"
@@ -1941,6 +2037,13 @@ export default function Research() {
         onImport={handleImportIntel}
         importing={importingIntel}
         defaultQuery={activeVertical === 'auto_insurance' ? 'cheap auto insurance' : currentVerticalLabel}
+      />
+      <ExternalResearchImportModal
+        open={showExternalImportModal}
+        onClose={() => setShowExternalImportModal(false)}
+        onImport={handleExternalResearchImport}
+        importing={importingIntel}
+        defaultVertical={currentVerticalLabel}
       />
       <ResearchDetailDrawer ad={detailAd} onClose={closeDetail} onInspect={inspectCreative} onExploreAdvertiser={exploreAdvertiser} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onPreviousResult={() => inspectAdjacentResult(-1)} onNextResult={() => inspectAdjacentResult(1)} canGoPrevious={detailResultIndex > 0} canGoNext={detailResultIndex >= 0 && detailResultIndex < browseAds.length - 1} resultPosition={detailResultIndex >= 0 ? { current: detailResultIndex + 1, total: browseAds.length } : null} onNotesSaved={handleStrategyNotesSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
     </div>
