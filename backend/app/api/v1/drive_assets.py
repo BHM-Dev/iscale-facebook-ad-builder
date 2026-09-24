@@ -1,6 +1,9 @@
 from typing import List, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
+import os
+import tempfile
+
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -9,6 +12,12 @@ from app.database import get_db
 from app.models import User
 from app.schemas.drive_assets import DriveAsset, DriveCopyHealth, DriveCopyRefreshRequest, DriveSyncResult
 from app.services.drive_sync_service import DriveSyncService
+
+
+MAX_IMAGE_SIZE = 10 * 1024 * 1024
+MAX_VIDEO_SIZE = 500 * 1024 * 1024
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".webm"}
 
 router = APIRouter()
 
@@ -85,6 +94,87 @@ def list_drive_assets(
         params,
     ).mappings().all()
     return [dict(row) for row in rows]
+
+
+@router.post("/upload", response_model=DriveAsset)
+def upload_drive_asset(
+    file: UploadFile = File(...),
+    brand_id: str = Form(...),
+    placement: Optional[str] = Form(default=None),
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_active_user),
+):
+    """Add a new file to the shared Drive-backed Creative Library.
+
+    This intentionally does not use the generic uploads endpoint: a launch
+    creative must remain a Drive asset so it gets the same R2 mirror, folder
+    provenance, pairing checks, and picker behavior as every other selection.
+    """
+    filename = (file.filename or "").split("/")[-1].split("\\")[-1]
+    mime_type = file.content_type or ""
+    is_video = mime_type.startswith("video/")
+    extension = os.path.splitext(filename)[1].lower()
+    allowed_extensions = ALLOWED_VIDEO_EXTENSIONS if is_video else ALLOWED_IMAGE_EXTENSIONS
+    if not (mime_type.startswith("image/") or is_video) or extension not in allowed_extensions:
+        raise HTTPException(status_code=400, detail="Only image and video files can be added to Creative Library")
+    if placement not in (None, "1x1", "9x16"):
+        raise HTTPException(status_code=400, detail="Placement must be 1x1 or 9x16")
+    if is_video and placement is None:
+        raise HTTPException(status_code=400, detail="Choose Feed (1:1) or Stories/Reels (9:16) for a video")
+    max_size = MAX_VIDEO_SIZE if is_video else MAX_IMAGE_SIZE
+    temp_path = None
+
+    try:
+        # UploadFile is already a spooled temporary file. Copy in bounded chunks
+        # to a real file so Drive and R2 can stream a 500MB video without putting
+        # multiple full copies in RAM.
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            temp_path = temp_file.name
+            total = 0
+            while chunk := file.file.read(1024 * 1024):
+                total += len(chunk)
+                if total > max_size:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"File is too large. Maximum is {max_size // (1024 * 1024)}MB for {'videos' if is_video else 'images'}.",
+                    )
+                temp_file.write(chunk)
+        drive_file_id = DriveSyncService(db).import_uploaded_media(
+            file_path=temp_path,
+            file_name=filename,
+            mime_type=mime_type,
+            brand_id=brand_id,
+            placement=placement,
+        )
+        row = db.execute(
+            text(
+                """
+                SELECT da.id, da.drive_file_id, da.brand_id, b.name AS brand_name,
+                       da.product_id, da.format, da.folder_path, da.file_name,
+                       da.r2_key, da.thumbnail_r2_key, da.drive_modified_time,
+                       da.synced_at, da.archived, da.soft_tags, da.variant, da.geo
+                FROM drive_assets da
+                LEFT JOIN brands b ON b.id = da.brand_id
+                WHERE da.drive_file_id = :drive_file_id
+                """
+            ),
+            {"drive_file_id": drive_file_id},
+        ).mappings().first()
+        if not row:
+            raise RuntimeError("Uploaded creative was not found in the library")
+        return dict(row)
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Could not add creative to the library: {exc}") from exc
+    finally:
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except FileNotFoundError:
+                pass
 
 
 @router.post("/sync-now", response_model=DriveSyncResult)

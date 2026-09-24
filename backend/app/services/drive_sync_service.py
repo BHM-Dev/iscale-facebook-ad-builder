@@ -16,7 +16,8 @@ from fastapi import HTTPException
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaIoBaseDownload
+from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
+from PIL import Image
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -26,7 +27,10 @@ from app.services import slack_service
 
 logger = logging.getLogger(__name__)
 
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+# The Creative step can add a file directly to the shared Drive library. The
+# service account must be an Editor on GOOGLE_DRIVE_ROOT_FOLDER_ID; read-only
+# access is insufficient for this explicit buyer action.
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 STATE_KEY = "drive_changes_start_page_token"
 SUPPORTED_PREFIXES = ("image/", "video/")
 TEXT_PREFIXES = ("text/",)
@@ -575,6 +579,159 @@ class DriveSyncService:
         )
         self._drive = build("drive", "v3", credentials=credentials, cache_discovery=False)
         return self._drive
+
+    def import_uploaded_media(
+        self,
+        *,
+        file_path: str,
+        file_name: str,
+        mime_type: str,
+        brand_id: str,
+        placement: Optional[str] = None,
+    ) -> str:
+        """Put a new buyer-selected file in the canonical Drive library.
+
+        Files are placed at ``<root>/<brand>/Ad Builder Uploads`` so the normal
+        Drive resolver, R2 mirror, and picker all use the same source of truth.
+        The row is written synchronously so the buyer can select it immediately;
+        the regular Drive sync remains responsible for later moves or edits.
+        """
+        self._validate_tables()
+        if not self._is_supported_media(mime_type, file_name):
+            raise HTTPException(status_code=400, detail="Only image and video files can be added to Creative Library")
+
+        brand = self.db.execute(
+            text("SELECT id, name FROM brands WHERE id = :brand_id"),
+            {"brand_id": brand_id},
+        ).mappings().first()
+        if not brand:
+            raise HTTPException(status_code=404, detail="Select a valid brand before uploading creative")
+
+        drive = self._client()
+        brand_folder_id = self._find_or_create_folder(drive, self.root_folder_id, brand["name"])
+        upload_folder_id = self._find_or_create_folder(drive, brand_folder_id, "Ad Builder Uploads")
+        metadata = {"name": file_name, "parents": [upload_folder_id]}
+        try:
+            uploaded = drive.files().create(
+                body=metadata,
+                media_body=MediaFileUpload(file_path, mimetype=mime_type, resumable=True, chunksize=5 * 1024 * 1024),
+                fields="id,name,mimeType,parents,modifiedTime",
+                supportsAllDrives=True,
+            ).execute()
+        except HttpError as exc:
+            logger.exception("Could not upload creative to Drive")
+            raise HTTPException(
+                status_code=502,
+                detail="Creative Library could not write to the shared Drive folder. Confirm the service account has Editor access.",
+            ) from exc
+
+        try:
+            r2_key = self._upload_file_to_r2(file_path, file_name, mime_type)
+            # Uploads intentionally enter manual-copy mode. Their per-row editor
+            # still requires headline, primary text, CTA, and global URL before
+            # launch; this only prevents an expected no-copy asset from appearing
+            # as a malformed Drive package in health reporting.
+            upload_tags = {"copy_mode": "manual", "upload_source": "ad_builder"}
+            detected_aspect = placement or self._detect_upload_aspect(file_path, mime_type)
+            if detected_aspect:
+                upload_tags["aspect"] = detected_aspect
+            self.db.execute(
+                text(
+                    """
+                INSERT INTO drive_assets (
+                    id, drive_file_id, brand_id, product_id, format, folder_path, file_name,
+                    r2_key, thumbnail_r2_key, drive_modified_time, synced_at, archived, soft_tags
+                ) VALUES (
+                    :id, :drive_file_id, :brand_id, NULL, :format, 'Ad Builder Uploads', :file_name,
+                    :r2_key, NULL, :modified_time, NOW(), FALSE, :soft_tags
+                )
+                ON CONFLICT (drive_file_id) DO UPDATE SET
+                    brand_id = EXCLUDED.brand_id, format = EXCLUDED.format,
+                    folder_path = EXCLUDED.folder_path, file_name = EXCLUDED.file_name,
+                    r2_key = EXCLUDED.r2_key, drive_modified_time = EXCLUDED.drive_modified_time,
+                    synced_at = NOW(), archived = FALSE, soft_tags = EXCLUDED.soft_tags
+                    """
+                ),
+                {
+                    "id": str(uuid.uuid4()), "drive_file_id": uploaded["id"], "brand_id": brand_id,
+                    "format": "video" if mime_type.startswith("video/") else "image",
+                    "file_name": file_name, "r2_key": r2_key,
+                    "modified_time": self._parse_drive_time(uploaded.get("modifiedTime")),
+                    "soft_tags": json.dumps(upload_tags),
+                },
+            )
+            self.db.commit()
+            return uploaded["id"]
+        except Exception:
+            self.db.rollback()
+            # The Drive object was already created. Compensate immediately so
+            # a retry cannot leave an invisible duplicate in the library.
+            try:
+                drive.files().update(
+                    fileId=uploaded["id"], body={"trashed": True}, supportsAllDrives=True
+                ).execute()
+            except Exception:
+                logger.exception("Could not clean up failed Creative Library upload %s", uploaded.get("id"))
+            raise
+
+    @staticmethod
+    def _detect_upload_aspect(file_path: str, mime_type: str) -> Optional[str]:
+        """Return a placement only when image pixels clearly match Meta's frames."""
+        if not mime_type.startswith("image/"):
+            return None
+        try:
+            with Image.open(file_path) as image:
+                ratio = image.width / image.height
+        except Exception:
+            return None
+        if abs(ratio - 1) <= 0.03:
+            return "1x1"
+        if abs(ratio - (9 / 16)) <= 0.03:
+            return "9x16"
+        return None
+
+    def _upload_file_to_r2(self, file_path: str, file_name: str, content_type: str) -> str:
+        client = get_s3_client()
+        if not client:
+            raise HTTPException(status_code=500, detail="R2 storage not configured")
+        extension = os.path.splitext(file_name)[1].lower()
+        key = f"drive-assets/{uuid.uuid4()}{extension}"
+        client.upload_file(
+            file_path,
+            settings.R2_BUCKET_NAME,
+            key,
+            ExtraArgs={"ContentType": content_type or "application/octet-stream"},
+        )
+        return f"{settings.R2_PUBLIC_URL}/{key}"
+
+    @staticmethod
+    def _escape_drive_query(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("'", "\\'")
+
+    def _find_or_create_folder(self, drive, parent_id: str, name: str) -> str:
+        query_name = self._escape_drive_query(name)
+        response = drive.files().list(
+            q=(f"'{parent_id}' in parents and name = '{query_name}' and "
+               "mimeType = 'application/vnd.google-apps.folder' and trashed = false"),
+            spaces="drive",
+            fields="files(id,name)",
+            includeItemsFromAllDrives=True,
+            supportsAllDrives=True,
+            pageSize=2,
+        ).execute()
+        existing = response.get("files", [])
+        if existing:
+            return existing[0]["id"]
+        created = drive.files().create(
+            body={
+                "name": name,
+                "mimeType": "application/vnd.google-apps.folder",
+                "parents": [parent_id],
+            },
+            fields="id",
+            supportsAllDrives=True,
+        ).execute()
+        return created["id"]
 
     def _validate_tables(self) -> None:
         missing = []

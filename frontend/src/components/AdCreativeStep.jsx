@@ -1,7 +1,7 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { ChevronDown, ChevronRight, X, Loader, Trash2, Copy, BookOpen, Check, Layers, FolderOpen, Maximize2, Search, ExternalLink } from 'lucide-react';
+import { ChevronDown, ChevronRight, X, Loader, Trash2, Copy, BookOpen, Check, Layers, FolderOpen, Maximize2, Search, ExternalLink, Upload } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
@@ -425,6 +425,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // Drive Creative Library modal — same pattern as the Generated Ads Library
     // above, sourced from Joel's synced Google Drive folder instead.
     const [showDriveLibraryModal, setShowDriveLibraryModal] = useState(false);
+    const [showDriveUploadModal, setShowDriveUploadModal] = useState(false);
+    const [driveUploadBrandId, setDriveUploadBrandId] = useState('');
+    const [driveUploadFile, setDriveUploadFile] = useState(null);
+    const [driveUploadPlacement, setDriveUploadPlacement] = useState('');
+    const [uploadingDriveCreative, setUploadingDriveCreative] = useState(false);
     const [driveAssets, setDriveAssets] = useState([]);
     const [driveLibraryLoading, setDriveLibraryLoading] = useState(false);
     const [driveLibraryError, setDriveLibraryError] = useState(null);
@@ -1005,6 +1010,57 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             return [];
         } finally {
             if (requestId === driveFetchRequestRef.current) setDriveLibraryLoading(false);
+        }
+    };
+
+    const openDriveUploadModal = () => {
+        setDriveUploadBrandId(brands.length === 1 ? brands[0].id : '');
+        setDriveUploadFile(null);
+        setDriveUploadPlacement('');
+        setShowDriveUploadModal(true);
+    };
+
+    const uploadDriveCreative = async (event) => {
+        event.preventDefault();
+        if (!driveUploadBrandId) {
+            showWarning('Choose the brand this creative belongs to');
+            return;
+        }
+        if (!driveUploadFile) {
+            showWarning('Choose an image or video to upload');
+            return;
+        }
+        if (driveUploadFile.type.startsWith('video/') && !driveUploadPlacement) {
+            showWarning('Choose Feed or Stories/Reels placement for this video');
+            return;
+        }
+        setUploadingDriveCreative(true);
+        try {
+            const body = new FormData();
+            body.append('brand_id', driveUploadBrandId);
+            body.append('file', driveUploadFile);
+            if (driveUploadPlacement) body.append('placement', driveUploadPlacement);
+            const res = await authFetch(`${API_URL}/drive-assets/upload`, { method: 'POST', body });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || 'Could not add this creative to Drive Library');
+            const assets = await fetchDriveAssets({ throwOnError: true });
+            const uploadedGroup = buildDriveAssetGroups(assets || []).find(group =>
+                group.assets.some(asset => asset.id === data.id)
+            );
+            setSelectedDriveAssetIds(uploadedGroup ? new Set([uploadedGroup.id]) : new Set());
+            setDriveSearchTerm(data.file_name || '');
+            setDriveFormatFilter('');
+            setShowBlockedDriveOnly(false);
+            setShowNeedsCopyDriveOnly(false);
+            setDriveRepairPairId(null);
+            setSelectedDriveParentKey(null);
+            setShowDriveUploadModal(false);
+            setShowDriveLibraryModal(true);
+            showSuccess(`${data.file_name || 'Creative'} is in Drive Library and selected. Add copy and CTA in the row editor, then set the global URL below the rows.`);
+        } catch (error) {
+            showError(error.message || 'Could not add this creative to Drive Library');
+        } finally {
+            setUploadingDriveCreative(false);
         }
     };
 
@@ -2293,7 +2349,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 <div>
                     <div className="mb-4">
                         <h3 className="text-base font-semibold text-gray-900">Choose your creative source</h3>
-                        <p className="text-sm text-gray-500 mb-3">Select approved creative from Drive or reuse an ad already generated in Ad Builder. New files should be added to the shared Drive package before this step.</p>
+                        <p className="text-sm text-gray-500 mb-3">Select approved creative from Drive or reuse an ad already generated in Ad Builder.</p>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div className="relative">
                                 {showDriveLibraryHint && (
@@ -2342,6 +2398,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             </button>
 
                         </div>
+                        <button
+                            type="button"
+                            onClick={openDriveUploadModal}
+                            className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-indigo-700 hover:text-indigo-900"
+                        >
+                            <Upload size={16} />
+                            Upload a new image or video to Drive Library
+                        </button>
                     </div>
 
                     {!isMatchImport && creativeData.creatives?.length > 0 && (() => {
@@ -2981,6 +3045,51 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         </div>
                     </div>
                 </div>
+            </div>
+        )}
+
+        {showDriveUploadModal && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+                <form onSubmit={uploadDriveCreative} className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
+                    <div className="flex items-start justify-between gap-4">
+                        <div>
+                            <h3 className="text-lg font-semibold text-gray-900">Upload to Drive Library</h3>
+                            <p className="mt-1 text-sm text-gray-500">The file is stored in the shared Drive library and immediately becomes available in this picker.</p>
+                        </div>
+                        <button type="button" onClick={() => setShowDriveUploadModal(false)} disabled={uploadingDriveCreative} className="text-gray-500 hover:text-gray-700" aria-label="Close upload dialog">
+                            <X size={20} />
+                        </button>
+                    </div>
+                    <label className="mt-5 block text-sm font-medium text-gray-700">
+                        Brand
+                        <select value={driveUploadBrandId} onChange={(event) => setDriveUploadBrandId(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100">
+                            <option value="">Select a brand…</option>
+                            {brands.map(brand => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+                        </select>
+                    </label>
+                    <label className="mt-4 block text-sm font-medium text-gray-700">
+                        Image or video
+                        <input type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/x-msvideo,video/webm" onChange={(event) => { setDriveUploadFile(event.target.files?.[0] || null); setDriveUploadPlacement(''); }} className="mt-1 block w-full text-sm text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:font-semibold file:text-indigo-700 hover:file:bg-indigo-100" />
+                    </label>
+                    {driveUploadFile?.type.startsWith('video/') && (
+                        <label className="mt-4 block text-sm font-medium text-gray-700">
+                            Video placement *
+                            <select value={driveUploadPlacement} onChange={(event) => setDriveUploadPlacement(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100">
+                                <option value="">Select placement…</option>
+                                <option value="1x1">Feed (1:1)</option>
+                                <option value="9x16">Stories &amp; Reels (9:16)</option>
+                            </select>
+                        </label>
+                    )}
+                    <p className="mt-2 text-xs text-gray-500">Images up to 10MB are detected as 1:1 or 9:16 automatically. Videos up to 500MB require a placement choice. Add copy and CTA in the row editor, then set one global URL below the rows.</p>
+                    <div className="mt-5 flex justify-end gap-3">
+                        <button type="button" onClick={() => setShowDriveUploadModal(false)} disabled={uploadingDriveCreative} className="px-4 py-2 text-sm font-semibold text-gray-600 hover:text-gray-800">Cancel</button>
+                        <button type="submit" disabled={uploadingDriveCreative} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60">
+                            {uploadingDriveCreative && <Loader size={16} className="animate-spin" />}
+                            {uploadingDriveCreative ? 'Adding to Drive…' : 'Add to Drive Library'}
+                        </button>
+                    </div>
+                </form>
             </div>
         )}
 
