@@ -386,10 +386,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const hasDriveCreative = currentCreatives.some(creative => creative.source === 'drive');
     const hasNonDriveCreative = currentCreatives.some(creative => creative.source !== 'drive');
     const isMixedCreativeBatch = hasDriveCreative && hasNonDriveCreative;
-    // Drive rows own their copy. Hide global fallback fields only when every
-    // current row is Drive-sourced; a mixed batch still needs one-time fields
-    // for its manual rows.
-    const allCreativesAreDriveSourced = currentCreatives.length > 0 && !hasNonDriveCreative;
+    const showGlobalCopyFallbacks = !isMatchImport && currentCreatives.length === 0;
     // Recomputed on every render off creativeData directly (not memoized on a
     // dependency array) — this step's whole job is showing the count change on every
     // keystroke/upload, and the computation itself is three array lengths, not worth
@@ -1332,8 +1329,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             }
 
             if (!group.isPair) {
-                // A truly single, unpaired asset — no real counterpart exists yet,
-                // so this is exactly the case applyAutoStoriesDupe is for.
+                // A Drive single is an explicit placement file. Do not invent
+                // its missing opposite placement from the same image.
                 const asset = group.displayAsset;
                 if (!asset) return [];
                 return applyAutoStoriesDupe({
@@ -1357,7 +1354,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     description: matchedCopy.description || '',
                     cta: groupCta,
                     ctaSource: group.cta ? 'Drive' : groupCta ? 'Creative default' : '',
-                    websiteUrl: groupWebsiteUrl
+                    websiteUrl: groupWebsiteUrl,
+                    skipAutoStoriesDupe: true,
+                    missingOppositePlacement: true,
                 });
             }
 
@@ -1453,6 +1452,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         });
         if (hasConflictingDriveDestinations) {
             showWarning('These Drive selections contain different destination URLs. Choose one Website URL for the full launch before continuing.');
+        }
+        const unpairedDriveImages = selectedGroups.filter(group => !group.isPair && group.displayAsset?.format !== 'video');
+        if (unpairedDriveImages.length > 0) {
+            const placements = [...new Set(unpairedDriveImages.map(group => driveAssetPlacement(group.displayAsset) === 'stories' ? 'Stories (9:16)' : 'Feed (1:1)'))];
+            showWarning(`${unpairedDriveImages.length} Drive image${unpairedDriveImages.length === 1 ? ' has' : 's have'} no matching opposite-placement asset. Added only as ${placements.join(' and ')}; no placement was auto-created.`);
         }
         if (unmatchedGroups.length > 0) {
             const pairMismatchCount = unmatchedGroups.filter(group => group.copyIntegrityIssue || group.copyRefreshUnverified).length;
@@ -2094,7 +2098,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // real crop applied, so this always produces an actual correctly-cropped
     // image server-side rather than just relabeling the source.
     const applyAutoStoriesDupe = (creative) => {
-        if (!autoDupeStories || creative.mediaType === 'video' || creative.dualPlacement) {
+        if (!autoDupeStories || creative.skipAutoStoriesDupe || creative.mediaType === 'video' || creative.dualPlacement) {
             return [creative];
         }
         const flippedFormat = (creative.format || 'feed') === 'stories' ? 'feed' : 'stories';
@@ -2657,7 +2661,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                         <span className="rounded-full border border-indigo-200 bg-white px-2 py-1 text-[11px] font-semibold text-indigo-700">{creativeData.creatives.length} ads</span>
                                     </div>
                                 </div>
-                                <div className="grid items-start gap-5 xl:grid-cols-[minmax(440px,0.9fr)_minmax(560px,1.35fr)]">
+                                <div className="grid items-start gap-5 xl:grid-cols-[minmax(760px,1.45fr)_minmax(480px,0.75fr)]">
                                     <div className="max-h-[660px] overflow-y-auto rounded-xl border border-gray-200 bg-white">
                                         <div className="hidden grid-cols-[76px_minmax(0,1fr)_110px_36px] gap-3 border-b border-gray-200 bg-gray-50 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500 md:grid">
                                             <span>Creative</span><span>Ad / copy</span><span className="text-right">Status</span><span className="sr-only">Remove</span>
@@ -2675,10 +2679,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                         {creative.dualPlacement && creative.secondaryImageUrl && <img src={creative.secondaryImageUrl} alt="Stories creative" className="w-1/2 object-contain" />}
                                                     </div>
                                                     <div className="min-w-0">
-                                                        <div className="truncate text-sm font-semibold text-gray-900">Ad {index + 1} · {creative.name || 'Untitled creative'}</div>
-                                                        <div className="mt-0.5 truncate text-xs text-gray-500">{creative.dualPlacement ? 'Feed + Stories pair' : (creative.format || 'feed') === 'stories' ? 'Stories & Reels' : 'Feed'} · {displayHeadline || 'No headline yet'}</div>
+                                                        <div className="break-words text-sm font-semibold leading-5 text-gray-900">Ad {index + 1} · {creative.name || 'Untitled creative'}</div>
+                                                        <div className="mt-1 break-words text-xs leading-4 text-gray-500">{creative.dualPlacement ? 'Feed + Stories pair' : (creative.format || 'feed') === 'stories' ? 'Stories & Reels' : 'Feed'} · {displayHeadline || 'No headline yet'}</div>
                                                         {creative.cropping && <div className="mt-0.5 text-[11px] font-medium text-indigo-700">Cropping placement…</div>}
                                                         {creative.cropFailed && <div className="mt-0.5 text-[11px] font-medium text-red-700">Crop failed — select row to retry</div>}
+                                                        {creative.missingOppositePlacement && <div className="mt-0.5 text-[11px] font-medium text-amber-700">No matching {(creative.format || 'feed') === 'stories' ? 'Feed' : 'Stories'} asset in Drive</div>}
                                                     </div>
                                                     <div className="hidden text-right md:block"><span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${copyReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{copyReady ? 'Ready' : `Needs ${issues[0]}`}</span></div>
                                                     </button>
@@ -2916,7 +2921,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     behavior remains unchanged. Cleared on a genuine campaign/
                     account switch by the scope-reset effect above, alongside
                     `creatives`. */}
-                {!isMatchImport && (
+                {showGlobalCopyFallbacks && (
                 <CreativeEnhancementsPanel
                     value={creativeEnhancements}
                     onChange={handleCreativeEnhancementsChange}
@@ -2928,7 +2933,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 )}
 
                 {/* Body Text */}
-                {!isMatchImport && !allCreativesAreDriveSourced && (
+                {showGlobalCopyFallbacks && (
                 <details className="rounded-lg border border-gray-200 bg-gray-50/70 p-3" open>
                     <summary className="cursor-pointer text-sm font-semibold text-gray-700">{isMixedCreativeBatch ? 'Shared fallback Primary Text' : 'Primary Text Variations'}</summary>
                     {isMixedCreativeBatch && <p className="mt-1 text-xs text-gray-500">Applies only to the non-Drive rows that do not have their own copy.</p>}
@@ -2986,7 +2991,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 )}
 
                 {/* Headline */}
-                {!isMatchImport && !allCreativesAreDriveSourced && (
+                {showGlobalCopyFallbacks && (
                 <details className="rounded-lg border border-gray-200 bg-gray-50/70 p-3" open>
                     <summary className="cursor-pointer text-sm font-semibold text-gray-700">{isMixedCreativeBatch ? 'Shared fallback Headline' : 'Headline Variations'}</summary>
                     {isMixedCreativeBatch && <p className="mt-1 text-xs text-gray-500">Applies only to the non-Drive rows that do not have their own copy.</p>}
@@ -3044,7 +3049,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 )}
 
                 {/* Description */}
-                {!isMatchImport && !allCreativesAreDriveSourced && (
+                {showGlobalCopyFallbacks && (
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                         {isMixedCreativeBatch ? 'Shared fallback Description' : 'Description'}
@@ -3065,7 +3070,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 )}
 
                 {/* Ad Permutation Counter */}
-                {!isMatchImport && creativeData.creatives && creativeData.creatives.length > 0 && (
+                {showGlobalCopyFallbacks && creativeData.creatives && creativeData.creatives.length > 0 && (
                     <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
                         <div className="flex items-center gap-2 text-amber-800">
                             <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -3114,10 +3119,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 )}
 
                 {/* Call to Action — Match Import gets CTA per-row from the CSV (defaults to LEARN_MORE) */}
-                {!isMatchImport && !allCreativesAreDriveSourced && (
+                {!isMatchImport && (
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                        {isMixedCreativeBatch ? 'Shared fallback Call to Action' : 'Call to Action *'}
+                        Call to Action *
                     </label>
                     <select
                         value={creativeData.cta}
