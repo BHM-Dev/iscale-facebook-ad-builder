@@ -1395,12 +1395,23 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         // A launch has exactly one destination. Never choose the first Drive
         // package's URL by accident when a multi-category selection contains
         // different landing pages; leave the global field blank so Joel makes
-        // that routing decision explicitly.
-        const selectedDestinationUrls = [...new Set(selectedGroups
-            .map(group => normalizeDestinationUrl(group.landingPage || defaultUrlForDriveGroup(group) || ''))
-            .filter(Boolean))];
-        const hasConflictingDriveDestinations = selectedDestinationUrls.length > 1;
+        // that routing decision explicitly. Checked against every creative
+        // already added this session too (not just the current picker
+        // selection) — otherwise adding category A, then later adding category
+        // B alone with a different landing page, sees only one URL in that
+        // second batch and silently overwrites A's already-launched-with URL
+        // with no conflict warning (code-auditor retroactive review finding,
+        // 2026-09-23).
+        let hasConflictingDriveDestinations = false;
         setCreativeData(prev => {
+            const existingDestinationUrls = (prev.creatives || [])
+                .map(creative => normalizeDestinationUrl(creative.websiteUrl || ''))
+                .filter(Boolean);
+            const selectedDestinationUrls = [...new Set([
+                ...existingDestinationUrls,
+                ...selectedGroups.map(group => normalizeDestinationUrl(group.landingPage || defaultUrlForDriveGroup(group) || '')).filter(Boolean),
+            ])];
+            hasConflictingDriveDestinations = selectedDestinationUrls.length > 1;
             const nextHeadlines = firstCopy.headline && !copyFieldsTouched.headlines
                 ? [firstCopy.headline]
                 : clearStaleGlobalCopy ? [''] : prev.headlines;
@@ -1414,7 +1425,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 ? firstWithCopy.cta
                 : clearStaleGlobalCopy && !copyFieldsTouched.cta ? 'GET_QUOTE' : (prev.cta || 'GET_QUOTE');
             const nextWebsiteUrl = hasConflictingDriveDestinations
-                ? ''
+                // Every other branch here respects a manual edit; this one
+                // shouldn't be the exception — don't wipe a URL Joel already
+                // typed just because this add-batch also conflicts.
+                ? (copyFieldsTouched.websiteUrl ? prev.websiteUrl : '')
                 : (firstWithCopy?.landingPage || firstDefaultUrl) && !copyFieldsTouched.websiteUrl
                 ? (firstWithCopy?.landingPage || firstDefaultUrl)
                 : clearStaleGlobalCopy && !copyFieldsTouched.websiteUrl ? '' : prev.websiteUrl;
@@ -2558,8 +2572,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             remove it with its "x" if it doesn't work.
                         </p>
                     ) : (
-                        <p className="mb-3 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block">
-                            Off — new images will be Feed-only. Nothing launches to Instagram/Facebook Stories until you turn this back on or duplicate one by hand.
+                        <p className="mb-3 flex flex-wrap items-center gap-2 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                            <span>Off — new images will be Feed-only. Nothing launches to Instagram/Facebook Stories until you turn this back on or duplicate one by hand.</span>
+                            {creativeData.creatives.some(c => c.id.endsWith('_autodupe')) && (
+                                <button type="button" onClick={removeAutoDupedCreatives} className="shrink-0 rounded-full border border-amber-300 bg-white px-2 py-0.5 font-semibold text-amber-800 hover:bg-amber-100">
+                                    Remove auto-added Stories duplicates already in this batch
+                                </button>
+                            )}
                         </p>
                     )}
 
@@ -2629,7 +2648,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                         <h3 className="text-sm font-semibold text-gray-900">Ad pairs &amp; copy</h3>
                                         <p className="mt-0.5 text-xs text-gray-600">Select a row to edit its own copy. The shared fallback fields are minimized below.</p>
                                     </div>
-                                    <span className="shrink-0 rounded-full border border-indigo-200 bg-white px-2 py-1 text-[11px] font-semibold text-indigo-700">{creativeData.creatives.length} ads</span>
+                                    <div className="flex shrink-0 items-center gap-2">
+                                        {cropFailedCount > 0 && (
+                                            <button type="button" onClick={retryAllFailedCrops} className="rounded-full border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-100">
+                                                Retry all {cropFailedCount} failed crop{cropFailedCount !== 1 ? 's' : ''}
+                                            </button>
+                                        )}
+                                        <span className="rounded-full border border-indigo-200 bg-white px-2 py-1 text-[11px] font-semibold text-indigo-700">{creativeData.creatives.length} ads</span>
+                                    </div>
                                 </div>
                                 <div className="grid items-start gap-5 xl:grid-cols-[minmax(440px,0.9fr)_minmax(560px,1.35fr)]">
                                     <div className="max-h-[660px] overflow-y-auto rounded-xl border border-gray-200 bg-white">

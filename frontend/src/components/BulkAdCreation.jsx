@@ -407,10 +407,6 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const [manifestSearch, setManifestSearch] = useState('');
     const [manifestCategory, setManifestCategory] = useState('all');
     const [campaignWideUrl, setCampaignWideUrl] = useState('');
-    // Holds { normalized, eligibleIds, differingRows } while the confirm modal
-    // is open for a bulk apply that would overwrite an already-different URL
-    // on at least one row — null the rest of the time.
-    const [campaignWideUrlPendingApply, setCampaignWideUrlPendingApply] = useState(null);
     const [manifestExcludedAdIds, setManifestExcludedAdIds] = useState(() => new Set(
         (adsData || []).filter(ad => ad.excludedFromLaunch).map(ad => ad.id)
     ));
@@ -1003,13 +999,6 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         }));
     };
 
-    // Eligible = would actually be touched by an Apply click right now — the
-    // same filter applyCampaignWideUrl uses. Shown live in the box so Joel
-    // knows the blast radius before he clicks, not just from the toast after.
-    const campaignWideUrlEligibleCount = adsData
-        .filter(ad => !manifestExcludedAdIds.has(ad.id) && !protectedReconciliationIdSet.has(ad.id))
-        .length;
-
     const applyCampaignWideUrl = () => {
         const normalized = normalizeDestinationUrl(campaignWideUrl);
         if (!isValidDestinationUrl(normalized)) {
@@ -1019,18 +1008,6 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         setCreativeData(prev => ({ ...prev, websiteUrl: normalized }));
         setCampaignWideUrl(normalized);
         showSuccess('Updated the single destination URL for every ad in this launch.');
-    };
-
-    const confirmApplyCampaignWideUrl = () => {
-        if (!campaignWideUrlPendingApply) return;
-        const { normalized, eligibleIds } = campaignWideUrlPendingApply;
-        setAdsData(prev => prev.map(ad => eligibleIds.has(ad.id)
-            ? { ...ad, websiteUrlOverride: normalized, manualCopyFields: { ...(ad.manualCopyFields || {}), websiteUrl: true } }
-            : ad
-        ));
-        setCampaignWideUrl(normalized);
-        showSuccess(`Applied one destination URL to ${eligibleIds.size} selected ad${eligibleIds.size === 1 ? '' : 's'}.`);
-        setCampaignWideUrlPendingApply(null);
     };
 
     const updateAdName = (index, name) => {
@@ -2667,26 +2644,6 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         );
                     })()}
 
-                    {campaignWideUrlPendingApply && (() => {
-                        const { normalized, eligibleIds, differingRows } = campaignWideUrlPendingApply;
-                        return (
-                        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="campaign-wide-url-confirm-title">
-                            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-                                <h2 id="campaign-wide-url-confirm-title" className="text-lg font-bold text-gray-900">Replace {differingRows.length} row{differingRows.length !== 1 ? 's' : ''} that already point somewhere else?</h2>
-                                <p className="mt-2 text-sm leading-6 text-gray-600">This applies <span className="font-semibold text-gray-900 break-all">{normalized}</span> to all {eligibleIds.size} selected ads. {differingRows.length} of them currently have a different destination URL set — that gets overwritten too.</p>
-                                <ul className="mt-3 max-h-32 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700 space-y-0.5">
-                                    {differingRows.map(row => (
-                                        <li key={row.ad.id} className="truncate">• {row.ad.name || `Row ${row.index + 1}`} — currently {row.websiteUrl}</li>
-                                    ))}
-                                </ul>
-                                <div className="mt-5 flex gap-3">
-                                    <button type="button" onClick={() => setCampaignWideUrlPendingApply(null)} className="flex-1 rounded-lg border border-gray-200 px-4 py-2.5 font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
-                                    <button type="button" onClick={confirmApplyCampaignWideUrl} className="flex-1 rounded-lg bg-blue-700 px-4 py-2.5 font-semibold text-white hover:bg-blue-800">Replace and apply to all {eligibleIds.size}</button>
-                                </div>
-                            </div>
-                        </div>
-                        );
-                    })()}
 
                     {/* Shared edit drawer — replaces the old always-open manifest rail with
                         an on-demand panel, and reuses the exact same updateManifestField
