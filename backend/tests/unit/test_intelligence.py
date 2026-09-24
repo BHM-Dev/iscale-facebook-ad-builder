@@ -131,6 +131,8 @@ def test_platform_geography_matches_redtrack_sub2_and_everflow_sub3_to_campaigns
     # Spend is Meta's own state breakdown, not RedTrack's inferred split.
     assert state['spend'] == 100.0
     assert state['roas'] == 0.38
+    assert state['profit'] == -62.0
+    assert result['campaigns'][0]['total_profit'] == -62.0
     # Per-adset rows carry revenue detail only — Meta's spend breakdown is
     # campaign x state, not campaign x state x adset.
     assert state['adsets'][0]['adset_name'] == '123456789012'
@@ -157,6 +159,8 @@ def test_platform_geography_meta_spend_join_needs_no_adset_identity():
     assert state['revenue'] == 0.0
     # No conversions but real spend — ROAS is a real, if bleak, 0.0, not None.
     assert state['roas'] == 0.0
+    assert state['profit'] == -50.0
+    assert campaign['total_profit'] == -50.0
 
 
 def test_platform_geography_pairs_conversions_and_revenue_from_the_same_source():
