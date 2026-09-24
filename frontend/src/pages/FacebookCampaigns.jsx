@@ -534,7 +534,7 @@ const FacebookCampaignWizardInner = () => {
                 sits. Mobile keeps the horizontal progress bar below since a
                 vertical rail doesn't fit a narrow screen; Launch Plan simply
                 stacks full-width above the workspace there via `contents`. */}
-            <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[240px_minmax(0,1fr)]">
+            <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[200px_minmax(0,1fr)]">
                 {/* Left column: step rail + Launch Plan. `contents` on mobile
                     un-wraps these so each stacks as its own full-width row;
                     lg:flex turns the wrapper into a real sticky column. */}

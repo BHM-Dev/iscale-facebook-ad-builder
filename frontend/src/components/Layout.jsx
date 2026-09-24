@@ -37,7 +37,23 @@ export default function Layout() {
     const { showSuccess } = useToast();
     const { activeVerticalFilter, setActiveVerticalFilter } = useBrands();
     const { activeAccountId, setActiveAccountId, adAccounts, activeAccountLoading } = useCampaign();
-    const [isCollapsed, setIsCollapsed] = useState(false);
+    // Auto-collapse the nav to icons-only while in the ad launch wizard, where
+    // every extra pixel of workspace width matters for reviewing 50-100 ad
+    // rows at once (Steve's call, 2026-09-23). Restores on exit. Adjusted
+    // during render (React's own pattern for "derive state from a prop/route
+    // change," not an effect — an effect here would setState synchronously
+    // inside itself, which triggers an avoidable extra render and is exactly
+    // what the react-hooks/set-state-in-effect rule flags) whenever the route
+    // actually changes, so a manual re-expand via the toggle mid-wizard is
+    // never fought back closed on the next unrelated render.
+    const LAUNCH_WIZARD_PATH = '/facebook-campaigns';
+    const [isCollapsed, setIsCollapsed] = useState(() => location.pathname === LAUNCH_WIZARD_PATH);
+    const [prevPath, setPrevPath] = useState(location.pathname);
+    if (location.pathname !== prevPath) {
+        setPrevPath(location.pathname);
+        if (location.pathname === LAUNCH_WIZARD_PATH) setIsCollapsed(true);
+        else if (prevPath === LAUNCH_WIZARD_PATH) setIsCollapsed(false);
+    }
 
     const handleLogout = async () => {
         await logout();

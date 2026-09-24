@@ -2661,19 +2661,23 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                         <span className="rounded-full border border-indigo-200 bg-white px-2 py-1 text-[11px] font-semibold text-indigo-700">{creativeData.creatives.length} ads</span>
                                     </div>
                                 </div>
-                                {/* auto-fit responds to the CONTAINER's real available width,
-                                    not a viewport breakpoint — deliberately not a hand-picked
-                                    xl:/2xl: split. A fixed-viewport breakpoint here previously
-                                    assumed a fixed amount of ancestor chrome (nav sidebar width,
-                                    Layout's own padding, the old Launch Plan rail) and broke the
-                                    moment any of those changed independently (code-auditor
-                                    retroactive review, 2026-09-23, caught the fix itself still
-                                    under-counting Layout.jsx's nav + p-5). Two 420px-min columns
-                                    render only when 2×420+gap genuinely fits; otherwise it falls
-                                    back to a single stacked column — correct at every nav-collapsed
-                                    state, every Launch Plan width, and every real screen size,
-                                    with no ancestor-width bookkeeping to keep in sync. */}
-                                <div className="grid items-start gap-5 grid-cols-[repeat(auto-fit,minmax(420px,1fr))]">
+                                {/* @container instead of a viewport breakpoint — this is what
+                                    actually fixes the class of bug two earlier attempts here got
+                                    wrong (code-auditor retroactive review, 2026-09-23): a fixed
+                                    xl:/2xl: split has to guess how much ancestor chrome (nav
+                                    sidebar width/collapse state, Layout's padding, Launch Plan's
+                                    width) is eating into the real available space, and breaks the
+                                    moment any of those changes independently. A container query
+                                    measures THIS element's own box directly, so it's correct by
+                                    construction regardless of what's around it — @tailwindcss/
+                                    container-queries added 2026-09-23 specifically for this (Steve's
+                                    call). Two columns (list favored 1.3fr for more room per row at
+                                    50-100 ad scale, detail pane 1fr, sticky so it stays in view
+                                    while the list scrolls) only render once the container is
+                                    actually >=900px (460+420 minimums + 20 gap); otherwise it stacks
+                                    to one column. */}
+                                <div className="@container">
+                                <div className="grid items-start gap-5 grid-cols-1 @[900px]:grid-cols-[minmax(460px,1.3fr)_minmax(420px,1fr)]">
                                     <div className="max-h-[660px] overflow-y-auto rounded-xl border border-gray-200 bg-white">
                                         <div className="hidden grid-cols-[76px_minmax(0,1fr)_110px_36px] gap-3 border-b border-gray-200 bg-gray-50 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500 md:grid">
                                             <span>Creative</span><span>Ad / copy</span><span className="text-right">Status</span><span className="sr-only">Remove</span>
@@ -2738,6 +2742,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             <label className="block text-xs font-semibold text-gray-700">Meta CTA *<select value={selectedCta} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'cta', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100"><option value="">Select a CTA...</option>{CTA_OPTIONS.map(option => <option key={option} value={option}>{option.replace(/_/g, ' ')}</option>)}</select></label>
                                         </div>
                                     </aside>
+                                </div>
                                 </div>
                                 {hoveredCreativePreview && (
                                     <div className="pointer-events-none fixed z-50 max-w-[calc(100vw-24px)] rounded-xl border border-gray-300 bg-white p-2 shadow-2xl" style={{ left: hoveredCreativePreview.x, top: hoveredCreativePreview.y }} aria-hidden="true">
