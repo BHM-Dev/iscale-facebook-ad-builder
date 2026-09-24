@@ -2661,7 +2661,19 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                         <span className="rounded-full border border-indigo-200 bg-white px-2 py-1 text-[11px] font-semibold text-indigo-700">{creativeData.creatives.length} ads</span>
                                     </div>
                                 </div>
-                                <div className="grid items-start gap-5 xl:grid-cols-[minmax(760px,1.45fr)_minmax(480px,0.75fr)]">
+                                {/* auto-fit responds to the CONTAINER's real available width,
+                                    not a viewport breakpoint — deliberately not a hand-picked
+                                    xl:/2xl: split. A fixed-viewport breakpoint here previously
+                                    assumed a fixed amount of ancestor chrome (nav sidebar width,
+                                    Layout's own padding, the old Launch Plan rail) and broke the
+                                    moment any of those changed independently (code-auditor
+                                    retroactive review, 2026-09-23, caught the fix itself still
+                                    under-counting Layout.jsx's nav + p-5). Two 420px-min columns
+                                    render only when 2×420+gap genuinely fits; otherwise it falls
+                                    back to a single stacked column — correct at every nav-collapsed
+                                    state, every Launch Plan width, and every real screen size,
+                                    with no ancestor-width bookkeeping to keep in sync. */}
+                                <div className="grid items-start gap-5 grid-cols-[repeat(auto-fit,minmax(420px,1fr))]">
                                     <div className="max-h-[660px] overflow-y-auto rounded-xl border border-gray-200 bg-white">
                                         <div className="hidden grid-cols-[76px_minmax(0,1fr)_110px_36px] gap-3 border-b border-gray-200 bg-gray-50 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500 md:grid">
                                             <span>Creative</span><span>Ad / copy</span><span className="text-right">Status</span><span className="sr-only">Remove</span>

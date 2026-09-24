@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, Target, Users, Image as ImageIcon, CreditCard, Megaphone, CheckCircle2, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Check, Target, Users, Image as ImageIcon, CreditCard, Megaphone, CheckCircle2, RefreshCw, ChevronUp, ChevronDown } from 'lucide-react';
 import { CampaignProvider, useCampaign } from '../context/CampaignContext';
 import { useToast } from '../context/ToastContext';
 import AdAccountStep from '../components/AdAccountStep';
@@ -73,10 +73,10 @@ const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaig
             >
                 {isExpanded && <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Launch Plan</span>}
                 <span className={`flex items-center text-xs font-medium text-gray-500 ${isExpanded ? 'gap-2' : ''}`}>
-                    {!isExpanded ? <ChevronLeft size={18} /> : null}
+                    {!isExpanded ? <ChevronDown size={18} /> : null}
                     {isExpanded && <>
                     {launchSummary.totalAds ?? '—'} ads
-                    <ChevronRight size={16} />
+                    <ChevronUp size={16} />
                     </>}
                 </span>
             </button>
@@ -133,7 +133,14 @@ const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaig
 
 const FacebookCampaignWizardInner = () => {
     const [currentStep, setCurrentStep] = useState(1);
-    const [isLaunchPlanExpanded, setIsLaunchPlanExpanded] = useState(false);
+    // Launch Plan now lives stacked under the Launch Steps rail (left column,
+    // not a competing right-hand rail — see the shell layout below), so
+    // keeping it expanded no longer costs horizontal space the Creative
+    // step's ad-detail preview needs. Defaulting to expanded also closes a
+    // real finding from the 2026-09-23 retroactive review: collapsed-by-
+    // default was hiding the Warnings count and Launched/paused Status
+    // behind an unlabeled chevron, exactly what Joel checks before Launch.
+    const [isLaunchPlanExpanded, setIsLaunchPlanExpanded] = useState(true);
     const [batchMode, setBatchMode] = useState('combinations'); // 'combinations' | 'match-import'
     const [formData, setFormData] = useState({
         adAccountId: null,
@@ -513,52 +520,80 @@ const FacebookCampaignWizardInner = () => {
                 </div>
             )}
 
-            {/* Launcher shell — three regions: step rail (left, desktop only — mobile
-                keeps the horizontal progress bar below since a vertical rail doesn't
-                fit a narrow screen), current workspace (center, unchanged step
-                components), launch summary rail (right). Full responsive collapse of
-                the summary rail into a mobile drawer is Phase 1B — for now it just
-                stacks full-width under the workspace, which keeps every screen size
-                free of horizontal overflow. */}
-            <div className={`grid grid-cols-1 items-start gap-5 ${isLaunchPlanExpanded ? 'lg:grid-cols-[190px_minmax(0,1fr)_260px]' : 'lg:grid-cols-[190px_minmax(0,1fr)_44px]'}`}>
-                {/* Desktop step rail */}
-                <div className="hidden lg:block bg-white rounded-xl shadow-sm border border-gray-200 p-4 lg:sticky lg:top-4">
-                    <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Launch Steps</div>
-                    <ol className="space-y-1">
-                        {steps.map((step) => {
-                            const isCompleted = step.id < currentStep;
-                            const isCurrent = step.id === currentStep;
-                            const isBlocked = step.id > currentStep;
-                            return (
-                                <li key={step.id}>
-                                    <button
-                                        type="button"
-                                        onClick={() => goToStep(step.id)}
-                                        disabled={!isCompleted}
-                                        title={isBlocked
-                                            ? 'Complete the steps above first'
-                                            : isCompleted
-                                                ? `Edit ${step.label} — your current selections stay saved`
-                                                : undefined}
-                                        aria-label={isCompleted ? `Edit ${step.label}; current selections stay saved` : step.label}
-                                        className={`w-full flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${isCurrent ? 'bg-amber-50 border border-amber-200' : isCompleted ? 'hover:bg-gray-50 cursor-pointer' : 'cursor-default'}`}
-                                    >
-                                        <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${isCompleted || isCurrent ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-400'}`}>
-                                            {isCompleted ? <Check size={14} /> : <step.icon size={13} />}
-                                        </span>
-                                        <span className="min-w-0">
-                                            <span className={`block text-sm font-medium ${isCurrent ? 'text-amber-900' : isCompleted ? 'text-gray-700' : 'text-gray-400'}`}>
-                                                {step.label}
+            {/* Launcher shell — two regions: a left sidebar (step rail + Launch
+                Plan stacked, desktop only) and the current workspace (center,
+                unchanged step components). Launch Plan used to be its own
+                260px/44px right-hand rail competing with the workspace for
+                width — on the Creative step that squeezed the ad list+detail
+                grid below its real minimum width and the detail preview
+                overflowed past the workspace card's border (Steve's call,
+                2026-09-23, "spacing cannot be an issue" for a 50-100 ad
+                launch). Moving Launch Plan under Launch Steps gives the
+                workspace the full remaining width, and the reclaimed
+                right-hand space is exactly where the ad-detail preview now
+                sits. Mobile keeps the horizontal progress bar below since a
+                vertical rail doesn't fit a narrow screen; Launch Plan simply
+                stacks full-width above the workspace there via `contents`. */}
+            <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[240px_minmax(0,1fr)]">
+                {/* Left column: step rail + Launch Plan. `contents` on mobile
+                    un-wraps these so each stacks as its own full-width row;
+                    lg:flex turns the wrapper into a real sticky column. */}
+                <div className="contents lg:flex lg:flex-col lg:gap-5 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+                    {/* Desktop step rail */}
+                    <div className="hidden lg:block bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+                        <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Launch Steps</div>
+                        <ol className="space-y-1">
+                            {steps.map((step) => {
+                                const isCompleted = step.id < currentStep;
+                                const isCurrent = step.id === currentStep;
+                                const isBlocked = step.id > currentStep;
+                                return (
+                                    <li key={step.id}>
+                                        <button
+                                            type="button"
+                                            onClick={() => goToStep(step.id)}
+                                            disabled={!isCompleted}
+                                            title={isBlocked
+                                                ? 'Complete the steps above first'
+                                                : isCompleted
+                                                    ? `Edit ${step.label} — your current selections stay saved`
+                                                    : undefined}
+                                            aria-label={isCompleted ? `Edit ${step.label}; current selections stay saved` : step.label}
+                                            className={`w-full flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${isCurrent ? 'bg-amber-50 border border-amber-200' : isCompleted ? 'hover:bg-gray-50 cursor-pointer' : 'cursor-default'}`}
+                                        >
+                                            <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${isCompleted || isCurrent ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                                                {isCompleted ? <Check size={14} /> : <step.icon size={13} />}
                                             </span>
-                                            {isCurrent && (
-                                                <span className="block text-xs text-amber-700 mt-0.5">{step.description}</span>
-                                            )}
-                                        </span>
-                                    </button>
-                                </li>
-                            );
-                        })}
-                    </ol>
+                                            <span className="min-w-0">
+                                                <span className={`block text-sm font-medium ${isCurrent ? 'text-amber-900' : isCompleted ? 'text-gray-700' : 'text-gray-400'}`}>
+                                                    {step.label}
+                                                </span>
+                                                {isCurrent && (
+                                                    <span className="block text-xs text-amber-700 mt-0.5">{step.description}</span>
+                                                )}
+                                            </span>
+                                        </button>
+                                    </li>
+                                );
+                            })}
+                        </ol>
+                    </div>
+
+                    {/* Launch Plan summary — see shell comment above for why this
+                        moved here from a right-hand rail. */}
+                    <div className={`min-w-0 bg-white rounded-xl border border-gray-200 shadow-sm ${isLaunchPlanExpanded ? 'p-4' : 'p-2'}`}>
+                        <LaunchSummaryPanel
+                            currentStep={currentStep}
+                            batchMode={batchMode}
+                            selectedAdAccount={selectedAdAccount}
+                            campaignData={campaignData}
+                            adsetData={adsetData}
+                            creativeData={creativeData}
+                            launchSummary={launchSummary}
+                            isExpanded={isLaunchPlanExpanded}
+                            onToggle={() => setIsLaunchPlanExpanded(expanded => !expanded)}
+                        />
+                    </div>
                 </div>
 
                 {/* Mobile compact progress bar — same step data, horizontal layout,
@@ -681,21 +716,6 @@ const FacebookCampaignWizardInner = () => {
                         </div>
                     )}
                 </div>
-                </div>
-
-                {/* Launch Plan summary rail */}
-                <div className={`min-w-0 bg-white rounded-xl border border-gray-200 shadow-sm lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto ${isLaunchPlanExpanded ? 'p-4' : 'p-2'}`}>
-                    <LaunchSummaryPanel
-                        currentStep={currentStep}
-                        batchMode={batchMode}
-                        selectedAdAccount={selectedAdAccount}
-                        campaignData={campaignData}
-                        adsetData={adsetData}
-                        creativeData={creativeData}
-                        launchSummary={launchSummary}
-                        isExpanded={isLaunchPlanExpanded}
-                        onToggle={() => setIsLaunchPlanExpanded(expanded => !expanded)}
-                    />
                 </div>
             </div>
         </div>
