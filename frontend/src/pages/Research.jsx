@@ -978,9 +978,9 @@ function ResearchBrief({ findings, totalFindings, visualStats, visualFilter, onV
                   <div className="flex flex-wrap justify-end gap-1.5">{intel.pinned && <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800">Pinned</span>}{intel.segment && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-right text-[11px] font-medium text-slate-600">{intel.segment}</span>}</div>
                 </div>
                 <p className="mt-4 text-sm font-semibold leading-6 text-slate-900">{ad.headline || 'Reviewed competitor pattern'}</p>
-                <p className="mt-2 text-sm leading-6 text-slate-600">{ad.ad_copy || intel.source_signal || 'Open the source notes for the reviewed takeaway.'}</p>
+                <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-600">{ad.ad_copy || intel.source_signal || 'Open details for the takeaway.'}</p>
                 {intel.bhm_takeaway && <p className="mt-3 rounded-lg bg-indigo-50 px-3 py-2 text-xs leading-5 text-indigo-950"><span className="font-semibold">BHM takeaway: </span>{intel.bhm_takeaway}</p>}
-                {intel.source_signal && <p className="mt-3 border-l-2 border-amber-300 pl-3 text-xs leading-5 text-slate-500">{intel.source_signal}</p>}
+                {intel.source_signal && intel.source_signal !== ad.ad_copy && <p className="mt-3 line-clamp-2 border-l-2 border-amber-300 pl-3 text-xs leading-5 text-slate-500">{intel.source_signal}</p>}
                 <div className="mt-auto flex gap-2 pt-5">
                   <button type="button" onClick={() => onInspect(ad)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-indigo-200 hover:text-indigo-700">Inspect</button>
                   <button type="button" onClick={() => onBuild(ad)} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Use as inspiration</button>
