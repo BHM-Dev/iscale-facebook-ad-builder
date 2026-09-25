@@ -31,6 +31,19 @@ def test_commercial_catalog_does_not_show_obvious_broad_query_noise():
     assert _matches_research_vertical(noise, "commercial_insurance") is False
 
 
+def test_commercial_catalog_keeps_validated_external_segment_rows():
+    """External imports are scoped to a configured vertical at write time."""
+    segment_led_external = SimpleNamespace(
+        platform="external",
+        brand_name="RigCover.com",
+        headline="Security firms: coverage tied to the work you do",
+        ad_copy="Compare options for your operation.",
+        cta_text="Get Quote",
+    )
+
+    assert _matches_research_vertical(segment_led_external, "commercial_insurance") is True
+
+
 def test_backfill_only_updates_untagged_rows_with_real_signal():
     legacy = SimpleNamespace(taxonomy_source=None, headline="Stop overpaying", ad_copy="", cta_text="Get Quote")
     existing = SimpleNamespace(taxonomy_source="capture", headline="Stop overpaying", ad_copy="", cta_text="Get Quote")

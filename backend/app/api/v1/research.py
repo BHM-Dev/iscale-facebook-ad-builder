@@ -97,6 +97,13 @@ def _matches_research_vertical(ad, config_id):
     """Last-line quality gate for legacy broad captures already in the catalog."""
     if config_id != "commercial_insurance":
         return True
+    # External rows are explicitly attached to a validated configured vertical
+    # at import time. Applying the legacy copy-keyword gate here hides useful
+    # segment-led examples whenever their visible copy does not repeat
+    # "commercial insurance". Keep this quality guard for broad legacy
+    # captures, where it protects Browse from unrelated search noise.
+    if getattr(ad, "platform", None) == "external":
+        return True
     text = " ".join(filter(None, [ad.brand_name, ad.headline, ad.ad_copy, ad.cta_text])).lower()
     commercial = ("business insurance", "commercial insurance", "general liability", "workers comp", "workers compensation", "business owners policy", "commercial auto", "business coverage", "liability insurance")
     obvious_noise = ("restaurant equipment", "now hiring", "lease type", "med spa", "hot-dog", "jewelry design", "tabletops")

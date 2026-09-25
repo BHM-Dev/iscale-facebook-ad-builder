@@ -847,6 +847,55 @@ function ExternalResearchImportModal({ open, onClose, onImport, importing, defau
   );
 }
 
+function ResearchBrief({ findings, verticalLabel, onOpenLibrary, onInspect, onBuild }) {
+  return (
+    <section className="space-y-4" aria-label="Research brief">
+      <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-white p-5">
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-700">Start here</p>
+        <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-slate-950">{verticalLabel} research brief</h2>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">Reviewed competitor patterns worth studying before making a creative. These are structural references—not BHM performance or approved claim language.</p>
+          </div>
+          <button type="button" onClick={onOpenLibrary} className="rounded-lg border border-indigo-200 bg-white px-3.5 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50">Open Ad Library</button>
+        </div>
+      </div>
+
+      {findings.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
+          <p className="font-medium text-slate-800">No reviewed findings yet for {verticalLabel}.</p>
+          <p className="mx-auto mt-1 max-w-lg text-sm leading-6 text-slate-500">Use the Ad Library to review public competitor creative, then add only the patterns worth preserving to this brief.</p>
+          <button type="button" onClick={onOpenLibrary} className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Open Ad Library</button>
+        </div>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+          {findings.map(ad => {
+            const intel = ad.creative_intel || {};
+            return (
+              <article key={ad.id} className="flex min-h-64 flex-col rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">{intel.research_source || 'Reviewed research'}</p>
+                    <h3 className="mt-1 text-base font-semibold leading-6 text-slate-900">{ad.brand_name}</h3>
+                  </div>
+                  {intel.segment && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-right text-[11px] font-medium text-slate-600">{intel.segment}</span>}
+                </div>
+                <p className="mt-4 text-sm font-semibold leading-6 text-slate-900">{ad.headline || 'Reviewed competitor pattern'}</p>
+                <p className="mt-2 text-sm leading-6 text-slate-600">{ad.ad_copy || intel.source_signal || 'Open the source notes for the reviewed takeaway.'}</p>
+                {intel.source_signal && <p className="mt-3 border-l-2 border-amber-300 pl-3 text-xs leading-5 text-slate-500">{intel.source_signal}</p>}
+                <div className="mt-auto flex gap-2 pt-5">
+                  <button type="button" onClick={() => onInspect(ad)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-indigo-200 hover:text-indigo-700">Inspect</button>
+                  <button type="button" onClick={() => onBuild(ad)} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Use as inspiration</button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ── Main page ────────────────────────────────────────────────────
 export default function Research() {
   const { authFetch } = useAuth();
@@ -857,6 +906,8 @@ export default function Research() {
   const [activeVertical, setActiveVertical] = useState('commercial_insurance');
   const [activeSubVertical, setActiveSubVertical] = useState(null);
   const [homeServicesOpen, setHomeServicesOpen] = useState(false);
+  const [researchView, setResearchView] = useState('brief');
+  const [showCatalogTools, setShowCatalogTools] = useState(false);
   const homeServicesRef = useRef(null);
 
   const [browseAds, setBrowseAds] = useState([]);
@@ -1528,6 +1579,10 @@ export default function Research() {
     mediaCount: browseAds.filter(ad => ad.thumbnail_url || ad.media_url).length,
     taggedCount: browseAds.filter(ad => (ad.creative_tags || []).length > 0).length,
   }), [browseAds]);
+  const reviewedFindings = useMemo(
+    () => browseAds.filter(ad => ad.platform === 'external'),
+    [browseAds],
+  );
 
   // ── Render ────────────────────────────────────────────────────
     return (
@@ -1560,7 +1615,15 @@ export default function Research() {
           <p className="text-sm text-gray-500 mt-0.5">Study captured competitor patterns before you write.</p>
         </div>
         <div className="flex flex-col items-end gap-1">
-          <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowCatalogTools(open => !open)}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+            aria-expanded={showCatalogTools}
+          >
+            Manage research
+          </button>
+          {showCatalogTools && <div className="flex flex-wrap justify-end gap-2">
             <button
               type="button"
               onClick={() => setShowImportModal(true)}
@@ -1600,15 +1663,15 @@ export default function Research() {
               <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
               {refreshing ? 'Refreshing…' : 'Refresh Vertical'}
             </button>
-          </div>
+          </div>}
           {refreshing && (
             <p className="text-xs text-gray-400">Pulling ads from Facebook — may take up to 3 minutes</p>
           )}
         </div>
       </div>
 
-      {/* Chrome import tutorial */}
-      <div className="bg-white border border-indigo-100 rounded-xl p-4">
+      {/* Capture guidance belongs to the operator workspace, not the default brief. */}
+      {researchView === 'library' && <div className="bg-white border border-indigo-100 rounded-xl p-4">
         <div className="flex items-start gap-3">
           <div className="w-9 h-9 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
             <BookOpen size={18} className="text-indigo-600" />
@@ -1638,7 +1701,7 @@ export default function Research() {
             </div>
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* Vertical tabs */}
       <div className="flex items-center gap-1 border-b border-gray-200 pb-0">
@@ -1703,6 +1766,24 @@ export default function Research() {
           )}
         </div>
       </div>
+
+      <div className="flex items-center justify-between gap-3">
+        <div className="inline-flex rounded-lg bg-slate-100 p-1" aria-label="Research view">
+          <button type="button" onClick={() => setResearchView('brief')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'brief' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Research Brief</button>
+          <button type="button" onClick={() => setResearchView('library')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'library' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Ad Library</button>
+        </div>
+        <span className="text-xs text-slate-500">{reviewedFindings.length} reviewed finding{reviewedFindings.length === 1 ? '' : 's'} · {catalogSummary.total} raw captures</span>
+      </div>
+
+      {researchView === 'brief' ? (
+        <ResearchBrief
+          findings={reviewedFindings}
+          verticalLabel={currentVerticalLabel}
+          onOpenLibrary={() => setResearchView('library')}
+          onInspect={inspectCreative}
+          onBuild={handleUseAsInspiration}
+        />
+      ) : <>
 
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500" aria-label="Research catalog summary"><span className="font-semibold text-slate-800">{browseLoading ? 'Loading captures…' : `${catalogSummary.total} captured examples`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.newCount} new this week`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.videoCount} video`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.taggedCount} theme tagged`}</span><span className="text-slate-300">·</span><span className="text-slate-400">Current vertical + filters</span></div>
       {!browseLoading && catalogSummary.total > 0 && catalogSummary.mediaCount === 0 && <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"><span>This view has no captured visual media yet. Import a Chrome Ad Library capture to unlock visual/video research.</span><button type="button" onClick={() => setShowImportModal(true)} className="font-semibold text-indigo-700 hover:text-indigo-900">Import visual captures</button></div>}
@@ -1992,6 +2073,7 @@ export default function Research() {
           )}
         </div>
       </div>
+      </>}
 
       {/* Clear Ads confirmation modal */}
       {showClearModal && (
