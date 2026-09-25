@@ -170,6 +170,17 @@ def _research_relevance_status(ad, config_id: str) -> str | None:
     return "needs_review"
 
 
+def _has_retained_visual(ad) -> bool:
+    """Return whether the catalog has a real, reviewable visual asset.
+
+    `media_type` alone is only source metadata; a card marked "video" may
+    still have no thumbnail or playable capture. Keep that distinction
+    explicit so researchers can begin from actual creative when needed.
+    """
+    value = (lambda field: ad.get(field) if isinstance(ad, dict) else getattr(ad, field, None))
+    return bool(value("thumbnail_url") or value("media_url") or value("media_preview_url") or value("video_urls"))
+
+
 def _related_pattern_score(source, candidate):
     """Return an explainable metadata match score and reasons, or None."""
     shared_tags = sorted(set(source.creative_tags or []) & set(candidate.creative_tags or []))
@@ -2051,6 +2062,7 @@ def get_vertical_browse_ads(
     page_type: str | None = None,
     new_within_days: int | None = None,
     needs_tagging: bool = False,
+    has_visual: bool = False,
     ads_per_advertiser: int | None = None,
     limit: int = 500,
     db: Session = Depends(get_db),
@@ -2167,6 +2179,7 @@ def get_vertical_browse_ads(
         if (not ad.brand_name or ad.brand_name.lower() not in blacklisted_names)
         and (not selected_tags or any(tag in (ad.creative_tags or []) for tag in selected_tags))
         and _matches_research_vertical(ad, config_id)
+        and (not has_visual or _has_retained_visual(ad))
     ]
     ads = _cap_ads_per_advertiser(_sort_research_ads(current_ads, sort_by), ads_per_advertiser)[:limit]
 

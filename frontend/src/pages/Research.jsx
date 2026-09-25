@@ -138,7 +138,7 @@ const capAdsPerAdvertiser = (ads, adsPerAdvertiser) => {
   });
 };
 
-const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, activeOnly, sortBy, adsPerAdvertiser }) => {
+const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, hasVisual, activeOnly, sortBy, adsPerAdvertiser }) => {
   const advertiser = advertiserFilter.trim().toLowerCase();
   return capAdsPerAdvertiser(sortResearchAds(ads.filter(ad => (
     (!angleFilter || ad.angle_tag === angleFilter) &&
@@ -149,6 +149,7 @@ const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, advertiserFilter
     (!pageTypeFilter || ad.page_type === pageTypeFilter) &&
     (!newOnly || !ad.first_seen || Date.now() - new Date(ad.first_seen).getTime() <= 7 * 24 * 60 * 60 * 1000) &&
     (!needsTagging || !ad.taxonomy_source) &&
+    (!hasVisual || Boolean(ad.thumbnail_url || ad.media_url || ad.media_preview_url || (ad.video_urls || []).length)) &&
     (!activeOnly || withDerivedResearchStatus(ad).is_active)
   )), sortBy), adsPerAdvertiser);
 };
@@ -1134,6 +1135,7 @@ export default function Research() {
   const [pageTypeFilter, setPageTypeFilter] = useState('');
   const [newOnly, setNewOnly] = useState(false);
   const [needsTagging, setNeedsTagging] = useState(false);
+  const [hasVisual, setHasVisual] = useState(false);
   const [adsPerAdvertiser, setAdsPerAdvertiser] = useState(0);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [savedViews, setSavedViews] = useState(readSavedResearchViews);
@@ -1238,6 +1240,7 @@ export default function Research() {
       if (pageTypeFilter) params.set('page_type', pageTypeFilter);
       if (newOnly) params.set('new_within_days', '7');
       if (needsTagging) params.set('needs_tagging', 'true');
+      if (hasVisual) params.set('has_visual', 'true');
       if (adsPerAdvertiser) params.set('ads_per_advertiser', String(adsPerAdvertiser));
       params.set('sort_by', sortBy);
       params.set('limit', '500');
@@ -1448,7 +1451,7 @@ export default function Research() {
       setBrowseError('');
       setSearchResultAds(normalized);
       setResultMode('search');
-      const filtered = filterResearchAds(normalized, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, activeOnly, sortBy, adsPerAdvertiser });
+      const filtered = filterResearchAds(normalized, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, hasVisual, activeOnly, sortBy, adsPerAdvertiser });
       setBrowseAds(filtered);
       showSuccess(`Search saved — ${filtered.length} matching ads shown`);
       loadBoards();
@@ -1467,12 +1470,12 @@ export default function Research() {
   useEffect(() => {
     if (!verticalConfig) return;
     if (resultMode === 'search') {
-      setBrowseAds(filterResearchAds(searchResultAds, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, activeOnly, sortBy, adsPerAdvertiser }));
+      setBrowseAds(filterResearchAds(searchResultAds, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, hasVisual, activeOnly, sortBy, adsPerAdvertiser }));
       return undefined;
     }
     const t = setTimeout(() => loadBrowseAds(), advertiserFilter ? 400 : 0);
     return () => clearTimeout(t);
-  }, [angleFilter, mediaTypeFilter, sortBy, activeOnly, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, adsPerAdvertiser, resultMode, searchResultAds, browseReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [angleFilter, mediaTypeFilter, sortBy, activeOnly, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, hasVisual, adsPerAdvertiser, resultMode, searchResultAds, browseReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Actions ──────────────────────────────────────────────────
   const handleRefresh = async ({ allowWhileClearing = false } = {}) => {
@@ -1757,16 +1760,16 @@ export default function Research() {
   }, [activeVertical, activeSubVertical, config, subVerticals]);
 
   const visibleSavedAds = activeBoardId ? boardAds : savedAds;
-  const advancedFilterCount = [creativeTagFilter, ctaTypeFilter, pageTypeFilter, activeOnly, newOnly, needsTagging, adsPerAdvertiser].filter(Boolean).length;
-  const hasActiveFilters = Boolean(angleFilter || mediaTypeFilter || creativeTagFilter || ctaTypeFilter || pageTypeFilter || activeOnly || newOnly || needsTagging || advertiserFilter || adsPerAdvertiser);
+  const advancedFilterCount = [creativeTagFilter, ctaTypeFilter, pageTypeFilter, activeOnly, newOnly, needsTagging, hasVisual, adsPerAdvertiser].filter(Boolean).length;
+  const hasActiveFilters = Boolean(angleFilter || mediaTypeFilter || creativeTagFilter || ctaTypeFilter || pageTypeFilter || activeOnly || newOnly || needsTagging || hasVisual || advertiserFilter || adsPerAdvertiser);
   const clearFilters = () => {
     setAngleFilter(''); setMediaTypeFilter(''); setCreativeTagFilter(''); setCtaTypeFilter('');
-    setPageTypeFilter(''); setActiveOnly(false); setNewOnly(false); setNeedsTagging(false); setAdvertiserFilter(''); setAdsPerAdvertiser(0);
+    setPageTypeFilter(''); setActiveOnly(false); setNewOnly(false); setNeedsTagging(false); setHasVisual(false); setAdvertiserFilter(''); setAdsPerAdvertiser(0);
   };
   const currentViewFilters = () => ({
     activeVertical, activeSubVertical, angleFilter, mediaTypeFilter, sortBy,
     activeOnly, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter,
-    newOnly, needsTagging, adsPerAdvertiser,
+    newOnly, needsTagging, hasVisual, adsPerAdvertiser,
   });
   const saveCurrentView = () => {
     const name = newViewName.trim();
@@ -1785,6 +1788,7 @@ export default function Research() {
     setAdvertiserFilter(filters.advertiserFilter || ''); setCreativeTagFilter(filters.creativeTagFilter || '');
     setCtaTypeFilter(filters.ctaTypeFilter || ''); setPageTypeFilter(filters.pageTypeFilter || '');
     setNewOnly(Boolean(filters.newOnly)); setNeedsTagging(Boolean(filters.needsTagging));
+    setHasVisual(Boolean(filters.hasVisual));
     setAdsPerAdvertiser(Number(filters.adsPerAdvertiser) || 0);
     setResultMode('browse'); setSearchResultAds([]); closeDetail();
     showSuccess(`Applied view “${view.name}”`);
@@ -2185,7 +2189,7 @@ export default function Research() {
             />
             {hasActiveFilters && <button type="button" onClick={clearFilters} className="text-xs font-medium text-indigo-600 hover:text-indigo-800">Clear filters</button>}
           </div>
-          {showAdvancedFilters && <div className="-mt-3 rounded-b-xl border border-t-0 border-gray-200 bg-slate-50 px-4 py-3"><div className="flex flex-wrap items-center gap-3"><select value={creativeTagFilter} onChange={e => setCreativeTagFilter(e.target.value)} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600" title="Visible-copy theme labels; unknown ads remain visible by default"><option value="">All themes</option><option value="testimonial">Testimonial</option><option value="problem_agitation">Problem agitation</option><option value="comparison">Comparison</option><option value="review">Review</option><option value="listicle">Listicle</option><option value="educational">Educational</option><option value="ugc">UGC</option></select><select value={ctaTypeFilter} onChange={e => setCtaTypeFilter(e.target.value)} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600"><option value="">All CTAs</option><option value="get_quote">Get quote</option><option value="learn_more">Learn more</option><option value="sign_up">Sign up</option><option value="apply_now">Apply now</option><option value="contact_us">Contact us</option><option value="shop_now">Shop now</option></select><select value={pageTypeFilter} onChange={e => setPageTypeFilter(e.target.value)} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600"><option value="">All destinations</option><option value="lead_form">Lead form</option><option value="advertorial">Advertorial</option><option value="ecommerce">Ecommerce</option><option value="homepage">Homepage</option></select><select value={adsPerAdvertiser} onChange={e => setAdsPerAdvertiser(Number(e.target.value))} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600" title="Keep the gallery varied by limiting how many ads appear from each known advertiser"><option value={0}>All per advertiser</option><option value={1}>1 per advertiser</option><option value={3}>3 per advertiser</option><option value={5}>5 per advertiser</option></select><label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap"><input type="checkbox" checked={activeOnly} onChange={e => setActiveOnly(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />Captured in last 30 days</label><label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap" title="First captured by this Research catalog in the last seven days"><input type="checkbox" checked={newOnly} onChange={e => setNewOnly(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />New captures</label><label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap" title="No theme or CTA label recorded yet"><input type="checkbox" checked={needsTagging} onChange={e => setNeedsTagging(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />Needs tagging</label></div></div>}
+          {showAdvancedFilters && <div className="-mt-3 rounded-b-xl border border-t-0 border-gray-200 bg-slate-50 px-4 py-3"><div className="flex flex-wrap items-center gap-3"><select value={creativeTagFilter} onChange={e => setCreativeTagFilter(e.target.value)} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600" title="Visible-copy theme labels; unknown ads remain visible by default"><option value="">All themes</option><option value="testimonial">Testimonial</option><option value="problem_agitation">Problem agitation</option><option value="comparison">Comparison</option><option value="review">Review</option><option value="listicle">Listicle</option><option value="educational">Educational</option><option value="ugc">UGC</option></select><select value={ctaTypeFilter} onChange={e => setCtaTypeFilter(e.target.value)} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600"><option value="">All CTAs</option><option value="get_quote">Get quote</option><option value="learn_more">Learn more</option><option value="sign_up">Sign up</option><option value="apply_now">Apply now</option><option value="contact_us">Contact us</option><option value="shop_now">Shop now</option></select><select value={pageTypeFilter} onChange={e => setPageTypeFilter(e.target.value)} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600"><option value="">All destinations</option><option value="lead_form">Lead form</option><option value="advertorial">Advertorial</option><option value="ecommerce">Ecommerce</option><option value="homepage">Homepage</option></select><select value={adsPerAdvertiser} onChange={e => setAdsPerAdvertiser(Number(e.target.value))} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600" title="Keep the gallery varied by limiting how many ads appear from each known advertiser"><option value={0}>All per advertiser</option><option value={1}>1 per advertiser</option><option value={3}>3 per advertiser</option><option value={5}>5 per advertiser</option></select><label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap" title="Only show cards with an actual retained image, thumbnail, or playable video—not source format metadata alone"><input type="checkbox" checked={hasVisual} onChange={e => setHasVisual(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />Has visual capture</label><label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap"><input type="checkbox" checked={activeOnly} onChange={e => setActiveOnly(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />Captured in last 30 days</label><label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap" title="First captured by this Research catalog in the last seven days"><input type="checkbox" checked={newOnly} onChange={e => setNewOnly(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />New captures</label><label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 whitespace-nowrap" title="No theme or CTA label recorded yet"><input type="checkbox" checked={needsTagging} onChange={e => setNeedsTagging(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />Needs tagging</label></div></div>}
           {showAdvancedFilters && <div className="-mt-2 flex flex-wrap items-center gap-2 text-xs"><span className="text-slate-400">Save this view</span>{savingView ? <><input autoFocus value={newViewName} onChange={event => setNewViewName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') saveCurrentView(); if (event.key === 'Escape') { setSavingView(false); setNewViewName(''); } }} placeholder="e.g. Video winners" className="w-40 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs" /><button type="button" onClick={saveCurrentView} disabled={!newViewName.trim()} className="rounded-lg bg-indigo-600 px-2.5 py-1.5 font-semibold text-white disabled:opacity-50">Save</button><button type="button" onClick={() => { setSavingView(false); setNewViewName(''); }} className="px-1.5 py-1 text-slate-500 hover:text-slate-800">Cancel</button></> : <button type="button" onClick={() => setSavingView(true)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-medium text-slate-700 hover:border-indigo-200 hover:text-indigo-700">Save current view</button>}</div>}
           {advertiserFilter && <div className="-mt-2 flex min-w-0 items-center gap-2 text-xs text-slate-500"><span className="flex-shrink-0">Scoped to</span><button type="button" onClick={() => setAdvertiserFilter('')} className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-1 font-medium text-indigo-700 hover:bg-indigo-100" title="Clear advertiser scope"><span className="truncate">{advertiserFilter}</span><X size={12} className="flex-shrink-0" /></button></div>}
           {savedViews.length > 0 && <div className="-mt-2 flex flex-wrap items-center gap-1.5 text-xs"><span className="mr-1 text-slate-400">Saved views</span>{savedViews.map(view => <span key={view.id} className="inline-flex max-w-full items-center rounded-full border border-slate-200 bg-white text-slate-600"><button type="button" onClick={() => applySavedView(view)} className="max-w-[180px] truncate px-2.5 py-1 hover:text-indigo-700">{view.name}</button><button type="button" onClick={() => deleteSavedView(view.id)} className="border-l border-slate-100 px-1.5 py-1 text-slate-400 hover:text-red-500" aria-label={`Delete saved view ${view.name}`}><X size={11} /></button></span>)}</div>}

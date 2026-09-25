@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.api.v1.research import _copilot_query_suggestions, _plan_research_copilot_question, _research_relevance_status
+from app.api.v1.research import _copilot_query_suggestions, _has_retained_visual, _plan_research_copilot_question, _research_relevance_status
 
 
 def test_copilot_plan_extracts_owner_operator_runtime_and_activity():
@@ -50,3 +50,8 @@ def test_commercial_relevance_status_flags_broad_non_offer_capture_for_review():
     insurance_ad = SimpleNamespace(platform="facebook", brand_name="Example", headline="Commercial insurance", ad_copy="Compare a business insurance quote", cta_text="Get Quote")
     assert _research_relevance_status(insurance_ad, "commercial_insurance") == "high_confidence"
     assert _research_relevance_status({"platform": "facebook", "brand_name": "Example", "headline": "Commercial insurance", "ad_copy": "Compare a business insurance quote", "cta_text": "Get Quote"}, "commercial_insurance") == "high_confidence"
+
+
+def test_retained_visual_requires_an_actual_asset_not_only_format_metadata():
+    assert not _has_retained_visual(SimpleNamespace(media_type="video", thumbnail_url=None, media_url=None, media_preview_url=None, video_urls=[]))
+    assert _has_retained_visual({"media_type": "video", "thumbnail_url": None, "media_url": None, "media_preview_url": "https://cdn.example.test/preview.mp4", "video_urls": []})
