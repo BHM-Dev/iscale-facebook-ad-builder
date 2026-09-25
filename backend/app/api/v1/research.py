@@ -1571,6 +1571,7 @@ def get_research_visual_candidates(
     if not source:
         raise HTTPException(status_code=404, detail="Ad not found")
     source_vertical_id = getattr(source.saved_search, "vertical_id", None)
+    source_vertical_name = getattr(getattr(source.saved_search, "vertical", None), "name", None)
     normalized_brand = (source.brand_name or "").strip().lower()
     if not normalized_brand:
         return []
@@ -1589,7 +1590,11 @@ def get_research_visual_candidates(
         if candidate_intel.get("capture_source") != "brand_scrape":
             continue
         candidate_vertical_id = getattr(candidate.saved_search, "vertical_id", None)
-        if source_vertical_id and candidate_vertical_id and candidate_vertical_id != source_vertical_id:
+        candidate_vertical_name = getattr(getattr(candidate.saved_search, "vertical", None), "name", None)
+        # Older external imports can point at a duplicate persisted Vertical
+        # row with the same human label. Treat that as the same configured
+        # vertical while still refusing a true cross-vertical attachment.
+        if source_vertical_id and candidate_vertical_id and candidate_vertical_id != source_vertical_id and candidate_vertical_name != source_vertical_name:
             continue
         safe_candidates.append(_serialize_scraped_ad(candidate))
         if len(safe_candidates) >= max(1, min(limit, 12)):
@@ -1617,7 +1622,9 @@ def adopt_retained_research_visual(
         raise HTTPException(status_code=400, detail="Visual must come from the same advertiser")
     target_vertical_id = getattr(target.saved_search, "vertical_id", None)
     source_vertical_id = getattr(source.saved_search, "vertical_id", None)
-    if target_vertical_id and source_vertical_id and target_vertical_id != source_vertical_id:
+    target_vertical_name = getattr(getattr(target.saved_search, "vertical", None), "name", None)
+    source_vertical_name = getattr(getattr(source.saved_search, "vertical", None), "name", None)
+    if target_vertical_id and source_vertical_id and target_vertical_id != source_vertical_id and target_vertical_name != source_vertical_name:
         raise HTTPException(status_code=400, detail="Visual must come from the same research vertical")
     target.media_type = source.media_type if source.media_type in {"image", "video"} else "image"
     target.media_url = source.media_url
