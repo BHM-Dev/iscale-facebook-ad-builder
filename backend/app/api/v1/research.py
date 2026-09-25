@@ -154,9 +154,10 @@ def _research_relevance_status(ad, config_id: str) -> str | None:
     """
     if config_id != "commercial_insurance":
         return None
-    if getattr(ad, "platform", None) == "external":
+    value = (lambda field: ad.get(field) if isinstance(ad, dict) else getattr(ad, field, None))
+    if value("platform") == "external":
         return "source_reviewed"
-    text = " ".join(filter(None, [ad.brand_name, ad.headline, ad.ad_copy, ad.cta_text])).casefold()
+    text = " ".join(filter(None, [value("brand_name"), value("headline"), value("ad_copy"), value("cta_text")])).casefold()
     explicit_offer = (
         "commercial insurance", "business insurance", "small business insurance",
         "commercial auto", "general liability", "liability insurance",
@@ -2257,7 +2258,11 @@ def get_vertical_advertisers(
         current_user=current_user,
     )
     grouped = {}
+    review_queue_count = 0
     for ad in ads:
+        if _research_relevance_status(ad, config_id) == "needs_review":
+            review_queue_count += 1
+            continue
         name = (ad.get("brand_name") or "Unknown advertiser").strip()
         key = name.casefold()
         item = grouped.setdefault(key, {
@@ -2300,6 +2305,7 @@ def get_vertical_advertisers(
     return {
         "vertical": config_id,
         "advertisers": directory[:100],
+        "review_queue_count": review_queue_count,
         "limitations": "Catalog footprint reflects retained, deduplicated captures only—not advertiser spend, scale, or current delivery.",
     }
 

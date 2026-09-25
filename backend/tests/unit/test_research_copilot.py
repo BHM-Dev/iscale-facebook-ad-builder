@@ -49,3 +49,4 @@ def test_commercial_relevance_status_flags_broad_non_offer_capture_for_review():
 
     insurance_ad = SimpleNamespace(platform="facebook", brand_name="Example", headline="Commercial insurance", ad_copy="Compare a business insurance quote", cta_text="Get Quote")
     assert _research_relevance_status(insurance_ad, "commercial_insurance") == "high_confidence"
+    assert _research_relevance_status({"platform": "facebook", "brand_name": "Example", "headline": "Commercial insurance", "ad_copy": "Compare a business insurance quote", "cta_text": "Get Quote"}, "commercial_insurance") == "high_confidence"
