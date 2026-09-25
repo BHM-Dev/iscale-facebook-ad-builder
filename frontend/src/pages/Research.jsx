@@ -40,6 +40,23 @@ const QUERY_PRESETS = [
 const RESEARCH_INITIAL_CARD_COUNT = 24;
 const RESEARCH_CARD_PAGE_SIZE = 24;
 const RESEARCH_SAVED_VIEWS_KEY = 'adbuilder.research.saved-views.v1';
+const COPILOT_PROMPTS = {
+  commercial_insurance: [
+    'Show commercial insurance ads for owner-operators',
+    'Find contractor comparison ads with a get quote CTA',
+    'Show video ads for security firms',
+  ],
+  auto_insurance: [
+    'Show active auto insurance quote ads',
+    'Find auto insurance comparison ads',
+    'Show recent auto insurance video ads',
+  ],
+  home_services: [
+    'Show active home services ads',
+    'Find home services testimonial ads',
+    'Show recent home services video ads',
+  ],
+};
 
 const readSavedResearchViews = () => {
   if (typeof window === 'undefined') return [];
@@ -1048,9 +1065,11 @@ function ResearchCopilot({ verticalId, verticalLabel, onRunResults }) {
   };
   const runQuery = (event) => { event.preventDefault(); executeQuery(question); };
   const plan = response?.query_plan;
+  const suggestedPrompts = COPILOT_PROMPTS[verticalId] || [];
   return <section className="mb-5 rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-indigo-50 p-4 shadow-sm" aria-label="Ask Research">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.14em] text-violet-700"><Sparkles size={13}/> Ask Research</p><p className="mt-1 text-sm text-slate-600">Describe the competitor pattern you need. We search retained evidence and show the plan before calling anything a winner.</p></div><span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-500 ring-1 ring-violet-100">{verticalLabel}</span></div>
     <form onSubmit={runQuery} className="mt-3 flex flex-col gap-2 sm:flex-row"><input value={question} onChange={event => setQuestion(event.target.value)} maxLength={500} placeholder="e.g. Show active commercial auto ads for owner-operators running 30+ days" className="min-w-0 flex-1 rounded-xl border border-violet-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-200" aria-label="Ask Research" /><button type="submit" disabled={loading || !question.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-violet-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-50"><Sparkles size={15}/>{loading ? 'Planning…' : 'Search research'}</button></form>
+    {!response && <div className="mt-2 flex flex-wrap items-center gap-1.5"><span className="text-[11px] font-medium text-slate-500">Try:</span>{suggestedPrompts.map(prompt => <button key={prompt} type="button" onClick={() => executeQuery(prompt)} className="rounded-full border border-violet-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-violet-700 hover:bg-violet-50">{prompt}</button>)}</div>}
     {response && <div className="mt-4 rounded-xl border border-violet-100 bg-white/85 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-semibold text-slate-900">Search plan · {response.coverage.matched} matching capture{response.coverage.matched === 1 ? '' : 's'}</p><p className="mt-0.5 text-xs text-slate-500">Searched {response.coverage.catalog_candidates} retained {verticalLabel.toLowerCase()} capture{response.coverage.catalog_candidates === 1 ? '' : 's'}.</p></div><button type="button" onClick={() => onRunResults(response)} disabled={!response.results.length} className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-800 hover:bg-violet-100 disabled:opacity-50">Review results{response.coverage.returned < response.coverage.matched ? ` (${response.coverage.returned} of ${response.coverage.matched})` : ''}</button></div>
       <div className="mt-2 flex flex-wrap gap-1.5">{plan.segments.map(segment => <span key={segment} className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{segment}</span>)}{plan.creative_tags?.map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{tag.replace('_', ' ')}</span>)}{plan.active_only && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">active capture</span>}{plan.min_running_days && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">observed {plan.min_running_days}+ days</span>}{plan.captured_within_days && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">captured within {plan.captured_within_days} days</span>}{plan.media_type && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{plan.media_type}</span>}{plan.cta_type && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{plan.cta_type.replace('_', ' ')} CTA</span>}{plan.page_type && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{plan.page_type.replace('_', ' ')} destination</span>}</div>
