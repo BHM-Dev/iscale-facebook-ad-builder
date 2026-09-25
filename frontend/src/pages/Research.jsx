@@ -1976,7 +1976,7 @@ export default function Research() {
           <button type="button" onClick={() => setResearchView('brief')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'brief' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Research Brief</button>
           <button type="button" onClick={() => setResearchView('library')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'library' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Ad Library</button>
         </div>
-        <span className="text-xs text-slate-500">{reviewedFindingsAll.length} reviewed finding{reviewedFindingsAll.length === 1 ? '' : 's'} · {catalogSummary.total} raw captures</span>
+        <span className="text-xs text-slate-500">{resultMode === 'search' ? `${reviewedFindingsAll.length} reviewed in results · ${catalogSummary.total} research results` : `${reviewedFindingsAll.length} reviewed finding${reviewedFindingsAll.length === 1 ? '' : 's'} · ${catalogSummary.total} raw captures`}</span>
       </div>
 
       <ResearchCopilot verticalId={activeVertical} verticalLabel={currentVerticalLabel} onRunResults={handleCopilotResults} />
