@@ -2,7 +2,7 @@ from types import SimpleNamespace
 from pathlib import Path
 import sys
 
-from app.api.v1.research import _cap_ads_per_advertiser, _infer_creative_taxonomy, _matches_research_vertical, _related_pattern_score
+from app.api.v1.research import _cap_ads_per_advertiser, _configured_vertical_label, _infer_creative_taxonomy, _matches_research_vertical, _related_pattern_score
 from app.schemas.research import ResearchBriefCuration
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
@@ -91,6 +91,10 @@ def test_commercial_relevance_guard_excludes_auto_insurance_related_candidates()
         cta_text="Get Quote",
     )
     assert _matches_research_vertical(auto_candidate, "commercial_insurance") is False
+
+
+def test_configured_vertical_label_matches_persisted_import_vertical_name():
+    assert _configured_vertical_label("commercial_insurance") == "Commercial Insurance"
 
 
 def test_advertiser_cap_preserves_sorted_first_result_and_unknown_legacy_rows():

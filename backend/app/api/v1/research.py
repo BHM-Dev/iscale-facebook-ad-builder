@@ -136,6 +136,15 @@ def _related_pattern_score(source, candidate):
     return len(shared_tags) * 4 + (2 if same_cta else 0) + int(same_format) + int(same_destination), reasons
 
 
+def _configured_vertical_label(config_id: str | None) -> str | None:
+    """Resolve a Research UI config id to its persisted Vertical name."""
+    if not config_id:
+        return None
+    from app.core.vertical_config import VERTICAL_KEYWORD_SETS
+    config = VERTICAL_KEYWORD_SETS.get(config_id)
+    return config.get("label") if config else None
+
+
 def _parse_research_date(value):
     if not value:
         return None
@@ -1502,7 +1511,8 @@ def get_related_research_ads(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return explainable related patterns, never a fabricated performance rank."""
-    from app.models import ScrapedAd
+    from app.models import ScrapedAd, SavedSearch
+    from sqlalchemy.orm import joinedload
     source = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
     if not source:
         raise HTTPException(status_code=404, detail="Ad not found")
@@ -1510,8 +1520,10 @@ def get_related_research_ads(
     # how large scraped_ads grows — a full-table scan here (as an earlier
     # version of this endpoint did) is the exact query pattern already
     # flagged as a scaling risk elsewhere in this file.
+    configured_vertical_name = _configured_vertical_label(vertical_id)
     candidates = (
         db.query(ScrapedAd)
+        .options(joinedload(ScrapedAd.saved_search).joinedload(SavedSearch.vertical))
         .filter(ScrapedAd.id != source.id)
         .order_by(ScrapedAd.last_seen.desc())
         .limit(500)
@@ -1519,6 +1531,13 @@ def get_related_research_ads(
     )
     scored = []
     for candidate in candidates:
+        candidate_vertical_name = getattr(getattr(candidate.saved_search, "vertical", None), "name", None)
+        # Imported/captured records carry a persisted Vertical through their
+        # SavedSearch. That is stronger than keyword inference and keeps an
+        # auto-insurance record out of a commercial review even if it shares
+        # a generic creative tag such as comparison.
+        if configured_vertical_name and candidate_vertical_name and candidate_vertical_name != configured_vertical_name:
+            continue
         # Related metadata is useful only when it belongs to the analyst's
         # current vertical. Without this guard, a shared CTA/video format can
         # lead a commercial-insurance review toward an auto-insurance ad.
