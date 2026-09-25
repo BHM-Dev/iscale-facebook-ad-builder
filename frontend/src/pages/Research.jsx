@@ -936,7 +936,23 @@ function ExternalResearchImportModal({ open, onClose, onImport, importing, defau
   );
 }
 
-function ResearchBrief({ findings, totalFindings, visualStats, visualFilter, onVisualFilterChange, verticalLabel, onOpenLibrary, onInspect, onBuild }) {
+function PatternMap({ findings }) {
+  const top = (values, fallback) => Object.entries(values.reduce((counts, value) => {
+    const key = value || fallback;
+    counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {})).sort(([, left], [, right]) => right - left).slice(0, 3);
+  const audiences = top(findings.map(ad => ad.creative_intel?.segment), 'General');
+  const themes = top(findings.map(ad => ad.creative_tags?.[0] || ad.angle_tag), 'Unclassified');
+  const coverage = top(findings.map(ad => (ad.thumbnail_url || ad.media_url) ? 'Visual ready' : 'Copy only'), 'Copy only');
+  const groups = [['Audience', audiences], ['Theme', themes], ['Coverage', coverage]];
+  if (!findings.length) return null;
+  return <section className="grid gap-3 md:grid-cols-3" aria-label="Research pattern map">
+    {groups.map(([label, items]) => <div key={label} className="rounded-xl border border-slate-200 bg-white px-4 py-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p><div className="mt-2 space-y-1.5">{items.map(([value, count]) => <div key={value} className="flex items-center justify-between gap-3 text-sm"><span className="truncate font-medium text-slate-700">{value.replaceAll('_', ' ')}</span><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{count}</span></div>)}</div></div>)}
+  </section>;
+}
+
+function ResearchBrief({ findings, totalFindings, visualStats, visualFilter, onVisualFilterChange, verticalLabel, onOpenLibrary, onInspect, onBuild, allFindings }) {
   return (
     <section className="space-y-4" aria-label="Research brief">
       <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-white p-5">
@@ -955,6 +971,8 @@ function ResearchBrief({ findings, totalFindings, visualStats, visualFilter, onV
           </div>
         </div>
       </div>
+
+      <PatternMap findings={allFindings} />
 
       {findings.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
@@ -2043,6 +2061,7 @@ export default function Research() {
           onOpenLibrary={() => setResearchView('library')}
           onInspect={inspectCreative}
           onBuild={handleUseAsInspiration}
+          allFindings={reviewedFindingsAll}
         />
       ) : <>
 
