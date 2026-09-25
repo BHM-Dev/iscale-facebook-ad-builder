@@ -141,8 +141,16 @@ def _matches_research_vertical(ad, config_id):
         return True
     text = " ".join(filter(None, [ad.brand_name, ad.headline, ad.ad_copy, ad.cta_text])).lower()
     commercial = ("business insurance", "commercial insurance", "general liability", "workers comp", "workers compensation", "business owners policy", "commercial auto", "business coverage", "liability insurance")
+    insurance_context = ("insurance", "coverage", "policy", "premium", "insured", "liability")
     obvious_noise = ("restaurant equipment", "now hiring", "lease type", "med spa", "hot-dog", "jewelry design", "tabletops")
-    return any(term in text for term in commercial) and not any(term in text for term in obvious_noise)
+    # A broad Ad Library search can return ordinary commercial/home-service
+    # promotions. Require insurance language as well as a commercial offer
+    # phrase before presenting a raw capture in this vertical.
+    return (
+        any(term in text for term in commercial)
+        and any(term in text for term in insurance_context)
+        and not any(term in text for term in obvious_noise)
+    )
 
 
 def _research_relevance_status(ad, config_id: str) -> str | None:
