@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Ban, FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, Zap, X, Upload, BookOpen, Video, BarChart3, Play, ImagePlus, Sparkles } from 'lucide-react';
+import { Ban, FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, Zap, X, Upload, BookOpen, Video, BarChart3, Play, ImagePlus, Sparkles, MoreHorizontal } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -302,10 +302,11 @@ function SaveButton({ ad, isSaved, onSave, onUnsave, angleTags }) {
       <button
         type="button"
         onClick={() => onUnsave(ad)}
-        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-600 text-xs font-medium hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-colors"
+        className="inline-flex items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-emerald-700 hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-colors"
+        title="Remove from your worth-studying saves"
+        aria-label="Saved as worth studying; click to remove"
       >
         <Star size={12} fill="currentColor" />
-        Saved
       </button>
     );
   }
@@ -315,11 +316,11 @@ function SaveButton({ ad, isSaved, onSave, onUnsave, angleTags }) {
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
-        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 text-xs font-medium hover:border-amber-300 hover:text-amber-600 transition-colors"
+        className="inline-flex items-center justify-center rounded-lg border border-emerald-200 bg-white p-2 text-emerald-700 hover:bg-emerald-50 transition-colors"
+        title="Mark as worth studying"
+        aria-label="Mark as worth studying"
       >
         <Star size={12} />
-        Save
-        <ChevronDown size={10} />
       </button>
       {open && (
         <div className="absolute right-0 top-8 z-10 bg-white border border-gray-200 rounded-xl shadow-lg p-2 min-w-[160px]">
@@ -425,6 +426,28 @@ function BoardSaveButton({ ad, boards, onAdd, onCreate }) {
         </div>
       )}
     </div>
+  );
+}
+
+// The research card is an inbox, not an ad-operations console. Keep the
+// high-frequency actions visible and move destructive/navigation utilities
+// behind one predictable overflow affordance.
+function CardOverflowMenu({ ad, advertiserUrl, isReviewed, onInspect, onBlockPage, onSetReviewed, onRemoveFromBoard, boards, onAddToBoard, onCreateBoard }) {
+  return (
+    <details className="relative">
+      <summary className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 [&::-webkit-details-marker]:hidden" aria-label="More research actions" title="More research actions">
+        <MoreHorizontal size={16} />
+      </summary>
+      <div className="absolute bottom-10 right-0 z-20 w-52 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
+        <button type="button" onClick={() => onInspect(ad)} className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50">Inspect details</button>
+        <a href={advertiserUrl} target="_blank" rel="noopener noreferrer" className="flex w-full items-center rounded-lg px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">{ad.platform === 'external' ? 'Open source' : 'View advertiser ads'} <ExternalLink size={11} className="ml-auto" /></a>
+        {ad.platform !== 'external' && <button type="button" onClick={() => onSetReviewed(ad, !isReviewed)} className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50">{isReviewed ? 'Remove from Research Brief' : 'Add to Research Brief'}</button>}
+        <div className="my-1 border-t border-slate-100" />
+        <BoardSaveButton ad={ad} boards={boards} onAdd={onAddToBoard} onCreate={onCreateBoard} />
+        {onRemoveFromBoard && <button type="button" onClick={() => onRemoveFromBoard(ad)} className="mt-1 flex w-full items-center rounded-lg px-2.5 py-2 text-left text-xs font-medium text-red-600 hover:bg-red-50">Remove from board</button>}
+        <button type="button" onClick={() => onBlockPage(ad)} className="mt-1 flex w-full items-center rounded-lg px-2.5 py-2 text-left text-xs font-medium text-red-600 hover:bg-red-50">Block advertiser</button>
+      </div>
+    </details>
   );
 }
 
@@ -675,16 +698,15 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
       </div>
 
       {/* Actions */}
-      <div className="flex flex-col gap-1.5 pt-1 border-t border-gray-100">
-        {/* Primary row */}
-        <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 border-t border-gray-100 pt-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <button
             type="button"
             onClick={() => onUseAsInspiration(ad)}
-            className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors"
+            className="inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 transition-colors"
           >
             <Zap size={12} />
-            Build from this ad
+            Build ad
           </button>
           <SaveButton
             ad={ad}
@@ -693,54 +715,8 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
             onUnsave={onUnsave}
             angleTags={angleTags}
           />
-          {ad.platform !== 'external' && <button
-            type="button"
-            onClick={() => onSetReviewed(ad, !isReviewed)}
-            className={`inline-flex shrink-0 items-center justify-center rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${isReviewed ? 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100' : 'border-slate-200 text-slate-600 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700'}`}
-            title={isReviewed ? 'Remove this raw capture from the Research Brief' : 'Add this raw capture to the Research Brief'}
-          >{isReviewed ? 'In Brief' : 'Add to Brief'}</button>}
         </div>
-        <BoardSaveButton ad={ad} boards={boards} onAdd={onAddToBoard} onCreate={onCreateBoard} />
-        {/* Secondary row */}
-        <div className={`grid gap-2 ${onRemoveFromBoard ? 'grid-cols-2' : 'grid-cols-3'}`}>
-          <button
-            type="button"
-            onClick={() => onInspect(ad)}
-            className="inline-flex w-full items-center justify-center gap-1 px-2 py-1 rounded-md border border-gray-200 text-xs font-medium text-gray-500 hover:text-indigo-600 hover:border-indigo-200 transition-colors"
-            title="Inspect the captured creative and its research context"
-          >
-            Inspect
-          </button>
-          <a
-            href={advertiserUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex w-full items-center justify-center gap-1 px-2 py-1 rounded-md border border-gray-200 text-xs font-medium text-gray-500 hover:text-indigo-600 hover:border-indigo-200 transition-colors"
-            title={ad.platform === 'external' ? 'Open the captured source link' : 'View all ads from this advertiser'}
-          >
-            <ExternalLink size={11} />
-            {ad.platform === 'external' ? 'Open source' : 'View all ads'}
-          </a>
-          {onRemoveFromBoard && (
-            <button
-              type="button"
-              onClick={() => onRemoveFromBoard(ad)}
-              className="inline-flex w-full items-center justify-center gap-1 px-2 py-1 rounded-md border border-gray-200 text-xs font-medium text-gray-500 hover:text-red-500 hover:border-red-200 transition-colors"
-            >
-              <X size={11} />
-              Remove
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => onBlockPage(ad)}
-            className="inline-flex w-full items-center justify-center gap-1 px-2 py-1 rounded-md border border-gray-200 text-xs font-medium text-gray-500 hover:text-red-500 hover:border-red-200 transition-colors"
-            title="Block this advertiser"
-          >
-            <Ban size={11} />
-            Block advertiser
-          </button>
-        </div>
+        <CardOverflowMenu ad={ad} advertiserUrl={advertiserUrl} isReviewed={isReviewed} onInspect={onInspect} onBlockPage={onBlockPage} onSetReviewed={onSetReviewed} onRemoveFromBoard={onRemoveFromBoard} boards={boards} onAddToBoard={onAddToBoard} onCreateBoard={onCreateBoard} />
       </div>
     </div>
   );
