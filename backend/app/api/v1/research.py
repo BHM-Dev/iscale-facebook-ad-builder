@@ -1552,6 +1552,89 @@ def attach_research_media(
     }
 
 
+@router.get("/scraped-ads/{ad_id}/visual-candidates")
+def get_research_visual_candidates(
+    ad_id: str,
+    limit: int = 8,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return only this app's retained Meta captures that can be attached safely.
+
+    External research rows deliberately do not carry vendor media.  This is the
+    explicit bridge to a matching BHM-owned Brand Scrape capture; it never
+    copies an image or video from a third-party research platform.
+    """
+    from app.models import ScrapedAd
+
+    source = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Ad not found")
+    source_vertical_id = getattr(source.saved_search, "vertical_id", None)
+    normalized_brand = (source.brand_name or "").strip().lower()
+    if not normalized_brand:
+        return []
+    candidates = (
+        db.query(ScrapedAd)
+        .filter(ScrapedAd.id != source.id)
+        .filter(func.lower(ScrapedAd.brand_name) == normalized_brand)
+        .filter(ScrapedAd.media_url.isnot(None))
+        .order_by(ScrapedAd.last_seen.desc())
+        .limit(100)
+        .all()
+    )
+    safe_candidates = []
+    for candidate in candidates:
+        candidate_intel = candidate.creative_intel or {}
+        if candidate_intel.get("capture_source") != "brand_scrape":
+            continue
+        candidate_vertical_id = getattr(candidate.saved_search, "vertical_id", None)
+        if source_vertical_id and candidate_vertical_id and candidate_vertical_id != source_vertical_id:
+            continue
+        safe_candidates.append(_serialize_scraped_ad(candidate))
+        if len(safe_candidates) >= max(1, min(limit, 12)):
+            break
+    return safe_candidates
+
+
+@router.post("/scraped-ads/{ad_id}/adopt-visual")
+def adopt_retained_research_visual(
+    ad_id: str,
+    source_ad_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Attach an explicitly selected, BHM-owned Brand Scrape visual to a finding."""
+    from app.models import ScrapedAd
+
+    target = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
+    source = db.query(ScrapedAd).filter(ScrapedAd.id == source_ad_id).first()
+    if not target or not source:
+        raise HTTPException(status_code=404, detail="Research capture not found")
+    if not source.media_url or (source.creative_intel or {}).get("capture_source") != "brand_scrape":
+        raise HTTPException(status_code=400, detail="Select a retained Brand Scrape visual")
+    if (target.brand_name or "").strip().lower() != (source.brand_name or "").strip().lower():
+        raise HTTPException(status_code=400, detail="Visual must come from the same advertiser")
+    target_vertical_id = getattr(target.saved_search, "vertical_id", None)
+    source_vertical_id = getattr(source.saved_search, "vertical_id", None)
+    if target_vertical_id and source_vertical_id and target_vertical_id != source_vertical_id:
+        raise HTTPException(status_code=400, detail="Visual must come from the same research vertical")
+    target.media_type = source.media_type if source.media_type in {"image", "video"} else "image"
+    target.media_url = source.media_url
+    target.thumbnail_url = source.thumbnail_url or (source.media_url if target.media_type == "image" else None)
+    target.media_preview_url = source.media_preview_url or (source.media_url if target.media_type == "video" else None)
+    target.video_urls = source.video_urls if target.media_type == "video" else target.video_urls
+    intel = dict(target.creative_intel or {})
+    intel.update({
+        "visual_source_ad_id": source.id,
+        "media_provenance": "BHM R2 Meta capture",
+        "visual_attachment": "operator-selected retained Brand Scrape capture",
+    })
+    target.creative_intel = _bounded_json(intel)
+    db.commit()
+    return _serialize_scraped_ad(target)
+
+
 @router.patch("/scraped-ads/{ad_id}/reviewed")
 def set_research_reviewed(ad_id: str, reviewed: bool, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Curate a raw capture into (or out of) the analyst-facing Brief."""

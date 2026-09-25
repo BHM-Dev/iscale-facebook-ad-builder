@@ -415,6 +415,9 @@ function ResearchDetailDrawer({ ad, activeVertical, advertiserSnapshot, onClose,
   const [savingNotes, setSavingNotes] = useState(false);
   const [videoFailed, setVideoFailed] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [visualCandidates, setVisualCandidates] = useState([]);
+  const [loadingVisualCandidates, setLoadingVisualCandidates] = useState(false);
+  const [adoptingVisualId, setAdoptingVisualId] = useState('');
   const [briefTakeaway, setBriefTakeaway] = useState('');
   const [savingBrief, setSavingBrief] = useState(false);
   const mediaInputRef = useRef(null);
@@ -429,6 +432,20 @@ function ResearchDetailDrawer({ ad, activeVertical, advertiserSnapshot, onClose,
   }, [ad?.id, activeVertical]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setNotes({ hook_type: ad?.hook_type || '', promise: ad?.promise || '' }); }, [ad?.id]);
   useEffect(() => { setBriefTakeaway(ad?.creative_intel?.bhm_takeaway || ''); }, [ad?.id]);
+  useEffect(() => {
+    if (!ad?.id || ad.thumbnail_url || ad.media_url || ad.platform !== 'external') {
+      setVisualCandidates([]);
+      return undefined;
+    }
+    let alive = true;
+    setLoadingVisualCandidates(true);
+    authFetch(`${API_URL}/research/scraped-ads/${ad.id}/visual-candidates`)
+      .then(res => res.ok ? res.json() : [])
+      .then(items => { if (alive) setVisualCandidates(Array.isArray(items) ? items : []); })
+      .catch(() => { if (alive) setVisualCandidates([]); })
+      .finally(() => { if (alive) setLoadingVisualCandidates(false); });
+    return () => { alive = false; };
+  }, [ad?.id, ad?.thumbnail_url, ad?.media_url, ad?.platform]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!ad) return undefined;
     const onKeyDown = (event) => { if (event.key === 'Escape') onClose(); };
@@ -479,6 +496,17 @@ function ResearchDetailDrawer({ ad, activeVertical, advertiserSnapshot, onClose,
       showSuccess(reviewed ? 'Added to Research Brief' : 'Removed from Research Brief');
     } catch (error) { showError(error.message || 'Could not update Brief'); }
   };
+  const adoptRetainedVisual = async (sourceAdId) => {
+    setAdoptingVisualId(sourceAdId);
+    try {
+      const response = await authFetch(`${API_URL}/research/scraped-ads/${ad.id}/adopt-visual?source_ad_id=${encodeURIComponent(sourceAdId)}`, { method: 'POST' });
+      const attached = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(attached.detail || 'Could not attach retained visual');
+      onMediaSaved(ad.id, attached);
+      showSuccess('BHM-captured visual attached to this Brief finding');
+    } catch (error) { showError(error.message || 'Could not attach retained visual'); }
+    finally { setAdoptingVisualId(''); }
+  };
   const saveBriefCuration = async (updates, successMessage) => {
     setSavingBrief(true);
     try {
@@ -497,6 +525,7 @@ function ResearchDetailDrawer({ ad, activeVertical, advertiserSnapshot, onClose,
       {(media || videoPreview) && <div className="relative mb-5 aspect-[4/3] overflow-hidden rounded-xl bg-slate-100">{ad.media_type === 'video' && videoPreview ? <video controls muted playsInline preload="metadata" poster={media || undefined} className="h-full w-full object-cover" onError={() => setVideoFailed(true)}><source src={videoPreview} />Your browser cannot preview this captured video.</video> : <img src={media} alt="Competitor creative" className="h-full w-full object-cover" onError={e => { e.target.style.display = 'none'; }} />}{ad.media_type === 'video' && <span className="absolute bottom-3 left-3 pointer-events-none inline-flex items-center gap-1 rounded-full bg-black/75 px-3 py-1.5 text-xs font-semibold text-white"><Play size={13} fill="currentColor"/> Video{ad.video_length_seconds ? ` · ${ad.video_length_seconds}s` : ''}</span>}</div>}
       <input ref={mediaInputRef} type="file" accept="image/*,video/mp4,video/webm,video/quicktime" className="hidden" onChange={attachVisual} />
       <button type="button" onClick={() => mediaInputRef.current?.click()} disabled={uploadingMedia} className="mb-5 inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"><ImagePlus size={14}/>{uploadingMedia ? 'Uploading…' : media ? 'Replace approved visual' : 'Attach approved visual'}</button>
+      {!media && ad.platform === 'external' && (loadingVisualCandidates || visualCandidates.length > 0) && <section className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3"><div><h3 className="text-sm font-semibold text-emerald-950">Retained {ad.brand_name || 'advertiser'} media</h3><p className="mt-1 text-xs leading-5 text-emerald-800">These are BHM’s R2-backed Meta captures from the same advertiser—not copied vendor media. Choose one only when it supports this reviewed pattern.</p></div>{loadingVisualCandidates ? <p className="mt-3 text-xs text-emerald-700">Finding retained captures…</p> : <div className="mt-3 grid grid-cols-2 gap-2">{visualCandidates.map(candidate => <button key={candidate.id} type="button" onClick={() => adoptRetainedVisual(candidate.id)} disabled={Boolean(adoptingVisualId)} className="overflow-hidden rounded-lg border border-emerald-200 bg-white text-left hover:border-emerald-400 disabled:opacity-50">{candidate.thumbnail_url || candidate.media_url ? <img src={candidate.thumbnail_url || candidate.media_url} alt="Retained Meta capture" className="aspect-[4/3] w-full object-cover" /> : <div className="flex aspect-[4/3] items-center justify-center bg-slate-100 text-xs text-slate-500">Visual capture</div>}<span className="block truncate px-2 py-1.5 text-[11px] font-semibold text-slate-700">{adoptingVisualId === candidate.id ? 'Attaching…' : 'Use this visual'}</span></button>)}</div>}</section>}
       {ad.platform !== 'external' && <button type="button" onClick={toggleReviewed} className="mb-5 ml-2 inline-flex rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-indigo-200 hover:text-indigo-700">{ad.creative_intel?.reviewed ? 'Remove from Brief' : 'Add to Brief'}</button>}
       <button type="button" onClick={() => saveBriefCuration({ pinned: !ad.creative_intel?.pinned }, ad.creative_intel?.pinned ? 'Unpinned from Research Brief' : 'Pinned in Research Brief')} disabled={savingBrief} className="mb-5 ml-2 inline-flex rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50">{ad.creative_intel?.pinned ? 'Unpin finding' : 'Pin finding'}</button>
       <div className="mb-5 flex flex-wrap gap-2">{ad.creative_intel?.research_source && <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">Source: {ad.creative_intel.research_source}</span>}{(ad.creative_tags || []).map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">{tag.replaceAll('_', ' ')}</span>)}{ad.cta_type && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">CTA: {ad.cta_type.replaceAll('_', ' ')}</span>}</div>
@@ -553,7 +582,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
           <span className="text-xs font-medium text-gray-400">{ad.media_type.toUpperCase()}</span>
         )}
         {!hasVisualCapture && (
-          <span className="text-xs font-medium text-amber-700" title="The source describes this format, but no image or playable video was retained with the capture.">NO VISUAL CAPTURE</span>
+          <span className="text-xs font-medium text-amber-700" title="The source reported an image or video format, but no usable asset was retained with this record.">FORMAT ONLY · NO ASSET</span>
         )}
         {Array.isArray(ad.platforms) && ad.platforms.length > 0 && (
           <span className="text-xs text-gray-400" title="Platforms reported by the Ad Library capture">
@@ -1916,7 +1945,7 @@ export default function Research() {
       ) : <>
 
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500" aria-label="Research catalog summary"><span className="font-semibold text-slate-800">{browseLoading ? 'Loading captures…' : `${catalogSummary.total} captured examples`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.newCount} new this week`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.videoCount} video`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.taggedCount} theme tagged`}</span><span className="text-slate-300">·</span><span className="text-slate-400">Current vertical + filters</span></div>
-      {!browseLoading && catalogSummary.total > 0 && catalogSummary.mediaCount === 0 && <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"><span>This view has no captured visual media yet. Import a Chrome Ad Library capture to unlock visual/video research.</span><button type="button" onClick={() => setShowImportModal(true)} className="font-semibold text-indigo-700 hover:text-indigo-900">Import visual captures</button></div>}
+      {!browseLoading && catalogSummary.total > 0 && catalogSummary.mediaCount === 0 && <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"><span>No retained assets in this filtered view. Source format labels are still shown, but they are not previews.</span><button type="button" onClick={() => setShowImportModal(true)} className="font-semibold text-indigo-700 hover:text-indigo-900">Import retained captures</button></div>}
 
       {/* Two-column layout */}
       <div className="flex gap-5 items-start">
