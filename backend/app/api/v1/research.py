@@ -142,7 +142,14 @@ def _matches_research_vertical(ad, config_id):
     text = " ".join(filter(None, [ad.brand_name, ad.headline, ad.ad_copy, ad.cta_text])).lower()
     commercial = ("business insurance", "commercial insurance", "general liability", "workers comp", "workers compensation", "business owners policy", "commercial auto", "business coverage", "liability insurance")
     insurance_context = ("insurance", "coverage", "policy", "premium", "insured", "liability")
-    obvious_noise = ("restaurant equipment", "now hiring", "lease type", "med spa", "hot-dog", "jewelry design", "tabletops")
+    # Known broad-search false positives are excluded even when their page or
+    # landing copy happens to contain generic commercial/insurance terms.
+    # These are product/service promotions, not insurance creative.
+    obvious_noise = (
+        "restaurant equipment", "now hiring", "lease type", "med spa",
+        "hot-dog", "jewelry design", "tabletops", "base compaction",
+        "ground freezes", "booking installs", "build a patio",
+    )
     # A broad Ad Library search can return ordinary commercial/home-service
     # promotions. Require insurance language as well as a commercial offer
     # phrase before presenting a raw capture in this vertical.
