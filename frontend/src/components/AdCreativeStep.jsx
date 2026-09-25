@@ -2598,9 +2598,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     {creative.previewUrl && (
                                                         <div className={`relative h-full ${creative.dualPlacement && creative.secondaryImageUrl ? 'w-1/2' : 'w-full'}`}>
                                                             {creative.mediaType === 'video' ? (
-                                                                <video src={creative.previewUrl} className="h-full w-full object-cover" muted playsInline />
+                                                                <video src={creative.previewUrl} className="h-full w-full object-cover" muted playsInline preload="metadata" />
                                                             ) : (
-                                                                <img src={creative.previewUrl} alt={creative.name} className="h-full w-full object-cover" />
+                                                                <img src={creative.previewUrl} alt={creative.name} className="h-full w-full object-cover" loading="lazy" decoding="async" />
                                                             )}
                                                             {/* Badge is a sibling of the two placement images now, not
                                                                 floating in the outer flex row — it was previously
@@ -2614,7 +2614,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     )}
                                                     {creative.dualPlacement && creative.secondaryImageUrl && (
                                                         <div className="relative h-full w-1/2">
-                                                            <img src={creative.secondaryImageUrl} alt={`${creative.name} Stories`} className="h-full w-full object-cover" />
+                                                            <img src={creative.secondaryImageUrl} alt={`${creative.name} Stories`} className="h-full w-full object-cover" loading="lazy" decoding="async" />
                                                             <span className="absolute bottom-1 left-1 rounded bg-purple-600 px-1 py-0.5 text-[9px] font-semibold text-white">Stories 9:16</span>
                                                         </div>
                                                     )}
@@ -3014,7 +3014,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             onClick={() => toggleLibrarySelection(ad.id)}
                                             className={`relative cursor-pointer rounded-lg overflow-hidden border-2 transition-all ${isSelected ? 'border-amber-500 ring-2 ring-amber-200' : 'border-gray-200 hover:border-amber-300'}`}
                                         >
-                                            <img src={ad.image_url} alt={ad.headline || 'Ad'} className="w-full aspect-square object-cover" />
+                                            <img src={ad.image_url} alt={ad.headline || 'Ad'} className="w-full aspect-square object-cover" loading="lazy" decoding="async" />
                                             {isSelected && (
                                                 <div className="absolute top-2 right-2 bg-amber-500 rounded-full p-0.5">
                                                     <Check size={14} className="text-white" />
@@ -3505,17 +3505,17 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                             <div className={`flex h-[96px] gap-1.5 bg-gray-100 p-1 ${group.isPair && group.storiesAsset ? 'items-stretch' : 'items-center justify-center'}`}>
                                                 <div className={`relative ${group.isPair && group.storiesAsset ? 'w-1/2 min-w-0' : 'h-full w-full'}`}>
                                                 {asset.format === 'video' ? (
-                                                    <video src={asset.r2_key} className="h-full w-full object-contain" muted />
+                                                    <video src={asset.r2_key} className="h-full w-full object-contain" muted preload="metadata" />
                                                 ) : (
-                                                    <img src={asset.r2_key} alt={asset.file_name} className="h-full w-full object-contain" />
+                                                    <img src={asset.r2_key} alt={asset.file_name} className="h-full w-full object-contain" loading="lazy" decoding="async" />
                                                 )}
                                                 </div>
                                                 {group.isPair && <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white">Feed</span>}
                                                 {group.isPair && group.storiesAsset && <div className="relative w-1/2 min-w-0">
                                                     {group.storiesAsset.format === 'video' ? (
-                                                        <video src={group.storiesAsset.r2_key} className="h-full w-full object-contain" muted />
+                                                        <video src={group.storiesAsset.r2_key} className="h-full w-full object-contain" muted preload="metadata" />
                                                     ) : (
-                                                        <img src={group.storiesAsset.r2_key} alt={group.storiesAsset.file_name} className="h-full w-full object-contain" />
+                                                        <img src={group.storiesAsset.r2_key} alt={group.storiesAsset.file_name} className="h-full w-full object-contain" loading="lazy" decoding="async" />
                                                     )}
                                                     <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white">Stories</span>
                                                 </div>}
