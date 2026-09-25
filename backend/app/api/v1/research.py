@@ -32,7 +32,7 @@ RESEARCH_CREATIVE_TAGS = {"testimonial", "problem_agitation", "transformation", 
 RESEARCH_CTA_TYPES = {"learn_more", "get_quote", "sign_up", "apply_now", "contact_us", "shop_now", "unknown"}
 RESEARCH_PAGE_TYPES = {"lead_form", "advertorial", "ecommerce", "homepage", "unknown"}
 COPILOT_STOP_WORDS = {
-    "active", "ad", "ads", "and", "are", "best", "day", "days", "find", "for", "from", "get", "in", "last", "me", "of", "performing", "please", "running", "show", "that", "the", "these", "this", "to", "what", "with",
+    "active", "ad", "ads", "and", "are", "best", "cta", "day", "days", "find", "for", "from", "get", "in", "last", "me", "of", "performing", "please", "running", "show", "that", "the", "these", "this", "to", "use", "what", "with",
 }
 COPILOT_SEGMENTS = {
     "owner-operators": ("owner operator", "owner-operator", "owner operators", "owner-operators"),
@@ -41,6 +41,28 @@ COPILOT_SEGMENTS = {
     "contractors": ("contractor", "contractors"),
     "tree services": ("tree service", "tree services", "arborist", "arborists"),
     "security firms": ("security firm", "security firms", "security company", "security companies"),
+}
+COPILOT_CREATIVE_TAGS = {
+    "testimonial": ("testimonial", "testimonials", "customer story", "customer stories"),
+    "review": ("review", "reviews", "rating", "ratings"),
+    "problem_agitation": ("problem agitation", "pain point", "pain points", "cost shock"),
+    "comparison": ("comparison", "compare", "versus", " vs "),
+    "ugc": ("ugc", "user generated", "selfie ad", "creator ad"),
+    "educational": ("educational", "explainer", "how it works"),
+    "listicle": ("listicle", "top reasons", "top 5", "top five"),
+}
+COPILOT_CTA_PHRASES = {
+    "get_quote": ("get quote", "quote ads", "quote ad"),
+    "learn_more": ("learn more",),
+    "apply_now": ("apply now",),
+    "sign_up": ("sign up", "signup"),
+    "contact_us": ("contact us", "contact them"),
+}
+COPILOT_PAGE_TYPE_PHRASES = {
+    "lead_form": ("lead form", "lead-form"),
+    "advertorial": ("advertorial", "presell", "pre sell"),
+    "ecommerce": ("ecommerce", "e-commerce", "product page"),
+    "homepage": ("homepage", "home page"),
 }
 
 
@@ -165,11 +187,13 @@ def _plan_research_copilot_question(question: str, vertical_id: str) -> dict:
     """
     text = question.casefold().strip()
     segments = [label for label, phrases in COPILOT_SEGMENTS.items() if any(phrase in text for phrase in phrases)]
+    creative_tags = [tag for tag, phrases in COPILOT_CREATIVE_TAGS.items() if any(phrase in text for phrase in phrases)]
+    cta_type = next((cta for cta, phrases in COPILOT_CTA_PHRASES.items() if any(phrase in text for phrase in phrases)), None)
+    page_type = next((page for page, phrases in COPILOT_PAGE_TYPE_PHRASES.items() if any(phrase in text for phrase in phrases)), None)
     active_only = any(term in text for term in ("active", "current", "running", "live now"))
     recent_match = re.search(r"(?:last|past)\s+(\d{1,3})\s+days", text)
     runtime_match = re.search(r"(?:running|run|active)[^\d]{0,20}(\d{1,3})\s*(?:\+|plus)?\s*days", text)
     media_type = "video" if "video" in text else "image" if any(term in text for term in ("image", "static")) else None
-    cta_type = "get_quote" if any(term in text for term in ("get quote", "quote ads", "quote ad")) else None
     raw_terms = re.findall(r"[a-z0-9]{3,}", text)
     terms = [term for term in raw_terms if term not in COPILOT_STOP_WORDS and not term.isdigit()]
     # Segment labels are query intent, not a reason to require every individual
@@ -177,14 +201,24 @@ def _plan_research_copilot_question(question: str, vertical_id: str) -> dict:
     for phrase in sum((list(phrases) for label, phrases in COPILOT_SEGMENTS.items() if label in segments), []):
         for token in re.findall(r"[a-z0-9]{3,}", phrase):
             terms = [term for term in terms if term != token]
+    for phrase in sum((list(phrases) for tag, phrases in COPILOT_CREATIVE_TAGS.items() if tag in creative_tags), []):
+        for token in re.findall(r"[a-z0-9]{3,}", phrase):
+            terms = [term for term in terms if term != token]
+    for phrase_group, selected in ((COPILOT_CTA_PHRASES, cta_type), (COPILOT_PAGE_TYPE_PHRASES, page_type)):
+        if not selected:
+            continue
+        for token in re.findall(r"[a-z0-9]{3,}", " ".join(phrase_group[selected])):
+            terms = [term for term in terms if term != token]
     return {
         "vertical_id": vertical_id,
         "segments": segments,
+        "creative_tags": creative_tags,
         "active_only": active_only,
         "captured_within_days": min(int(recent_match.group(1)), 365) if recent_match else None,
         "min_running_days": min(int(runtime_match.group(1)), 3650) if runtime_match else None,
         "media_type": media_type,
         "cta_type": cta_type,
+        "page_type": page_type,
         "terms": terms[:8],
         "ranking": ["observed runtime", "creative versions", "capture recency", "retained media"],
     }
@@ -220,7 +254,12 @@ def _score_research_copilot_candidate(ad, plan: dict, now: datetime) -> tuple[in
     if plan["cta_type"]:
         if ad.cta_type != plan["cta_type"]:
             return None
-        reasons.append("get quote CTA")
+        reasons.append(f"{plan['cta_type'].replace('_', ' ')} CTA")
+        score += 8
+    if plan["page_type"]:
+        if ad.page_type != plan["page_type"]:
+            return None
+        reasons.append(f"{plan['page_type'].replace('_', ' ')} destination")
         score += 8
     segment_matches = [segment for segment in plan["segments"] if any(phrase in text for phrase in COPILOT_SEGMENTS[segment])]
     if plan["segments"] and not segment_matches:
@@ -228,8 +267,19 @@ def _score_research_copilot_candidate(ad, plan: dict, now: datetime) -> tuple[in
     if segment_matches:
         reasons.extend(f"{segment} language" for segment in segment_matches)
         score += 28 * len(segment_matches)
+    tag_matches = [tag for tag in plan["creative_tags"] if tag in (ad.creative_tags or [])]
+    if plan["creative_tags"] and not tag_matches:
+        # Imports predating taxonomy may still carry the explicit phrase in
+        # their visible copy. This fallback is transparent and avoids making
+        # older, otherwise valid evidence disappear solely for missing tags.
+        tag_matches = [tag for tag in plan["creative_tags"] if any(phrase in text for phrase in COPILOT_CREATIVE_TAGS[tag])]
+    if plan["creative_tags"] and not tag_matches:
+        return None
+    if tag_matches:
+        reasons.extend(f"{tag.replace('_', ' ')} pattern" for tag in tag_matches)
+        score += 18 * len(tag_matches)
     term_matches = [term for term in plan["terms"] if term in text]
-    if plan["terms"] and not term_matches and not segment_matches:
+    if plan["terms"] and not term_matches and not segment_matches and not tag_matches:
         return None
     if term_matches:
         reasons.append("matched: " + ", ".join(term_matches[:3]))

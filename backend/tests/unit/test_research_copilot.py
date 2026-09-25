@@ -29,3 +29,13 @@ def test_copilot_suggestions_broaden_runtime_without_claiming_performance():
     assert suggestions
     assert any("runtime" in suggestion["reason"] for suggestion in suggestions)
     assert all("best performing" not in suggestion["question"].casefold() for suggestion in suggestions)
+
+
+def test_copilot_plan_extracts_creative_pattern_cta_and_destination():
+    plan = _plan_research_copilot_question(
+        "Show UGC comparison ads with a learn more CTA that use an advertorial",
+        "commercial_insurance",
+    )
+    assert plan["creative_tags"] == ["comparison", "ugc"]
+    assert plan["cta_type"] == "learn_more"
+    assert plan["page_type"] == "advertorial"
