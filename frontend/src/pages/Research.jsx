@@ -951,7 +951,7 @@ function ComparePanel({ ads, onClose, onInspect }) {
   return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/30 p-4 backdrop-blur-sm sm:items-center" onClick={onClose}>
     <section className="max-h-[85vh] w-full max-w-6xl overflow-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={event => event.stopPropagation()} aria-label="Compare research ads">
       <div className="flex items-center justify-between gap-4"><div><h2 className="text-lg font-semibold text-slate-900">Compare ads</h2><p className="text-xs text-slate-500">Creative structure only—not performance.</p></div><button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close comparison"><X size={18}/></button></div>
-      <div className={`mt-5 grid gap-4 ${ads.length === 1 ? 'grid-cols-1' : ads.length === 2 ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>{ads.map(ad => <article key={ad.id} className="overflow-hidden rounded-xl border border-slate-200"><button type="button" onClick={() => onInspect(ad)} className="w-full border-b border-slate-100 bg-slate-50 p-4 text-left hover:bg-indigo-50"><p className="truncate text-sm font-semibold text-slate-900">{ad.brand_name || 'Unknown advertiser'}</p><p className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-slate-700">{ad.headline || 'No headline captured'}</p></button><div className="space-y-4 p-4"><div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Copy</p><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-600">{ad.ad_copy || 'No copy captured'}</p></div><div className="flex flex-wrap gap-1.5">{(ad.creative_tags || []).map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-violet-700">{tag.replaceAll('_', ' ')}</span>)}{ad.cta_type && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-600">{ad.cta_type.replaceAll('_', ' ')}</span>}</div><div className="grid grid-cols-2 gap-2 text-xs"><div><p className="text-slate-400">Format</p><p className="mt-1 font-medium text-slate-700">{ad.media_type || 'Unknown'}</p></div><div><p className="text-slate-400">Visual</p><p className="mt-1 font-medium text-slate-700">{ad.thumbnail_url || ad.media_url ? 'Available' : 'Not retained'}</p></div></div></div></article>)}</div>
+      <div className={`mt-5 grid gap-4 ${ads.length === 1 ? 'grid-cols-1' : ads.length === 2 ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>{ads.map(ad => <article key={ad.id} className="overflow-hidden rounded-xl border border-slate-200"><button type="button" onClick={() => onInspect(ad)} className="w-full border-b border-slate-100 bg-slate-50 p-4 text-left hover:bg-indigo-50"><p className="truncate text-sm font-semibold text-slate-900">{ad.brand_name || 'Unknown advertiser'}</p><p className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-slate-700">{ad.headline || 'No headline captured'}</p></button>{(ad.thumbnail_url || ad.media_url) ? <button type="button" onClick={() => onInspect(ad)} className="flex aspect-[16/9] w-full items-center justify-center overflow-hidden bg-slate-100" title="Inspect creative"><img src={ad.thumbnail_url || ad.media_url} alt="" className="h-full w-full object-contain" /></button> : <div className="flex aspect-[16/9] items-center justify-center bg-slate-50 text-xs font-medium text-slate-400">No retained visual</div>}<div className="space-y-4 p-4"><div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Copy</p><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-600">{ad.ad_copy || 'No copy captured'}</p></div><div className="flex flex-wrap gap-1.5">{(ad.creative_tags || []).map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-violet-700">{tag.replaceAll('_', ' ')}</span>)}{ad.cta_type && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-600">{ad.cta_type.replaceAll('_', ' ')}</span>}</div><div className="grid grid-cols-2 gap-2 text-xs"><div><p className="text-slate-400">Format</p><p className="mt-1 font-medium text-slate-700">{ad.media_type || 'Unknown'}</p></div><div><p className="text-slate-400">Visual</p><p className="mt-1 font-medium text-slate-700">Available</p></div></div></div></article>)}</div>
     </section>
   </div>;
 }
@@ -972,7 +972,15 @@ function PatternMap({ findings }) {
   </section>;
 }
 
-function ResearchBrief({ findings, totalFindings, visualStats, visualFilter, onVisualFilterChange, verticalLabel, onOpenLibrary, onInspect, onBuild, allFindings }) {
+function ResearchLanes({ visualCount, onOpenVisuals, onOpenThemes, onOpenAdvertisers }) {
+  return <section className="grid gap-3 md:grid-cols-3" aria-label="Research lanes">
+    <button type="button" onClick={onOpenVisuals} className="rounded-xl border border-slate-200 bg-white p-4 text-left transition-colors hover:border-indigo-200 hover:bg-indigo-50"><p className="text-sm font-semibold text-slate-900">Visual review</p><p className="mt-1 text-xs leading-5 text-slate-500">{visualCount} retained visual{visualCount === 1 ? '' : 's'} to inspect.</p></button>
+    <button type="button" onClick={onOpenThemes} className="rounded-xl border border-slate-200 bg-white p-4 text-left transition-colors hover:border-indigo-200 hover:bg-indigo-50"><p className="text-sm font-semibold text-slate-900">Creative themes</p><p className="mt-1 text-xs leading-5 text-slate-500">Compare hooks, framing, and calls to action.</p></button>
+    <button type="button" onClick={onOpenAdvertisers} className="rounded-xl border border-slate-200 bg-white p-4 text-left transition-colors hover:border-indigo-200 hover:bg-indigo-50"><p className="text-sm font-semibold text-slate-900">Advertisers</p><p className="mt-1 text-xs leading-5 text-slate-500">Start with a retained competitor, then inspect examples.</p></button>
+  </section>;
+}
+
+function ResearchBrief({ findings, totalFindings, visualStats, visualFilter, onVisualFilterChange, verticalLabel, onOpenLibrary, onOpenVisuals, onOpenThemes, onOpenAdvertisers, onInspect, onBuild, allFindings }) {
   return (
     <section className="space-y-4" aria-label="Research brief">
       <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-white p-5">
@@ -993,6 +1001,7 @@ function ResearchBrief({ findings, totalFindings, visualStats, visualFilter, onV
       </div>
 
       <PatternMap findings={allFindings} />
+      <ResearchLanes visualCount={visualStats.withVisual} onOpenVisuals={onOpenVisuals} onOpenThemes={onOpenThemes} onOpenAdvertisers={onOpenAdvertisers} />
 
       {findings.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
@@ -1791,6 +1800,30 @@ export default function Research() {
     setAngleFilter(''); setMediaTypeFilter(''); setCreativeTagFilter(''); setCtaTypeFilter('');
     setPageTypeFilter(''); setActiveOnly(false); setNewOnly(false); setNeedsTagging(false); setHasVisual(false); setAdvertiserFilter(''); setAdsPerAdvertiser(0);
   };
+  const openVisualLane = () => {
+    clearFilters();
+    setHasVisual(true);
+    setCatalogMode('ads');
+    setShowAdvancedFilters(true);
+    setResearchView('library');
+    setResultMode('browse');
+    setSearchResultAds([]);
+  };
+  const openThemeLane = () => {
+    clearFilters();
+    setCatalogMode('ads');
+    setShowAdvancedFilters(true);
+    setResearchView('library');
+    setResultMode('browse');
+    setSearchResultAds([]);
+  };
+  const openAdvertiserLane = () => {
+    clearFilters();
+    setCatalogMode('advertisers');
+    setResearchView('library');
+    setResultMode('browse');
+    setSearchResultAds([]);
+  };
   const currentViewFilters = () => ({
     activeVertical, activeSubVertical, angleFilter, mediaTypeFilter, sortBy,
     activeOnly, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter,
@@ -2086,6 +2119,9 @@ export default function Research() {
           onVisualFilterChange={setBriefVisualFilter}
           verticalLabel={currentVerticalLabel}
           onOpenLibrary={() => setResearchView('library')}
+          onOpenVisuals={openVisualLane}
+          onOpenThemes={openThemeLane}
+          onOpenAdvertisers={openAdvertiserLane}
           onInspect={inspectCreative}
           onBuild={handleUseAsInspiration}
           allFindings={reviewedFindingsAll}
