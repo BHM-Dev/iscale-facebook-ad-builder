@@ -1987,7 +1987,8 @@ def query_research_copilot(
     It does not call a model, scrape Meta, or represent source proxies as
     performance data.
     """
-    from app.models import ScrapedAd, SavedSearch
+    from app.models import PageBlacklist, ScrapedAd, SavedSearch, Vertical
+    from app.core.vertical_config import ALWAYS_BLOCKED_PAGES, VERTICAL_KEYWORD_SETS
     from sqlalchemy.orm import joinedload
 
     vertical_label = _configured_vertical_label(payload.vertical_id)
