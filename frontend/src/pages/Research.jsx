@@ -122,6 +122,9 @@ const withDerivedResearchStatus = (ad) => {
 };
 
 const isUnknownMedia = (mediaType) => !['image', 'video', 'carousel'].includes((mediaType || '').toLowerCase());
+const hasVisualCandidate = (ad) => Boolean(
+  ad.thumbnail_url || ad.media_url || ad.media_preview_url || (ad.video_urls || []).length,
+);
 
 const capAdsPerAdvertiser = (ads, adsPerAdvertiser) => {
   if (!adsPerAdvertiser) return ads;
@@ -149,7 +152,7 @@ const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, advertiserFilter
     (!pageTypeFilter || ad.page_type === pageTypeFilter) &&
     (!newOnly || !ad.first_seen || Date.now() - new Date(ad.first_seen).getTime() <= 7 * 24 * 60 * 60 * 1000) &&
     (!needsTagging || !ad.taxonomy_source) &&
-    (!hasVisual || Boolean(ad.thumbnail_url || ad.media_url || ad.media_preview_url || (ad.video_urls || []).length)) &&
+    (!hasVisual || hasVisualCandidate(ad)) &&
     (!activeOnly || withDerivedResearchStatus(ad).is_active)
   )), sortBy), adsPerAdvertiser);
 };
@@ -567,7 +570,7 @@ function ResearchDetailDrawer({ ad, activeVertical, advertiserSnapshot, retained
   </div>;
 }
 
-function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, onBlockPage, onSetReviewed, angleTags, boards, onAddToBoard, onCreateBoard, onRemoveFromBoard }) {
+function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, onBlockPage, onSetReviewed, angleTags, boards, onAddToBoard, onCreateBoard, onRemoveFromBoard, onVisualLoadError }) {
   const [videoPreviewFailed, setVideoPreviewFailed] = useState(false);
   const media = ad.thumbnail_url || ad.media_url;
   const videoPreview = ad.media_preview_url || (ad.video_urls || [])[0];
@@ -582,7 +585,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
           get a useful preview, and falls back to an inspectable state if it expires. */}
       {(media || videoPreview) && (
         <button type="button" onClick={() => onInspect(ad)} className="relative rounded-lg overflow-hidden bg-gray-100 -mx-4 -mt-4 mb-1 aspect-[4/3] text-left" aria-label="Inspect captured creative">
-          {media ? <img src={media} alt="" className="w-full h-full object-cover transition-transform duration-500 hover:scale-[1.02]" onError={(e) => { e.target.style.display = 'none'; }} />
+          {media ? <img src={media} alt="" className="w-full h-full object-cover transition-transform duration-500 hover:scale-[1.02]" onError={() => onVisualLoadError?.(ad.id)} />
             : !videoPreviewFailed ? <video muted loop playsInline preload="metadata" className="w-full h-full object-cover" onMouseEnter={event => event.currentTarget.play().catch(() => {})} onMouseLeave={event => { event.currentTarget.pause(); event.currentTarget.currentTime = 0; }} onError={() => setVideoPreviewFailed(true)}><source src={videoPreview} /></video>
               : <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-slate-900 text-white"><Video size={28} /><span className="text-xs font-semibold">Video capture · inspect to review</span></div>}
           {ad.media_type === 'video' && <span className="absolute left-3 bottom-3 inline-flex items-center gap-1.5 rounded-full bg-black/75 px-2.5 py-1 text-[11px] font-semibold text-white"><Play size={12} fill="currentColor" /> Video{ad.video_length_seconds ? ` · ${ad.video_length_seconds}s` : ''}</span>}
@@ -1097,6 +1100,10 @@ export default function Research() {
   const homeServicesRef = useRef(null);
 
   const [browseAds, setBrowseAds] = useState([]);
+  // A Meta CDN URL can be present in a capture but no longer resolve. Keep
+  // those failures client-side so "Has visual capture" means an image/video
+  // the researcher can actually see, not merely a stale URL in the database.
+  const [failedVisualIds, setFailedVisualIds] = useState(() => new Set());
   const [catalogMode, setCatalogMode] = useState('ads');
   const [advertiserDirectory, setAdvertiserDirectory] = useState(null);
   const [advertiserDirectoryLoading, setAdvertiserDirectoryLoading] = useState(false);
@@ -1150,6 +1157,22 @@ export default function Research() {
   const contextGenerationRef = useRef(0);
   const activeVerticalRef = useRef(activeVertical);
   const activeSubVerticalRef = useRef(activeSubVertical);
+
+  const displayedBrowseAds = useMemo(
+    () => hasVisual ? browseAds.filter(ad => !failedVisualIds.has(ad.id)) : browseAds,
+    [browseAds, failedVisualIds, hasVisual],
+  );
+
+  const handleVisualLoadError = (adId) => {
+    if (!hasVisual || !adId) return;
+    setFailedVisualIds(previous => previous.has(adId) ? previous : new Set([...previous, adId]));
+  };
+
+  // A new browse response may contain a refreshed replacement URL for an ad
+  // that failed earlier. Let that candidate prove itself again.
+  useEffect(() => {
+    setFailedVisualIds(new Set());
+  }, [browseAds]);
 
   // ── Boot ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -1826,13 +1849,13 @@ export default function Research() {
     setResultMode('search');
   };
   const catalogSummary = useMemo(() => ({
-    total: browseAds.length,
-    newCount: browseAds.filter(ad => ad.first_seen && Date.now() - new Date(ad.first_seen).getTime() <= 7 * 24 * 60 * 60 * 1000).length,
-    videoCount: browseAds.filter(ad => ad.media_type === 'video').length,
-    mediaCount: browseAds.filter(ad => ad.thumbnail_url || ad.media_url).length,
-    taggedCount: browseAds.filter(ad => (ad.creative_tags || []).length > 0).length,
-    needsReviewCount: browseAds.filter(ad => ad.relevance_status === 'needs_review').length,
-  }), [browseAds]);
+    total: displayedBrowseAds.length,
+    newCount: displayedBrowseAds.filter(ad => ad.first_seen && Date.now() - new Date(ad.first_seen).getTime() <= 7 * 24 * 60 * 60 * 1000).length,
+    videoCount: displayedBrowseAds.filter(ad => ad.media_type === 'video').length,
+    mediaCount: displayedBrowseAds.filter(hasVisualCandidate).length,
+    taggedCount: displayedBrowseAds.filter(ad => (ad.creative_tags || []).length > 0).length,
+    needsReviewCount: displayedBrowseAds.filter(ad => ad.relevance_status === 'needs_review').length,
+  }), [displayedBrowseAds]);
   const reviewedFindingsAll = useMemo(() => [...browseAds]
     .filter(ad => ad.platform === 'external' || ad.creative_intel?.reviewed)
     .sort((a, b) => Number(Boolean(b.creative_intel?.pinned)) - Number(Boolean(a.creative_intel?.pinned))), [browseAds]);
@@ -2121,11 +2144,11 @@ export default function Research() {
             <p className="mt-2 text-[11px] text-gray-400">Keyword Search is global; the selected vertical scopes Browse and Refresh.</p>
           </form>
           {/* Filter bar */}
-          <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-4 flex-wrap">
-            <div className="flex items-center gap-2 flex-1 min-w-0">
+          <div className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 lg:flex-row lg:items-center">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-2">
               <span className="text-xs font-medium text-gray-500 whitespace-nowrap">
                 {resultMode === 'search' ? 'SEARCH RESULTS' : 'BROWSE'}
-                {!browseLoading && <span className="ml-1 text-gray-400">({browseAds.length})</span>}
+                {!browseLoading && <span className="ml-1 text-gray-400">({displayedBrowseAds.length})</span>}
               </span>
               <div className="h-4 w-px bg-gray-200" />
 
@@ -2185,7 +2208,7 @@ export default function Research() {
               value={advertiserFilter}
               onChange={e => setAdvertiserFilter(e.target.value)}
               placeholder="Filter by advertiser…"
-              className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-indigo-400 focus:border-transparent w-44"
+              className="w-full shrink-0 rounded-lg border border-gray-200 px-3 py-1.5 text-xs focus:border-transparent focus:ring-2 focus:ring-indigo-400 sm:w-56 lg:w-48"
             />
             {hasActiveFilters && <button type="button" onClick={clearFilters} className="text-xs font-medium text-indigo-600 hover:text-indigo-800">Clear filters</button>}
           </div>
@@ -2218,7 +2241,7 @@ export default function Research() {
                 {resultMode === 'search' ? 'Edit search' : 'Try again'}
               </button>
             </div>
-          ) : browseAds.length === 0 ? (
+          ) : displayedBrowseAds.length === 0 ? (
             <div className="bg-white rounded-xl border border-gray-200 px-6 py-16 text-center">
               <p className="text-gray-500 font-medium mb-1">{resultMode === 'search' ? `No ads found for “${query}”` : `No ads yet for ${currentVerticalLabel}`}</p>
               <p className="text-sm text-gray-400 mb-4">
@@ -2241,7 +2264,7 @@ export default function Research() {
           ) : (
             <>
               <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4">
-                {browseAds.slice(0, visibleCardCount).map(ad => (
+                {displayedBrowseAds.slice(0, visibleCardCount).map(ad => (
                   <AdCard
                     key={ad.id}
                     ad={ad}
@@ -2256,10 +2279,11 @@ export default function Research() {
                     boards={boards}
                     onAddToBoard={handleAddToBoard}
                     onCreateBoard={handleCreateBoard}
+                    onVisualLoadError={handleVisualLoadError}
                   />
                 ))}
               </div>
-              {browseAds.length > visibleCardCount && <div className="mt-5 flex flex-col items-center gap-2"><p className="text-xs text-slate-500">Showing {visibleCardCount} of {browseAds.length} matching captures</p><button type="button" onClick={() => setVisibleCardCount(count => Math.min(count + RESEARCH_CARD_PAGE_SIZE, browseAds.length))} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700">Show {Math.min(RESEARCH_CARD_PAGE_SIZE, browseAds.length - visibleCardCount)} more</button></div>}
+              {displayedBrowseAds.length > visibleCardCount && <div className="mt-5 flex flex-col items-center gap-2"><p className="text-xs text-slate-500">Showing {visibleCardCount} of {displayedBrowseAds.length} matching captures</p><button type="button" onClick={() => setVisibleCardCount(count => Math.min(count + RESEARCH_CARD_PAGE_SIZE, displayedBrowseAds.length))} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700">Show {Math.min(RESEARCH_CARD_PAGE_SIZE, displayedBrowseAds.length - visibleCardCount)} more</button></div>}
             </>
           )}
         </div>
