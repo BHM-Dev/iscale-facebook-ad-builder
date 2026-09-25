@@ -432,7 +432,7 @@ function BoardSaveButton({ ad, boards, onAdd, onCreate }) {
 // The research card is an inbox, not an ad-operations console. Keep the
 // high-frequency actions visible and move destructive/navigation utilities
 // behind one predictable overflow affordance.
-function CardOverflowMenu({ ad, advertiserUrl, isReviewed, onInspect, onBlockPage, onSetReviewed, onRemoveFromBoard, boards, onAddToBoard, onCreateBoard }) {
+function CardOverflowMenu({ ad, advertiserUrl, isReviewed, onInspect, onBlockPage, onSetReviewed, onRemoveFromBoard, boards, onAddToBoard, onCreateBoard, isCompared, onToggleCompare }) {
   return (
     <details className="relative">
       <summary className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 [&::-webkit-details-marker]:hidden" aria-label="More research actions" title="More research actions">
@@ -440,6 +440,7 @@ function CardOverflowMenu({ ad, advertiserUrl, isReviewed, onInspect, onBlockPag
       </summary>
       <div className="absolute bottom-10 right-0 z-20 w-52 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
         <button type="button" onClick={() => onInspect(ad)} className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50">Inspect details</button>
+        {onToggleCompare && <button type="button" onClick={() => onToggleCompare(ad)} className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50">{isCompared ? 'Remove from compare' : 'Add to compare'}</button>}
         <a href={advertiserUrl} target="_blank" rel="noopener noreferrer" className="flex w-full items-center rounded-lg px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">{ad.platform === 'external' ? 'Open source' : 'View advertiser ads'} <ExternalLink size={11} className="ml-auto" /></a>
         {ad.platform !== 'external' && <button type="button" onClick={() => onSetReviewed(ad, !isReviewed)} className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50">{isReviewed ? 'Remove from Research Brief' : 'Add to Research Brief'}</button>}
         <div className="my-1 border-t border-slate-100" />
@@ -593,7 +594,7 @@ function ResearchDetailDrawer({ ad, activeVertical, advertiserSnapshot, retained
   </div>;
 }
 
-function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, onBlockPage, onSetReviewed, angleTags, boards, onAddToBoard, onCreateBoard, onRemoveFromBoard, onVisualLoadError }) {
+function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, onBlockPage, onSetReviewed, angleTags, boards, onAddToBoard, onCreateBoard, onRemoveFromBoard, onVisualLoadError, isCompared, onToggleCompare }) {
   const [videoPreviewFailed, setVideoPreviewFailed] = useState(false);
   const media = ad.thumbnail_url || ad.media_url;
   const videoPreview = ad.media_preview_url || (ad.video_urls || [])[0];
@@ -707,7 +708,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
             angleTags={angleTags}
           />
         </div>
-        <CardOverflowMenu ad={ad} advertiserUrl={advertiserUrl} isReviewed={isReviewed} onInspect={onInspect} onBlockPage={onBlockPage} onSetReviewed={onSetReviewed} onRemoveFromBoard={onRemoveFromBoard} boards={boards} onAddToBoard={onAddToBoard} onCreateBoard={onCreateBoard} />
+        <CardOverflowMenu ad={ad} advertiserUrl={advertiserUrl} isReviewed={isReviewed} onInspect={onInspect} onBlockPage={onBlockPage} onSetReviewed={onSetReviewed} onRemoveFromBoard={onRemoveFromBoard} boards={boards} onAddToBoard={onAddToBoard} onCreateBoard={onCreateBoard} isCompared={isCompared} onToggleCompare={onToggleCompare} />
       </div>
     </div>
   );
@@ -936,6 +937,25 @@ function ExternalResearchImportModal({ open, onClose, onImport, importing, defau
   );
 }
 
+function CompareTray({ ads, onRemove, onClear, onOpen }) {
+  if (!ads.length) return null;
+  return <div className="fixed bottom-5 left-1/2 z-30 flex w-[min(680px,calc(100vw-2rem))] -translate-x-1/2 items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
+    <div className="min-w-0 flex-1"><p className="text-xs font-semibold text-slate-700">Compare {ads.length} ad{ads.length === 1 ? '' : 's'}</p><div className="mt-1 flex gap-1 overflow-hidden">{ads.map(ad => <button type="button" key={ad.id} onClick={() => onRemove(ad.id)} title={`Remove ${ad.brand_name || 'ad'}`} className="max-w-32 truncate rounded bg-slate-100 px-2 py-1 text-[11px] text-slate-600 hover:bg-red-50 hover:text-red-700">{ad.brand_name || 'Unknown'} ×</button>)}</div></div>
+    <button type="button" onClick={onClear} className="text-xs font-medium text-slate-500 hover:text-slate-800">Clear</button>
+    <button type="button" onClick={onOpen} className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700">Compare</button>
+  </div>;
+}
+
+function ComparePanel({ ads, onClose, onInspect }) {
+  if (!ads.length) return null;
+  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/30 p-4 backdrop-blur-sm sm:items-center" onClick={onClose}>
+    <section className="max-h-[85vh] w-full max-w-6xl overflow-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={event => event.stopPropagation()} aria-label="Compare research ads">
+      <div className="flex items-center justify-between gap-4"><div><h2 className="text-lg font-semibold text-slate-900">Compare ads</h2><p className="text-xs text-slate-500">Creative structure only—not performance.</p></div><button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close comparison"><X size={18}/></button></div>
+      <div className={`mt-5 grid gap-4 ${ads.length === 1 ? 'grid-cols-1' : ads.length === 2 ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>{ads.map(ad => <article key={ad.id} className="overflow-hidden rounded-xl border border-slate-200"><button type="button" onClick={() => onInspect(ad)} className="w-full border-b border-slate-100 bg-slate-50 p-4 text-left hover:bg-indigo-50"><p className="truncate text-sm font-semibold text-slate-900">{ad.brand_name || 'Unknown advertiser'}</p><p className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-slate-700">{ad.headline || 'No headline captured'}</p></button><div className="space-y-4 p-4"><div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Copy</p><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-600">{ad.ad_copy || 'No copy captured'}</p></div><div className="flex flex-wrap gap-1.5">{(ad.creative_tags || []).map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-violet-700">{tag.replaceAll('_', ' ')}</span>)}{ad.cta_type && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-600">{ad.cta_type.replaceAll('_', ' ')}</span>}</div><div className="grid grid-cols-2 gap-2 text-xs"><div><p className="text-slate-400">Format</p><p className="mt-1 font-medium text-slate-700">{ad.media_type || 'Unknown'}</p></div><div><p className="text-slate-400">Visual</p><p className="mt-1 font-medium text-slate-700">{ad.thumbnail_url || ad.media_url ? 'Available' : 'Not retained'}</p></div></div></div></article>)}</div>
+    </section>
+  </div>;
+}
+
 function PatternMap({ findings }) {
   const top = (values, fallback) => Object.entries(values.reduce((counts, value) => {
     const key = value || fallback;
@@ -1108,6 +1128,8 @@ export default function Research() {
   const [showExternalImportModal, setShowExternalImportModal] = useState(false);
   const [detailAd, setDetailAd] = useState(null);
   const [detailHistory, setDetailHistory] = useState([]);
+  const [compareIds, setCompareIds] = useState([]);
+  const [compareOpen, setCompareOpen] = useState(false);
   const [importingIntel, setImportingIntel] = useState(false);
   const [clearing, setClearing] = useState(false);
 
@@ -1801,6 +1823,7 @@ export default function Research() {
     setDetailAd(ad);
     setDetailHistory(prev => [...prev.filter(item => item.id !== ad.id), ad]);
   };
+  const toggleCompare = (ad) => setCompareIds(ids => ids.includes(ad.id) ? ids.filter(id => id !== ad.id) : [...ids, ad.id].slice(-3));
   const closeDetail = () => { setDetailAd(null); setDetailHistory([]); };
   const goBackInDetail = () => setDetailHistory(prev => {
     const next = prev.slice(0, -1);
@@ -1846,6 +1869,10 @@ export default function Research() {
   const reviewedFindings = useMemo(() => reviewedFindingsAll.filter(ad => (
     briefVisualFilter === 'all' || (briefVisualFilter === 'with_visual' ? Boolean(ad.thumbnail_url || ad.media_url) : !ad.thumbnail_url && !ad.media_url)
   )), [reviewedFindingsAll, briefVisualFilter]);
+  const compareAds = useMemo(() => {
+    const byId = new Map([...browseAds, ...savedAds, ...boardAds].map(ad => [ad.id, ad]));
+    return compareIds.map(id => byId.get(id)).filter(Boolean);
+  }, [browseAds, savedAds, boardAds, compareIds]);
   // The detail drawer must stay in the workspace the user entered from.
   // A Brief finding is not the first item in the raw catalog merely because
   // both records live in the same collection.
@@ -2245,6 +2272,8 @@ export default function Research() {
                     onAddToBoard={handleAddToBoard}
                     onCreateBoard={handleCreateBoard}
                     onVisualLoadError={handleVisualLoadError}
+                    isCompared={compareIds.includes(ad.id)}
+                    onToggleCompare={toggleCompare}
                   />
                 ))}
               </div>
@@ -2340,6 +2369,8 @@ export default function Research() {
                   onAddToBoard={handleAddToBoard}
                   onCreateBoard={handleCreateBoard}
                   onRemoveFromBoard={handleRemoveFromBoard}
+                  isCompared={compareIds.includes(ad.id)}
+                  onToggleCompare={toggleCompare}
                 />
               )) : visibleSavedAds.map(ad => (
                 <SavedCard
@@ -2359,6 +2390,9 @@ export default function Research() {
         </div>
       </div>}
       </>}
+
+      <CompareTray ads={compareAds} onRemove={id => setCompareIds(ids => ids.filter(item => item !== id))} onClear={() => setCompareIds([])} onOpen={() => setCompareOpen(true)} />
+      {compareOpen && <ComparePanel ads={compareAds} onClose={() => setCompareOpen(false)} onInspect={ad => { setCompareOpen(false); inspectCreative(ad); }} />}
 
       {/* Clear Ads confirmation modal */}
       {showClearModal && (
