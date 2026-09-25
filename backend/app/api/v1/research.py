@@ -13,7 +13,8 @@ from app.schemas.research import (
     AdSearchRequest, ScrapedAdResponse, ScrapedAdCreate, ScrapedAdSearchResult, SavedSearchResponse,
     BrandScrapeCreate, BrandScrapeResponse, BrandScrapeListResponse, AdLibraryImportRequest,
     ExternalResearchImportRequest,
-    ResearchBoardCreate, ResearchBoardItemCreate, ResearchBoardResponse, ResearchBoardItemResponse
+    ResearchBoardCreate, ResearchBoardItemCreate, ResearchBoardResponse, ResearchBoardItemResponse,
+    ResearchMediaAttachment,
 )
 from app.services.research_service import ResearchService
 from app.services.rate_limiter import rate_limiter
@@ -1415,6 +1416,40 @@ def update_strategy_notes(
         setattr(ad, field, value.strip() if isinstance(value, str) and value.strip() else None)
     db.commit()
     return {"id": ad_id, **{field: getattr(ad, field) for field in allowed}}
+
+
+@router.patch("/scraped-ads/{ad_id}/media")
+def attach_research_media(
+    ad_id: str,
+    attachment: ResearchMediaAttachment,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Attach operator-provided, durable visual research to a captured ad.
+
+    The browser uploads the file through the authenticated R2 upload endpoint
+    first; this route only links that resulting URL to the finding. It never
+    downloads or copies third-party vendor media.
+    """
+    from app.models import ScrapedAd
+    url = _normalize_external_url(attachment.url)
+    if not url:
+        raise HTTPException(status_code=400, detail="A valid image or video URL is required")
+    ad = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Ad not found")
+    ad.media_type = attachment.media_type
+    ad.media_url = url
+    ad.thumbnail_url = url if attachment.media_type == "image" else ad.thumbnail_url
+    ad.media_preview_url = url if attachment.media_type == "video" else ad.media_preview_url
+    db.commit()
+    return {
+        "id": ad.id,
+        "media_type": ad.media_type,
+        "media_url": ad.media_url,
+        "thumbnail_url": ad.thumbnail_url,
+        "media_preview_url": ad.media_preview_url,
+    }
 
 
 @router.get("/scraped-ads/{ad_id}/related")

@@ -233,3 +233,9 @@ class ExternalResearchImportRequest(BaseModel):
     query: str = Field(default="external competitor research", max_length=500)
     source_url: Optional[str] = Field(default=None, max_length=2000)
     ads: List[ExternalResearchImportAd] = Field(min_length=1, max_length=200)
+
+
+class ResearchMediaAttachment(BaseModel):
+    """A visual the operator is permitted to retain with a research finding."""
+    url: str = Field(min_length=1, max_length=2000)
+    media_type: str = Field(pattern="^(image|video)$")

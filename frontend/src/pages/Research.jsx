@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Ban, FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, Zap, X, Upload, BookOpen, Video, BarChart3, Play } from 'lucide-react';
+import { Ban, FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, Zap, X, Upload, BookOpen, Video, BarChart3, Play, ImagePlus } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -407,13 +407,15 @@ function BoardSaveButton({ ad, boards, onAdd, onCreate }) {
   );
 }
 
-function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onExploreAdvertiser, onBack, canGoBack, onPreviousResult, onNextResult, canGoPrevious, canGoNext, resultPosition, onNotesSaved, boards, onAddToBoard, onCreateBoard }) {
+function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onExploreAdvertiser, onBack, canGoBack, onPreviousResult, onNextResult, canGoPrevious, canGoNext, resultPosition, onNotesSaved, onMediaSaved, boards, onAddToBoard, onCreateBoard }) {
   const { authFetch } = useAuth();
   const { showError, showSuccess } = useToast();
   const [related, setRelated] = useState([]);
   const [notes, setNotes] = useState({ hook_type: '', promise: '' });
   const [savingNotes, setSavingNotes] = useState(false);
   const [videoFailed, setVideoFailed] = useState(false);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const mediaInputRef = useRef(null);
   useEffect(() => { setVideoFailed(false); }, [ad?.id]);
   useEffect(() => {
     if (!ad?.id) return undefined;
@@ -442,10 +444,33 @@ function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onExploreAdvert
       showSuccess('Strategic notes saved');
     } catch (error) { showError(error.message || 'Could not save notes'); } finally { setSavingNotes(false); }
   };
+  const attachVisual = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setUploadingMedia(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const uploaded = await authFetch(`${API_URL}/uploads/`, { method: 'POST', body: form });
+      if (!uploaded.ok) throw new Error((await uploaded.json().catch(() => ({}))).detail || 'Could not upload visual');
+      const asset = await uploaded.json();
+      const linked = await authFetch(`${API_URL}/research/scraped-ads/${ad.id}/media`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: asset.url, media_type: asset.media_type }),
+      });
+      if (!linked.ok) throw new Error((await linked.json().catch(() => ({}))).detail || 'Could not attach visual');
+      onMediaSaved(ad.id, await linked.json());
+      showSuccess('Visual attached to this research finding');
+    } catch (error) { showError(error.message || 'Could not attach visual'); }
+    finally { setUploadingMedia(false); }
+  };
   return <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/30 backdrop-blur-sm" onClick={onClose}>
     <aside className="h-full w-full max-w-xl overflow-y-auto bg-white p-6 shadow-2xl" onClick={event => event.stopPropagation()} aria-label="Creative detail">
       <div className="mb-5 flex items-start justify-between gap-4"><div className="min-w-0 flex items-start gap-2">{canGoBack && <button type="button" onClick={onBack} className="mt-0.5 rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Back to previous related creative">←</button>}<div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-wider text-indigo-600">Creative detail{resultPosition ? ` · ${resultPosition.current} of ${resultPosition.total}` : ''}</p><h2 className="mt-1 truncate text-xl font-bold text-slate-900" title={ad.brand_name || 'Unknown advertiser'}>{ad.brand_name || 'Unknown advertiser'}</h2></div></div><div className="flex flex-shrink-0 items-center gap-1"><button type="button" onClick={onPreviousResult} disabled={!canGoPrevious} className="rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30">Previous</button><button type="button" onClick={onNextResult} disabled={!canGoNext} className="rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30">Next</button><button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X size={20}/></button></div></div>
       {(media || videoPreview) && <div className="relative mb-5 aspect-[4/3] overflow-hidden rounded-xl bg-slate-100">{ad.media_type === 'video' && videoPreview ? <video controls muted playsInline preload="metadata" poster={media || undefined} className="h-full w-full object-cover" onError={() => setVideoFailed(true)}><source src={videoPreview} />Your browser cannot preview this captured video.</video> : <img src={media} alt="Competitor creative" className="h-full w-full object-cover" onError={e => { e.target.style.display = 'none'; }} />}{ad.media_type === 'video' && <span className="absolute bottom-3 left-3 pointer-events-none inline-flex items-center gap-1 rounded-full bg-black/75 px-3 py-1.5 text-xs font-semibold text-white"><Play size={13} fill="currentColor"/> Video{ad.video_length_seconds ? ` · ${ad.video_length_seconds}s` : ''}</span>}</div>}
+      <input ref={mediaInputRef} type="file" accept="image/*,video/mp4,video/webm,video/quicktime" className="hidden" onChange={attachVisual} />
+      <button type="button" onClick={() => mediaInputRef.current?.click()} disabled={uploadingMedia} className="mb-5 inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"><ImagePlus size={14}/>{uploadingMedia ? 'Uploading…' : media ? 'Replace approved visual' : 'Attach approved visual'}</button>
       <div className="mb-5 flex flex-wrap gap-2">{ad.creative_intel?.research_source && <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">Source: {ad.creative_intel.research_source}</span>}{(ad.creative_tags || []).map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">{tag.replaceAll('_', ' ')}</span>)}{ad.cta_type && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">CTA: {ad.cta_type.replaceAll('_', ' ')}</span>}</div>
       {ad.headline && <h3 className="text-lg font-semibold leading-snug text-slate-900">{ad.headline}</h3>}{ad.ad_copy && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{ad.ad_copy}</p>}
       <dl className="mt-6 grid grid-cols-2 gap-3 border-t border-slate-100 pt-5 text-sm"><div><dt className="text-xs text-slate-400">Destination</dt><dd className="mt-1 truncate font-medium text-slate-700">{ad.destination_domain || 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Observed</dt><dd className="mt-1 font-medium text-slate-700">{ad.running_days != null ? `${ad.running_days} days` : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Last captured</dt><dd className="mt-1 font-medium text-slate-700">{ad.last_seen ? new Date(ad.last_seen).toLocaleDateString() : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Tag source</dt><dd className="mt-1 font-medium text-slate-700">{ad.taxonomy_source || 'Not tagged'}</dd></div>{ad.creative_intel?.source_signal && <div className="col-span-2"><dt className="text-xs text-slate-400">Source signal</dt><dd className="mt-1 text-xs font-medium text-amber-800">{ad.creative_intel.source_signal} <span className="font-normal text-slate-400">· directional source context</span></dd></div>}</dl>
@@ -873,6 +898,7 @@ function ResearchBrief({ findings, verticalLabel, onOpenLibrary, onInspect, onBu
             const intel = ad.creative_intel || {};
             return (
               <article key={ad.id} className="flex min-h-64 flex-col rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                {(ad.thumbnail_url || ad.media_url) && <div className="mb-4 aspect-[16/9] overflow-hidden rounded-lg bg-slate-100">{ad.media_type === 'video' ? <video muted playsInline preload="metadata" poster={ad.thumbnail_url || undefined} className="h-full w-full object-cover"><source src={ad.media_preview_url || ad.media_url} /></video> : <img src={ad.thumbnail_url || ad.media_url} alt="" className="h-full w-full object-cover" />}</div>}
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">{intel.research_source || 'Reviewed research'}</p>
@@ -1083,6 +1109,14 @@ export default function Research() {
   const handleStrategyNotesSaved = (adId, notes) => {
     setSavedAds(prev => prev.map(a => (a.id === adId ? { ...a, ...notes } : a)));
     setBrowseAds(prev => prev.map(a => (a.id === adId ? { ...a, ...notes } : a)));
+  };
+  const handleResearchMediaSaved = (adId, media) => {
+    const apply = (ad) => ad.id === adId ? { ...ad, ...media } : ad;
+    setSavedAds(prev => prev.map(apply));
+    setBrowseAds(prev => prev.map(apply));
+    setSearchResultAds(prev => prev.map(apply));
+    setBoardAds(prev => prev.map(apply));
+    setDetailAd(prev => prev?.id === adId ? apply(prev) : prev);
   };
 
   const loadBoards = async () => {
@@ -2127,7 +2161,7 @@ export default function Research() {
         importing={importingIntel}
         defaultVertical={currentVerticalLabel}
       />
-      <ResearchDetailDrawer ad={detailAd} onClose={closeDetail} onInspect={inspectCreative} onExploreAdvertiser={exploreAdvertiser} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onPreviousResult={() => inspectAdjacentResult(-1)} onNextResult={() => inspectAdjacentResult(1)} canGoPrevious={detailResultIndex > 0} canGoNext={detailResultIndex >= 0 && detailResultIndex < browseAds.length - 1} resultPosition={detailResultIndex >= 0 ? { current: detailResultIndex + 1, total: browseAds.length } : null} onNotesSaved={handleStrategyNotesSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
+      <ResearchDetailDrawer ad={detailAd} onClose={closeDetail} onInspect={inspectCreative} onExploreAdvertiser={exploreAdvertiser} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onPreviousResult={() => inspectAdjacentResult(-1)} onNextResult={() => inspectAdjacentResult(1)} canGoPrevious={detailResultIndex > 0} canGoNext={detailResultIndex >= 0 && detailResultIndex < browseAds.length - 1} resultPosition={detailResultIndex >= 0 ? { current: detailResultIndex + 1, total: browseAds.length } : null} onNotesSaved={handleStrategyNotesSaved} onMediaSaved={handleResearchMediaSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
     </div>
   );
 }
