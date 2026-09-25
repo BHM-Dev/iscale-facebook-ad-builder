@@ -1532,6 +1532,12 @@ def get_related_research_ads(
     )
     scored = []
     for candidate in candidates:
+        # A reviewed external-source capture and a raw Meta capture have
+        # different provenance. Do not present them as related solely from
+        # generic metadata; analysts can still compare them deliberately in
+        # the library.
+        if source.platform == "external" and candidate.platform != "external":
+            continue
         candidate_vertical_id = getattr(candidate.saved_search, "vertical_id", None)
         # Prefer an exact saved-search vertical match when both records have
         # one. This is stronger than a shared human-readable label and keeps
