@@ -1497,6 +1497,7 @@ def update_research_brief_curation(
 def get_related_research_ads(
     ad_id: str,
     limit: int = 6,
+    vertical_id: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -1518,6 +1519,11 @@ def get_related_research_ads(
     )
     scored = []
     for candidate in candidates:
+        # Related metadata is useful only when it belongs to the analyst's
+        # current vertical. Without this guard, a shared CTA/video format can
+        # lead a commercial-insurance review toward an auto-insurance ad.
+        if vertical_id and not _matches_research_vertical(candidate, vertical_id):
+            continue
         match = _related_pattern_score(source, candidate)
         if not match:
             continue

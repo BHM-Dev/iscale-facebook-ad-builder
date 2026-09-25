@@ -82,6 +82,17 @@ def test_related_pattern_score_rejects_cross_vertical_matches_on_generic_signals
     assert _related_pattern_score(commercial_insurance, same_destination_candidate) is not None
 
 
+def test_commercial_relevance_guard_excludes_auto_insurance_related_candidates():
+    auto_candidate = SimpleNamespace(
+        platform="facebook",
+        brand_name="SmarterAuto",
+        headline="Compare auto insurance quotes",
+        ad_copy="Save on car coverage today.",
+        cta_text="Get Quote",
+    )
+    assert _matches_research_vertical(auto_candidate, "commercial_insurance") is False
+
+
 def test_advertiser_cap_preserves_sorted_first_result_and_unknown_legacy_rows():
     ads = [
         SimpleNamespace(brand_name="Acme"),

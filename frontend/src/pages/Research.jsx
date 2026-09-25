@@ -407,7 +407,7 @@ function BoardSaveButton({ ad, boards, onAdd, onCreate }) {
   );
 }
 
-function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onExploreAdvertiser, onBack, canGoBack, onPreviousResult, onNextResult, canGoPrevious, canGoNext, resultPosition, onNotesSaved, onMediaSaved, onReviewSaved, onBriefSaved, boards, onAddToBoard, onCreateBoard }) {
+function ResearchDetailDrawer({ ad, activeVertical, onClose, onBuild, onInspect, onExploreAdvertiser, onBack, canGoBack, onPreviousResult, onNextResult, canGoPrevious, canGoNext, resultPosition, onNotesSaved, onMediaSaved, onReviewSaved, onBriefSaved, boards, onAddToBoard, onCreateBoard }) {
   const { authFetch } = useAuth();
   const { showError, showSuccess } = useToast();
   const [related, setRelated] = useState([]);
@@ -422,9 +422,11 @@ function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onExploreAdvert
   useEffect(() => {
     if (!ad?.id) return undefined;
     let alive = true;
-    authFetch(`${API_URL}/research/scraped-ads/${ad.id}/related`).then(res => res.ok ? res.json() : []).then(items => { if (alive) setRelated(items); }).catch(() => { if (alive) setRelated([]); });
+    const params = new URLSearchParams();
+    if (activeVertical) params.set('vertical_id', activeVertical);
+    authFetch(`${API_URL}/research/scraped-ads/${ad.id}/related?${params}`).then(res => res.ok ? res.json() : []).then(items => { if (alive) setRelated(items); }).catch(() => { if (alive) setRelated([]); });
     return () => { alive = false; };
-  }, [ad?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ad?.id, activeVertical]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setNotes({ hook_type: ad?.hook_type || '', promise: ad?.promise || '' }); }, [ad?.id]);
   useEffect(() => { setBriefTakeaway(ad?.creative_intel?.bhm_takeaway || ''); }, [ad?.id]);
   useEffect(() => {
@@ -2237,7 +2239,7 @@ export default function Research() {
         importing={importingIntel}
         defaultVertical={currentVerticalLabel}
       />
-      <ResearchDetailDrawer ad={detailAd} onClose={closeDetail} onInspect={inspectCreative} onExploreAdvertiser={exploreAdvertiser} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onPreviousResult={() => inspectAdjacentResult(-1)} onNextResult={() => inspectAdjacentResult(1)} canGoPrevious={detailResultIndex > 0} canGoNext={detailResultIndex >= 0 && detailResultIndex < detailResults.length - 1} resultPosition={detailResultIndex >= 0 ? { current: detailResultIndex + 1, total: detailResults.length } : null} onNotesSaved={handleStrategyNotesSaved} onMediaSaved={handleResearchMediaSaved} onReviewSaved={handleResearchReviewSaved} onBriefSaved={handleResearchReviewSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
+      <ResearchDetailDrawer ad={detailAd} activeVertical={activeVertical} onClose={closeDetail} onInspect={inspectCreative} onExploreAdvertiser={exploreAdvertiser} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onPreviousResult={() => inspectAdjacentResult(-1)} onNextResult={() => inspectAdjacentResult(1)} canGoPrevious={detailResultIndex > 0} canGoNext={detailResultIndex >= 0 && detailResultIndex < detailResults.length - 1} resultPosition={detailResultIndex >= 0 ? { current: detailResultIndex + 1, total: detailResults.length } : null} onNotesSaved={handleStrategyNotesSaved} onMediaSaved={handleResearchMediaSaved} onReviewSaved={handleResearchReviewSaved} onBriefSaved={handleResearchReviewSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
     </div>
   );
 }
