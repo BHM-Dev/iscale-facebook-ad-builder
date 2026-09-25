@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Research Copilot — Prototype</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; color:#172033; background:#f7f8fb; }
+    * { box-sizing:border-box; } body { margin:0; } main { max-width:1120px; margin:48px auto; padding:0 24px; }
+    .eyebrow { color:#4f46e5; font-size:12px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
+    h1 { font-size:36px; margin:8px 0; } .sub { color:#63708a; max-width:720px; line-height:1.55; }
+    .ask, .card, .plan, .drawer { background:#fff; border:1px solid #e3e7f0; border-radius:16px; box-shadow:0 8px 30px rgba(30,41,59,.05); }
+    .ask { margin-top:28px; padding:12px; display:flex; gap:10px; } input { flex:1; border:0; font-size:16px; padding:12px; outline:0; } button { border:0; border-radius:10px; background:#4f46e5; color:#fff; cursor:pointer; font-weight:700; padding:12px 16px; } button.ghost { background:#eef2ff; color:#4338ca; }
+    .layout { display:grid; grid-template-columns:1fr 300px; gap:20px; margin-top:24px; } .plan { padding:18px; } .plan h2, .drawer h2 { margin:0; font-size:15px; } .chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; } .chip { background:#eef2ff; border:1px solid #dfe3ff; border-radius:999px; color:#4338ca; font-size:12px; font-weight:700; padding:6px 10px; }
+    .note { margin-top:14px; background:#fff8dd; border:1px solid #f2dc8c; color:#7c5b00; border-radius:10px; font-size:13px; line-height:1.45; padding:10px; }.results { display:grid; gap:12px; margin-top:16px; }.card { display:grid; grid-template-columns:160px 1fr; overflow:hidden; }.visual { align-items:center; background:linear-gradient(130deg,#293548,#63748d); color:#fff; display:flex; font-size:12px; font-weight:800; justify-content:center; }.copy { padding:16px; }.copy h3 { margin:0; font-size:16px; }.copy p { color:#657189; font-size:13px; line-height:1.45; margin:8px 0; }.reason { color:#19734e; font-size:12px; font-weight:700; }.drawer { height:max-content; padding:18px; }.drawer p { color:#647189; font-size:13px; line-height:1.45; }.stats { border-top:1px solid #edf0f5; display:grid; gap:10px; margin-top:12px; padding-top:12px; }.stat b { display:block; font-size:18px; }.stat span { color:#748097; font-size:12px; }
+    .toolbar { bottom:12px; display:flex; gap:16px; left:12px; position:fixed; background:#172033; color:#fff; padding:9px 12px; border-radius:9px; font-size:12px; } @media (max-width:760px) { main{margin:24px auto}.layout{grid-template-columns:1fr}.card{grid-template-columns:110px 1fr}.ask{display:block}.ask button{margin-top:8px;width:100%} }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">Commercial Insurance · Research Copilot</div>
+    <h1>Ask for the pattern. See the evidence.</h1>
+    <p class="sub">The copilot converts Joel’s question into visible filters and public-source proxies. It does not invent Meta performance data.</p>
+    <form class="ask" onsubmit="event.preventDefault(); document.querySelector('#question').textContent = this.q.value || 'Show active commercial auto ads for owner-operators running 30+ days';">
+      <input name="q" value="Show active commercial auto ads for owner-operators running 30+ days" aria-label="Ask Research" />
+      <button>Search research</button>
+    </form>
+    <div class="layout"><section><div class="plan"><h2 id="question">Show active commercial auto ads for owner-operators running 30+ days</h2><div class="chips"><span class="chip">Commercial Insurance</span><span class="chip">Owner-operators</span><span class="chip">Active capture</span><span class="chip">Observed 30+ days</span><span class="chip">Rank: runtime + variants + recency</span></div><div class="note">“Best performing” is shown as the strongest available public proxy. These records do not contain Meta spend, ROAS, conversion, or delivery data.</div></div><div class="results"><article class="card"><div class="visual">BHM R2 CAPTURE</div><div class="copy"><h3>RigCover.com · Owner-operators</h3><p>Route-specific commercial coverage structure: identity → operating risk → compare quote → agent path.</p><div class="reason">Matched: owner-operator language · active capture · retained media</div></div></article><article class="card"><div class="visual">FORMAT ONLY</div><div class="copy"><h3>RigCover.com · Commercial route coverage</h3><p>Directional source record; the source described a video but BHM has not retained an asset.</p><div class="reason">Matched: commercial auto intent · observed runtime</div></div></article></div></section><aside class="drawer"><h2>Coverage</h2><p>The retained catalog has enough examples to start a creative review.</p><div class="stats"><div class="stat"><b>8</b><span>matching captures</span></div><div class="stat"><b>1</b><span>retained visuals</span></div><div class="stat"><b>0</b><span>performance claims made</span></div></div><button class="ghost" style="margin-top:16px;width:100%">Request live capture</button></aside></div>
+  </main><div class="toolbar"><span>Build: Research Copilot MVP</span><span>Session: prototype</span><span>Events: 0</span><span>Routing: retained catalog</span><button onclick="location.reload()" style="background:#303c54;padding:4px 8px">Reset</button></div>
+</body>
+</html>
