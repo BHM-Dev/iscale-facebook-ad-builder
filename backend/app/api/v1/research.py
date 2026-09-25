@@ -1570,8 +1570,6 @@ def get_research_visual_candidates(
     source = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
     if not source:
         raise HTTPException(status_code=404, detail="Ad not found")
-    source_vertical_id = getattr(source.saved_search, "vertical_id", None)
-    source_vertical_name = getattr(getattr(source.saved_search, "vertical", None), "name", None)
     normalized_brand = (source.brand_name or "").strip().lower()
     if not normalized_brand:
         return []
@@ -1589,13 +1587,11 @@ def get_research_visual_candidates(
         candidate_intel = candidate.creative_intel or {}
         if candidate_intel.get("capture_source") != "brand_scrape":
             continue
-        candidate_vertical_id = getattr(candidate.saved_search, "vertical_id", None)
-        candidate_vertical_name = getattr(getattr(candidate.saved_search, "vertical", None), "name", None)
-        # Older external imports can point at a duplicate persisted Vertical
-        # row with the same human label. Treat that as the same configured
-        # vertical while still refusing a true cross-vertical attachment.
-        if source_vertical_id and candidate_vertical_id and candidate_vertical_id != source_vertical_id and candidate_vertical_name != source_vertical_name:
-            continue
+        # This is an operator-selected association, not an automatic match.
+        # An exact advertiser match plus BHM-owned capture provenance is the
+        # durable safety boundary; saved-search vertical ids have historically
+        # been duplicated during imports and are not reliable enough to hide
+        # a legitimate same-brand visual from review.
         safe_candidates.append(_serialize_scraped_ad(candidate))
         if len(safe_candidates) >= max(1, min(limit, 12)):
             break
@@ -1620,12 +1616,6 @@ def adopt_retained_research_visual(
         raise HTTPException(status_code=400, detail="Select a retained Brand Scrape visual")
     if (target.brand_name or "").strip().lower() != (source.brand_name or "").strip().lower():
         raise HTTPException(status_code=400, detail="Visual must come from the same advertiser")
-    target_vertical_id = getattr(target.saved_search, "vertical_id", None)
-    source_vertical_id = getattr(source.saved_search, "vertical_id", None)
-    target_vertical_name = getattr(getattr(target.saved_search, "vertical", None), "name", None)
-    source_vertical_name = getattr(getattr(source.saved_search, "vertical", None), "name", None)
-    if target_vertical_id and source_vertical_id and target_vertical_id != source_vertical_id and target_vertical_name != source_vertical_name:
-        raise HTTPException(status_code=400, detail="Visual must come from the same research vertical")
     target.media_type = source.media_type if source.media_type in {"image", "video"} else "image"
     target.media_url = source.media_url
     target.thumbnail_url = source.thumbnail_url or (source.media_url if target.media_type == "image" else None)
