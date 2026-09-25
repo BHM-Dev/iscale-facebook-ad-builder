@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Ban, FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, Zap, X, Upload, BookOpen, Video, BarChart3, Play, ImagePlus, Sparkles, MoreHorizontal } from 'lucide-react';
+import { Ban, FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, Zap, X, Upload, BookOpen, Video, Play, ImagePlus, Sparkles, MoreHorizontal } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -944,7 +944,7 @@ function ResearchBrief({ findings, totalFindings, visualStats, visualFilter, onV
         <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 className="text-xl font-semibold text-slate-950">{verticalLabel} research brief</h2>
-            <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">Reviewed competitor patterns worth studying before making a creative. These are structural references—not BHM performance or approved claim language.</p>
+            <p className="mt-1 text-sm text-slate-600">Patterns worth testing. Not performance data.</p>
           </div>
           <button type="button" onClick={onOpenLibrary} className="rounded-lg border border-indigo-200 bg-white px-3.5 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50">Open Ad Library</button>
         </div>
@@ -959,7 +959,7 @@ function ResearchBrief({ findings, totalFindings, visualStats, visualFilter, onV
       {findings.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
           <p className="font-medium text-slate-800">No reviewed findings yet for {verticalLabel}.</p>
-          <p className="mx-auto mt-1 max-w-lg text-sm leading-6 text-slate-500">Use the Ad Library to review public competitor creative, then add only the patterns worth preserving to this brief.</p>
+          <p className="mx-auto mt-1 max-w-lg text-sm text-slate-500">Review ads, then save the patterns you want to test.</p>
           <button type="button" onClick={onOpenLibrary} className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Open Ad Library</button>
         </div>
       ) : (
@@ -1032,14 +1032,14 @@ function ResearchCopilot({ verticalId, verticalLabel, onRunResults }) {
   const plan = response?.query_plan;
   const suggestedPrompts = COPILOT_PROMPTS[verticalId] || [];
   return <section className="mb-5 rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-indigo-50 p-4 shadow-sm" aria-label="Ask Research">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.14em] text-violet-700"><Sparkles size={13}/> Ask Research</p><p className="mt-1 text-sm text-slate-600">Describe the competitor pattern you need. We search retained evidence and show the plan before calling anything a winner.</p></div><span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-500 ring-1 ring-violet-100">{verticalLabel}</span></div>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.14em] text-violet-700"><Sparkles size={13}/> Ask Research</p><p className="mt-1 text-sm text-slate-600">Search the retained competitor library.</p></div><span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-500 ring-1 ring-violet-100">{verticalLabel}</span></div>
     <form onSubmit={runQuery} className="mt-3 flex flex-col gap-2 sm:flex-row"><input value={question} onChange={event => setQuestion(event.target.value)} maxLength={500} placeholder="e.g. Show active commercial auto ads for owner-operators running 30+ days" className="min-w-0 flex-1 rounded-xl border border-violet-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-200" aria-label="Ask Research" /><button type="submit" disabled={loading || !question.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-violet-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-50"><Sparkles size={15}/>{loading ? 'Planning…' : 'Search research'}</button></form>
     {!response && <div className="mt-2 flex flex-wrap items-center gap-1.5"><span className="text-[11px] font-medium text-slate-500">Try:</span>{suggestedPrompts.map(prompt => <button key={prompt} type="button" onClick={() => executeQuery(prompt)} className="rounded-full border border-violet-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-violet-700 hover:bg-violet-50">{prompt}</button>)}</div>}
     {response && <div className="mt-4 rounded-xl border border-violet-100 bg-white/85 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-semibold text-slate-900">Search plan · {response.coverage.matched} matching capture{response.coverage.matched === 1 ? '' : 's'}</p><p className="mt-0.5 text-xs text-slate-500">Searched {response.coverage.catalog_candidates} retained {verticalLabel.toLowerCase()} capture{response.coverage.catalog_candidates === 1 ? '' : 's'}.</p></div><button type="button" onClick={() => onRunResults(response)} disabled={!response.results.length} className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-800 hover:bg-violet-100 disabled:opacity-50">Review results{response.coverage.returned < response.coverage.matched ? ` (${response.coverage.returned} of ${response.coverage.matched})` : ''}</button></div>
       <div className="mt-2 flex flex-wrap gap-1.5">{plan.segments.map(segment => <span key={segment} className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{segment}</span>)}{plan.creative_tags?.map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{tag.replace('_', ' ')}</span>)}{plan.active_only && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">active capture</span>}{plan.min_running_days && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">observed {plan.min_running_days}+ days</span>}{plan.captured_within_days && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">captured within {plan.captured_within_days} days</span>}{plan.media_type && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{plan.media_type}</span>}{plan.cta_type && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{plan.cta_type.replace('_', ' ')} CTA</span>}{plan.page_type && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{plan.page_type.replace('_', ' ')} destination</span>}</div>
-      {plan.performance_intent && <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">Performance data is not retained here, so this is a relevance-based research search—not a winner or spend ranking.</p>}
-      <p className={`mt-3 text-xs leading-5 ${response.coverage.sufficient ? 'text-slate-600' : 'text-amber-800'}`}>{response.coverage.sufficient ? 'Coverage is sufficient to review in the retained library.' : 'Coverage is thin. A live Meta capture can be requested later, but will never run automatically.'}</p>
+      {plan.performance_intent && <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">No verified performance data—showing relevant examples.</p>}
+      <p className={`mt-3 text-xs leading-5 ${response.coverage.sufficient ? 'text-slate-600' : 'text-amber-800'}`}>{response.coverage.sufficient ? 'Enough examples to review.' : 'Limited examples in this library.'}</p>
       {response.suggestions?.length > 0 && <div className="mt-3 border-t border-violet-100 pt-3"><p className="text-xs font-semibold text-slate-700">Try a broader retained-catalog search</p><div className="mt-2 flex flex-wrap gap-2">{response.suggestions.map(suggestion => <button key={suggestion.question} type="button" disabled={loading} onClick={() => executeQuery(suggestion.question)} title={suggestion.reason} className="rounded-lg border border-violet-200 bg-white px-2.5 py-1.5 text-left text-xs font-medium text-violet-800 hover:bg-violet-50 disabled:opacity-50"><span className="block">{suggestion.question}</span><span className="mt-0.5 block text-[10px] font-normal text-slate-500">{suggestion.reason}</span></button>)}</div></div>}
       {response.limitations?.map((limitation, index) => <p key={limitation} className={`mt-2 text-xs leading-5 ${index === 0 && plan.performance_intent ? 'font-medium text-amber-800' : 'text-slate-500'}`}>{limitation}</p>)}
     </div>}
@@ -1885,7 +1885,7 @@ export default function Research() {
             <FlaskConical size={24} className="text-indigo-600" />
             Research Library
           </h1>
-          <p className="text-sm text-gray-500 mt-0.5">Study captured competitor patterns before you write.</p>
+          <p className="text-sm text-gray-500 mt-0.5">Find patterns worth testing.</p>
         </div>
         <div className="flex flex-col items-end gap-1">
           <button
@@ -1953,23 +1953,7 @@ export default function Research() {
             <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-sm font-semibold text-gray-900">Capture inbox</h2>
             </div>
-            <p className="text-sm text-gray-600 mt-1">
-              Review raw captures here. Inspect a candidate to add strategy notes, attach an approved image or video, then promote the strongest findings to the Research Brief.
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
-              <div className="flex items-center gap-2 text-xs text-gray-600">
-                <BarChart3 size={14} className="text-indigo-500" />
-                Capture signals are directional, not spend truth
-              </div>
-              <div className="flex items-center gap-2 text-xs text-gray-600">
-                <Video size={14} className="text-indigo-500" />
-                Visual coverage is shown explicitly—missing media is not implied
-              </div>
-              <div className="flex items-center gap-2 text-xs text-gray-600">
-                <Zap size={14} className="text-indigo-500" />
-                Build from this ad sends the pattern to Ad Remix
-              </div>
-            </div>
+            <p className="text-sm text-gray-600 mt-1">Inspect, save, or build from a captured ad.</p>
           </div>
         </div>
       </div>}
@@ -2103,7 +2087,7 @@ export default function Research() {
                 </button>
               ))}
             </div>
-            <p className="mt-2 text-[11px] text-gray-400">Keyword Search is global; the selected vertical scopes Browse and Refresh.</p>
+            <p className="mt-2 text-[11px] text-gray-400">Search all captures. Browse stays scoped to this vertical.</p>
           </form>
           {/* Filter bar */}
           <div className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 lg:flex-row lg:items-center">
