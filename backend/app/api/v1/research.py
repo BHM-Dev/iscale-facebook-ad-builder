@@ -1576,7 +1576,10 @@ def get_research_visual_candidates(
     candidates = (
         db.query(ScrapedAd)
         .filter(ScrapedAd.id != source.id)
-        .filter(func.lower(ScrapedAd.brand_name) == normalized_brand)
+        # Meta page labels occasionally arrive with invisible surrounding
+        # whitespace; normalize both sides before enforcing the advertiser
+        # boundary so those captures remain available for deliberate review.
+        .filter(func.lower(func.trim(ScrapedAd.brand_name)) == normalized_brand)
         .filter(ScrapedAd.media_url.isnot(None))
         .order_by(ScrapedAd.last_seen.desc())
         .limit(100)
