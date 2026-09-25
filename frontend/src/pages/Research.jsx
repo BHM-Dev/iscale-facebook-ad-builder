@@ -496,6 +496,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
   const [videoPreviewFailed, setVideoPreviewFailed] = useState(false);
   const media = ad.thumbnail_url || ad.media_url;
   const videoPreview = ad.media_preview_url || (ad.video_urls || [])[0];
+  const hasVisualCapture = Boolean(media || videoPreview);
   const advertiserUrl = ad.platform === 'external'
     ? ad.ad_link
     : `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&q=${encodeURIComponent(ad.brand_name || '')}`;
@@ -529,6 +530,9 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
         )}
         {['image', 'carousel'].includes((ad.media_type || '').toLowerCase()) && (
           <span className="text-xs font-medium text-gray-400">{ad.media_type.toUpperCase()}</span>
+        )}
+        {!hasVisualCapture && (
+          <span className="text-xs font-medium text-amber-700" title="The source describes this format, but no image or playable video was retained with the capture.">NO VISUAL CAPTURE</span>
         )}
         {Array.isArray(ad.platforms) && ad.platforms.length > 0 && (
           <span className="text-xs text-gray-400" title="Platforms reported by the Ad Library capture">
@@ -1739,25 +1743,23 @@ export default function Research() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-sm font-semibold text-gray-900">Ad Library Intel workflow</h2>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-100">Prototype</span>
+              <h2 className="text-sm font-semibold text-gray-900">Capture inbox</h2>
             </div>
             <p className="text-sm text-gray-600 mt-1">
-              For auto insurance, use Chrome instead of the weak API path: search <strong>cheap auto insurance</strong> or <strong>auto insurance</strong>,
-              set United States, active ads, and sort by most impressions. Import the capture, then save the best examples for the video agent.
+              Review raw captures here. Inspect a candidate to add strategy notes, attach an approved image or video, then promote the strongest findings to the Research Brief.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
               <div className="flex items-center gap-2 text-xs text-gray-600">
                 <BarChart3 size={14} className="text-indigo-500" />
-                Volume score is directional, not spend truth
+                Capture signals are directional, not spend truth
               </div>
               <div className="flex items-center gap-2 text-xs text-gray-600">
                 <Video size={14} className="text-indigo-500" />
-                Video URLs are inspiration-only and may expire
+                Visual coverage is shown explicitly—missing media is not implied
               </div>
               <div className="flex items-center gap-2 text-xs text-gray-600">
                 <Zap size={14} className="text-indigo-500" />
-                Build from this ad sends the angle to Ad Remix
+                Build from this ad sends the pattern to Ad Remix
               </div>
             </div>
           </div>
