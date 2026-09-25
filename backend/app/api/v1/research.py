@@ -2023,8 +2023,7 @@ def query_research_copilot(
         .limit(750)
         .all()
     )
-    scored = []
-    vertical_candidates = 0
+    eligible_candidates = []
     seen_keys = set()
     for ad in candidates:
         unique_key = ad.content_hash or ad.id
@@ -2038,7 +2037,16 @@ def query_research_copilot(
             continue
         if not _matches_research_vertical(ad, payload.vertical_id):
             continue
-        vertical_candidates += 1
+        eligible_candidates.append(ad)
+
+    # The plan's coverage denominator must match the visible Ad Library, which
+    # removes repeated visible creatives in addition to row-level content-hash
+    # duplicates. Otherwise a copilot answer can claim it searched more
+    # evidence than an operator can actually inspect.
+    eligible_candidates = _dedupe_research_creatives(eligible_candidates)
+    vertical_candidates = len(eligible_candidates)
+    scored = []
+    for ad in eligible_candidates:
         match = _score_research_copilot_candidate(ad, plan, now)
         if not match:
             continue
