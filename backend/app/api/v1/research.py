@@ -245,6 +245,33 @@ def _score_research_copilot_candidate(ad, plan: dict, now: datetime) -> tuple[in
     return score, reasons or ["same selected research vertical"]
 
 
+def _copilot_query_suggestions(question: str, plan: dict, vertical_label: str) -> list[dict]:
+    """Offer transparent, deterministic recovery paths for a narrow query."""
+    subject = f"{vertical_label} ads"
+    if plan["segments"]:
+        subject += f" for {plan['segments'][0]}"
+    if plan["media_type"]:
+        subject += f" with {plan['media_type']} creative"
+    suggestions = []
+    if plan["min_running_days"]:
+        suggestions.append({"question": f"Show {subject}", "reason": f"Remove the {plan['min_running_days']}-day observed-runtime requirement"})
+    if plan["active_only"]:
+        suggestions.append({"question": f"Show {subject}", "reason": "Include older retained captures instead of only the last 30 days"})
+    if plan["captured_within_days"]:
+        suggestions.append({"question": f"Show {subject}", "reason": f"Remove the {plan['captured_within_days']}-day capture-recency requirement"})
+    if plan["media_type"]:
+        broad_subject = f"{vertical_label} ads" + (f" for {plan['segments'][0]}" if plan["segments"] else "")
+        suggestions.append({"question": f"Show {broad_subject}", "reason": f"Include all retained formats instead of only {plan['media_type']} creative"})
+    suggestions.append({"question": f"Show {subject}", "reason": "Review the broad retained catalog for this audience"})
+    seen, unique = {question.casefold().strip()}, []
+    for suggestion in suggestions:
+        key = suggestion["question"].casefold()
+        if key not in seen:
+            unique.append(suggestion)
+            seen.add(key)
+    return unique[:3]
+
+
 def _parse_research_date(value):
     if not value:
         return None
@@ -1867,12 +1894,14 @@ def query_research_copilot(
         .all()
     )
     scored = []
+    vertical_candidates = 0
     for ad in candidates:
         candidate_vertical = getattr(getattr(ad.saved_search, "vertical", None), "name", None)
         if candidate_vertical and candidate_vertical != vertical_label:
             continue
         if not candidate_vertical and not _matches_research_vertical(ad, payload.vertical_id):
             continue
+        vertical_candidates += 1
         match = _score_research_copilot_candidate(ad, plan, now)
         if not match:
             continue
@@ -1889,10 +1918,13 @@ def query_research_copilot(
         "question": payload.question.strip(),
         "query_plan": {**plan, "vertical": vertical_label},
         "coverage": {
-            "matched": len(results),
-            "sufficient": len(results) >= 5,
-            "live_capture_recommended": len(results) < 5,
+            "matched": len(scored),
+            "returned": len(results),
+            "catalog_candidates": vertical_candidates,
+            "sufficient": len(scored) >= 5,
+            "live_capture_recommended": len(scored) < 5,
         },
+        "suggestions": _copilot_query_suggestions(payload.question, plan, vertical_label),
         "results": results,
         "limitations": [
             "Results are ranked by retained catalog signals, not Meta spend, ROAS, conversions, or delivery performance.",
