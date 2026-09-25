@@ -1242,7 +1242,11 @@ export default function Research() {
       params.set('sort_by', sortBy);
       params.set('limit', '500');
 
-      const res = await authFetch(`${API_URL}/research/config-verticals/${activeVertical}/browse-ads?${params}`);
+      // Research is an operator-facing, mutable catalog. Never let a browser
+      // reuse an older browse response after an import, relevance update, or
+      // deploy; stale rows are especially misleading when deciding what to
+      // build from.
+      const res = await authFetch(`${API_URL}/research/config-verticals/${activeVertical}/browse-ads?${params}`, { cache: 'no-store' });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || `Failed to load ads (${res.status})`);
@@ -1262,7 +1266,10 @@ export default function Research() {
     try {
       const params = new URLSearchParams();
       if (activeSubVertical) params.set('sub_vertical', activeSubVertical);
-      const response = await authFetch(`${API_URL}/research/config-verticals/${activeVertical}/advertisers?${params}`);
+      // Keep the directory in lockstep with the browse catalog. A cached
+      // directory could keep previously excluded broad-search advertisers on
+      // screen after the underlying relevance rules changed.
+      const response = await authFetch(`${API_URL}/research/config-verticals/${activeVertical}/advertisers?${params}`, { cache: 'no-store' });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         throw new Error(payload.detail || 'Failed to load advertiser directory');
