@@ -598,6 +598,8 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
           </span>
         )}
         {ad.creative_intel?.research_source && <span className="text-xs font-medium text-amber-700" title="Imported external research source; any signal is directional only">{ad.creative_intel.research_source}</span>}
+        {ad.relevance_status === 'needs_review' && <span className="text-xs font-medium text-amber-700" title="This older capture passed the broad vertical gate but lacks a direct commercial-insurance offer signal. Review before using it as an input.">REVIEW RELEVANCE</span>}
+        {ad.relevance_status === 'source_reviewed' && <span className="text-xs font-medium text-emerald-700" title="Externally reviewed source capture; still directional research, not performance evidence.">SOURCE REVIEWED</span>}
         <a
           href={advertiserUrl}
           target="_blank"
@@ -1797,6 +1799,7 @@ export default function Research() {
     videoCount: browseAds.filter(ad => ad.media_type === 'video').length,
     mediaCount: browseAds.filter(ad => ad.thumbnail_url || ad.media_url).length,
     taggedCount: browseAds.filter(ad => (ad.creative_tags || []).length > 0).length,
+    needsReviewCount: browseAds.filter(ad => ad.relevance_status === 'needs_review').length,
   }), [browseAds]);
   const reviewedFindingsAll = useMemo(() => [...browseAds]
     .filter(ad => ad.platform === 'external' || ad.creative_intel?.reviewed)
@@ -2042,7 +2045,7 @@ export default function Research() {
         />
       ) : <>
 
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500" aria-label="Research catalog summary"><span className="font-semibold text-slate-800">{browseLoading ? 'Loading captures…' : `${catalogSummary.total} captured examples`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.newCount} new this week`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.videoCount} video`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.taggedCount} theme tagged`}</span><span className="text-slate-300">·</span><span className="text-slate-400">Current vertical + filters</span></div>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500" aria-label="Research catalog summary"><span className="font-semibold text-slate-800">{browseLoading ? 'Loading captures…' : `${catalogSummary.total} captured examples`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.newCount} new this week`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.videoCount} video`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.taggedCount} theme tagged`}</span>{catalogSummary.needsReviewCount > 0 && <><span className="text-slate-300">·</span><span className="text-amber-700">{catalogSummary.needsReviewCount} need relevance review</span></>}<span className="text-slate-300">·</span><span className="text-slate-400">Current vertical + filters</span></div>
       {!browseLoading && catalogSummary.total > 0 && catalogSummary.mediaCount === 0 && <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"><span>No retained assets in this filtered view. Source format labels are still shown, but they are not previews.</span><button type="button" onClick={() => setShowImportModal(true)} className="font-semibold text-indigo-700 hover:text-indigo-900">Import retained captures</button></div>}
 
       <div className="inline-flex rounded-lg bg-slate-100 p-1" aria-label="Research catalog mode"><button type="button" onClick={() => setCatalogMode('ads')} className={`rounded-md px-3 py-1.5 text-sm font-semibold ${catalogMode === 'ads' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Ad examples</button><button type="button" onClick={() => setCatalogMode('advertisers')} className={`rounded-md px-3 py-1.5 text-sm font-semibold ${catalogMode === 'advertisers' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Advertisers</button></div>

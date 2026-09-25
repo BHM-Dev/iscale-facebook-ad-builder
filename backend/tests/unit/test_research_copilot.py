@@ -1,4 +1,6 @@
-from app.api.v1.research import _copilot_query_suggestions, _plan_research_copilot_question
+from types import SimpleNamespace
+
+from app.api.v1.research import _copilot_query_suggestions, _plan_research_copilot_question, _research_relevance_status
 
 
 def test_copilot_plan_extracts_owner_operator_runtime_and_activity():
@@ -39,3 +41,11 @@ def test_copilot_plan_extracts_creative_pattern_cta_and_destination():
     assert plan["creative_tags"] == ["comparison", "ugc"]
     assert plan["cta_type"] == "learn_more"
     assert plan["page_type"] == "advertorial"
+
+
+def test_commercial_relevance_status_flags_broad_non_offer_capture_for_review():
+    ad = SimpleNamespace(platform="facebook", brand_name="Calan Services", headline="Build a patio", ad_copy="Book your free estimate", cta_text="Learn More")
+    assert _research_relevance_status(ad, "commercial_insurance") == "needs_review"
+
+    insurance_ad = SimpleNamespace(platform="facebook", brand_name="Example", headline="Commercial insurance", ad_copy="Compare a business insurance quote", cta_text="Get Quote")
+    assert _research_relevance_status(insurance_ad, "commercial_insurance") == "high_confidence"

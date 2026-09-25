@@ -145,6 +145,30 @@ def _matches_research_vertical(ad, config_id):
     return any(term in text for term in commercial) and not any(term in text for term in obvious_noise)
 
 
+def _research_relevance_status(ad, config_id: str) -> str | None:
+    """Expose a conservative review cue without hiding retained evidence.
+
+    The legacy commercial catalog contains old broad-search captures. Keep
+    them searchable, but label records that lack an explicit insurance-offer
+    signal so an internal researcher does not mistake them for clean input.
+    """
+    if config_id != "commercial_insurance":
+        return None
+    if getattr(ad, "platform", None) == "external":
+        return "source_reviewed"
+    text = " ".join(filter(None, [ad.brand_name, ad.headline, ad.ad_copy, ad.cta_text])).casefold()
+    explicit_offer = (
+        "commercial insurance", "business insurance", "small business insurance",
+        "commercial auto", "general liability", "liability insurance",
+        "business owners policy", "bop insurance", "insurance quote",
+    )
+    if any(phrase in text for phrase in explicit_offer):
+        return "high_confidence"
+    if "insurance" in text and any(phrase in text for phrase in ("quote", "coverage", "policy", "premium", "get insured")):
+        return "high_confidence"
+    return "needs_review"
+
+
 def _related_pattern_score(source, candidate):
     """Return an explainable metadata match score and reasons, or None."""
     shared_tags = sorted(set(source.creative_tags or []) & set(candidate.creative_tags or []))
@@ -1991,6 +2015,7 @@ def query_research_copilot(
         record = _serialize_scraped_ad(ad)
         record["copilot_score"] = score
         record["match_reasons"] = reasons
+        record["relevance_status"] = _research_relevance_status(ad, payload.vertical_id)
         results.append(record)
     return {
         "question": payload.question.strip(),
@@ -2202,6 +2227,7 @@ def get_vertical_browse_ads(
             "media_height": ad.media_height,
             "taxonomy_source": ad.taxonomy_source,
             "taxonomy_confidence": ad.taxonomy_confidence,
+            "relevance_status": _research_relevance_status(ad, config_id),
             "is_saved": ad.is_saved,
             "last_seen": _serialize_research_datetime(ad.last_seen),
             "first_seen": _serialize_research_datetime(ad.first_seen),
