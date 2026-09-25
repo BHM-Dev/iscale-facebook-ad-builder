@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Ban, FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, Zap, X, Upload, BookOpen, Video, BarChart3, Play, ImagePlus } from 'lucide-react';
+import { Ban, FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, Zap, X, Upload, BookOpen, Video, BarChart3, Play, ImagePlus, Sparkles } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -617,6 +617,8 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
       {/* Body */}
       <BodyText text={ad.ad_copy} />
 
+      {ad.match_reasons?.length > 0 && <p className="rounded-lg bg-violet-50 px-2.5 py-2 text-[11px] font-medium leading-4 text-violet-800"><span className="font-bold">Why it matched: </span>{ad.match_reasons.join(' · ')}</p>}
+
       {(ad.creative_tags?.length || ad.cta_type || ad.page_type) && <div className="flex flex-wrap gap-1.5">
         {(ad.creative_tags || []).slice(0, 3).map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700">{tag.replaceAll('_', ' ')}</span>)}
         {ad.cta_type && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600">{ad.cta_type.replaceAll('_', ' ')}</span>}
@@ -1007,6 +1009,35 @@ function ResearchBrief({ findings, totalFindings, visualStats, visualFilter, onV
       )}
     </section>
   );
+}
+
+function ResearchCopilot({ verticalId, verticalLabel, onRunResults }) {
+  const { authFetch } = useAuth();
+  const { showError } = useToast();
+  const [question, setQuestion] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [response, setResponse] = useState(null);
+  const runQuery = async (event) => {
+    event.preventDefault();
+    if (!question.trim()) return;
+    setLoading(true);
+    try {
+      const res = await authFetch(`${API_URL}/research/copilot/query`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: question.trim(), vertical_id: verticalId }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.detail || 'Research Copilot could not run that query');
+      setResponse(payload);
+    } catch (error) { showError(error.message || 'Research Copilot could not run that query'); }
+    finally { setLoading(false); }
+  };
+  const plan = response?.query_plan;
+  return <section className="mb-5 rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-indigo-50 p-4 shadow-sm" aria-label="Ask Research">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.14em] text-violet-700"><Sparkles size={13}/> Ask Research</p><p className="mt-1 text-sm text-slate-600">Describe the competitor pattern you need. We search retained evidence and show the plan before calling anything a winner.</p></div><span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-500 ring-1 ring-violet-100">{verticalLabel}</span></div>
+    <form onSubmit={runQuery} className="mt-3 flex flex-col gap-2 sm:flex-row"><input value={question} onChange={event => setQuestion(event.target.value)} maxLength={500} placeholder="e.g. Show active commercial auto ads for owner-operators running 30+ days" className="min-w-0 flex-1 rounded-xl border border-violet-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-200" aria-label="Ask Research" /><button type="submit" disabled={loading || !question.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-violet-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-50"><Sparkles size={15}/>{loading ? 'Planning…' : 'Search research'}</button></form>
+    {response && <div className="mt-4 rounded-xl border border-violet-100 bg-white/85 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-semibold text-slate-900">Search plan · {response.coverage.matched} matching capture{response.coverage.matched === 1 ? '' : 's'}</p><button type="button" onClick={() => onRunResults(response)} disabled={!response.results.length} className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-800 hover:bg-violet-100 disabled:opacity-50">Review results</button></div><div className="mt-2 flex flex-wrap gap-1.5">{plan.segments.map(segment => <span key={segment} className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{segment}</span>)}{plan.active_only && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">active capture</span>}{plan.min_running_days && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">observed {plan.min_running_days}+ days</span>}{plan.captured_within_days && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">captured within {plan.captured_within_days} days</span>}{plan.media_type && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{plan.media_type}</span>}{plan.cta_type && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">get quote CTA</span>}</div><p className={`mt-3 text-xs leading-5 ${response.coverage.sufficient ? 'text-slate-600' : 'text-amber-800'}`}>{response.coverage.sufficient ? 'Coverage is sufficient to review in the retained library.' : 'Coverage is thin. A live Meta capture can be requested later, but will never run automatically.'}</p><p className="mt-1 text-xs leading-5 text-slate-500">{response.limitations?.[0]}</p></div>}
+  </section>;
 }
 
 // ── Main page ────────────────────────────────────────────────────
@@ -1703,6 +1734,16 @@ export default function Research() {
     setAdvertiserFilter(advertiser);
     closeDetail();
   };
+  const handleCopilotResults = (response) => {
+    const results = (response.results || []).map(withDerivedResearchStatus);
+    setQuery(response.question || '');
+    setResearchView('library');
+    setActiveBoardId(null);
+    setBrowseError('');
+    setSearchResultAds(results);
+    setBrowseAds(results);
+    setResultMode('search');
+  };
   const catalogSummary = useMemo(() => ({
     total: browseAds.length,
     newCount: browseAds.filter(ad => ad.first_seen && Date.now() - new Date(ad.first_seen).getTime() <= 7 * 24 * 60 * 60 * 1000).length,
@@ -1937,6 +1978,8 @@ export default function Research() {
         </div>
         <span className="text-xs text-slate-500">{reviewedFindingsAll.length} reviewed finding{reviewedFindingsAll.length === 1 ? '' : 's'} · {catalogSummary.total} raw captures</span>
       </div>
+
+      <ResearchCopilot verticalId={activeVertical} verticalLabel={currentVerticalLabel} onRunResults={handleCopilotResults} />
 
       {researchView === 'brief' ? (
         <ResearchBrief

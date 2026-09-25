@@ -245,3 +245,9 @@ class ResearchBriefCuration(BaseModel):
     """Operator-owned context layered onto a reviewed research finding."""
     pinned: Optional[bool] = None
     bhm_takeaway: Optional[str] = Field(default=None, max_length=500)
+
+
+class ResearchCopilotQuery(BaseModel):
+    """A bounded, read-only natural-language query against retained research."""
+    question: str = Field(min_length=3, max_length=500)
+    vertical_id: str = Field(default="commercial_insurance", max_length=100)

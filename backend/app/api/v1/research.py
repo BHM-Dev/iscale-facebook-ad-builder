@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import List, Tuple
+import re
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -14,7 +15,7 @@ from app.schemas.research import (
     BrandScrapeCreate, BrandScrapeResponse, BrandScrapeListResponse, AdLibraryImportRequest,
     ExternalResearchImportRequest,
     ResearchBoardCreate, ResearchBoardItemCreate, ResearchBoardResponse, ResearchBoardItemResponse,
-    ResearchMediaAttachment, ResearchBriefCuration,
+    ResearchMediaAttachment, ResearchBriefCuration, ResearchCopilotQuery,
 )
 from app.services.research_service import ResearchService
 from app.services.rate_limiter import rate_limiter
@@ -30,6 +31,17 @@ RESEARCH_SORT_OPTIONS = {"longest_running", "newest_seen", "most_sightings", "mu
 RESEARCH_CREATIVE_TAGS = {"testimonial", "problem_agitation", "transformation", "comparison", "review", "listicle", "founder", "educational", "statistic", "ugc", "comment_response"}
 RESEARCH_CTA_TYPES = {"learn_more", "get_quote", "sign_up", "apply_now", "contact_us", "shop_now", "unknown"}
 RESEARCH_PAGE_TYPES = {"lead_form", "advertorial", "ecommerce", "homepage", "unknown"}
+COPILOT_STOP_WORDS = {
+    "active", "ad", "ads", "and", "are", "best", "day", "days", "find", "for", "from", "get", "in", "last", "me", "of", "performing", "please", "running", "show", "that", "the", "these", "this", "to", "what", "with",
+}
+COPILOT_SEGMENTS = {
+    "owner-operators": ("owner operator", "owner-operator", "owner operators", "owner-operators"),
+    "truckers": ("trucker", "truckers", "trucking", "hauler", "haulers"),
+    "religious organizations": ("church", "churches", "religious organization", "religious organizations", "ministry", "ministries"),
+    "contractors": ("contractor", "contractors"),
+    "tree services": ("tree service", "tree services", "arborist", "arborists"),
+    "security firms": ("security firm", "security firms", "security company", "security companies"),
+}
 
 
 def _normalize_external_url(value: str | None) -> str:
@@ -143,6 +155,94 @@ def _configured_vertical_label(config_id: str | None) -> str | None:
     from app.core.vertical_config import VERTICAL_KEYWORD_SETS
     config = VERTICAL_KEYWORD_SETS.get(config_id)
     return config.get("label") if config else None
+
+
+def _plan_research_copilot_question(question: str, vertical_id: str) -> dict:
+    """Translate common media-buyer language into transparent, bounded filters.
+
+    This is intentionally deterministic for v1. A model can later propose the
+    same structured plan, but it must still pass these validation boundaries.
+    """
+    text = question.casefold().strip()
+    segments = [label for label, phrases in COPILOT_SEGMENTS.items() if any(phrase in text for phrase in phrases)]
+    active_only = any(term in text for term in ("active", "current", "running", "live now"))
+    recent_match = re.search(r"(?:last|past)\s+(\d{1,3})\s+days", text)
+    runtime_match = re.search(r"(?:running|run|active)[^\d]{0,20}(\d{1,3})\s*(?:\+|plus)?\s*days", text)
+    media_type = "video" if "video" in text else "image" if any(term in text for term in ("image", "static")) else None
+    cta_type = "get_quote" if any(term in text for term in ("get quote", "quote ads", "quote ad")) else None
+    raw_terms = re.findall(r"[a-z0-9]{3,}", text)
+    terms = [term for term in raw_terms if term not in COPILOT_STOP_WORDS and not term.isdigit()]
+    # Segment labels are query intent, not a reason to require every individual
+    # phrase fragment (e.g. both "owner" and "operators") in a result.
+    for phrase in sum((list(phrases) for label, phrases in COPILOT_SEGMENTS.items() if label in segments), []):
+        for token in re.findall(r"[a-z0-9]{3,}", phrase):
+            terms = [term for term in terms if term != token]
+    return {
+        "vertical_id": vertical_id,
+        "segments": segments,
+        "active_only": active_only,
+        "captured_within_days": min(int(recent_match.group(1)), 365) if recent_match else None,
+        "min_running_days": min(int(runtime_match.group(1)), 3650) if runtime_match else None,
+        "media_type": media_type,
+        "cta_type": cta_type,
+        "terms": terms[:8],
+        "ranking": ["observed runtime", "creative versions", "capture recency", "retained media"],
+    }
+
+
+def _score_research_copilot_candidate(ad, plan: dict, now: datetime) -> tuple[int, list[str]] | None:
+    text = " ".join(filter(None, [ad.brand_name, ad.headline, ad.ad_copy, ad.cta_text])).casefold()
+    start = _parse_research_date(ad.start_date)
+    last_seen = _parse_research_date(ad.last_seen)
+    running_days = max(0, (now - start).days) if start else None
+    reasons = []
+    score = 0
+    if plan["active_only"]:
+        if not last_seen or (now - last_seen).days > 30:
+            return None
+        score += 18
+        reasons.append("captured in the last 30 days")
+    if plan["captured_within_days"]:
+        if not last_seen or (now - last_seen).days > plan["captured_within_days"]:
+            return None
+        score += 14
+        reasons.append(f"captured within {plan['captured_within_days']} days")
+    if plan["min_running_days"]:
+        if running_days is None or running_days < plan["min_running_days"]:
+            return None
+        score += min(30, running_days // 3)
+        reasons.append(f"observed {running_days} days")
+    if plan["media_type"]:
+        if (ad.media_type or "").casefold() != plan["media_type"]:
+            return None
+        reasons.append(f"{plan['media_type']} format")
+        score += 8
+    if plan["cta_type"]:
+        if ad.cta_type != plan["cta_type"]:
+            return None
+        reasons.append("get quote CTA")
+        score += 8
+    segment_matches = [segment for segment in plan["segments"] if any(phrase in text for phrase in COPILOT_SEGMENTS[segment])]
+    if plan["segments"] and not segment_matches:
+        return None
+    if segment_matches:
+        reasons.extend(f"{segment} language" for segment in segment_matches)
+        score += 28 * len(segment_matches)
+    term_matches = [term for term in plan["terms"] if term in text]
+    if plan["terms"] and not term_matches and not segment_matches:
+        return None
+    if term_matches:
+        reasons.append("matched: " + ", ".join(term_matches[:3]))
+        score += min(24, len(term_matches) * 8)
+    if ad.is_multiple_versions:
+        score += 7
+        reasons.append("multiple captured versions")
+    if ad.thumbnail_url or ad.media_url:
+        score += 4
+        reasons.append("retained visual")
+    if last_seen:
+        score += max(0, 10 - min(10, (now - last_seen).days // 3))
+    return score, reasons or ["same selected research vertical"]
 
 
 def _parse_research_date(value):
@@ -1737,6 +1837,68 @@ def get_related_research_ads(
         scored.append((score, candidate, reasons))
     scored.sort(key=lambda item: (-item[0], _parse_research_date(item[1].last_seen) or datetime.min))
     return [{**_serialize_scraped_ad(ad), "match_reasons": reasons} for _, ad, reasons in scored[:max(1, min(limit, 12))]]
+
+
+@router.post("/copilot/query")
+def query_research_copilot(
+    payload: ResearchCopilotQuery,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Answer a natural-language research question from BHM's retained catalog.
+
+    This is deliberately read-only and uses only observable catalog signals.
+    It does not call a model, scrape Meta, or represent source proxies as
+    performance data.
+    """
+    from app.models import ScrapedAd, SavedSearch
+    from sqlalchemy.orm import joinedload
+
+    vertical_label = _configured_vertical_label(payload.vertical_id)
+    if not vertical_label:
+        raise HTTPException(status_code=400, detail="Choose a supported Research vertical")
+    plan = _plan_research_copilot_question(payload.question, payload.vertical_id)
+    now = datetime.utcnow()
+    candidates = (
+        db.query(ScrapedAd)
+        .options(joinedload(ScrapedAd.saved_search).joinedload(SavedSearch.vertical))
+        .order_by(ScrapedAd.last_seen.desc())
+        .limit(750)
+        .all()
+    )
+    scored = []
+    for ad in candidates:
+        candidate_vertical = getattr(getattr(ad.saved_search, "vertical", None), "name", None)
+        if candidate_vertical and candidate_vertical != vertical_label:
+            continue
+        if not candidate_vertical and not _matches_research_vertical(ad, payload.vertical_id):
+            continue
+        match = _score_research_copilot_candidate(ad, plan, now)
+        if not match:
+            continue
+        score, reasons = match
+        scored.append((score, ad, reasons))
+    scored.sort(key=lambda item: (-item[0], _parse_research_date(item[1].last_seen) or datetime.min))
+    results = []
+    for score, ad, reasons in scored[:40]:
+        record = _serialize_scraped_ad(ad)
+        record["copilot_score"] = score
+        record["match_reasons"] = reasons
+        results.append(record)
+    return {
+        "question": payload.question.strip(),
+        "query_plan": {**plan, "vertical": vertical_label},
+        "coverage": {
+            "matched": len(results),
+            "sufficient": len(results) >= 5,
+            "live_capture_recommended": len(results) < 5,
+        },
+        "results": results,
+        "limitations": [
+            "Results are ranked by retained catalog signals, not Meta spend, ROAS, conversions, or delivery performance.",
+            "Observed runtime is calculated from source-provided dates when available.",
+        ],
+    }
 
 
 @router.get("/config-verticals/{config_id}/browse-ads")
