@@ -239,3 +239,9 @@ class ResearchMediaAttachment(BaseModel):
     """A visual the operator is permitted to retain with a research finding."""
     url: str = Field(min_length=1, max_length=2000)
     media_type: str = Field(pattern="^(image|video)$")
+
+
+class ResearchBriefCuration(BaseModel):
+    """Operator-owned context layered onto a reviewed research finding."""
+    pinned: Optional[bool] = None
+    bhm_takeaway: Optional[str] = Field(default=None, max_length=500)

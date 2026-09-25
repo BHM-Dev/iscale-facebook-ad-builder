@@ -407,7 +407,7 @@ function BoardSaveButton({ ad, boards, onAdd, onCreate }) {
   );
 }
 
-function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onExploreAdvertiser, onBack, canGoBack, onPreviousResult, onNextResult, canGoPrevious, canGoNext, resultPosition, onNotesSaved, onMediaSaved, onReviewSaved, boards, onAddToBoard, onCreateBoard }) {
+function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onExploreAdvertiser, onBack, canGoBack, onPreviousResult, onNextResult, canGoPrevious, canGoNext, resultPosition, onNotesSaved, onMediaSaved, onReviewSaved, onBriefSaved, boards, onAddToBoard, onCreateBoard }) {
   const { authFetch } = useAuth();
   const { showError, showSuccess } = useToast();
   const [related, setRelated] = useState([]);
@@ -415,6 +415,8 @@ function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onExploreAdvert
   const [savingNotes, setSavingNotes] = useState(false);
   const [videoFailed, setVideoFailed] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [briefTakeaway, setBriefTakeaway] = useState('');
+  const [savingBrief, setSavingBrief] = useState(false);
   const mediaInputRef = useRef(null);
   useEffect(() => { setVideoFailed(false); }, [ad?.id]);
   useEffect(() => {
@@ -424,6 +426,7 @@ function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onExploreAdvert
     return () => { alive = false; };
   }, [ad?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setNotes({ hook_type: ad?.hook_type || '', promise: ad?.promise || '' }); }, [ad?.id]);
+  useEffect(() => { setBriefTakeaway(ad?.creative_intel?.bhm_takeaway || ''); }, [ad?.id]);
   useEffect(() => {
     if (!ad) return undefined;
     const onKeyDown = (event) => { if (event.key === 'Escape') onClose(); };
@@ -474,6 +477,18 @@ function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onExploreAdvert
       showSuccess(reviewed ? 'Added to Research Brief' : 'Removed from Research Brief');
     } catch (error) { showError(error.message || 'Could not update Brief'); }
   };
+  const saveBriefCuration = async (updates, successMessage) => {
+    setSavingBrief(true);
+    try {
+      const response = await authFetch(`${API_URL}/research/scraped-ads/${ad.id}/brief`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates),
+      });
+      if (!response.ok) throw new Error('Could not update Research Brief');
+      onBriefSaved(ad.id, await response.json());
+      showSuccess(successMessage);
+    } catch (error) { showError(error.message || 'Could not update Research Brief'); }
+    finally { setSavingBrief(false); }
+  };
   return <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/30 backdrop-blur-sm" onClick={onClose}>
     <aside className="h-full w-full max-w-xl overflow-y-auto bg-white p-6 shadow-2xl" onClick={event => event.stopPropagation()} aria-label="Creative detail">
       <div className="mb-5 flex items-start justify-between gap-4"><div className="min-w-0 flex items-start gap-2">{canGoBack && <button type="button" onClick={onBack} className="mt-0.5 rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Back to previous related creative">←</button>}<div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-wider text-indigo-600">Creative detail{resultPosition ? ` · ${resultPosition.current} of ${resultPosition.total}` : ''}</p><h2 className="mt-1 truncate text-xl font-bold text-slate-900" title={ad.brand_name || 'Unknown advertiser'}>{ad.brand_name || 'Unknown advertiser'}</h2></div></div><div className="flex flex-shrink-0 items-center gap-1"><button type="button" onClick={onPreviousResult} disabled={!canGoPrevious} className="rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30">Previous</button><button type="button" onClick={onNextResult} disabled={!canGoNext} className="rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30">Next</button><button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X size={20}/></button></div></div>
@@ -481,10 +496,12 @@ function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onExploreAdvert
       <input ref={mediaInputRef} type="file" accept="image/*,video/mp4,video/webm,video/quicktime" className="hidden" onChange={attachVisual} />
       <button type="button" onClick={() => mediaInputRef.current?.click()} disabled={uploadingMedia} className="mb-5 inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"><ImagePlus size={14}/>{uploadingMedia ? 'Uploading…' : media ? 'Replace approved visual' : 'Attach approved visual'}</button>
       {ad.platform !== 'external' && <button type="button" onClick={toggleReviewed} className="mb-5 ml-2 inline-flex rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-indigo-200 hover:text-indigo-700">{ad.creative_intel?.reviewed ? 'Remove from Brief' : 'Add to Brief'}</button>}
+      <button type="button" onClick={() => saveBriefCuration({ pinned: !ad.creative_intel?.pinned }, ad.creative_intel?.pinned ? 'Unpinned from Research Brief' : 'Pinned in Research Brief')} disabled={savingBrief} className="mb-5 ml-2 inline-flex rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50">{ad.creative_intel?.pinned ? 'Unpin finding' : 'Pin finding'}</button>
       <div className="mb-5 flex flex-wrap gap-2">{ad.creative_intel?.research_source && <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">Source: {ad.creative_intel.research_source}</span>}{(ad.creative_tags || []).map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">{tag.replaceAll('_', ' ')}</span>)}{ad.cta_type && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">CTA: {ad.cta_type.replaceAll('_', ' ')}</span>}</div>
       {ad.headline && <h3 className="text-lg font-semibold leading-snug text-slate-900">{ad.headline}</h3>}{ad.ad_copy && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{ad.ad_copy}</p>}
       <dl className="mt-6 grid grid-cols-2 gap-3 border-t border-slate-100 pt-5 text-sm"><div><dt className="text-xs text-slate-400">Destination</dt><dd className="mt-1 truncate font-medium text-slate-700">{ad.destination_domain || 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Observed</dt><dd className="mt-1 font-medium text-slate-700">{ad.running_days != null ? `${ad.running_days} days` : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Last captured</dt><dd className="mt-1 font-medium text-slate-700">{ad.last_seen ? new Date(ad.last_seen).toLocaleDateString() : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Tag source</dt><dd className="mt-1 font-medium text-slate-700">{ad.taxonomy_source || 'Not tagged'}</dd></div>{ad.creative_intel?.source_signal && <div className="col-span-2"><dt className="text-xs text-slate-400">Source signal</dt><dd className="mt-1 text-xs font-medium text-amber-800">{ad.creative_intel.source_signal} <span className="font-normal text-slate-400">· directional source context</span></dd></div>}</dl>
       <section className="mt-6 border-t border-slate-100 pt-5"><h3 className="text-sm font-semibold text-slate-900">Strategic notes</h3><p className="mt-1 text-xs text-slate-400">Your interpretation is passed to Remix as context, never competitor copy.</p><label className="mt-3 block text-xs font-medium text-slate-600">Hook pattern<input value={notes.hook_type} onChange={e => setNotes(prev => ({ ...prev, hook_type: e.target.value }))} placeholder="e.g. Cost shock" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></label><label className="mt-3 block text-xs font-medium text-slate-600">Why this pattern works<textarea value={notes.promise} onChange={e => setNotes(prev => ({ ...prev, promise: e.target.value }))} placeholder="The promise or reason to test this structure" className="mt-1 min-h-20 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></label><button type="button" onClick={saveNotes} disabled={savingNotes} className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">{savingNotes ? 'Saving…' : 'Save strategic notes'}</button></section>
+      <section className="mt-6 border-t border-slate-100 pt-5"><h3 className="text-sm font-semibold text-slate-900">BHM takeaway</h3><p className="mt-1 text-xs text-slate-400">One internal sentence about what to test. This is never shown as source copy.</p><textarea value={briefTakeaway} onChange={event => setBriefTakeaway(event.target.value)} maxLength={500} placeholder="e.g. Test the segment → operational risk → compare-quote sequence with a verified claim." className="mt-3 min-h-20 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /><div className="mt-1 flex items-center justify-between"><span className="text-xs text-slate-400">{briefTakeaway.length}/500</span><button type="button" onClick={() => saveBriefCuration({ bhm_takeaway: briefTakeaway }, briefTakeaway.trim() ? 'BHM takeaway saved' : 'BHM takeaway cleared')} disabled={savingBrief} className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">{savingBrief ? 'Saving…' : 'Save takeaway'}</button></div></section>
       {related.length > 0 && <section className="mt-6 border-t border-slate-100 pt-5"><h3 className="text-sm font-semibold text-slate-900">Related patterns</h3><p className="mt-1 text-xs text-slate-400">Matched on visible creative metadata, not performance.</p><div className="mt-3 space-y-2">{related.map(item => <button type="button" key={item.id} onClick={() => onInspect(item)} className="w-full rounded-lg border border-slate-100 p-3 text-left hover:border-indigo-200 hover:bg-indigo-50/40"><p className="truncate text-sm font-semibold text-slate-700">{item.brand_name || 'Unknown advertiser'}</p><p className="mt-1 text-xs text-slate-500">{item.match_reasons.join(' · ')}</p></button>)}</div></section>}
       <div className="mt-7 grid grid-cols-2 gap-2"><button type="button" onClick={() => onBuild(ad)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"><Zap size={15}/>Use as Inspiration</button>{ad.brand_name && <button type="button" onClick={() => onExploreAdvertiser(ad.brand_name)} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-semibold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"><span>Explore advertiser</span></button>}<a href={ad.ad_link} target="_blank" rel="noreferrer" className="col-span-2 inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><ExternalLink size={15}/>{ad.platform === 'external' ? 'Open source link' : 'View in Meta Ad Library'}</a></div>
       <div className="mt-2"><BoardSaveButton ad={ad} boards={boards} onAdd={onAddToBoard} onCreate={onCreateBoard} /></div>
@@ -932,10 +949,11 @@ function ResearchBrief({ findings, totalFindings, visualStats, visualFilter, onV
                     <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">{intel.research_source || 'Reviewed research'}</p>
                     <h3 className="mt-1 text-base font-semibold leading-6 text-slate-900">{ad.brand_name}</h3>
                   </div>
-                  {intel.segment && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-right text-[11px] font-medium text-slate-600">{intel.segment}</span>}
+                  <div className="flex flex-wrap justify-end gap-1.5">{intel.pinned && <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800">Pinned</span>}{intel.segment && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-right text-[11px] font-medium text-slate-600">{intel.segment}</span>}</div>
                 </div>
                 <p className="mt-4 text-sm font-semibold leading-6 text-slate-900">{ad.headline || 'Reviewed competitor pattern'}</p>
                 <p className="mt-2 text-sm leading-6 text-slate-600">{ad.ad_copy || intel.source_signal || 'Open the source notes for the reviewed takeaway.'}</p>
+                {intel.bhm_takeaway && <p className="mt-3 rounded-lg bg-indigo-50 px-3 py-2 text-xs leading-5 text-indigo-950"><span className="font-semibold">BHM takeaway: </span>{intel.bhm_takeaway}</p>}
                 {intel.source_signal && <p className="mt-3 border-l-2 border-amber-300 pl-3 text-xs leading-5 text-slate-500">{intel.source_signal}</p>}
                 <div className="mt-auto flex gap-2 pt-5">
                   <button type="button" onClick={() => onInspect(ad)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-indigo-200 hover:text-indigo-700">Inspect</button>
@@ -1657,7 +1675,9 @@ export default function Research() {
     mediaCount: browseAds.filter(ad => ad.thumbnail_url || ad.media_url).length,
     taggedCount: browseAds.filter(ad => (ad.creative_tags || []).length > 0).length,
   }), [browseAds]);
-  const reviewedFindingsAll = useMemo(() => browseAds.filter(ad => ad.platform === 'external' || ad.creative_intel?.reviewed), [browseAds]);
+  const reviewedFindingsAll = useMemo(() => [...browseAds]
+    .filter(ad => ad.platform === 'external' || ad.creative_intel?.reviewed)
+    .sort((a, b) => Number(Boolean(b.creative_intel?.pinned)) - Number(Boolean(a.creative_intel?.pinned))), [browseAds]);
   const visualStats = useMemo(() => {
     const withVisual = reviewedFindingsAll.filter(ad => ad.thumbnail_url || ad.media_url).length;
     return { withVisual, needsVisual: reviewedFindingsAll.length - withVisual };
@@ -2213,7 +2233,7 @@ export default function Research() {
         importing={importingIntel}
         defaultVertical={currentVerticalLabel}
       />
-      <ResearchDetailDrawer ad={detailAd} onClose={closeDetail} onInspect={inspectCreative} onExploreAdvertiser={exploreAdvertiser} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onPreviousResult={() => inspectAdjacentResult(-1)} onNextResult={() => inspectAdjacentResult(1)} canGoPrevious={detailResultIndex > 0} canGoNext={detailResultIndex >= 0 && detailResultIndex < browseAds.length - 1} resultPosition={detailResultIndex >= 0 ? { current: detailResultIndex + 1, total: browseAds.length } : null} onNotesSaved={handleStrategyNotesSaved} onMediaSaved={handleResearchMediaSaved} onReviewSaved={handleResearchReviewSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
+      <ResearchDetailDrawer ad={detailAd} onClose={closeDetail} onInspect={inspectCreative} onExploreAdvertiser={exploreAdvertiser} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onPreviousResult={() => inspectAdjacentResult(-1)} onNextResult={() => inspectAdjacentResult(1)} canGoPrevious={detailResultIndex > 0} canGoNext={detailResultIndex >= 0 && detailResultIndex < browseAds.length - 1} resultPosition={detailResultIndex >= 0 ? { current: detailResultIndex + 1, total: browseAds.length } : null} onNotesSaved={handleStrategyNotesSaved} onMediaSaved={handleResearchMediaSaved} onReviewSaved={handleResearchReviewSaved} onBriefSaved={handleResearchReviewSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
     </div>
   );
 }

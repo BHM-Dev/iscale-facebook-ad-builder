@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 
 from app.api.v1.research import _cap_ads_per_advertiser, _infer_creative_taxonomy, _matches_research_vertical, _related_pattern_score
+from app.schemas.research import ResearchBriefCuration
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from backfill_research_taxonomy import taxonomy_update
@@ -92,3 +93,11 @@ def test_advertiser_cap_preserves_sorted_first_result_and_unknown_legacy_rows():
     limited = _cap_ads_per_advertiser(ads, 1)
     assert [ad.brand_name for ad in limited] == ["Acme", "Bravo", None, ""]
     assert _cap_ads_per_advertiser(ads, None) == ads
+
+
+def test_brief_curation_accepts_operator_context_without_source_fields():
+    curation = ResearchBriefCuration(pinned=True, bhm_takeaway="Test the segment-to-risk sequence with verified claims.")
+    assert curation.model_dump(exclude_unset=True) == {
+        "pinned": True,
+        "bhm_takeaway": "Test the segment-to-risk sequence with verified claims.",
+    }

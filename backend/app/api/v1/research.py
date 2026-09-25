@@ -14,7 +14,7 @@ from app.schemas.research import (
     BrandScrapeCreate, BrandScrapeResponse, BrandScrapeListResponse, AdLibraryImportRequest,
     ExternalResearchImportRequest,
     ResearchBoardCreate, ResearchBoardItemCreate, ResearchBoardResponse, ResearchBoardItemResponse,
-    ResearchMediaAttachment,
+    ResearchMediaAttachment, ResearchBriefCuration,
 )
 from app.services.research_service import ResearchService
 from app.services.rate_limiter import rate_limiter
@@ -1461,6 +1461,33 @@ def set_research_reviewed(ad_id: str, reviewed: bool, db: Session = Depends(get_
         raise HTTPException(status_code=404, detail="Ad not found")
     intel = dict(ad.creative_intel or {})
     intel["reviewed"] = reviewed
+    ad.creative_intel = intel
+    db.commit()
+    return {"id": ad.id, "creative_intel": ad.creative_intel}
+
+
+@router.patch("/scraped-ads/{ad_id}/brief")
+def update_research_brief_curation(
+    ad_id: str,
+    curation: ResearchBriefCuration,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Persist BHM's own takeaway and priority without altering source data."""
+    from app.models import ScrapedAd
+    ad = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Ad not found")
+    updates = curation.model_dump(exclude_unset=True)
+    intel = dict(ad.creative_intel or {})
+    if "pinned" in updates:
+        intel["pinned"] = bool(updates["pinned"])
+    if "bhm_takeaway" in updates:
+        takeaway = (updates["bhm_takeaway"] or "").strip()
+        if takeaway:
+            intel["bhm_takeaway"] = takeaway
+        else:
+            intel.pop("bhm_takeaway", None)
     ad.creative_intel = intel
     db.commit()
     return {"id": ad.id, "creative_intel": ad.creative_intel}
