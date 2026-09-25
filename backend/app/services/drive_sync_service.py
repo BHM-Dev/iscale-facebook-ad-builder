@@ -627,6 +627,9 @@ class DriveSyncService:
 
         try:
             r2_key = self._upload_file_to_r2(file_path, file_name, mime_type)
+            upload_format = "video" if mime_type.startswith("video/") else "image"
+            with open(file_path, "rb") as fh:
+                thumbnail_r2_key = self._upload_image_thumbnail(fh.read(), upload_format)
             # Uploads intentionally enter manual-copy mode. Their per-row editor
             # still requires headline, primary text, CTA, and global URL before
             # launch; this only prevents an expected no-copy asset from appearing
@@ -643,19 +646,20 @@ class DriveSyncService:
                     r2_key, thumbnail_r2_key, drive_modified_time, synced_at, archived, soft_tags
                 ) VALUES (
                     :id, :drive_file_id, :brand_id, NULL, :format, 'Ad Builder Uploads', :file_name,
-                    :r2_key, NULL, :modified_time, NOW(), FALSE, :soft_tags
+                    :r2_key, :thumbnail_r2_key, :modified_time, NOW(), FALSE, :soft_tags
                 )
                 ON CONFLICT (drive_file_id) DO UPDATE SET
                     brand_id = EXCLUDED.brand_id, format = EXCLUDED.format,
                     folder_path = EXCLUDED.folder_path, file_name = EXCLUDED.file_name,
-                    r2_key = EXCLUDED.r2_key, drive_modified_time = EXCLUDED.drive_modified_time,
+                    r2_key = EXCLUDED.r2_key, thumbnail_r2_key = EXCLUDED.thumbnail_r2_key,
+                    drive_modified_time = EXCLUDED.drive_modified_time,
                     synced_at = NOW(), archived = FALSE, soft_tags = EXCLUDED.soft_tags
                     """
                 ),
                 {
                     "id": str(uuid.uuid4()), "drive_file_id": uploaded["id"], "brand_id": brand_id,
-                    "format": "video" if mime_type.startswith("video/") else "image",
-                    "file_name": file_name, "r2_key": r2_key,
+                    "format": upload_format,
+                    "file_name": file_name, "r2_key": r2_key, "thumbnail_r2_key": thumbnail_r2_key,
                     "modified_time": self._parse_drive_time(uploaded.get("modifiedTime")),
                     "soft_tags": json.dumps(upload_tags),
                 },
@@ -953,6 +957,7 @@ class DriveSyncService:
 
         content = self._download_file(drive_file_id)
         r2_key = self._upload_to_r2(content, file_name, mime_type)
+        thumbnail_r2_key = self._upload_image_thumbnail(content, media_format)
         soft_tags = self._metadata_for_media_file(file_meta, file_name)
 
         params = {
@@ -964,7 +969,7 @@ class DriveSyncService:
             "folder_path": resolved.folder_path,
             "file_name": file_name,
             "r2_key": r2_key,
-            "thumbnail_r2_key": None,
+            "thumbnail_r2_key": thumbnail_r2_key,
             "drive_modified_time": modified_time,
             "soft_tags": json.dumps(soft_tags) if soft_tags else None,
         }
@@ -1023,6 +1028,53 @@ class DriveSyncService:
             ContentType=content_type or "application/octet-stream",
         )
         return f"{settings.R2_PUBLIC_URL}/{key}"
+
+    # Grid thumbnails are the whole point of thumbnail_r2_key: Joel's library
+    # picker renders hundreds of these at once, so shipping the same full-res
+    # original both places (previously the only option, since this was never
+    # populated) is what made the picker feel slow. Capped at 480px on the long
+    # edge — plenty for an ~80-150px grid tile, tiny compared to Drive-sourced
+    # originals that are routinely several MB. Video has no equivalent here
+    # (no frame-extraction dependency in this image); thumbnail_r2_key stays
+    # NULL for video rows and the frontend falls back to r2_key for those.
+    _THUMBNAIL_MAX_EDGE = 480
+    _THUMBNAIL_QUALITY = 78
+
+    def _generate_image_thumbnail(self, content: bytes) -> Optional[bytes]:
+        try:
+            with Image.open(io.BytesIO(content)) as image:
+                image = image.convert("RGB")
+                image.thumbnail((self._THUMBNAIL_MAX_EDGE, self._THUMBNAIL_MAX_EDGE), Image.LANCZOS)
+                buffer = io.BytesIO()
+                image.save(buffer, format="JPEG", quality=self._THUMBNAIL_QUALITY)
+                return buffer.getvalue()
+        except Exception:
+            # A malformed/unreadable source image must not fail the whole sync
+            # over a grid thumbnail — the full-res r2_key is still usable, the
+            # frontend already falls back to it when thumbnail_r2_key is NULL.
+            logger.warning("Could not generate Drive asset thumbnail", exc_info=True)
+            return None
+
+    def _upload_image_thumbnail(self, content: bytes, media_format: str) -> Optional[str]:
+        if media_format != "image":
+            return None
+        thumb_bytes = self._generate_image_thumbnail(content)
+        if thumb_bytes is None:
+            return None
+        try:
+            return self._upload_to_r2(thumb_bytes, "thumb.jpg", "image/jpeg")
+        except Exception:
+            # Same graceful-degradation guarantee as a Pillow decode failure
+            # above: a transient R2 hiccup on the thumbnail must not fail the
+            # asset it's attached to. Caught here specifically because
+            # import_uploaded_media's outer handler treats ANY exception as a
+            # failed upload and trashes the Drive file it just created — a
+            # thumbnail-only failure must not undo an otherwise-successful
+            # upload or force a wasted full re-download+re-upload on the next
+            # sync pass. The frontend already falls back to r2_key when
+            # thumbnail_r2_key is NULL.
+            logger.warning("Could not upload Drive asset thumbnail to R2", exc_info=True)
+            return None
 
     def _archive_by_drive_id(self, drive_file_id: Optional[str]) -> int:
         if not drive_file_id:

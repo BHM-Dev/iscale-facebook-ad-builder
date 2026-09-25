@@ -1353,8 +1353,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     id: `drive_${group.feedAsset.id}_${group.storiesAsset.id}`,
                     file: null,
                     previewUrl: group.feedAsset.r2_key,
+                    thumbnailUrl: group.feedAsset.thumbnail_r2_key || group.feedAsset.r2_key,
                     imageUrl: group.feedAsset.r2_key,
                     secondaryImageUrl: group.storiesAsset.r2_key,
+                    secondaryThumbnailUrl: group.storiesAsset.thumbnail_r2_key || group.storiesAsset.r2_key,
                     name: group.feedAsset.file_name,
                     mediaType: 'image',
                     format: 'feed',
@@ -1384,6 +1386,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                     id: `drive_${asset.id}`,
                     file: null,
                     previewUrl: asset.r2_key,
+                    thumbnailUrl: asset.thumbnail_r2_key || asset.r2_key,
                     imageUrl: asset.format === 'video' ? undefined : asset.r2_key,
                     videoUrl: asset.format === 'video' ? asset.r2_key : undefined,
                     name: asset.file_name,
@@ -1413,6 +1416,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                 id: `drive_${asset.id}`,
                 file: null,
                 previewUrl: asset.r2_key,
+                thumbnailUrl: asset.thumbnail_r2_key || asset.r2_key,
                 imageUrl: asset.format === 'video' ? undefined : asset.r2_key,
                 videoUrl: asset.format === 'video' ? asset.r2_key : undefined,
                 name: asset.file_name,
@@ -2600,7 +2604,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                             {creative.mediaType === 'video' ? (
                                                                 <video src={creative.previewUrl} className="h-full w-full object-cover" muted playsInline preload="metadata" />
                                                             ) : (
-                                                                <img src={creative.previewUrl} alt={creative.name} className="h-full w-full object-cover" loading="lazy" decoding="async" />
+                                                                <img src={creative.thumbnailUrl || creative.previewUrl} alt={creative.name} className="h-full w-full object-cover" loading="lazy" decoding="async" />
                                                             )}
                                                             {/* Badge is a sibling of the two placement images now, not
                                                                 floating in the outer flex row — it was previously
@@ -2614,7 +2618,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     )}
                                                     {creative.dualPlacement && creative.secondaryImageUrl && (
                                                         <div className="relative h-full w-1/2">
-                                                            <img src={creative.secondaryImageUrl} alt={`${creative.name} Stories`} className="h-full w-full object-cover" loading="lazy" decoding="async" />
+                                                            <img src={creative.secondaryThumbnailUrl || creative.secondaryImageUrl} alt={`${creative.name} Stories`} className="h-full w-full object-cover" loading="lazy" decoding="async" />
                                                             <span className="absolute bottom-1 left-1 rounded bg-purple-600 px-1 py-0.5 text-[9px] font-semibold text-white">Stories 9:16</span>
                                                         </div>
                                                     )}
@@ -3507,7 +3511,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                 {asset.format === 'video' ? (
                                                     <video src={asset.r2_key} className="h-full w-full object-contain" muted preload="metadata" />
                                                 ) : (
-                                                    <img src={asset.r2_key} alt={asset.file_name} className="h-full w-full object-contain" loading="lazy" decoding="async" />
+                                                    <img src={asset.thumbnail_r2_key || asset.r2_key} alt={asset.file_name} className="h-full w-full object-contain" loading="lazy" decoding="async" />
                                                 )}
                                                 </div>
                                                 {group.isPair && <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white">Feed</span>}
@@ -3515,7 +3519,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                                     {group.storiesAsset.format === 'video' ? (
                                                         <video src={group.storiesAsset.r2_key} className="h-full w-full object-contain" muted preload="metadata" />
                                                     ) : (
-                                                        <img src={group.storiesAsset.r2_key} alt={group.storiesAsset.file_name} className="h-full w-full object-contain" loading="lazy" decoding="async" />
+                                                        <img src={group.storiesAsset.thumbnail_r2_key || group.storiesAsset.r2_key} alt={group.storiesAsset.file_name} className="h-full w-full object-contain" loading="lazy" decoding="async" />
                                                     )}
                                                     <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white">Stories</span>
                                                 </div>}
