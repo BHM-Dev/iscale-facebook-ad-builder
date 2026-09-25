@@ -407,7 +407,7 @@ function BoardSaveButton({ ad, boards, onAdd, onCreate }) {
   );
 }
 
-function ResearchDetailDrawer({ ad, activeVertical, onClose, onBuild, onInspect, onExploreAdvertiser, onBack, canGoBack, onPreviousResult, onNextResult, canGoPrevious, canGoNext, resultPosition, onNotesSaved, onMediaSaved, onReviewSaved, onBriefSaved, boards, onAddToBoard, onCreateBoard }) {
+function ResearchDetailDrawer({ ad, activeVertical, advertiserSnapshot, onClose, onBuild, onInspect, onExploreAdvertiser, onBack, canGoBack, onPreviousResult, onNextResult, canGoPrevious, canGoNext, resultPosition, onNotesSaved, onMediaSaved, onReviewSaved, onBriefSaved, boards, onAddToBoard, onCreateBoard }) {
   const { authFetch } = useAuth();
   const { showError, showSuccess } = useToast();
   const [related, setRelated] = useState([]);
@@ -502,6 +502,7 @@ function ResearchDetailDrawer({ ad, activeVertical, onClose, onBuild, onInspect,
       <div className="mb-5 flex flex-wrap gap-2">{ad.creative_intel?.research_source && <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">Source: {ad.creative_intel.research_source}</span>}{(ad.creative_tags || []).map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">{tag.replaceAll('_', ' ')}</span>)}{ad.cta_type && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">CTA: {ad.cta_type.replaceAll('_', ' ')}</span>}</div>
       {ad.headline && <h3 className="text-lg font-semibold leading-snug text-slate-900">{ad.headline}</h3>}{ad.ad_copy && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{ad.ad_copy}</p>}
       <dl className="mt-6 grid grid-cols-2 gap-3 border-t border-slate-100 pt-5 text-sm"><div><dt className="text-xs text-slate-400">Destination</dt><dd className="mt-1 truncate font-medium text-slate-700">{ad.destination_domain || 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Observed</dt><dd className="mt-1 font-medium text-slate-700">{ad.running_days != null ? `${ad.running_days} days` : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Last captured</dt><dd className="mt-1 font-medium text-slate-700">{ad.last_seen ? new Date(ad.last_seen).toLocaleDateString() : 'Unknown'}</dd></div><div><dt className="text-xs text-slate-400">Tag source</dt><dd className="mt-1 font-medium text-slate-700">{ad.taxonomy_source || 'Not tagged'}</dd></div>{ad.creative_intel?.source_signal && <div className="col-span-2"><dt className="text-xs text-slate-400">Source signal</dt><dd className="mt-1 text-xs font-medium text-amber-800">{ad.creative_intel.source_signal} <span className="font-normal text-slate-400">· directional source context</span></dd></div>}</dl>
+      {advertiserSnapshot && <section className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4"><div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-900">Advertiser context</h3><p className="mt-1 text-xs text-slate-500">From this library’s current {advertiserSnapshot.captureCount} captured records—not platform performance.</p></div><button type="button" onClick={() => onExploreAdvertiser(ad.brand_name)} className="text-xs font-semibold text-indigo-700 hover:text-indigo-900">Explore all</button></div><div className="mt-3 grid grid-cols-2 gap-3 text-xs"><div><p className="text-slate-400">Active captures</p><p className="mt-1 font-semibold text-slate-800">{advertiserSnapshot.activeCount}</p></div><div><p className="text-slate-400">Format mix</p><p className="mt-1 font-semibold text-slate-800">{advertiserSnapshot.formatMix || 'Unknown'}</p></div><div><p className="text-slate-400">First observed</p><p className="mt-1 font-semibold text-slate-800">{advertiserSnapshot.firstObserved || 'Unknown'}</p></div><div><p className="text-slate-400">Landing domains</p><p className="mt-1 font-semibold text-slate-800">{advertiserSnapshot.domainCount}</p></div></div></section>}
       <section className="mt-6 border-t border-slate-100 pt-5"><h3 className="text-sm font-semibold text-slate-900">Strategic notes</h3><p className="mt-1 text-xs text-slate-400">Your interpretation is passed to Remix as context, never competitor copy.</p><label className="mt-3 block text-xs font-medium text-slate-600">Hook pattern<input value={notes.hook_type} onChange={e => setNotes(prev => ({ ...prev, hook_type: e.target.value }))} placeholder="e.g. Cost shock" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></label><label className="mt-3 block text-xs font-medium text-slate-600">Why this pattern works<textarea value={notes.promise} onChange={e => setNotes(prev => ({ ...prev, promise: e.target.value }))} placeholder="The promise or reason to test this structure" className="mt-1 min-h-20 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></label><button type="button" onClick={saveNotes} disabled={savingNotes} className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">{savingNotes ? 'Saving…' : 'Save strategic notes'}</button></section>
       <section className="mt-6 border-t border-slate-100 pt-5"><h3 className="text-sm font-semibold text-slate-900">BHM takeaway</h3><p className="mt-1 text-xs text-slate-400">One internal sentence about what to test. This is never shown as source copy.</p><textarea value={briefTakeaway} onChange={event => setBriefTakeaway(event.target.value)} maxLength={500} placeholder="e.g. Test the segment → operational risk → compare-quote sequence with a verified claim." className="mt-3 min-h-20 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /><div className="mt-1 flex items-center justify-between"><span className="text-xs text-slate-400">{briefTakeaway.length}/500</span><button type="button" onClick={() => saveBriefCuration({ bhm_takeaway: briefTakeaway }, briefTakeaway.trim() ? 'BHM takeaway saved' : 'BHM takeaway cleared')} disabled={savingBrief} className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">{savingBrief ? 'Saving…' : 'Save takeaway'}</button></div></section>
       {related.length > 0 && <section className="mt-6 border-t border-slate-100 pt-5"><h3 className="text-sm font-semibold text-slate-900">Related patterns</h3><p className="mt-1 text-xs text-slate-400">Matched on visible creative metadata, not performance.</p><div className="mt-3 space-y-2">{related.map(item => <button type="button" key={item.id} onClick={() => onInspect(item)} className="w-full rounded-lg border border-slate-100 p-3 text-left hover:border-indigo-200 hover:bg-indigo-50/40"><p className="truncate text-sm font-semibold text-slate-700">{item.brand_name || 'Unknown advertiser'}</p><p className="mt-1 text-xs text-slate-500">{item.match_reasons.join(' · ')}</p></button>)}</div></section>}
@@ -1691,6 +1692,25 @@ export default function Research() {
     const adjacent = detailResults[detailResultIndex + offset];
     if (adjacent) setDetailAd(adjacent);
   };
+  const advertiserSnapshot = useMemo(() => {
+    const advertiser = detailAd?.brand_name?.trim().toLowerCase();
+    if (!advertiser) return null;
+    const matches = browseAds.filter(ad => ad.brand_name?.trim().toLowerCase() === advertiser);
+    if (!matches.length) return null;
+    const formatCounts = matches.reduce((counts, ad) => {
+      const format = ad.media_type || 'unknown';
+      counts[format] = (counts[format] || 0) + 1;
+      return counts;
+    }, {});
+    const firstObserved = matches.map(ad => ad.start_date).filter(Boolean).sort()[0];
+    return {
+      captureCount: matches.length,
+      activeCount: matches.filter(ad => ad.is_active).length,
+      formatMix: Object.entries(formatCounts).map(([format, count]) => `${count} ${format}`).join(' · '),
+      firstObserved: firstObserved ? new Date(firstObserved).toLocaleDateString() : null,
+      domainCount: new Set(matches.map(ad => ad.destination_domain).filter(Boolean)).size,
+    };
+  }, [browseAds, detailAd]);
 
   // ── Render ────────────────────────────────────────────────────
     return (
@@ -2239,7 +2259,7 @@ export default function Research() {
         importing={importingIntel}
         defaultVertical={currentVerticalLabel}
       />
-      <ResearchDetailDrawer ad={detailAd} activeVertical={activeVertical} onClose={closeDetail} onInspect={inspectCreative} onExploreAdvertiser={exploreAdvertiser} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onPreviousResult={() => inspectAdjacentResult(-1)} onNextResult={() => inspectAdjacentResult(1)} canGoPrevious={detailResultIndex > 0} canGoNext={detailResultIndex >= 0 && detailResultIndex < detailResults.length - 1} resultPosition={detailResultIndex >= 0 ? { current: detailResultIndex + 1, total: detailResults.length } : null} onNotesSaved={handleStrategyNotesSaved} onMediaSaved={handleResearchMediaSaved} onReviewSaved={handleResearchReviewSaved} onBriefSaved={handleResearchReviewSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
+      <ResearchDetailDrawer ad={detailAd} activeVertical={activeVertical} advertiserSnapshot={advertiserSnapshot} onClose={closeDetail} onInspect={inspectCreative} onExploreAdvertiser={exploreAdvertiser} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onPreviousResult={() => inspectAdjacentResult(-1)} onNextResult={() => inspectAdjacentResult(1)} canGoPrevious={detailResultIndex > 0} canGoNext={detailResultIndex >= 0 && detailResultIndex < detailResults.length - 1} resultPosition={detailResultIndex >= 0 ? { current: detailResultIndex + 1, total: detailResults.length } : null} onNotesSaved={handleStrategyNotesSaved} onMediaSaved={handleResearchMediaSaved} onReviewSaved={handleResearchReviewSaved} onBriefSaved={handleResearchReviewSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
     </div>
   );
 }
