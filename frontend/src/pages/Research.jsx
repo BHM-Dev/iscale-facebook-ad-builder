@@ -965,7 +965,7 @@ function ComparePanel({ ads, onClose, onInspect }) {
   </div>;
 }
 
-function PatternMap({ findings }) {
+function PatternMap({ findings, onOpenTheme, onOpenVisuals }) {
   const top = (values, fallback) => Object.entries(values.reduce((counts, value) => {
     const key = value || fallback;
     counts[key] = (counts[key] || 0) + 1;
@@ -977,7 +977,7 @@ function PatternMap({ findings }) {
   const groups = [['Audience', audiences], ['Theme', themes], ['Coverage', coverage]];
   if (!findings.length) return null;
   return <section className="grid gap-3 md:grid-cols-3" aria-label="Research pattern map">
-    {groups.map(([label, items]) => <div key={label} className="rounded-xl border border-slate-200 bg-white px-4 py-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p><div className="mt-2 space-y-1.5">{items.map(([value, count]) => <div key={value} className="flex items-center justify-between gap-3 text-sm"><span className="truncate font-medium text-slate-700">{value.replaceAll('_', ' ')}</span><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{count}</span></div>)}</div></div>)}
+    {groups.map(([label, items]) => <div key={label} className="rounded-xl border border-slate-200 bg-white px-4 py-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p><div className="mt-2 space-y-1.5">{items.map(([value, count]) => { const canOpenTheme = label === 'Theme' && value !== 'Unclassified'; const canOpenVisuals = label === 'Coverage' && value === 'Visual ready'; return <div key={value} className="flex items-center justify-between gap-3 text-sm">{canOpenTheme || canOpenVisuals ? <button type="button" onClick={() => canOpenTheme ? onOpenTheme(value) : onOpenVisuals()} className="truncate text-left font-medium text-indigo-700 hover:text-indigo-900 hover:underline">{value.replaceAll('_', ' ')}</button> : <span className="truncate font-medium text-slate-700">{value.replaceAll('_', ' ')}</span>}<span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{count}</span></div>; })}</div></div>)}
   </section>;
 }
 
@@ -1009,7 +1009,7 @@ function ResearchBrief({ findings, totalFindings, visualStats, visualFilter, onV
         </div>
       </div>
 
-      <PatternMap findings={allFindings} />
+      <PatternMap findings={allFindings} onOpenTheme={onOpenThemes} onOpenVisuals={onOpenVisuals} />
       <ResearchLanes visualCount={visualStats.withVisual} onOpenVisuals={onOpenVisuals} onOpenThemes={onOpenThemes} onOpenAdvertisers={onOpenAdvertisers} />
 
       {findings.length === 0 ? (
@@ -1818,8 +1818,9 @@ export default function Research() {
     setResultMode('browse');
     setSearchResultAds([]);
   };
-  const openThemeLane = () => {
+  const openThemeLane = (theme = '') => {
     clearFilters();
+    setCreativeTagFilter(theme);
     setCatalogMode('ads');
     setShowAdvancedFilters(true);
     setResearchView('library');
