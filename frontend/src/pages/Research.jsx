@@ -492,11 +492,12 @@ function ResearchDetailDrawer({ ad, onClose, onBuild, onInspect, onExploreAdvert
   </div>;
 }
 
-function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, onBlockPage, angleTags, boards, onAddToBoard, onCreateBoard, onRemoveFromBoard }) {
+function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, onBlockPage, onSetReviewed, angleTags, boards, onAddToBoard, onCreateBoard, onRemoveFromBoard }) {
   const [videoPreviewFailed, setVideoPreviewFailed] = useState(false);
   const media = ad.thumbnail_url || ad.media_url;
   const videoPreview = ad.media_preview_url || (ad.video_urls || [])[0];
   const hasVisualCapture = Boolean(media || videoPreview);
+  const isReviewed = ad.platform === 'external' || Boolean(ad.creative_intel?.reviewed);
   const advertiserUrl = ad.platform === 'external'
     ? ad.ad_link
     : `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&q=${encodeURIComponent(ad.brand_name || '')}`;
@@ -610,6 +611,12 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
             onUnsave={onUnsave}
             angleTags={angleTags}
           />
+          {ad.platform !== 'external' && <button
+            type="button"
+            onClick={() => onSetReviewed(ad, !isReviewed)}
+            className={`inline-flex shrink-0 items-center justify-center rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${isReviewed ? 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100' : 'border-slate-200 text-slate-600 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700'}`}
+            title={isReviewed ? 'Remove this raw capture from the Research Brief' : 'Add this raw capture to the Research Brief'}
+          >{isReviewed ? 'In Brief' : 'Add to Brief'}</button>}
         </div>
         <BoardSaveButton ad={ad} boards={boards} onAdd={onAddToBoard} onCreate={onCreateBoard} />
         {/* Secondary row */}
@@ -1144,6 +1151,16 @@ export default function Research() {
   const handleResearchReviewSaved = (adId, update) => {
     const apply = (ad) => ad.id === adId ? { ...ad, ...update } : ad;
     setSavedAds(prev => prev.map(apply)); setBrowseAds(prev => prev.map(apply)); setSearchResultAds(prev => prev.map(apply)); setBoardAds(prev => prev.map(apply)); setDetailAd(prev => prev?.id === adId ? apply(prev) : prev);
+  };
+  const handleSetResearchReviewed = async (ad, reviewed) => {
+    try {
+      const response = await authFetch(`${API_URL}/research/scraped-ads/${ad.id}/reviewed?reviewed=${reviewed}`, { method: 'PATCH' });
+      if (!response.ok) throw new Error('Could not update Research Brief');
+      handleResearchReviewSaved(ad.id, await response.json());
+      showSuccess(reviewed ? 'Added to Research Brief' : 'Removed from Research Brief');
+    } catch (error) {
+      showError(error.message || 'Could not update Research Brief');
+    }
   };
 
   const loadBoards = async () => {
@@ -2024,6 +2041,7 @@ export default function Research() {
                     onUseAsInspiration={handleUseAsInspiration}
                     onInspect={inspectCreative}
                     onBlockPage={handleBlockPage}
+                    onSetReviewed={handleSetResearchReviewed}
                     angleTags={angleTags}
                     boards={boards}
                     onAddToBoard={handleAddToBoard}
@@ -2117,6 +2135,7 @@ export default function Research() {
                   onUseAsInspiration={handleUseAsInspiration}
                   onInspect={inspectCreative}
                   onBlockPage={handleBlockPage}
+                  onSetReviewed={handleSetResearchReviewed}
                   angleTags={angleTags}
                   boards={boards}
                   onAddToBoard={handleAddToBoard}
