@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useToast } from '../context/ToastContext';
-import { createBrandScrape, getBrandScrapes, getBrandScrape, deleteBrandScrape } from '../api/research';
+import { createBrandScrape, getBrandScrapes, getBrandScrape, deleteBrandScrape, importBrandScrapeToResearch } from '../api/research';
 import { Search, Trash2, ChevronDown, ChevronRight, ExternalLink, Image, Video, Loader2, RefreshCw } from 'lucide-react';
 
 const BrandScrapes = () => {
@@ -32,6 +32,8 @@ const BrandScrapes = () => {
     const [scrapeDetails, setScrapeDetails] = useState(null);
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [scrapeToDelete, setScrapeToDelete] = useState(null);
+    const [researchVertical, setResearchVertical] = useState('Commercial Insurance');
+    const [importingScrapeId, setImportingScrapeId] = useState(null);
 
     useEffect(() => {
         fetchScrapes();
@@ -106,6 +108,18 @@ const BrandScrapes = () => {
     const confirmDelete = (scrape) => {
         setScrapeToDelete(scrape);
         setShowDeleteModal(true);
+    };
+
+    const handleImportToResearch = async (scrape) => {
+        setImportingScrapeId(scrape.id);
+        try {
+            const result = await importBrandScrapeToResearch(scrape.id, researchVertical);
+            showSuccess(`Added ${result.with_visual} retained visual capture${result.with_visual === 1 ? '' : 's'} to ${result.vertical} Research.`);
+        } catch (error) {
+            showError(error.message || 'Could not add this Brand Scrape to Research');
+        } finally {
+            setImportingScrapeId(null);
+        }
     };
 
     const handleDelete = async () => {
@@ -286,6 +300,25 @@ const BrandScrapes = () => {
                                         {scrape.error_message && (
                                             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
                                                 {scrape.error_message}
+                                            </div>
+                                        )}
+
+                                        {scrape.status === 'completed' && (
+                                            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-indigo-100 bg-white p-3">
+                                                <div>
+                                                    <p className="text-sm font-semibold text-gray-900">Add retained media to Research</p>
+                                                    <p className="mt-0.5 text-xs text-gray-500">Uses this app’s R2-backed Meta captures; it does not copy third-party research-platform media.</p>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <select value={researchVertical} onChange={(event) => setResearchVertical(event.target.value)} className="rounded-md border border-gray-200 px-2 py-1.5 text-xs text-gray-700">
+                                                        <option>Commercial Insurance</option>
+                                                        <option>Auto Insurance</option>
+                                                        <option>Home Services</option>
+                                                    </select>
+                                                    <button type="button" onClick={() => handleImportToResearch(scrape)} disabled={importingScrapeId === scrape.id} className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+                                                        {importingScrapeId === scrape.id ? 'Adding…' : 'Add to Research'}
+                                                    </button>
+                                                </div>
                                             </div>
                                         )}
 

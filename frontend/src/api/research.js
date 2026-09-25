@@ -178,6 +178,12 @@ export const getBrandScrape = async (scrapeId) => {
     return unwrap(response, 'Error fetching brand scrape');
 };
 
+export const importBrandScrapeToResearch = async (scrapeId, vertical) => {
+    const params = new URLSearchParams({ vertical });
+    const response = await authFetch(`${API_URL}/brand-scrapes/${scrapeId}/import-research?${params}`, { method: 'POST' });
+    return unwrap(response, 'Error importing Brand Scrape into Research');
+};
+
 export const deleteBrandScrape = async (scrapeId) => {
     const response = await authFetch(`${API_URL}/brand-scrapes/${scrapeId}`, { method: 'DELETE' });
     return unwrap(response, 'Error deleting brand scrape');

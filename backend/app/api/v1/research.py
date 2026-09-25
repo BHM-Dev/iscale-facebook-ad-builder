@@ -825,6 +825,97 @@ def get_brand_scrape(scrape_id: str, db: Session = Depends(get_db), current_user
     return scrape
 
 
+@router.post("/brand-scrapes/{scrape_id}/import-research")
+def import_brand_scrape_into_research(
+    scrape_id: str,
+    vertical: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Promote our own R2-backed Brand Scrape media into Research.
+
+    This is intentionally limited to media captured by our Meta scraper. It
+    does not download or copy third-party research-platform assets.
+    """
+    from app.models import BrandScrape, FacebookPage, SavedSearch, ScrapedAd, Vertical
+
+    scrape = db.query(BrandScrape).filter(BrandScrape.id == scrape_id).first()
+    if not scrape:
+        raise HTTPException(status_code=404, detail="Brand scrape not found")
+    if scrape.status != "completed":
+        raise HTTPException(status_code=400, detail="Wait for this Brand Scrape to complete before importing it")
+    vertical_name = vertical.strip()
+    if not vertical_name:
+        raise HTTPException(status_code=400, detail="A Research vertical is required")
+    target_vertical = db.query(Vertical).filter(Vertical.name == vertical_name).first()
+    if not target_vertical:
+        target_vertical = Vertical(name=vertical_name, description="R2-backed Meta Brand Scrape research")
+        db.add(target_vertical)
+        db.flush()
+    saved_search = SavedSearch(
+        query=scrape.brand_name,
+        country="US",
+        vertical_id=target_vertical.id,
+        search_type="brand_scrape_import",
+        schedule_config={"source": "brand_scrape", "brand_scrape_id": scrape.id, "page_url": scrape.page_url},
+        is_active=False,
+        last_run=datetime.utcnow(),
+        ads_requested=len(scrape.ads),
+        ads_returned=len(scrape.ads),
+        ads_new=0,
+        ads_duplicate=0,
+    )
+    db.add(saved_search)
+    db.flush()
+    imported = updated = with_visual = 0
+    for captured in scrape.ads:
+        external_id = captured.external_id.strip() if captured.external_id else f"brand-scrape:{scrape.id}:{captured.id}"
+        ad = db.query(ScrapedAd).filter(ScrapedAd.external_id == external_id).first()
+        if ad:
+            updated += 1
+            ad.last_seen = datetime.utcnow()
+            ad.seen_count = (ad.seen_count or 0) + 1
+        else:
+            imported += 1
+            ad = ScrapedAd(external_id=external_id, ad_link=captured.ad_link or scrape.page_url)
+            db.add(ad)
+        page_name = captured.page_name or scrape.page_name or scrape.brand_name
+        page = db.query(FacebookPage).filter(FacebookPage.page_name == page_name).first()
+        if not page:
+            page = FacebookPage(page_name=page_name, page_url=captured.page_link or scrape.page_url, vertical_id=target_vertical.id)
+            db.add(page)
+            db.flush()
+        media_urls = [url for url in (captured.media_urls or []) if _normalize_external_url(url)]
+        primary_media = media_urls[0] if media_urls else None
+        creative_tags, inferred_cta_type = _infer_creative_taxonomy(captured.headline, captured.ad_copy, captured.cta_text)
+        ad.brand_name = page_name
+        ad.headline = _truncate_text(captured.headline)
+        ad.ad_copy = _truncate_text(captured.ad_copy)
+        ad.cta_text = captured.cta_text
+        ad.platform = "facebook"
+        ad.ad_link = captured.ad_link or scrape.page_url
+        ad.platforms = captured.platforms
+        ad.start_date = captured.start_date
+        ad.media_type = captured.media_type
+        ad.media_url = primary_media
+        ad.thumbnail_url = primary_media if captured.media_type != "video" else ad.thumbnail_url
+        ad.media_preview_url = primary_media if captured.media_type == "video" else ad.media_preview_url
+        ad.video_urls = media_urls if captured.media_type == "video" else ad.video_urls
+        ad.source_query = f"brand-scrape:{scrape.id}"
+        ad.search_id = saved_search.id
+        ad.facebook_page_id = page.id
+        ad.creative_tags = creative_tags
+        ad.cta_type = inferred_cta_type
+        ad.taxonomy_source = "brand_scrape" if creative_tags else None
+        ad.creative_intel = _bounded_json({**dict(ad.creative_intel or {}), "capture_source": "brand_scrape", "brand_scrape_id": scrape.id, "media_provenance": "BHM R2 Meta capture"})
+        if primary_media:
+            with_visual += 1
+    saved_search.ads_new = imported
+    saved_search.ads_duplicate = updated
+    db.commit()
+    return {"scrape_id": scrape.id, "vertical": target_vertical.name, "imported": imported, "updated": updated, "with_visual": with_visual}
+
+
 @router.delete("/brand-scrapes/{scrape_id}")
 async def delete_brand_scrape(scrape_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Delete a brand scrape and its media from R2."""
