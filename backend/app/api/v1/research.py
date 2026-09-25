@@ -2160,6 +2160,74 @@ def get_vertical_browse_ads(
     return result
 
 
+@router.get("/config-verticals/{config_id}/advertisers")
+def get_vertical_advertisers(
+    config_id: str,
+    sub_vertical: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Summarize retained, browse-eligible captures by advertiser.
+
+    This is deliberately a catalog directory, not a claim about advertiser
+    scale, spend, or live Meta delivery. It gives researchers a fast way to
+    decide which retained advertiser evidence is worth opening next.
+    """
+    ads = get_vertical_browse_ads(
+        config_id=config_id,
+        sub_vertical=sub_vertical,
+        limit=500,
+        db=db,
+        current_user=current_user,
+    )
+    grouped = {}
+    for ad in ads:
+        name = (ad.get("brand_name") or "Unknown advertiser").strip()
+        key = name.casefold()
+        item = grouped.setdefault(key, {
+            "advertiser": name,
+            "capture_count": 0,
+            "active_capture_count": 0,
+            "media_capture_count": 0,
+            "multiple_version_count": 0,
+            "latest_seen": None,
+            "formats": set(),
+            "domains": set(),
+            "sample_ad_id": ad.get("id"),
+        })
+        item["capture_count"] += 1
+        item["active_capture_count"] += int(bool(ad.get("is_active")))
+        item["media_capture_count"] += int(bool(ad.get("thumbnail_url") or ad.get("media_url") or ad.get("media_preview_url")))
+        item["multiple_version_count"] += int(bool(ad.get("is_multiple_versions")))
+        if ad.get("media_type"):
+            item["formats"].add(ad["media_type"])
+        if ad.get("destination_domain"):
+            item["domains"].add(ad["destination_domain"])
+        latest_seen = _parse_research_date(ad.get("last_seen"))
+        if latest_seen and (not item["latest_seen"] or latest_seen > item["latest_seen"]):
+            item["latest_seen"] = latest_seen
+
+    directory = []
+    for item in grouped.values():
+        directory.append({
+            **item,
+            "formats": sorted(item["formats"]),
+            "domains": sorted(item["domains"])[:3],
+            "latest_seen": _serialize_research_datetime(item["latest_seen"]),
+        })
+    directory.sort(key=lambda item: (
+        -item["active_capture_count"],
+        -item["capture_count"],
+        -item["media_capture_count"],
+        item["advertiser"].casefold(),
+    ))
+    return {
+        "vertical": config_id,
+        "advertisers": directory[:100],
+        "limitations": "Catalog footprint reflects retained, deduplicated captures only—not advertiser spend, scale, or current delivery.",
+    }
+
+
 @router.delete("/config-verticals/{config_id}/ads")
 def clear_vertical_ads(
     config_id: str,
