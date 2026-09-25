@@ -1516,6 +1516,7 @@ def get_related_research_ads(
     source = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
     if not source:
         raise HTTPException(status_code=404, detail="Ad not found")
+    source_vertical_id = getattr(source.saved_search, "vertical_id", None)
     # Bounded to the most recently seen rows so this stays cheap regardless of
     # how large scraped_ads grows — a full-table scan here (as an earlier
     # version of this endpoint did) is the exact query pattern already
@@ -1531,6 +1532,12 @@ def get_related_research_ads(
     )
     scored = []
     for candidate in candidates:
+        candidate_vertical_id = getattr(candidate.saved_search, "vertical_id", None)
+        # Prefer an exact saved-search vertical match when both records have
+        # one. This is stronger than a shared human-readable label and keeps
+        # legacy imports from crossing between verticals.
+        if source_vertical_id and candidate_vertical_id and candidate_vertical_id != source_vertical_id:
+            continue
         candidate_vertical_name = getattr(getattr(candidate.saved_search, "vertical", None), "name", None)
         # Imported/captured records carry a persisted Vertical through their
         # SavedSearch. That is stronger than keyword inference and keeps an
