@@ -222,6 +222,15 @@ def _plan_research_copilot_question(question: str, vertical_id: str) -> dict:
     same structured plan, but it must still pass these validation boundaries.
     """
     text = question.casefold().strip()
+    # Meta's public Ad Library does not expose spend, ROAS, conversions, or
+    # a trustworthy performance ranking. Preserve the operator's question,
+    # but surface the limitation rather than quietly translating "best
+    # performing" into our capture-order proxy.
+    performance_intent = any(phrase in text for phrase in (
+        "best performing", "top performing", "performance", "winning ad",
+        "winning ads", "highest spend", "most spend", "roas", "roi",
+        "conversions", "conversion", "impressions",
+    ))
     segments = [label for label, phrases in COPILOT_SEGMENTS.items() if any(phrase in text for phrase in phrases)]
     creative_tags = [tag for tag, phrases in COPILOT_CREATIVE_TAGS.items() if any(phrase in text for phrase in phrases)]
     cta_type = next((cta for cta, phrases in COPILOT_CTA_PHRASES.items() if any(phrase in text for phrase in phrases)), None)
@@ -256,7 +265,8 @@ def _plan_research_copilot_question(question: str, vertical_id: str) -> dict:
         "cta_type": cta_type,
         "page_type": page_type,
         "terms": terms[:8],
-        "ranking": ["observed runtime", "creative versions", "capture recency", "retained media"],
+        "ranking": ["query relevance", "capture recency", "observed runtime", "creative versions"],
+        "performance_intent": performance_intent,
     }
 
 
@@ -2005,6 +2015,11 @@ def query_research_copilot(
         vertical_labels = [item["label"] for item in config.get("sub_verticals", {}).values()]
     vertical_ids = [row.id for row in db.query(Vertical.id).filter(Vertical.name.in_(vertical_labels)).all()]
     search_ids = [row.id for row in db.query(SavedSearch.id).filter(SavedSearch.vertical_id.in_(vertical_ids)).all()]
+    performance_limitation = (
+        "This question asks about performance, but the retained catalog has no verified spend, "
+        "impressions, ROAS, conversion, or delivery data. Results below are matching research "
+        "examples—not a performance ranking."
+    )
     if not search_ids:
         return {
             "question": payload.question.strip(),
@@ -2012,7 +2027,10 @@ def query_research_copilot(
             "coverage": {"matched": 0, "returned": 0, "catalog_candidates": 0, "sufficient": False, "live_capture_recommended": True},
             "suggestions": _copilot_query_suggestions(payload.question, plan, vertical_label),
             "results": [],
-            "limitations": ["No retained captures are available for this Research vertical yet.", "Results are ranked by retained catalog signals, not Meta spend, ROAS, conversions, or delivery performance."],
+            "limitations": [
+                "No retained captures are available for this Research vertical yet.",
+                performance_limitation if plan["performance_intent"] else "Results are ordered by research relevance and catalog evidence, not Meta spend, ROAS, conversions, or delivery performance.",
+            ],
         }
     blacklisted_names = {row.page_name.casefold() for row in db.query(PageBlacklist.page_name).all()} | {item.casefold() for item in ALWAYS_BLOCKED_PAGES}
     candidates = (
@@ -2073,8 +2091,8 @@ def query_research_copilot(
         "suggestions": _copilot_query_suggestions(payload.question, plan, vertical_label),
         "results": results,
         "limitations": [
-            "Results are ranked by retained catalog signals, not Meta spend, ROAS, conversions, or delivery performance.",
-            "Observed runtime is calculated from source-provided dates when available.",
+            performance_limitation if plan["performance_intent"] else "Results are ordered by research relevance and catalog evidence, not Meta spend, ROAS, conversions, or delivery performance.",
+            "Observed runtime is calculated from source-provided dates when available; it does not confirm current delivery.",
         ],
     }
 

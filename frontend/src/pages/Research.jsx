@@ -674,15 +674,6 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
       {/* Tags + duration */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <AngleBadge tag={ad.angle_tag} />
-        {ad.volume_score != null && (
-          <span className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded px-2 py-0.5" title="Directional capture signal based on rank, age, repeat versions, and media presence—not spend or impressions.">
-            <BarChart3 size={11} />
-            Signal {ad.volume_score}
-          </span>
-        )}
-        {ad.rank_position != null && (
-          <span className="text-xs text-gray-400" title="Position in the imported Ad Library capture, not a performance ranking">Capture rank #{ad.rank_position}</span>
-        )}
         {ad.is_multiple_versions && (
           <span className="text-xs text-gray-400">Multiple versions</span>
         )}
@@ -785,12 +776,6 @@ function SavedCard({ ad, onUnsave, onUseAsInspiration, boards, onAddToBoard, onC
         )}
         {['image', 'carousel'].includes((ad.media_type || '').toLowerCase()) && (
           <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-500">{ad.media_type}</span>
-        )}
-        {ad.volume_score != null && (
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold bg-indigo-50 text-indigo-600" title="Directional capture signal—not spend or impressions.">
-            <BarChart3 size={10} />
-            Signal {ad.volume_score}
-          </span>
         )}
       </div>
       <button
@@ -1053,9 +1038,10 @@ function ResearchCopilot({ verticalId, verticalLabel, onRunResults }) {
     {response && <div className="mt-4 rounded-xl border border-violet-100 bg-white/85 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-semibold text-slate-900">Search plan · {response.coverage.matched} matching capture{response.coverage.matched === 1 ? '' : 's'}</p><p className="mt-0.5 text-xs text-slate-500">Searched {response.coverage.catalog_candidates} retained {verticalLabel.toLowerCase()} capture{response.coverage.catalog_candidates === 1 ? '' : 's'}.</p></div><button type="button" onClick={() => onRunResults(response)} disabled={!response.results.length} className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-800 hover:bg-violet-100 disabled:opacity-50">Review results{response.coverage.returned < response.coverage.matched ? ` (${response.coverage.returned} of ${response.coverage.matched})` : ''}</button></div>
       <div className="mt-2 flex flex-wrap gap-1.5">{plan.segments.map(segment => <span key={segment} className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{segment}</span>)}{plan.creative_tags?.map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{tag.replace('_', ' ')}</span>)}{plan.active_only && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">active capture</span>}{plan.min_running_days && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">observed {plan.min_running_days}+ days</span>}{plan.captured_within_days && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">captured within {plan.captured_within_days} days</span>}{plan.media_type && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{plan.media_type}</span>}{plan.cta_type && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{plan.cta_type.replace('_', ' ')} CTA</span>}{plan.page_type && <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{plan.page_type.replace('_', ' ')} destination</span>}</div>
+      {plan.performance_intent && <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">Performance data is not retained here, so this is a relevance-based research search—not a winner or spend ranking.</p>}
       <p className={`mt-3 text-xs leading-5 ${response.coverage.sufficient ? 'text-slate-600' : 'text-amber-800'}`}>{response.coverage.sufficient ? 'Coverage is sufficient to review in the retained library.' : 'Coverage is thin. A live Meta capture can be requested later, but will never run automatically.'}</p>
       {response.suggestions?.length > 0 && <div className="mt-3 border-t border-violet-100 pt-3"><p className="text-xs font-semibold text-slate-700">Try a broader retained-catalog search</p><div className="mt-2 flex flex-wrap gap-2">{response.suggestions.map(suggestion => <button key={suggestion.question} type="button" disabled={loading} onClick={() => executeQuery(suggestion.question)} title={suggestion.reason} className="rounded-lg border border-violet-200 bg-white px-2.5 py-1.5 text-left text-xs font-medium text-violet-800 hover:bg-violet-50 disabled:opacity-50"><span className="block">{suggestion.question}</span><span className="mt-0.5 block text-[10px] font-normal text-slate-500">{suggestion.reason}</span></button>)}</div></div>}
-      <p className="mt-2 text-xs leading-5 text-slate-500">{response.limitations?.[0]}</p>
+      {response.limitations?.map((limitation, index) => <p key={limitation} className={`mt-2 text-xs leading-5 ${index === 0 && plan.performance_intent ? 'font-medium text-amber-800' : 'text-slate-500'}`}>{limitation}</p>)}
     </div>}
   </section>;
 }
