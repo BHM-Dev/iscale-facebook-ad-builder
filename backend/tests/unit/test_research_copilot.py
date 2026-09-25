@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.api.v1.research import _copilot_query_suggestions, _has_retained_visual, _plan_research_copilot_question, _research_relevance_status
+from app.api.v1.research import _copilot_query_suggestions, _dedupe_research_creatives, _has_retained_visual, _plan_research_copilot_question, _research_relevance_status
 
 
 def test_copilot_plan_extracts_owner_operator_runtime_and_activity():
@@ -55,3 +55,11 @@ def test_commercial_relevance_status_flags_broad_non_offer_capture_for_review():
 def test_retained_visual_requires_an_actual_asset_not_only_format_metadata():
     assert not _has_retained_visual(SimpleNamespace(media_type="video", thumbnail_url=None, media_url=None, media_preview_url=None, video_urls=[]))
     assert _has_retained_visual({"media_type": "video", "thumbnail_url": None, "media_url": None, "media_preview_url": "https://cdn.example.test/preview.mp4", "video_urls": []})
+
+
+def test_catalog_dedupes_exact_visible_creative_but_keeps_copy_variants():
+    base = dict(brand_name="RigCover", headline="Commercial coverage", ad_copy="Compare policies", cta_text="Get Quote", media_type="image")
+    same = SimpleNamespace(**base)
+    duplicate = SimpleNamespace(**base)
+    variant = SimpleNamespace(**{**base, "ad_copy": "Compare commercial policies"})
+    assert _dedupe_research_creatives([same, duplicate, variant]) == [same, variant]

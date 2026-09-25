@@ -425,6 +425,28 @@ def _cap_ads_per_advertiser(ads, ads_per_advertiser):
     return limited
 
 
+def _dedupe_research_creatives(ads):
+    """Keep one representative for an identical retained creative.
+
+    Ad Library imports can retain the same page/copy/CTA on more than one
+    source row. It is useful as capture provenance, but it makes a working
+    library feel like spam. This intentionally dedupes only exact visible
+    creative identity after sorting, so a distinct headline or body remains
+    available for comparison.
+    """
+    unique = []
+    seen = set()
+    for ad in ads:
+        identity = tuple((value or "").strip().casefold() for value in (
+            ad.brand_name, ad.headline, ad.ad_copy, ad.cta_text, ad.media_type,
+        ))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        unique.append(ad)
+    return unique
+
+
 def _serialize_scraped_ad(ad, board_item_id=None):
     # _parse_research_date normalizes timezone-aware DB values to naive UTC
     # before arithmetic, matching datetime.utcnow() below.
@@ -2181,7 +2203,8 @@ def get_vertical_browse_ads(
         and _matches_research_vertical(ad, config_id)
         and (not has_visual or _has_retained_visual(ad))
     ]
-    ads = _cap_ads_per_advertiser(_sort_research_ads(current_ads, sort_by), ads_per_advertiser)[:limit]
+    sorted_ads = _sort_research_ads(current_ads, sort_by)
+    ads = _cap_ads_per_advertiser(_dedupe_research_creatives(sorted_ads), ads_per_advertiser)[:limit]
 
     # Compute running duration; filter blacklisted advertisers and off-topic ads
     now = datetime.utcnow()
