@@ -1588,7 +1588,7 @@ def get_research_visual_candidates(
     safe_candidates = []
     for candidate in candidates:
         candidate_intel = candidate.creative_intel or {}
-        if candidate_intel.get("capture_source") != "brand_scrape":
+        if candidate_intel.get("capture_source") != "brand_scrape" and candidate.taxonomy_source != "brand_scrape":
             continue
         # This is an operator-selected association, not an automatic match.
         # An exact advertiser match plus BHM-owned capture provenance is the
@@ -1615,7 +1615,7 @@ def adopt_retained_research_visual(
     source = db.query(ScrapedAd).filter(ScrapedAd.id == source_ad_id).first()
     if not target or not source:
         raise HTTPException(status_code=404, detail="Research capture not found")
-    if not source.media_url or (source.creative_intel or {}).get("capture_source") != "brand_scrape":
+    if not source.media_url or ((source.creative_intel or {}).get("capture_source") != "brand_scrape" and source.taxonomy_source != "brand_scrape"):
         raise HTTPException(status_code=400, detail="Select a retained Brand Scrape visual")
     if (target.brand_name or "").strip().lower() != (source.brand_name or "").strip().lower():
         raise HTTPException(status_code=400, detail="Visual must come from the same advertiser")

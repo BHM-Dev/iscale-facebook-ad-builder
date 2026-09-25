@@ -441,7 +441,7 @@ function ResearchDetailDrawer({ ad, activeVertical, advertiserSnapshot, retained
     const fallbackCandidates = retainedVisuals.filter(candidate => (
       candidate.id !== ad.id
       && (candidate.brand_name || '').trim().toLowerCase() === normalizedBrand
-      && candidate.creative_intel?.capture_source === 'brand_scrape'
+      && (candidate.creative_intel?.capture_source === 'brand_scrape' || candidate.taxonomy_source === 'brand_scrape')
       && (candidate.thumbnail_url || candidate.media_url)
     )).slice(0, 8);
     setVisualCandidates(fallbackCandidates);
