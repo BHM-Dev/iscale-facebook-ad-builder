@@ -1663,11 +1663,6 @@ export default function Research() {
     setAdvertiserFilter(advertiser);
     closeDetail();
   };
-  const detailResultIndex = detailAd ? browseAds.findIndex(ad => ad.id === detailAd.id) : -1;
-  const inspectAdjacentResult = (offset) => {
-    const adjacent = browseAds[detailResultIndex + offset];
-    if (adjacent) setDetailAd(adjacent);
-  };
   const catalogSummary = useMemo(() => ({
     total: browseAds.length,
     newCount: browseAds.filter(ad => ad.first_seen && Date.now() - new Date(ad.first_seen).getTime() <= 7 * 24 * 60 * 60 * 1000).length,
@@ -1685,6 +1680,15 @@ export default function Research() {
   const reviewedFindings = useMemo(() => reviewedFindingsAll.filter(ad => (
     briefVisualFilter === 'all' || (briefVisualFilter === 'with_visual' ? Boolean(ad.thumbnail_url || ad.media_url) : !ad.thumbnail_url && !ad.media_url)
   )), [reviewedFindingsAll, briefVisualFilter]);
+  // The detail drawer must stay in the workspace the user entered from.
+  // A Brief finding is not the first item in the raw catalog merely because
+  // both records live in the same collection.
+  const detailResults = researchView === 'brief' ? reviewedFindings : browseAds;
+  const detailResultIndex = detailAd ? detailResults.findIndex(ad => ad.id === detailAd.id) : -1;
+  const inspectAdjacentResult = (offset) => {
+    const adjacent = detailResults[detailResultIndex + offset];
+    if (adjacent) setDetailAd(adjacent);
+  };
 
   // ── Render ────────────────────────────────────────────────────
     return (
@@ -2233,7 +2237,7 @@ export default function Research() {
         importing={importingIntel}
         defaultVertical={currentVerticalLabel}
       />
-      <ResearchDetailDrawer ad={detailAd} onClose={closeDetail} onInspect={inspectCreative} onExploreAdvertiser={exploreAdvertiser} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onPreviousResult={() => inspectAdjacentResult(-1)} onNextResult={() => inspectAdjacentResult(1)} canGoPrevious={detailResultIndex > 0} canGoNext={detailResultIndex >= 0 && detailResultIndex < browseAds.length - 1} resultPosition={detailResultIndex >= 0 ? { current: detailResultIndex + 1, total: browseAds.length } : null} onNotesSaved={handleStrategyNotesSaved} onMediaSaved={handleResearchMediaSaved} onReviewSaved={handleResearchReviewSaved} onBriefSaved={handleResearchReviewSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
+      <ResearchDetailDrawer ad={detailAd} onClose={closeDetail} onInspect={inspectCreative} onExploreAdvertiser={exploreAdvertiser} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onPreviousResult={() => inspectAdjacentResult(-1)} onNextResult={() => inspectAdjacentResult(1)} canGoPrevious={detailResultIndex > 0} canGoNext={detailResultIndex >= 0 && detailResultIndex < detailResults.length - 1} resultPosition={detailResultIndex >= 0 ? { current: detailResultIndex + 1, total: detailResults.length } : null} onNotesSaved={handleStrategyNotesSaved} onMediaSaved={handleResearchMediaSaved} onReviewSaved={handleResearchReviewSaved} onBriefSaved={handleResearchReviewSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
     </div>
   );
 }
