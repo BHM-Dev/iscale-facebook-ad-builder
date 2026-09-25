@@ -28,6 +28,22 @@ import { isValidDestinationUrl, normalizeDestinationUrl } from '../lib/destinati
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
+// A review row is only meaningful if it can produce a Meta creative. A stale
+// CampaignContext can retain a permutation after its selected Drive/library
+// asset was removed while its copy still looks valid. A local File counts even
+// before the browser has generated a preview URL because it is uploadable.
+const hasUsableCreativeAsset = (creative) => {
+    if (!creative) return false;
+    const isVideo = creative.mediaType === 'video';
+    const primaryAsset = isVideo
+        ? (creative.file || creative.videoUrl || creative.previewUrl)
+        : (creative.file || creative.imageUrl || creative.previewUrl);
+    if (!primaryAsset) return false;
+    // A paired Drive creative promises Meta a distinct Stories image through
+    // asset-feed-spec. A half-pair is not a usable launch asset.
+    return !creative.dualPlacement || Boolean(creative.secondaryImageUrl);
+};
+
 // Best-effort domain for the preview card's link strip — falls back to the raw
 // string rather than hiding the field entirely if the URL doesn't parse (e.g.
 // still mid-edit in a prior step).
@@ -566,7 +582,13 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         // A non-null ref means this is a real input change within the mounted
         // step, where regeneration is still intentional.
         const batchMatchesCurrentInputs = adsData.length > 0
-            && adsData.every(ad => ad.permutationInputKey === permutationInputKey);
+            && adsData.every(ad => ad.permutationInputKey === permutationInputKey)
+            // Never restore a review batch whose media was subsequently removed
+            // or failed to hydrate after a refresh. Regenerating below removes
+            // those rows instead of displaying a launch-looking ad with no asset.
+            && adsData.every(ad => hasUsableCreativeAsset(
+                creativeData.creatives?.find(creative => creative.id === ad.creativeId)
+            ));
         if (permutationInputsRef.current === null && batchMatchesCurrentInputs) {
             permutationInputsRef.current = permutationInputKey;
             // Silent when there's nothing to restore (a fresh, untouched batch) —
@@ -612,7 +634,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
 
             // Generate all permutations: media × headlines × bodies
                         const permutations = [];
+            const missingAssetCreatives = creativeData.creatives.filter(creative => !hasUsableCreativeAsset(creative));
             creativeData.creatives.forEach((creative, creativeIndex) => {
+                if (!hasUsableCreativeAsset(creative)) return;
                 const creativeHeadlines = creative.source === 'drive' || creative.headline
                     ? [{ index: null, override: creative.headline }]
                     : validHeadlines.map(({ index }) => ({ index }));
@@ -681,6 +705,11 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     `${droppedCreatives.length} creative${droppedCreatives.length !== 1 ? 's' : ''} `
                     + `(${droppedCreatives.map(c => c.name || c.id).join(', ')}) produced no ads — `
                     + `missing headline/body and no manual headline/body typed as a fallback.`
+                );
+            }
+            if (missingAssetCreatives.length > 0) {
+                showWarning(
+                    `${missingAssetCreatives.length} creative${missingAssetCreatives.length !== 1 ? 's were' : ' was'} removed from this review because ${missingAssetCreatives.length !== 1 ? 'they have' : 'it has'} no uploadable image or video asset.`
                 );
             }
 
@@ -828,6 +857,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 ? creative.cta || ''
                 : creative?.cta || creativeData.cta || '';
         const category = creative?.category || creative?.brandName || 'Uncategorized';
+        const assetReady = hasUsableCreativeAsset(creative);
         const copyReady = Boolean(
             headline.trim() && body.trim() && isValidDestinationUrl(websiteUrl) && isValidMetaCta(cta)
         );
@@ -844,7 +874,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             ? (creative?.driveCopyIntegrityReason
                 || 'This row’s Drive copy source needs repair or a fresh refresh — go back to Ad Creative and re-run "Refresh Drive copy" after fixing it. Editing the fields here will not clear this.')
             : null;
-        return { ad, index, creative, headline, body, description, websiteUrl, cta, ctaSource: ad.ctaSource || creative?.ctaSource || 'Creative card', category, copyReady: copyReady && !driveCopyIntegrityIssue, driveCopyIntegrityIssue, driveCopyIntegrityReason, adsetName, destinationLabel, outcome: manifestLaunchOutcome(ad) };
+        return { ad, index, creative, headline, body, description, websiteUrl, cta, ctaSource: ad.ctaSource || creative?.ctaSource || 'Creative card', category, assetReady, copyReady: copyReady && assetReady && !driveCopyIntegrityIssue, driveCopyIntegrityIssue, driveCopyIntegrityReason, adsetName, destinationLabel, outcome: manifestLaunchOutcome(ad) };
     });
     const manifestCategories = [...new Set(manifestRows.map(row => row.category))].sort((a, b) => a.localeCompare(b));
     const visibleManifestRows = manifestRows.filter(row => {
@@ -1073,6 +1103,19 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         const launchAds = adsData.filter(ad => !manifestExcludedAdIds.has(ad.id) && !protectedReconciliationIdSet.has(ad.id));
         if (launchAds.length === 0) {
             showWarning('Select at least one ad pair to launch');
+            return;
+        }
+
+        // Final fail-closed guard. The review normally removes these rows when
+        // it builds permutations, but state can change between Review mounting
+        // and this click (asset deletion, failed hydration, or a stale tab).
+        // Do not make any Meta writes when even one selected row lacks media.
+        const assetlessRows = launchAds.filter(ad => !hasUsableCreativeAsset(
+            creativeData.creatives?.find(creative => creative.id === ad.creativeId)
+        ));
+        if (assetlessRows.length > 0) {
+            const labels = assetlessRows.map(ad => ad.name).filter(Boolean).slice(0, 3).join(', ');
+            showWarning(`${assetlessRows.length} selected ad${assetlessRows.length !== 1 ? 's are' : ' is'} missing an uploadable image or video asset${labels ? `: ${labels}${assetlessRows.length > 3 ? '…' : ''}` : ''}. Go back to Ad Creative, remove or replace the media, then review again.`);
             return;
         }
 
@@ -2287,9 +2330,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                         {!protectedRow && included && !outcome && (
                                             <span
                                                 title={row.driveCopyIntegrityIssue ? row.driveCopyIntegrityReason : undefined}
-                                                className={`text-xs px-2 py-0.5 rounded-full font-medium ${row.copyReady ? 'bg-emerald-100 text-emerald-700' : row.driveCopyIntegrityIssue ? 'bg-indigo-100 text-indigo-800' : 'bg-amber-100 text-amber-800'}`}
+                                                className={`text-xs px-2 py-0.5 rounded-full font-medium ${row.copyReady ? 'bg-emerald-100 text-emerald-700' : !row.assetReady ? 'bg-red-100 text-red-800' : row.driveCopyIntegrityIssue ? 'bg-indigo-100 text-indigo-800' : 'bg-amber-100 text-amber-800'}`}
                                             >
-                                                {row.copyReady ? 'Ready' : row.driveCopyIntegrityIssue ? 'Drive copy needs repair' : 'Needs copy'}
+                                                {row.copyReady ? 'Ready' : !row.assetReady ? 'Missing asset' : row.driveCopyIntegrityIssue ? 'Drive copy needs repair' : 'Needs copy'}
                                             </span>
                                         )}
                                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
@@ -2337,7 +2380,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                         and no follow-up form to add one — it is guaranteed to fail
                                         against Meta on launch. Say that plainly instead of rendering
                                         a normal-looking card with a blank media area. */}
-                                    {creative ? (
+                                    {creative && row.assetReady ? (
                                         <div className={`bg-gray-200 relative ${ad.dualPlacement && creative.secondaryImageUrl ? 'flex aspect-[16/9]' : ad.format === 'stories' ? 'aspect-[9/16]' : 'aspect-square'}`}>
                                             {ad.dualPlacement && creative.secondaryImageUrl ? (
                                                 <>
@@ -2366,9 +2409,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                                 </>
                                             )}
                                         </div>
-                                    ) : isEmptyCustomAd ? (
+                                    ) : creative || isEmptyCustomAd ? (
                                         <div className="px-3 py-4 bg-red-50 border-y border-red-200 text-sm text-red-800">
-                                            <strong>No creative attached.</strong> This ad will fail on launch — remove it or attach media/copy before continuing.
+                                            <strong>No uploadable creative asset.</strong> This ad is blocked — go back to Ad Creative and replace the missing image or video.
                                         </div>
                                     ) : null}
 
