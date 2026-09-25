@@ -407,7 +407,7 @@ function BoardSaveButton({ ad, boards, onAdd, onCreate }) {
   );
 }
 
-function ResearchDetailDrawer({ ad, activeVertical, advertiserSnapshot, onClose, onBuild, onInspect, onExploreAdvertiser, onBack, canGoBack, onPreviousResult, onNextResult, canGoPrevious, canGoNext, resultPosition, onNotesSaved, onMediaSaved, onReviewSaved, onBriefSaved, boards, onAddToBoard, onCreateBoard }) {
+function ResearchDetailDrawer({ ad, activeVertical, advertiserSnapshot, retainedVisuals = [], onClose, onBuild, onInspect, onExploreAdvertiser, onBack, canGoBack, onPreviousResult, onNextResult, canGoPrevious, canGoNext, resultPosition, onNotesSaved, onMediaSaved, onReviewSaved, onBriefSaved, boards, onAddToBoard, onCreateBoard }) {
   const { authFetch } = useAuth();
   const { showError, showSuccess } = useToast();
   const [related, setRelated] = useState([]);
@@ -437,15 +437,23 @@ function ResearchDetailDrawer({ ad, activeVertical, advertiserSnapshot, onClose,
       setVisualCandidates([]);
       return undefined;
     }
+    const normalizedBrand = (ad.brand_name || '').trim().toLowerCase();
+    const fallbackCandidates = retainedVisuals.filter(candidate => (
+      candidate.id !== ad.id
+      && (candidate.brand_name || '').trim().toLowerCase() === normalizedBrand
+      && candidate.creative_intel?.capture_source === 'brand_scrape'
+      && (candidate.thumbnail_url || candidate.media_url)
+    )).slice(0, 8);
+    setVisualCandidates(fallbackCandidates);
     let alive = true;
     setLoadingVisualCandidates(true);
     authFetch(`${API_URL}/research/scraped-ads/${ad.id}/visual-candidates`)
       .then(res => res.ok ? res.json() : [])
-      .then(items => { if (alive) setVisualCandidates(Array.isArray(items) ? items : []); })
-      .catch(() => { if (alive) setVisualCandidates([]); })
+      .then(items => { if (alive && Array.isArray(items) && items.length) setVisualCandidates(items); })
+      .catch(() => { /* The loaded library is a safe same-session fallback. */ })
       .finally(() => { if (alive) setLoadingVisualCandidates(false); });
     return () => { alive = false; };
-  }, [ad?.id, ad?.thumbnail_url, ad?.media_url, ad?.platform]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ad?.id, ad?.thumbnail_url, ad?.media_url, ad?.platform, retainedVisuals]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!ad) return undefined;
     const onKeyDown = (event) => { if (event.key === 'Escape') onClose(); };
@@ -2288,7 +2296,7 @@ export default function Research() {
         importing={importingIntel}
         defaultVertical={currentVerticalLabel}
       />
-      <ResearchDetailDrawer ad={detailAd} activeVertical={activeVertical} advertiserSnapshot={advertiserSnapshot} onClose={closeDetail} onInspect={inspectCreative} onExploreAdvertiser={exploreAdvertiser} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onPreviousResult={() => inspectAdjacentResult(-1)} onNextResult={() => inspectAdjacentResult(1)} canGoPrevious={detailResultIndex > 0} canGoNext={detailResultIndex >= 0 && detailResultIndex < detailResults.length - 1} resultPosition={detailResultIndex >= 0 ? { current: detailResultIndex + 1, total: detailResults.length } : null} onNotesSaved={handleStrategyNotesSaved} onMediaSaved={handleResearchMediaSaved} onReviewSaved={handleResearchReviewSaved} onBriefSaved={handleResearchReviewSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
+      <ResearchDetailDrawer ad={detailAd} activeVertical={activeVertical} advertiserSnapshot={advertiserSnapshot} retainedVisuals={browseAds} onClose={closeDetail} onInspect={inspectCreative} onExploreAdvertiser={exploreAdvertiser} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onPreviousResult={() => inspectAdjacentResult(-1)} onNextResult={() => inspectAdjacentResult(1)} canGoPrevious={detailResultIndex > 0} canGoNext={detailResultIndex >= 0 && detailResultIndex < detailResults.length - 1} resultPosition={detailResultIndex >= 0 ? { current: detailResultIndex + 1, total: detailResults.length } : null} onNotesSaved={handleStrategyNotesSaved} onMediaSaved={handleResearchMediaSaved} onReviewSaved={handleResearchReviewSaved} onBriefSaved={handleResearchReviewSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
     </div>
   );
 }
