@@ -1688,6 +1688,8 @@ export default function Research() {
       rankPosition: ad.rank_position,
       isMultipleVersions: ad.is_multiple_versions,
       creativeIntel: ad.creative_intel,
+      analystTakeaway: ad.creative_intel?.bhm_takeaway || null,
+      researchBoard: boards.find(board => board.id === activeBoardId)?.name || null,
       adLink: ad.ad_link,
       scrapedAdId: ad.id,
       vertical: currentVerticalLabel,

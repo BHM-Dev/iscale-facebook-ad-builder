@@ -47,6 +47,8 @@ def _format_research_context(research_inspiration: dict | None) -> str:
     headline = research_inspiration.get("headline") or ""
     body = research_inspiration.get("body") or ""
     cta = research_inspiration.get("cta") or ""
+    analyst_takeaway = research_inspiration.get("analystTakeaway") or ""
+    research_board = research_inspiration.get("researchBoard") or ""
     strategy_fields = {
         "Hook type": research_inspiration.get("hook_type"),
         "Persona": research_inspiration.get("persona"),
@@ -70,6 +72,10 @@ def _format_research_context(research_inspiration: dict | None) -> str:
         lines.append(f"- Competitor body to study, not copy: {body[:700]}")
     if cta:
         lines.append(f"- Competitor CTA: {cta}")
+    if research_board:
+        lines.append(f"- Internal research board: {research_board}")
+    if analyst_takeaway:
+        lines.append(f"- Internal analyst takeaway (use as strategic guidance, not source copy): {analyst_takeaway[:500]}")
     for label, value in strategy_fields.items():
         if value:
             lines.append(f"- Strategy {label}: {value}")
