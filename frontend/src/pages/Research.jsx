@@ -439,14 +439,14 @@ function CardOverflowMenu({ ad, advertiserUrl, isReviewed, onInspect, onBlockPag
         <MoreHorizontal size={16} />
       </summary>
       <div className="absolute bottom-10 right-0 z-20 w-52 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
-        <button type="button" onClick={() => onInspect(ad)} className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50">Inspect details</button>
-        {onToggleCompare && <button type="button" onClick={() => onToggleCompare(ad)} className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50">{isCompared ? 'Remove from compare' : 'Add to compare'}</button>}
+        <button type="button" aria-label="Inspect details" onClick={() => onInspect(ad)} className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50">Inspect details</button>
+        {onToggleCompare && <button type="button" aria-label={isCompared ? 'Remove from compare' : 'Add to compare'} onClick={() => onToggleCompare(ad)} className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50">{isCompared ? 'Remove from compare' : 'Add to compare'}</button>}
         <a href={advertiserUrl} target="_blank" rel="noopener noreferrer" className="flex w-full items-center rounded-lg px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">{ad.platform === 'external' ? 'Open source' : 'View advertiser ads'} <ExternalLink size={11} className="ml-auto" /></a>
-        {ad.platform !== 'external' && <button type="button" onClick={() => onSetReviewed(ad, !isReviewed)} className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50">{isReviewed ? 'Remove from Research Brief' : 'Add to Research Brief'}</button>}
+        {ad.platform !== 'external' && <button type="button" aria-label={isReviewed ? 'Remove from Research Brief' : 'Add to Research Brief'} onClick={() => onSetReviewed(ad, !isReviewed)} className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50">{isReviewed ? 'Remove from Research Brief' : 'Add to Research Brief'}</button>}
         <div className="my-1 border-t border-slate-100" />
         <BoardSaveButton ad={ad} boards={boards} onAdd={onAddToBoard} onCreate={onCreateBoard} />
-        {onRemoveFromBoard && <button type="button" onClick={() => onRemoveFromBoard(ad)} className="mt-1 flex w-full items-center rounded-lg px-2.5 py-2 text-left text-xs font-medium text-red-600 hover:bg-red-50">Remove from board</button>}
-        <button type="button" onClick={() => onBlockPage(ad)} className="mt-1 flex w-full items-center rounded-lg px-2.5 py-2 text-left text-xs font-medium text-red-600 hover:bg-red-50">Block advertiser</button>
+        {onRemoveFromBoard && <button type="button" aria-label="Remove from board" onClick={() => onRemoveFromBoard(ad)} className="mt-1 flex w-full items-center rounded-lg px-2.5 py-2 text-left text-xs font-medium text-red-600 hover:bg-red-50">Remove from board</button>}
+        <button type="button" aria-label="Block advertiser" onClick={() => onBlockPage(ad)} className="mt-1 flex w-full items-center rounded-lg px-2.5 py-2 text-left text-xs font-medium text-red-600 hover:bg-red-50">Block advertiser</button>
       </div>
     </details>
   );
@@ -940,7 +940,7 @@ function ExternalResearchImportModal({ open, onClose, onImport, importing, defau
 function CompareTray({ ads, onRemove, onClear, onOpen }) {
   if (!ads.length) return null;
   return <div className="fixed bottom-5 left-1/2 z-30 flex w-[min(680px,calc(100vw-2rem))] -translate-x-1/2 items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
-    <div className="min-w-0 flex-1"><p className="text-xs font-semibold text-slate-700">Compare {ads.length} ad{ads.length === 1 ? '' : 's'}</p><div className="mt-1 flex gap-1 overflow-hidden">{ads.map(ad => <button type="button" key={ad.id} onClick={() => onRemove(ad.id)} title={`Remove ${ad.brand_name || 'ad'}`} className="max-w-32 truncate rounded bg-slate-100 px-2 py-1 text-[11px] text-slate-600 hover:bg-red-50 hover:text-red-700">{ad.brand_name || 'Unknown'} ×</button>)}</div></div>
+    <div className="min-w-0 flex-1"><p className="text-xs font-semibold text-slate-700">Compare {ads.length} ad{ads.length === 1 ? '' : 's'}</p><div className="mt-1 flex gap-1 overflow-hidden">{ads.map(ad => { const label = ad.headline || ad.brand_name || 'ad'; return <button type="button" key={ad.id} onClick={() => onRemove(ad.id)} title={`Remove ${label}`} className="max-w-32 truncate rounded bg-slate-100 px-2 py-1 text-[11px] text-slate-600 hover:bg-red-50 hover:text-red-700">{label} ×</button>; })}</div></div>
     <button type="button" onClick={onClear} className="text-xs font-medium text-slate-500 hover:text-slate-800">Clear</button>
     <button type="button" onClick={onOpen} className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700">Compare</button>
   </div>;
