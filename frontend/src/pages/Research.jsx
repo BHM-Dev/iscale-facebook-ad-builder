@@ -872,7 +872,7 @@ function ExternalResearchImportModal({ open, onClose, onImport, importing, defau
   );
 }
 
-function ResearchBrief({ findings, verticalLabel, onOpenLibrary, onInspect, onBuild }) {
+function ResearchBrief({ findings, totalFindings, visualStats, visualFilter, onVisualFilterChange, verticalLabel, onOpenLibrary, onInspect, onBuild }) {
   return (
     <section className="space-y-4" aria-label="Research brief">
       <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-white p-5">
@@ -883,6 +883,12 @@ function ResearchBrief({ findings, verticalLabel, onOpenLibrary, onInspect, onBu
             <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">Reviewed competitor patterns worth studying before making a creative. These are structural references—not BHM performance or approved claim language.</p>
           </div>
           <button type="button" onClick={onOpenLibrary} className="rounded-lg border border-indigo-200 bg-white px-3.5 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50">Open Ad Library</button>
+        </div>
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-indigo-100 pt-4">
+          <div className="flex flex-wrap gap-2 text-xs font-medium"><span className="rounded-full bg-white px-2.5 py-1 text-slate-600 ring-1 ring-slate-200">{totalFindings} reviewed</span><span className="rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-700 ring-1 ring-emerald-100">{visualStats.withVisual} visual</span><span className="rounded-full bg-amber-50 px-2.5 py-1 text-amber-800 ring-1 ring-amber-100">{visualStats.needsVisual} need a capture</span></div>
+          <div className="inline-flex rounded-lg bg-white p-1 ring-1 ring-slate-200" aria-label="Visual coverage filter">
+            {[['all', 'All'], ['with_visual', 'Visual'], ['needs_visual', 'Needs visual']].map(([value, label]) => <button key={value} type="button" onClick={() => onVisualFilterChange(value)} className={`rounded-md px-2.5 py-1 text-xs font-semibold ${visualFilter === value ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-800'}`}>{label}</button>)}
+          </div>
         </div>
       </div>
 
@@ -897,8 +903,9 @@ function ResearchBrief({ findings, verticalLabel, onOpenLibrary, onInspect, onBu
           {findings.map(ad => {
             const intel = ad.creative_intel || {};
             return (
-              <article key={ad.id} className="flex min-h-64 flex-col rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                {(ad.thumbnail_url || ad.media_url) && <div className="mb-4 aspect-[16/9] overflow-hidden rounded-lg bg-slate-100">{ad.media_type === 'video' ? <video muted playsInline preload="metadata" poster={ad.thumbnail_url || undefined} className="h-full w-full object-cover"><source src={ad.media_preview_url || ad.media_url} /></video> : <img src={ad.thumbnail_url || ad.media_url} alt="" className="h-full w-full object-cover" />}</div>}
+              <article key={ad.id} className="flex min-h-64 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                {(ad.thumbnail_url || ad.media_url) ? <button type="button" onClick={() => onInspect(ad)} className="aspect-[16/9] overflow-hidden bg-slate-100 text-left">{ad.media_type === 'video' ? <video muted playsInline preload="metadata" poster={ad.thumbnail_url || undefined} className="h-full w-full object-cover"><source src={ad.media_preview_url || ad.media_url} /></video> : <img src={ad.thumbnail_url || ad.media_url} alt="" className="h-full w-full object-cover" />}</button> : <button type="button" onClick={() => onInspect(ad)} className="flex aspect-[16/9] flex-col items-center justify-center gap-2 border-b border-dashed border-slate-200 bg-slate-50 text-center text-xs text-slate-500 hover:bg-indigo-50 hover:text-indigo-700"><ImagePlus size={20}/><span className="font-semibold">Attach approved visual</span></button>}
+                <div className="flex flex-1 flex-col p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">{intel.research_source || 'Reviewed research'}</p>
@@ -912,6 +919,7 @@ function ResearchBrief({ findings, verticalLabel, onOpenLibrary, onInspect, onBu
                 <div className="mt-auto flex gap-2 pt-5">
                   <button type="button" onClick={() => onInspect(ad)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-indigo-200 hover:text-indigo-700">Inspect</button>
                   <button type="button" onClick={() => onBuild(ad)} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Use as inspiration</button>
+                </div>
                 </div>
               </article>
             );
@@ -933,6 +941,7 @@ export default function Research() {
   const [activeSubVertical, setActiveSubVertical] = useState(null);
   const [homeServicesOpen, setHomeServicesOpen] = useState(false);
   const [researchView, setResearchView] = useState('brief');
+  const [briefVisualFilter, setBriefVisualFilter] = useState('all');
   const [showCatalogTools, setShowCatalogTools] = useState(false);
   const homeServicesRef = useRef(null);
 
@@ -1613,10 +1622,14 @@ export default function Research() {
     mediaCount: browseAds.filter(ad => ad.thumbnail_url || ad.media_url).length,
     taggedCount: browseAds.filter(ad => (ad.creative_tags || []).length > 0).length,
   }), [browseAds]);
-  const reviewedFindings = useMemo(
-    () => browseAds.filter(ad => ad.platform === 'external'),
-    [browseAds],
-  );
+  const reviewedFindingsAll = useMemo(() => browseAds.filter(ad => ad.platform === 'external'), [browseAds]);
+  const visualStats = useMemo(() => {
+    const withVisual = reviewedFindingsAll.filter(ad => ad.thumbnail_url || ad.media_url).length;
+    return { withVisual, needsVisual: reviewedFindingsAll.length - withVisual };
+  }, [reviewedFindingsAll]);
+  const reviewedFindings = useMemo(() => reviewedFindingsAll.filter(ad => (
+    briefVisualFilter === 'all' || (briefVisualFilter === 'with_visual' ? Boolean(ad.thumbnail_url || ad.media_url) : !ad.thumbnail_url && !ad.media_url)
+  )), [reviewedFindingsAll, briefVisualFilter]);
 
   // ── Render ────────────────────────────────────────────────────
     return (
@@ -1806,12 +1819,16 @@ export default function Research() {
           <button type="button" onClick={() => setResearchView('brief')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'brief' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Research Brief</button>
           <button type="button" onClick={() => setResearchView('library')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'library' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Ad Library</button>
         </div>
-        <span className="text-xs text-slate-500">{reviewedFindings.length} reviewed finding{reviewedFindings.length === 1 ? '' : 's'} · {catalogSummary.total} raw captures</span>
+        <span className="text-xs text-slate-500">{reviewedFindingsAll.length} reviewed finding{reviewedFindingsAll.length === 1 ? '' : 's'} · {catalogSummary.total} raw captures</span>
       </div>
 
       {researchView === 'brief' ? (
         <ResearchBrief
           findings={reviewedFindings}
+          totalFindings={reviewedFindingsAll.length}
+          visualStats={visualStats}
+          visualFilter={briefVisualFilter}
+          onVisualFilterChange={setBriefVisualFilter}
           verticalLabel={currentVerticalLabel}
           onOpenLibrary={() => setResearchView('library')}
           onInspect={inspectCreative}
