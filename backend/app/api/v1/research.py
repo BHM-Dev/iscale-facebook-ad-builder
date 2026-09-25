@@ -1812,7 +1812,8 @@ def get_related_research_ads(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return explainable related patterns, never a fabricated performance rank."""
-    from app.models import ScrapedAd, SavedSearch
+    from app.models import PageBlacklist, SavedSearch, ScrapedAd, Vertical
+    from app.core.vertical_config import ALWAYS_BLOCKED_PAGES, VERTICAL_KEYWORD_SETS
     from sqlalchemy.orm import joinedload
     source = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
     if not source:
@@ -1886,20 +1887,47 @@ def query_research_copilot(
         raise HTTPException(status_code=400, detail="Choose a supported Research vertical")
     plan = _plan_research_copilot_question(payload.question, payload.vertical_id)
     now = datetime.utcnow()
+    # The Copilot must search exactly the same eligible corpus that its
+    # visible Ad Library represents. A wider ScrapedAd query can include
+    # duplicate/off-topic legacy captures and makes the coverage count lie.
+    config = VERTICAL_KEYWORD_SETS[payload.vertical_id]
+    vertical_labels = [config["label"]]
+    if payload.vertical_id == "home_services":
+        vertical_labels = [item["label"] for item in config.get("sub_verticals", {}).values()]
+    vertical_ids = [row.id for row in db.query(Vertical.id).filter(Vertical.name.in_(vertical_labels)).all()]
+    search_ids = [row.id for row in db.query(SavedSearch.id).filter(SavedSearch.vertical_id.in_(vertical_ids)).all()]
+    if not search_ids:
+        return {
+            "question": payload.question.strip(),
+            "query_plan": {**plan, "vertical": vertical_label},
+            "coverage": {"matched": 0, "returned": 0, "catalog_candidates": 0, "sufficient": False, "live_capture_recommended": True},
+            "suggestions": _copilot_query_suggestions(payload.question, plan, vertical_label),
+            "results": [],
+            "limitations": ["No retained captures are available for this Research vertical yet.", "Results are ranked by retained catalog signals, not Meta spend, ROAS, conversions, or delivery performance."],
+        }
+    blacklisted_names = {row.page_name.casefold() for row in db.query(PageBlacklist.page_name).all()} | {item.casefold() for item in ALWAYS_BLOCKED_PAGES}
     candidates = (
         db.query(ScrapedAd)
         .options(joinedload(ScrapedAd.saved_search).joinedload(SavedSearch.vertical))
+        .filter(ScrapedAd.search_id.in_(search_ids))
         .order_by(ScrapedAd.last_seen.desc())
         .limit(750)
         .all()
     )
     scored = []
     vertical_candidates = 0
+    seen_keys = set()
     for ad in candidates:
+        unique_key = ad.content_hash or ad.id
+        if unique_key in seen_keys:
+            continue
+        seen_keys.add(unique_key)
+        if ad.brand_name and ad.brand_name.casefold() in blacklisted_names:
+            continue
         candidate_vertical = getattr(getattr(ad.saved_search, "vertical", None), "name", None)
         if candidate_vertical and candidate_vertical != vertical_label:
             continue
-        if not candidate_vertical and not _matches_research_vertical(ad, payload.vertical_id):
+        if not _matches_research_vertical(ad, payload.vertical_id):
             continue
         vertical_candidates += 1
         match = _score_research_copilot_candidate(ad, plan, now)
