@@ -1452,6 +1452,20 @@ def attach_research_media(
     }
 
 
+@router.patch("/scraped-ads/{ad_id}/reviewed")
+def set_research_reviewed(ad_id: str, reviewed: bool, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    """Curate a raw capture into (or out of) the analyst-facing Brief."""
+    from app.models import ScrapedAd
+    ad = db.query(ScrapedAd).filter(ScrapedAd.id == ad_id).first()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Ad not found")
+    intel = dict(ad.creative_intel or {})
+    intel["reviewed"] = reviewed
+    ad.creative_intel = intel
+    db.commit()
+    return {"id": ad.id, "creative_intel": ad.creative_intel}
+
+
 @router.get("/scraped-ads/{ad_id}/related")
 def get_related_research_ads(
     ad_id: str,
