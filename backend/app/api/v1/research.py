@@ -274,7 +274,7 @@ def _score_research_copilot_candidate(ad, plan: dict, now: datetime) -> tuple[in
     text = " ".join(filter(None, [ad.brand_name, ad.headline, ad.ad_copy, ad.cta_text])).casefold()
     start = _parse_research_date(ad.start_date)
     last_seen = _parse_research_date(ad.last_seen)
-    running_days = max(0, (now - start).days) if start else None
+    running_days = max(0, (now - start).days) if start and ad.platform != "external" else None
     reasons = []
     score = 0
     if plan["active_only"]:
@@ -399,7 +399,7 @@ def _sort_research_ads(ads, sort_by):
     """Sort source-backed research signals with unknown dates last."""
     if sort_by == "longest_running":
         return sorted(ads, key=lambda ad: (
-            _parse_research_date(ad.start_date) is None,
+            ad.platform == "external" or _parse_research_date(ad.start_date) is None,
             _parse_research_date(ad.start_date) or datetime.max,
         ))
     if sort_by == "most_sightings":
@@ -484,7 +484,7 @@ def _serialize_scraped_ad(ad, board_item_id=None):
         "ad_link": ad.ad_link,
         "start_date": _serialize_research_datetime(ad.start_date),
         "seen_count": ad.seen_count or 1,
-        "running_days": max(0, (datetime.utcnow() - start_date).days) if start_date else None,
+        "running_days": max(0, (datetime.utcnow() - start_date).days) if start_date and ad.platform != "external" else None,
         "is_active": bool(last_seen and (datetime.utcnow() - last_seen).days <= 30),
         "angle_tag": ad.angle_tag,
         "hook_type": ad.hook_type,
@@ -1658,7 +1658,9 @@ def import_external_research(
         ad.ad_copy = _truncate_text(incoming.primary_text)
         ad.cta_text = incoming.cta
         ad.platform = "external"
-        ad.start_date = incoming.first_seen
+        # A vendor's first-seen date is provenance, not an independently
+        # verified Meta start date. Never use it for runtime or ranking.
+        ad.start_date = None
         ad.media_type = incoming.format.lower().strip() if incoming.format else None
         ad.destination_domain = destination_domain
         ad.source_query = request.query
@@ -1667,6 +1669,7 @@ def import_external_research(
             "research_source": request.source.strip(),
             "source_url": source_url or None,
             "source_signal": incoming.source_signal,
+            "source_first_seen": incoming.first_seen,
             "segment": incoming.segment,
             "imported_by_user_id": current_user.id,
             "signal_disclaimer": "Directional source context; not verified BHM performance.",
@@ -2242,7 +2245,7 @@ def get_vertical_browse_ads(
             continue
 
         start = _parse_research_date(ad.start_date)
-        running_days = max(0, (now - start).days) if start else None
+        running_days = max(0, (now - start).days) if start and ad.platform != "external" else None
 
         # "Active" proxy: seen within last 30 days
         is_active = False
