@@ -1,7 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useToast } from '../context/ToastContext';
 import { createBrandScrape, getBrandScrapes, getBrandScrape, deleteBrandScrape, importBrandScrapeToResearch } from '../api/research';
-import { Search, Trash2, ChevronDown, ChevronRight, ExternalLink, Image, Video, Loader2, RefreshCw } from 'lucide-react';
+import { Search, Trash2, ChevronDown, ChevronRight, ExternalLink, Image, Video, Loader2, RefreshCw, AlertTriangle } from 'lucide-react';
+
+const requestedBrandMatchesPage = (brandName, pageName) => {
+    const terms = (brandName || '').toLowerCase().match(/[a-z0-9]+/g) || [];
+    const usefulTerms = terms.filter(term => term.length >= 4);
+    const resolvedPage = (pageName || '').toLowerCase();
+    return Boolean(usefulTerms.length && usefulTerms.some(term => resolvedPage.includes(term)));
+};
 
 const BrandScrapes = () => {
     const { showSuccess, showError, showInfo } = useToast();
@@ -248,10 +255,12 @@ const BrandScrapes = () => {
                     </div>
                 ) : (
                     <div className="divide-y divide-amber-100">
-                        {scrapes.map((scrape) => (
+                        {scrapes.map((scrape) => {
+                            const hasAdvertiserMismatch = Boolean(scrape.page_name) && !requestedBrandMatchesPage(scrape.brand_name, scrape.page_name);
+                            return (
                             <div key={scrape.id}>
                                 <div
-                                    className="p-4 hover:bg-amber-50 cursor-pointer flex items-center justify-between"
+                                    className={`p-4 cursor-pointer flex items-center justify-between ${hasAdvertiserMismatch ? 'bg-red-50/60 hover:bg-red-50' : 'hover:bg-amber-50'}`}
                                     onClick={() => handleExpand(scrape.id)}
                                 >
                                     <div className="flex items-center gap-4">
@@ -265,7 +274,7 @@ const BrandScrapes = () => {
                                         <div>
                                             <h3 className="font-medium text-gray-900">{scrape.brand_name}</h3>
                                             <p className="text-sm text-gray-500">
-                                                {scrape.page_name || `Page ID: ${scrape.page_id}`}
+                                                {scrape.page_name ? (hasAdvertiserMismatch ? `Resolved page: ${scrape.page_name}` : scrape.page_name) : `Page ID: ${scrape.page_id}`}
                                             </p>
                                         </div>
                                     </div>
@@ -279,6 +288,7 @@ const BrandScrapes = () => {
                                             </p>
                                         </div>
                                         {getStatusBadge(scrape.status)}
+                                        {hasAdvertiserMismatch && <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-1 text-xs font-semibold text-red-700"><AlertTriangle size={12} />Wrong page</span>}
                                         <span className="text-xs text-gray-400">
                                             {formatDate(scrape.created_at)}
                                         </span>
@@ -303,7 +313,7 @@ const BrandScrapes = () => {
                                             </div>
                                         )}
 
-                                        {scrape.status === 'completed' && (
+                                        {scrape.status === 'completed' && !hasAdvertiserMismatch && (
                                             <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-indigo-100 bg-white p-3">
                                                 <div>
                                                     <p className="text-sm font-semibold text-gray-900">Add retained media to Research</p>
@@ -319,6 +329,11 @@ const BrandScrapes = () => {
                                                         {importingScrapeId === scrape.id ? 'Adding…' : 'Add to Research'}
                                                     </button>
                                                 </div>
+                                            </div>
+                                        )}
+                                        {hasAdvertiserMismatch && (
+                                            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                                                This scrape resolved to <strong>{scrape.page_name}</strong>, not <strong>{scrape.brand_name}</strong>. It is blocked from Research until the Meta Page ID is verified.
                                             </div>
                                         )}
 
@@ -439,7 +454,8 @@ const BrandScrapes = () => {
                                     </div>
                                 )}
                             </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
             </div>

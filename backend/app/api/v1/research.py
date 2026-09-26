@@ -1187,12 +1187,21 @@ def import_brand_scrape_into_research(
     does not download or copy third-party research-platform assets.
     """
     from app.models import BrandScrape, FacebookPage, SavedSearch, ScrapedAd, Vertical
+    from app.services.brand_scraper import requested_brand_matches_page
 
     scrape = db.query(BrandScrape).filter(BrandScrape.id == scrape_id).first()
     if not scrape:
         raise HTTPException(status_code=404, detail="Brand scrape not found")
     if scrape.status != "completed":
         raise HTTPException(status_code=400, detail="Wait for this Brand Scrape to complete before importing it")
+    if not requested_brand_matches_page(scrape.brand_name, scrape.page_name):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f'Requested brand "{scrape.brand_name}" resolved to '
+                f'"{scrape.page_name or "an unknown page"}". Verify the Meta Page ID before importing.'
+            ),
+        )
     vertical_name = vertical.strip()
     if not vertical_name:
         raise HTTPException(status_code=400, detail="A Research vertical is required")

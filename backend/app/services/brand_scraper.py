@@ -58,6 +58,16 @@ def search_query_matches_page(query: str, page_name: str | None) -> bool:
     return bool(query_terms) and any(term in page_text for term in query_terms)
 
 
+def requested_brand_matches_page(brand_name: str, page_name: str | None) -> bool:
+    """Return whether Meta resolved a scrape to the brand the operator named.
+
+    Numeric page IDs are usually authoritative, but a stale or incorrectly
+    copied ID can still resolve to a different advertiser. Do not let those
+    captures enter Research simply because the scrape itself completed.
+    """
+    return search_query_matches_page(brand_name, page_name)
+
+
 class BrandScraperService:
     """Service for scraping brand ads and downloading media to R2."""
 
@@ -112,6 +122,15 @@ class BrandScraperService:
             # Get page name from first ad
             if ads_data and ads_data[0].get("page_name"):
                 brand_scrape.page_name = ads_data[0]["page_name"]
+
+            if not requested_brand_matches_page(brand_scrape.brand_name, brand_scrape.page_name):
+                brand_scrape.status = "failed"
+                brand_scrape.error_message = (
+                    f'Requested brand "{brand_scrape.brand_name}" resolved to "{brand_scrape.page_name or "an unknown page"}". '
+                    "Verify the Meta Page ID before scraping or importing."
+                )[:500]
+                self.db.commit()
+                return brand_scrape
 
             brand_scrape.total_ads = len(ads_data)
             self.db.commit()
