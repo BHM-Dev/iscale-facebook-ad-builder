@@ -395,7 +395,7 @@ function SaveButton({ ad, isSaved, onSave, onUnsave, angleTags }) {
 }
 
 // ── Ad Card ─────────────────────────────────────────────────────
-function BoardSaveButton({ ad, boards, onAdd, onCreate }) {
+function BoardSaveButton({ ad, boards, onAdd, onCreate, compact = false }) {
   const [open, setOpen] = useState(false);
   const [newBoardName, setNewBoardName] = useState('');
   const [creating, setCreating] = useState(false);
@@ -425,11 +425,11 @@ function BoardSaveButton({ ad, boards, onAdd, onCreate }) {
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
-        className="w-full inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors"
+        className={`${compact ? 'inline-flex' : 'w-full'} items-center justify-center gap-1 px-2 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors`}
         aria-expanded={open}
       >
         <Star size={11} />
-        Save to board
+        {compact ? 'Save' : 'Save to board'}
         <ChevronDown size={10} />
       </button>
       {open && (
@@ -1008,7 +1008,7 @@ function ComparePanel({ ads, onClose, onInspect }) {
   </div>;
 }
 
-function ResearchBrief({ findings, testShortlist, totalFindings, visualStats, visualFilter, onVisualFilterChange, verticalLabel, onOpenLibrary, onInspect, onBuild }) {
+function ResearchBrief({ findings, testShortlist, totalFindings, visualStats, visualFilter, onVisualFilterChange, verticalLabel, onOpenLibrary, onInspect, onBuild, boards, onAddToBoard, onCreateBoard }) {
   return (
     <section className="space-y-4" aria-label="Research brief">
       <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-white p-5">
@@ -1039,7 +1039,7 @@ function ResearchBrief({ findings, testShortlist, totalFindings, visualStats, vi
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {testShortlist.map(ad => (
-              <article key={ad.id} className="flex overflow-hidden rounded-lg border border-slate-200 bg-slate-50 text-left transition hover:border-indigo-300">
+              <article key={ad.id} className="flex rounded-lg border border-slate-200 bg-slate-50 text-left transition hover:border-indigo-300">
                 <button type="button" onClick={() => onInspect(ad)} className="m-3 h-24 w-24 shrink-0 overflow-hidden rounded-md bg-slate-100 sm:h-28 sm:w-28" title="Inspect creative">
                   {ad.media_type === 'video' ? <video muted playsInline preload="metadata" poster={ad.thumbnail_url || undefined} className="h-full w-full object-contain"><source src={ad.media_preview_url || ad.media_url} /></video> : <img src={ad.thumbnail_url || ad.media_url} alt="" className="h-full w-full object-contain" />}
                 </button>
@@ -1049,6 +1049,7 @@ function ResearchBrief({ findings, testShortlist, totalFindings, visualStats, vi
                   <p className="mt-2 text-xs text-slate-500"><span className="font-semibold text-slate-600">Mechanism:</span> {researchMechanism(ad)}</p>
                   <div className="mt-auto flex items-center gap-3 pt-3">
                     <button type="button" onClick={() => onInspect(ad)} className="text-xs font-semibold text-indigo-700 hover:text-indigo-900">Inspect</button>
+                    <BoardSaveButton ad={ad} boards={boards} onAdd={onAddToBoard} onCreate={onCreateBoard} compact />
                     <button type="button" onClick={() => onBuild(ad)} className="text-xs font-semibold text-indigo-700 hover:text-indigo-900">Build ad</button>
                   </div>
                 </div>
@@ -2157,6 +2158,9 @@ export default function Research() {
           onOpenLibrary={() => setResearchView('library')}
           onInspect={inspectCreative}
           onBuild={handleUseAsInspiration}
+          boards={boards}
+          onAddToBoard={handleAddToBoard}
+          onCreateBoard={handleCreateBoard}
         />
       ) : <>
 
