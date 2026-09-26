@@ -80,3 +80,11 @@ def test_ai_summary_rejects_unsupported_performance_language():
         "answer": "This is a winning ad with high spend.",
         "patterns": ["Identity hook"],
     }) is None
+
+
+def test_ai_summary_allows_a_metric_caveat_without_a_claim():
+    summary = _sanitize_research_copilot_ai_summary({
+        "answer": "The retained copy shows a direct quote route; spend data is not available here.",
+        "patterns": ["Identity-led hook"],
+    })
+    assert summary["patterns"] == ["Identity-led hook"]

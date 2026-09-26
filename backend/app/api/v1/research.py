@@ -69,7 +69,7 @@ COPILOT_PAGE_TYPE_PHRASES = {
 COPILOT_AI_MODEL = "claude-sonnet-4-5-20250929"
 _research_copilot_client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY")) if os.getenv("ANTHROPIC_API_KEY") else None
 COPILOT_UNSUPPORTED_PERFORMANCE_RE = re.compile(
-    r"\b(?:spend|impressions?|roas|roi|conversions?|conversion rate|delivery volume|best performing|top performing|winner|winning ads?)\b",
+    r"\b(?:best performing|top performing|winner|winning ads?|highest (?:spend|impressions?|roas|roi|conversions?)|(?:high|low) (?:spend|impressions?|roas|roi|conversions?)|(?:spend|impressions?|roas|roi|conversions?) (?:is|are) (?:high|low))\b",
     re.IGNORECASE,
 )
 
