@@ -679,6 +679,7 @@ const FacebookCampaignWizardInner = () => {
                                 onNext={handleNext}
                                 onBack={handleBack}
                                 mode={batchMode}
+                                preferLaunchReady={Boolean(driveLaunchResolved)}
                             />
                         </div>
                     )}

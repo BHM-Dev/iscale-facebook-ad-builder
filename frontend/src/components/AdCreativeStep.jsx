@@ -58,6 +58,11 @@ export const CTA_OPTIONS = [
     'DONATE_NOW',
 ];
 
+const normalizeMetaCta = (value) => {
+    const normalized = String(value || '').trim().toUpperCase();
+    return CTA_OPTIONS.includes(normalized) ? normalized : '';
+};
+
 const parseDriveTags = (asset) => {
     if (!asset?.soft_tags) return {};
     if (typeof asset.soft_tags === 'object') return asset.soft_tags;
@@ -246,7 +251,7 @@ const buildDriveAssetGroups = (assets) => {
             return {
                 copy: tags.copy || {},
                 landingPage: tags.landing_page || '',
-                cta: tags.cta || '',
+                cta: normalizeMetaCta(tags.cta),
                 refreshStatus: tags.copy_refresh_status || 'verified',
             };
         });
@@ -279,7 +284,7 @@ const buildDriveAssetGroups = (assets) => {
             isPair,
             copy: pairCopyIntegrityOk ? group.copy : null,
             landingPage: pairCopyIntegrityOk ? group.landingPage : null,
-            cta: pairCopyIntegrityOk ? group.cta : null,
+            cta: pairCopyIntegrityOk ? normalizeMetaCta(group.cta) : null,
             copyIntegrityIssue: group.copyIntegrityIssue || (isPair && !pairCopyIntegrityOk),
             copyIntegrityReason: group.copyIntegrityReason || null,
             copyRefusedForOtherFile: group.copyRefusedForOtherFile || false,
@@ -340,7 +345,7 @@ const formatReconciliationRecords = (records) => records.map(record => {
     return `${ads} (Meta: ${meta}; ${scope}; ${when})`;
 }).join(' • ');
 
-const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
+const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchReady = false }) => {
     const isMatchImport = mode === 'match-import';
     const { showWarning, showError, showSuccess } = useToast();
     const { authFetch } = useAuth();
@@ -446,6 +451,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // One filter at a time. Both on at once yields "blocked AND needs copy",
     // an intersection nobody asked for behind two independent-looking toggles.
     const [showNeedsCopyDriveOnly, setShowNeedsCopyDriveOnly] = useState(false);
+    // The Drive shortcut is the execution path, not a library-maintenance
+    // screen. Start it on items that can actually survive the launch preflight;
+    // incomplete assets remain discoverable through the explicit filters.
+    const [showLaunchReadyDriveOnly, setShowLaunchReadyDriveOnly] = useState(preferLaunchReady);
     const [driveSectionOverrides, setDriveSectionOverrides] = useState({});
     const [driveParentOverrides, setDriveParentOverrides] = useState({});
     const [selectedDriveParentKey, setSelectedDriveParentKey] = useState(null);
@@ -456,9 +465,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         if (showDriveLibraryModal) {
             setShowBlockedDriveOnly(false);
             setShowNeedsCopyDriveOnly(false);
+            setShowLaunchReadyDriveOnly(preferLaunchReady);
             setDriveSectionOverrides({});
         }
-    }, [showDriveLibraryModal]);
+    }, [showDriveLibraryModal, preferLaunchReady]);
     const [showDriveLibraryHint, setShowDriveLibraryHint] = useState(
         () => safeLocalStorageGet('driveLibraryHintSeen') !== 'true'
     );
@@ -572,6 +582,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // toggle, or the button can read "Showing blocked" above one unblocked pair.
     const blockedFilterActive = showBlockedDriveOnly && !driveRepairPairId;
     const needsCopyFilterActive = showNeedsCopyDriveOnly && !driveRepairPairId;
+    const launchReadyFilterActive = showLaunchReadyDriveOnly && !driveRepairPairId;
 
     // A tile with no copy is not blocked -- it is selectable and launches once
     // the buyer types a headline and body. It just renders with no badge at all,
@@ -584,12 +595,42 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     // path's extra `|| group.copyRefreshUnverified` (addDriveSelectionToCreatives)
     // needs no counterpart here -- those groups are already out.
     const needsCopy = (group) => !isDriveGroupSelectionBlocked(group) && !hasCompleteCopy(group?.copy || {});
+    const defaultUrlForDriveGroup = (group) => {
+        const brandId = group?.displayAsset?.brand_id;
+        const brand = brands.find(item => item.id === brandId);
+        const productsWithUrl = (brand?.products || []).filter(product => product.default_url);
+        return productsWithUrl.length === 1 ? productsWithUrl[0].default_url : '';
+    };
+    // A batch has one global destination. When it is already set, only show
+    // ready groups that agree with it. With no global URL, use the newest
+    // ready URL family as the execution set and keep other destinations out
+    // of bulk selection rather than blanking the URL after selection.
+    const resolvedDriveDestination = (group) => normalizeDestinationUrl(
+        group?.landingPage || defaultUrlForDriveGroup(group) || creativeData.websiteUrl || ''
+    );
+    const resolvedDriveCta = (group) => normalizeMetaCta(group?.cta) || normalizeMetaCta(creativeData.cta);
+    const isLaunchReady = (group) => (
+        !isDriveGroupSelectionBlocked(group)
+        && hasCompleteCopy(group?.copy || {})
+        && isValidDestinationUrl(resolvedDriveDestination(group))
+        && Boolean(resolvedDriveCta(group))
+    );
+    const configuredDestinationCandidate = normalizeDestinationUrl(creativeData.websiteUrl || '');
+    const configuredLaunchDestination = isValidDestinationUrl(configuredDestinationCandidate)
+        ? configuredDestinationCandidate
+        : '';
+    const launchReadyDestination = configuredLaunchDestination
+        || resolvedDriveDestination(scopedDriveAssetGroups.find(isLaunchReady));
+    const isLaunchReadyForDestination = (group) => (
+        isLaunchReady(group) && resolvedDriveDestination(group) === launchReadyDestination
+    );
 
     const driveAssetGroups = useMemo(() => {
         if (blockedFilterActive) return scopedDriveAssetGroups.filter(isDriveGroupSelectionBlocked);
         if (needsCopyFilterActive) return scopedDriveAssetGroups.filter(needsCopy);
+        if (launchReadyFilterActive) return scopedDriveAssetGroups.filter(isLaunchReadyForDestination);
         return scopedDriveAssetGroups;
-    }, [scopedDriveAssetGroups, blockedFilterActive, needsCopyFilterActive]);
+    }, [scopedDriveAssetGroups, blockedFilterActive, needsCopyFilterActive, launchReadyFilterActive, launchReadyDestination]);
 
     const driveSections = useMemo(() => {
         const bySection = new Map();
@@ -674,6 +715,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const expandEverySection = Boolean(driveSearchTerm.trim())
         || blockedFilterActive
         || needsCopyFilterActive
+        || launchReadyFilterActive
         || Boolean(driveRepairPairId);
     const isParentExpanded = (parent) => driveParentOverrides[parent.key] ?? parent.defaultOpen;
     const toggleDriveParent = (parent) => setDriveParentOverrides(prev => ({ ...prev, [parent.key]: !isParentExpanded(parent) }));
@@ -718,7 +760,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     useEffect(() => {
         setDriveSectionOverrides({});
         setDriveParentOverrides({});
-    }, [driveSearchTerm, driveFormatFilter, blockedFilterActive, needsCopyFilterActive, driveRepairPairId]);
+    }, [driveSearchTerm, driveFormatFilter, blockedFilterActive, needsCopyFilterActive, launchReadyFilterActive, driveRepairPairId]);
     const setAllDriveSections = (expanded) => {
         setDriveParentOverrides(Object.fromEntries(driveParents.map(parent => [parent.key, expanded])));
         setDriveSectionOverrides(Object.fromEntries(driveSections.map(section => [section.key, expanded])));
@@ -779,6 +821,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
     const scopedBlockedDriveGroupCount = useMemo(
         () => scopedDriveAssetGroups.filter(isDriveGroupSelectionBlocked).length,
         [scopedDriveAssetGroups],
+    );
+    const scopedLaunchReadyDriveGroupCount = useMemo(
+        () => scopedDriveAssetGroups.filter(isLaunchReadyForDestination).length,
+        [scopedDriveAssetGroups, launchReadyDestination],
+    );
+    const scopedOtherLaunchReadyDestinationCount = useMemo(
+        () => scopedDriveAssetGroups.filter(group => isLaunchReady(group) && !isLaunchReadyForDestination(group)).length,
+        [scopedDriveAssetGroups, launchReadyDestination],
     );
     // Selectable tiles currently on screen. "Select all (7)" was enabled while
     // the blocked filter was on, and every one of those 7 is by definition
@@ -963,13 +1013,6 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
         };
     }, [driveAssets, driveSearchTerm]);
 
-    const defaultUrlForDriveGroup = (group) => {
-        const brandId = group?.displayAsset?.brand_id;
-        const brand = brands.find(item => item.id === brandId);
-        const productsWithUrl = (brand?.products || []).filter(product => product.default_url);
-        return productsWithUrl.length === 1 ? productsWithUrl[0].default_url : '';
-    };
-
     const fetchDriveAssets = async ({ throwOnError = false } = {}) => {
         const requestId = ++driveFetchRequestRef.current;
         setDriveLibraryLoading(true);
@@ -1052,6 +1095,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             setDriveFormatFilter('');
             setShowBlockedDriveOnly(false);
             setShowNeedsCopyDriveOnly(false);
+            // The upload is intentionally incomplete until its copy is
+            // supplied, so don't hide the newly selected item behind the
+            // execution-only filter when this began from Launch from Drive.
+            setShowLaunchReadyDriveOnly(false);
             setDriveRepairPairId(null);
             setSelectedDriveParentKey(null);
             setShowDriveUploadModal(false);
@@ -1159,7 +1206,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                         headline: manualCopyFields.headline ? creative.headline || '' : (matchedCopy.headline || (sourceCopyComplete ? '' : creative.headline || '')),
                         body: manualCopyFields.body ? creative.body || '' : (matchedCopy.primary_text || (sourceCopyComplete ? '' : creative.body || '')),
                         description: manualCopyFields.description ? creative.description || '' : (matchedCopy.description || (sourceCopyComplete ? '' : creative.description || '')),
-                        cta: manualCopyFields.cta ? creative.cta || '' : (group.cta || (sourceCopyComplete ? '' : creative.cta || '')),
+                        cta: manualCopyFields.cta ? creative.cta || '' : (normalizeMetaCta(group.cta) || (sourceCopyComplete ? '' : creative.cta || '')),
                         websiteUrl: manualCopyFields.websiteUrl ? creative.websiteUrl || '' : (group.landingPage || (sourceCopyComplete ? '' : creative.websiteUrl || '')),
                     };
                 }),
@@ -1333,7 +1380,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
             // fields. Assign the explicit Creative-step CTA and brand's single
             // default URL to that individual row at add time (never as a hidden
             // Bulk fallback), so it remains visible/editable and can advance.
-            const groupCta = group.cta || creativeData.cta || '';
+            const groupCta = normalizeMetaCta(group.cta) || normalizeMetaCta(creativeData.cta);
             const groupWebsiteUrl = group.landingPage || defaultUrlForDriveGroup(group) || creativeData.websiteUrl || '';
             // A real pair (both an image feed asset AND an image stories asset —
             // create_creative's dual-placement path is image-only, never video,
@@ -3174,8 +3221,34 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                             <button
                                 type="button"
                                 onClick={() => {
+                                    setShowLaunchReadyDriveOnly(current => !current);
+                                    setShowNeedsCopyDriveOnly(false);
+                                    setShowBlockedDriveOnly(false);
+                                }}
+                                disabled={(scopedLaunchReadyDriveGroupCount === 0 && !launchReadyFilterActive) || Boolean(driveRepairPairId)}
+                                aria-pressed={launchReadyFilterActive}
+                                className={`whitespace-nowrap rounded-lg border px-3 py-1 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                                    launchReadyFilterActive
+                                        ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                                        : 'border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50'
+                                }`}
+                            >
+                                Launch ready ({scopedLaunchReadyDriveGroupCount})
+                            </button>
+                            {scopedOtherLaunchReadyDestinationCount > 0 && (
+                                <span
+                                    className="whitespace-nowrap text-[11px] font-medium text-amber-700"
+                                    title="These creative groups use another destination URL. Change the global Website URL to review that launch set."
+                                >
+                                    +{scopedOtherLaunchReadyDestinationCount} other URL
+                                </span>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => {
                                     setShowNeedsCopyDriveOnly(current => !current);
                                     setShowBlockedDriveOnly(false);
+                                    setShowLaunchReadyDriveOnly(false);
                                 }}
                                 disabled={(scopedNeedsCopyDriveGroupCount === 0 && !needsCopyFilterActive) || Boolean(driveRepairPairId)}
                                 aria-pressed={needsCopyFilterActive}
@@ -3192,6 +3265,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations' }) => {
                                 onClick={() => {
                                     setShowBlockedDriveOnly(current => !current);
                                     setShowNeedsCopyDriveOnly(false);
+                                    setShowLaunchReadyDriveOnly(false);
                                 }}
                                 disabled={(scopedBlockedDriveGroupCount === 0 && !blockedFilterActive) || Boolean(driveRepairPairId)}
                                 aria-pressed={blockedFilterActive}
