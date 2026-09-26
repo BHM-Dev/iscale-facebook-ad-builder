@@ -965,7 +965,7 @@ function ComparePanel({ ads, onClose, onInspect }) {
   </div>;
 }
 
-function PatternMap({ findings, onOpenTheme, onOpenVisuals }) {
+function PatternMap({ findings, audienceFilter, themeFilter, visualFilter, onAudienceFilterChange, onThemeFilterChange, onVisualFilterChange }) {
   const top = (values, fallback) => Object.entries(values.reduce((counts, value) => {
     const key = value || fallback;
     counts[key] = (counts[key] || 0) + 1;
@@ -976,8 +976,14 @@ function PatternMap({ findings, onOpenTheme, onOpenVisuals }) {
   const coverage = top(findings.map(ad => (ad.thumbnail_url || ad.media_url) ? 'Visual ready' : 'Copy only'), 'Copy only');
   const groups = [['Audience', audiences], ['Theme', themes], ['Coverage', coverage]];
   if (!findings.length) return null;
+  const selected = (label, value) => (label === 'Audience' && audienceFilter === value) || (label === 'Theme' && themeFilter === value) || (label === 'Coverage' && ((value === 'Visual ready' && visualFilter === 'with_visual') || (value === 'Copy only' && visualFilter === 'needs_visual')));
+  const select = (label, value) => {
+    if (label === 'Audience') onAudienceFilterChange(audienceFilter === value ? '' : value);
+    if (label === 'Theme') onThemeFilterChange(themeFilter === value ? '' : value);
+    if (label === 'Coverage') onVisualFilterChange(value === 'Visual ready' ? (visualFilter === 'with_visual' ? 'all' : 'with_visual') : (visualFilter === 'needs_visual' ? 'all' : 'needs_visual'));
+  };
   return <section className="grid gap-3 md:grid-cols-3" aria-label="Research pattern map">
-    {groups.map(([label, items]) => <div key={label} className="rounded-xl border border-slate-200 bg-white px-4 py-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p><div className="mt-2 space-y-1.5">{items.map(([value, count]) => { const canOpenTheme = label === 'Theme' && value !== 'Unclassified'; const canOpenVisuals = label === 'Coverage' && value === 'Visual ready'; return <div key={value} className="flex items-center justify-between gap-3 text-sm">{canOpenTheme || canOpenVisuals ? <button type="button" onClick={() => canOpenTheme ? onOpenTheme(value) : onOpenVisuals()} className="truncate text-left font-medium text-indigo-700 hover:text-indigo-900 hover:underline">{value.replaceAll('_', ' ')}</button> : <span className="truncate font-medium text-slate-700">{value.replaceAll('_', ' ')}</span>}<span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{count}</span></div>; })}</div></div>)}
+    {groups.map(([label, items]) => <div key={label} className="rounded-xl border border-slate-200 bg-white px-4 py-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p><div className="mt-2 space-y-1.5">{items.map(([value, count]) => <div key={value} className="flex items-center justify-between gap-3 text-sm"><button type="button" onClick={() => select(label, value)} className={`truncate rounded px-1.5 py-0.5 text-left font-medium transition-colors ${selected(label, value) ? 'bg-indigo-600 text-white' : 'text-indigo-700 hover:bg-indigo-50 hover:text-indigo-900'}`}>{value.replaceAll('_', ' ')}</button><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{count}</span></div>)}</div></div>)}
   </section>;
 }
 
@@ -989,7 +995,7 @@ function ResearchLanes({ visualCount, onOpenVisuals, onOpenThemes, onOpenAdverti
   </section>;
 }
 
-function ResearchBrief({ findings, totalFindings, visualStats, visualFilter, onVisualFilterChange, verticalLabel, onOpenLibrary, onOpenVisuals, onOpenThemes, onOpenAdvertisers, onInspect, onBuild, allFindings }) {
+function ResearchBrief({ findings, totalFindings, visualStats, visualFilter, audienceFilter, themeFilter, onVisualFilterChange, onAudienceFilterChange, onThemeFilterChange, verticalLabel, onOpenLibrary, onOpenVisuals, onOpenThemes, onOpenAdvertisers, onInspect, onBuild, allFindings }) {
   return (
     <section className="space-y-4" aria-label="Research brief">
       <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-white p-5">
@@ -1003,13 +1009,13 @@ function ResearchBrief({ findings, totalFindings, visualStats, visualFilter, onV
         </div>
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-indigo-100 pt-4">
           <div className="flex flex-wrap gap-2 text-xs font-medium"><span className="rounded-full bg-white px-2.5 py-1 text-slate-600 ring-1 ring-slate-200">{totalFindings} reviewed</span><span className="rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-700 ring-1 ring-emerald-100">{visualStats.withVisual} visual</span><span className="rounded-full bg-amber-50 px-2.5 py-1 text-amber-800 ring-1 ring-amber-100">{visualStats.needsVisual} need a capture</span></div>
-          <div className="inline-flex rounded-lg bg-white p-1 ring-1 ring-slate-200" aria-label="Visual coverage filter">
+          <div className="flex items-center gap-2"><div className="inline-flex rounded-lg bg-white p-1 ring-1 ring-slate-200" aria-label="Visual coverage filter">
             {[['all', 'All'], ['with_visual', 'Visual'], ['needs_visual', 'Needs visual']].map(([value, label]) => <button key={value} type="button" onClick={() => onVisualFilterChange(value)} className={`rounded-md px-2.5 py-1 text-xs font-semibold ${visualFilter === value ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-800'}`}>{label}</button>)}
-          </div>
+          </div>{(audienceFilter || themeFilter || visualFilter !== 'all') && <button type="button" onClick={() => { onAudienceFilterChange(''); onThemeFilterChange(''); onVisualFilterChange('all'); }} className="text-xs font-semibold text-indigo-700 hover:text-indigo-900">Reset</button>}</div>
         </div>
       </div>
 
-      <PatternMap findings={allFindings} onOpenTheme={onOpenThemes} onOpenVisuals={onOpenVisuals} />
+      <PatternMap findings={allFindings} audienceFilter={audienceFilter} themeFilter={themeFilter} visualFilter={visualFilter} onAudienceFilterChange={onAudienceFilterChange} onThemeFilterChange={onThemeFilterChange} onVisualFilterChange={onVisualFilterChange} />
       <ResearchLanes visualCount={visualStats.withVisual} onOpenVisuals={onOpenVisuals} onOpenThemes={onOpenThemes} onOpenAdvertisers={onOpenAdvertisers} />
 
       {findings.length === 0 ? (
@@ -1114,6 +1120,8 @@ export default function Research() {
   const [homeServicesOpen, setHomeServicesOpen] = useState(false);
   const [researchView, setResearchView] = useState('brief');
   const [briefVisualFilter, setBriefVisualFilter] = useState('all');
+  const [briefAudienceFilter, setBriefAudienceFilter] = useState('');
+  const [briefThemeFilter, setBriefThemeFilter] = useState('');
   const [showCatalogTools, setShowCatalogTools] = useState(false);
   const homeServicesRef = useRef(null);
 
@@ -1200,6 +1208,9 @@ export default function Research() {
     activeVerticalRef.current = activeVertical;
     activeSubVerticalRef.current = activeSubVertical;
     setQueryLoading(false);
+    setBriefAudienceFilter('');
+    setBriefThemeFilter('');
+    setBriefVisualFilter('all');
   }, [activeVertical, activeSubVertical]);
 
   useEffect(() => {
@@ -1910,8 +1921,10 @@ export default function Research() {
     return { withVisual, needsVisual: reviewedFindingsAll.length - withVisual };
   }, [reviewedFindingsAll]);
   const reviewedFindings = useMemo(() => reviewedFindingsAll.filter(ad => (
-    briefVisualFilter === 'all' || (briefVisualFilter === 'with_visual' ? Boolean(ad.thumbnail_url || ad.media_url) : !ad.thumbnail_url && !ad.media_url)
-  )), [reviewedFindingsAll, briefVisualFilter]);
+    (!briefAudienceFilter || ad.creative_intel?.segment === briefAudienceFilter) &&
+    (!briefThemeFilter || (ad.creative_tags || []).includes(briefThemeFilter) || ad.angle_tag === briefThemeFilter) &&
+    (briefVisualFilter === 'all' || (briefVisualFilter === 'with_visual' ? Boolean(ad.thumbnail_url || ad.media_url) : !ad.thumbnail_url && !ad.media_url))
+  )), [reviewedFindingsAll, briefAudienceFilter, briefThemeFilter, briefVisualFilter]);
   const compareAds = useMemo(() => {
     const byId = new Map([...browseAds, ...savedAds, ...boardAds].map(ad => [ad.id, ad]));
     return compareIds.map(id => byId.get(id)).filter(Boolean);
@@ -2126,7 +2139,11 @@ export default function Research() {
           totalFindings={reviewedFindingsAll.length}
           visualStats={visualStats}
           visualFilter={briefVisualFilter}
+          audienceFilter={briefAudienceFilter}
+          themeFilter={briefThemeFilter}
           onVisualFilterChange={setBriefVisualFilter}
+          onAudienceFilterChange={setBriefAudienceFilter}
+          onThemeFilterChange={setBriefThemeFilter}
           verticalLabel={currentVerticalLabel}
           onOpenLibrary={() => setResearchView('library')}
           onOpenVisuals={openVisualLane}
