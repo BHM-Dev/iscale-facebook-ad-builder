@@ -135,6 +135,41 @@ const hasMisassignedVideoUiCapture = (ad) => (
 );
 const hasUsableVisual = (ad) => hasVisualCandidate(ad) && !hasMisassignedVideoUiCapture(ad);
 
+const researchText = (ad) => [ad.headline, ad.ad_copy, ad.cta_text].filter(Boolean).join(' ').trim();
+
+const firstResearchSentence = (value) => {
+  const clean = (value || '').replace(/\s+/g, ' ').trim();
+  const sentence = clean.match(/^.*?[.!?](?:\s|$)|^.+$/)?.[0]?.trim() || '';
+  return sentence.length > 116 ? `${sentence.slice(0, 113).trimEnd()}…` : sentence;
+};
+
+const researchMechanism = (ad) => {
+  const copy = researchText(ad).toLowerCase();
+  if (/\b(?:minutes?|fast|easy|online)\b/.test(copy) && /\b(?:quote|policy|coverage)\b/.test(copy)) return 'Fast online quote';
+  if (/\b(?:save|saving|affordable|lower rate|cheap)\b/.test(copy)) return 'Savings-led offer';
+  if (/\b(?:compare|comparison|options)\b/.test(copy)) return 'Comparison angle';
+  if (/\b(?:protect|protection|covered|coverage)\b/.test(copy)) return 'Protection promise';
+  if (/\b(?:custom|tailored|specialist)\b/.test(copy)) return 'Tailored coverage';
+  return 'Direct coverage offer';
+};
+
+const selectCurrentTestShortlist = (ads) => {
+  const seenCreative = new Set();
+  const advertiserCounts = new Map();
+  return [...ads]
+    .filter(ad => ad.creative_intel?.capture_source === 'brand_scrape' && hasUsableVisual(ad))
+    .sort((a, b) => new Date(b.last_seen || 0).getTime() - new Date(a.last_seen || 0).getTime())
+    .filter(ad => {
+      const fingerprint = `${ad.brand_name || ''}|${ad.headline || ''}|${ad.ad_copy || ''}`.toLowerCase().replace(/\s+/g, ' ').trim();
+      const advertiser = (ad.brand_name || 'unknown advertiser').trim().toLowerCase();
+      if (!fingerprint || seenCreative.has(fingerprint) || (advertiserCounts.get(advertiser) || 0) >= 2) return false;
+      seenCreative.add(fingerprint);
+      advertiserCounts.set(advertiser, (advertiserCounts.get(advertiser) || 0) + 1);
+      return true;
+    })
+    .slice(0, 3);
+};
+
 const capAdsPerAdvertiser = (ads, adsPerAdvertiser) => {
   if (!adsPerAdvertiser) return ads;
   const counts = new Map();
@@ -973,7 +1008,7 @@ function ComparePanel({ ads, onClose, onInspect }) {
   </div>;
 }
 
-function ResearchBrief({ findings, latestCaptures, totalFindings, visualStats, visualFilter, onVisualFilterChange, verticalLabel, onOpenLibrary, onInspect, onBuild }) {
+function ResearchBrief({ findings, testShortlist, totalFindings, visualStats, visualFilter, onVisualFilterChange, verticalLabel, onOpenLibrary, onInspect, onBuild }) {
   return (
     <section className="space-y-4" aria-label="Research brief">
       <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-white p-5">
@@ -993,26 +1028,31 @@ function ResearchBrief({ findings, latestCaptures, totalFindings, visualStats, v
         </div>
       </div>
 
-      {latestCaptures.length > 0 && (
-        <section className="rounded-xl border border-slate-200 bg-white p-4" aria-label="Latest Meta captures">
+      {testShortlist.length > 0 && (
+        <section className="rounded-xl border border-slate-200 bg-white p-4" aria-label="Current test shortlist">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-700">Latest Meta captures</p>
-              <p className="mt-1 text-sm text-slate-600">Recent visual examples from verified advertiser captures. These are creative candidates, not spend or performance winners.</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-700">Current test shortlist</p>
+              <p className="mt-1 text-sm text-slate-600">Three recent visual examples worth studying first. Ranked for reviewability and message clarity—not performance.</p>
             </div>
             <button type="button" onClick={onOpenLibrary} className="text-sm font-semibold text-indigo-700 hover:text-indigo-900">Browse all captures</button>
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {latestCaptures.map(ad => (
-              <button key={ad.id} type="button" onClick={() => onInspect(ad)} className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50 text-left transition hover:border-indigo-300 hover:bg-indigo-50">
-                <div className="aspect-[16/9] bg-slate-100">
+            {testShortlist.map(ad => (
+              <article key={ad.id} className="flex overflow-hidden rounded-lg border border-slate-200 bg-slate-50 text-left transition hover:border-indigo-300">
+                <button type="button" onClick={() => onInspect(ad)} className="m-3 h-24 w-24 shrink-0 overflow-hidden rounded-md bg-slate-100 sm:h-28 sm:w-28" title="Inspect creative">
                   {ad.media_type === 'video' ? <video muted playsInline preload="metadata" poster={ad.thumbnail_url || undefined} className="h-full w-full object-contain"><source src={ad.media_preview_url || ad.media_url} /></video> : <img src={ad.thumbnail_url || ad.media_url} alt="" className="h-full w-full object-contain" />}
+                </button>
+                <div className="flex min-w-0 flex-1 flex-col py-3 pr-3">
+                  <p className="truncate text-xs font-semibold text-slate-900">{ad.brand_name || 'Verified advertiser'}</p>
+                  <p className="mt-1 line-clamp-2 text-sm font-semibold leading-5 text-slate-800">{firstResearchSentence(ad.headline || ad.ad_copy || 'Open captured creative')}</p>
+                  <p className="mt-2 text-xs text-slate-500"><span className="font-semibold text-slate-600">Mechanism:</span> {researchMechanism(ad)}</p>
+                  <div className="mt-auto flex items-center gap-3 pt-3">
+                    <button type="button" onClick={() => onInspect(ad)} className="text-xs font-semibold text-indigo-700 hover:text-indigo-900">Inspect</button>
+                    <button type="button" onClick={() => onBuild(ad)} className="text-xs font-semibold text-indigo-700 hover:text-indigo-900">Build ad</button>
+                  </div>
                 </div>
-                <div className="p-3">
-                  <p className="truncate text-xs font-semibold text-slate-900">{ad.brand_name || 'Meta advertiser'}</p>
-                  <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">{ad.headline || ad.ad_copy || 'Open captured creative'}</p>
-                </div>
-              </button>
+              </article>
             ))}
           </div>
         </section>
@@ -1897,9 +1937,7 @@ export default function Research() {
   const reviewedFindings = useMemo(() => reviewedFindingsAll.filter(ad => (
     briefVisualFilter === 'all' || (briefVisualFilter === 'with_visual' ? Boolean(ad.thumbnail_url || ad.media_url) : !ad.thumbnail_url && !ad.media_url)
   )), [reviewedFindingsAll, briefVisualFilter]);
-  const latestMetaCaptures = useMemo(() => browseAds
-    .filter(ad => ad.creative_intel?.capture_source === 'brand_scrape' && hasUsableVisual(ad))
-    .slice(0, 3), [browseAds]);
+  const currentTestShortlist = useMemo(() => selectCurrentTestShortlist(browseAds), [browseAds]);
   const compareAds = useMemo(() => {
     const byId = new Map([...browseAds, ...savedAds, ...boardAds].map(ad => [ad.id, ad]));
     return compareIds.map(id => byId.get(id)).filter(Boolean);
@@ -2111,7 +2149,7 @@ export default function Research() {
       {researchView === 'brief' ? (
         <ResearchBrief
           findings={reviewedFindings}
-          latestCaptures={latestMetaCaptures}
+          testShortlist={currentTestShortlist}
           totalFindings={reviewedFindingsAll.length}
           visualStats={visualStats}
           visualFilter={briefVisualFilter}
