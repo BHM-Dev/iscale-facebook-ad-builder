@@ -3,10 +3,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import List, Tuple
 import re
+import os
 from datetime import datetime, timezone
 import hashlib
 import json
 from urllib.parse import urlparse
+import anthropic
 from app.database import get_db
 from app.core.deps import get_current_active_user
 from app.models import User
@@ -64,6 +66,8 @@ COPILOT_PAGE_TYPE_PHRASES = {
     "ecommerce": ("ecommerce", "e-commerce", "product page"),
     "homepage": ("homepage", "home page"),
 }
+COPILOT_AI_MODEL = "claude-sonnet-4-5-20250929"
+_research_copilot_client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY")) if os.getenv("ANTHROPIC_API_KEY") else None
 
 
 def _normalize_external_url(value: str | None) -> str:
@@ -387,6 +391,74 @@ def _copilot_query_suggestions(question: str, plan: dict, vertical_label: str) -
             unique.append(suggestion)
             seen.add(key)
     return unique[:3]
+
+
+def _sanitize_research_copilot_ai_summary(payload) -> dict | None:
+    """Keep the optional model read concise and grounded in catalog evidence."""
+    if not isinstance(payload, dict):
+        return None
+    answer = str(payload.get("answer") or "").strip()
+    patterns = payload.get("patterns") or []
+    if not answer:
+        return None
+    if not isinstance(patterns, list):
+        patterns = []
+    cleaned_patterns = [str(item).strip()[:180] for item in patterns if str(item).strip()][:3]
+    return {"answer": answer[:600], "patterns": cleaned_patterns}
+
+
+async def _research_copilot_ai_summary(question: str, vertical_label: str, results: list[dict]) -> dict | None:
+    """Ask Claude for a bounded synthesis of already-selected catalog rows.
+
+    The model is deliberately downstream of deterministic filtering: it can
+    explain visible evidence, never expand the corpus or claim performance.
+    A missing key or malformed response quietly leaves the read-only search
+    usable with its deterministic plan.
+    """
+    if not _research_copilot_client or not results:
+        return None
+    evidence = []
+    for item in results[:8]:
+        evidence.append({
+            "advertiser": (item.get("brand_name") or "Unknown")[:120],
+            "headline": (item.get("headline") or "")[:400],
+            "copy": (item.get("ad_copy") or "")[:700],
+            "format": item.get("media_type") or "unknown",
+            "tags": item.get("creative_tags") or [],
+            "cta": item.get("cta_type") or "unknown",
+            "reasons": item.get("match_reasons") or [],
+        })
+    prompt = f"""You are assisting a performance media buyer reviewing a retained {vertical_label} competitor-ad library.
+
+Question: {question}
+
+Evidence (only these captured records):
+{json.dumps(evidence, ensure_ascii=False)}
+
+Return valid JSON only:
+{{"answer":"One concise, practical reading of what is visibly present (max 70 words).","patterns":["Up to three concrete message or creative patterns worth inspecting (max 18 words each)."]}}
+
+Rules:
+- Ground every statement in the supplied evidence. If evidence is thin, say so plainly.
+- Never claim or imply spend, impressions, ROAS, conversions, delivery volume, or that an ad is a winner/best performer.
+- Do not give legal, coverage, rate, or savings assurances.
+- Do not copy long competitor text. Name the observed structure or mechanism instead.
+"""
+    try:
+        response = await _research_copilot_client.messages.create(
+            model=COPILOT_AI_MODEL,
+            max_tokens=340,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = (response.content[0].text or "").strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE)
+        return _sanitize_research_copilot_ai_summary(json.loads(raw))
+    except Exception:
+        # Research search remains useful even if the optional synthesis provider
+        # is temporarily unavailable; do not turn a read-only catalog query into
+        # an operational error.
+        return None
 
 
 def _parse_research_date(value):
@@ -2010,7 +2082,7 @@ def get_related_research_ads(
 
 
 @router.post("/copilot/query")
-def query_research_copilot(
+async def query_research_copilot(
     payload: ResearchCopilotQuery,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -2051,6 +2123,7 @@ def query_research_copilot(
             "coverage": {"matched": 0, "returned": 0, "catalog_candidates": 0, "sufficient": False, "live_capture_recommended": True},
             "suggestions": _copilot_query_suggestions(payload.question, plan, vertical_label),
             "results": [],
+            "ai_summary": None,
             "limitations": [
                 "No retained captures are available for this Research vertical yet.",
                 performance_limitation if plan["performance_intent"] else "Results are ordered by research relevance and catalog evidence, not Meta spend, ROAS, conversions, or delivery performance.",
@@ -2102,6 +2175,7 @@ def query_research_copilot(
         record["match_reasons"] = reasons
         record["relevance_status"] = _research_relevance_status(ad, payload.vertical_id)
         results.append(record)
+    ai_summary = await _research_copilot_ai_summary(payload.question.strip(), vertical_label, results)
     return {
         "question": payload.question.strip(),
         "query_plan": {**plan, "vertical": vertical_label},
@@ -2114,6 +2188,7 @@ def query_research_copilot(
         },
         "suggestions": _copilot_query_suggestions(payload.question, plan, vertical_label),
         "results": results,
+        "ai_summary": ai_summary,
         "limitations": [
             performance_limitation if plan["performance_intent"] else "Results are ordered by research relevance and catalog evidence, not Meta spend, ROAS, conversions, or delivery performance.",
             "Observed runtime is calculated from source-provided dates when available; it does not confirm current delivery.",

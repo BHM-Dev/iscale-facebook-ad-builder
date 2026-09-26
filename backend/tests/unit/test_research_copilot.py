@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.api.v1.research import _copilot_query_suggestions, _dedupe_research_creatives, _has_retained_visual, _plan_research_copilot_question, _research_relevance_status
+from app.api.v1.research import _copilot_query_suggestions, _dedupe_research_creatives, _has_retained_visual, _plan_research_copilot_question, _research_relevance_status, _sanitize_research_copilot_ai_summary
 
 
 def test_copilot_plan_extracts_owner_operator_runtime_and_activity():
@@ -63,3 +63,13 @@ def test_catalog_dedupes_exact_visible_creative_but_keeps_copy_variants():
     duplicate = SimpleNamespace(**base)
     variant = SimpleNamespace(**{**base, "ad_copy": "Compare commercial policies"})
     assert _dedupe_research_creatives([same, duplicate, variant]) == [same, variant]
+
+
+def test_ai_summary_is_bounded_and_requires_a_grounded_answer():
+    assert _sanitize_research_copilot_ai_summary({"patterns": ["Comparison"]}) is None
+    summary = _sanitize_research_copilot_ai_summary({
+        "answer": "A" * 700,
+        "patterns": ["Fast quote", "Identity hook", "Comparison", "Ignore me"],
+    })
+    assert len(summary["answer"]) == 600
+    assert summary["patterns"] == ["Fast quote", "Identity hook", "Comparison"]
