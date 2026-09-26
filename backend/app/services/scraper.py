@@ -494,10 +494,25 @@ class FacebookAdsLibraryAPI:
                             const dateMatch = text.match(/Started running on\\s+([A-Za-z]+\\s+\\d+,?\\s*\\d*)/);
                             if (dateMatch) startDate = dateMatch[1];
 
-                            // Facebook CDN image URLs are temporary. Keep the fresh URL only for MVP thumbnails.
-                            const creativeImage = Array.from(adContainer.querySelectorAll('img'))
-                                .find(img => img.naturalWidth > 150 && (img.currentSrc || img.src));
-                            const imageUrl = creativeImage ? (creativeImage.currentSrc || creativeImage.src) : null;
+                            // Facebook lazy-loads media, so naturalWidth is often 0 in a
+                            // headless capture even when the creative is present. Prefer
+                            // the largest rendered/CDN image rather than treating the
+                            // whole card as copy-only. Small profile/logo images are
+                            // deliberately excluded.
+                            const creativeCandidates = Array.from(adContainer.querySelectorAll('img'))
+                                .map(img => {
+                                    const url = img.currentSrc || img.src || img.getAttribute('data-src') || '';
+                                    const rect = img.getBoundingClientRect();
+                                    const width = Math.max(img.naturalWidth || 0, rect.width || 0);
+                                    const height = Math.max(img.naturalHeight || 0, rect.height || 0);
+                                    const isCdn = /(?:scontent|fbcdn|facebook\.com)/i.test(url);
+                                    const score = (width * height) + (isCdn ? 50000 : 0);
+                                    return { url, width, height, score };
+                                })
+                                .filter(item => item.url && !item.url.startsWith('data:') &&
+                                    item.width >= 120 && item.height >= 80)
+                                .sort((a, b) => b.score - a.score);
+                            const imageUrl = creativeCandidates[0]?.url || null;
 
                             results.push({
                                 external_id: libraryId,
@@ -558,7 +573,9 @@ class FacebookAdsLibraryAPI:
                             ad_link=fb_library_url,
                             platforms=ad_data.get('platforms'),
                             start_date=ad_data.get('start_date'),
-                            media_url=ad_data.get('image_url')
+                            media_type='image' if ad_data.get('image_url') else None,
+                            media_url=ad_data.get('image_url'),
+                            thumbnail_url=ad_data.get('image_url')
                         )
                         ads.append(ad)
 
