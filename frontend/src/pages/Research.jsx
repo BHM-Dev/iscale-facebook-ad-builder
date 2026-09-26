@@ -1082,7 +1082,6 @@ function ResearchBrief({ findings, testShortlist, totalFindings, visualStats, vi
                 <p className="mt-4 text-sm font-semibold leading-6 text-slate-900">{firstResearchSentence(ad.headline || 'Reviewed competitor pattern')}</p>
                 <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600"><span className="font-medium text-slate-700">Pattern:</span> {firstResearchSentence(ad.ad_copy || intel.source_signal || 'Open details for the takeaway.')}</p>
                 {intel.bhm_takeaway && <p className="mt-3 rounded-lg bg-indigo-50 px-3 py-2 text-xs leading-5 text-indigo-950"><span className="font-semibold">BHM takeaway: </span>{intel.bhm_takeaway}</p>}
-                {intel.source_signal && intel.source_signal !== ad.ad_copy && <p className="mt-3 line-clamp-2 border-l-2 border-amber-300 pl-3 text-xs leading-5 text-slate-500">{intel.source_signal}</p>}
                 <div className="mt-auto flex gap-2 pt-5">
                   <button type="button" onClick={() => onInspect(ad)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-indigo-200 hover:text-indigo-700">Inspect</button>
                   <button type="button" onClick={() => onBuild(ad)} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Build ad</button>
