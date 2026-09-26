@@ -1008,7 +1008,7 @@ function ComparePanel({ ads, onClose, onInspect }) {
   </div>;
 }
 
-function ResearchBrief({ findings, testShortlist, totalFindings, visualStats, visualFilter, onVisualFilterChange, verticalLabel, onOpenLibrary, onInspect, onBuild, boards, onAddToBoard, onCreateBoard }) {
+function ResearchBrief({ findings, testShortlist, visualMatchesByAdvertiser, totalFindings, visualStats, visualFilter, onVisualFilterChange, verticalLabel, onOpenLibrary, onInspect, onBuild, boards, onAddToBoard, onCreateBoard }) {
   return (
     <section className="space-y-4" aria-label="Research brief">
       <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-white p-5">
@@ -1069,6 +1069,7 @@ function ResearchBrief({ findings, testShortlist, totalFindings, visualStats, vi
         <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
           {findings.map(ad => {
             const intel = ad.creative_intel || {};
+            const visualMatchCount = visualMatchesByAdvertiser[(ad.brand_name || '').trim().toLowerCase()] || 0;
             return (
               <article key={ad.id} className="flex min-h-64 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
                 {(ad.thumbnail_url || ad.media_url) ? <button type="button" onClick={() => onInspect(ad)} className="aspect-[16/9] overflow-hidden bg-slate-100 text-left">{ad.media_type === 'video' ? <video muted playsInline preload="metadata" poster={ad.thumbnail_url || undefined} className="h-full w-full object-contain"><source src={ad.media_preview_url || ad.media_url} /></video> : <img src={ad.thumbnail_url || ad.media_url} alt="" className="h-full w-full object-contain" />}</button> : null}
@@ -1082,6 +1083,7 @@ function ResearchBrief({ findings, testShortlist, totalFindings, visualStats, vi
                 </div>
                 <p className="mt-4 text-sm font-semibold leading-6 text-slate-900">{firstResearchSentence(ad.headline || 'Reviewed competitor pattern')}</p>
                 <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600"><span className="font-medium text-slate-700">Pattern:</span> {firstResearchSentence(ad.ad_copy || intel.source_signal || 'Open details for the takeaway.')}</p>
+                {!hasUsableVisual(ad) && visualMatchCount > 0 && <button type="button" onClick={() => onInspect(ad)} className="mt-3 inline-flex w-fit items-center rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100">{visualMatchCount} retained visual{visualMatchCount === 1 ? '' : 's'} available</button>}
                 {intel.bhm_takeaway && <p className="mt-3 rounded-lg bg-indigo-50 px-3 py-2 text-xs leading-5 text-indigo-950"><span className="font-semibold">BHM takeaway: </span>{intel.bhm_takeaway}</p>}
                 <div className="mt-auto flex gap-2 pt-5">
                   <button type="button" onClick={() => onInspect(ad)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-indigo-200 hover:text-indigo-700">Inspect</button>
@@ -1939,6 +1941,12 @@ export default function Research() {
     briefVisualFilter === 'all' || (briefVisualFilter === 'with_visual' ? Boolean(ad.thumbnail_url || ad.media_url) : !ad.thumbnail_url && !ad.media_url)
   )), [reviewedFindingsAll, briefVisualFilter]);
   const currentTestShortlist = useMemo(() => selectCurrentTestShortlist(browseAds), [browseAds]);
+  const visualMatchesByAdvertiser = useMemo(() => browseAds.reduce((matches, ad) => {
+    const advertiser = (ad.brand_name || '').trim().toLowerCase();
+    if (!advertiser || ad.creative_intel?.capture_source !== 'brand_scrape' || !hasUsableVisual(ad)) return matches;
+    matches[advertiser] = (matches[advertiser] || 0) + 1;
+    return matches;
+  }, {}), [browseAds]);
   const compareAds = useMemo(() => {
     const byId = new Map([...browseAds, ...savedAds, ...boardAds].map(ad => [ad.id, ad]));
     return compareIds.map(id => byId.get(id)).filter(Boolean);
@@ -2151,6 +2159,7 @@ export default function Research() {
         <ResearchBrief
           findings={reviewedFindings}
           testShortlist={currentTestShortlist}
+          visualMatchesByAdvertiser={visualMatchesByAdvertiser}
           totalFindings={reviewedFindingsAll.length}
           visualStats={visualStats}
           visualFilter={briefVisualFilter}
