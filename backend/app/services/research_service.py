@@ -358,6 +358,11 @@ class ResearchService:
                     existing.media_preview_url = ad_data.media_preview_url
                 if not existing.video_urls and ad_data.video_urls:
                     existing.video_urls = ad_data.video_urls
+                if ad_data.creative_intel:
+                    existing.creative_intel = {
+                        **(existing.creative_intel or {}),
+                        **ad_data.creative_intel,
+                    }
                 saved_ads.append(existing)
                 ads_duplicate += 1
             else:

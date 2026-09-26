@@ -494,6 +494,15 @@ class FacebookAdsLibraryAPI:
                             const dateMatch = text.match(/Started running on\\s+([A-Za-z]+\\s+\\d+,?\\s*\\d*)/);
                             if (dateMatch) startDate = dateMatch[1];
 
+                            // Keep the durable Meta Page ID whenever the card exposes
+                            // it. A name search is ambiguous; this ID lets a later
+                            // targeted media capture stay on the same advertiser.
+                            let pageId = null;
+                            adContainer.querySelectorAll('a[href*="view_all_page_id"]').forEach(link => {
+                                const match = link.href.match(/[?&]view_all_page_id=(\\d+)/);
+                                if (match) pageId = match[1];
+                            });
+
                             // Facebook lazy-loads media, so naturalWidth is often 0 in a
                             // headless capture even when the creative is present. Prefer
                             // the largest rendered/CDN image rather than treating the
@@ -522,7 +531,8 @@ class FacebookAdsLibraryAPI:
                                 cta_text: ctaText,
                                 platforms: platforms.length > 0 ? platforms : null,
                                 start_date: startDate,
-                                image_url: imageUrl
+                                image_url: imageUrl,
+                                page_id: pageId
                             });
                         });
 
@@ -561,7 +571,11 @@ class FacebookAdsLibraryAPI:
                 for i, ad_data in enumerate(ads_data[:limit]):
                     try:
                         # Build FB library URL
-                        fb_library_url = f"https://www.facebook.com/ads/library/?id={ad_data['external_id']}"
+                        page_id = ad_data.get('page_id')
+                        fb_library_url = (
+                            f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={country}&view_all_page_id={page_id}"
+                            if page_id else f"https://www.facebook.com/ads/library/?id={ad_data['external_id']}"
+                        )
 
                         ad = ScrapedAdCreate(
                             brand_name=ad_data.get('brand_name', 'Unknown Brand'),
@@ -575,7 +589,8 @@ class FacebookAdsLibraryAPI:
                             start_date=ad_data.get('start_date'),
                             media_type='image' if ad_data.get('image_url') else None,
                             media_url=ad_data.get('image_url'),
-                            thumbnail_url=ad_data.get('image_url')
+                            thumbnail_url=ad_data.get('image_url'),
+                            creative_intel={'ads_library_page_id': page_id} if page_id else None,
                         )
                         ads.append(ad)
 
