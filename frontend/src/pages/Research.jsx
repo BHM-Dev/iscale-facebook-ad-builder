@@ -2281,17 +2281,24 @@ export default function Research() {
 
               <div className="h-4 w-px bg-gray-200" />
 
-              <select
-                value={reviewFilter}
-                onChange={e => setReviewFilter(e.target.value)}
-                className="text-xs border-0 text-gray-600 bg-transparent focus:ring-0 cursor-pointer pr-6 py-0"
-                title="Triage retained captures by research review state"
-              >
-                <option value="">All captures</option>
-                <option value="ready_to_review">Ready to review</option>
-                <option value="in_brief">In Research Brief</option>
-                <option value="needs_relevance">Check relevance</option>
-              </select>
+              <div className="inline-flex max-w-full flex-wrap items-center gap-1 rounded-lg bg-slate-100 p-1" aria-label="Review status">
+                <span className="px-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Review</span>
+                {[
+                  ['', 'All'],
+                  ['ready_to_review', 'Ready to review'],
+                  ['in_brief', 'In Brief'],
+                  ['needs_relevance', 'Check relevance'],
+                ].map(([value, label]) => (
+                  <button
+                    key={value || 'all'}
+                    type="button"
+                    onClick={() => setReviewFilter(value)}
+                    className={`rounded-md px-2 py-1 text-xs font-semibold transition-colors ${reviewFilter === value ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
 
               <div className="h-4 w-px bg-gray-200" />
 
