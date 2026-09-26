@@ -1025,7 +1025,7 @@ function ComparePanel({ ads, onClose, onInspect }) {
   </div>;
 }
 
-function ResearchBrief({ findings, testShortlist, visualMatchesByAdvertiser, totalFindings, visualStats, visualFilter, onVisualFilterChange, verticalLabel, onOpenLibrary, onInspect, onBuild, boards, onAddToBoard, onCreateBoard }) {
+function ResearchBrief({ findings, testShortlist, visualMatchesByAdvertiser, totalFindings, visualStats, visualFilter, onVisualFilterChange, verticalLabel, onOpenLibrary, onInspect, onBuild, boards, onAddToBoard, onCreateBoard, compareIds, onToggleCompare }) {
   return (
     <section className="space-y-4" aria-label="Research brief">
       <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-white p-5">
@@ -1067,6 +1067,7 @@ function ResearchBrief({ findings, testShortlist, visualMatchesByAdvertiser, tot
                   <div className="mt-auto flex items-center gap-3 pt-3">
                     <button type="button" onClick={() => onInspect(ad)} className="text-xs font-semibold text-indigo-700 hover:text-indigo-900">Inspect</button>
                     <BoardSaveButton ad={ad} boards={boards} onAdd={onAddToBoard} onCreate={onCreateBoard} compact />
+                    <button type="button" onClick={() => onToggleCompare(ad)} className={`text-xs font-semibold ${compareIds.includes(ad.id) ? 'text-violet-700' : 'text-slate-600 hover:text-indigo-900'}`}>{compareIds.includes(ad.id) ? 'Compared' : 'Compare'}</button>
                     <button type="button" onClick={() => onBuild(ad)} className="text-xs font-semibold text-indigo-700 hover:text-indigo-900">Build ad</button>
                   </div>
                 </div>
@@ -1102,8 +1103,9 @@ function ResearchBrief({ findings, testShortlist, visualMatchesByAdvertiser, tot
                 <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600"><span className="font-medium text-slate-700">Pattern:</span> {firstResearchSentence(ad.ad_copy || intel.source_signal || 'Open details for the takeaway.')}</p>
                 {!hasUsableVisual(ad) && visualMatchCount > 0 && <button type="button" onClick={() => onInspect(ad)} className="mt-3 inline-flex w-fit items-center rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100">{visualMatchCount} retained visual{visualMatchCount === 1 ? '' : 's'} available</button>}
                 {intel.bhm_takeaway && <p className="mt-3 rounded-lg bg-indigo-50 px-3 py-2 text-xs leading-5 text-indigo-950"><span className="font-semibold">BHM takeaway: </span>{intel.bhm_takeaway}</p>}
-                <div className="mt-auto flex gap-2 pt-5">
+                <div className="mt-auto flex flex-wrap gap-2 pt-5">
                   <button type="button" onClick={() => onInspect(ad)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-indigo-200 hover:text-indigo-700">Inspect</button>
+                  <button type="button" onClick={() => onToggleCompare(ad)} className={`rounded-lg border px-3 py-2 text-sm font-semibold ${compareIds.includes(ad.id) ? 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100' : 'border-slate-200 text-slate-600 hover:border-violet-200 hover:text-violet-700'}`}>{compareIds.includes(ad.id) ? 'Compared' : 'Compare'}</button>
                   <button type="button" onClick={() => onBuild(ad)} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Build ad</button>
                 </div>
                 </div>
@@ -2192,6 +2194,8 @@ export default function Research() {
           boards={boards}
           onAddToBoard={handleAddToBoard}
           onCreateBoard={handleCreateBoard}
+          compareIds={compareIds}
+          onToggleCompare={toggleCompare}
         />
       ) : <>
 
