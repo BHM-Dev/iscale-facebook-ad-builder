@@ -153,6 +153,8 @@ def _matches_research_vertical(ad, config_id):
         # searches have already allowed into the legacy catalog.
         "professional home cleaner", "client's home", "set your availability",
         "job pays before", "box truck with liftgate", "truck rental", "rent a 26' box truck",
+        "large office suite", "corporate workspace", "private offices", "office space for lease",
+        "office suite", "office rental",
     )
     # A broad Ad Library search can return ordinary commercial/home-service
     # promotions. Require insurance language as well as a commercial offer
