@@ -33,7 +33,7 @@ function SourceAdReferenceCard({ researchInspiration, uploadedInspiration, onDis
     return (
         <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-3 space-y-3">
             <div className="flex items-center justify-between gap-2">
-                <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Source ad</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">{researchInspiration ? 'Research reference' : 'Source ad'}</div>
                 <div className="flex items-center gap-2">
                     {source.adLink && <a href={source.adLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800" title="Open original ad"><ExternalLink size={11} />Open</a>}
                     {/* Only dismiss/clear control for this card — the old
@@ -808,7 +808,7 @@ export default function AdRemix() {
                     <Sparkles size={32} className="text-purple-600" />
                     Build New Ad
                 </h1>
-                <p className="text-gray-600 mt-1">Start from a winning ad and rebuild it with your brand voice.</p>
+                <p className="text-gray-600 mt-1">{researchInspiration ? 'Study a competitor creative and build an original ad in your brand voice.' : 'Start from a winning ad and rebuild it with your brand voice.'}</p>
             </div>
 
             {/* Progress Steps */}
