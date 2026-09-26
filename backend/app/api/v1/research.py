@@ -149,6 +149,10 @@ def _matches_research_vertical(ad, config_id):
         "restaurant equipment", "now hiring", "lease type", "med spa",
         "hot-dog", "jewelry design", "tabletops", "base compaction",
         "ground freezes", "booking installs", "build a patio",
+        # Recruiting and service/rental listings that broad competitor
+        # searches have already allowed into the legacy catalog.
+        "professional home cleaner", "client's home", "set your availability",
+        "job pays before", "box truck with liftgate", "truck rental", "rent a 26' box truck",
     )
     # A broad Ad Library search can return ordinary commercial/home-service
     # promotions. Require insurance language as well as a commercial offer
