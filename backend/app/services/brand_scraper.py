@@ -428,27 +428,34 @@ class BrandScraperService:
                                 if (match) pageId = match[1];
                             });
 
-                            // Get images - try multiple selectors
+                            // Meta renders video controls as CDN-hosted images too.  They
+                            // are not creative and must never be retained as a stand-in
+                            // thumbnail for a video ad.
+                            const hasVideo = Boolean(div.querySelector('video')) || /0:00\s*\/\s*\d/.test(text);
+
+                            // Get images - try multiple selectors for genuine image ads.
                             const imageUrls = [];
-                            // Try scontent images first
-                            div.querySelectorAll('img[src*="scontent"], img[src*="fbcdn"]').forEach(img => {
-                                if (img.src && !img.src.includes('emoji') && img.width > 50 && !imageUrls.includes(img.src)) {
-                                    imageUrls.push(img.src);
-                                }
-                            });
-                            // Also check for data-src (lazy loaded)
-                            div.querySelectorAll('img[data-src*="scontent"], img[data-src*="fbcdn"]').forEach(img => {
-                                if (img.dataset.src && !imageUrls.includes(img.dataset.src)) {
-                                    imageUrls.push(img.dataset.src);
-                                }
-                            });
-                            // Check for background images in style
-                            div.querySelectorAll('[style*="background-image"]').forEach(el => {
-                                const match = el.style.backgroundImage.match(/url\\(["']?(https:[^"')]+)["']?\\)/);
-                                if (match && (match[1].includes('scontent') || match[1].includes('fbcdn')) && !imageUrls.includes(match[1])) {
-                                    imageUrls.push(match[1]);
-                                }
-                            });
+                            if (!hasVideo) {
+                                // Try scontent images first
+                                div.querySelectorAll('img[src*="scontent"], img[src*="fbcdn"]').forEach(img => {
+                                    if (img.src && !img.src.includes('emoji') && img.width > 50 && !imageUrls.includes(img.src)) {
+                                        imageUrls.push(img.src);
+                                    }
+                                });
+                                // Also check for data-src (lazy loaded)
+                                div.querySelectorAll('img[data-src*="scontent"], img[data-src*="fbcdn"]').forEach(img => {
+                                    if (img.dataset.src && !imageUrls.includes(img.dataset.src)) {
+                                        imageUrls.push(img.dataset.src);
+                                    }
+                                });
+                                // Check for background images in style
+                                div.querySelectorAll('[style*="background-image"]').forEach(el => {
+                                    const match = el.style.backgroundImage.match(/url\\(["']?(https:[^"')]+)["']?\\)/);
+                                    if (match && (match[1].includes('scontent') || match[1].includes('fbcdn')) && !imageUrls.includes(match[1])) {
+                                        imageUrls.push(match[1]);
+                                    }
+                                });
+                            }
 
                             results.push({
                                 id: libraryId,
@@ -457,7 +464,8 @@ class BrandScraperService:
                                 ad_creative_link_titles: headline ? [headline] : null,
                                 ad_creative_bodies: adCopy ? [adCopy] : null,
                                 ad_creative_link_captions: ctaText ? [ctaText] : null,
-                                _image_urls: imageUrls
+                                _image_urls: imageUrls,
+                                _media_type_hint: hasVideo ? 'video' : 'image'
                             });
                         });
 
@@ -487,21 +495,9 @@ class BrandScraperService:
 
                 print(f"Matched {matched_count} images to ads")
 
-                # If few matches, distribute captured images to ads without media
-                if matched_count < len(ads) // 2 and captured_images:
-                    print("Low match rate, distributing captured images to ads")
-                    remaining_images = list(captured_images.items())
-                    img_idx = 0
-                    for ad in ads:
-                        if not ad['_media_data'] and img_idx < len(remaining_images):
-                            url, data = remaining_images[img_idx]
-                            ad['_media_data'].append({
-                                'url': url,
-                                'type': 'image',
-                                'content_type': 'image/jpeg',
-                                'data': data
-                            })
-                            img_idx += 1
+                # Do not distribute unmatched response images across ads. Meta's
+                # player controls are also CDN images; a random fallback makes
+                # a false creative preview worse than an honest no-asset state.
 
                 await browser.close()
 
@@ -757,7 +753,7 @@ class BrandScraperService:
 
         r2_urls = []
         original_media_urls = []
-        media_type = "image"
+        media_type = ad_data.get("_media_type_hint") or "image"
 
         # Check if we have pre-captured media data (from Playwright with response interception)
         media_data_list = ad_data.get("_media_data", [])

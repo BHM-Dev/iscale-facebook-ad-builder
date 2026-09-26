@@ -125,6 +125,15 @@ const isUnknownMedia = (mediaType) => !['image', 'video', 'carousel'].includes((
 const hasVisualCandidate = (ad) => Boolean(
   ad.thumbnail_url || ad.media_url || ad.media_preview_url || (ad.video_urls || []).length,
 );
+// Older Brand Scrape records could attach Meta's player-control sprite to a
+// video ad when no media match existed. Treat that known bad capture as
+// missing media instead of presenting it as competitor creative.
+const hasMisassignedVideoUiCapture = (ad) => (
+  ad.creative_intel?.capture_source === 'brand_scrape'
+  && (ad.media_type || '').toLowerCase() === 'image'
+  && /0:00\s*\/\s*\d/.test(`${ad.headline || ''} ${ad.ad_copy || ''}`)
+);
+const hasUsableVisual = (ad) => hasVisualCandidate(ad) && !hasMisassignedVideoUiCapture(ad);
 
 const capAdsPerAdvertiser = (ads, adsPerAdvertiser) => {
   if (!adsPerAdvertiser) return ads;
@@ -506,7 +515,7 @@ function ResearchDetailDrawer({ ad, activeVertical, advertiserSnapshot, retained
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [ad, onClose]);
   if (!ad) return null;
-  const media = ad.thumbnail_url || ad.media_url;
+  const media = hasMisassignedVideoUiCapture(ad) ? null : (ad.thumbnail_url || ad.media_url);
   // Meta CDN video URLs expire within minutes to hours (same as media_url) —
   // never assume a captured video_urls/media_preview_url is still playable.
   const videoPreview = !videoFailed && (ad.media_preview_url || (ad.video_urls || [])[0]);
@@ -584,7 +593,7 @@ function ResearchDetailDrawer({ ad, activeVertical, advertiserSnapshot, retained
   return <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/30 backdrop-blur-sm" onClick={onClose}>
     <aside className="h-full w-full max-w-xl overflow-y-auto bg-white p-6 shadow-2xl" onClick={event => event.stopPropagation()} aria-label="Creative detail">
       <div className="mb-5 flex items-start justify-between gap-4"><div className="min-w-0 flex items-start gap-2">{canGoBack && <button type="button" onClick={onBack} className="mt-0.5 rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Back to previous related creative">←</button>}<div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-wider text-indigo-600">Creative detail{resultPosition ? ` · ${resultPosition.current} of ${resultPosition.total}` : ''}</p><h2 className="mt-1 truncate text-xl font-bold text-slate-900" title={ad.brand_name || 'Unknown advertiser'}>{ad.brand_name || 'Unknown advertiser'}</h2></div></div><div className="flex flex-shrink-0 items-center gap-1"><button type="button" onClick={onPreviousResult} disabled={!canGoPrevious} className="rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30">Previous</button><button type="button" onClick={onNextResult} disabled={!canGoNext} className="rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30">Next</button><button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X size={20}/></button></div></div>
-      {(media || videoPreview) && <div className="relative mb-5 aspect-[4/3] overflow-hidden rounded-xl bg-slate-100">{ad.media_type === 'video' && videoPreview ? <video controls muted playsInline preload="metadata" poster={media || undefined} className="h-full w-full object-cover" onError={() => setVideoFailed(true)}><source src={videoPreview} />Your browser cannot preview this captured video.</video> : <img src={media} alt="Competitor creative" className="h-full w-full object-cover" onError={e => { e.target.style.display = 'none'; }} />}{ad.media_type === 'video' && <span className="absolute bottom-3 left-3 pointer-events-none inline-flex items-center gap-1 rounded-full bg-black/75 px-3 py-1.5 text-xs font-semibold text-white"><Play size={13} fill="currentColor"/> Video{ad.video_length_seconds ? ` · ${ad.video_length_seconds}s` : ''}</span>}</div>}
+      {(media || videoPreview) && <div className="relative mb-5 aspect-[4/3] overflow-hidden rounded-xl bg-slate-100">{ad.media_type === 'video' && videoPreview ? <video controls muted playsInline preload="metadata" poster={media || undefined} className="h-full w-full object-contain" onError={() => setVideoFailed(true)}><source src={videoPreview} />Your browser cannot preview this captured video.</video> : <img src={media} alt="Competitor creative" className="h-full w-full object-contain" onError={e => { e.target.style.display = 'none'; }} />}{ad.media_type === 'video' && <span className="absolute bottom-3 left-3 pointer-events-none inline-flex items-center gap-1 rounded-full bg-black/75 px-3 py-1.5 text-xs font-semibold text-white"><Play size={13} fill="currentColor"/> Video{ad.video_length_seconds ? ` · ${ad.video_length_seconds}s` : ''}</span>}</div>}
       <input ref={mediaInputRef} type="file" accept="image/*,video/mp4,video/webm,video/quicktime" className="hidden" onChange={attachVisual} />
       <button type="button" onClick={() => mediaInputRef.current?.click()} disabled={uploadingMedia} className="mb-5 inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"><ImagePlus size={14}/>{uploadingMedia ? 'Uploading…' : media ? 'Replace approved visual' : 'Attach approved visual'}</button>
       {!media && ad.platform === 'external' && (loadingVisualCandidates || visualCandidates.length > 0) && <section className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3"><div><h3 className="text-sm font-semibold text-emerald-950">Retained {ad.brand_name || 'advertiser'} media</h3><p className="mt-1 text-xs leading-5 text-emerald-800">These are BHM’s R2-backed Meta captures from the same advertiser—not copied vendor media. Choose one only when it supports this reviewed pattern.</p></div>{loadingVisualCandidates ? <p className="mt-3 text-xs text-emerald-700">Finding retained captures…</p> : <div className="mt-3 grid grid-cols-2 gap-2">{visualCandidates.map(candidate => <button key={candidate.id} type="button" onClick={() => adoptRetainedVisual(candidate.id)} disabled={Boolean(adoptingVisualId)} className="overflow-hidden rounded-lg border border-emerald-200 bg-white text-left hover:border-emerald-400 disabled:opacity-50">{candidate.thumbnail_url || candidate.media_url ? <img src={candidate.thumbnail_url || candidate.media_url} alt="Retained Meta capture" className="aspect-[4/3] w-full object-cover" /> : <div className="flex aspect-[4/3] items-center justify-center bg-slate-100 text-xs text-slate-500">Visual capture</div>}<span className="block truncate px-2 py-1.5 text-[11px] font-semibold text-slate-700">{adoptingVisualId === candidate.id ? 'Attaching…' : 'Use this visual'}</span></button>)}</div>}</section>}
@@ -605,7 +614,8 @@ function ResearchDetailDrawer({ ad, activeVertical, advertiserSnapshot, retained
 
 function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, onBlockPage, onSetReviewed, angleTags, boards, onAddToBoard, onCreateBoard, onRemoveFromBoard, onVisualLoadError, isCompared, onToggleCompare }) {
   const [videoPreviewFailed, setVideoPreviewFailed] = useState(false);
-  const media = ad.thumbnail_url || ad.media_url;
+  const [imageFailed, setImageFailed] = useState(false);
+  const media = imageFailed || hasMisassignedVideoUiCapture(ad) ? null : (ad.thumbnail_url || ad.media_url);
   const videoPreview = ad.media_preview_url || (ad.video_urls || [])[0];
   const hasVisualCapture = Boolean(media || videoPreview);
   const isReviewed = ad.platform === 'external' || Boolean(ad.creative_intel?.reviewed);
@@ -618,8 +628,8 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
           get a useful preview, and falls back to an inspectable state if it expires. */}
       {(media || videoPreview) && (
         <button type="button" onClick={() => onInspect(ad)} className="relative rounded-lg overflow-hidden bg-gray-100 -mx-4 -mt-4 mb-1 aspect-[4/3] text-left" aria-label="Inspect captured creative">
-          {media ? <img src={media} alt="" className="w-full h-full object-cover transition-transform duration-500 hover:scale-[1.02]" onError={() => onVisualLoadError?.(ad.id)} />
-            : !videoPreviewFailed ? <video muted loop playsInline preload="metadata" className="w-full h-full object-cover" onMouseEnter={event => event.currentTarget.play().catch(() => {})} onMouseLeave={event => { event.currentTarget.pause(); event.currentTarget.currentTime = 0; }} onError={() => setVideoPreviewFailed(true)}><source src={videoPreview} /></video>
+          {media ? <img src={media} alt="" className="w-full h-full object-contain transition-transform duration-500 hover:scale-[1.02]" onError={() => { setImageFailed(true); onVisualLoadError?.(ad.id); }} />
+            : !videoPreviewFailed ? <video muted loop playsInline preload="metadata" className="w-full h-full object-contain" onMouseEnter={event => event.currentTarget.play().catch(() => {})} onMouseLeave={event => { event.currentTarget.pause(); event.currentTarget.currentTime = 0; }} onError={() => setVideoPreviewFailed(true)}><source src={videoPreview} /></video>
               : <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-slate-900 text-white"><Video size={28} /><span className="text-xs font-semibold">Video capture · inspect to review</span></div>}
           {ad.media_type === 'video' && <span className="absolute left-3 bottom-3 inline-flex items-center gap-1.5 rounded-full bg-black/75 px-2.5 py-1 text-[11px] font-semibold text-white"><Play size={12} fill="currentColor" /> Video{ad.video_length_seconds ? ` · ${ad.video_length_seconds}s` : ''}</span>}
         </button>
@@ -699,7 +709,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
       </div>
 
       {/* Actions */}
-      <div className="flex items-center gap-2 border-t border-gray-100 pt-3">
+      <div className="mt-auto flex items-center gap-2 border-t border-gray-100 pt-3">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <button
             type="button"
@@ -998,7 +1008,7 @@ function ResearchBrief({ findings, latestCaptures, totalFindings, visualStats, v
             {latestCaptures.map(ad => (
               <button key={ad.id} type="button" onClick={() => onInspect(ad)} className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50 text-left transition hover:border-indigo-300 hover:bg-indigo-50">
                 <div className="aspect-[16/9] bg-slate-100">
-                  {ad.media_type === 'video' ? <video muted playsInline preload="metadata" poster={ad.thumbnail_url || undefined} className="h-full w-full object-cover"><source src={ad.media_preview_url || ad.media_url} /></video> : <img src={ad.thumbnail_url || ad.media_url} alt="" className="h-full w-full object-cover" />}
+                  {ad.media_type === 'video' ? <video muted playsInline preload="metadata" poster={ad.thumbnail_url || undefined} className="h-full w-full object-contain"><source src={ad.media_preview_url || ad.media_url} /></video> : <img src={ad.thumbnail_url || ad.media_url} alt="" className="h-full w-full object-contain" />}
                 </div>
                 <div className="p-3">
                   <p className="truncate text-xs font-semibold text-slate-900">{ad.brand_name || 'Meta advertiser'}</p>
@@ -1022,7 +1032,7 @@ function ResearchBrief({ findings, latestCaptures, totalFindings, visualStats, v
             const intel = ad.creative_intel || {};
             return (
               <article key={ad.id} className="flex min-h-64 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                {(ad.thumbnail_url || ad.media_url) ? <button type="button" onClick={() => onInspect(ad)} className="aspect-[16/9] overflow-hidden bg-slate-100 text-left">{ad.media_type === 'video' ? <video muted playsInline preload="metadata" poster={ad.thumbnail_url || undefined} className="h-full w-full object-cover"><source src={ad.media_preview_url || ad.media_url} /></video> : <img src={ad.thumbnail_url || ad.media_url} alt="" className="h-full w-full object-cover" />}</button> : <button type="button" onClick={() => onInspect(ad)} className="flex aspect-[16/9] flex-col items-center justify-center gap-2 border-b border-dashed border-slate-200 bg-slate-50 text-center text-xs text-slate-500 hover:bg-indigo-50 hover:text-indigo-700"><ImagePlus size={20}/><span className="font-semibold">Attach approved visual</span></button>}
+                {(ad.thumbnail_url || ad.media_url) ? <button type="button" onClick={() => onInspect(ad)} className="aspect-[16/9] overflow-hidden bg-slate-100 text-left">{ad.media_type === 'video' ? <video muted playsInline preload="metadata" poster={ad.thumbnail_url || undefined} className="h-full w-full object-contain"><source src={ad.media_preview_url || ad.media_url} /></video> : <img src={ad.thumbnail_url || ad.media_url} alt="" className="h-full w-full object-contain" />}</button> : <button type="button" onClick={() => onInspect(ad)} className="flex aspect-[16/9] flex-col items-center justify-center gap-2 border-b border-dashed border-slate-200 bg-slate-50 text-center text-xs text-slate-500 hover:bg-indigo-50 hover:text-indigo-700"><ImagePlus size={20}/><span className="font-semibold">Attach approved visual</span></button>}
                 <div className="flex flex-1 flex-col p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -1890,7 +1900,7 @@ export default function Research() {
     briefVisualFilter === 'all' || (briefVisualFilter === 'with_visual' ? Boolean(ad.thumbnail_url || ad.media_url) : !ad.thumbnail_url && !ad.media_url)
   )), [reviewedFindingsAll, briefVisualFilter]);
   const latestMetaCaptures = useMemo(() => browseAds
-    .filter(ad => ad.creative_intel?.capture_source === 'brand_scrape' && hasVisualCandidate(ad))
+    .filter(ad => ad.creative_intel?.capture_source === 'brand_scrape' && hasUsableVisual(ad))
     .slice(0, 3), [browseAds]);
   const compareAds = useMemo(() => {
     const byId = new Map([...browseAds, ...savedAds, ...boardAds].map(ad => [ad.id, ad]));
