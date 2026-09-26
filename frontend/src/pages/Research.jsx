@@ -647,14 +647,12 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
             VIDEO
           </span>
         )}
-        {isUnknownMedia(ad.media_type) && (
+        {!hasVisualCapture ? (
+          <span className="text-xs font-medium text-slate-400" title="No usable creative asset was retained with this record.">NO MEDIA RETAINED</span>
+        ) : isUnknownMedia(ad.media_type) ? (
           <span className="text-xs font-medium text-gray-400" title="The source did not provide a supported media format">UNKNOWN FORMAT</span>
-        )}
-        {['image', 'carousel'].includes((ad.media_type || '').toLowerCase()) && (
+        ) : ['image', 'carousel'].includes((ad.media_type || '').toLowerCase()) && (
           <span className="text-xs font-medium text-gray-400">{ad.media_type.toUpperCase()}</span>
-        )}
-        {!hasVisualCapture && (
-          <span className="text-xs font-medium text-amber-700" title="The source reported an image or video format, but no usable asset was retained with this record.">FORMAT ONLY · NO ASSET</span>
         )}
         {Array.isArray(ad.platforms) && ad.platforms.length > 0 && (
           <span className="text-xs text-gray-400" title="Platforms reported by the Ad Library capture">
@@ -1032,7 +1030,7 @@ function ResearchBrief({ findings, latestCaptures, totalFindings, visualStats, v
             const intel = ad.creative_intel || {};
             return (
               <article key={ad.id} className="flex min-h-64 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                {(ad.thumbnail_url || ad.media_url) ? <button type="button" onClick={() => onInspect(ad)} className="aspect-[16/9] overflow-hidden bg-slate-100 text-left">{ad.media_type === 'video' ? <video muted playsInline preload="metadata" poster={ad.thumbnail_url || undefined} className="h-full w-full object-contain"><source src={ad.media_preview_url || ad.media_url} /></video> : <img src={ad.thumbnail_url || ad.media_url} alt="" className="h-full w-full object-contain" />}</button> : <button type="button" onClick={() => onInspect(ad)} className="flex aspect-[16/9] flex-col items-center justify-center gap-2 border-b border-dashed border-slate-200 bg-slate-50 text-center text-xs text-slate-500 hover:bg-indigo-50 hover:text-indigo-700"><ImagePlus size={20}/><span className="font-semibold">Attach approved visual</span></button>}
+                {(ad.thumbnail_url || ad.media_url) ? <button type="button" onClick={() => onInspect(ad)} className="aspect-[16/9] overflow-hidden bg-slate-100 text-left">{ad.media_type === 'video' ? <video muted playsInline preload="metadata" poster={ad.thumbnail_url || undefined} className="h-full w-full object-contain"><source src={ad.media_preview_url || ad.media_url} /></video> : <img src={ad.thumbnail_url || ad.media_url} alt="" className="h-full w-full object-contain" />}</button> : null}
                 <div className="flex flex-1 flex-col p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div>
