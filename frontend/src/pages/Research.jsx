@@ -145,6 +145,8 @@ const firstResearchSentence = (value) => {
 
 const researchMechanism = (ad) => {
   const copy = researchText(ad).toLowerCase();
+  if (/\b(?:getting screwed|overpaying|tired of|struggling|chaotic|risk)\b/.test(copy)) return 'Problem-agitation hook';
+  if (/\b(?:owner-operator|trucker|truckers|hauler|haulers|contractor|contractors|small business owner|security firm)\b/.test(copy)) return 'Identity-led hook';
   if (/\b(?:minutes?|fast|easy|online)\b/.test(copy) && /\b(?:quote|policy|coverage)\b/.test(copy)) return 'Fast online quote';
   if (/\b(?:save|saving|affordable|lower rate|cheap)\b/.test(copy)) return 'Savings-led offer';
   if (/\b(?:compare|comparison|options)\b/.test(copy)) return 'Comparison angle';
