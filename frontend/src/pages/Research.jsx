@@ -1943,7 +1943,10 @@ export default function Research() {
   const currentTestShortlist = useMemo(() => selectCurrentTestShortlist(browseAds), [browseAds]);
   const visualMatchesByAdvertiser = useMemo(() => browseAds.reduce((matches, ad) => {
     const advertiser = (ad.brand_name || '').trim().toLowerCase();
-    if (!advertiser || ad.creative_intel?.capture_source !== 'brand_scrape' || !hasUsableVisual(ad)) return matches;
+    // The detail drawer can adopt only a durable retained image/media URL.
+    // A video preview URL alone is useful for catalog playback but cannot be
+    // attached to another finding, so never advertise it as a selectable match.
+    if (!advertiser || ad.creative_intel?.capture_source !== 'brand_scrape' || hasMisassignedVideoUiCapture(ad) || !(ad.thumbnail_url || ad.media_url)) return matches;
     matches[advertiser] = (matches[advertiser] || 0) + 1;
     return matches;
   }, {}), [browseAds]);
