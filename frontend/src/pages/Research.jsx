@@ -1566,7 +1566,7 @@ export default function Research() {
       setResultMode('search');
       const filtered = filterResearchAds(normalized, { angleFilter, mediaTypeFilter, reviewFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, hasVisual, activeOnly, sortBy, adsPerAdvertiser });
       setBrowseAds(filtered);
-      showSuccess(`Search saved — ${filtered.length} matching ads shown`);
+      showSuccess(`Captured ${filtered.length} matching ads from Meta`);
       loadBoards();
       loadSavedAds();
     } catch (e) {
@@ -2214,7 +2214,7 @@ export default function Research() {
                 type="search"
                 value={query}
                 onChange={e => setQuery(e.target.value)}
-                placeholder="Search the Ad Library by keyword…"
+                placeholder="Pull from Meta Ad Library by keyword…"
                 className="min-w-0 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-300"
                 aria-label="Research query"
               />
@@ -2224,7 +2224,7 @@ export default function Research() {
                 className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <RefreshCw size={14} className={queryLoading ? 'animate-spin' : ''} />
-                {queryLoading ? 'Searching…' : 'Search'}
+                {queryLoading ? 'Pulling…' : 'Pull captures'}
               </button>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -2240,13 +2240,13 @@ export default function Research() {
                 </button>
               ))}
             </div>
-            <p className="mt-2 text-[11px] text-gray-400">Search all captures. Browse stays scoped to this vertical.</p>
+            <p className="mt-2 text-[11px] text-gray-400">Pulls new captures from Meta and saves them to this Research vertical.</p>
           </form>
           {/* Filter bar */}
           <div className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 lg:flex-row lg:items-center">
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-2">
               <span className="text-xs font-medium text-gray-500 whitespace-nowrap">
-                {resultMode === 'search' ? 'SEARCH RESULTS' : 'BROWSE'}
+                {resultMode === 'search' ? 'PULLED RESULTS' : 'BROWSE'}
                 {!browseLoading && <span className="ml-1 text-gray-400">({displayedBrowseAds.length})</span>}
               </span>
               <div className="h-4 w-px bg-gray-200" />
