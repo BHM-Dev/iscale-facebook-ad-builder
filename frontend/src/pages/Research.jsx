@@ -187,11 +187,24 @@ const capAdsPerAdvertiser = (ads, adsPerAdvertiser) => {
   });
 };
 
-const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, hasVisual, activeOnly, sortBy, adsPerAdvertiser }) => {
+const matchesReviewFilter = (ad, reviewFilter) => {
+  if (!reviewFilter) return true;
+  const normalized = withDerivedResearchStatus(ad);
+  const isReviewed = normalized.platform === 'external' || Boolean(normalized.creative_intel?.reviewed);
+  if (reviewFilter === 'ready_to_review') return !isReviewed && normalized.relevance_status !== 'needs_review';
+  if (reviewFilter === 'in_brief') return isReviewed;
+  if (reviewFilter === 'needs_relevance') return normalized.relevance_status === 'needs_review';
+  return true;
+};
+
+const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, reviewFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, hasVisual, activeOnly, sortBy, adsPerAdvertiser }) => {
   const advertiser = advertiserFilter.trim().toLowerCase();
-  return capAdsPerAdvertiser(sortResearchAds(ads.filter(ad => (
+  return capAdsPerAdvertiser(sortResearchAds(ads.filter(ad => {
+    const normalized = withDerivedResearchStatus(ad);
+    return (
     (!angleFilter || ad.angle_tag === angleFilter) &&
     (!mediaTypeFilter || (mediaTypeFilter === 'unknown' ? isUnknownMedia(ad.media_type) : ad.media_type === mediaTypeFilter)) &&
+    matchesReviewFilter(normalized, reviewFilter) &&
     (!advertiser || (ad.brand_name || '').toLowerCase().includes(advertiser)) &&
     (!creativeTagFilter || (ad.creative_tags || []).includes(creativeTagFilter)) &&
     (!ctaTypeFilter || ad.cta_type === ctaTypeFilter) &&
@@ -199,8 +212,9 @@ const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, advertiserFilter
     (!newOnly || !ad.first_seen || Date.now() - new Date(ad.first_seen).getTime() <= 7 * 24 * 60 * 60 * 1000) &&
     (!needsTagging || !ad.taxonomy_source) &&
     (!hasVisual || hasVisualCandidate(ad)) &&
-    (!activeOnly || withDerivedResearchStatus(ad).is_active)
-  )), sortBy), adsPerAdvertiser);
+    (!activeOnly || normalized.is_active)
+    );
+  }), sortBy), adsPerAdvertiser);
 };
 
 const normalizeAdLibraryImport = (raw, activeVerticalLabel) => {
@@ -1206,6 +1220,7 @@ export default function Research() {
   // Filters
   const [angleFilter, setAngleFilter] = useState('');
   const [mediaTypeFilter, setMediaTypeFilter] = useState('');
+  const [reviewFilter, setReviewFilter] = useState('');
   const [sortBy, setSortBy] = useState('newest_seen');
   const [activeOnly, setActiveOnly] = useState(false);
   const [advertiserFilter, setAdvertiserFilter] = useState('');
@@ -1230,10 +1245,10 @@ export default function Research() {
   const activeVerticalRef = useRef(activeVertical);
   const activeSubVerticalRef = useRef(activeSubVertical);
 
-  const displayedBrowseAds = useMemo(
-    () => hasVisual ? browseAds.filter(ad => !failedVisualIds.has(ad.id)) : browseAds,
-    [browseAds, failedVisualIds, hasVisual],
-  );
+  const displayedBrowseAds = useMemo(() => {
+    const candidates = hasVisual ? browseAds.filter(ad => !failedVisualIds.has(ad.id)) : browseAds;
+    return candidates.filter(ad => matchesReviewFilter(ad, reviewFilter));
+  }, [browseAds, failedVisualIds, hasVisual, reviewFilter]);
 
   const handleVisualLoadError = (adId) => {
     if (!hasVisual || !adId) return;
@@ -1547,7 +1562,7 @@ export default function Research() {
       setBrowseError('');
       setSearchResultAds(normalized);
       setResultMode('search');
-      const filtered = filterResearchAds(normalized, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, hasVisual, activeOnly, sortBy, adsPerAdvertiser });
+      const filtered = filterResearchAds(normalized, { angleFilter, mediaTypeFilter, reviewFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, hasVisual, activeOnly, sortBy, adsPerAdvertiser });
       setBrowseAds(filtered);
       showSuccess(`Search saved — ${filtered.length} matching ads shown`);
       loadBoards();
@@ -1566,12 +1581,12 @@ export default function Research() {
   useEffect(() => {
     if (!verticalConfig) return;
     if (resultMode === 'search') {
-      setBrowseAds(filterResearchAds(searchResultAds, { angleFilter, mediaTypeFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, hasVisual, activeOnly, sortBy, adsPerAdvertiser }));
+      setBrowseAds(filterResearchAds(searchResultAds, { angleFilter, mediaTypeFilter, reviewFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, hasVisual, activeOnly, sortBy, adsPerAdvertiser }));
       return undefined;
     }
     const t = setTimeout(() => loadBrowseAds(), advertiserFilter ? 400 : 0);
     return () => clearTimeout(t);
-  }, [angleFilter, mediaTypeFilter, sortBy, activeOnly, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, hasVisual, adsPerAdvertiser, resultMode, searchResultAds, browseReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [angleFilter, mediaTypeFilter, reviewFilter, sortBy, activeOnly, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, hasVisual, adsPerAdvertiser, resultMode, searchResultAds, browseReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Actions ──────────────────────────────────────────────────
   const handleRefresh = async ({ allowWhileClearing = false } = {}) => {
@@ -1859,14 +1874,14 @@ export default function Research() {
   }, [activeVertical, activeSubVertical, config, subVerticals]);
 
   const visibleSavedAds = activeBoardId ? boardAds : savedAds;
-  const advancedFilterCount = [creativeTagFilter, ctaTypeFilter, pageTypeFilter, activeOnly, newOnly, needsTagging, hasVisual, adsPerAdvertiser].filter(Boolean).length;
-  const hasActiveFilters = Boolean(angleFilter || mediaTypeFilter || creativeTagFilter || ctaTypeFilter || pageTypeFilter || activeOnly || newOnly || needsTagging || hasVisual || advertiserFilter || adsPerAdvertiser);
+  const advancedFilterCount = [reviewFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, activeOnly, newOnly, needsTagging, hasVisual, adsPerAdvertiser].filter(Boolean).length;
+  const hasActiveFilters = Boolean(angleFilter || mediaTypeFilter || reviewFilter || creativeTagFilter || ctaTypeFilter || pageTypeFilter || activeOnly || newOnly || needsTagging || hasVisual || advertiserFilter || adsPerAdvertiser);
   const clearFilters = () => {
     setAngleFilter(''); setMediaTypeFilter(''); setCreativeTagFilter(''); setCtaTypeFilter('');
-    setPageTypeFilter(''); setActiveOnly(false); setNewOnly(false); setNeedsTagging(false); setHasVisual(false); setAdvertiserFilter(''); setAdsPerAdvertiser(0);
+    setReviewFilter(''); setPageTypeFilter(''); setActiveOnly(false); setNewOnly(false); setNeedsTagging(false); setHasVisual(false); setAdvertiserFilter(''); setAdsPerAdvertiser(0);
   };
   const currentViewFilters = () => ({
-    activeVertical, activeSubVertical, angleFilter, mediaTypeFilter, sortBy,
+    activeVertical, activeSubVertical, angleFilter, mediaTypeFilter, reviewFilter, sortBy,
     activeOnly, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter,
     newOnly, needsTagging, hasVisual, adsPerAdvertiser,
   });
@@ -1882,7 +1897,7 @@ export default function Research() {
     const filters = view.filters || {};
     setActiveVertical(filters.activeVertical || activeVertical);
     setActiveSubVertical(filters.activeSubVertical || null);
-    setAngleFilter(filters.angleFilter || ''); setMediaTypeFilter(filters.mediaTypeFilter || '');
+    setAngleFilter(filters.angleFilter || ''); setMediaTypeFilter(filters.mediaTypeFilter || ''); setReviewFilter(filters.reviewFilter || '');
     setSortBy(filters.sortBy || 'newest_seen'); setActiveOnly(Boolean(filters.activeOnly));
     setAdvertiserFilter(filters.advertiserFilter || ''); setCreativeTagFilter(filters.creativeTagFilter || '');
     setCtaTypeFilter(filters.ctaTypeFilter || ''); setPageTypeFilter(filters.pageTypeFilter || '');
@@ -2258,6 +2273,20 @@ export default function Research() {
                 <option value="video">Videos</option>
                 <option value="carousel">Carousels</option>
                 <option value="unknown">Unknown format</option>
+              </select>
+
+              <div className="h-4 w-px bg-gray-200" />
+
+              <select
+                value={reviewFilter}
+                onChange={e => setReviewFilter(e.target.value)}
+                className="text-xs border-0 text-gray-600 bg-transparent focus:ring-0 cursor-pointer pr-6 py-0"
+                title="Triage retained captures by research review state"
+              >
+                <option value="">All captures</option>
+                <option value="ready_to_review">Ready to review</option>
+                <option value="in_brief">In Research Brief</option>
+                <option value="needs_relevance">Check relevance</option>
               </select>
 
               <div className="h-4 w-px bg-gray-200" />
