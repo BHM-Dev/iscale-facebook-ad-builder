@@ -46,6 +46,18 @@ def sanitize_folder_name(name: str) -> str:
     return sanitized.lower()[:50]  # Limit length
 
 
+def search_query_matches_page(query: str, page_name: str | None) -> bool:
+    """Fail closed when an Ads Library name search resolves to another advertiser."""
+    if not query or not page_name:
+        return False
+    query_terms = {
+        term for term in re.findall(r"[a-z0-9]+", query.casefold())
+        if len(term) >= 4
+    }
+    page_text = page_name.casefold()
+    return bool(query_terms) and any(term in page_text for term in query_terms)
+
+
 class BrandScraperService:
     """Service for scraping brand ads and downloading media to R2."""
 
@@ -76,6 +88,26 @@ class BrandScraperService:
                 brand_scrape.total_ads = 0
                 self.db.commit()
                 return brand_scrape
+
+            # A non-numeric identifier is an Ads Library name search, not a
+            # durable Page ID. Meta can return unrelated advertisers for those
+            # searches. Never download or present their media as the requested
+            # brand; a failed capture is safer than polluted research.
+            if not brand_scrape.page_id.isdigit():
+                matching_ads = [
+                    ad for ad in ads_data
+                    if search_query_matches_page(brand_scrape.page_id, ad.get("page_name"))
+                ]
+                if not matching_ads:
+                    returned_page = next((ad.get("page_name") for ad in ads_data if ad.get("page_name")), "an unrelated advertiser")
+                    brand_scrape.status = "failed"
+                    brand_scrape.error_message = (
+                        f'Ads Library search for "{brand_scrape.page_id}" returned {returned_page}, not the requested advertiser. '
+                        "Use a numeric Page ID or a view_all_page_id URL."
+                    )[:500]
+                    self.db.commit()
+                    return brand_scrape
+                ads_data = matching_ads
 
             # Get page name from first ad
             if ads_data and ads_data[0].get("page_name"):
