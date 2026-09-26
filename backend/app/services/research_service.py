@@ -345,9 +345,19 @@ class ResearchService:
                 ).first()
 
             if existing:
-                # Update last_seen timestamp and increment seen_count
+                # Update last_seen and enrich an earlier copy-only capture
+                # when a later live pass can see its creative.  Content-based
+                # dedupe should not permanently prevent visual retention.
                 existing.last_seen = datetime.utcnow()
                 existing.seen_count = (existing.seen_count or 0) + 1
+                if not existing.media_url and ad_data.media_url:
+                    existing.media_url = ad_data.media_url
+                    existing.thumbnail_url = ad_data.thumbnail_url or ad_data.media_url
+                    existing.media_type = ad_data.media_type or existing.media_type or "image"
+                if not existing.media_preview_url and ad_data.media_preview_url:
+                    existing.media_preview_url = ad_data.media_preview_url
+                if not existing.video_urls and ad_data.video_urls:
+                    existing.video_urls = ad_data.video_urls
                 saved_ads.append(existing)
                 ads_duplicate += 1
             else:
