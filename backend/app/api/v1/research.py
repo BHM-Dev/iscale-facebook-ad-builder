@@ -68,6 +68,10 @@ COPILOT_PAGE_TYPE_PHRASES = {
 }
 COPILOT_AI_MODEL = "claude-sonnet-4-5-20250929"
 _research_copilot_client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY")) if os.getenv("ANTHROPIC_API_KEY") else None
+COPILOT_UNSUPPORTED_PERFORMANCE_RE = re.compile(
+    r"\b(?:spend|impressions?|roas|roi|conversions?|conversion rate|delivery volume|best performing|top performing|winner|winning ads?)\b",
+    re.IGNORECASE,
+)
 
 
 def _normalize_external_url(value: str | None) -> str:
@@ -404,6 +408,12 @@ def _sanitize_research_copilot_ai_summary(payload) -> dict | None:
     if not isinstance(patterns, list):
         patterns = []
     cleaned_patterns = [str(item).strip()[:180] for item in patterns if str(item).strip()][:3]
+    # The model is not the source of truth for performance. If it disregards
+    # the prompt and introduces an unsupported performance claim, omit its
+    # read entirely rather than trying to rewrite a potentially misleading
+    # conclusion into something that sounds credible.
+    if COPILOT_UNSUPPORTED_PERFORMANCE_RE.search(" ".join([answer, *cleaned_patterns])):
+        return None
     return {"answer": answer[:600], "patterns": cleaned_patterns}
 
 

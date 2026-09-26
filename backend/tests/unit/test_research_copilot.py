@@ -73,3 +73,10 @@ def test_ai_summary_is_bounded_and_requires_a_grounded_answer():
     })
     assert len(summary["answer"]) == 600
     assert summary["patterns"] == ["Fast quote", "Identity hook", "Comparison"]
+
+
+def test_ai_summary_rejects_unsupported_performance_language():
+    assert _sanitize_research_copilot_ai_summary({
+        "answer": "This is a winning ad with high spend.",
+        "patterns": ["Identity hook"],
+    }) is None
