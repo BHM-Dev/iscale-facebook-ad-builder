@@ -58,6 +58,7 @@ class User(Base):
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     ad_accounts = relationship("UserAdAccount", back_populates="user", cascade="all, delete-orphan")
     created_research_boards = relationship("ResearchBoard", back_populates="creator")
+    created_launch_packs = relationship("LaunchPack", back_populates="creator")
 
     def allowed_account_ids(self):
         """Meta ad accounts this user may see/act on.
@@ -678,6 +679,29 @@ class ResearchBoardItem(Base):
 
     __table_args__ = (
         UniqueConstraint('board_id', 'scraped_ad_id', name='uq_research_board_item'),
+    )
+
+
+class LaunchPack(Base):
+    """A workspace-shared, exact Meta launch target reusable by media buyers."""
+    __tablename__ = "launch_packs"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    name = Column(String, nullable=False)
+    ad_account_id = Column(String, nullable=False, index=True)
+    ad_account_name = Column(String, nullable=True)
+    campaign_id = Column(String, nullable=False)
+    campaign_name = Column(String, nullable=True)
+    adset_id = Column(String, nullable=False)
+    adset_name = Column(String, nullable=True)
+    created_by = Column(String, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    creator = relationship("User", back_populates="created_launch_packs")
+
+    __table_args__ = (
+        UniqueConstraint('ad_account_id', 'campaign_id', 'adset_id', name='uq_launch_pack_target'),
     )
 
 class Prompt(Base):

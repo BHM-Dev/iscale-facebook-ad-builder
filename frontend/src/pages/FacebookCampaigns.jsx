@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, Target, Users, Image as ImageIcon, CreditCard, Megaphone, CheckCircle2, RefreshCw, ChevronUp, ChevronDown } from 'lucide-react';
+import { Check, Target, Users, Image as ImageIcon, CreditCard, Megaphone, CheckCircle2, RefreshCw, ChevronUp, ChevronDown, BookmarkPlus } from 'lucide-react';
+import { authFetch } from '../lib/facebookApi';
 import { CampaignProvider, useCampaign } from '../context/CampaignContext';
 import { useToast } from '../context/ToastContext';
 import AdAccountStep from '../components/AdAccountStep';
@@ -157,7 +158,7 @@ const FacebookCampaignWizardInner = () => {
     // auto-select-from-cache logic, and advances the instant each one resolves to
     // the intended target — so Joel never has to search for or click any of them,
     // he just watches it land on Creative.
-    const { showWarning } = useToast();
+    const { showWarning, showSuccess, showError } = useToast();
     const { selectedAdAccount, campaignData, adsetData, creativeData, launchSummary, setLaunchSummary } = useCampaign();
 
     // Switching between standard combinations and naming-convention import is a
@@ -183,6 +184,7 @@ const FacebookCampaignWizardInner = () => {
     // Quick Ad land me on?" needs to stay visible on the Creative/Bulk Ads/Review
     // steps, not just flash during the ~1-2s auto-advance itself.
     const [quickAdResolved, setQuickAdResolved] = useState(null);
+    const [savingLaunchPack, setSavingLaunchPack] = useState(false);
     const quickAdTimeoutRef = useRef(null);
 
     const stopQuickAd = (warningMessage) => {
@@ -203,25 +205,47 @@ const FacebookCampaignWizardInner = () => {
         });
     };
 
+    const stopStaleLaunchPack = (message) => {
+        if (quickAdTarget?.source === 'launch-pack') {
+            try {
+                localStorage.removeItem(`lastSelectedCampaignId_${quickAdTarget.ad_account_id}`);
+                localStorage.removeItem(`lastSelectedAdSetId_${quickAdTarget.fb_campaign_id}`);
+            } catch { /* The manual fallback remains safe without cache cleanup. */ }
+        }
+        stopQuickAd(message);
+    };
+
     useEffect(() => {
         let raw;
+        let isLaunchPack = false;
         try {
             raw = localStorage.getItem('pendingQuickAd');
+            if (!raw) {
+                raw = localStorage.getItem('pendingLaunchPack');
+                isLaunchPack = Boolean(raw);
+            }
         } catch {
             raw = null;
         }
         if (!raw) return;
         try {
             localStorage.removeItem('pendingQuickAd');
+            localStorage.removeItem('pendingLaunchPack');
         } catch { /* non-fatal */ }
         try {
             const parsed = JSON.parse(raw);
-            if (parsed?.ad_account_id && parsed?.fb_campaign_id && parsed?.fb_adset_id) {
-                setQuickAdTarget(parsed);
+            const target = isLaunchPack ? {
+                ...parsed,
+                fb_campaign_id: parsed.campaign_id,
+                fb_adset_id: parsed.adset_id,
+                source: 'launch-pack',
+            } : parsed;
+            if (target?.ad_account_id && target?.fb_campaign_id && target?.fb_adset_id) {
+                setQuickAdTarget(target);
                 quickAdTimeoutRef.current = setTimeout(() => {
                     stopQuickAd(
-                        parsed.adset_name
-                            ? `Couldn't auto-load "${parsed.adset_name}" — continue manually below.`
+                        target.adset_name
+                            ? `Couldn't auto-load "${target.adset_name}" — continue manually below.`
                             : "Couldn't auto-load the campaign/ad set — continue manually below."
                     );
                 }, QUICK_AD_TIMEOUT_MS);
@@ -232,6 +256,38 @@ const FacebookCampaignWizardInner = () => {
         return () => clearTimeout(quickAdTimeoutRef.current);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    const saveCurrentLaunchPack = async () => {
+        if (!selectedAdAccount?.id || !campaignData?.fbCampaignId || !adsetData?.fbAdsetId) {
+            showWarning('Choose an existing account, campaign, and ad set before saving a launch pack.');
+            return;
+        }
+        setSavingLaunchPack(true);
+        try {
+            const response = await authFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'}/launch-packs`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: adsetData.name || campaignData.name || 'Saved launch pack',
+                    ad_account_id: selectedAdAccount.id,
+                    ad_account_name: selectedAdAccount.name || null,
+                    campaign_id: campaignData.fbCampaignId,
+                    campaign_name: campaignData.name || null,
+                    adset_id: adsetData.fbAdsetId,
+                    adset_name: adsetData.name || null,
+                }),
+            });
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.detail || 'Could not save launch pack');
+            }
+            showSuccess(`Saved “${adsetData.name || campaignData.name || 'Launch pack'}” for the team.`);
+        } catch (error) {
+            showError(error.message || 'Could not save launch pack');
+        } finally {
+            setSavingLaunchPack(false);
+        }
+    };
 
     useEffect(() => {
         if (!quickAdTarget) return;
@@ -247,17 +303,26 @@ const FacebookCampaignWizardInner = () => {
                 // Caught in pre-push review (code-auditor: HIGH).
                 stopQuickAd("Quick Ad couldn't find that ad account in your list — continuing manually from here.");
             }
-        } else if (currentStep === 2 && campaignData?.fbCampaignId === quickAdTarget.fb_campaign_id) {
-            setCurrentStep(3);
-        } else if (currentStep === 3 && adsetData?.fbAdsetId === quickAdTarget.fb_adset_id) {
-            setQuickAdResolved({
-                accountName: selectedAdAccount?.name || '',
-                campaignName: campaignData?.name || '',
-                adsetName: adsetData?.name || quickAdTarget.adset_name || '',
-            });
-            setCurrentStep(4);
-            clearTimeout(quickAdTimeoutRef.current);
-            setQuickAdTarget(null);
+        } else if (currentStep === 2 && campaignData?.fbCampaignId) {
+            if (campaignData.fbCampaignId === quickAdTarget.fb_campaign_id) {
+                setCurrentStep(3);
+            } else {
+                stopStaleLaunchPack('This launch target no longer matches the selected campaign. Continue manually from here.');
+            }
+        } else if (currentStep === 3 && adsetData?.fbAdsetId) {
+            if (adsetData.fbAdsetId === quickAdTarget.fb_adset_id) {
+                setQuickAdResolved({
+                    accountName: selectedAdAccount?.name || '',
+                    campaignName: campaignData?.name || '',
+                    adsetName: adsetData?.name || quickAdTarget.adset_name || '',
+                    source: quickAdTarget.source || 'quick-ad',
+                });
+                setCurrentStep(4);
+                clearTimeout(quickAdTimeoutRef.current);
+                setQuickAdTarget(null);
+            } else {
+                stopStaleLaunchPack('This launch target no longer matches the selected ad set. Continue manually from here.');
+            }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [quickAdTarget, currentStep, selectedAdAccount, campaignData, adsetData]);
@@ -452,7 +517,7 @@ const FacebookCampaignWizardInner = () => {
                 <div className="flex items-center gap-2 bg-teal-50 border border-teal-200 rounded-lg px-4 py-3 text-sm text-teal-800">
                     <RefreshCw size={15} className="animate-spin flex-shrink-0" />
                     <span>
-                        <strong>Quick Ad:</strong> loading step {Math.min(currentStep, 3)} of 3
+                        <strong>{quickAdTarget.source === 'launch-pack' ? 'Launch Pack' : 'Quick Ad'}:</strong> loading step {Math.min(currentStep, 3)} of 3
                         ({['ad account', 'campaign', 'ad set'][Math.min(currentStep, 3) - 1]})
                         {quickAdTarget.adset_name ? <> for <strong>{quickAdTarget.adset_name}</strong></> : ''} —
                         you'll land on Creative in a moment.
@@ -484,13 +549,24 @@ const FacebookCampaignWizardInner = () => {
                 Creative/Bulk Ads/Review so Joel never has to guess before he builds or
                 launches against it. Caught in pre-push review (joel-perspective: P0). */}
             {quickAdResolved && currentStep >= 4 && (
-                <div className="flex items-center gap-2 bg-teal-50 border border-teal-200 rounded-lg px-4 py-2.5 text-xs text-teal-800">
-                    <CheckCircle2 size={14} className="flex-shrink-0" />
-                    <span>
-                        <strong>Quick Ad</strong> loaded: {quickAdResolved.accountName || 'this account'}
-                        {' → '}{quickAdResolved.campaignName || 'this campaign'}
-                        {' → '}{quickAdResolved.adsetName || 'this ad set'}
+                <div className="flex items-center justify-between gap-2 bg-teal-50 border border-teal-200 rounded-lg px-4 py-2.5 text-xs text-teal-800">
+                    <span className="flex items-center gap-2 min-w-0">
+                        <CheckCircle2 size={14} className="flex-shrink-0" />
+                        <span>
+                            <strong>{quickAdResolved.source === 'launch-pack' ? 'Launch Pack' : 'Quick Ad'}</strong> loaded: {quickAdResolved.accountName || 'this account'}
+                            {' → '}{quickAdResolved.campaignName || 'this campaign'}
+                            {' → '}{quickAdResolved.adsetName || 'this ad set'}
+                        </span>
                     </span>
+                    {quickAdResolved.source === 'launch-pack' && (
+                        <button
+                            type="button"
+                            onClick={() => { setQuickAdResolved(null); setCurrentStep(1); }}
+                            className="font-semibold underline shrink-0 hover:text-teal-900"
+                        >
+                            Not right? Switch
+                        </button>
+                    )}
                 </div>
             )}
 
@@ -513,6 +589,20 @@ const FacebookCampaignWizardInner = () => {
                         className="font-semibold underline shrink-0 hover:text-blue-900"
                     >
                         Not right? Switch
+                    </button>
+                </div>
+            )}
+
+            {currentStep >= 4 && selectedAdAccount?.id && campaignData?.fbCampaignId && adsetData?.fbAdsetId && (
+                <div className="flex justify-end -mt-3">
+                    <button
+                        type="button"
+                        onClick={saveCurrentLaunchPack}
+                        disabled={savingLaunchPack}
+                        className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:cursor-wait disabled:opacity-60"
+                    >
+                        <BookmarkPlus size={14} />
+                        {savingLaunchPack ? 'Saving…' : 'Save this launch target'}
                     </button>
                 </div>
             )}

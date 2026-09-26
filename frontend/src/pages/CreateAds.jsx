@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileImage, Video, Zap, Shuffle, ArrowRight, HardDrive } from 'lucide-react';
+import { FileImage, Video, Zap, Shuffle, ArrowRight, HardDrive, Rocket } from 'lucide-react';
+import { authFetch } from '../lib/facebookApi';
 
 const DRIVE_LAUNCH_TOOL = {
     path: '/facebook-campaigns',
@@ -55,6 +56,24 @@ const TOOLS = [
 
 export default function CreateAds() {
     const navigate = useNavigate();
+    const [launchPacks, setLaunchPacks] = useState([]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadLaunchPacks = async () => {
+            try {
+                const response = await authFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'}/launch-packs`);
+                if (!response.ok) return;
+                const packs = await response.json();
+                if (!cancelled) setLaunchPacks(Array.isArray(packs) ? packs : []);
+            } catch {
+                // Launch Packs are an accelerator, never a reason to block the
+                // normal build workflows if the service is temporarily unavailable.
+            }
+        };
+        loadLaunchPacks();
+        return () => { cancelled = true; };
+    }, []);
 
     const launchFromDrive = () => {
         // Consumed once by FacebookCampaigns.jsx on mount to auto-advance through
@@ -64,6 +83,19 @@ export default function CreateAds() {
         try {
             localStorage.setItem('pendingDriveLaunch', '1');
         } catch { /* non-fatal — worst case Joel clicks through manually */ }
+        navigate(DRIVE_LAUNCH_TOOL.path);
+    };
+
+    const launchFromPack = (pack) => {
+        try {
+            // The wizard's existing exact-target resolver reads these per-step
+            // cache keys, while pendingLaunchPack makes it verify every ID rather
+            // than silently accepting whichever target happens to be last used.
+            localStorage.setItem('lastSelectedAdAccountId', pack.ad_account_id);
+            localStorage.setItem(`lastSelectedCampaignId_${pack.ad_account_id}`, pack.campaign_id);
+            localStorage.setItem(`lastSelectedAdSetId_${pack.campaign_id}`, pack.adset_id);
+            localStorage.setItem('pendingLaunchPack', JSON.stringify(pack));
+        } catch { /* The wizard will fall back to the normal, explicit flow. */ }
         navigate(DRIVE_LAUNCH_TOOL.path);
     };
 
@@ -92,6 +124,34 @@ export default function CreateAds() {
                     Get Started <ArrowRight size={16} />
                 </div>
             </button>
+
+            {launchPacks.length > 0 && (
+                <section className="mb-8" aria-label="Saved launch packs">
+                    <div className="flex items-baseline justify-between mb-3">
+                        <h2 className="text-sm font-semibold text-gray-700">Saved launch packs</h2>
+                        <span className="text-xs text-gray-500">Exact account, campaign, and ad set</span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {launchPacks.slice(0, 6).map(pack => (
+                            <button
+                                key={pack.id}
+                                type="button"
+                                onClick={() => launchFromPack(pack)}
+                                className="group flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-left hover:border-blue-300 hover:shadow-sm transition"
+                            >
+                                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-700"><Rocket size={17} /></span>
+                                <span className="min-w-0 flex-1">
+                                    <span className="block truncate text-sm font-semibold text-gray-900">{pack.name}</span>
+                                    <span className="block truncate text-xs text-gray-500">
+                                        {[pack.ad_account_name || pack.ad_account_id, pack.campaign_name || pack.campaign_id, pack.adset_name || pack.adset_id].filter(Boolean).join(' → ')}
+                                    </span>
+                                </span>
+                                <ArrowRight size={16} className="shrink-0 text-gray-400 group-hover:text-blue-600" />
+                            </button>
+                        ))}
+                    </div>
+                </section>
+            )}
 
             <p className="text-sm font-semibold text-gray-500 mb-4">Or generate new creatives</p>
 

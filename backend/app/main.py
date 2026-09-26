@@ -491,13 +491,14 @@ async def shutdown_event():
 
 
 # Include Routers
-from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence, creative_angles, pnl, drive_assets, drive_health, capi_quality
+from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence, creative_angles, pnl, drive_assets, drive_health, capi_quality, launch_packs
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 app.include_router(brands.router, prefix="/api/v1/brands", tags=["brands"])
 app.include_router(products.router, prefix="/api/v1/products", tags=["products"])
 app.include_router(research.router, prefix="/api/v1/research", tags=["research"])
+app.include_router(launch_packs.router, prefix="/api/v1/launch-packs", tags=["launch-packs"])
 app.include_router(generated_ads.router, prefix="/api/v1/generated-ads", tags=["generated-ads"])
 app.include_router(templates.router, prefix="/api/v1/templates", tags=["templates"])
 app.include_router(facebook.router, prefix="/api/v1/facebook", tags=["facebook"])
