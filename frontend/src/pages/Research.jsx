@@ -349,8 +349,8 @@ function SaveButton({ ad, isSaved, onSave, onUnsave, angleTags }) {
         type="button"
         onClick={() => onUnsave(ad)}
         className="inline-flex items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-emerald-700 hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-colors"
-        title="Remove from your worth-studying saves"
-        aria-label="Saved as worth studying; click to remove"
+        title="Saved — remove from library"
+        aria-label="Saved — remove from library"
       >
         <Star size={12} fill="currentColor" />
       </button>
@@ -363,8 +363,8 @@ function SaveButton({ ad, isSaved, onSave, onUnsave, angleTags }) {
         type="button"
         onClick={() => setOpen(v => !v)}
         className="inline-flex items-center justify-center rounded-lg border border-emerald-200 bg-white p-2 text-emerald-700 hover:bg-emerald-50 transition-colors"
-        title="Mark as worth studying"
-        aria-label="Mark as worth studying"
+        title="Save to library"
+        aria-label="Save to library"
       >
         <Star size={12} />
       </button>
@@ -761,6 +761,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
             onUnsave={onUnsave}
             angleTags={angleTags}
           />
+          {onToggleCompare && <button type="button" onClick={() => onToggleCompare(ad)} className={`inline-flex items-center justify-center gap-1 rounded-lg border px-2.5 py-2 text-xs font-semibold transition-colors ${isCompared ? 'border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100' : 'border-slate-200 bg-white text-slate-600 hover:border-violet-200 hover:bg-violet-50 hover:text-violet-700'}`} title={isCompared ? 'Remove from compare' : 'Add to compare'}><Copy size={12}/>{isCompared ? 'Compared' : 'Compare'}</button>}
         </div>
         <CardOverflowMenu ad={ad} advertiserUrl={advertiserUrl} isReviewed={isReviewed} onInspect={onInspect} onBlockPage={onBlockPage} onSetReviewed={onSetReviewed} onRemoveFromBoard={onRemoveFromBoard} boards={boards} onAddToBoard={onAddToBoard} onCreateBoard={onCreateBoard} isCompared={isCompared} onToggleCompare={onToggleCompare} />
       </div>
