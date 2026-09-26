@@ -1514,7 +1514,10 @@ export default function Research() {
     browseRequestRef.current += 1;
     setRefreshing(true);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 min cap
+    // A full vertical refresh walks several live Ad Library queries.  Three
+    // minutes regularly aborts a healthy server-side run midway through and
+    // leaves the researcher with a misleading partial result.
+    const timeoutId = setTimeout(() => controller.abort(), 600000); // 10 min cap
 
     try {
       const params = new URLSearchParams({ vertical_id: activeVertical });
@@ -1557,7 +1560,7 @@ export default function Research() {
       if (e.name === 'AbortError') {
         setRefreshSummary({ status: 'timed_out', keywords_run: 0, total_new: 0, total_duplicate: 0, first_error: 'Request timed out; earlier keywords may have completed and saved results.' });
         setBrowseReloadKey(value => value + 1);
-        showError('Refresh timed out — try a single sub-vertical tab instead of pulling all at once.');
+        showError('Refresh timed out before the live capture completed. Any earlier keyword results may be available below.');
       } else {
         setRefreshSummary({ status: 'failed', keywords_run: 0, total_new: 0, total_duplicate: 0, first_error: e.message || 'Refresh failed before completion.' });
         setBrowseError('');
@@ -1975,7 +1978,7 @@ export default function Research() {
             </button>
           </div>}
           {refreshing && (
-            <p className="text-xs text-gray-400">Pulling ads from Facebook — may take up to 3 minutes</p>
+            <p className="text-xs text-gray-400">Pulling live Ad Library examples — a full vertical refresh can take several minutes</p>
           )}
         </div>
       </div>

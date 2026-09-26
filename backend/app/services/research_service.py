@@ -170,6 +170,38 @@ class ResearchService:
 
         return score, reasons
 
+    @staticmethod
+    def _has_commercial_insurance_offer(ad_data: ScrapedAdCreate) -> bool:
+        """Require an actual commercial-insurance offer, not a broad business match.
+
+        Ads Library occasionally returns recruiting and local-service ads when a
+        competitor or broad business query is used.  A page name containing
+        "Insurance" is not enough evidence: the ad itself must describe an
+        insurance product or a business-coverage quote path.
+        """
+        text = ResearchService._ad_text(ad_data)
+        direct_offer = (
+            "commercial insurance", "business insurance", "small business insurance",
+            "contractor insurance", "trucking insurance", "general liability",
+            "commercial property", "business owners policy", "bop insurance",
+            "workers comp insurance", "workers compensation insurance",
+            "certificate of insurance", "commercial auto", "fleet insurance",
+            "umbrella insurance", "liability insurance",
+        )
+        if any(phrase in text for phrase in direct_offer):
+            return True
+
+        # Preserve segment-led ads that do not use the exact product phrase,
+        # but only when they pair an insurance/coverage reference with a real
+        # commercial audience and an offer action.
+        insurance_reference = any(phrase in text for phrase in ("insurance", "coverage", "policy", "premium", "insured"))
+        commercial_audience = any(phrase in text for phrase in (
+            "contractor", "trucking", "restaurant", "salon", "business owner",
+            "small business", "fleet", "landscaping", "construction", "commercial auto",
+        ))
+        offer_action = any(phrase in text for phrase in ("quote", "get covered", "protect", "rate", "premium", "policy"))
+        return insurance_reference and commercial_audience and offer_action
+
     def _filter_ads_by_vertical_relevance(
         self,
         ads: list[ScrapedAdCreate],
@@ -183,19 +215,20 @@ class ResearchService:
         kept = []
         rejected = 0
         scored_ads = []
-        min_score = 2
+        min_score = 4
 
         for ad in ads:
             score, reasons = self._commercial_insurance_relevance_score(ad, request.query)
             scored_ads.append((score, reasons, ad))
-            if score >= min_score:
+            has_offer = self._has_commercial_insurance_offer(ad)
+            if score >= min_score and has_offer:
                 kept.append(ad)
             else:
                 rejected += 1
                 text_preview = self._ad_text(ad)[:1200]
                 print(
                     "[research relevance] rejected "
-                    f"query='{request.query}' page='{ad.brand_name}' score={score} reasons={reasons[:5]} "
+                    f"query='{request.query}' page='{ad.brand_name}' score={score} offer={has_offer} reasons={reasons[:5]} "
                     f"text='{text_preview}'"
                 )
 
@@ -212,7 +245,7 @@ class ResearchService:
                 if self.compute_content_hash(ad) in kept_hashes:
                     continue
                 has_penalty = any(reason.startswith("-") for reason in reasons)
-                if score >= 1 or (len(ads) <= 3 and score >= 0 and not has_penalty):
+                if self._has_commercial_insurance_offer(ad) and (score >= min_score or (len(ads) <= 3 and score >= 0 and not has_penalty)):
                     kept.append(ad)
                     kept_hashes.add(self.compute_content_hash(ad))
                     rejected = max(0, rejected - 1)
