@@ -133,14 +133,11 @@ const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaig
 
 const FacebookCampaignWizardInner = () => {
     const [currentStep, setCurrentStep] = useState(1);
-    // Launch Plan now lives stacked under the Launch Steps rail (left column,
-    // not a competing right-hand rail — see the shell layout below), so
-    // keeping it expanded no longer costs horizontal space the Creative
-    // step's ad-detail preview needs. Defaulting to expanded also closes a
-    // real finding from the 2026-09-23 retroactive review: collapsed-by-
-    // default was hiding the Warnings count and Launched/paused Status
-    // behind an unlabeled chevron, exactly what Joel checks before Launch.
-    const [isLaunchPlanExpanded, setIsLaunchPlanExpanded] = useState(true);
+    // The Creative workspace is the launcher's working surface. Keep the
+    // supporting plan collapsed initially so it never steals vertical space
+    // from the ad rows or preview; its button always exposes the current ad
+    // count and expands the complete plan on demand.
+    const [isLaunchPlanExpanded, setIsLaunchPlanExpanded] = useState(false);
     const [batchMode, setBatchMode] = useState('combinations'); // 'combinations' | 'match-import'
     const [formData, setFormData] = useState({
         adAccountId: null,
