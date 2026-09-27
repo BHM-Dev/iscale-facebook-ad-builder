@@ -482,6 +482,7 @@ def test_readme_handoff_is_recognized_as_a_package_manifest():
     ]
 
     assert service._is_handoff_manifest_file("READ ME — Painting Contractors FINAL Meta Handoff.md")
+    assert service._is_handoff_manifest_file("Painting Contractors — Final Meta Launch Brief.md")
     assert not service._is_handoff_manifest_file("README — Painting Contractors Handoff Notes.md")
     assert service._find_package_folder({"parents": ["package"]}) == "package"
 
@@ -549,6 +550,14 @@ def test_final_painting_launch_brief_maps_bold_table_fields_and_single_placement
     assert result["assets_by_drive_id"]["video"]["copy_pairing_status"] == "single"
     assert result["assets_by_drive_id"]["static"]["landing_page"] == "https://example.com/paint"
     assert result["assets_by_drive_id"]["video"]["cta"] == "LEARN_MORE"
+
+
+def test_video_aspect_allows_a_descriptive_suffix_after_its_size():
+    service = DriveSyncService.__new__(DriveSyncService)
+
+    assert service._media_aspect({
+        "name": "PC-PAINT-05 — The Adjuster Question — 9x16 Captions + Music.mp4"
+    }) == "9x16"
 
 
 def test_ad_numbered_copy_doc_maps_compact_general_auto_legacy_set_names():

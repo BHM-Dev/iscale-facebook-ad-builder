@@ -1190,21 +1190,32 @@ class DriveSyncService:
             re.search(r"(?:^|[\s_-])read[\s_-]*me(?:$|[\s_.-])", normalized)
         )
 
+    @staticmethod
+    def _is_final_meta_launch_brief_file(file_name: str) -> bool:
+        """Recognize the current, package-scoped final launch brief format."""
+        return "final meta launch brief" in (file_name or "").lower()
+
     @classmethod
     def _is_handoff_manifest_file(cls, file_name: str) -> bool:
-        """Recognize formal manifests and direct README Meta Handoffs."""
+        """Recognize formal manifests and package-scoped final Meta briefs."""
         normalized = (file_name or "").lower()
-        return "handoff" in normalized and (
-            "manifest" in normalized
-            or cls._is_readme_meta_handoff_file(normalized)
+        return (
+            ("handoff" in normalized and (
+                "manifest" in normalized
+                or cls._is_readme_meta_handoff_file(normalized)
+            ))
+            or cls._is_final_meta_launch_brief_file(normalized)
         )
 
     @classmethod
     def _is_handoff_manifest_for_folder(cls, item: Dict[str, Any], folder_id: str) -> bool:
-        """README handoffs are scoped to their direct package folder."""
+        """README handoffs and final briefs are scoped to their direct package folder."""
         file_name = item.get("name") or ""
         return cls._is_handoff_manifest_file(file_name) and (
-            not cls._is_readme_meta_handoff_file(file_name)
+            not (
+                cls._is_readme_meta_handoff_file(file_name)
+                or cls._is_final_meta_launch_brief_file(file_name)
+            )
             or item.get("_direct_parent_folder_id") == folder_id
         )
 
@@ -2687,7 +2698,7 @@ class DriveSyncService:
 
     def _media_aspect(self, item: Dict[str, Any]) -> Optional[str]:
         file_name = item.get("name") or ""
-        aspect_match = re.search(r"(?:^|[-_ ])(1x1|4x5|9x16)(?:[-_][A-Za-z0-9]+)?(?=\.[^.]+$)", file_name, re.IGNORECASE)
+        aspect_match = re.search(r"(?:^|[-_ ])(1x1|4x5|9x16)(?=$|[-_ .])", file_name, re.IGNORECASE)
         if aspect_match:
             return aspect_match.group(1).lower()
         for folder_name in reversed(item.get("_parent_folder_path") or [item.get("_parent_folder_name") or ""]):
