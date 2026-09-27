@@ -1526,7 +1526,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                 ? (copyFieldsTouched.websiteUrl ? prev.websiteUrl : '')
                 : (firstWithCopy?.landingPage || firstDefaultUrl) && !copyFieldsTouched.websiteUrl
                 ? (firstWithCopy?.landingPage || firstDefaultUrl)
-                : clearStaleGlobalCopy && !copyFieldsTouched.websiteUrl ? '' : prev.websiteUrl;
+                // Missing Drive copy must never erase the one global launch URL.
+                // These are independent concerns: the row editor can correctly
+                // require primary text/headline while every ad continues to
+                // inherit the destination already chosen for the launch.
+                : prev.websiteUrl;
 
             if (selectedAdAccount) {
                 safeLocalStorageSet(`defaultHeadlines_${selectedAdAccount.id}_${campaignCacheId}`, JSON.stringify(nextHeadlines || ['']));
