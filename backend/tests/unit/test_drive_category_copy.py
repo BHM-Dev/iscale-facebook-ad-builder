@@ -495,6 +495,25 @@ def test_markdown_handoff_file_is_a_text_source_when_mime_type_is_unknown():
     )
 
 
+def test_final_painting_markdown_handoff_maps_its_numbered_assets():
+    service = DriveSyncService.__new__(DriveSyncService)
+    document = """| Landing page | https://example.com/paint |
+| CTA | Learn More |
+### PC-PAINT-01 — Adjuster Question
+| Primary text | Painting copy. |
+| Headline | Painting Contractors Insurance |
+| Description | Work van coverage. |
+"""
+    normalized = service._markdown_handoff_to_ad_copy_doc(document)
+    result = service._ad_numbered_folder_copy_metadata("painting", [
+        {"id": "feed", "name": "PC-PAINT-01 — Adjuster Question — 1x1.png"},
+        {"id": "story", "name": "PC-PAINT-01 — Adjuster Question — 9x16.png"},
+    ], normalized)
+
+    assert result["assets_by_drive_id"]["feed"]["copy"]["primary_text"] == "Painting copy."
+    assert result["assets_by_drive_id"]["story"]["copy"]["headline"] == "Painting Contractors Insurance"
+
+
 def test_ad_numbered_copy_doc_maps_compact_general_auto_legacy_set_names():
     service = DriveSyncService.__new__(DriveSyncService)
     document = """AD 01 — Original Set A1

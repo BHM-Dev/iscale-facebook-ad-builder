@@ -2020,9 +2020,19 @@ class DriveSyncService:
                 raise RuntimeError(f"Could not read Drive handoff manifest {manifest.get('name')}") from unreadable_text_by_id.get(manifest.get("id"))
 
             try:
-                metadata = self._handoff_folder_copy_metadata(
-                    folder_id, folder_files, text_files, media_by_name, manifest_text
-                )
+                markdown_ad_copy = self._markdown_handoff_to_ad_copy_doc(manifest_text)
+                if markdown_ad_copy:
+                    media_files = [
+                        item for item in folder_files
+                        if self._is_supported_media(item.get("mimeType") or "", item.get("name") or "")
+                    ]
+                    metadata = self._ad_numbered_folder_copy_metadata(folder_id, media_files, markdown_ad_copy)
+                    if not metadata.get("assets_by_drive_id"):
+                        raise NonActionableHandoffManifestError("Markdown handoff did not map any current media")
+                else:
+                    metadata = self._handoff_folder_copy_metadata(
+                        folder_id, folder_files, text_files, media_by_name, manifest_text
+                    )
             except NonActionableHandoffManifestError as exc:
                 # A self-contained handoff map can use inline PRIMARY TEXT /
                 # HEADLINE / IMAGE fields rather than a separate copy-file
@@ -3154,6 +3164,45 @@ class DriveSyncService:
             "cta": self._normalize_cta(cta_value.rstrip(".,")) if cta_value else None,
             "entries": entries,
         }
+
+    def _markdown_handoff_to_ad_copy_doc(self, text_body: str) -> str:
+        """Normalize final-handoff Markdown tables into AD-copy format."""
+        landing = re.search(
+            r"^\|\s*Landing page\s*\|\s*\`?([^|\`]+?)\`?\s*\|", text_body,
+            re.IGNORECASE | re.MULTILINE,
+        )
+        cta = re.search(
+            r"^\|\s*CTA\s*\|\s*\`?([^|\`]+?)\`?\s*\|", text_body,
+            re.IGNORECASE | re.MULTILINE,
+        )
+        headings = list(re.finditer(r"^###\s+PC-PAINT-(\d{1,2})\b.*$", text_body, re.IGNORECASE | re.MULTILINE))
+        if not headings:
+            return ""
+        sections = []
+        for index, heading in enumerate(headings):
+            block = text_body[heading.end():headings[index + 1].start() if index + 1 < len(headings) else len(text_body)]
+            def table_value(label: str) -> str:
+                match = re.search(
+                    rf"^\|\s*{re.escape(label)}\s*\|\s*\`?([^|\`]+?)\`?\s*\|",
+                    block, re.IGNORECASE | re.MULTILINE,
+                )
+                return self._clean_markdown_value(match.group(1)) if match else ""
+            headline = table_value("Headline")
+            primary_text = table_value("Primary text")
+            description = table_value("Description")
+            if not headline or not primary_text:
+                return ""
+            sections.append(
+                f"AD {int(heading.group(1))}\nMETA HEADLINE\n{headline}\n"
+                f"PRIMARY TEXT\n{primary_text}\n"
+                + (f"DESCRIPTION\n{description}\n" if description else "")
+            )
+        prefix = ""
+        if landing:
+            prefix += f"Lander: {landing.group(1).strip()}\n"
+        if cta:
+            prefix += f"CTA: {cta.group(1).strip()}\n"
+        return prefix + "\n".join(sections)
 
     def _parse_copy_file(self, text_body: str) -> Dict[str, Dict[str, str]]:
         blocks: Dict[str, Dict[str, str]] = {}
