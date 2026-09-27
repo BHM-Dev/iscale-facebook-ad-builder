@@ -486,6 +486,15 @@ def test_readme_handoff_is_recognized_as_a_package_manifest():
     assert service._find_package_folder({"parents": ["package"]}) == "package"
 
 
+def test_markdown_handoff_file_is_a_text_source_when_mime_type_is_unknown():
+    service = DriveSyncService.__new__(DriveSyncService)
+
+    assert service._is_text_file(
+        "application/octet-stream",
+        "READ ME — Painting Contractors FINAL Meta Handoff.md",
+    )
+
+
 def test_ad_numbered_copy_doc_maps_compact_general_auto_legacy_set_names():
     service = DriveSyncService.__new__(DriveSyncService)
     document = """AD 01 — Original Set A1

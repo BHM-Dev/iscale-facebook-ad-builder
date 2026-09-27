@@ -1178,7 +1178,10 @@ class DriveSyncService:
         if mime_type.startswith(TEXT_PREFIXES):
             return True
         guessed, _ = mimetypes.guess_type(file_name)
-        return bool((guessed and guessed.startswith(TEXT_PREFIXES)) or file_name.lower().endswith(".txt"))
+        return bool(
+            (guessed and guessed.startswith(TEXT_PREFIXES))
+            or file_name.lower().endswith((".txt", ".md", ".markdown"))
+        )
 
     @staticmethod
     def _is_readme_meta_handoff_file(file_name: str) -> bool:
