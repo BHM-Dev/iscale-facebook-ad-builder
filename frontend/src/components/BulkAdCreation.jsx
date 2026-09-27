@@ -2722,19 +2722,24 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                     }
                                 }}
                             >
-                                <div className="flex items-start justify-between gap-3 border-b border-gray-200 px-4 py-3">
+                                {/* Keep identity copy above the row switcher. Keeping both in
+                                    one horizontal flex row left the switcher its intrinsic
+                                    width first; in wide desktop drawers that reduced the ad
+                                    identity to a skinny wrapped column and created the large
+                                    empty header shown in live review. */}
+                                <div className="border-b border-gray-200 px-4 py-3">
                                     <div className="min-w-0">
                                         <h3 id="edit-drawer-title" className="truncate text-sm font-bold text-gray-900">{selectedManifestRow.adsetName}</h3>
                                         <p className="mt-0.5 text-xs text-gray-500">Ad: {selectedManifestRow.ad.name} · {selectedManifestRow.category} · {selectedManifestRow.ad.dualPlacement ? 'Feed + Stories pair' : 'Single placement'}</p>
                                         <p className="mt-0.5 truncate text-[11px] text-gray-500">Identity: {creativeData.pageName || creativeData.pageId || 'Page not confirmed'} · Instagram {creativeData.instagramId || 'not linked'} · {selectedManifestRow.ad.dualPlacement ? (drawerExistingTargetStatus === 'unverified' ? 'Placement contract not verified' : drawerExistingTargetStatus === 'verified-facebook-only' ? 'Facebook Feed + Facebook Stories' : 'Facebook Feed + Instagram Stream/Stories/Reels') : selectedManifestRow.ad.format === 'stories' ? (drawerExistingTargetStatus === 'unverified' ? 'Stories/Reels placement not verified' : 'Stories + Reels') : 'Feed'}</p>
                                     </div>
-                                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-3">
                                         <span
                                             title={selectedManifestRow.driveCopyIntegrityIssue ? selectedManifestRow.driveCopyIntegrityReason : undefined}
                                             className={`rounded-full px-2 py-1 text-[10px] font-semibold ${manifestExcludedAdIds.has(selectedManifestRow.ad.id) || protectedReconciliationIdSet.has(selectedManifestRow.ad.id) ? 'bg-gray-100 text-gray-600' : selectedManifestRow.copyReady ? 'bg-emerald-100 text-emerald-700' : selectedManifestRow.driveCopyIntegrityIssue ? 'bg-indigo-100 text-indigo-800' : 'bg-amber-100 text-amber-800'}`}
                                         >{manifestExcludedAdIds.has(selectedManifestRow.ad.id) || protectedReconciliationIdSet.has(selectedManifestRow.ad.id) ? 'Excluded' : selectedManifestRow.copyReady ? 'Ready' : selectedManifestRow.driveCopyIntegrityIssue ? 'Drive copy needs repair' : 'Needs copy'}</span>
                                         {selectedManifestRow.outcome && <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${selectedManifestRow.outcome.cls}`}>{selectedManifestRow.outcome.label}</span>}
-                                        <div className="flex items-center rounded-md border border-gray-200 bg-gray-50">
+                                        <div className="flex min-w-0 flex-1 items-center rounded-md border border-gray-200 bg-gray-50 sm:flex-none">
                                             <button
                                                 type="button"
                                                 onClick={() => moveManifestDrawer(-1)}
@@ -2745,7 +2750,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                             >
                                                 <ChevronLeft size={15} />
                                             </button>
-                                            <span className="border-x border-gray-200 px-1.5 text-[10px] font-medium tabular-nums text-gray-500" aria-live="polite">
+                                            <span className="min-w-0 flex-1 border-x border-gray-200 px-1.5 text-center text-[10px] font-medium tabular-nums text-gray-500" aria-live="polite">
                                                 Row {selectedManifestIndex + 1} of {drawerRows.length} matching · {activeAds.length} included overall
                                             </span>
                                             <button
