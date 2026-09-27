@@ -6,6 +6,7 @@ import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 import { isValidDestinationUrl, normalizeDestinationUrl } from '../lib/destinationUrl';
+import { resolveGlobalWebsiteUrl } from '../lib/driveCreativeSelection';
 import { cropImageToAspect } from '../lib/imageCrop';
 import { useBrands } from '../context/BrandContext';
 import CreativeEnhancementsPanel from './CreativeEnhancementsPanel';
@@ -1519,18 +1520,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
             const nextCta = firstWithCopy?.cta && !copyFieldsTouched.cta
                 ? firstWithCopy.cta
                 : clearStaleGlobalCopy && !copyFieldsTouched.cta ? 'GET_QUOTE' : (prev.cta || 'GET_QUOTE');
-            const nextWebsiteUrl = hasConflictingDriveDestinations
-                // Every other branch here respects a manual edit; this one
-                // shouldn't be the exception — don't wipe a URL Joel already
-                // typed just because this add-batch also conflicts.
-                ? (copyFieldsTouched.websiteUrl ? prev.websiteUrl : '')
-                : (firstWithCopy?.landingPage || firstDefaultUrl) && !copyFieldsTouched.websiteUrl
-                ? (firstWithCopy?.landingPage || firstDefaultUrl)
-                // Missing Drive copy must never erase the one global launch URL.
-                // These are independent concerns: the row editor can correctly
-                // require primary text/headline while every ad continues to
-                // inherit the destination already chosen for the launch.
-                : prev.websiteUrl;
+            const nextWebsiteUrl = resolveGlobalWebsiteUrl({
+                previousUrl: prev.websiteUrl,
+                suggestedUrl: firstWithCopy?.landingPage || firstDefaultUrl,
+                hasConflictingDestinations: hasConflictingDriveDestinations,
+                wasManuallyEdited: copyFieldsTouched.websiteUrl,
+            });
 
             if (selectedAdAccount) {
                 safeLocalStorageSet(`defaultHeadlines_${selectedAdAccount.id}_${campaignCacheId}`, JSON.stringify(nextHeadlines || ['']));
