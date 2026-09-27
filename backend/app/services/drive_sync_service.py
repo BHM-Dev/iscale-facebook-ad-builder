@@ -2659,13 +2659,13 @@ class DriveSyncService:
         match = re.search(r"(?:^|[-_ ])AD\s*0?(\d{1,2})(?=$|[-_ ])", stem, re.IGNORECASE)
         if match:
             return int(match.group(1))
-        # The Painting package uses the older CVI-PAINT-01 convention instead
-        # of spelling out AD before the number. Keep this fallback restricted
-        # to that known family so arbitrary CVI-prefixed files cannot inherit
-        # another package's copy. Accept both a suffix and an exact stem.
-        cvi_match = re.search(r"^CVI-PAINT-0?(\d{1,2})(?=$|[-_ ])", stem, re.IGNORECASE)
-        if cvi_match:
-            return int(cvi_match.group(1))
+        # Painting exports use a family prefix (the older CVI-PAINT-01 and
+        # current PC-PAINT-01 conventions) instead of spelling out AD before
+        # the number. Keep this fallback restricted to known Painting families
+        # so arbitrary prefixed files cannot inherit another package's copy.
+        paint_match = re.search(r"^(?:CVI|PC)-PAINT-0?(\d{1,2})(?=$|[-_ ])", stem, re.IGNORECASE)
+        if paint_match:
+            return int(paint_match.group(1))
         # General Commercial Auto's original launch export predates the
         # AD-01 filename convention: its paired files are A1…A5, B1…B4,
         # C1…C4 and D1…D5 while its source document numbers them AD 01…18.

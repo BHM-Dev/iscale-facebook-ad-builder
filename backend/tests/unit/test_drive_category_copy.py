@@ -437,6 +437,30 @@ CTA: Get My Rate Now
     assert result["assets_by_drive_id"]["stories"]["copy_id"] == "AD-01"
 
 
+def test_ad_numbered_copy_doc_maps_current_pc_paint_filenames():
+    service = DriveSyncService.__new__(DriveSyncService)
+    document = """GBC — Painting Contractors
+AD 1 — Adjuster Question
+META HEADLINE
+Does Your Personal Policy Cover Job-Site Driving?
+PRIMARY TEXT
+Painting contractors need commercial coverage for their work vehicles.
+CTA: Get My Rate Now
+"""
+    media = [
+        {"id": "feed", "name": "PC-PAINT-01 — Adjuster Question — 1x1.png"},
+        {"id": "stories", "name": "PC-PAINT-01 — Adjuster Question — 9x16.png"},
+    ]
+
+    result = service._ad_numbered_folder_copy_metadata("painting", media, document)
+
+    assert result["assets_by_drive_id"]["feed"]["copy_id"] == "AD-01"
+    assert result["assets_by_drive_id"]["stories"]["copy_id"] == "AD-01"
+    assert result["assets_by_drive_id"]["feed"]["copy"]["primary_text"] == (
+        "Painting contractors need commercial coverage for their work vehicles."
+    )
+
+
 def test_ad_numbered_copy_doc_maps_compact_general_auto_legacy_set_names():
     service = DriveSyncService.__new__(DriveSyncService)
     document = """AD 01 — Original Set A1
