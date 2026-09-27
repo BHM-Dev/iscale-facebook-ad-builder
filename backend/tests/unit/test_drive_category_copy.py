@@ -524,6 +524,33 @@ def test_final_painting_markdown_handoff_maps_its_numbered_assets():
     assert result["assets_by_drive_id"]["feed"]["cta"] == "LEARN_MORE"
 
 
+def test_final_painting_launch_brief_maps_bold_table_fields_and_single_placements():
+    service = DriveSyncService.__new__(DriveSyncService)
+    document = """| **Landing page** | `https://example.com/paint` |
+| **CTA** | `Learn More` |
+### PC-PAINT-01 — Static
+| **Primary text** | Painting static copy. |
+| **Headline** | Commercial Auto for Painters |
+| **Description** | Work vehicle coverage. |
+### PC-PAINT-05 — Video
+| **Primary text** | Painting video copy. |
+| **Headline** | Protect the Van |
+| **Description** | Commercial auto. |
+"""
+
+    normalized = service._markdown_handoff_to_ad_copy_doc(document)
+    result = service._ad_numbered_folder_copy_metadata("painting", [
+        {"id": "static", "name": "PC-PAINT-01 — Static — 4x5.png"},
+        {"id": "video", "name": "PC-PAINT-05 — Video — 9x16.mp4"},
+    ], normalized, allow_single_placements=True)
+
+    assert result["assets_by_drive_id"]["static"]["aspect"] == "4x5"
+    assert result["assets_by_drive_id"]["static"]["copy_pairing_status"] == "single"
+    assert result["assets_by_drive_id"]["video"]["copy_pairing_status"] == "single"
+    assert result["assets_by_drive_id"]["static"]["landing_page"] == "https://example.com/paint"
+    assert result["assets_by_drive_id"]["video"]["cta"] == "LEARN_MORE"
+
+
 def test_ad_numbered_copy_doc_maps_compact_general_auto_legacy_set_names():
     service = DriveSyncService.__new__(DriveSyncService)
     document = """AD 01 — Original Set A1

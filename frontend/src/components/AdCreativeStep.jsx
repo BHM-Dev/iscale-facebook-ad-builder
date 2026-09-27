@@ -89,11 +89,11 @@ const hasCompleteCopy = (copy = {}) => Boolean(
 
 const normalizeFilenameBase = (fileName = '') => {
     const withoutExt = fileName.replace(/\.[^.]+$/, '');
-    const aspectMatch = withoutExt.match(/(?:^|[_\-\s])(1x1|9x16)(?=$|[_\-\s])/i);
+    const aspectMatch = withoutExt.match(/(?:^|[_\-\s])(1x1|4x5|9x16)(?=$|[_\-\s])/i);
     if (!aspectMatch) return null;
     const aspect = aspectMatch[1].toLowerCase();
     const base = withoutExt
-        .replace(/(?:^|[_\-\s])(1x1|9x16)(?=$|[_\-\s])/i, ' ')
+        .replace(/(?:^|[_\-\s])(1x1|4x5|9x16)(?=$|[_\-\s])/i, ' ')
         .replace(/[_\-\s]+/g, ' ')
         .trim()
         .toLowerCase();
@@ -108,16 +108,16 @@ const folderPlacementHint = (asset) => {
         .split(/[\\/]/)
         .map(part => part.trim().toLowerCase())
         .filter(Boolean);
-    const aspectFolder = [...pathParts].reverse().find(part => /^(?:1x1|9x16)(?:\s+(?:images?|assets?))?$/.test(part));
+    const aspectFolder = [...pathParts].reverse().find(part => /^(?:1x1|4x5|9x16)(?:\s+(?:images?|assets?))?$/.test(part));
     if (aspectFolder?.startsWith('9x16')) return 'stories';
-    if (aspectFolder?.startsWith('1x1')) return 'feed';
+    if (aspectFolder?.startsWith('1x1') || aspectFolder?.startsWith('4x5')) return 'feed';
     return null;
 };
 
 const driveAssetPlacement = (asset) => {
     const tags = parseDriveTags(asset);
     if (tags.aspect === '9x16') return 'stories';
-    if (tags.aspect === '1x1') return 'feed';
+    if (tags.aspect === '1x1' || tags.aspect === '4x5') return 'feed';
     const folderHint = folderPlacementHint(asset);
     if (folderHint) return folderHint;
     const parsed = normalizeFilenameBase(asset.file_name || '');

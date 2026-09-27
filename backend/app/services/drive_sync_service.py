@@ -2031,7 +2031,9 @@ class DriveSyncService:
                         # happens to match.
                         if self._is_painting_markdown_handoff_media(item)
                     ]
-                    metadata = self._ad_numbered_folder_copy_metadata(folder_id, media_files, markdown_ad_copy)
+                    metadata = self._ad_numbered_folder_copy_metadata(
+                        folder_id, media_files, markdown_ad_copy, allow_single_placements=True
+                    )
                     if not metadata.get("assets_by_drive_id"):
                         raise NonActionableHandoffManifestError("Markdown handoff did not map any current media")
                 else:
@@ -2685,12 +2687,12 @@ class DriveSyncService:
 
     def _media_aspect(self, item: Dict[str, Any]) -> Optional[str]:
         file_name = item.get("name") or ""
-        aspect_match = re.search(r"(?:^|[-_ ])(1x1|9x16)(?:[-_][A-Za-z0-9]+)?(?=\.[^.]+$)", file_name, re.IGNORECASE)
+        aspect_match = re.search(r"(?:^|[-_ ])(1x1|4x5|9x16)(?:[-_][A-Za-z0-9]+)?(?=\.[^.]+$)", file_name, re.IGNORECASE)
         if aspect_match:
             return aspect_match.group(1).lower()
         for folder_name in reversed(item.get("_parent_folder_path") or [item.get("_parent_folder_name") or ""]):
             folder_aspect = re.match(
-                r"^\s*(1x1|9x16)(?:\s+(?:images?|assets?|feed|stories|reels))?\s*$",
+                r"^\s*(1x1|4x5|9x16)(?:\s+(?:images?|assets?|feed|stories|reels))?\s*$",
                 folder_name,
                 re.IGNORECASE,
             )
@@ -2735,10 +2737,10 @@ class DriveSyncService:
         filename so that each uniquely named Feed/Stories pair stays intact.
         """
         stem = os.path.splitext(file_name or "")[0].lower()
-        stem = re.sub(r"(?:^|[-_ ])(?:1x1|9x16)(?=$|[-_ ])", " ", stem, flags=re.IGNORECASE)
+        stem = re.sub(r"(?:^|[-_ ])(?:1x1|4x5|9x16)(?=$|[-_ ])", " ", stem, flags=re.IGNORECASE)
         return re.sub(r"[-_\s]+", " ", stem).strip()
 
-    def _ad_numbered_folder_copy_metadata(self, folder_id, media_files, text_body):
+    def _ad_numbered_folder_copy_metadata(self, folder_id, media_files, text_body, allow_single_placements=False):
         sections = self._parse_ad_copy_doc(text_body)
         if not sections:
             # An incomplete draft can still reach this lower-level resolver
@@ -2773,9 +2775,10 @@ class DriveSyncService:
             # Incomplete/unknown identities remain explicit singles and retain
             # the prior fail-closed EXTRA IDs.
             valid_pairs: Dict[str, List[Any]] = {}
+            valid_singles: Dict[str, List[Any]] = {}
             ambiguous_candidates: List[Any] = []
             for identity, identity_candidates in candidates_by_identity.items():
-                by_aspect: Dict[str, List[Any]] = {"1x1": [], "9x16": [], "unknown": []}
+                by_aspect: Dict[str, List[Any]] = {"1x1": [], "4x5": [], "9x16": [], "unknown": []}
                 for candidate in identity_candidates:
                     by_aspect[candidate[2]].append(candidate)
                 if (
@@ -2785,23 +2788,34 @@ class DriveSyncService:
                     and not by_aspect["unknown"]
                 ):
                     valid_pairs[identity] = identity_candidates
+                elif (
+                    allow_single_placements
+                    and identity
+                    and not by_aspect["unknown"]
+                    and sum(len(by_aspect[aspect]) for aspect in ("1x1", "4x5", "9x16")) == 1
+                ):
+                    # Keep explicitly supplied Feed-only 4:5 statics and
+                    # Stories-only 9:16 video as single placements. Never
+                    # invent the missing companion asset.
+                    valid_singles[identity] = identity_candidates
                 else:
                     ambiguous_candidates.extend(identity_candidates)
 
             copy_ids_by_drive_id = {}
             pairing_status_by_drive_id = {}
-            for identity, pair in valid_pairs.items():
+            source_count = len(valid_pairs) + len(valid_singles)
+            for identity, pair in {**valid_pairs, **valid_singles}.items():
                 # Preserve the historic AD-01 ID for the simple one-pair case;
                 # add the visual identity only where it distinguishes multiple
                 # valid pairs under the same AD number.
                 copy_id = (
                     f"AD-{ad_number:02d}"
-                    if len(valid_pairs) == 1
+                    if source_count == 1
                     else f"AD-{ad_number:02d}-{re.sub(r'[^a-z0-9]+', '-', identity).strip('-')}"
                 )
                 for candidate in pair:
                     copy_ids_by_drive_id[candidate[0].get("id")] = copy_id
-                    pairing_status_by_drive_id[candidate[0].get("id")] = "paired"
+                    pairing_status_by_drive_id[candidate[0].get("id")] = "paired" if identity in valid_pairs else "single"
             for extra_index, candidate in enumerate(sorted(ambiguous_candidates, key=lambda entry: (
                 entry[2], entry[1].lower(), str(entry[0].get("id") or "")
             )), start=1):
@@ -3172,14 +3186,14 @@ class DriveSyncService:
 
     def _markdown_handoff_to_ad_copy_doc(self, text_body: str) -> str:
         """Normalize final-handoff Markdown tables into AD-copy format."""
-        landing = re.search(
-            r"^\|\s*Landing page\s*\|\s*\`?([^|\`]+?)\`?\s*\|", text_body,
-            re.IGNORECASE | re.MULTILINE,
-        )
-        cta = re.search(
-            r"^\|\s*CTA\s*\|\s*\`?([^|\`]+?)\`?\s*\|", text_body,
-            re.IGNORECASE | re.MULTILINE,
-        )
+        def markdown_table_value(source: str, label: str):
+            return re.search(
+                rf"^\|\s*(?:\*\*)?{re.escape(label)}(?:\*\*)?\s*\|\s*\`?([^|\`]+?)\`?\s*\|",
+                source, re.IGNORECASE | re.MULTILINE,
+            )
+
+        landing = markdown_table_value(text_body, "Landing page")
+        cta = markdown_table_value(text_body, "CTA")
         headings = list(re.finditer(r"^###\s+PC-PAINT-(\d{1,2})\b.*$", text_body, re.IGNORECASE | re.MULTILINE))
         if not headings:
             return ""
@@ -3187,10 +3201,7 @@ class DriveSyncService:
         for index, heading in enumerate(headings):
             block = text_body[heading.end():headings[index + 1].start() if index + 1 < len(headings) else len(text_body)]
             def table_value(label: str) -> str:
-                match = re.search(
-                    rf"^\|\s*{re.escape(label)}\s*\|\s*\`?([^|\`]+?)\`?\s*\|",
-                    block, re.IGNORECASE | re.MULTILINE,
-                )
+                match = markdown_table_value(block, label)
                 return self._clean_markdown_value(match.group(1)) if match else ""
             headline = table_value("Headline")
             primary_text = table_value("Primary text")
