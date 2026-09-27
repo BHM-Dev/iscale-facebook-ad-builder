@@ -5,6 +5,45 @@ def _service():
     return DriveSyncService.__new__(DriveSyncService)
 
 
+def test_final_meta_launch_brief_is_selected_and_binds_only_its_supported_assets():
+    service = _service()
+    service._folder_metadata_cache = {}
+    brief = """| **Landing page** | `https://example.com/paint` |
+| **CTA** | `Learn More` |
+### PC-PAINT-01 — Static
+| **Primary text** | Painting static copy. |
+| **Headline** | Commercial Auto for Painters |
+| **Description** | Work vehicle coverage. |
+### PC-PAINT-05 — Video
+| **Primary text** | Painting video copy. |
+| **Headline** | Protect the Van |
+| **Description** | Commercial auto. |
+"""
+    files = [
+        {
+            "id": "brief", "name": "Painting Contractors — Final Meta Launch Brief.md",
+            "mimeType": "text/markdown", "modifiedTime": "2026-09-09T12:45:52.974Z",
+            "_direct_parent_folder_id": "package",
+        },
+        {"id": "static", "name": "PC-PAINT-01 — Static — 4x5.png", "mimeType": "image/png"},
+        {"id": "video", "name": "PC-PAINT-05 — Video — 9x16 Captions + Music.mp4", "mimeType": "video/mp4"},
+        # A package can contain other media, but this PC-PAINT handoff must
+        # never apply its AD 1 copy to an unrelated numbered asset.
+        {"id": "other", "name": "AD-01 — Other Package — 1x1.png", "mimeType": "image/png"},
+    ]
+    service._list_folder_subtree = lambda folder_id: files
+    service._download_text_file = lambda file_id: brief if file_id == "brief" else ""
+
+    result = service._folder_copy_metadata("package", force=True)
+
+    assert set(result["assets_by_drive_id"]) == {"static", "video"}
+    assert result["assets_by_drive_id"]["static"]["copy"]["headline"] == "Commercial Auto for Painters"
+    assert result["assets_by_drive_id"]["static"]["copy_pairing_status"] == "single"
+    assert result["assets_by_drive_id"]["video"]["aspect"] == "9x16"
+    assert result["assets_by_drive_id"]["video"]["cta"] == "LEARN_MORE"
+    assert result["_copy_source_drive_file_id"] == "brief"
+
+
 def test_handoff_id_extractor_normalizes_live_formats_and_rejects_prose():
     service = _service()
 
