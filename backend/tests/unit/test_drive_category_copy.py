@@ -461,6 +461,31 @@ CTA: Get My Rate Now
     )
 
 
+def test_readme_handoff_is_recognized_as_a_package_manifest():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._package_folder_cache = {}
+    service._client = lambda: None
+    service.root_folder_id = "root"
+    service._folder_chain_to_root = lambda folder_id: [
+        {"id": "package", "name": "Painting Contractors"},
+        {"id": "brand", "name": "Commercial Insurance"},
+        {"id": "root", "name": "root"},
+    ]
+    service._list_folder_subtree = lambda folder_id: [
+        {
+            "id": "readme",
+            "name": "READ ME — Painting Contractors FINAL Meta Handoff.md",
+            "mimeType": "text/markdown",
+            "_direct_parent_folder_id": "package",
+        },
+        {"id": "asset", "name": "PC-PAINT-01 — Adjuster Question — 1x1.png", "mimeType": "image/png"},
+    ]
+
+    assert service._is_handoff_manifest_file("READ ME — Painting Contractors FINAL Meta Handoff.md")
+    assert not service._is_handoff_manifest_file("README — Painting Contractors Handoff Notes.md")
+    assert service._find_package_folder({"parents": ["package"]}) == "package"
+
+
 def test_ad_numbered_copy_doc_maps_compact_general_auto_legacy_set_names():
     service = DriveSyncService.__new__(DriveSyncService)
     document = """AD 01 — Original Set A1

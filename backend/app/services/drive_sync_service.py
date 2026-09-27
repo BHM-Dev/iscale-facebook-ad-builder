@@ -410,7 +410,7 @@ class DriveSyncService:
                     logger.warning("Could not read Drive text file %s during copy refresh: %s", file_meta.get("name"), exc)
                     self._mark_package_copy_unverified(file_meta, str(exc))
                     continue
-                is_handoff_manifest = all(token in (file_meta.get("name") or "").lower() for token in ("handoff", "manifest"))
+                is_handoff_manifest = self._is_handoff_manifest_file(file_meta.get("name") or "")
                 if not (
                     self._looks_like_strategy_copy_doc(text_body)
                     or self._looks_like_category_copy_doc(text_body)
@@ -1180,6 +1180,31 @@ class DriveSyncService:
         guessed, _ = mimetypes.guess_type(file_name)
         return bool((guessed and guessed.startswith(TEXT_PREFIXES)) or file_name.lower().endswith(".txt"))
 
+    @staticmethod
+    def _is_readme_meta_handoff_file(file_name: str) -> bool:
+        normalized = (file_name or "").lower()
+        return "meta handoff" in normalized and bool(
+            re.search(r"(?:^|[\s_-])read[\s_-]*me(?:$|[\s_.-])", normalized)
+        )
+
+    @classmethod
+    def _is_handoff_manifest_file(cls, file_name: str) -> bool:
+        """Recognize formal manifests and direct README Meta Handoffs."""
+        normalized = (file_name or "").lower()
+        return "handoff" in normalized and (
+            "manifest" in normalized
+            or cls._is_readme_meta_handoff_file(normalized)
+        )
+
+    @classmethod
+    def _is_handoff_manifest_for_folder(cls, item: Dict[str, Any], folder_id: str) -> bool:
+        """README handoffs are scoped to their direct package folder."""
+        file_name = item.get("name") or ""
+        return cls._is_handoff_manifest_file(file_name) and (
+            not cls._is_readme_meta_handoff_file(file_name)
+            or item.get("_direct_parent_folder_id") == folder_id
+        )
+
     def _find_package_folder(self, file_meta: Dict[str, Any], max_depth: int = 4) -> Optional[str]:
         """Walk up from a file's immediate parent to find its manifest package.
 
@@ -1213,7 +1238,7 @@ class DriveSyncService:
                 logger.warning("Could not check Drive folder %s for a handoff manifest: %s", current, exc)
                 break
             has_manifest = any(
-                "handoff" in (item.get("name") or "").lower() and "manifest" in (item.get("name") or "").lower()
+                self._is_handoff_manifest_for_folder(item, current)
                 for item in folder_items
                 if item.get("mimeType") != "application/vnd.google-apps.folder"
             )
@@ -1477,7 +1502,7 @@ class DriveSyncService:
     def _metadata_folder_for_copy_document(self, file_meta: Dict[str, Any]) -> Optional[str]:
         """Resolve the one package folder whose canonical copy this doc may refresh."""
         doc_name = (file_meta.get("name") or "").lower()
-        is_handoff_manifest = "handoff" in doc_name and "manifest" in doc_name
+        is_handoff_manifest = self._is_handoff_manifest_file(doc_name)
         return (
             self._find_package_folder(file_meta) or self._find_strategy_package_folder(file_meta)
             if is_handoff_manifest
@@ -1763,6 +1788,7 @@ class DriveSyncService:
                         # rather than repeated in every image filename.
                         item["_parent_folder_name"] = current_path[-1] if current_path else ""
                         item["_parent_folder_path"] = current_path
+                        item["_direct_parent_folder_id"] = current
                         collected.append(item)
                 page_token = response.get("nextPageToken")
                 if not page_token or len(collected) >= max_files:
@@ -1890,7 +1916,7 @@ class DriveSyncService:
             if self._is_supported_media(item.get("mimeType") or "", item.get("name") or "")
         }
         manifest = next(
-            (item for item in text_files if "handoff" in item.get("name", "").lower() and "manifest" in item.get("name", "").lower()),
+            (item for item in text_files if self._is_handoff_manifest_for_folder(item, folder_id)),
             None,
         )
         unreadable_launch_copy_candidates = [
@@ -1926,7 +1952,7 @@ class DriveSyncService:
             non_manifest_candidates = []
             for item in text_files:
                 name = (item.get("name") or "").lower()
-                if "handoff" in name and "manifest" in name:
+                if self._is_handoff_manifest_for_folder(item, folder_id):
                     continue
                 candidate_text = text_by_id.get(item.get("id"))
                 if candidate_text is None:
@@ -2072,7 +2098,7 @@ class DriveSyncService:
         copy_candidates = []
         unreadable_text_files = []
         for item in text_files:
-            if "handoff" in (item.get("name") or "").lower() and "manifest" in (item.get("name") or "").lower():
+            if self._is_handoff_manifest_for_folder(item, folder_id):
                 # A handoff document is considered only by the manifest path
                 # above.  It must never be silently reclassified as generic ad
                 # copy after losing a freshness comparison or failing parsing.
