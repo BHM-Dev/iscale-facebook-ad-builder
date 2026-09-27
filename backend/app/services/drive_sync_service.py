@@ -2024,7 +2024,12 @@ class DriveSyncService:
                 if markdown_ad_copy:
                     media_files = [
                         item for item in folder_files
-                        if self._is_supported_media(item.get("mimeType") or "", item.get("name") or "")
+                        # This parser is deliberately scoped to the explicit
+                        # PC-PAINT handoff headings below.  A mixed folder may
+                        # contain an unrelated AD-01 asset; it must never
+                        # inherit Painting copy merely because its number
+                        # happens to match.
+                        if self._is_painting_markdown_handoff_media(item)
                     ]
                     metadata = self._ad_numbered_folder_copy_metadata(folder_id, media_files, markdown_ad_copy)
                     if not metadata.get("assets_by_drive_id"):
@@ -3196,6 +3201,11 @@ class DriveSyncService:
                 f"AD {int(heading.group(1))}\nMETA HEADLINE\n{headline}\n"
                 f"PRIMARY TEXT\n{primary_text}\n"
                 + (f"DESCRIPTION\n{description}\n" if description else "")
+                # _parse_ad_copy_doc correctly gives every AD the global
+                # landing page, but CTA is intentionally read within each AD
+                # block. Repeat the handoff's shared CTA here so it cannot
+                # silently fall back to a stale UI default at launch time.
+                + (f"CTA: {cta.group(1).strip()}\n" if cta else "")
             )
         prefix = ""
         if landing:
@@ -3203,6 +3213,14 @@ class DriveSyncService:
         if cta:
             prefix += f"CTA: {cta.group(1).strip()}\n"
         return prefix + "\n".join(sections)
+
+    def _is_painting_markdown_handoff_media(self, item: Dict[str, Any]) -> bool:
+        """Limit PC-PAINT Markdown handoffs to their explicit asset family."""
+        file_name = item.get("name") or ""
+        return bool(
+            self._is_supported_media(item.get("mimeType") or "", file_name)
+            and re.search(r"^PC-PAINT-0?\d{1,2}(?=$|[-_ ])", file_name, re.IGNORECASE)
+        )
 
     def _parse_copy_file(self, text_body: str) -> Dict[str, Dict[str, str]]:
         blocks: Dict[str, Dict[str, str]] = {}

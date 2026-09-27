@@ -505,6 +505,15 @@ def test_final_painting_markdown_handoff_maps_its_numbered_assets():
 | Description | Work van coverage. |
 """
     normalized = service._markdown_handoff_to_ad_copy_doc(document)
+    assert service._is_painting_markdown_handoff_media(
+        {"name": "PC-PAINT-01 — Adjuster Question — 1x1.png", "mimeType": "image/png"}
+    )
+    assert not service._is_painting_markdown_handoff_media(
+        {"name": "CVI-PAINT-01-legacy-1x1.png", "mimeType": "image/png"}
+    )
+    assert not service._is_painting_markdown_handoff_media(
+        {"name": "AD-01 — Different Package — 1x1.png", "mimeType": "image/png"}
+    )
     result = service._ad_numbered_folder_copy_metadata("painting", [
         {"id": "feed", "name": "PC-PAINT-01 — Adjuster Question — 1x1.png"},
         {"id": "story", "name": "PC-PAINT-01 — Adjuster Question — 9x16.png"},
@@ -512,6 +521,7 @@ def test_final_painting_markdown_handoff_maps_its_numbered_assets():
 
     assert result["assets_by_drive_id"]["feed"]["copy"]["primary_text"] == "Painting copy."
     assert result["assets_by_drive_id"]["story"]["copy"]["headline"] == "Painting Contractors Insurance"
+    assert result["assets_by_drive_id"]["feed"]["cta"] == "LEARN_MORE"
 
 
 def test_ad_numbered_copy_doc_maps_compact_general_auto_legacy_set_names():
