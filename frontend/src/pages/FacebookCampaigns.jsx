@@ -477,11 +477,15 @@ const FacebookCampaignWizardInner = () => {
         : [{ id: adsetData?.fbAdsetId || null, name: launchReceipt?.adsetName || adsetData?.name || 'Ad set not recorded' }];
     const receiptCreatedAds = Array.isArray(launchReceipt?.createdAds) ? launchReceipt.createdAds : [];
     const receiptVisibleAds = receiptCreatedAds.slice(0, 10);
+    const receiptPageName = launchReceipt?.pageName || creativeData?.pageName || creativeData?.pageId || null;
+    const receiptDestinationUrl = launchReceipt?.destinationUrl || creativeData?.websiteUrl || null;
 
     const copyLaunchReceipt = async () => {
         const lines = [
             `Account: ${launchReceipt?.accountName || selectedAdAccount?.name || 'Not recorded'}`,
             `Campaign: ${launchReceipt?.campaignName || campaignData?.name || 'Not recorded'}${launchReceipt?.campaignId ? ` (${launchReceipt.campaignId})` : ''}`,
+            ...(receiptPageName ? [`Facebook Page: ${receiptPageName}${launchReceipt?.pageId && launchReceipt.pageId !== receiptPageName ? ` (${launchReceipt.pageId})` : ''}`] : []),
+            ...(receiptDestinationUrl ? [`Destination URL: ${receiptDestinationUrl}`] : []),
             ...receiptAdSetTargets.map(target => `Ad set: ${target.name}${target.id ? ` (${target.id})` : ''}`),
             ...receiptCreatedAds.map(ad => `Ad: ${ad.name}${ad.placement ? ` [${ad.placement}]` : ''}${ad.id ? ` (${ad.id})` : ''}`),
         ];
@@ -854,6 +858,7 @@ const FacebookCampaignWizardInner = () => {
                                         <p className="mt-1 truncate text-xs text-gray-600" title={launchReceipt?.campaignName || campaignData?.name}>{launchReceipt?.campaignName || campaignData?.name || 'Campaign not recorded'}{launchReceipt?.campaignId ? ` · ${launchReceipt.campaignId}` : ''}</p>
                                     </div>
                                 </div>
+                                {(receiptPageName || receiptDestinationUrl) && <div className="mt-4 grid gap-3 border-t border-gray-100 pt-4 text-xs sm:grid-cols-2"><div><p className="font-semibold uppercase tracking-wide text-gray-400">Facebook Page</p><p className="mt-1 break-words font-medium text-gray-800">{receiptPageName || 'Not recorded'}{launchReceipt?.pageId && launchReceipt.pageId !== receiptPageName ? ` · ${launchReceipt.pageId}` : ''}</p></div><div><p className="font-semibold uppercase tracking-wide text-gray-400">Destination URL</p><p className="mt-1 break-all font-medium text-gray-800">{receiptDestinationUrl || 'Not recorded'}</p></div></div>}
                                 <div className="mt-4 border-t border-gray-100 pt-4">
                                     <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ad sets to verify</p><button type="button" onClick={copyLaunchReceipt} className="text-xs font-semibold text-amber-700 hover:text-amber-900">Copy full receipt</button></div>
                                     <div className="mt-2 space-y-1.5">
