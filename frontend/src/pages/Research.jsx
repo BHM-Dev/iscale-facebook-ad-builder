@@ -1208,7 +1208,7 @@ function ResearchTestBacklog({ items, loading, verticalId, verticalLabel, onCrea
   const statuses = ['draft', 'building', 'launched', 'learned', 'archived'];
   const visible = (items || []).filter(item => item.vertical_id === verticalId);
   const submit = event => { event.preventDefault(); if (!hypothesis.trim()) return; onCreate({ vertical_id: verticalId, hypothesis: hypothesis.trim(), advertiser: advertiser.trim() || null }); setHypothesis(''); setAdvertiser(''); };
-  return <section className="rounded-xl border border-slate-200 bg-white" aria-label="Research test backlog"><div className="border-b border-slate-100 px-5 py-4"><p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-700">Research test backlog</p><h3 className="mt-1 text-base font-semibold text-slate-900">Turn evidence into an original test decision</h3><p className="mt-1 text-sm text-slate-500">This records a BHM hypothesis—not competitor performance. Linking outcomes is a later step after a generated ad is explicitly associated.</p></div><form onSubmit={submit} className="grid gap-2 border-b border-slate-100 bg-slate-50/70 p-4 md:grid-cols-[180px_1fr_auto]"><input value={advertiser} onChange={event => setAdvertiser(event.target.value)} maxLength={200} placeholder="Source advertiser (optional)" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" /><input value={hypothesis} onChange={event => setHypothesis(event.target.value)} maxLength={2000} placeholder={`e.g. Test a contractor-specific comparison hook for ${verticalLabel}`} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" /><button type="submit" disabled={!hypothesis.trim()} className="rounded-lg bg-violet-700 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-800 disabled:opacity-50">Add test</button></form>{loading ? <p className="px-5 py-10 text-center text-sm text-slate-500">Loading test decisions…</p> : visible.length === 0 ? <p className="px-5 py-10 text-center text-sm text-slate-500">No {verticalLabel.toLowerCase()} test decisions yet.</p> : <div className="divide-y divide-slate-100">{visible.map(item => <article key={item.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-4"><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-slate-900">{item.hypothesis}</p><p className="mt-1 text-xs text-slate-500">{item.advertiser ? `${item.advertiser} · ` : ''}Created {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'recently'}</p></div><div className="flex flex-wrap items-center gap-2">{item.source && <button type="button" onClick={() => onBuild(item)} className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-100">Build test</button>}<select value={item.status} onChange={event => onStatusChange(item.id, event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-semibold text-slate-700">{statuses.map(status => <option key={status} value={status}>{status[0].toUpperCase() + status.slice(1)}</option>)}</select></div></article>)}</div>}</section>;
+  return <section className="rounded-xl border border-slate-200 bg-white" aria-label="Research test backlog"><div className="border-b border-slate-100 px-5 py-4"><p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-700">Research test backlog</p><h3 className="mt-1 text-base font-semibold text-slate-900">Turn evidence into an original test decision</h3><p className="mt-1 text-sm text-slate-500">This records a BHM hypothesis—not competitor performance. A BHM ad is linked only after a buyer explicitly creates it in the paused Meta handoff.</p></div><form onSubmit={submit} className="grid gap-2 border-b border-slate-100 bg-slate-50/70 p-4 md:grid-cols-[180px_1fr_auto]"><input value={advertiser} onChange={event => setAdvertiser(event.target.value)} maxLength={200} placeholder="Source advertiser (optional)" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" /><input value={hypothesis} onChange={event => setHypothesis(event.target.value)} maxLength={2000} placeholder={`e.g. Test a contractor-specific comparison hook for ${verticalLabel}`} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" /><button type="submit" disabled={!hypothesis.trim()} className="rounded-lg bg-violet-700 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-800 disabled:opacity-50">Add test</button></form>{loading ? <p className="px-5 py-10 text-center text-sm text-slate-500">Loading test decisions…</p> : visible.length === 0 ? <p className="px-5 py-10 text-center text-sm text-slate-500">No {verticalLabel.toLowerCase()} test decisions yet.</p> : <div className="divide-y divide-slate-100">{visible.map(item => <article key={item.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-4"><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-slate-900">{item.hypothesis}</p><p className="mt-1 text-xs text-slate-500">{item.advertiser ? `${item.advertiser} · ` : ''}Created {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'recently'}</p>{item.generated_ad_id && <p className="mt-2 inline-flex rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700" title="This is a link to a BHM-generated ad created through the paused Meta handoff. It does not indicate delivery, spend, or outcome.">BHM ad linked</p>}</div><div className="flex flex-wrap items-center gap-2">{item.source && !item.generated_ad_id && <button type="button" onClick={() => onBuild(item)} className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-100">Build test</button>}<select value={item.status} onChange={event => onStatusChange(item.id, event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-semibold text-slate-700">{statuses.map(status => <option key={status} value={status}>{status[0].toUpperCase() + status.slice(1)}</option>)}</select></div></article>)}</div>}</section>;
 }
 
 function ResearchCopilot({ verticalId, verticalLabel, onRunResults }) {
@@ -1547,7 +1547,7 @@ export default function Research() {
     const source = item.source;
     if (!source) return;
     await handleTestBacklogStatus(item.id, 'building');
-    handleUseAsInspiration(source, item.hypothesis);
+    handleUseAsInspiration(source, item.hypothesis, item.id);
   };
 
   const handleAddToWatchlist = async (advertiser) => {
@@ -2018,7 +2018,7 @@ export default function Research() {
     }
   };
 
-  const handleUseAsInspiration = (ad, watchlistBrief = null) => {
+  const handleUseAsInspiration = (ad, watchlistBrief = null, testBacklogId = null) => {
     localStorage.setItem('pendingResearchInspiration', JSON.stringify({
       headline: ad.headline,
       body: ad.ad_copy,
@@ -2035,6 +2035,10 @@ export default function Research() {
       creativeIntel: ad.creative_intel,
       analystTakeaway: ad.creative_intel?.bhm_takeaway || null,
       watchlistBrief,
+      // A backlog ID is only created from the buyer-owned Test Backlog. It lets
+      // later Meta-create flow link this original BHM ad back to the
+      // hypothesis without attributing competitor delivery or performance.
+      testBacklogId,
       researchBoard: boards.find(board => board.id === activeBoardId)?.name || null,
       adLink: ad.ad_link,
       scrapedAdId: ad.id,

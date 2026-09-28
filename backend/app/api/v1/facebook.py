@@ -12,7 +12,7 @@ except ImportError:
     FacebookBadObjectError = Exception  # fallback so catch still works
 
 logger = logging.getLogger(__name__)
-from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, User, Brand, GeneratedAd, MetaLaunchRequest, normalize_account_id
+from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, User, Brand, GeneratedAd, MetaLaunchRequest, ResearchTestBacklogItem, normalize_account_id
 from app.database import get_db
 from app.core.deps import get_current_active_user, require_permission
 from sqlalchemy.orm import Session
@@ -1352,11 +1352,23 @@ def push_to_meta(
     ad_name       = body.get("ad_name") or headline[:40] or "Remix Ad"
     status        = body.get("status", "PAUSED")
     request_id    = (body.get("request_id") or "").strip()
+    research_test_backlog_id = (body.get("research_test_backlog_id") or "").strip() or None
 
     if not adset_id:
         raise HTTPException(status_code=400, detail="adset_id is required")
     if not request_id:
         raise HTTPException(status_code=400, detail="request_id is required")
+    # Resolve buyer-owned research context before any Meta write. A stale or
+    # cross-user browser handoff must never create an ad that appears linked to
+    # somebody else's test decision.
+    research_test = None
+    if research_test_backlog_id:
+        research_test = db.query(ResearchTestBacklogItem).filter(
+            ResearchTestBacklogItem.id == research_test_backlog_id,
+            ResearchTestBacklogItem.created_by == current_user.id,
+        ).first()
+        if not research_test:
+            raise HTTPException(status_code=404, detail="Research test backlog item not found")
     prior = db.query(MetaLaunchRequest).filter(MetaLaunchRequest.id == request_id).first()
     if prior:
         if prior.status == "completed":
@@ -1461,6 +1473,8 @@ def push_to_meta(
                 fb_creative_id=creative_id,
             )
             db.add(ga)
+            if research_test:
+                research_test.generated_ad_id = ga.id
             db.commit()
             generated_ad_id = ga.id
         except Exception as link_err:
@@ -1481,6 +1495,7 @@ def push_to_meta(
             "image_hash": image_hash,
             "status": status,
             "generated_ad_id": generated_ad_id,
+            "research_test_backlog_id": research_test_backlog_id if generated_ad_id else None,
             "attribution_linked": generated_ad_id is not None,
             "meta_url": f"https://www.facebook.com/adsmanager/manage/ads?act={account_id_clean}&selected_ad_ids={ad_id}"
         }

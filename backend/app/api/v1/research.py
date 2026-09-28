@@ -2779,6 +2779,7 @@ def get_research_test_backlog(db: Session = Depends(get_db), current_user: User 
         "vertical_id": item.vertical_id,
         "advertiser": item.advertiser,
         "scraped_ad_id": item.scraped_ad_id,
+        "generated_ad_id": item.generated_ad_id,
         "hypothesis": item.hypothesis,
         "status": item.status,
         "notes": item.notes,

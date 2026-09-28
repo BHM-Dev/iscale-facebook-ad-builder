@@ -1,7 +1,7 @@
 """Acceptance tests for workspace-shared Research boards."""
 from uuid import uuid4
 
-from app.models import ResearchBoard, ResearchBoardItem, ScrapedAd
+from app.models import ResearchBoard, ResearchBoardItem, ResearchTestBacklogItem, ScrapedAd
 
 
 def create_test_ad(db_session):
@@ -90,5 +90,42 @@ class TestResearchBoards:
 
         # Remove the first board and test ad so this test is isolated in shared DB runs.
         client.delete(f"/api/v1/research/boards/{first_id}", headers=auth_headers)
+        db_session.query(ScrapedAd).filter(ScrapedAd.id == ad.id).delete()
+        db_session.commit()
+
+
+class TestResearchTestBacklog:
+    def test_backlog_keeps_retained_source_context_and_allows_buyer_status_updates(self, client, auth_headers, db_session):
+        """A research test is a buyer-owned decision, not a performance claim."""
+        ad = create_test_ad(db_session)
+        create = client.post(
+            "/api/v1/research/test-backlog",
+            json={
+                "vertical_id": "commercial_insurance",
+                "advertiser": ad.brand_name,
+                "scraped_ad_id": ad.id,
+                "hypothesis": "Test an original proof-led commercial insurance angle.",
+            },
+            headers=auth_headers,
+        )
+        assert create.status_code == 201
+        item_id = create.json()["id"]
+
+        listed = client.get("/api/v1/research/test-backlog", headers=auth_headers)
+        assert listed.status_code == 200
+        item = next(row for row in listed.json() if row["id"] == item_id)
+        assert item["status"] == "draft"
+        assert item["source"]["id"] == ad.id
+        assert item["source"]["brand_name"] == ad.brand_name
+
+        update = client.patch(
+            f"/api/v1/research/test-backlog/{item_id}",
+            json={"status": "building"},
+            headers=auth_headers,
+        )
+        assert update.status_code == 200
+        assert update.json()["status"] == "building"
+
+        db_session.query(ResearchTestBacklogItem).filter(ResearchTestBacklogItem.id == item_id).delete()
         db_session.query(ScrapedAd).filter(ScrapedAd.id == ad.id).delete()
         db_session.commit()

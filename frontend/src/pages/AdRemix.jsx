@@ -670,6 +670,7 @@ export default function AdRemix() {
                     niche: pendingNiche || null,
                     source_ad_id: remixSourceAdId || null,
                     campaign_id: remixFbCampaignId || null,
+                    research_test_backlog_id: researchInspiration?.testBacklogId || null,
                     request_id: pushForm.request_id,
                 }),
             });
