@@ -42,7 +42,6 @@ const ANGLE_LABELS = {
 const QUERY_PRESETS = [
   'Auto insurance — cheap quote',
   'Commercial insurance — niche/industry',
-  'Reverse mortgage — homeowner benefit',
 ];
 
 const RESEARCH_INITIAL_CARD_COUNT = 24;
@@ -58,11 +57,6 @@ const COPILOT_PROMPTS = {
     'Show active auto insurance quote ads',
     'Find auto insurance comparison ads',
     'Show recent auto insurance video ads',
-  ],
-  home_services: [
-    'Show active home services ads',
-    'Find home services testimonial ads',
-    'Show recent home services video ads',
   ],
 };
 
@@ -1402,11 +1396,9 @@ export default function Research() {
   const [verticalConfig, setVerticalConfig] = useState(null);
   const [activeVertical, setActiveVertical] = useState('commercial_insurance');
   const [activeSubVertical, setActiveSubVertical] = useState(null);
-  const [homeServicesOpen, setHomeServicesOpen] = useState(false);
   const [researchView, setResearchView] = useState('brief');
   const [briefVisualFilter, setBriefVisualFilter] = useState('all');
   const [showCatalogTools, setShowCatalogTools] = useState(false);
-  const homeServicesRef = useRef(null);
 
   const [browseAds, setBrowseAds] = useState([]);
   // A Meta CDN URL can be present in a capture but no longer resolve. Keep
@@ -1558,18 +1550,6 @@ export default function Research() {
   useEffect(() => {
     setVisibleCardCount(RESEARCH_INITIAL_CARD_COUNT);
   }, [browseAds]);
-
-  // Close Home Services dropdown on outside click
-  useEffect(() => {
-    if (!homeServicesOpen) return;
-    const handler = (e) => {
-      if (homeServicesRef.current && !homeServicesRef.current.contains(e.target)) {
-        setHomeServicesOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [homeServicesOpen]);
 
   const loadConfig = async () => {
     try {
@@ -2294,8 +2274,14 @@ export default function Research() {
   };
   const applySavedView = (view) => {
     const filters = view.filters || {};
-    setActiveVertical(filters.activeVertical || activeVertical);
-    setActiveSubVertical(filters.activeSubVertical || null);
+    // Research is intentionally scoped to the two active insurance
+    // workflows. Older browser-saved views can contain legacy verticals;
+    // applying one must not quietly take this workspace out of scope.
+    const savedVertical = ['commercial_insurance', 'auto_insurance'].includes(filters.activeVertical)
+      ? filters.activeVertical
+      : activeVertical;
+    setActiveVertical(savedVertical);
+    setActiveSubVertical(null);
     setAngleFilter(filters.angleFilter || ''); setMediaTypeFilter(filters.mediaTypeFilter || ''); setReviewFilter(filters.reviewFilter || '');
     setSortBy(filters.sortBy || 'newest_seen'); setActiveOnly(Boolean(filters.activeOnly));
     setAdvertiserFilter(filters.advertiserFilter || ''); setCreativeTagFilter(filters.creativeTagFilter || '');
@@ -2518,51 +2504,6 @@ export default function Research() {
           </button>
         ))}
 
-        {/* Home Services dropdown */}
-        <div ref={homeServicesRef} className="relative -mb-px">
-          <button
-            type="button"
-            onClick={() => setHomeServicesOpen(v => !v)}
-            className={`inline-flex items-center gap-1 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-              activeVertical === 'home_services'
-                ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-gray-800'
-            }`}
-          >
-            Home Services
-            <ChevronDown size={14} className={`transition-transform ${homeServicesOpen ? 'rotate-180' : ''}`} />
-          </button>
-          {homeServicesOpen && (
-            <div className="absolute left-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-xl shadow-lg py-1.5 min-w-[200px]">
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveVertical('home_services');
-                  setActiveSubVertical(null);
-                  setHomeServicesOpen(false);
-                }}
-                className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${activeVertical === 'home_services' && !activeSubVertical ? 'font-semibold text-indigo-600' : 'text-gray-700'}`}
-              >
-                All Home Services
-              </button>
-              <div className="h-px bg-gray-100 mx-3 my-1" />
-              {Object.entries(subVerticals).map(([key, sv]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => {
-                    setActiveVertical('home_services');
-                    setActiveSubVertical(key);
-                    setHomeServicesOpen(false);
-                  }}
-                  className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${activeSubVertical === key ? 'font-semibold text-indigo-600' : 'text-gray-700'}`}
-                >
-                  {sv.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
 
       <div className="flex items-center justify-between gap-3">
