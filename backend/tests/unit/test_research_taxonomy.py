@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from app.api.v1.research import (
     _parse_research_date,
+    _research_evidence_coverage,
     _serialize_research_datetime,
     _sort_research_ads,
     _watchlist_summary,
@@ -86,3 +87,22 @@ def test_watchlist_only_surfaces_new_catalog_changes_since_last_review():
     assert summary['refresh_status'] == 'stale'
     assert summary['days_since_latest_capture'] is not None
     assert 'more than 14 days old' in summary['refresh_reason']
+    assert summary['evidence_coverage_count'] == 3
+    assert summary['evidence_gaps'] == ['visual']
+
+
+def test_evidence_coverage_names_only_missing_retained_fields():
+    coverage = _research_evidence_coverage([{
+        'headline': 'Compare commercial insurance',
+        'ad_copy': None,
+        'thumbnail_url': None,
+        'media_url': None,
+        'media_preview_url': None,
+        'cta_type': None,
+        'cta_text': None,
+        'destination_domain': None,
+    }])
+
+    assert coverage['evidence_coverage_count'] == 1
+    assert coverage['evidence_fields'] == ['copy']
+    assert coverage['evidence_gaps'] == ['visual', 'CTA', 'destination']
