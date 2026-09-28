@@ -142,7 +142,7 @@ const buildPerMediaAdsetName = (baseName, creative, index) => {
 const BulkAdCreation = ({ onNext, onBack }) => {
     const { showWarning, showError, showSuccess } = useToast();
     const { authFetch } = useAuth();
-    const { campaignData, adsetData, creativeData, setCreativeData, adsData, setAdsData, selectedAdAccount, setLaunchSummary } = useCampaign();
+    const { campaignData, adsetData, creativeData, setCreativeData, adsData, setAdsData, selectedAdAccount, setLaunchSummary, setLaunchReceipt } = useCampaign();
     const [loading, setLoading] = useState(false);
     const launchInFlightRef = React.useRef(false);
     const [progress, setProgress] = useState({ current: 0, total: 0, status: '' });
@@ -1202,6 +1202,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         launchInFlightRef.current = true;
         setErrors([]);
         setLaunchOutcome(null);
+        setLaunchReceipt(null);
 
         // Determine format strategy at submission time (not stale closure)
         const feedAdsToCreate    = launchAds.filter(ad => (ad.format || 'feed') !== 'stories');
@@ -1832,6 +1833,33 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             } else if (failedCount === 0) {
                 // All ads created — auto-advance after brief success display
                 clearSuccessfulLaunchIntent();
+                const adSetTargets = perMediaMode
+                    ? [...perMediaAdsetMap.entries()].map(([creativeId, value], index) => {
+                        const creative = creativeData.creatives?.find(item => item.id === creativeId);
+                        const creativeIndex = creativeData.creatives?.findIndex(item => item.id === creativeId);
+                        return {
+                            id: value.fbAdsetId,
+                            name: buildPerMediaAdsetName(adsetData.name, creative, creativeIndex >= 0 ? creativeIndex : index),
+                        };
+                    })
+                    : isMixed
+                        ? [
+                            { id: fbFeedAdsetId, name: adsetData.isExisting ? adsetData.name : `${adsetData.name} - Feed` },
+                            { id: fbStoriesAdsetId, name: `${adsetData.name} - Stories & Reels` },
+                        ]
+                        : [{ id: fbFeedAdsetId, name: adsetData.name }];
+                setLaunchReceipt({
+                    createdAdCount: launchAds.length,
+                    createdAdSetCount: adSetTargets.length,
+                    accountName: selectedAdAccount?.name || null,
+                    campaignName: campaignData?.name || null,
+                    campaignId: fbCampaignId || null,
+                    adsetName: adsetData?.name || null,
+                    adSetTargets,
+                    usedExistingCampaign: Boolean(campaignData?.isExisting),
+                    usedExistingAdSet: Boolean(adsetData?.isExisting),
+                    createdAt: new Date().toISOString(),
+                });
                 setProgress({ current: launchAds.length, total: launchAds.length, status: 'Complete!' });
                 launchInFlightRef.current = false;
                 setTimeout(() => { onNext(); }, 1500);

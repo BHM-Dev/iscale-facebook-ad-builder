@@ -1396,7 +1396,10 @@ export default function Research() {
   const [verticalConfig, setVerticalConfig] = useState(null);
   const [activeVertical, setActiveVertical] = useState('commercial_insurance');
   const [activeSubVertical, setActiveSubVertical] = useState(null);
-  const [researchView, setResearchView] = useState('brief');
+  // Joel's first job here is creative discovery, not reviewing an internal
+  // summary. Keep the Brief one click away, but land directly in the visual
+  // catalog—the closest honest analogue to the GetHookd Explore workflow.
+  const [researchView, setResearchView] = useState('library');
   const [briefVisualFilter, setBriefVisualFilter] = useState('all');
   const [showCatalogTools, setShowCatalogTools] = useState(false);
 
@@ -2480,9 +2483,9 @@ export default function Research() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-sm font-semibold text-gray-900">Capture inbox</h2>
+              <h2 className="text-sm font-semibold text-gray-900">Creative discovery</h2>
             </div>
-            <p className="text-sm text-gray-600 mt-1">Inspect, save, or build from a captured ad.</p>
+            <p className="text-sm text-gray-600 mt-1">Explore current examples, save the strongest patterns to boards, then build from evidence.</p>
           </div>
         </div>
       </div>}

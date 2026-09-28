@@ -154,7 +154,7 @@ function toAbsoluteUploadUrl(url) {
 const BulkMatchImport = ({ onNext, onBack }) => {
     const { showWarning, showError } = useToast();
     const { authFetch } = useAuth();
-    const { campaignData, adsetData, creativeData, selectedAdAccount, setLaunchSummary } = useCampaign();
+    const { campaignData, adsetData, creativeData, selectedAdAccount, setLaunchSummary, setLaunchReceipt } = useCampaign();
 
     const [csvRows, setCsvRows] = useState([]); // [{ adNumber, headline, primaryText, cta }]
     const [csvError, setCsvError] = useState('');
@@ -684,6 +684,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
         setLoading(true);
         setErrors([]);
         setRequiresReconciliation(false);
+        setLaunchReceipt(null);
         setProgress({ current: 0, total: launchReadyRows.length, status: 'Starting...' });
 
         try {
@@ -920,6 +921,18 @@ const BulkMatchImport = ({ onNext, onBack }) => {
 
             if (failedCount === 0) {
                 clearSuccessfulLaunchIntent();
+                setLaunchReceipt({
+                    createdAdCount: launchReadyRows.length,
+                    createdAdSetCount: 1,
+                    accountName: selectedAdAccount?.name || null,
+                    campaignName: campaignData?.name || null,
+                    campaignId: fbCampaignId || null,
+                    adsetName: adsetData?.name || null,
+                    adSetTargets: [{ id: fbAdsetId, name: adsetData?.name || 'Selected ad set' }],
+                    usedExistingCampaign: Boolean(campaignData?.isExisting),
+                    usedExistingAdSet: Boolean(adsetData?.isExisting),
+                    createdAt: new Date().toISOString(),
+                });
                 setProgress({ current: launchReadyRows.length, total: launchReadyRows.length, status: 'Complete!' });
                 setTimeout(() => { onNext(); }, 1500);
             } else {

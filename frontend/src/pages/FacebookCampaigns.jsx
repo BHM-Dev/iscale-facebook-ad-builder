@@ -159,7 +159,7 @@ const FacebookCampaignWizardInner = () => {
     // the intended target — so Joel never has to search for or click any of them,
     // he just watches it land on Creative.
     const { showWarning, showSuccess, showError } = useToast();
-    const { selectedAdAccount, campaignData, adsetData, creativeData, launchSummary, setLaunchSummary } = useCampaign();
+    const { selectedAdAccount, campaignData, adsetData, creativeData, setAdsData, launchSummary, setLaunchSummary, launchReceipt, setLaunchReceipt } = useCampaign();
 
     // Switching between standard combinations and naming-convention import is a
     // different build path. Clear the previous path's counts before the new
@@ -455,6 +455,39 @@ const FacebookCampaignWizardInner = () => {
         if (quickAdTarget) stopQuickAd(null);
         if (driveLaunchActive) stopDriveLaunch(null);
         setCurrentStep(stepId);
+    };
+
+    const prepareNextBatch = () => {
+        // Keep the selected target, but drop the completed review rows. A new
+        // batch must be deliberately generated from Creative, never look like
+        // a replay of the Meta objects confirmed by the receipt.
+        setLaunchReceipt(null);
+        setAdsData([]);
+        setLaunchSummary(prev => ({ ...prev, totalAds: null, readyCount: null, warningCount: null, excludedCount: null }));
+        setCurrentStep(4);
+    };
+
+    const selectedAdsManagerAccountId = selectedAdAccount?.accountId || selectedAdAccount?.id;
+    const adsManagerHref = selectedAdsManagerAccountId
+        ? `https://adsmanager.facebook.com/adsmanager/manage/ads?act=${encodeURIComponent(String(selectedAdsManagerAccountId).replace(/^act_/, ''))}`
+        : 'https://adsmanager.facebook.com/adsmanager/manage/ads';
+
+    const receiptAdSetTargets = launchReceipt?.adSetTargets?.length
+        ? launchReceipt.adSetTargets
+        : [{ id: adsetData?.fbAdsetId || null, name: launchReceipt?.adsetName || adsetData?.name || 'Ad set not recorded' }];
+
+    const copyLaunchTargets = async () => {
+        const lines = [
+            `Account: ${launchReceipt?.accountName || selectedAdAccount?.name || 'Not recorded'}`,
+            `Campaign: ${launchReceipt?.campaignName || campaignData?.name || 'Not recorded'}${launchReceipt?.campaignId ? ` (${launchReceipt.campaignId})` : ''}`,
+            ...receiptAdSetTargets.map(target => `Ad set: ${target.name}${target.id ? ` (${target.id})` : ''}`),
+        ];
+        try {
+            await navigator.clipboard.writeText(lines.join('\n'));
+            showSuccess('Launch targets copied');
+        } catch {
+            showWarning('Could not copy the launch targets. Use the names and IDs shown here in Ads Manager.');
+        }
     };
 
     return (
@@ -789,18 +822,55 @@ const FacebookCampaignWizardInner = () => {
                         </div>
                     )}
                     {currentStep === 6 && (
-                        <div className="text-center py-12">
-                            <CheckCircle2 className="mx-auto mb-4 text-amber-500" size={64} />
-                            <h2 className="text-3xl font-bold mb-4">Ads Created as Paused</h2>
-                            <p className="text-gray-600 mb-8">
-                                Your ads were created in Meta with delivery paused. In Ads Manager, activate the campaign, the applicable ad set, and the new ads; if this batch used an already-active ad set, activate only the new ads.
-                            </p>
-                            <Link
-                                to="/campaign-performance"
-                                className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-amber-700"
-                            >
-                                Open Campaign Performance
-                            </Link>
+                        <div className="mx-auto max-w-2xl py-8">
+                            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-center">
+                                <CheckCircle2 className="mx-auto mb-4 text-emerald-600" size={56} />
+                                <p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">Launch receipt</p>
+                                <h2 className="mt-2 text-3xl font-bold text-gray-900">Ads created as paused</h2>
+                                <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-gray-700">
+                                    Meta has the new ads, but none will spend until you deliberately activate them in Ads Manager. This receipt is for the current session; Ads Manager remains the delivery record.
+                                </p>
+                            </div>
+
+                            <div className="mt-5 rounded-xl border border-gray-200 bg-white p-5">
+                                <div className="grid gap-4 sm:grid-cols-2">
+                                    <div>
+                                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Created</p>
+                                        <p className="mt-1 text-2xl font-bold text-gray-900">{launchReceipt?.createdAdCount ?? launchSummary.totalAds ?? '—'} ads</p>
+                                        <p className="mt-1 text-xs text-gray-500">
+                                            {launchReceipt?.createdAdSetCount != null
+                                                ? `${launchReceipt.createdAdSetCount} ${launchReceipt.createdAdSetCount === 1 ? 'ad set' : 'ad sets'} used`
+                                                : 'Meta delivery paused'}
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Target</p>
+                                        <p className="mt-1 truncate text-sm font-semibold text-gray-900" title={launchReceipt?.accountName || selectedAdAccount?.name}>{launchReceipt?.accountName || selectedAdAccount?.name || 'Selected ad account'}</p>
+                                        <p className="mt-1 truncate text-xs text-gray-600" title={launchReceipt?.campaignName || campaignData?.name}>{launchReceipt?.campaignName || campaignData?.name || 'Campaign not recorded'}{launchReceipt?.campaignId ? ` · ${launchReceipt.campaignId}` : ''}</p>
+                                    </div>
+                                </div>
+                                <div className="mt-4 border-t border-gray-100 pt-4">
+                                    <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ad sets to verify</p><button type="button" onClick={copyLaunchTargets} className="text-xs font-semibold text-amber-700 hover:text-amber-900">Copy names + IDs</button></div>
+                                    <div className="mt-2 space-y-1.5">
+                                        {receiptAdSetTargets.map(target => <div key={`${target.id || 'no-id'}-${target.name}`} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 rounded-md bg-gray-50 px-3 py-2 text-xs"><span className="font-medium text-gray-800">{target.name}</span>{target.id && <span className="font-mono text-gray-500">{target.id}</span>}</div>)}
+                                    </div>
+                                </div>
+                                <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                                    Next: activate the new ads and any newly created ad sets in Ads Manager. If you reused a campaign or ad set and it is paused, enable it too.
+                                </div>
+                            </div>
+
+                            <div className="mt-5 flex flex-col justify-center gap-3 sm:flex-row">
+                                <a href={adsManagerHref} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-amber-700">
+                                    Open Ads Manager
+                                </a>
+                                <Link to="/campaign-performance" className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:border-amber-200 hover:text-amber-800">
+                                    Open Campaign Performance
+                                </Link>
+                                <button type="button" onClick={prepareNextBatch} className="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:border-amber-200 hover:text-amber-800">
+                                    Start a new batch
+                                </button>
+                            </div>
                         </div>
                     )}
                 </div>

@@ -149,6 +149,12 @@ export const CampaignProvider = ({ children }) => {
         excludedCount: null,
     });
 
+    // The Review step owns the actual Meta write. Keep its successful outcome
+    // alongside the rest of the wizard context so the completion screen can be
+    // a real receipt instead of a generic success message. This is deliberately
+    // session-only: Meta remains the authority for durable delivery state.
+    const [launchReceipt, setLaunchReceipt] = useState(null);
+
     const [selectedAdAccount, setSelectedAdAccount] = useState(null);
 
     const normalizeAccountId = useCallback((rawId) => {
@@ -231,6 +237,8 @@ export const CampaignProvider = ({ children }) => {
         setAdsData,
         launchSummary,
         setLaunchSummary,
+        launchReceipt,
+        setLaunchReceipt,
         selectedAdAccount,
         setSelectedAdAccount,
         activeAccountId,
