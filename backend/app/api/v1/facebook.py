@@ -1312,6 +1312,26 @@ def resolve_cta(cta_text: str) -> str:
     return CTA_MAP.get(cta_text.lower().strip(), "LEARN_MORE")
 
 
+def _release_research_test_claim(db: Session, research_test, request_id: str) -> None:
+    """Release a research test's launch_claim_id back to None.
+
+    Only call this when the failure is unambiguous (nothing spend-bearing
+    happened yet, or the ad already exists and only bookkeeping failed).
+    Without this, ANY failure between the claim and success — a bad image,
+    a rejected creative, a transient network error — left the claim set
+    forever: no other code path ever cleared it, so every retry (which mints
+    a fresh request_id on modal reopen) hit "already claimed by another
+    launch" indefinitely, even though it was the buyer's own dead attempt.
+    """
+    if not research_test:
+        return
+    db.query(ResearchTestBacklogItem).filter(
+        ResearchTestBacklogItem.id == research_test.id,
+        ResearchTestBacklogItem.launch_claim_id == request_id,
+    ).update({ResearchTestBacklogItem.launch_claim_id: None}, synchronize_session=False)
+    db.commit()
+
+
 @router.post("/push-to-meta")
 def push_to_meta(
     body: Dict[str, Any],
@@ -1431,6 +1451,14 @@ def push_to_meta(
     db.add(MetaLaunchRequest(id=request_id, status="preparing"))
     db.commit()
 
+    # Tracks whether the ad-create step may have already reached Meta. Before
+    # this flips, any failure is unambiguous (nothing was spend-bearing yet)
+    # and it's safe to release the research-test claim so an ordinary retry
+    # isn't permanently blocked. After it flips, a Meta response can be
+    # ambiguous (see the "started" comment below) — the claim must stay in
+    # place, matching the deliberate MetaLaunchRequest "started" reconciliation
+    # guard, so a fresh request_id can't bypass it and risk a real duplicate ad.
+    ad_create_ambiguous = False
     try:
         # Step 1: Upload image → get image hash
         image_hash = service.upload_image(image_url, ad_account_id)
@@ -1458,6 +1486,7 @@ def push_to_meta(
         launch.status = "started"
         launch.fb_creative_id = creative_id
         db.commit()
+        ad_create_ambiguous = True
 
         # Step 3: Create ad (PAUSED by default — Joel activates in Meta after review).
         # RedTrack macros are already set on the creative's url_tags (Step 2).
@@ -1502,6 +1531,12 @@ def push_to_meta(
         except Exception as link_err:
             db.rollback()
             logging.warning("push-to-meta: ad %s created on Meta but GeneratedAd link failed: %s", ad_id, link_err)
+            # The rollback above also undid research_test.launch_claim_id = None
+            # from the try block. The ad already exists on Meta at this point —
+            # never leave the test permanently claimed over a bookkeeping-only
+            # failure; release it in its own statement so a real launch success
+            # can't get stuck behind a failed attribution link.
+            _release_research_test_claim(db, research_test, request_id)
 
         launch = db.query(MetaLaunchRequest).filter(MetaLaunchRequest.id == request_id).first()
         launch.status = "completed"
@@ -1523,6 +1558,8 @@ def push_to_meta(
         }
 
     except (ValueError, RuntimeError, FacebookBadObjectError) as e:
+        if not ad_create_ambiguous:
+            _release_research_test_claim(db, research_test, request_id)
         raise HTTPException(status_code=400, detail=str(e))
     except FacebookRequestError as e:
         # Parse Meta's structured error body for a readable message
@@ -1531,6 +1568,10 @@ def push_to_meta(
             meta_msg = body.get("error", {}).get("message") or str(e)
         except Exception:
             meta_msg = str(e)
+        if not ad_create_ambiguous:
+            _release_research_test_claim(db, research_test, request_id)
         raise HTTPException(status_code=400, detail=f"Meta API error: {meta_msg}")
     except Exception as e:
+        if not ad_create_ambiguous:
+            _release_research_test_claim(db, research_test, request_id)
         raise HTTPException(status_code=500, detail=f"Push to Meta failed: {str(e)}")

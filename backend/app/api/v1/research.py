@@ -2818,6 +2818,12 @@ def get_research_test_backlog(db: Session = Depends(get_db), current_user: User 
         "status": item.status,
         "notes": item.notes,
         "created_at": _serialize_research_datetime(item.created_at),
+        # Surfaced so the list can show "Launch in progress" and disable the
+        # build action — without this the UI only knew a launch had
+        # succeeded (generated_ad_id), never that one was already underway,
+        # so two tabs (or a reopened test) could both run the full build
+        # wizard only to have the second Push to Meta click hit a 409.
+        "launch_in_progress": item.launch_claim_id is not None,
         # Source context is returned only from the user's own retained
         # catalog. It is strategy context for the next build, never a claim
         # about delivery or performance.
