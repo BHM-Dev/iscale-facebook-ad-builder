@@ -7,14 +7,17 @@ import {
   addResearchBoardItem,
   addAdvertiserWatchlist,
   createResearchBoard,
+  createResearchTestBacklogItem,
   deleteAdvertiserWatchlist,
   deleteResearchBoard,
   deleteResearchBoardItem,
   getAdvertiserWatchlist,
   getResearchBoardItems,
   getResearchBoards,
+  getResearchTestBacklog,
   markAdvertiserWatchlistReviewed,
   searchAndSave,
+  updateResearchTestBacklogItem,
 } from '../api/research';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -1196,6 +1199,15 @@ function WatchlistPanel({ watchlist, loading, error, onExplore, onBuild, onMarkR
   </section>;
 }
 
+function ResearchTestBacklog({ items, loading, verticalId, verticalLabel, onCreate, onStatusChange }) {
+  const [hypothesis, setHypothesis] = useState('');
+  const [advertiser, setAdvertiser] = useState('');
+  const statuses = ['draft', 'building', 'launched', 'learned', 'archived'];
+  const visible = (items || []).filter(item => item.vertical_id === verticalId);
+  const submit = event => { event.preventDefault(); if (!hypothesis.trim()) return; onCreate({ vertical_id: verticalId, hypothesis: hypothesis.trim(), advertiser: advertiser.trim() || null }); setHypothesis(''); setAdvertiser(''); };
+  return <section className="rounded-xl border border-slate-200 bg-white" aria-label="Research test backlog"><div className="border-b border-slate-100 px-5 py-4"><p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-700">Research test backlog</p><h3 className="mt-1 text-base font-semibold text-slate-900">Turn evidence into an original test decision</h3><p className="mt-1 text-sm text-slate-500">This records a BHM hypothesis—not competitor performance. Linking outcomes is a later step after a generated ad is explicitly associated.</p></div><form onSubmit={submit} className="grid gap-2 border-b border-slate-100 bg-slate-50/70 p-4 md:grid-cols-[180px_1fr_auto]"><input value={advertiser} onChange={event => setAdvertiser(event.target.value)} maxLength={200} placeholder="Source advertiser (optional)" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" /><input value={hypothesis} onChange={event => setHypothesis(event.target.value)} maxLength={2000} placeholder={`e.g. Test a contractor-specific comparison hook for ${verticalLabel}`} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" /><button type="submit" disabled={!hypothesis.trim()} className="rounded-lg bg-violet-700 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-800 disabled:opacity-50">Add test</button></form>{loading ? <p className="px-5 py-10 text-center text-sm text-slate-500">Loading test decisions…</p> : visible.length === 0 ? <p className="px-5 py-10 text-center text-sm text-slate-500">No {verticalLabel.toLowerCase()} test decisions yet.</p> : <div className="divide-y divide-slate-100">{visible.map(item => <article key={item.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-4"><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-slate-900">{item.hypothesis}</p><p className="mt-1 text-xs text-slate-500">{item.advertiser ? `${item.advertiser} · ` : ''}Created {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'recently'}</p></div><select value={item.status} onChange={event => onStatusChange(item.id, event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-semibold text-slate-700">{statuses.map(status => <option key={status} value={status}>{status[0].toUpperCase() + status.slice(1)}</option>)}</select></article>)}</div>}</section>;
+}
+
 function ResearchCopilot({ verticalId, verticalLabel, onRunResults }) {
   const { authFetch } = useAuth();
   const { showError } = useToast();
@@ -1264,6 +1276,8 @@ export default function Research() {
   const [watchlist, setWatchlist] = useState(null);
   const [watchlistLoading, setWatchlistLoading] = useState(false);
   const [watchlistError, setWatchlistError] = useState('');
+  const [testBacklog, setTestBacklog] = useState([]);
+  const [testBacklogLoading, setTestBacklogLoading] = useState(false);
   const [visibleCardCount, setVisibleCardCount] = useState(RESEARCH_INITIAL_CARD_COUNT);
   const [savedAds, setSavedAds] = useState([]);
   const [savedAdIds, setSavedAdIds] = useState(new Set());
@@ -1377,6 +1391,10 @@ export default function Research() {
   useEffect(() => {
     if (researchView === 'watchlist' && verticalConfig && watchlistEnabled) loadWatchlist();
   }, [researchView, activeVertical, verticalConfig, watchlistEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (researchView === 'tests' && verticalConfig && watchlistEnabled) loadTestBacklog();
+  }, [researchView, verticalConfig, watchlistEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     try {
@@ -1496,6 +1514,28 @@ export default function Research() {
     } finally {
       if (requestId === watchlistRequestRef.current) setWatchlistLoading(false);
     }
+  };
+
+  const loadTestBacklog = async () => {
+    setTestBacklogLoading(true);
+    try { setTestBacklog(await getResearchTestBacklog()); }
+    catch (error) { showError(error.message || 'Could not load research test backlog'); }
+    finally { setTestBacklogLoading(false); }
+  };
+
+  const handleCreateTestBacklog = async (item) => {
+    try {
+      const created = await createResearchTestBacklogItem(item);
+      setTestBacklog(previous => [{ ...item, ...created, created_at: new Date().toISOString() }, ...previous]);
+      showSuccess('Research test added to backlog');
+    } catch (error) { showError(error.message || 'Could not add research test'); }
+  };
+
+  const handleTestBacklogStatus = async (itemId, status) => {
+    try {
+      const updated = await updateResearchTestBacklogItem(itemId, { status });
+      setTestBacklog(previous => previous.map(item => item.id === itemId ? { ...item, ...updated } : item));
+    } catch (error) { showError(error.message || 'Could not update research test'); }
   };
 
   const handleAddToWatchlist = async (advertiser) => {
@@ -2321,6 +2361,7 @@ export default function Research() {
           <button type="button" onClick={() => setResearchView('brief')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'brief' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Research Brief</button>
           <button type="button" onClick={() => setResearchView('advertisers')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'advertisers' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Advertisers</button>
           {watchlistEnabled && <button type="button" onClick={() => setResearchView('watchlist')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'watchlist' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Watchlist</button>}
+          {watchlistEnabled && <button type="button" onClick={() => setResearchView('tests')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'tests' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Test Backlog</button>}
           <button type="button" onClick={() => setResearchView('library')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'library' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Ad Library</button>
         </div>
         <span className="text-xs text-slate-500">{resultMode === 'search' ? `${reviewedFindingsAll.length} reviewed in results · ${catalogSummary.total} research results` : `${reviewedFindingsAll.length} reviewed finding${reviewedFindingsAll.length === 1 ? '' : 's'} · ${catalogSummary.total} raw captures`}</span>
@@ -2351,6 +2392,8 @@ export default function Research() {
         <AdvertiserDirectory directory={advertiserDirectory} loading={advertiserDirectoryLoading} error={advertiserDirectoryError} onExplore={exploreAdvertiser} onWatch={watchlistEnabled ? handleAddToWatchlist : null} watchedAdvertisers={watchedAdvertisers} />
       ) : researchView === 'watchlist' && watchlistEnabled ? (
         <WatchlistPanel watchlist={watchlist} loading={watchlistLoading} error={watchlistError} onExplore={exploreAdvertiser} onBuild={handleUseAsInspiration} onMarkReviewed={handleMarkWatchlistReviewed} onRemove={handleRemoveFromWatchlist} onRefresh={handleWatchlistRefresh} refreshing={refreshing} verticalLabel={currentVerticalLabel} />
+      ) : researchView === 'tests' && watchlistEnabled ? (
+        <ResearchTestBacklog items={testBacklog} loading={testBacklogLoading} verticalId={activeVertical} verticalLabel={currentVerticalLabel} onCreate={handleCreateTestBacklog} onStatusChange={handleTestBacklogStatus} />
       ) : <>
 
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500" aria-label="Research catalog summary"><span className="font-semibold text-slate-800">{browseLoading ? 'Loading captures…' : `${catalogSummary.total} captured examples`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.newCount} new this week`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.videoCount} video`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.taggedCount} theme tagged`}</span>{catalogSummary.needsReviewCount > 0 && <><span className="text-slate-300">·</span><span className="text-amber-700">{catalogSummary.needsReviewCount} need relevance review</span></>}<span className="text-slate-300">·</span><span className="text-slate-400">Current vertical + filters</span></div>

@@ -102,6 +102,25 @@ export const deleteAdvertiserWatchlist = async (verticalId, watchlistId) => {
     return unwrap(response, 'Error removing advertiser from watchlist');
 };
 
+export const getResearchTestBacklog = async () => {
+    const response = await authFetch(`${API_URL}/test-backlog`, { cache: 'no-store' });
+    return unwrap(response, 'Error fetching research test backlog');
+};
+
+export const createResearchTestBacklogItem = async (item) => {
+    const response = await authFetch(`${API_URL}/test-backlog`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item),
+    });
+    return unwrap(response, 'Error creating research test');
+};
+
+export const updateResearchTestBacklogItem = async (itemId, item) => {
+    const response = await authFetch(`${API_URL}/test-backlog/${encodeURIComponent(itemId)}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item),
+    });
+    return unwrap(response, 'Error updating research test');
+};
+
 export const getSavedSearches = async () => {
     const response = await authFetch(`${API_URL}/saved-searches`);
     return unwrap(response, 'Error fetching saved searches');
