@@ -2625,6 +2625,20 @@ def _watchlist_summary(watchlist, ads: list[dict]) -> dict:
     }
 
 
+def _capture_browse_advertiser(requested_advertiser: str, retained_advertisers: list[str]) -> str:
+    """Choose an unambiguous retained page name for the post-capture library."""
+    requested_key = re.sub(r"[^a-z0-9]", "", requested_advertiser.casefold())
+    exact_page_matches = [
+        page_name for page_name in retained_advertisers
+        if re.sub(r"[^a-z0-9]", "", page_name.casefold()) == requested_key
+    ]
+    if len(exact_page_matches) == 1:
+        return exact_page_matches[0]
+    if len(retained_advertisers) == 1:
+        return retained_advertisers[0]
+    return requested_advertiser
+
+
 @router.get("/config-verticals/{config_id}/watchlist")
 def get_advertiser_watchlist(
     config_id: str,
@@ -2680,6 +2694,11 @@ async def capture_advertiser_for_research(
         db.add(vertical); db.commit(); db.refresh(vertical)
     saved_search, ads = await ResearchService(db).search_and_save(AdSearchRequest(query=advertiser, platform="facebook", limit=limit, country="US", negative_keywords=config.get("negative_keywords", []), vertical_id=vertical.id, search_type="one_time"))
     retained_advertisers = sorted({ad.brand_name for ad in ads if ad.brand_name}, key=str.casefold)
+    # The page name shown by Meta can differ slightly from the operator's
+    # shorthand (spacing, punctuation, LLC suffix). When the capture found one
+    # unambiguous page, return it so the next view cannot land on an empty
+    # string-filtered library.
+    browse_advertiser = _capture_browse_advertiser(advertiser, retained_advertisers)
     return {
         "advertiser": advertiser,
         "search_id": saved_search.id,
@@ -2690,6 +2709,7 @@ async def capture_advertiser_for_research(
         "new_ads": saved_search.ads_new or 0,
         "duplicates": saved_search.ads_duplicate or 0,
         "retained_advertisers": retained_advertisers,
+        "browse_advertiser": browse_advertiser,
         "evidence": _research_evidence_coverage([_serialize_scraped_ad(ad) for ad in ads]),
         "captured_at": _serialize_research_datetime(saved_search.created_at),
         "limitations": "This is a manual retained-catalog capture, not proof of current delivery, spend, performance, or complete advertiser coverage.",

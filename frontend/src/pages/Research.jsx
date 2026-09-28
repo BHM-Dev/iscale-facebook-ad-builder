@@ -1182,6 +1182,7 @@ function LiveCaptureReceipt({ receipt, onDismiss }) {
         <p className="mt-1 text-sm font-semibold text-slate-900">{receipt.advertiser} · {receipt.new_ads || 0} new retained, {receipt.duplicates || 0} already cataloged</p>
         <p className="mt-1 text-xs leading-5 text-slate-600">{receipt.capture_source || 'Meta Ads Library'} · requested {receipt.requested ?? '—'} · {receipt.returned ?? '—'} passed the configured relevance rules · {receipt.captured ?? 0} retained. Evidence available across retained records: {evidence.evidence_coverage_count ?? 0}/4 fields.</p>
         {advertiserNames.length > 0 && <p className="mt-1 text-xs text-slate-600">Retained page names: {advertiserNames.join(' · ')}</p>}
+        {receipt.browse_advertiser && receipt.browse_advertiser !== receipt.advertiser && <p className="mt-1 text-xs font-medium text-indigo-800">Library scoped to Meta page: {receipt.browse_advertiser}</p>}
         <p className="mt-1 text-[11px] leading-4 text-slate-500">{receipt.limitations || 'Retained catalog evidence only—not proof of current delivery, spend, performance, or complete coverage.'}</p>
       </div>
       <button type="button" onClick={onDismiss} className="text-xs font-semibold text-slate-500 hover:text-slate-800">Dismiss</button>
@@ -1595,7 +1596,7 @@ export default function Research() {
       // A targeted capture should land the buyer on the retained evidence it
       // just produced, not force a second manual search. Filtering the local
       // catalog keeps the next step inspectable and avoids any extra source call.
-      setAdvertiserFilter(advertiser);
+      setAdvertiserFilter(result.browse_advertiser || advertiser);
       setResultMode('browse');
       setResearchView('library');
       setBrowseReloadKey(value => value + 1);
