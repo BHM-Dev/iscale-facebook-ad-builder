@@ -1227,7 +1227,7 @@ function WatchlistTargetedRefresh({ watchlist, onRefreshAdvertiser, refreshingAd
   </section>;
 }
 
-function ResearchNextActions({ watchlist, tests, loading, verticalId, verticalLabel, onBuild, onExplore, onRefresh }) {
+function ResearchNextActions({ watchlist, tests, loading, verticalId, verticalLabel, onBuild, onExplore, onRefresh, onReviewGenerated, onOpenTests }) {
   const actions = useMemo(() => {
     const next = [];
     (tests || []).filter(item => item.vertical_id === verticalId && !item.generated_ad_id && !item.launch_in_progress && item.source && ['draft', 'building'].includes(item.status)).forEach(item => {
@@ -1242,10 +1242,34 @@ function ResearchNextActions({ watchlist, tests, loading, verticalId, verticalLa
         actionLabel: item.status === 'building' ? 'Resume build' : 'Build test',
       });
     });
+    (tests || []).filter(item => item.vertical_id === verticalId && item.generated_ad_id && !item.bhm_ad?.last_synced_at).forEach(item => {
+      next.push({
+        id: `tracking-${item.id}`,
+        priority: 3,
+        kind: 'tracking',
+        label: 'Check BHM tracking',
+        detail: `${item.hypothesis} has a linked BHM ad, but internal performance tracking has not synced yet.`,
+        context: 'BHM-owned tracking state',
+        action: () => onReviewGenerated(item.generated_ad_id),
+        actionLabel: 'Review BHM ad',
+      });
+    });
+    (tests || []).filter(item => item.vertical_id === verticalId && item.bhm_ad?.last_synced_at && !item.notes && item.status !== 'learned').forEach(item => {
+      next.push({
+        id: `learning-${item.id}`,
+        priority: 4,
+        kind: 'learning',
+        label: 'Record the BHM learning',
+        detail: `${item.hypothesis} has BHM tracking data but no documented decision or next iteration.`,
+        context: `Tracking synced ${new Date(item.bhm_ad.last_synced_at).toLocaleDateString()}`,
+        action: onOpenTests,
+        actionLabel: 'Open test backlog',
+      });
+    });
     (watchlist?.items || []).filter(item => item.new_capture_count > 0).forEach(item => {
       next.push({
         id: `review-${item.id}`,
-        priority: 3,
+        priority: 5,
         kind: 'review',
         label: 'Review new retained creative',
         detail: `${item.advertiser} has ${item.new_capture_count} new retained capture${item.new_capture_count === 1 ? '' : 's'} since its last review.`,
@@ -1257,7 +1281,7 @@ function ResearchNextActions({ watchlist, tests, loading, verticalId, verticalLa
     (watchlist?.items || []).filter(item => ['missing', 'stale', 'due'].includes(item.refresh_status)).forEach(item => {
       next.push({
         id: `refresh-${item.id}`,
-        priority: item.refresh_status === 'missing' || item.refresh_status === 'stale' ? 4 : 5,
+        priority: item.refresh_status === 'missing' || item.refresh_status === 'stale' ? 6 : 7,
         kind: 'refresh',
         label: item.refresh_status === 'missing' ? 'Capture first evidence' : 'Refresh advertiser evidence',
         detail: item.refresh_reason || `${item.advertiser} needs a manual Meta catalog refresh.`,
@@ -1267,8 +1291,8 @@ function ResearchNextActions({ watchlist, tests, loading, verticalId, verticalLa
       });
     });
     return next.sort((left, right) => left.priority - right.priority || left.label.localeCompare(right.label)).slice(0, 8);
-  }, [watchlist, tests, verticalId, onBuild, onExplore, onRefresh]);
-  const badge = { test: 'bg-violet-50 text-violet-700', review: 'bg-amber-50 text-amber-800', refresh: 'bg-indigo-50 text-indigo-700' };
+  }, [watchlist, tests, verticalId, onBuild, onExplore, onRefresh, onReviewGenerated, onOpenTests]);
+  const badge = { test: 'bg-violet-50 text-violet-700', tracking: 'bg-emerald-50 text-emerald-700', learning: 'bg-slate-100 text-slate-700', review: 'bg-amber-50 text-amber-800', refresh: 'bg-indigo-50 text-indigo-700' };
   if (loading) return <div className="rounded-xl border border-slate-200 bg-white px-5 py-12 text-center text-sm text-slate-500">Preparing the next research actions…</div>;
   return <section className="rounded-xl border border-slate-200 bg-white" aria-label="Research next actions"><div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-100 px-5 py-4"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-700">Next actions</p><h3 className="mt-1 text-base font-semibold text-slate-900">Move from new evidence to the next BHM decision</h3><p className="mt-1 max-w-2xl text-sm text-slate-500">Prioritized from ready test decisions, new retained catalog captures, and capture freshness. This is workflow priority—not a spend or performance score.</p></div><span className="rounded-full bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-600">{actions.length} action{actions.length === 1 ? '' : 's'} · {verticalLabel}</span></div>{actions.length === 0 ? <div className="px-5 py-12 text-center"><p className="font-medium text-slate-800">No immediate research actions.</p><p className="mt-1 text-sm text-slate-500">Capture an advertiser or add a source-backed test to start the loop.</p></div> : <div className="divide-y divide-slate-100">{actions.map(item => <article key={item.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-4"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${badge[item.kind]}`}>{item.kind}</span><p className="font-semibold text-slate-900">{item.label}</p></div><p className="mt-2 text-sm text-slate-700">{item.detail}</p><p className="mt-1 text-xs text-slate-500">{item.context}</p></div><button type="button" onClick={item.action} className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">{item.actionLabel}</button></article>)}</div>}</section>;
 }
@@ -2577,7 +2601,7 @@ export default function Research() {
       ) : researchView === 'advertisers' ? (
         <AdvertiserDirectory directory={advertiserDirectory} loading={advertiserDirectoryLoading} error={advertiserDirectoryError} onExplore={exploreAdvertiser} onWatch={watchlistEnabled ? handleAddToWatchlist : null} onCapture={watchlistEnabled ? handleCaptureAdvertiser : null} capturing={capturingAdvertiser} watchedAdvertisers={watchedAdvertisers} />
       ) : researchView === 'next' && watchlistEnabled ? (
-        <ResearchNextActions watchlist={watchlist} tests={testBacklog} loading={watchlistLoading || testBacklogLoading} verticalId={activeVertical} verticalLabel={currentVerticalLabel} onBuild={handleBuildTestBacklogItem} onExplore={exploreAdvertiser} onRefresh={handleTargetedWatchlistRefresh} />
+        <ResearchNextActions watchlist={watchlist} tests={testBacklog} loading={watchlistLoading || testBacklogLoading} verticalId={activeVertical} verticalLabel={currentVerticalLabel} onBuild={handleBuildTestBacklogItem} onExplore={exploreAdvertiser} onRefresh={handleTargetedWatchlistRefresh} onReviewGenerated={handleReviewGeneratedTestAd} onOpenTests={() => setResearchView('tests')} />
       ) : researchView === 'watchlist' && watchlistEnabled ? (
         <><WatchlistTargetedRefresh watchlist={watchlist} onRefreshAdvertiser={handleTargetedWatchlistRefresh} refreshingAdvertiserId={refreshingWatchlistAdvertiserId} refreshingVertical={refreshing} /><WatchlistPanel watchlist={watchlist} loading={watchlistLoading} error={watchlistError} onExplore={exploreAdvertiser} onBuild={handleUseAsInspiration} onAddTest={handleCreateTestBacklog} onMarkReviewed={handleMarkWatchlistReviewed} onRemove={handleRemoveFromWatchlist} onRefresh={handleWatchlistRefresh} refreshing={refreshing} verticalLabel={currentVerticalLabel} /></>
       ) : researchView === 'tests' && watchlistEnabled ? (
