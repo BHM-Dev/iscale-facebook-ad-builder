@@ -2456,6 +2456,8 @@ def get_vertical_advertisers(
             "latest_seen": None,
             "formats": set(),
             "domains": set(),
+            "segments": set(),
+            "sample_headlines": [],
             "sample_ad_id": ad.get("id"),
         })
         item["capture_count"] += 1
@@ -2466,6 +2468,12 @@ def get_vertical_advertisers(
             item["formats"].add(ad["media_type"])
         if ad.get("destination_domain"):
             item["domains"].add(ad["destination_domain"])
+        segment = (ad.get("creative_intel") or {}).get("segment")
+        if segment:
+            item["segments"].add(segment)
+        headline = (ad.get("headline") or "").strip()
+        if headline and headline not in item["sample_headlines"] and len(item["sample_headlines"]) < 2:
+            item["sample_headlines"].append(headline)
         latest_seen = _parse_research_date(ad.get("last_seen"))
         if latest_seen and (not item["latest_seen"] or latest_seen > item["latest_seen"]):
             item["latest_seen"] = latest_seen
@@ -2476,6 +2484,7 @@ def get_vertical_advertisers(
             **item,
             "formats": sorted(item["formats"]),
             "domains": sorted(item["domains"])[:3],
+            "segments": sorted(item["segments"])[:3],
             "latest_seen": _serialize_research_datetime(item["latest_seen"]),
         })
     directory.sort(key=lambda item: (

@@ -1119,12 +1119,44 @@ function ResearchBrief({ findings, testShortlist, visualMatchesByAdvertiser, tot
 }
 
 function AdvertiserDirectory({ directory, loading, error, onExplore }) {
+  const [selectedAdvertisers, setSelectedAdvertisers] = useState([]);
+  const [directorySort, setDirectorySort] = useState('recent');
+  const [recentOnly, setRecentOnly] = useState(false);
+  const [mediaOnly, setMediaOnly] = useState(false);
+  // Adjust state during render (React's documented pattern for "reset when a
+  // prop changes") instead of a useEffect that calls setState synchronously —
+  // the latter is a real lint error here (react-hooks/set-state-in-effect)
+  // and causes an extra cascading render on every directory/vertical switch.
+  const [prevDirectory, setPrevDirectory] = useState(directory);
+  if (directory !== prevDirectory) {
+    setPrevDirectory(directory);
+    setSelectedAdvertisers([]);
+  }
+  const advertisers = directory?.advertisers || [];
+  const visibleAdvertisers = advertisers
+    .filter(item => !recentOnly || item.active_capture_count > 0)
+    .filter(item => !mediaOnly || item.media_capture_count > 0)
+    .sort((left, right) => {
+      if (directorySort === 'captures') return right.capture_count - left.capture_count || left.advertiser.localeCompare(right.advertiser);
+      if (directorySort === 'media') return right.media_capture_count - left.media_capture_count || right.capture_count - left.capture_count || left.advertiser.localeCompare(right.advertiser);
+      if (directorySort === 'name') return left.advertiser.localeCompare(right.advertiser);
+      return (Date.parse(right.latest_seen || '') || 0) - (Date.parse(left.latest_seen || '') || 0) || right.capture_count - left.capture_count;
+    });
+  const selectedItems = advertisers.filter(item => selectedAdvertisers.includes(item.advertiser));
+  const toggleAdvertiser = (advertiser) => {
+    setSelectedAdvertisers(current => current.includes(advertiser)
+      ? current.filter(item => item !== advertiser)
+      : current.length < 3 ? [...current, advertiser] : current);
+  };
+
   if (loading) return <div className="rounded-xl border border-slate-200 bg-white px-5 py-12 text-center text-sm text-slate-500">Building the retained advertiser directory…</div>;
   if (error) return <div className="rounded-xl border border-red-100 bg-white px-5 py-12 text-center"><p className="font-medium text-red-700">Couldn’t load the advertiser directory.</p><p className="mt-1 text-sm text-slate-500">{error}</p></div>;
-  if (!directory?.advertisers?.length) return <div className="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-12 text-center text-sm text-slate-500">No retained advertisers are available for this vertical yet.</div>;
+  if (!advertisers.length) return <div className="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-12 text-center text-sm text-slate-500">No retained advertisers are available for this vertical yet.</div>;
   return <section className="rounded-xl border border-slate-200 bg-white" aria-label="Retained advertiser directory">
-    <div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-100 px-5 py-4"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-700">Advertiser directory</p><h3 className="mt-1 text-base font-semibold text-slate-900">Choose an advertiser before you wade into ads</h3><p className="mt-1 max-w-2xl text-sm text-slate-500">Counts reflect unique retained creative patterns, not spend, scale, or a claim that an advertiser is currently live.</p>{directory.review_queue_count > 0 && <p className="mt-2 text-xs font-medium text-amber-700">{directory.review_queue_count} broad legacy capture{directory.review_queue_count === 1 ? '' : 's'} stay in Ad examples for relevance review and are excluded here.</p>}</div><span className="rounded-full bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-600">{directory.advertisers.length} advertisers</span></div>
-    <div className="divide-y divide-slate-100">{directory.advertisers.map(item => <div key={item.advertiser} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><p className="truncate font-semibold text-slate-900">{item.advertiser}</p><p className="mt-1 truncate text-xs text-slate-500">{item.domains?.join(' · ') || 'No landing domain retained'}{item.latest_seen ? ` · last captured ${new Date(item.latest_seen).toLocaleDateString()}` : ''}</p></div><div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full bg-slate-100 px-2.5 py-1 font-medium text-slate-700">{item.capture_count} capture{item.capture_count === 1 ? '' : 's'}</span>{item.active_capture_count > 0 && <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-medium text-emerald-700">{item.active_capture_count} recent</span>}{item.media_capture_count > 0 && <span className="rounded-full bg-indigo-50 px-2.5 py-1 font-medium text-indigo-700">{item.media_capture_count} with media</span>}{item.formats?.length > 0 && <span className="rounded-full bg-slate-50 px-2.5 py-1 font-medium text-slate-500">{item.formats.join(' / ')}</span>}</div><button type="button" onClick={() => onExplore(item.advertiser)} className="shrink-0 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">Explore ads</button></div>)}</div>
+    <div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-100 px-5 py-4"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-700">Advertiser directory</p><h3 className="mt-1 text-base font-semibold text-slate-900">Choose an advertiser before you wade into ads</h3><p className="mt-1 max-w-2xl text-sm text-slate-500">Compare up to three advertisers by retained hooks, audiences, destinations, and formats. Counts are catalog evidence—not spend, scale, or delivery claims.</p>{directory.review_queue_count > 0 && <p className="mt-2 text-xs font-medium text-amber-700">{directory.review_queue_count} broad legacy capture{directory.review_queue_count === 1 ? '' : 's'} stay in Ad examples for relevance review and are excluded here.</p>}</div><div className="flex items-center gap-2"><span className="rounded-full bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-600">{visibleAdvertisers.length} of {advertisers.length}</span>{selectedItems.length > 0 && <button type="button" onClick={() => setSelectedAdvertisers([])} className="text-xs font-semibold text-slate-500 hover:text-slate-800">Clear comparison</button>}</div></div>
+    <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 bg-slate-50/70 px-5 py-3"><label className="flex items-center gap-2 text-xs font-medium text-slate-600">Sort <select value={directorySort} onChange={event => setDirectorySort(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"><option value="recent">Most recently captured</option><option value="captures">Most retained examples</option><option value="media">Most visual coverage</option><option value="name">Advertiser name</option></select></label><label className="flex items-center gap-1.5 text-xs text-slate-600"><input type="checkbox" checked={recentOnly} onChange={event => setRecentOnly(event.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />Recent only</label><label className="flex items-center gap-1.5 text-xs text-slate-600"><input type="checkbox" checked={mediaOnly} onChange={event => setMediaOnly(event.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />Has retained media</label></div>
+    {selectedItems.length > 1 && <section className="border-b border-violet-100 bg-violet-50/50 px-5 py-4" aria-label="Advertiser comparison"><div className="mb-3 flex items-center justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-700">Advertiser comparison</p><p className="mt-1 text-sm text-slate-600">Observed creative structure only—not comparative performance.</p></div><span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-violet-700">{selectedItems.length} selected</span></div><div className={`grid gap-3 ${selectedItems.length === 2 ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>{selectedItems.map(item => <article key={item.advertiser} className="rounded-xl border border-violet-100 bg-white p-4"><div className="flex items-start justify-between gap-2"><p className="min-w-0 truncate font-semibold text-slate-900">{item.advertiser}</p><button type="button" onClick={() => toggleAdvertiser(item.advertiser)} className="shrink-0 text-xs font-semibold text-slate-500 hover:text-slate-800">Remove</button></div><dl className="mt-3 space-y-2 text-xs"><div><dt className="font-semibold uppercase tracking-wide text-slate-400">Most recent hook</dt><dd className="mt-1 leading-5 text-slate-700">{item.sample_headlines?.[0] ? `“${item.sample_headlines[0]}”` : 'No retained headline'}</dd></div><div><dt className="font-semibold uppercase tracking-wide text-slate-400">Audience (as tagged)</dt><dd className="mt-1 text-slate-700" title="Free-text tag from an external/manual import, not a classifier output — treat as one analyst's note, not a determined targeting signal.">{item.segments?.join(' · ') || 'Not classified'}</dd></div><div><dt className="font-semibold uppercase tracking-wide text-slate-400">Destination</dt><dd className="mt-1 break-words text-slate-700">{item.domains?.join(' · ') || 'Not retained'}</dd></div><div><dt className="font-semibold uppercase tracking-wide text-slate-400">Format mix</dt><dd className="mt-1 text-slate-700">{item.formats?.join(' / ') || 'Unknown'}</dd></div></dl><button type="button" onClick={() => onExplore(item.advertiser)} className="mt-4 w-full rounded-lg border border-indigo-200 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50">Explore ads</button></article>)}</div></section>}
+    <div className="divide-y divide-slate-100">{visibleAdvertisers.length === 0 ? <div className="px-5 py-10 text-center text-sm text-slate-500">No advertisers match these directory filters.</div> : visibleAdvertisers.map(item => <div key={item.advertiser} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><p className="truncate font-semibold text-slate-900">{item.advertiser}</p><p className="mt-1 truncate text-xs text-slate-500">{item.domains?.join(' · ') || 'No landing domain retained'}{item.latest_seen ? ` · last captured ${new Date(item.latest_seen).toLocaleDateString()}` : ''}</p>{item.sample_headlines?.length > 0 && <p className="mt-2 line-clamp-1 text-sm font-medium text-slate-700">“{item.sample_headlines[0]}”</p>}{item.segments?.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{item.segments.map(segment => <span key={segment} title="Free-text tag from an external/manual import, not a classifier output." className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">{segment}</span>)}</div>}</div><div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full bg-slate-100 px-2.5 py-1 font-medium text-slate-700">{item.capture_count} capture{item.capture_count === 1 ? '' : 's'}</span>{item.active_capture_count > 0 && <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-medium text-emerald-700">{item.active_capture_count} recent</span>}{item.media_capture_count > 0 && <span className="rounded-full bg-indigo-50 px-2.5 py-1 font-medium text-indigo-700">{item.media_capture_count} with media</span>}{item.formats?.length > 0 && <span className="rounded-full bg-slate-50 px-2.5 py-1 font-medium text-slate-500">{item.formats.join(' / ')}</span>}</div><div className="flex shrink-0 gap-2"><button type="button" onClick={() => toggleAdvertiser(item.advertiser)} disabled={!selectedAdvertisers.includes(item.advertiser) && selectedAdvertisers.length >= 3} aria-pressed={selectedAdvertisers.includes(item.advertiser)} title={!selectedAdvertisers.includes(item.advertiser) && selectedAdvertisers.length >= 3 ? 'Comparing 3 already — remove one to compare a different advertiser' : undefined} className={`rounded-lg border px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40 ${selectedAdvertisers.includes(item.advertiser) ? 'border-violet-200 bg-violet-50 text-violet-700' : 'border-slate-200 text-slate-600 hover:border-violet-200 hover:text-violet-700'}`}>{selectedAdvertisers.includes(item.advertiser) ? 'Selected' : 'Compare'}</button><button type="button" onClick={() => onExplore(item.advertiser)} className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">Explore ads</button></div></div>)}</div>
   </section>;
 }
 
@@ -1190,7 +1222,6 @@ export default function Research() {
   // those failures client-side so "Has visual capture" means an image/video
   // the researcher can actually see, not merely a stale URL in the database.
   const [failedVisualIds, setFailedVisualIds] = useState(() => new Set());
-  const [catalogMode, setCatalogMode] = useState('ads');
   const [advertiserDirectory, setAdvertiserDirectory] = useState(null);
   const [advertiserDirectoryLoading, setAdvertiserDirectoryLoading] = useState(false);
   const [advertiserDirectoryError, setAdvertiserDirectoryError] = useState('');
@@ -1243,6 +1274,7 @@ export default function Research() {
   const browseRequestRef = useRef(0);
   const searchRequestRef = useRef(0);
   const refreshRequestRef = useRef(0);
+  const advertiserDirectoryRequestRef = useRef(0);
   const contextGenerationRef = useRef(0);
   const activeVerticalRef = useRef(activeVertical);
   const activeSubVerticalRef = useRef(activeSubVertical);
@@ -1295,8 +1327,8 @@ export default function Research() {
   }, [activeVertical, activeSubVertical, verticalConfig]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (catalogMode === 'advertisers' && verticalConfig) loadAdvertiserDirectory();
-  }, [catalogMode, activeVertical, activeSubVertical, verticalConfig]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (researchView === 'advertisers' && verticalConfig) loadAdvertiserDirectory();
+  }, [researchView, activeVertical, activeSubVertical, verticalConfig]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     try {
@@ -1377,6 +1409,11 @@ export default function Research() {
   };
 
   const loadAdvertiserDirectory = async () => {
+    // Same race guard as loadBrowseAds above: a quick double vertical-switch
+    // fires two overlapping fetches, and without this an older response
+    // landing after a newer one would silently show the wrong vertical's
+    // advertisers under the vertical now selected.
+    const requestId = ++advertiserDirectoryRequestRef.current;
     setAdvertiserDirectoryLoading(true);
     setAdvertiserDirectoryError('');
     try {
@@ -1390,11 +1427,12 @@ export default function Research() {
         const payload = await response.json().catch(() => ({}));
         throw new Error(payload.detail || 'Failed to load advertiser directory');
       }
-      setAdvertiserDirectory(await response.json());
+      const directory = await response.json();
+      if (requestId === advertiserDirectoryRequestRef.current) setAdvertiserDirectory(directory);
     } catch (error) {
-      setAdvertiserDirectoryError(error.message || 'Failed to load advertiser directory');
+      if (requestId === advertiserDirectoryRequestRef.current) setAdvertiserDirectoryError(error.message || 'Failed to load advertiser directory');
     } finally {
-      setAdvertiserDirectoryLoading(false);
+      if (requestId === advertiserDirectoryRequestRef.current) setAdvertiserDirectoryLoading(false);
     }
   };
 
@@ -1926,7 +1964,7 @@ export default function Research() {
     // keyword search. Move back to the durable catalog before applying the
     // advertiser filter, while retaining the analyst's other filters.
     setActiveBoardId(null);
-    setCatalogMode('ads');
+    setResearchView('library');
     setResultMode('browse');
     setSearchResultAds([]);
     setAdvertiserFilter(advertiser);
@@ -2171,6 +2209,7 @@ export default function Research() {
       <div className="flex items-center justify-between gap-3">
         <div className="inline-flex rounded-lg bg-slate-100 p-1" aria-label="Research view">
           <button type="button" onClick={() => setResearchView('brief')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'brief' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Research Brief</button>
+          <button type="button" onClick={() => setResearchView('advertisers')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'advertisers' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Advertisers</button>
           <button type="button" onClick={() => setResearchView('library')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'library' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Ad Library</button>
         </div>
         <span className="text-xs text-slate-500">{resultMode === 'search' ? `${reviewedFindingsAll.length} reviewed in results · ${catalogSummary.total} research results` : `${reviewedFindingsAll.length} reviewed finding${reviewedFindingsAll.length === 1 ? '' : 's'} · ${catalogSummary.total} raw captures`}</span>
@@ -2197,15 +2236,15 @@ export default function Research() {
           compareIds={compareIds}
           onToggleCompare={toggleCompare}
         />
+      ) : researchView === 'advertisers' ? (
+        <AdvertiserDirectory directory={advertiserDirectory} loading={advertiserDirectoryLoading} error={advertiserDirectoryError} onExplore={exploreAdvertiser} />
       ) : <>
 
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500" aria-label="Research catalog summary"><span className="font-semibold text-slate-800">{browseLoading ? 'Loading captures…' : `${catalogSummary.total} captured examples`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.newCount} new this week`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.videoCount} video`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.taggedCount} theme tagged`}</span>{catalogSummary.needsReviewCount > 0 && <><span className="text-slate-300">·</span><span className="text-amber-700">{catalogSummary.needsReviewCount} need relevance review</span></>}<span className="text-slate-300">·</span><span className="text-slate-400">Current vertical + filters</span></div>
       {!browseLoading && catalogSummary.total > 0 && catalogSummary.mediaCount === 0 && <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"><span>No retained assets in this filtered view. Source format labels are still shown, but they are not previews.</span><button type="button" onClick={() => setShowImportModal(true)} className="font-semibold text-indigo-700 hover:text-indigo-900">Import retained captures</button></div>}
 
-      <div className="inline-flex rounded-lg bg-slate-100 p-1" aria-label="Research catalog mode"><button type="button" onClick={() => setCatalogMode('ads')} className={`rounded-md px-3 py-1.5 text-sm font-semibold ${catalogMode === 'ads' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Ad examples</button><button type="button" onClick={() => setCatalogMode('advertisers')} className={`rounded-md px-3 py-1.5 text-sm font-semibold ${catalogMode === 'advertisers' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Advertisers</button></div>
-
       {/* Two-column layout */}
-      {catalogMode === 'advertisers' ? <AdvertiserDirectory directory={advertiserDirectory} loading={advertiserDirectoryLoading} error={advertiserDirectoryError} onExplore={exploreAdvertiser} /> : <div className="flex gap-5 items-start">
+      <div className="flex gap-5 items-start">
         {/* Browse panel — 70% */}
         <div className="flex-[7] min-w-0 space-y-4">
           <form onSubmit={handleQuerySearch} className="bg-white rounded-xl border border-indigo-200 px-4 py-3">
@@ -2516,7 +2555,7 @@ export default function Research() {
             </div>
           )}
         </div>
-      </div>}
+      </div>
       </>}
 
       <CompareTray ads={compareAds} onRemove={id => setCompareIds(ids => ids.filter(item => item !== id))} onClear={() => setCompareIds([])} onOpen={() => setCompareOpen(true)} />
