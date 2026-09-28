@@ -2824,6 +2824,16 @@ def get_research_test_backlog(db: Session = Depends(get_db), current_user: User 
         "advertiser": item.advertiser,
         "scraped_ad_id": item.scraped_ad_id,
         "generated_ad_id": item.generated_ad_id,
+        # BHM-owned tracking context only. This is intentionally separate
+        # from the competitor source evidence and is absent until our own ad
+        # has been linked through the paused Meta handoff.
+        "bhm_ad": {
+            "id": item.generated_ad.id,
+            "fb_ad_id": item.generated_ad.fb_ad_id,
+            "revenue": float(item.generated_ad.revenue) if item.generated_ad.revenue is not None else None,
+            "profit": float(item.generated_ad.profit) if item.generated_ad.profit is not None else None,
+            "last_synced_at": _serialize_research_datetime(item.generated_ad.last_synced_at),
+        } if item.generated_ad else None,
         "hypothesis": item.hypothesis,
         "status": item.status,
         "notes": item.notes,
