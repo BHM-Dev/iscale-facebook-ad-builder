@@ -1370,6 +1370,10 @@ def push_to_meta(
             raise HTTPException(status_code=409, detail="This push may already have reached Meta. Reconcile it in Ads Manager before trying a new request.")
         # A prior request died before creating the Meta Ad. Removing it is
         # safe: a retry may create a duplicate image/creative, never spend.
+        db.query(ResearchTestBacklogItem).filter(
+            ResearchTestBacklogItem.launch_claim_id == request_id,
+            ResearchTestBacklogItem.created_by == current_user.id,
+        ).update({ResearchTestBacklogItem.launch_claim_id: None}, synchronize_session=False)
         db.delete(prior)
         db.commit()
     # Resolve buyer-owned research context only after the idempotency replay
@@ -1385,6 +1389,8 @@ def push_to_meta(
             raise HTTPException(status_code=404, detail="Research test backlog item not found")
         if research_test.generated_ad_id:
             raise HTTPException(status_code=409, detail="This research test is already linked to a BHM ad. Create a new test decision before launching another variation.")
+        if research_test.launch_claim_id:
+            raise HTTPException(status_code=409, detail="This research test already has a launch in progress or awaiting reconciliation.")
     # Highest-consequence endpoint (creates a live ad) — enforce that a scoped
     # user can only push into an ad set within their assigned accounts.
     _assert_adset_allowed(current_user, adset_id, db, service)
@@ -1406,7 +1412,20 @@ def push_to_meta(
     if not lead_form_id and (not website_url or not website_url.startswith("http")):
         raise HTTPException(status_code=400, detail="website_url is required for non-lead-gen campaigns")
 
-    # Create a durable request record before work begins.  It remains safely
+    # Claim the test and create a durable request record in one transaction
+    # before any external write. This closes the cross-browser race where two
+    # launches both observe an unlinked test and reach Meta.
+    if research_test:
+        claimed = db.query(ResearchTestBacklogItem).filter(
+            ResearchTestBacklogItem.id == research_test.id,
+            ResearchTestBacklogItem.created_by == current_user.id,
+            ResearchTestBacklogItem.generated_ad_id.is_(None),
+            ResearchTestBacklogItem.launch_claim_id.is_(None),
+        ).update({ResearchTestBacklogItem.launch_claim_id: request_id}, synchronize_session=False)
+        if claimed != 1:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="This research test was claimed by another launch. Reconcile it before retrying.")
+    # Create a durable request record before work begins. It remains safely
     # retryable while preparing; it becomes a reconciliation guard immediately
     # before the final ad-create write.
     db.add(MetaLaunchRequest(id=request_id, status="preparing"))
@@ -1477,6 +1496,7 @@ def push_to_meta(
             db.add(ga)
             if research_test:
                 research_test.generated_ad_id = ga.id
+                research_test.launch_claim_id = None
             db.commit()
             generated_ad_id = ga.id
         except Exception as link_err:

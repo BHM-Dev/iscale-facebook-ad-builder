@@ -711,6 +711,9 @@ class ResearchTestBacklogItem(Base):
     status = Column(String, nullable=False, default='draft', index=True)
     notes = Column(Text, nullable=True)
     generated_ad_id = Column(String, ForeignKey('generated_ads.id', ondelete='SET NULL'), nullable=True)
+    # Durable claim held while a direct Meta launch is preparing. This prevents
+    # two browser sessions from turning one research decision into two ads.
+    launch_claim_id = Column(String, nullable=True, index=True)
     created_by = Column(String, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

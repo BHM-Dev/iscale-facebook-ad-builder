@@ -43,6 +43,9 @@ or ROAS. Retained catalog observations and BHM performance remain separate.
 5. Retry the same Meta request ID: it must replay safely.
 6. Attempt another new launch with the same linked test: it must fail before
    the Meta write, preserving one durable test-to-ad attribution link.
+7. Attempt simultaneous new request IDs for one unlinked test: exactly one
+   may claim the test before Meta; the other must fail closed. A request that
+   fails while still preparing may safely release its claim on retry.
 
 ## Required safety assertions
 
@@ -55,6 +58,9 @@ or ROAS. Retained catalog observations and BHM performance remain separate.
 - A Direct Meta launch validates the buyer owns the supplied test decision.
 - Completed idempotent launch requests replay before checking whether a local
   test record still exists.
+- A durable `launch_claim_id` prevents cross-browser double launches for the
+  same test decision and remains in place for reconciliation if Meta was
+  already reached but local bookkeeping later failed.
 
 ## Local validation completed
 
