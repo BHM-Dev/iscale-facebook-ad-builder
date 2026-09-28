@@ -1358,17 +1358,6 @@ def push_to_meta(
         raise HTTPException(status_code=400, detail="adset_id is required")
     if not request_id:
         raise HTTPException(status_code=400, detail="request_id is required")
-    # Resolve buyer-owned research context before any Meta write. A stale or
-    # cross-user browser handoff must never create an ad that appears linked to
-    # somebody else's test decision.
-    research_test = None
-    if research_test_backlog_id:
-        research_test = db.query(ResearchTestBacklogItem).filter(
-            ResearchTestBacklogItem.id == research_test_backlog_id,
-            ResearchTestBacklogItem.created_by == current_user.id,
-        ).first()
-        if not research_test:
-            raise HTTPException(status_code=404, detail="Research test backlog item not found")
     prior = db.query(MetaLaunchRequest).filter(MetaLaunchRequest.id == request_id).first()
     if prior:
         if prior.status == "completed":
@@ -1383,6 +1372,19 @@ def push_to_meta(
         # safe: a retry may create a duplicate image/creative, never spend.
         db.delete(prior)
         db.commit()
+    # Resolve buyer-owned research context only after the idempotency replay
+    # path. A completed retry must remain replayable even if the buyer later
+    # archives or removes its local test record.
+    research_test = None
+    if research_test_backlog_id:
+        research_test = db.query(ResearchTestBacklogItem).filter(
+            ResearchTestBacklogItem.id == research_test_backlog_id,
+            ResearchTestBacklogItem.created_by == current_user.id,
+        ).first()
+        if not research_test:
+            raise HTTPException(status_code=404, detail="Research test backlog item not found")
+        if research_test.generated_ad_id:
+            raise HTTPException(status_code=409, detail="This research test is already linked to a BHM ad. Create a new test decision before launching another variation.")
     # Highest-consequence endpoint (creates a live ad) — enforce that a scoped
     # user can only push into an ad set within their assigned accounts.
     _assert_adset_allowed(current_user, adset_id, db, service)
