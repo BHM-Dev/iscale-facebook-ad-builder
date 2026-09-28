@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import os
 import tempfile
@@ -221,15 +221,57 @@ def refresh_drive_copy_metadata(
         service = DriveSyncService(db)
         if payload.skip_full_refresh:
             return DriveSyncResult(copy_health=service.get_copy_health_summary())
-        # Media IDs are the correct recovery key for a selected asset without a
-        # previously recorded copy source.  Prefer this narrowly scoped path to
-        # a full-library refresh even when the batch also contains known sources.
-        if payload.drive_file_ids and not payload.force_full_refresh:
-            return service.refresh_copy_metadata_for_drive_files(payload.drive_file_ids)
-        if payload.source_file_ids and not payload.force_full_refresh:
-            return service.refresh_copy_metadata_for_sources(payload.source_file_ids)
+        # A batch routinely contains BOTH kinds of row at once: assets with a
+        # recorded copy source and source-less assets fresh off an import.
+        # Each must resolve through its own path — a known source refreshes
+        # via its recorded document (tries the strategy-package folder first),
+        # while a source-less asset's own media-file location is the only
+        # thing to resolve from (tried in the opposite order: its own folder
+        # first, strategy second). An if/elif here would silently starve
+        # whichever list came second whenever the batch had any of the other
+        # kind, even though both lists can be correct and non-empty together.
+        if (payload.drive_file_ids or payload.source_file_ids) and not payload.force_full_refresh:
+            results = []
+            # Each call is its own transaction (its own commit/rollback, its own
+            # advisory lock acquire/release) — NOT one atomic unit across both.
+            # If the sources call commits and the drive-files call then raises,
+            # the sources-side writes are already durable; the frontend's catch
+            # block currently treats the resulting 500 as a total failure and
+            # re-marks every Drive row in the batch as needing another refresh,
+            # including the ones this already fixed. Not data-unsafe (fails
+            # closed, and a retry is idempotent), just wasted work — a caller
+            # that cares about partial-success reporting should catch each
+            # call independently rather than relying on this endpoint for it.
+            if payload.source_file_ids:
+                results.append(service.refresh_copy_metadata_for_sources(payload.source_file_ids))
+            if payload.drive_file_ids:
+                results.append(service.refresh_copy_metadata_for_drive_files(payload.drive_file_ids))
+            # The overwhelmingly common case is exactly one of the two lists —
+            # return that call's own result unchanged (same dict shape every
+            # caller before this change already expects) rather than routing
+            # a single result through the merge helper for no reason.
+            return results[0] if len(results) == 1 else _merge_drive_sync_results(results)
         return service.refresh_copy_metadata()
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+def _merge_drive_sync_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Combine two scoped refresh results into the single response the
+    frontend already expects from one refresh-copy-metadata call."""
+    merged = {
+        "processed": 0, "created": 0, "updated": 0, "skipped": 0,
+        "archived": 0, "unmatched_brand": 0, "errors": 0, "unverified": 0,
+        "next_page_token_saved": False, "copy_health": None,
+    }
+    for result in results:
+        for key in ("processed", "created", "updated", "skipped", "archived", "unmatched_brand", "errors", "unverified"):
+            merged[key] += result.get(key, 0)
+        merged["next_page_token_saved"] = merged["next_page_token_saved"] or result.get("next_page_token_saved", False)
+        if result.get("copy_health") is not None:
+            # Both calls audit the same whole-library health summary — the
+            # later one already reflects everything the earlier one changed.
+            merged["copy_health"] = result["copy_health"]
+    return merged

@@ -3330,13 +3330,13 @@ class DriveSyncService:
                 # landing page, but CTA is intentionally read within each AD
                 # block. Repeat the handoff's shared CTA here so it cannot
                 # silently fall back to a stale UI default at launch time.
-                + (f"CTA: {cta.group(1).strip()}\n" if cta else "")
+                + (f"CTA: {self._clean_markdown_value(cta.group(1))}\n" if cta else "")
             )
         prefix = ""
         if landing:
-            prefix += f"Lander: {landing.group(1).strip()}\n"
+            prefix += f"Lander: {self._clean_markdown_value(landing.group(1))}\n"
         if cta:
-            prefix += f"CTA: {cta.group(1).strip()}\n"
+            prefix += f"CTA: {self._clean_markdown_value(cta.group(1))}\n"
         return prefix + "\n".join(sections)
 
     def _is_painting_markdown_handoff_media(self, item: Dict[str, Any]) -> bool:

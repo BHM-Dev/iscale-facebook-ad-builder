@@ -64,6 +64,19 @@ const normalizeMetaCta = (value) => {
     return CTA_OPTIONS.includes(normalized) ? normalized : '';
 };
 
+// Derived on every read from `cta` + `rawCta`, never stored as its own mutable
+// field — a stored "was this invalid" flag went stale the moment `cta` was
+// corrected by a Drive refresh or a manual dropdown pick (neither writer knew
+// to clear it), which kept blocking launch with the OLD bad value even after
+// the row was actually fixed. Deriving it means any place that fixes `cta`
+// fixes this for free, with nothing else to keep in sync.
+const invalidCtaRawFor = (creative) => {
+    if (creative?.source !== 'drive') return '';
+    if (creative.cta?.trim()) return '';
+    const raw = creative.rawCta;
+    return raw && !normalizeMetaCta(raw) ? raw : '';
+};
+
 const parseDriveTags = (asset) => {
     if (!asset?.soft_tags) return {};
     if (typeof asset.soft_tags === 'object') return asset.soft_tags;
@@ -286,6 +299,12 @@ const buildDriveAssetGroups = (assets) => {
             copy: pairCopyIntegrityOk ? group.copy : null,
             landingPage: pairCopyIntegrityOk ? group.landingPage : null,
             cta: pairCopyIntegrityOk ? normalizeMetaCta(group.cta) : null,
+            // Preserved separately from the normalized `cta` above so a Drive
+            // tag that doesn't match Meta's current CTA enum can still be
+            // surfaced to Joel by name ("Unsupported CTA: FOO") instead of
+            // just reading as a plain, unexplained "Needs CTA" once the raw
+            // value is normalized away.
+            rawCta: group.cta || '',
             copyIntegrityIssue: group.copyIntegrityIssue || (isPair && !pairCopyIntegrityOk),
             copyIntegrityReason: group.copyIntegrityReason || null,
             copyRefusedForOtherFile: group.copyRefusedForOtherFile || false,
@@ -1133,7 +1152,15 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
             // A source-less row is normal immediately after import. Send its
             // media IDs so the server resolves its own package; do not make a
             // buyer wait for every unrelated Drive package to be re-scanned.
+            // Scoped to only the assets WITHOUT a known source — an asset that
+            // already has copy_source_drive_file_id must keep resolving via
+            // its recorded source (refresh_copy_metadata_for_sources tries the
+            // strategy-package folder before the media's own folder), not via
+            // this media-file fallback, which walks the opposite order and
+            // silently diverges for a strategy-doc-sourced package if every
+            // asset's drive_file_id were sent here regardless of source.
             const driveFileIds = [...new Set(refreshAssetIds
+                .filter(assetId => !parseDriveTags(assetById.get(assetId)).copy_source_drive_file_id)
                 .map(assetId => assetById.get(assetId)?.drive_file_id)
                 .filter(Boolean))];
             const res = await authFetch(`${API_URL}/drive-assets/refresh-copy-metadata`, {
@@ -1206,6 +1233,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                         body: manualCopyFields.body ? creative.body || '' : (matchedCopy.primary_text || (sourceCopyComplete ? '' : creative.body || '')),
                         description: manualCopyFields.description ? creative.description || '' : (matchedCopy.description || (sourceCopyComplete ? '' : creative.description || '')),
                         cta: manualCopyFields.cta ? creative.cta || '' : (normalizeMetaCta(group.cta) || (sourceCopyComplete ? '' : creative.cta || '')),
+                        // Refreshed alongside cta so a corrected-in-Drive CTA's
+                        // stale rejected value can't keep surfacing after the
+                        // real fix — invalidCtaRawFor derives from both together.
+                        rawCta: group.rawCta || creative.rawCta || '',
                         websiteUrl: manualCopyFields.websiteUrl ? creative.websiteUrl || '' : (group.landingPage || (sourceCopyComplete ? '' : creative.websiteUrl || '')),
                     };
                 }),
@@ -1418,6 +1449,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                     body: matchedCopy.primary_text || '',
                     description: matchedCopy.description || '',
                     cta: groupCta,
+                    rawCta: group.rawCta || '',
                     ctaSource: group.cta ? 'Drive' : groupCta ? 'Creative default' : '',
                     websiteUrl: groupWebsiteUrl
                 }];
@@ -1449,6 +1481,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                     body: matchedCopy.primary_text || '',
                     description: matchedCopy.description || '',
                     cta: groupCta,
+                    rawCta: group.rawCta || '',
                     ctaSource: group.cta ? 'Drive' : groupCta ? 'Creative default' : '',
                     websiteUrl: groupWebsiteUrl,
                     missingOppositePlacement: true,
@@ -1479,6 +1512,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                 body: matchedCopy.primary_text || '',
                 description: matchedCopy.description || '',
                 cta: groupCta,
+                rawCta: group.rawCta || '',
                 ctaSource: group.cta ? 'Drive' : groupCta ? 'Creative default' : '',
                 websiteUrl: groupWebsiteUrl
             }));
@@ -2204,18 +2238,24 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                     showWarning(`${missingCopy.length} selected ad${missingCopy.length !== 1 ? 's' : ''} still needs its own Primary Text and Headline. Edit the Ad pairs & copy rows before continuing.`);
                     return;
                 }
+                // Checked before the generic "missing" case below: creative.cta is
+                // already normalized to Meta's enum by construction time, so a
+                // rejected Drive tag never survives as a truthy-but-invalid string
+                // on c.cta itself — invalidCtaRaw is the only place that value is
+                // still visible, and checking it first gives Joel the specific
+                // "not a Meta-supported CTA" warning instead of a bare "missing"
+                // one for exactly the case where something WAS there and got
+                // silently dropped.
+                const invalidDriveCta = creativeData.creatives.find(c => invalidCtaRawFor(c));
+                if (invalidDriveCta) {
+                    focusCopyCreative(invalidDriveCta.id);
+                    showWarning(`The Drive CTA for ${invalidDriveCta.name || 'one selected ad'} ("${invalidCtaRawFor(invalidDriveCta)}") is not a Meta-supported CTA. Correct it in Drive, then refresh the pair before continuing.`);
+                    return;
+                }
                 const missingDriveCta = creativeData.creatives.find(c => c.source === 'drive' && !c.cta?.trim());
                 if (missingDriveCta) {
                     focusCopyCreative(missingDriveCta.id);
                     showWarning(`The Drive CTA for ${missingDriveCta.name || 'one selected ad'} is missing. Refresh its Drive pair before continuing.`);
-                    return;
-                }
-                const invalidDriveCta = creativeData.creatives.find(c => (
-                    c.source === 'drive' && c.cta?.trim() && !CTA_OPTIONS.includes(c.cta.trim())
-                ));
-                if (invalidDriveCta) {
-                    focusCopyCreative(invalidDriveCta.id);
-                    showWarning(`The Drive CTA for ${invalidDriveCta.name || 'one selected ad'} is not a Meta-supported CTA. Correct it in Drive, then refresh the pair before continuing.`);
                     return;
                 }
             } else {
@@ -2475,7 +2515,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             const issues = [];
                             if (!body) issues.push('Primary text');
                             if (!headline) issues.push('Headline');
-                            if (!CTA_OPTIONS.includes(cta)) issues.push('CTA');
+                            // Distinguish "nobody set a CTA" from "Drive tagged one and it's
+                            // not a Meta-supported value" — collapsing both into a bare "CTA"
+                            // left Joel unable to tell the two apart while scanning a big
+                            // batch, and unable to see what the rejected value even was.
+                            const invalidCta = invalidCtaRawFor(creative);
+                            if (invalidCta) issues.push(`Unsupported CTA (${invalidCta})`);
+                            else if (!CTA_OPTIONS.includes(cta)) issues.push('CTA');
                             if (!isValidDestinationUrl(url)) issues.push('URL');
                             if (creative.driveCopyIntegrityIssue) issues.push(creative.driveCopyRefusedForOtherFile ? 'Drive copy not matched' : 'Drive pair');
                             if (body.length > BODY_LIMIT) issues.push('Primary text length');
@@ -2484,6 +2530,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             return issues;
                         };
                         const selectedIssues = rowIssues(selectedCreative);
+                        const selectedInvalidCta = invalidCtaRawFor(selectedCreative);
                         const selectedCopyReady = selectedIssues.length === 0;
                         return (
                             <section ref={copyEditorRef} className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/50 p-4">
@@ -2584,6 +2631,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                             <label className="block text-xs font-semibold text-gray-700">Primary text *<textarea rows="5" value={selectedBody} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'body', event.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100 ${selectedBody.length > BODY_LIMIT ? 'border-red-400' : 'border-gray-300'}`} /><span className={`mt-1 block text-right text-[11px] ${charCountClass(selectedBody.length, BODY_WARN, BODY_LIMIT)}`}>{selectedBody.length} / {BODY_LIMIT}</span></label>
                                             <label className="block text-xs font-semibold text-gray-700">Headline *<input value={selectedHeadline} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'headline', event.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100 ${selectedHeadline.length > HEADLINE_LIMIT ? 'border-red-400' : 'border-gray-300'}`} /><span className={`mt-1 block text-right text-[11px] ${charCountClass(selectedHeadline.length, HEADLINE_WARN, HEADLINE_LIMIT)}`}>{selectedHeadline.length} / {HEADLINE_LIMIT}</span></label>
                                             <label className="block text-xs font-semibold text-gray-700">Description <span className="font-normal text-gray-400">(optional)</span><input value={selectedDescription} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'description', event.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100 ${selectedDescription.length > DESC_LIMIT ? 'border-red-400' : 'border-gray-300'}`} /><span className={`mt-1 block text-right text-[11px] ${charCountClass(selectedDescription.length, DESC_LIMIT, DESC_LIMIT)}`}>{selectedDescription.length} / {DESC_LIMIT}</span></label>
+                                            {selectedInvalidCta && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Drive tagged this ad&apos;s CTA as &quot;{selectedInvalidCta}&quot;, which isn&apos;t a Meta-supported CTA. Pick one below, or fix it in Drive and refresh.</p>}
                                             <label className="block text-xs font-semibold text-gray-700">Meta CTA *<select value={selectedCta} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'cta', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100"><option value="">Select a CTA...</option>{CTA_OPTIONS.map(option => <option key={option} value={option}>{option.replace(/_/g, ' ')}</option>)}</select></label>
                                         </div>
                                     </aside>
@@ -2635,15 +2683,18 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                             primary_text: creativeData.bodies?.[0],
                                         })
                                     );
-                                    const missingDriveCta = creative.source === 'drive' && !creative.cta?.trim();
+                                    // creative.cta is already normalized to Meta's enum by construction
+                                    // time, so a rejected Drive tag never survives here as a truthy-but-
+                                    // invalid string — invalidCtaRawFor derives the distinction from
+                                    // cta + rawCta instead, or a real "the tag said X but X isn't a
+                                    // Meta CTA" case silently reads as a plain, unexplained "Needs CTA".
+                                    const invalidDriveCta = Boolean(invalidCtaRawFor(creative));
+                                    const missingDriveCta = creative.source === 'drive' && !creative.cta?.trim() && !invalidDriveCta;
                                     const missingDriveUrl = creative.source === 'drive' && !creative.websiteUrl?.trim();
                                     const missingDriveFields = [
                                         missingDriveCta && 'CTA',
                                         missingDriveUrl && 'URL',
                                     ].filter(Boolean);
-                                    const invalidDriveCta = creative.source === 'drive'
-                                        && creative.cta?.trim()
-                                        && !CTA_OPTIONS.includes(creative.cta.trim());
                                     return (
                                         <div key={`copy-${creative.id}`} className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
                                             <div className="flex gap-3">
@@ -2721,7 +2772,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                                                     ? 'Show this creative in the picker'
                                                                     : creative.drivePairId ? 'Open Drive to repair this pair' : 'Open Drive to repair copy mapping')
                                                                 : invalidDriveCta
-                                                                    ? `Open Drive to repair unsupported CTA: ${creative.cta}`
+                                                                    ? `Open Drive to repair unsupported CTA: ${invalidCtaRawFor(creative)}`
                                                                 : `Edit the ${missingDriveFields.join(' + ')} below, or refresh from Drive`}
                                                         </button>
                                                     )}
