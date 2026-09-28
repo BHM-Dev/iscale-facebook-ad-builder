@@ -88,6 +88,13 @@ export const addAdvertiserWatchlist = async (verticalId, advertiser) => {
     return unwrap(response, 'Error adding advertiser to watchlist');
 };
 
+export const captureResearchAdvertiser = async (verticalId, advertiser, limit = 30) => {
+    const response = await authFetch(`${API_URL}/config-verticals/${encodeURIComponent(verticalId)}/capture-advertiser?limit=${limit}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ advertiser }),
+    });
+    return unwrap(response, 'Error capturing advertiser research');
+};
+
 export const markAdvertiserWatchlistReviewed = async (verticalId, watchlistId) => {
     const response = await authFetch(`${API_URL}/config-verticals/${encodeURIComponent(verticalId)}/watchlist/${encodeURIComponent(watchlistId)}/mark-reviewed`, {
         method: 'POST',

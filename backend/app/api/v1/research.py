@@ -2651,6 +2651,37 @@ def get_advertiser_watchlist(
     }
 
 
+@router.post("/config-verticals/{config_id}/capture-advertiser")
+async def capture_advertiser_for_research(
+    config_id: str,
+    request: ResearchAdvertiserWatchlistCreate,
+    limit: int = 30,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Manually capture one advertiser into an active insurance vertical."""
+    from app.core.vertical_config import VERTICAL_KEYWORD_SETS
+    from app.models import Vertical
+    _watchlist_vertical_or_404(config_id)
+    if not 1 <= limit <= 50:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 50")
+    advertiser = request.advertiser.strip()
+    if not advertiser:
+        raise HTTPException(status_code=400, detail="Advertiser is required")
+    allowed, _, reset_seconds = rate_limiter.check_limit(db)
+    if not allowed:
+        raise HTTPException(status_code=429, detail=f"Rate limit exceeded. Try again in {reset_seconds} seconds.")
+    config = VERTICAL_KEYWORD_SETS.get(config_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Unknown research vertical")
+    vertical = db.query(Vertical).filter(Vertical.name == config["label"]).first()
+    if not vertical:
+        vertical = Vertical(name=config["label"], description=f"Auto-created for {config['label']} research vertical")
+        db.add(vertical); db.commit(); db.refresh(vertical)
+    saved_search, ads = await ResearchService(db).search_and_save(AdSearchRequest(query=advertiser, platform="facebook", limit=limit, country="US", negative_keywords=config.get("negative_keywords", []), vertical_id=vertical.id, search_type="one_time"))
+    return {"advertiser": advertiser, "search_id": saved_search.id, "captured": len(ads), "new_ads": saved_search.ads_new or 0, "duplicates": saved_search.ads_duplicate or 0}
+
+
 @router.post("/config-verticals/{config_id}/watchlist", status_code=201)
 def add_advertiser_watchlist(
     config_id: str,
