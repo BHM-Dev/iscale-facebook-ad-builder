@@ -1669,6 +1669,9 @@ export default function CampaignPerformance() {
   // Adset-level manual pause state
   const [pausingAdsets, setPausingAdsets] = useState(new Set());
   const [adsetStatusOverrides, setAdsetStatusOverrides] = useState({}); // local optimistic overrides
+  // Native confirm dialogs are easy to miss in a tab-heavy media-buying workflow.
+  // Keep the requested operation explicit until Joel confirms it in the app.
+  const [adsetActionConfirm, setAdsetActionConfirm] = useState(null); // { type: 'pause' | 'remove', adset }
   const [syncingRT, setSyncingRT] = useState(false);
 
   // Brand assignment state — maps adset.id → { brand_id, brand_name }
@@ -1841,6 +1844,25 @@ export default function CampaignPerformance() {
       setPausingAdsets(prev => { const next = new Set(prev); next.delete(adset.fb_adset_id); return next; });
     }
   }, [adsetStatusOverrides, timedFetch, showSuccess, showError]);
+
+  const removeAdsetFromApp = useCallback(async (adset) => {
+    try {
+      const res = await authFetch(`${API_BASE}/facebook/adsets/saved/${adset.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to remove');
+      setAdsets(prev => prev.filter(item => item.id !== adset.id));
+      showSuccess(`"${adset.name}" removed from this app`);
+    } catch (e) {
+      showError(e.message || 'Failed to remove ad set from this app');
+    }
+  }, [showSuccess, showError]);
+
+  const confirmAdsetAction = async () => {
+    const action = adsetActionConfirm;
+    if (!action) return;
+    setAdsetActionConfirm(null);
+    if (action.type === 'pause') await toggleAdsetStatus(action.adset);
+    else await removeAdsetFromApp(action.adset);
+  };
 
   // Persist non-custom date presets so they survive navigation
   useEffect(() => {
@@ -3072,8 +3094,11 @@ export default function CampaignPerformance() {
                                         <button
                                           onClick={() => {
                                             const currentStatus = normalizeStatus(adsetStatusOverrides[adset.fb_adset_id] ?? adset.status);
-                                            if (currentStatus === 'ACTIVE' && !window.confirm(`Pause "${adset.name}"?\n\nThis will stop delivery immediately in Meta.`)) return;
-                                            toggleAdsetStatus(adset);
+                                            if (currentStatus === 'ACTIVE') {
+                                              setAdsetActionConfirm({ type: 'pause', adset });
+                                            } else {
+                                              toggleAdsetStatus(adset);
+                                            }
                                           }}
                                           disabled={isPausingAdset}
                                           className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
@@ -3091,15 +3116,7 @@ export default function CampaignPerformance() {
                                         </button>
                                       )}
                                       <button
-                                        onClick={async () => {
-                                          if (!window.confirm(`Remove "${adset.name}" from this app?\n\nAny auto-pause rules for this ad set will also be deleted. The ad set itself will not be affected in Meta.`)) return;
-                                          try {
-                                            const res = await authFetch(`${API_BASE}/facebook/adsets/saved/${adset.id}`, { method: 'DELETE' });
-                                            if (!res.ok) throw new Error('Failed to remove');
-                                            setAdsets(prev => prev.filter(a => a.id !== adset.id));
-                                            showSuccess(`"${adset.name}" removed`);
-                                          } catch (e) { showError(e.message); }
-                                        }}
+                                        onClick={() => setAdsetActionConfirm({ type: 'remove', adset })}
                                         className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-all"
                                         title="Remove from app (does not affect Meta)"
                                       >
@@ -3188,6 +3205,28 @@ export default function CampaignPerformance() {
         onClose={() => setShowAddRuleModal(false)}
         onCreated={() => { setShowAddRuleModal(false); }}
       />
+    )}
+
+    {adsetActionConfirm && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" role="presentation">
+        <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" role="dialog" aria-modal="true" aria-labelledby="adset-action-confirm-title">
+          <h2 id="adset-action-confirm-title" className="text-lg font-bold text-gray-900">
+            {adsetActionConfirm.type === 'pause' ? 'Pause ad set in Meta?' : 'Remove ad set from this app?'}
+          </h2>
+          <p className="mt-3 text-sm font-semibold text-gray-800">{adsetActionConfirm.adset.name}</p>
+          <p className="mt-2 text-sm leading-6 text-gray-600">
+            {adsetActionConfirm.type === 'pause'
+              ? 'This stops delivery immediately in Meta. You can resume it here or in Ads Manager later.'
+              : 'This only removes the saved ad set and its auto-pause rules from this app. It does not pause or delete anything in Meta.'}
+          </p>
+          <div className="mt-6 flex justify-end gap-3">
+            <button type="button" onClick={() => setAdsetActionConfirm(null)} className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Cancel</button>
+            <button type="button" onClick={confirmAdsetAction} className={`rounded-lg px-4 py-2 text-sm font-semibold text-white ${adsetActionConfirm.type === 'pause' ? 'bg-red-600 hover:bg-red-700' : 'bg-gray-800 hover:bg-gray-900'}`}>
+              {adsetActionConfirm.type === 'pause' ? 'Pause in Meta' : 'Remove from app'}
+            </button>
+          </div>
+        </div>
+      </div>
     )}
 
     {/* ── Remix Drawer ─────────────────────────────────────────────────────── */}
