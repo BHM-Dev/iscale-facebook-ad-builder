@@ -929,6 +929,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                         placement: 'Feed + Stories creative pair',
                     })),
                     createdAdSetCount: 1,
+                    accountId: selectedAdAccount?.accountId || selectedAdAccount?.id || null,
                     accountName: selectedAdAccount?.name || null,
                     campaignName: campaignData?.name || null,
                     campaignId: fbCampaignId || null,

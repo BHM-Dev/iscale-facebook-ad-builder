@@ -1,8 +1,21 @@
 import React, { createContext, useCallback, useEffect, useContext, useState } from 'react';
 import { authFetch } from '../lib/facebookApi';
-import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
+import { safeLocalStorageGet, safeLocalStorageSet, safeSessionStorageGet, safeSessionStorageRemove, safeSessionStorageSet } from '../lib/safeLocalStorage';
 
 const CampaignContext = createContext();
+const LAUNCH_RECEIPT_SESSION_KEY = 'campaign-launch-receipt';
+
+const restoreLaunchReceipt = () => {
+    const stored = safeSessionStorageGet(LAUNCH_RECEIPT_SESSION_KEY);
+    if (!stored) return null;
+    try {
+        return JSON.parse(stored);
+    } catch (error) {
+        console.warn('Discarding unreadable launch receipt session data', error);
+        safeSessionStorageRemove(LAUNCH_RECEIPT_SESSION_KEY);
+        return null;
+    }
+};
 
 export const useCampaign = () => {
     const context = useContext(CampaignContext);
@@ -151,9 +164,15 @@ export const CampaignProvider = ({ children }) => {
 
     // The Review step owns the actual Meta write. Keep its successful outcome
     // alongside the rest of the wizard context so the completion screen can be
-    // a real receipt instead of a generic success message. This is deliberately
-    // session-only: Meta remains the authority for durable delivery state.
-    const [launchReceipt, setLaunchReceipt] = useState(null);
+    // a real receipt instead of a generic success message. Keep it only in the
+    // current browser tab session so a refresh cannot erase a successful Meta
+    // write, while Ads Manager remains the durable delivery authority.
+    const [launchReceipt, setLaunchReceiptState] = useState(restoreLaunchReceipt);
+    const setLaunchReceipt = useCallback((receipt) => {
+        setLaunchReceiptState(receipt);
+        if (receipt) safeSessionStorageSet(LAUNCH_RECEIPT_SESSION_KEY, JSON.stringify(receipt));
+        else safeSessionStorageRemove(LAUNCH_RECEIPT_SESSION_KEY);
+    }, []);
 
     const [selectedAdAccount, setSelectedAdAccount] = useState(null);
 

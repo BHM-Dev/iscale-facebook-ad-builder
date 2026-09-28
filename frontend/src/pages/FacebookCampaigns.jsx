@@ -160,6 +160,31 @@ const FacebookCampaignWizardInner = () => {
     // he just watches it land on Creative.
     const { showWarning, showSuccess, showError } = useToast();
     const { selectedAdAccount, campaignData, adsetData, creativeData, setAdsData, launchSummary, setLaunchSummary, launchReceipt, setLaunchReceipt } = useCampaign();
+    const restoredReceiptRef = useRef(false);
+    // Snapshot a shortcut intent before its mount effect consumes the localStorage
+    // key. A previous receipt must never interrupt a new Quick Ad, Launch Pack, or
+    // Drive launch path in the same tab.
+    const [hasPendingLaunchIntent] = useState(() => {
+        try {
+            return Boolean(
+                localStorage.getItem('pendingQuickAd')
+                || localStorage.getItem('pendingLaunchPack')
+                || localStorage.getItem('pendingDriveLaunch')
+            );
+        } catch {
+            return false;
+        }
+    });
+
+    // A completed receipt is retained only for this browser tab. Restore the
+    // completion view after a refresh so a successful Meta write does not look
+    // like it disappeared; starting a new batch clears it explicitly.
+    useEffect(() => {
+        if (!restoredReceiptRef.current && !hasPendingLaunchIntent && launchReceipt && currentStep === 1) {
+            restoredReceiptRef.current = true;
+            setCurrentStep(6);
+        }
+    }, [currentStep, hasPendingLaunchIntent, launchReceipt]);
 
     // Switching between standard combinations and naming-convention import is a
     // different build path. Clear the previous path's counts before the new
@@ -438,6 +463,7 @@ const FacebookCampaignWizardInner = () => {
         if (quickAdTarget) stopQuickAd(null);
         if (driveLaunchActive) stopDriveLaunch(null);
         if (currentStep > 1) {
+            if (currentStep === 6) setLaunchReceipt(null);
             setCurrentStep(currentStep - 1);
         }
     };
@@ -454,6 +480,7 @@ const FacebookCampaignWizardInner = () => {
         if (stepId >= currentStep) return;
         if (quickAdTarget) stopQuickAd(null);
         if (driveLaunchActive) stopDriveLaunch(null);
+        if (currentStep === 6) setLaunchReceipt(null);
         setCurrentStep(stepId);
     };
 
@@ -467,7 +494,9 @@ const FacebookCampaignWizardInner = () => {
         setCurrentStep(4);
     };
 
-    const selectedAdsManagerAccountId = selectedAdAccount?.accountId || selectedAdAccount?.id;
+    // A receipt is immutable evidence of the batch just created, so its account
+    // must win over any mutable wizard selection that may resolve after refresh.
+    const selectedAdsManagerAccountId = launchReceipt?.accountId || selectedAdAccount?.accountId || selectedAdAccount?.id;
     const adsManagerHref = selectedAdsManagerAccountId
         ? `https://adsmanager.facebook.com/adsmanager/manage/ads?act=${encodeURIComponent(String(selectedAdsManagerAccountId).replace(/^act_/, ''))}`
         : 'https://adsmanager.facebook.com/adsmanager/manage/ads';
@@ -479,9 +508,14 @@ const FacebookCampaignWizardInner = () => {
     const receiptVisibleAds = receiptCreatedAds.slice(0, 10);
     const receiptPageName = launchReceipt?.pageName || creativeData?.pageName || creativeData?.pageId || null;
     const receiptDestinationUrl = launchReceipt?.destinationUrl || creativeData?.websiteUrl || null;
+    const receiptCreatedDate = launchReceipt?.createdAt ? new Date(launchReceipt.createdAt) : null;
+    const receiptCreatedAt = receiptCreatedDate && !Number.isNaN(receiptCreatedDate.getTime())
+        ? receiptCreatedDate.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+        : null;
 
     const copyLaunchReceipt = async () => {
         const lines = [
+            ...(receiptCreatedAt ? [`Created: ${receiptCreatedAt} (paused at creation; verify current status in Ads Manager)`] : []),
             `Account: ${launchReceipt?.accountName || selectedAdAccount?.name || 'Not recorded'}`,
             `Campaign: ${launchReceipt?.campaignName || campaignData?.name || 'Not recorded'}${launchReceipt?.campaignId ? ` (${launchReceipt.campaignId})` : ''}`,
             ...(receiptPageName ? [`Facebook Page: ${receiptPageName}${launchReceipt?.pageId && launchReceipt.pageId !== receiptPageName ? ` (${launchReceipt.pageId})` : ''}`] : []),
@@ -601,7 +635,7 @@ const FacebookCampaignWizardInner = () => {
                     {quickAdResolved.source === 'launch-pack' && (
                         <button
                             type="button"
-                            onClick={() => { setQuickAdResolved(null); setCurrentStep(1); }}
+                            onClick={() => { setLaunchReceipt(null); setQuickAdResolved(null); setCurrentStep(1); }}
                             className="font-semibold underline shrink-0 hover:text-teal-900"
                         >
                             Not right? Switch
@@ -625,7 +659,7 @@ const FacebookCampaignWizardInner = () => {
                     </span>
                     <button
                         type="button"
-                        onClick={() => { setDriveLaunchResolved(null); setCurrentStep(1); }}
+                        onClick={() => { setLaunchReceipt(null); setDriveLaunchResolved(null); setCurrentStep(1); }}
                         className="font-semibold underline shrink-0 hover:text-blue-900"
                     >
                         Not right? Switch
@@ -837,7 +871,7 @@ const FacebookCampaignWizardInner = () => {
                                 <p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">Launch receipt</p>
                                 <h2 className="mt-2 text-3xl font-bold text-gray-900">Ads created as paused</h2>
                                 <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-gray-700">
-                                    Meta has the new ads, but none will spend until you deliberately activate them in Ads Manager. This receipt is for the current session; Ads Manager remains the delivery record.
+                                    Meta created these ads as paused. This receipt stays available in this browser tab after a refresh, but verify their current status in Ads Manager before activating anything.
                                 </p>
                             </div>
 
@@ -858,6 +892,7 @@ const FacebookCampaignWizardInner = () => {
                                         <p className="mt-1 truncate text-xs text-gray-600" title={launchReceipt?.campaignName || campaignData?.name}>{launchReceipt?.campaignName || campaignData?.name || 'Campaign not recorded'}{launchReceipt?.campaignId ? ` · ${launchReceipt.campaignId}` : ''}</p>
                                     </div>
                                 </div>
+                                {receiptCreatedAt && <p className="mt-4 border-t border-gray-100 pt-4 text-xs text-gray-500">Created {receiptCreatedAt} · Paused status was confirmed at creation; verify current status in Ads Manager.</p>}
                                 {(receiptPageName || receiptDestinationUrl) && <div className="mt-4 grid gap-3 border-t border-gray-100 pt-4 text-xs sm:grid-cols-2"><div><p className="font-semibold uppercase tracking-wide text-gray-400">Facebook Page</p><p className="mt-1 break-words font-medium text-gray-800">{receiptPageName || 'Not recorded'}{launchReceipt?.pageId && launchReceipt.pageId !== receiptPageName ? ` · ${launchReceipt.pageId}` : ''}</p></div><div><p className="font-semibold uppercase tracking-wide text-gray-400">Destination URL</p><p className="mt-1 break-all font-medium text-gray-800">{receiptDestinationUrl || 'Not recorded'}</p></div></div>}
                                 <div className="mt-4 border-t border-gray-100 pt-4">
                                     <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ad sets to verify</p><button type="button" onClick={copyLaunchReceipt} className="text-xs font-semibold text-amber-700 hover:text-amber-900">Copy full receipt</button></div>

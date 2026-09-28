@@ -1871,6 +1871,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 : 'Feed creative',
                     })),
                     createdAdSetCount: adSetTargets.length,
+                    accountId: selectedAdAccount?.accountId || selectedAdAccount?.id || null,
                     accountName: selectedAdAccount?.name || null,
                     campaignName: campaignData?.name || null,
                     campaignId: fbCampaignId || null,
