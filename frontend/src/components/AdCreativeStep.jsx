@@ -652,9 +652,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
         return productsWithUrl.length === 1 ? productsWithUrl[0].default_url : '';
     };
     // A batch has one global destination. When it is already set, only show
-    // ready groups that agree with it. With no global URL, use the newest
-    // ready URL family as the execution set and keep other destinations out
-    // of bulk selection rather than blanking the URL after selection.
+    // ready groups that agree with it. Before Joel has set one, keep every
+    // launch-ready package visible: choosing the first Drive URL family made
+    // an unrelated recent package (for example Painting Contractors) hide the
+    // active ad set's Religious Organizations creative. A mixed selection is
+    // still fail-closed below: it clears the global URL and requires Joel to
+    // choose the one destination before launch.
     const resolvedDriveDestination = (group) => normalizeDestinationUrl(
         group?.landingPage || defaultUrlForDriveGroup(group) || creativeData.websiteUrl || ''
     );
@@ -669,10 +672,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
     const configuredLaunchDestination = isValidDestinationUrl(configuredDestinationCandidate)
         ? configuredDestinationCandidate
         : '';
-    const launchReadyDestination = configuredLaunchDestination
-        || resolvedDriveDestination(scopedDriveAssetGroups.find(isLaunchReady));
+    const launchReadyDestination = configuredLaunchDestination;
     const isLaunchReadyForDestination = (group) => (
-        isLaunchReady(group) && resolvedDriveDestination(group) === launchReadyDestination
+        isLaunchReady(group)
+        && (!launchReadyDestination || resolvedDriveDestination(group) === launchReadyDestination)
     );
 
     const driveAssetGroups = useMemo(() => {
@@ -924,7 +927,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
         [scopedDriveAssetGroups, launchReadyDestination],
     );
     const scopedOtherLaunchReadyDestinationCount = useMemo(
-        () => scopedDriveAssetGroups.filter(group => isLaunchReady(group) && !isLaunchReadyForDestination(group)).length,
+        () => launchReadyDestination
+            ? scopedDriveAssetGroups.filter(group => isLaunchReady(group) && !isLaunchReadyForDestination(group)).length
+            : 0,
         [scopedDriveAssetGroups, launchReadyDestination],
     );
     // Selectable tiles currently on screen. "Select all (7)" was enabled while
@@ -3536,7 +3541,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                     </div>
                     {launchReadyFilterActive && (
                         <div className="border-b border-emerald-100 bg-emerald-50 px-3 py-1.5 text-xs text-emerald-800">
-                            Launch-ready hides packages that need matched copy or use a different destination URL. Clear filters to browse every Drive folder.
+                            {launchReadyDestination
+                                ? 'Launch-ready hides packages that need matched copy or use a different destination URL. Clear filters to browse every Drive folder.'
+                                : 'Showing every package with matched copy, CTA, and a valid destination. Choose one Website URL before launch; mixed selections require an explicit choice.'}
                         </div>
                     )}
                     <div className="flex-1 min-h-0 overflow-y-auto p-2">
