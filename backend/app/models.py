@@ -682,6 +682,23 @@ class ResearchBoardItem(Base):
     )
 
 
+class ResearchAdvertiserWatchlist(Base):
+    """A user's tracked competitor advertiser within a Research vertical."""
+    __tablename__ = "research_advertiser_watchlists"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    vertical_id = Column(String, nullable=False, index=True)
+    advertiser = Column(String, nullable=False)
+    advertiser_key = Column(String, nullable=False)
+    created_by = Column(String, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    last_viewed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint('created_by', 'vertical_id', 'advertiser_key', name='uq_research_watchlist_advertiser'),
+    )
+
+
 class LaunchPack(Base):
     """A workspace-shared, exact Meta launch target reusable by media buyers."""
     __tablename__ = "launch_packs"

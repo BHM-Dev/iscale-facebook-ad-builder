@@ -16,7 +16,7 @@ from app.schemas.research import (
     AdSearchRequest, ScrapedAdResponse, ScrapedAdCreate, ScrapedAdSearchResult, SavedSearchResponse,
     BrandScrapeCreate, BrandScrapeResponse, BrandScrapeListResponse, AdLibraryImportRequest,
     ExternalResearchImportRequest,
-    ResearchBoardCreate, ResearchBoardItemCreate, ResearchBoardResponse, ResearchBoardItemResponse,
+    ResearchBoardCreate, ResearchBoardItemCreate, ResearchBoardResponse, ResearchBoardItemResponse, ResearchAdvertiserWatchlistCreate,
     ResearchMediaAttachment, ResearchBriefCuration, ResearchCopilotQuery,
 )
 from app.services.research_service import ResearchService
@@ -33,6 +33,7 @@ RESEARCH_SORT_OPTIONS = {"longest_running", "newest_seen", "most_sightings", "mu
 RESEARCH_CREATIVE_TAGS = {"testimonial", "problem_agitation", "transformation", "comparison", "review", "listicle", "founder", "educational", "statistic", "ugc", "comment_response"}
 RESEARCH_CTA_TYPES = {"learn_more", "get_quote", "sign_up", "apply_now", "contact_us", "shop_now", "unknown"}
 RESEARCH_PAGE_TYPES = {"lead_form", "advertorial", "ecommerce", "homepage", "unknown"}
+WATCHLIST_VERTICALS = {"commercial_insurance", "auto_insurance"}
 COPILOT_STOP_WORDS = {
     "active", "ad", "ads", "and", "are", "best", "cta", "day", "days", "find", "for", "from", "get", "in", "last", "me", "of", "performing", "please", "running", "show", "that", "the", "these", "this", "to", "use", "what", "with",
 }
@@ -2499,6 +2500,181 @@ def get_vertical_advertisers(
         "review_queue_count": review_queue_count,
         "limitations": "Catalog footprint reflects retained, deduplicated captures only—not advertiser spend, scale, or current delivery.",
     }
+
+
+# ============= Advertiser watchlists and change detection =============
+
+def _watchlist_vertical_or_404(config_id: str) -> None:
+    """Keep this workflow intentionally limited to the two active insurance verticals."""
+    if config_id not in WATCHLIST_VERTICALS:
+        raise HTTPException(status_code=404, detail="Advertiser watchlists are available for Commercial Insurance and Auto Insurance only")
+
+
+def _watchlist_signal_values(ad: dict, field: str) -> set[str]:
+    if field == "themes":
+        return {str(tag) for tag in (ad.get("creative_tags") or []) if tag}
+    if field == "segments":
+        segment = (ad.get("creative_intel") or {}).get("segment")
+        return {str(segment)} if segment else set()
+    value = ad.get(field)
+    return {str(value)} if value else set()
+
+
+def _watchlist_changes(new_ads: list[dict], prior_ads: list[dict]) -> list[dict]:
+    """Return observed catalog deltas only; no delivery or performance inference."""
+    changes = []
+    headlines = []
+    for ad in new_ads:
+        headline = (ad.get("headline") or "").strip()
+        if headline and headline not in headlines:
+            headlines.append(headline)
+    for headline in headlines[:2]:
+        changes.append({"kind": "hook", "label": f"New hook: {headline}"})
+
+    labels = {
+        "themes": "New theme",
+        "cta_type": "New CTA",
+        "media_type": "New format",
+        "segments": "New audience segment",
+        "destination_domain": "New destination",
+    }
+    for field, label in labels.items():
+        new_values = set().union(*(_watchlist_signal_values(ad, field) for ad in new_ads)) if new_ads else set()
+        prior_values = set().union(*(_watchlist_signal_values(ad, field) for ad in prior_ads)) if prior_ads else set()
+        for value in sorted(new_values - prior_values)[:2]:
+            changes.append({"kind": field, "label": f"{label}: {value.replace('_', ' ')}"})
+    return changes[:6]
+
+
+def _watchlist_summary(watchlist, ads: list[dict]) -> dict:
+    advertiser_key = watchlist.advertiser_key
+    advertiser_ads = [ad for ad in ads if (ad.get("brand_name") or "").strip().casefold() == advertiser_key]
+    since = _parse_research_date(watchlist.last_viewed_at or watchlist.created_at) or datetime.utcnow()
+    new_ads = [ad for ad in advertiser_ads if (_parse_research_date(ad.get("first_seen")) or datetime.min) > since]
+    prior_ads = [ad for ad in advertiser_ads if ad not in new_ads]
+    seen_dates = [_parse_research_date(ad.get("last_seen")) for ad in advertiser_ads]
+    latest_seen = max((value for value in seen_dates if value), default=None)
+    return {
+        "id": watchlist.id,
+        "advertiser": watchlist.advertiser,
+        "vertical_id": watchlist.vertical_id,
+        "created_at": _serialize_research_datetime(watchlist.created_at),
+        "last_viewed_at": _serialize_research_datetime(watchlist.last_viewed_at),
+        "current_capture_count": len(advertiser_ads),
+        "new_capture_count": len(new_ads),
+        "latest_seen": _serialize_research_datetime(latest_seen),
+        "changes": _watchlist_changes(new_ads, prior_ads),
+        "new_ads": new_ads[:3],
+    }
+
+
+@router.get("/config-verticals/{config_id}/watchlist")
+def get_advertiser_watchlist(
+    config_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.models import ResearchAdvertiserWatchlist
+
+    _watchlist_vertical_or_404(config_id)
+    watchlists = db.query(ResearchAdvertiserWatchlist).filter(
+        ResearchAdvertiserWatchlist.created_by == current_user.id,
+        ResearchAdvertiserWatchlist.vertical_id == config_id,
+    ).order_by(ResearchAdvertiserWatchlist.created_at.desc()).all()
+    ads = get_vertical_browse_ads(config_id=config_id, limit=500, db=db, current_user=current_user)
+    items = [_watchlist_summary(watchlist, ads) for watchlist in watchlists]
+    items.sort(key=lambda item: (-item["new_capture_count"], item["advertiser"].casefold()))
+    return {
+        "vertical": config_id,
+        "items": items,
+        "limitations": "Changes reflect newly retained catalog captures since you last marked an advertiser reviewed—not spend, performance, or live delivery.",
+    }
+
+
+@router.post("/config-verticals/{config_id}/watchlist", status_code=201)
+def add_advertiser_watchlist(
+    config_id: str,
+    request: ResearchAdvertiserWatchlistCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.models import ResearchAdvertiserWatchlist
+
+    _watchlist_vertical_or_404(config_id)
+    advertiser = request.advertiser.strip()
+    advertiser_key = advertiser.casefold()
+    existing = db.query(ResearchAdvertiserWatchlist).filter(
+        ResearchAdvertiserWatchlist.created_by == current_user.id,
+        ResearchAdvertiserWatchlist.vertical_id == config_id,
+        ResearchAdvertiserWatchlist.advertiser_key == advertiser_key,
+    ).first()
+    if existing:
+        return _watchlist_summary(existing, get_vertical_browse_ads(config_id=config_id, limit=500, db=db, current_user=current_user))
+    watchlist = ResearchAdvertiserWatchlist(
+        vertical_id=config_id,
+        advertiser=advertiser,
+        advertiser_key=advertiser_key,
+        created_by=current_user.id,
+    )
+    db.add(watchlist)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        watchlist = db.query(ResearchAdvertiserWatchlist).filter(
+            ResearchAdvertiserWatchlist.created_by == current_user.id,
+            ResearchAdvertiserWatchlist.vertical_id == config_id,
+            ResearchAdvertiserWatchlist.advertiser_key == advertiser_key,
+        ).first()
+        if not watchlist:
+            raise
+    db.refresh(watchlist)
+    return _watchlist_summary(watchlist, get_vertical_browse_ads(config_id=config_id, limit=500, db=db, current_user=current_user))
+
+
+@router.post("/config-verticals/{config_id}/watchlist/{watchlist_id}/mark-reviewed")
+def mark_advertiser_watchlist_reviewed(
+    config_id: str,
+    watchlist_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.models import ResearchAdvertiserWatchlist
+
+    _watchlist_vertical_or_404(config_id)
+    watchlist = db.query(ResearchAdvertiserWatchlist).filter(
+        ResearchAdvertiserWatchlist.id == watchlist_id,
+        ResearchAdvertiserWatchlist.created_by == current_user.id,
+        ResearchAdvertiserWatchlist.vertical_id == config_id,
+    ).first()
+    if not watchlist:
+        raise HTTPException(status_code=404, detail="Watchlist advertiser not found")
+    watchlist.last_viewed_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(watchlist)
+    return _watchlist_summary(watchlist, get_vertical_browse_ads(config_id=config_id, limit=500, db=db, current_user=current_user))
+
+
+@router.delete("/config-verticals/{config_id}/watchlist/{watchlist_id}")
+def delete_advertiser_watchlist(
+    config_id: str,
+    watchlist_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.models import ResearchAdvertiserWatchlist
+
+    _watchlist_vertical_or_404(config_id)
+    watchlist = db.query(ResearchAdvertiserWatchlist).filter(
+        ResearchAdvertiserWatchlist.id == watchlist_id,
+        ResearchAdvertiserWatchlist.created_by == current_user.id,
+        ResearchAdvertiserWatchlist.vertical_id == config_id,
+    ).first()
+    if not watchlist:
+        raise HTTPException(status_code=404, detail="Watchlist advertiser not found")
+    db.delete(watchlist)
+    db.commit()
+    return {"message": "Advertiser removed from watchlist"}
 
 
 @router.delete("/config-verticals/{config_id}/ads")

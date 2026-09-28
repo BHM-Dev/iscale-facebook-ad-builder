@@ -7,6 +7,7 @@ from app.api.v1.research import (
     _parse_research_date,
     _serialize_research_datetime,
     _sort_research_ads,
+    _watchlist_summary,
 )
 
 
@@ -48,3 +49,35 @@ def test_multiple_versions_prioritizes_versions_then_newest_seen():
         ad(id='multi-new', is_multiple_versions=True, last_seen='2026-09-19'),
     ]
     assert [item.id for item in _sort_research_ads(ads, 'multiple_versions')] == ['multi-new', 'multi-old', 'single-new']
+
+
+def test_watchlist_only_surfaces_new_catalog_changes_since_last_review():
+    watchlist = SimpleNamespace(
+        id='watch-1', advertiser='NerdInsure', advertiser_key='nerdinsure',
+        vertical_id='commercial_insurance', created_at='2026-09-01T00:00:00Z',
+        last_viewed_at='2026-09-10T00:00:00Z',
+    )
+    ads = [
+        {
+            'id': 'old', 'brand_name': 'NerdInsure', 'headline': 'Compare business coverage',
+            'first_seen': '2026-09-05T00:00:00Z', 'last_seen': '2026-09-09T00:00:00Z',
+            'cta_type': 'get_quote', 'media_type': 'image', 'creative_tags': ['comparison'],
+            'destination_domain': 'nerdinsure.example', 'creative_intel': {'segment': 'contractors'},
+        },
+        {
+            'id': 'new', 'brand_name': 'NerdInsure', 'headline': 'Security firms: compare coverage',
+            'first_seen': '2026-09-12T00:00:00Z', 'last_seen': '2026-09-12T00:00:00Z',
+            'cta_type': 'learn_more', 'media_type': 'video', 'creative_tags': ['educational'],
+            'destination_domain': 'nerdinsure.example', 'creative_intel': {'segment': 'security firms'},
+        },
+    ]
+
+    summary = _watchlist_summary(watchlist, ads)
+
+    assert summary['new_capture_count'] == 1
+    assert [ad['id'] for ad in summary['new_ads']] == ['new']
+    labels = [change['label'] for change in summary['changes']]
+    assert 'New hook: Security firms: compare coverage' in labels
+    assert 'New CTA: learn more' in labels
+    assert 'New format: video' in labels
+    assert 'New audience segment: security firms' in labels

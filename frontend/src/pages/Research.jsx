@@ -5,11 +5,15 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import {
   addResearchBoardItem,
+  addAdvertiserWatchlist,
   createResearchBoard,
+  deleteAdvertiserWatchlist,
   deleteResearchBoard,
   deleteResearchBoardItem,
+  getAdvertiserWatchlist,
   getResearchBoardItems,
   getResearchBoards,
+  markAdvertiserWatchlistReviewed,
   searchAndSave,
 } from '../api/research';
 
@@ -1118,7 +1122,7 @@ function ResearchBrief({ findings, testShortlist, visualMatchesByAdvertiser, tot
   );
 }
 
-function AdvertiserDirectory({ directory, loading, error, onExplore }) {
+function AdvertiserDirectory({ directory, loading, error, onExplore, onWatch, watchedAdvertisers = new Set() }) {
   const [selectedAdvertisers, setSelectedAdvertisers] = useState([]);
   const [directorySort, setDirectorySort] = useState('recent');
   const [recentOnly, setRecentOnly] = useState(false);
@@ -1156,7 +1160,17 @@ function AdvertiserDirectory({ directory, loading, error, onExplore }) {
     <div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-100 px-5 py-4"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-700">Advertiser directory</p><h3 className="mt-1 text-base font-semibold text-slate-900">Choose an advertiser before you wade into ads</h3><p className="mt-1 max-w-2xl text-sm text-slate-500">Compare up to three advertisers by retained hooks, audiences, destinations, and formats. Counts are catalog evidence—not spend, scale, or delivery claims.</p>{directory.review_queue_count > 0 && <p className="mt-2 text-xs font-medium text-amber-700">{directory.review_queue_count} broad legacy capture{directory.review_queue_count === 1 ? '' : 's'} stay in Ad examples for relevance review and are excluded here.</p>}</div><div className="flex items-center gap-2"><span className="rounded-full bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-600">{visibleAdvertisers.length} of {advertisers.length}</span>{selectedItems.length > 0 && <button type="button" onClick={() => setSelectedAdvertisers([])} className="text-xs font-semibold text-slate-500 hover:text-slate-800">Clear comparison</button>}</div></div>
     <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 bg-slate-50/70 px-5 py-3"><label className="flex items-center gap-2 text-xs font-medium text-slate-600">Sort <select value={directorySort} onChange={event => setDirectorySort(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"><option value="recent">Most recently captured</option><option value="captures">Most retained examples</option><option value="media">Most visual coverage</option><option value="name">Advertiser name</option></select></label><label className="flex items-center gap-1.5 text-xs text-slate-600"><input type="checkbox" checked={recentOnly} onChange={event => setRecentOnly(event.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />Recent only</label><label className="flex items-center gap-1.5 text-xs text-slate-600"><input type="checkbox" checked={mediaOnly} onChange={event => setMediaOnly(event.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />Has retained media</label></div>
     {selectedItems.length > 1 && <section className="border-b border-violet-100 bg-violet-50/50 px-5 py-4" aria-label="Advertiser comparison"><div className="mb-3 flex items-center justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-700">Advertiser comparison</p><p className="mt-1 text-sm text-slate-600">Observed creative structure only—not comparative performance.</p></div><span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-violet-700">{selectedItems.length} selected</span></div><div className={`grid gap-3 ${selectedItems.length === 2 ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>{selectedItems.map(item => <article key={item.advertiser} className="rounded-xl border border-violet-100 bg-white p-4"><div className="flex items-start justify-between gap-2"><p className="min-w-0 truncate font-semibold text-slate-900">{item.advertiser}</p><button type="button" onClick={() => toggleAdvertiser(item.advertiser)} className="shrink-0 text-xs font-semibold text-slate-500 hover:text-slate-800">Remove</button></div><dl className="mt-3 space-y-2 text-xs"><div><dt className="font-semibold uppercase tracking-wide text-slate-400">Most recent hook</dt><dd className="mt-1 leading-5 text-slate-700">{item.sample_headlines?.[0] ? `“${item.sample_headlines[0]}”` : 'No retained headline'}</dd></div><div><dt className="font-semibold uppercase tracking-wide text-slate-400">Audience (as tagged)</dt><dd className="mt-1 text-slate-700" title="Free-text tag from an external/manual import, not a classifier output — treat as one analyst's note, not a determined targeting signal.">{item.segments?.join(' · ') || 'Not classified'}</dd></div><div><dt className="font-semibold uppercase tracking-wide text-slate-400">Destination</dt><dd className="mt-1 break-words text-slate-700">{item.domains?.join(' · ') || 'Not retained'}</dd></div><div><dt className="font-semibold uppercase tracking-wide text-slate-400">Format mix</dt><dd className="mt-1 text-slate-700">{item.formats?.join(' / ') || 'Unknown'}</dd></div></dl><button type="button" onClick={() => onExplore(item.advertiser)} className="mt-4 w-full rounded-lg border border-indigo-200 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50">Explore ads</button></article>)}</div></section>}
-    <div className="divide-y divide-slate-100">{visibleAdvertisers.length === 0 ? <div className="px-5 py-10 text-center text-sm text-slate-500">No advertisers match these directory filters.</div> : visibleAdvertisers.map(item => <div key={item.advertiser} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><p className="truncate font-semibold text-slate-900">{item.advertiser}</p><p className="mt-1 truncate text-xs text-slate-500">{item.domains?.join(' · ') || 'No landing domain retained'}{item.latest_seen ? ` · last captured ${new Date(item.latest_seen).toLocaleDateString()}` : ''}</p>{item.sample_headlines?.length > 0 && <p className="mt-2 line-clamp-1 text-sm font-medium text-slate-700">“{item.sample_headlines[0]}”</p>}{item.segments?.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{item.segments.map(segment => <span key={segment} title="Free-text tag from an external/manual import, not a classifier output." className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">{segment}</span>)}</div>}</div><div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full bg-slate-100 px-2.5 py-1 font-medium text-slate-700">{item.capture_count} capture{item.capture_count === 1 ? '' : 's'}</span>{item.active_capture_count > 0 && <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-medium text-emerald-700">{item.active_capture_count} recent</span>}{item.media_capture_count > 0 && <span className="rounded-full bg-indigo-50 px-2.5 py-1 font-medium text-indigo-700">{item.media_capture_count} with media</span>}{item.formats?.length > 0 && <span className="rounded-full bg-slate-50 px-2.5 py-1 font-medium text-slate-500">{item.formats.join(' / ')}</span>}</div><div className="flex shrink-0 gap-2"><button type="button" onClick={() => toggleAdvertiser(item.advertiser)} disabled={!selectedAdvertisers.includes(item.advertiser) && selectedAdvertisers.length >= 3} aria-pressed={selectedAdvertisers.includes(item.advertiser)} title={!selectedAdvertisers.includes(item.advertiser) && selectedAdvertisers.length >= 3 ? 'Comparing 3 already — remove one to compare a different advertiser' : undefined} className={`rounded-lg border px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40 ${selectedAdvertisers.includes(item.advertiser) ? 'border-violet-200 bg-violet-50 text-violet-700' : 'border-slate-200 text-slate-600 hover:border-violet-200 hover:text-violet-700'}`}>{selectedAdvertisers.includes(item.advertiser) ? 'Selected' : 'Compare'}</button><button type="button" onClick={() => onExplore(item.advertiser)} className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">Explore ads</button></div></div>)}</div>
+    <div className="divide-y divide-slate-100">{visibleAdvertisers.length === 0 ? <div className="px-5 py-10 text-center text-sm text-slate-500">No advertisers match these directory filters.</div> : visibleAdvertisers.map(item => <div key={item.advertiser} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><p className="truncate font-semibold text-slate-900">{item.advertiser}</p><p className="mt-1 truncate text-xs text-slate-500">{item.domains?.join(' · ') || 'No landing domain retained'}{item.latest_seen ? ` · last captured ${new Date(item.latest_seen).toLocaleDateString()}` : ''}</p>{item.sample_headlines?.length > 0 && <p className="mt-2 line-clamp-1 text-sm font-medium text-slate-700">“{item.sample_headlines[0]}”</p>}{item.segments?.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{item.segments.map(segment => <span key={segment} title="Free-text tag from an external/manual import, not a classifier output." className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">{segment}</span>)}</div>}</div><div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full bg-slate-100 px-2.5 py-1 font-medium text-slate-700">{item.capture_count} capture{item.capture_count === 1 ? '' : 's'}</span>{item.active_capture_count > 0 && <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-medium text-emerald-700">{item.active_capture_count} recent</span>}{item.media_capture_count > 0 && <span className="rounded-full bg-indigo-50 px-2.5 py-1 font-medium text-indigo-700">{item.media_capture_count} with media</span>}{item.formats?.length > 0 && <span className="rounded-full bg-slate-50 px-2.5 py-1 font-medium text-slate-500">{item.formats.join(' / ')}</span>}</div><div className="flex shrink-0 flex-wrap gap-2"><button type="button" onClick={() => toggleAdvertiser(item.advertiser)} disabled={!selectedAdvertisers.includes(item.advertiser) && selectedAdvertisers.length >= 3} aria-pressed={selectedAdvertisers.includes(item.advertiser)} title={!selectedAdvertisers.includes(item.advertiser) && selectedAdvertisers.length >= 3 ? 'Comparing 3 already — remove one to compare a different advertiser' : undefined} className={`rounded-lg border px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40 ${selectedAdvertisers.includes(item.advertiser) ? 'border-violet-200 bg-violet-50 text-violet-700' : 'border-slate-200 text-slate-600 hover:border-violet-200 hover:text-violet-700'}`}>{selectedAdvertisers.includes(item.advertiser) ? 'Selected' : 'Compare'}</button>{onWatch && <button type="button" onClick={() => onWatch(item.advertiser)} disabled={watchedAdvertisers.has(item.advertiser.casefold())} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-default disabled:opacity-70">{watchedAdvertisers.has(item.advertiser.casefold()) ? 'Watching' : 'Watch'}</button>}<button type="button" onClick={() => onExplore(item.advertiser)} className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">Explore ads</button></div></div>)}</div>
+  </section>;
+}
+
+function WatchlistPanel({ watchlist, loading, error, onExplore, onBuild, onMarkReviewed, onRemove }) {
+  if (loading) return <div className="rounded-xl border border-slate-200 bg-white px-5 py-12 text-center text-sm text-slate-500">Checking tracked advertisers for new retained creative…</div>;
+  if (error) return <div className="rounded-xl border border-red-100 bg-white px-5 py-12 text-center"><p className="font-medium text-red-700">Couldn’t load the watchlist.</p><p className="mt-1 text-sm text-slate-500">{error}</p></div>;
+  const items = watchlist?.items || [];
+  return <section className="rounded-xl border border-slate-200 bg-white" aria-label="Advertiser watchlist">
+    <div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-100 px-5 py-4"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-700">Advertiser watchlist</p><h3 className="mt-1 text-base font-semibold text-slate-900">What changed since you last reviewed it</h3><p className="mt-1 max-w-2xl text-sm text-slate-500">Changes are newly retained catalog evidence—not spend, performance, or proof an ad is live.</p></div><span className="rounded-full bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-600">{items.length} tracked</span></div>
+    {items.length === 0 ? <div className="px-5 py-12 text-center"><p className="font-medium text-slate-800">No advertisers are being watched yet.</p><p className="mt-1 text-sm text-slate-500">Open Advertisers and use Watch on the aggregators you want to monitor.</p></div> : <div className="divide-y divide-slate-100">{items.map(item => <article key={item.id} className="px-5 py-4"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="font-semibold text-slate-900">{item.advertiser}</p>{item.new_capture_count > 0 ? <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">{item.new_capture_count} new capture{item.new_capture_count === 1 ? '' : 's'}</span> : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">No new captures</span>}</div><p className="mt-1 text-xs text-slate-500">{item.current_capture_count} retained examples{item.latest_seen ? ` · latest capture ${new Date(item.latest_seen).toLocaleDateString()}` : ''}</p></div><div className="flex flex-wrap gap-2"><button type="button" onClick={() => onExplore(item.advertiser)} className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">Review advertiser</button><button type="button" onClick={() => onMarkReviewed(item.id)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:border-slate-300">Mark reviewed</button><button type="button" onClick={() => onRemove(item.id)} className="rounded-lg px-2 py-2 text-sm font-medium text-slate-400 hover:text-red-600" aria-label={`Remove ${item.advertiser} from watchlist`}>Remove</button></div></div>{item.changes?.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{item.changes.map((change, index) => <span key={`${change.kind}-${index}`} className="max-w-full truncate rounded-lg bg-amber-50 px-2.5 py-1 text-xs text-amber-900" title={change.label}>{change.label}</span>)}</div>}{item.new_ads?.length > 0 && <div className="mt-3 grid gap-2 md:grid-cols-3">{item.new_ads.map(ad => <div key={ad.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3"><p className="line-clamp-2 text-sm font-medium text-slate-800">{ad.headline || ad.ad_copy || 'New retained creative'}</p><button type="button" onClick={() => onBuild(ad)} className="mt-2 text-xs font-semibold text-indigo-700 hover:text-indigo-900">Build from this creative →</button></div>)}</div>}</article>)}</div>}
   </section>;
 }
 
@@ -1225,6 +1239,9 @@ export default function Research() {
   const [advertiserDirectory, setAdvertiserDirectory] = useState(null);
   const [advertiserDirectoryLoading, setAdvertiserDirectoryLoading] = useState(false);
   const [advertiserDirectoryError, setAdvertiserDirectoryError] = useState('');
+  const [watchlist, setWatchlist] = useState(null);
+  const [watchlistLoading, setWatchlistLoading] = useState(false);
+  const [watchlistError, setWatchlistError] = useState('');
   const [visibleCardCount, setVisibleCardCount] = useState(RESEARCH_INITIAL_CARD_COUNT);
   const [savedAds, setSavedAds] = useState([]);
   const [savedAdIds, setSavedAdIds] = useState(new Set());
@@ -1275,9 +1292,14 @@ export default function Research() {
   const searchRequestRef = useRef(0);
   const refreshRequestRef = useRef(0);
   const advertiserDirectoryRequestRef = useRef(0);
+  const watchlistRequestRef = useRef(0);
   const contextGenerationRef = useRef(0);
   const activeVerticalRef = useRef(activeVertical);
   const activeSubVerticalRef = useRef(activeSubVertical);
+  const watchlistEnabled = activeVertical === 'commercial_insurance' || activeVertical === 'auto_insurance';
+  const watchedAdvertisers = useMemo(() => new Set(
+    watchlist?.vertical === activeVertical ? (watchlist.items || []).map(item => item.advertiser.casefold()) : [],
+  ), [watchlist, activeVertical]);
 
   const displayedBrowseAds = useMemo(() => {
     const candidates = hasVisual ? browseAds.filter(ad => !failedVisualIds.has(ad.id)) : browseAds;
@@ -1329,6 +1351,10 @@ export default function Research() {
   useEffect(() => {
     if (researchView === 'advertisers' && verticalConfig) loadAdvertiserDirectory();
   }, [researchView, activeVertical, activeSubVertical, verticalConfig]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (researchView === 'watchlist' && verticalConfig && watchlistEnabled) loadWatchlist();
+  }, [researchView, activeVertical, verticalConfig, watchlistEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     try {
@@ -1433,6 +1459,53 @@ export default function Research() {
       if (requestId === advertiserDirectoryRequestRef.current) setAdvertiserDirectoryError(error.message || 'Failed to load advertiser directory');
     } finally {
       if (requestId === advertiserDirectoryRequestRef.current) setAdvertiserDirectoryLoading(false);
+    }
+  };
+
+  const loadWatchlist = async () => {
+    const requestId = ++watchlistRequestRef.current;
+    setWatchlistLoading(true);
+    setWatchlistError('');
+    try {
+      const result = await getAdvertiserWatchlist(activeVertical);
+      if (requestId === watchlistRequestRef.current) setWatchlist(result);
+    } catch (error) {
+      if (requestId === watchlistRequestRef.current) setWatchlistError(error.message || 'Failed to load advertiser watchlist');
+    } finally {
+      if (requestId === watchlistRequestRef.current) setWatchlistLoading(false);
+    }
+  };
+
+  const handleAddToWatchlist = async (advertiser) => {
+    try {
+      const item = await addAdvertiserWatchlist(activeVertical, advertiser);
+      setWatchlist(previous => {
+        const currentItems = previous?.vertical === activeVertical ? previous.items : [];
+        return { vertical: activeVertical, items: [item, ...currentItems.filter(existing => existing.id !== item.id)] };
+      });
+      showSuccess(`${advertiser} added to your watchlist`);
+    } catch (error) {
+      showError(error.message || 'Could not add advertiser to watchlist');
+    }
+  };
+
+  const handleMarkWatchlistReviewed = async (watchlistId) => {
+    try {
+      const item = await markAdvertiserWatchlistReviewed(activeVertical, watchlistId);
+      setWatchlist(previous => previous ? { ...previous, items: previous.items.map(existing => existing.id === item.id ? item : existing) } : previous);
+      showSuccess(`${item.advertiser} marked reviewed`);
+    } catch (error) {
+      showError(error.message || 'Could not mark advertiser reviewed');
+    }
+  };
+
+  const handleRemoveFromWatchlist = async (watchlistId) => {
+    try {
+      await deleteAdvertiserWatchlist(activeVertical, watchlistId);
+      setWatchlist(previous => previous ? { ...previous, items: previous.items.filter(item => item.id !== watchlistId) } : previous);
+      showSuccess('Advertiser removed from watchlist');
+    } catch (error) {
+      showError(error.message || 'Could not remove advertiser from watchlist');
     }
   };
 
@@ -2210,6 +2283,7 @@ export default function Research() {
         <div className="inline-flex rounded-lg bg-slate-100 p-1" aria-label="Research view">
           <button type="button" onClick={() => setResearchView('brief')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'brief' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Research Brief</button>
           <button type="button" onClick={() => setResearchView('advertisers')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'advertisers' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Advertisers</button>
+          {watchlistEnabled && <button type="button" onClick={() => setResearchView('watchlist')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'watchlist' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Watchlist</button>}
           <button type="button" onClick={() => setResearchView('library')} className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${researchView === 'library' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Ad Library</button>
         </div>
         <span className="text-xs text-slate-500">{resultMode === 'search' ? `${reviewedFindingsAll.length} reviewed in results · ${catalogSummary.total} research results` : `${reviewedFindingsAll.length} reviewed finding${reviewedFindingsAll.length === 1 ? '' : 's'} · ${catalogSummary.total} raw captures`}</span>
@@ -2237,7 +2311,9 @@ export default function Research() {
           onToggleCompare={toggleCompare}
         />
       ) : researchView === 'advertisers' ? (
-        <AdvertiserDirectory directory={advertiserDirectory} loading={advertiserDirectoryLoading} error={advertiserDirectoryError} onExplore={exploreAdvertiser} />
+        <AdvertiserDirectory directory={advertiserDirectory} loading={advertiserDirectoryLoading} error={advertiserDirectoryError} onExplore={exploreAdvertiser} onWatch={watchlistEnabled ? handleAddToWatchlist : null} watchedAdvertisers={watchedAdvertisers} />
+      ) : researchView === 'watchlist' && watchlistEnabled ? (
+        <WatchlistPanel watchlist={watchlist} loading={watchlistLoading} error={watchlistError} onExplore={exploreAdvertiser} onBuild={handleUseAsInspiration} onMarkReviewed={handleMarkWatchlistReviewed} onRemove={handleRemoveFromWatchlist} />
       ) : <>
 
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500" aria-label="Research catalog summary"><span className="font-semibold text-slate-800">{browseLoading ? 'Loading captures…' : `${catalogSummary.total} captured examples`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.newCount} new this week`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.videoCount} video`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.taggedCount} theme tagged`}</span>{catalogSummary.needsReviewCount > 0 && <><span className="text-slate-300">·</span><span className="text-amber-700">{catalogSummary.needsReviewCount} need relevance review</span></>}<span className="text-slate-300">·</span><span className="text-slate-400">Current vertical + filters</span></div>

@@ -62,6 +62,10 @@ class ResearchBoardItemCreate(BaseModel):
     scraped_ad_id: str = Field(min_length=1, max_length=200)
 
 
+class ResearchAdvertiserWatchlistCreate(BaseModel):
+    advertiser: str = Field(min_length=1, max_length=200)
+
+
 class ResearchBoardResponse(BaseModel):
     id: str
     name: str

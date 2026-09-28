@@ -74,6 +74,34 @@ export const deleteResearchBoardItem = async (boardId, itemId) => {
     return unwrap(response, 'Error removing ad from research board');
 };
 
+export const getAdvertiserWatchlist = async (verticalId) => {
+    const response = await authFetch(`${API_URL}/config-verticals/${encodeURIComponent(verticalId)}/watchlist`, { cache: 'no-store' });
+    return unwrap(response, 'Error fetching advertiser watchlist');
+};
+
+export const addAdvertiserWatchlist = async (verticalId, advertiser) => {
+    const response = await authFetch(`${API_URL}/config-verticals/${encodeURIComponent(verticalId)}/watchlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ advertiser }),
+    });
+    return unwrap(response, 'Error adding advertiser to watchlist');
+};
+
+export const markAdvertiserWatchlistReviewed = async (verticalId, watchlistId) => {
+    const response = await authFetch(`${API_URL}/config-verticals/${encodeURIComponent(verticalId)}/watchlist/${encodeURIComponent(watchlistId)}/mark-reviewed`, {
+        method: 'POST',
+    });
+    return unwrap(response, 'Error marking advertiser reviewed');
+};
+
+export const deleteAdvertiserWatchlist = async (verticalId, watchlistId) => {
+    const response = await authFetch(`${API_URL}/config-verticals/${encodeURIComponent(verticalId)}/watchlist/${encodeURIComponent(watchlistId)}`, {
+        method: 'DELETE',
+    });
+    return unwrap(response, 'Error removing advertiser from watchlist');
+};
+
 export const getSavedSearches = async () => {
     const response = await authFetch(`${API_URL}/saved-searches`);
     return unwrap(response, 'Error fetching saved searches');
