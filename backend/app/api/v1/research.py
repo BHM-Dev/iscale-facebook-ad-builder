@@ -2141,7 +2141,7 @@ async def query_research_copilot(
         return {
             "question": payload.question.strip(),
             "query_plan": {**plan, "vertical": vertical_label},
-            "coverage": {"matched": 0, "returned": 0, "catalog_candidates": 0, "sufficient": False, "live_capture_recommended": True},
+            "coverage": {"matched": 0, "returned": 0, "catalog_candidates": 0, "sufficient": False, "live_capture_recommended": True, "latest_matching_capture_at": None},
             "suggestions": _copilot_query_suggestions(payload.question, plan, vertical_label),
             "results": [],
             "ai_summary": None,
@@ -2196,6 +2196,14 @@ async def query_research_copilot(
         record["match_reasons"] = reasons
         record["relevance_status"] = _research_relevance_status(ad, payload.vertical_id)
         results.append(record)
+    # `last_seen` is written when this catalog retains or re-observes a
+    # source row. Surface it as a capture timestamp, not an implication that
+    # Meta is delivering the ad right now.
+    matching_capture_dates = [
+        _parse_research_date(ad.last_seen)
+        for _, ad, _ in scored
+        if _parse_research_date(ad.last_seen)
+    ]
     ai_summary = await _research_copilot_ai_summary(payload.question.strip(), vertical_label, results)
     return {
         "question": payload.question.strip(),
@@ -2206,12 +2214,14 @@ async def query_research_copilot(
             "catalog_candidates": vertical_candidates,
             "sufficient": len(scored) >= 5,
             "live_capture_recommended": len(scored) < 5,
+            "latest_matching_capture_at": _serialize_research_datetime(max(matching_capture_dates)) if matching_capture_dates else None,
         },
         "suggestions": _copilot_query_suggestions(payload.question, plan, vertical_label),
         "results": results,
         "ai_summary": ai_summary,
         "limitations": [
             performance_limitation if plan["performance_intent"] else "Results are ordered by research relevance and catalog evidence, not Meta spend, ROAS, conversions, or delivery performance.",
+            "Capture freshness is based on BHM's last retained observation; it does not confirm an ad is currently live.",
             "Observed runtime is calculated from source-provided dates when available; it does not confirm current delivery.",
         ],
     }
