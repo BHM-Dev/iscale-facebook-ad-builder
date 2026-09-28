@@ -862,6 +862,23 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
     // buyer can select Feed assets, switch to Stories, and continue selecting;
     // filtering must not erase the earlier choices from the eventual payload.
     const allDriveAssetGroups = useMemo(() => buildDriveAssetGroups(driveAssets), [driveAssets]);
+    // The folder rail intentionally reflects the current filter, but a count
+    // of only the surviving folders made a scoped picker look as though Drive
+    // packages had disappeared. Keep the complete-library folder count beside
+    // the filtered count so a missing package reads as a filter result, never
+    // a silent deletion.
+    const totalDriveFolderCount = useMemo(() => new Set(allDriveAssetGroups.map(group => {
+        const section = drivePackageSection(group);
+        return section.split(' / ').slice(0, -1).join(' / ') || section;
+    })).size, [allDriveAssetGroups]);
+    const hasActiveDriveLibraryFilter = Boolean(
+        driveSearchTerm.trim()
+        || driveFormatFilter
+        || blockedFilterActive
+        || needsCopyFilterActive
+        || launchReadyFilterActive
+        || driveRepairPairId
+    );
     const driveGroupById = useMemo(() => new Map(allDriveAssetGroups.map(group => [group.id, group])), [allDriveAssetGroups]);
     const totalBlockedDriveGroupCount = useMemo(
         () => allDriveAssetGroups.filter(isDriveGroupSelectionBlocked).length,
@@ -3217,18 +3234,18 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             </button>
                         </div>
                     </div>
-                    <div className="flex flex-col gap-2 border-b p-2 lg:flex-row lg:items-center">
-                        <label className="relative block lg:flex-1 lg:min-w-0">
+                    <div className="flex flex-col gap-2 border-b p-2">
+                        <label className="relative block w-full">
                             <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
                             <input
                                 value={driveSearchTerm}
                                 onChange={(e) => setDriveSearchTerm(e.target.value)}
-                                placeholder={driveRepairPairId ? 'Repairing one pair — search paused' : 'Search filenames, folders, or brands'}
+                                placeholder={driveRepairPairId ? 'Repairing one pair — search paused' : 'Search filenames, folders, packages, or brands'}
                                 disabled={Boolean(driveRepairPairId)}
                                 className="w-full rounded-lg border border-gray-300 bg-white py-1 pl-9 pr-3 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400"
                             />
                         </label>
-                        <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap lg:shrink-0">
+                        <div className="flex flex-wrap items-center gap-2">
                             {/* The only way out of repair scope used to be closing and
                                 reopening the picker -- with search and the pills both
                                 inert, every control on this bar was dead. */}
@@ -3286,7 +3303,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                         : 'border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50'
                                 }`}
                             >
-                                Launch ready ({scopedLaunchReadyDriveGroupCount})
+                                {launchReadyFilterActive
+                                    ? `Launch-ready in current filters (${scopedLaunchReadyDriveGroupCount})`
+                                    : `Launch ready (${scopedLaunchReadyDriveGroupCount})`}
                             </button>
                             {scopedOtherLaunchReadyDestinationCount > 0 && (
                                 <span
@@ -3361,8 +3380,23 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             >
                                 Clear selection
                             </button>
-                            <div className="flex flex-col gap-0.5">
-                                <div className="flex items-center gap-1.5">
+                            {hasActiveDriveLibraryFilter && !driveRepairPairId && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setDriveSearchTerm('');
+                                        setDriveFormatFilter('');
+                                        setShowBlockedDriveOnly(false);
+                                        setShowNeedsCopyDriveOnly(false);
+                                        setShowLaunchReadyDriveOnly(false);
+                                    }}
+                                    className="px-3 py-1 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                                >
+                                    Clear filters
+                                </button>
+                            )}
+                            <div className="min-w-0 max-w-full flex flex-col gap-0.5">
+                                <div className="flex flex-wrap items-center gap-1.5">
                                     <span className="text-xs text-gray-500">Select first</span>
                                     <input
                                         type="number"
@@ -3370,7 +3404,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                         value={driveSelectCount}
                                         onChange={(e) => setDriveSelectCount(e.target.value)}
                                         placeholder="e.g. 50"
-                                        className="w-16 rounded-lg border border-gray-300 py-1 px-2 text-xs focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                                        className="w-16 shrink-0 rounded-lg border border-gray-300 py-1 px-2 text-xs focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
                                     />
                                     <span className="text-xs text-gray-500">matching assets</span>
                                     <button
@@ -3423,6 +3457,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             </div>
                         </div>
                     </div>
+                    {launchReadyFilterActive && (
+                        <div className="border-b border-emerald-100 bg-emerald-50 px-3 py-1.5 text-xs text-emerald-800">
+                            Launch-ready hides packages that need matched copy or use a different destination URL. Clear filters to browse every Drive folder.
+                        </div>
+                    )}
                     <div className="flex-1 min-h-0 overflow-y-auto p-2">
                         {driveLibraryLoading ? (
                             <div className="flex items-center justify-center py-12 gap-2 text-gray-500">
@@ -3461,11 +3500,17 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                     {mixedDriveCopyMatches.matchedPairs} pair{mixedDriveCopyMatches.matchedPairs !== 1 ? 's' : ''} matched copy from a strategy doc; {mixedDriveCopyMatches.unmatchedPairs} pair{mixedDriveCopyMatches.unmatchedPairs !== 1 ? 's' : ''} did not. Check the source files, then use Refresh copy from Drive.
                                 </div>
                             )}
-                            {driveParents.length > 1 && (
+                            {(hasActiveDriveLibraryFilter || driveParents.length > 1) && (
                                 <div className="mb-2 flex flex-wrap items-center justify-end gap-2 text-[11px] font-semibold text-gray-500">
-                                    <span className="mr-auto">{driveParents.length} Drive folder{driveParents.length !== 1 ? 's' : ''}</span>
-                                    <button type="button" onClick={() => setAllDriveSections(true)} className="rounded border border-gray-300 px-2 py-0.5 hover:bg-gray-50">Expand all</button>
-                                    <button type="button" onClick={() => setAllDriveSections(false)} className="rounded border border-gray-300 px-2 py-0.5 hover:bg-gray-50">Collapse all</button>
+                                    <span className="mr-auto">
+                                        {hasActiveDriveLibraryFilter
+                                            ? `${driveParents.length} of ${totalDriveFolderCount} Drive folders shown by active filters`
+                                            : `${driveParents.length} Drive folder${driveParents.length !== 1 ? 's' : ''}`}
+                                    </span>
+                                    {driveParents.length > 1 && <>
+                                        <button type="button" onClick={() => setAllDriveSections(true)} className="rounded border border-gray-300 px-2 py-0.5 hover:bg-gray-50">Expand all</button>
+                                        <button type="button" onClick={() => setAllDriveSections(false)} className="rounded border border-gray-300 px-2 py-0.5 hover:bg-gray-50">Collapse all</button>
+                                    </>}
                                 </div>
                             )}
                             <div className="grid gap-3 md:grid-cols-[220px_1fr]">
