@@ -558,6 +558,84 @@ class DriveSyncService:
             logger.exception("Targeted Drive copy refresh failed")
             raise
 
+    def refresh_copy_metadata_for_drive_files(self, drive_file_ids: List[str]) -> Dict[str, Any]:
+        """Refresh the packages that contain the selected Drive media files.
+
+        A media row can be new enough that it has no ``copy_source_drive_file_id``
+        yet.  Treating that ordinary state as a reason to scan every package in
+        the library made the Creative-step refresh slow and let unrelated broken
+        documents affect a buyer's active batch.  Resolve each selected file to
+        its nearest handoff package instead, deduplicating files from the same
+        package along the way.
+        """
+        result = {
+            "processed": 0, "created": 0, "updated": 0, "skipped": 0,
+            "archived": 0, "unmatched_brand": 0, "errors": 0,
+            "unverified": 0, "next_page_token_saved": False,
+        }
+        unique_ids = list(dict.fromkeys(file_id for file_id in drive_file_ids if file_id))
+        if not unique_ids:
+            return result
+        try:
+            self._validate_tables()
+            acquired = self.db.execute(
+                text("SELECT pg_try_advisory_xact_lock(hashtext(:lock_key))"),
+                {"lock_key": "drive_asset_sync"},
+            ).scalar()
+            if not acquired:
+                raise HTTPException(
+                    status_code=409,
+                    detail="A Drive sync is already running. Wait for it to finish, then refresh copy matches again.",
+                )
+            drive = self._client()
+            refreshed_folders = set()
+            for drive_file_id in unique_ids:
+                file_meta = None
+                try:
+                    with self.db.begin_nested():
+                        file_meta = drive.files().get(
+                            fileId=drive_file_id,
+                            fields="id,name,mimeType,parents,modifiedTime,trashed,size,webViewLink",
+                            supportsAllDrives=True,
+                        ).execute()
+                        result["processed"] += 1
+                        if file_meta.get("trashed") or not self._is_supported_media(
+                            file_meta.get("mimeType") or "", file_meta.get("name", "")
+                        ):
+                            raise RuntimeError("Selected Drive creative is unavailable or is no longer supported media")
+                        self._package_folder_cache.clear()
+                        self._strategy_package_folder_cache.clear()
+                        self._folder_metadata_cache.clear()
+                        metadata_folder = self._find_package_folder(file_meta) or self._find_strategy_package_folder(file_meta)
+                        if not metadata_folder:
+                            raise RuntimeError("Could not resolve the Drive package for this selected creative")
+                        if metadata_folder in refreshed_folders:
+                            result["skipped"] += 1
+                            continue
+                        result["updated"] += self._refresh_folder_copy_metadata(
+                            file_meta, metadata_folder=metadata_folder
+                        )
+                        refreshed_folders.add(metadata_folder)
+                except Exception as exc:
+                    result["errors"] += 1
+                    logger.warning("Could not refresh Drive creative package %s: %s", drive_file_id, exc)
+                    # This row often has no copy source yet, so revoking by
+                    # source-document ID is a no-op. Block the exact selected
+                    # media first; if its package was resolvable, block the
+                    # siblings as well. A 200 with errors must never leave
+                    # stale copy looking launchable.
+                    with self.db.begin_nested():
+                        self._mark_drive_media_unverified(drive_file_id, str(exc))
+                        if file_meta:
+                            self._mark_package_copy_unverified(file_meta, str(exc))
+            result = self._attach_copy_health(result)
+            self.db.commit()
+            return result
+        except Exception:
+            self.db.rollback()
+            logger.exception("Targeted Drive media-package refresh failed")
+            raise
+
     def _client(self):
         if self._drive:
             return self._drive
@@ -1723,6 +1801,31 @@ class DriveSyncService:
                 result.rowcount,
                 source_drive_file_id,
             )
+
+    def _mark_drive_media_unverified(self, drive_file_id: str, reason: str) -> None:
+        """Block one selected media row when its package refresh fails.
+
+        This is intentionally keyed by ``drive_assets.drive_file_id`` rather
+        than the copy-source tag: newly imported rows have no source tag until
+        a successful package resolution, which is precisely the failure path
+        this guard covers.
+        """
+        result = self.db.execute(
+            text(
+                """
+                UPDATE drive_assets
+                SET soft_tags = jsonb_set(
+                    jsonb_set(COALESCE(NULLIF(soft_tags, '')::jsonb, '{}'::jsonb), '{copy_refresh_status}', '"unverified"'::jsonb, true),
+                    '{copy_refresh_error}', to_jsonb(CAST(:reason AS text)), true
+                )::text,
+                synced_at = NOW()
+                WHERE archived = FALSE AND drive_file_id = :drive_file_id
+                """
+            ),
+            {"drive_file_id": drive_file_id, "reason": str(reason)[:500]},
+        )
+        if result.rowcount:
+            logger.warning("Marked selected Drive media %s unverified after package refresh failure", drive_file_id)
 
     def _mark_package_copy_unverified(self, file_meta: Dict[str, Any], reason: str) -> None:
         """Fail closed for a package whose current copy source cannot be verified.

@@ -1130,28 +1130,26 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
             const sourceFileIds = [...new Set(refreshAssetIds
                 .map(assetId => parseDriveTags(assetById.get(assetId)).copy_source_drive_file_id)
                 .filter(Boolean))];
-            const hasAssetWithoutSource = refreshAssetIds.some(
-                assetId => !parseDriveTags(assetById.get(assetId)).copy_source_drive_file_id
-            );
+            // A source-less row is normal immediately after import. Send its
+            // media IDs so the server resolves its own package; do not make a
+            // buyer wait for every unrelated Drive package to be re-scanned.
+            const driveFileIds = [...new Set(refreshAssetIds
+                .map(assetId => assetById.get(assetId)?.drive_file_id)
+                .filter(Boolean))];
             const res = await authFetch(`${API_URL}/drive-assets/refresh-copy-metadata`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                // If any selected/current row lacks a known source, use the
-                // comprehensive path so a mixed batch cannot report success
-                // while silently leaving that row stale.
                 body: JSON.stringify({
                     source_file_ids: sourceFileIds,
-                    force_full_refresh: hasAssetWithoutSource,
+                    drive_file_ids: driveFileIds,
+                    force_full_refresh: false,
                     skip_full_refresh: refreshAssetIds.length === 0,
                 }),
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.detail || 'Could not refresh Drive copy');
             const health = data.copy_health || {};
-            // A source-less selected asset requires the maintenance fallback.
-            // That scan may report unrelated document failures, which must not
-            // be presented as a failure of Joel's selected batch.
-            const batchSourceErrors = hasAssetWithoutSource ? 0 : (data.errors || 0);
+            const batchSourceErrors = data.errors || 0;
             // The endpoint audits the whole library, but this button is a
             // batch action. Do not make Joel repair a different package before
             // launching a batch whose selected/current assets are healthy.
@@ -1168,7 +1166,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                 return `${asset.package} — ${asset.file_name}${reason ? `: ${reason}` : ''}`;
             });
             const refreshMessage = batchSourceErrors
-                ? `Copy refresh completed with ${batchSourceErrors} source file${batchSourceErrors === 1 ? '' : 's'} requiring repair. Those packages are blocked until their current Drive copy refreshes successfully.`
+                ? `Copy refresh completed with ${batchSourceErrors} selected creative package${batchSourceErrors === 1 ? '' : 's'} requiring repair. Those creatives are blocked until their current Drive copy refreshes successfully.`
                 : `Drive copy refreshed for ${data.updated || 0} asset${data.updated === 1 ? '' : 's'} and synchronized with active Drive rows.`;
             const refreshedAssets = await fetchDriveAssets({ throwOnError: true });
             const refreshedGroups = buildDriveAssetGroups(refreshedAssets || []);

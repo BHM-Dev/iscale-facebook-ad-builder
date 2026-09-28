@@ -221,6 +221,11 @@ def refresh_drive_copy_metadata(
         service = DriveSyncService(db)
         if payload.skip_full_refresh:
             return DriveSyncResult(copy_health=service.get_copy_health_summary())
+        # Media IDs are the correct recovery key for a selected asset without a
+        # previously recorded copy source.  Prefer this narrowly scoped path to
+        # a full-library refresh even when the batch also contains known sources.
+        if payload.drive_file_ids and not payload.force_full_refresh:
+            return service.refresh_copy_metadata_for_drive_files(payload.drive_file_ids)
         if payload.source_file_ids and not payload.force_full_refresh:
             return service.refresh_copy_metadata_for_sources(payload.source_file_ids)
         return service.refresh_copy_metadata()

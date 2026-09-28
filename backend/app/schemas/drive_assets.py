@@ -55,5 +55,9 @@ class DriveCopyRefreshRequest(BaseModel):
     # server processes them sequentially under its sync lock, so imposing an
     # arbitrary request cap would turn a valid batch into a false 422 failure.
     source_file_ids: List[str] = Field(default_factory=list)
+    # Newly imported or previously unmatched assets have no source document ID
+    # yet.  Their Drive media IDs let the server resolve *their own package*
+    # without falling back to a whole-library crawl.
+    drive_file_ids: List[str] = Field(default_factory=list)
     force_full_refresh: bool = False
     skip_full_refresh: bool = False

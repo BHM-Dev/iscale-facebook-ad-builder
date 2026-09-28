@@ -2180,6 +2180,60 @@ def test_sync_once_isolates_a_bad_file_and_commits_successful_files():
     assert service.db.rolled_back is False
 
 
+def test_selected_media_refresh_failure_marks_media_and_package_unverified():
+    """A source-less picker row must fail closed if its package cannot resolve."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._validate_tables = lambda: None
+    service._find_package_folder = lambda file_meta: (_ for _ in ()).throw(RuntimeError("broken package"))
+    service._find_strategy_package_folder = lambda file_meta: None
+    service._attach_copy_health = lambda result: result
+    marked_media = []
+    marked_packages = []
+    service._mark_drive_media_unverified = lambda drive_file_id, reason: marked_media.append((drive_file_id, reason))
+    service._mark_package_copy_unverified = lambda file_meta, reason: marked_packages.append((file_meta["id"], reason))
+
+    class Result:
+        def scalar(self):
+            return True
+
+    class FakeDB:
+        committed = False
+        rolled_back = False
+        def execute(self, *args, **kwargs):
+            return Result()
+        class Savepoint:
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+        def begin_nested(self):
+            return self.Savepoint()
+        def commit(self):
+            self.committed = True
+        def rollback(self):
+            self.rolled_back = True
+
+    class FakeFiles:
+        def get(self, **kwargs):
+            return self
+        def execute(self):
+            return {"id": "media-1", "name": "ad-1.png", "mimeType": "image/png", "parents": ["folder"]}
+
+    class FakeDrive:
+        def files(self):
+            return FakeFiles()
+
+    service.db = FakeDB()
+    service._client = lambda: FakeDrive()
+    result = service.refresh_copy_metadata_for_drive_files(["media-1"])
+
+    assert result["errors"] == 1
+    assert marked_media and marked_media[0][0] == "media-1"
+    assert marked_packages and marked_packages[0][0] == "media-1"
+    assert service.db.committed is True
+    assert service.db.rolled_back is False
+
+
 def test_drive_sync_routes_keep_their_intended_service_composition(monkeypatch):
     """Pin endpoint wiring so a future refactor cannot silently swap paths."""
     from app.api.v1 import drive_assets as route_module
@@ -2199,6 +2253,9 @@ def test_drive_sync_routes_keep_their_intended_service_composition(monkeypatch):
         def refresh_copy_metadata_for_sources(self, source_ids):
             calls.append(("refresh_sources", source_ids))
             return {"processed": 3}
+        def refresh_copy_metadata_for_drive_files(self, drive_file_ids):
+            calls.append(("refresh_files", drive_file_ids))
+            return {"processed": 4}
         def get_copy_health_summary(self):
             calls.append(("copy_health", {}))
             return {
@@ -2215,6 +2272,11 @@ def test_drive_sync_routes_keep_their_intended_service_composition(monkeypatch):
         payload=DriveCopyRefreshRequest(source_file_ids=["copy-doc"]), db=db, _current_user=object()
     )["processed"] == 3
     assert calls[-1] == ("refresh_sources", ["copy-doc"])
+
+    assert route_module.refresh_drive_copy_metadata(
+        payload=DriveCopyRefreshRequest(drive_file_ids=["creative-file"]), db=db, _current_user=object()
+    )["processed"] == 4
+    assert calls[-1] == ("refresh_files", ["creative-file"])
 
     assert route_module.refresh_drive_copy_metadata(
         payload=DriveCopyRefreshRequest(), db=db, _current_user=object()
