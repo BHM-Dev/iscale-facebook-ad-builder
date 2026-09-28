@@ -2420,6 +2420,27 @@ def get_vertical_browse_ads(
     return result
 
 
+def _research_evidence_coverage(ads: list[dict]) -> dict:
+    """Describe retained research fields without suggesting delivery quality.
+
+    This is a coverage check, not a confidence, performance, or advertiser
+    quality score. It tells a buyer whether there is enough retained evidence
+    to inspect before translating a competitor pattern into a BHM test.
+    """
+    fields = {
+        "copy": any(bool((ad.get("headline") or "").strip() or (ad.get("ad_copy") or "").strip()) for ad in ads),
+        "visual": any(_has_retained_visual(ad) for ad in ads),
+        "cta": any(bool(ad.get("cta_type") or ad.get("cta_text")) for ad in ads),
+        "destination": any(bool(ad.get("destination_domain")) for ad in ads),
+    }
+    labels = {"copy": "copy", "visual": "visual", "cta": "CTA", "destination": "destination"}
+    return {
+        "evidence_coverage_count": sum(fields.values()),
+        "evidence_fields": [labels[key] for key, present in fields.items() if present],
+        "evidence_gaps": [labels[key] for key, present in fields.items() if not present],
+    }
+
+
 @router.get("/config-verticals/{config_id}/advertisers")
 def get_vertical_advertisers(
     config_id: str,
@@ -2460,6 +2481,7 @@ def get_vertical_advertisers(
             "segments": set(),
             "sample_headlines": [],
             "sample_ad_id": ad.get("id"),
+            "coverage_ads": [],
         })
         item["capture_count"] += 1
         item["active_capture_count"] += int(bool(ad.get("is_active")))
@@ -2478,16 +2500,20 @@ def get_vertical_advertisers(
         latest_seen = _parse_research_date(ad.get("last_seen"))
         if latest_seen and (not item["latest_seen"] or latest_seen > item["latest_seen"]):
             item["latest_seen"] = latest_seen
+        item["coverage_ads"].append(ad)
 
     directory = []
     for item in grouped.values():
-        directory.append({
+        directory_item = {
             **item,
+            **_research_evidence_coverage(item["coverage_ads"]),
             "formats": sorted(item["formats"]),
             "domains": sorted(item["domains"])[:3],
             "segments": sorted(item["segments"])[:3],
             "latest_seen": _serialize_research_datetime(item["latest_seen"]),
-        })
+        }
+        directory_item.pop("coverage_ads", None)
+        directory.append(directory_item)
     directory.sort(key=lambda item: (
         -item["active_capture_count"],
         -item["capture_count"],
@@ -2591,6 +2617,7 @@ def _watchlist_summary(watchlist, ads: list[dict]) -> dict:
         "days_since_latest_capture": days_since_latest_capture,
         "refresh_status": refresh_status,
         "refresh_reason": refresh_reason,
+        **_research_evidence_coverage(advertiser_ads),
         "changes": changes,
         "review_value": review_value,
         "review_priority": "high" if review_value >= 60 else "medium" if review_value >= 25 else "low",
@@ -2614,7 +2641,7 @@ def get_advertiser_watchlist(
     ads = get_vertical_browse_ads(config_id=config_id, limit=500, db=db, current_user=current_user)
     items = [_watchlist_summary(watchlist, ads) for watchlist in watchlists]
     refresh_order = {"missing": 0, "stale": 1, "due": 2, "fresh": 3}
-    items.sort(key=lambda item: (refresh_order[item["refresh_status"]], -item["review_value"], -item["new_capture_count"], item["advertiser"].casefold()))
+    items.sort(key=lambda item: (refresh_order.get(item["refresh_status"], 99), -item["review_value"], -item["new_capture_count"], item["advertiser"].casefold()))
     return {
         "vertical": config_id,
         "items": items,

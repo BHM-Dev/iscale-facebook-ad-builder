@@ -1534,7 +1534,12 @@ export default function Research() {
     // A watchlist refresh deliberately reuses the visible, rate-limited
     // vertical workflow. It never creates a hidden advertiser search or a
     // scheduled job, so the buyer controls when any live-source work runs.
-    setResearchView('library');
+    // Deliberately does NOT navigate to the Library tab — WatchlistPanel
+    // already shows its own "Refreshing…" state via the shared `refreshing`
+    // prop, and handleRefresh's own guard/warning toast (e.g. "finish the
+    // current Search or Clear operation first") is more useful seen from the
+    // tab the user actually clicked than after being silently bounced away
+    // from it, sometimes for a refresh that never even started.
     await handleRefresh();
     await loadWatchlist();
   };
