@@ -923,6 +923,11 @@ const BulkMatchImport = ({ onNext, onBack }) => {
                 clearSuccessfulLaunchIntent();
                 setLaunchReceipt({
                     createdAdCount: launchReadyRows.length,
+                    createdAds: createdAds.map(ad => ({
+                        id: ad.fbAdId || null,
+                        name: `AD ${ad.adNumber}`,
+                        placement: 'Feed + Stories creative pair',
+                    })),
                     createdAdSetCount: 1,
                     accountName: selectedAdAccount?.name || null,
                     campaignName: campaignData?.name || null,

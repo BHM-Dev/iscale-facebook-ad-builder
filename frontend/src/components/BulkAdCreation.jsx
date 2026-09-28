@@ -1861,6 +1861,15 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         : [{ id: fbFeedAdsetId, name: adsetData.name }];
                 setLaunchReceipt({
                     createdAdCount: launchAds.length,
+                    createdAds: launchAds.map((ad, index) => ({
+                        id: createdMetaAdIds[index] || null,
+                        name: ad.name || `Ad ${index + 1}`,
+                        placement: ad.dualPlacement
+                            ? 'Feed + Stories creative pair'
+                            : ad.format === 'stories'
+                                ? 'Stories & Reels creative'
+                                : 'Feed creative',
+                    })),
                     createdAdSetCount: adSetTargets.length,
                     accountName: selectedAdAccount?.name || null,
                     campaignName: campaignData?.name || null,

@@ -475,18 +475,21 @@ const FacebookCampaignWizardInner = () => {
     const receiptAdSetTargets = launchReceipt?.adSetTargets?.length
         ? launchReceipt.adSetTargets
         : [{ id: adsetData?.fbAdsetId || null, name: launchReceipt?.adsetName || adsetData?.name || 'Ad set not recorded' }];
+    const receiptCreatedAds = Array.isArray(launchReceipt?.createdAds) ? launchReceipt.createdAds : [];
+    const receiptVisibleAds = receiptCreatedAds.slice(0, 10);
 
-    const copyLaunchTargets = async () => {
+    const copyLaunchReceipt = async () => {
         const lines = [
             `Account: ${launchReceipt?.accountName || selectedAdAccount?.name || 'Not recorded'}`,
             `Campaign: ${launchReceipt?.campaignName || campaignData?.name || 'Not recorded'}${launchReceipt?.campaignId ? ` (${launchReceipt.campaignId})` : ''}`,
             ...receiptAdSetTargets.map(target => `Ad set: ${target.name}${target.id ? ` (${target.id})` : ''}`),
+            ...receiptCreatedAds.map(ad => `Ad: ${ad.name}${ad.placement ? ` [${ad.placement}]` : ''}${ad.id ? ` (${ad.id})` : ''}`),
         ];
         try {
             await navigator.clipboard.writeText(lines.join('\n'));
-            showSuccess('Launch targets copied');
+            showSuccess('Launch receipt copied');
         } catch {
-            showWarning('Could not copy the launch targets. Use the names and IDs shown here in Ads Manager.');
+            showWarning('Could not copy the launch receipt. Use the names and IDs shown here in Ads Manager.');
         }
     };
 
@@ -852,11 +855,20 @@ const FacebookCampaignWizardInner = () => {
                                     </div>
                                 </div>
                                 <div className="mt-4 border-t border-gray-100 pt-4">
-                                    <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ad sets to verify</p><button type="button" onClick={copyLaunchTargets} className="text-xs font-semibold text-amber-700 hover:text-amber-900">Copy names + IDs</button></div>
+                                    <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ad sets to verify</p><button type="button" onClick={copyLaunchReceipt} className="text-xs font-semibold text-amber-700 hover:text-amber-900">Copy full receipt</button></div>
                                     <div className="mt-2 space-y-1.5">
                                         {receiptAdSetTargets.map(target => <div key={`${target.id || 'no-id'}-${target.name}`} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 rounded-md bg-gray-50 px-3 py-2 text-xs"><span className="font-medium text-gray-800">{target.name}</span>{target.id && <span className="font-mono text-gray-500">{target.id}</span>}</div>)}
                                     </div>
                                 </div>
+                                {receiptCreatedAds.length > 0 && (
+                                    <div className="mt-4 border-t border-gray-100 pt-4">
+                                        <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ads created</p><span className="text-xs text-gray-500">{receiptCreatedAds.length}</span></div>
+                                        <div className="mt-2 max-h-52 space-y-1.5 overflow-y-auto pr-1">
+                                            {receiptVisibleAds.map((ad, index) => <div key={`${ad.id || ad.name || 'ad'}-${index}`} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 rounded-md bg-gray-50 px-3 py-2 text-xs"><span className="min-w-0 font-medium text-gray-800">{ad.name || `Ad ${index + 1}`}</span><span className="text-gray-500">{ad.placement || 'Placement not recorded'}</span>{ad.id && <span className="font-mono text-gray-500">{ad.id}</span>}</div>)}
+                                        </div>
+                                        {receiptCreatedAds.length > receiptVisibleAds.length && <p className="mt-2 text-xs text-gray-500">Showing the first {receiptVisibleAds.length}; copy the receipt for all {receiptCreatedAds.length} ad names and IDs.</p>}
+                                    </div>
+                                )}
                                 <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                                     Next: activate the new ads and any newly created ad sets in Ads Manager. If you reused a campaign or ad set and it is paused, enable it too.
                                 </div>
