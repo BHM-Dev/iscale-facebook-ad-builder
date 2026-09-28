@@ -1564,6 +1564,14 @@ export default function Research() {
       showSuccess(`${advertiser}: ${result.new_ads} new retained capture${result.new_ads === 1 ? '' : 's'}`);
       loadAdvertiserDirectory();
       loadWatchlist();
+      // A targeted capture should land the buyer on the retained evidence it
+      // just produced, not force a second manual search. Filtering the local
+      // catalog keeps the next step inspectable and avoids any extra source call.
+      setAdvertiserFilter(advertiser);
+      setResultMode('browse');
+      setResearchView('library');
+      setBrowseReloadKey(value => value + 1);
+      loadSavedAds();
     } catch (error) { showError(error.message || 'Could not capture advertiser research'); }
     finally { setCapturingAdvertiser(false); }
   };
