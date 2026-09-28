@@ -699,21 +699,23 @@ const FacebookCampaignWizardInner = () => {
                         </ol>
                     </div>
 
-                    {/* Launch Plan summary — see shell comment above for why this
-                        moved here from a right-hand rail. */}
-                    <div className={`min-w-0 bg-white rounded-xl border border-gray-200 shadow-sm ${isLaunchPlanExpanded ? 'p-4' : 'p-2'}`}>
-                        <LaunchSummaryPanel
-                            currentStep={currentStep}
-                            batchMode={batchMode}
-                            selectedAdAccount={selectedAdAccount}
-                            campaignData={campaignData}
-                            adsetData={adsetData}
-                            creativeData={creativeData}
-                            launchSummary={launchSummary}
-                            isExpanded={isLaunchPlanExpanded}
-                            onToggle={() => setIsLaunchPlanExpanded(expanded => !expanded)}
-                        />
-                    </div>
+                    {/* The plan is pre-launch guidance. Once Meta has confirmed
+                        completion, the receipt is the single source of truth. */}
+                    {currentStep < 6 && (
+                        <div className={`min-w-0 bg-white rounded-xl border border-gray-200 shadow-sm ${isLaunchPlanExpanded ? 'p-4' : 'p-2'}`}>
+                            <LaunchSummaryPanel
+                                currentStep={currentStep}
+                                batchMode={batchMode}
+                                selectedAdAccount={selectedAdAccount}
+                                campaignData={campaignData}
+                                adsetData={adsetData}
+                                creativeData={creativeData}
+                                launchSummary={launchSummary}
+                                isExpanded={isLaunchPlanExpanded}
+                                onToggle={() => setIsLaunchPlanExpanded(expanded => !expanded)}
+                            />
+                        </div>
+                    )}
                 </div>
 
                 {/* Mobile compact progress bar — same step data, horizontal layout,
