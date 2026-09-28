@@ -2771,7 +2771,23 @@ def delete_advertiser_watchlist(
 @router.get("/test-backlog")
 def get_research_test_backlog(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     from app.models import ResearchTestBacklogItem
-    return [{"id": item.id, "vertical_id": item.vertical_id, "advertiser": item.advertiser, "scraped_ad_id": item.scraped_ad_id, "hypothesis": item.hypothesis, "status": item.status, "notes": item.notes, "created_at": _serialize_research_datetime(item.created_at)} for item in db.query(ResearchTestBacklogItem).filter(ResearchTestBacklogItem.created_by == current_user.id).order_by(ResearchTestBacklogItem.updated_at.desc()).all()]
+    items = db.query(ResearchTestBacklogItem).filter(
+        ResearchTestBacklogItem.created_by == current_user.id
+    ).order_by(ResearchTestBacklogItem.updated_at.desc()).all()
+    return [{
+        "id": item.id,
+        "vertical_id": item.vertical_id,
+        "advertiser": item.advertiser,
+        "scraped_ad_id": item.scraped_ad_id,
+        "hypothesis": item.hypothesis,
+        "status": item.status,
+        "notes": item.notes,
+        "created_at": _serialize_research_datetime(item.created_at),
+        # Source context is returned only from the user's own retained
+        # catalog. It is strategy context for the next build, never a claim
+        # about delivery or performance.
+        "source": _serialize_scraped_ad(item.scraped_ad) if item.scraped_ad else None,
+    } for item in items]
 
 
 @router.post("/test-backlog", status_code=201)
