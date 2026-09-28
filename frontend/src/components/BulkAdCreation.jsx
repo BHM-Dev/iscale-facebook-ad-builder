@@ -789,6 +789,17 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const driveManifestUsesExistingAdset = Boolean(isDriveManifest && adsetData.isExisting);
     const driveManifestCreatesSeparateAdsets = Boolean(isDriveManifest && perMediaModeActive);
     const driveManifestHasDualPlacement = Boolean(isDriveManifest && activeAds.some(ad => ad.dualPlacement));
+    const drivePairCount = activeAds.filter(ad => ad.dualPlacement).length;
+    const driveSinglePlacementCount = activeAds.length - drivePairCount;
+    const driveReviewDestination = driveManifestCreatesSeparateAdsets
+        ? 'its own new ad set'
+        : driveManifestUsesExistingAdset
+            ? 'the selected existing ad set'
+            : 'the new shared ad set';
+    const driveReviewInventory = [
+        drivePairCount > 0 && `${drivePairCount} Feed + Stories pair${drivePairCount === 1 ? '' : 's'}`,
+        driveSinglePlacementCount > 0 && `${driveSinglePlacementCount} single-placement creative${driveSinglePlacementCount === 1 ? '' : 's'}`,
+    ].filter(Boolean).join(' and ');
     // handleSubmit's own safety gate (below, in the submit handler) has no
     // isDriveManifest condition — it blocks ANY existing-ad-set batch with a
     // dual-placement or all-stories creative, Drive-sourced or not. The
@@ -1917,11 +1928,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             )}
             <p className="text-gray-600 mb-6">
                 {isDriveManifest
-                    ? driveManifestCreatesSeparateAdsets
-                        ? 'Each selected Feed + Stories pair becomes one paused ad in its own new ad set. Use the compact manifest to organize, inspect, and select pairs without reviewing a wall of full-size ad previews.'
-                        : driveManifestUsesExistingAdset
-                            ? 'Each selected Feed + Stories pair becomes one paused ad in the selected existing ad set. Use the compact manifest to organize, inspect, and select pairs without reviewing a wall of full-size ad previews.'
-                            : 'Each selected Feed + Stories pair becomes one paused ad in the new shared ad set. Use the compact manifest to organize, inspect, and select pairs without reviewing a wall of full-size ad previews.'
+                    ? `Creative review: ${driveReviewInventory || 'no selected creatives'}. Each selected row becomes one paused ad in ${driveReviewDestination}. Use the compact manifest to organize, inspect, and select rows without reviewing a wall of full-size ad previews.`
                     : 'The app has automatically generated one ad for every combination of your images, headlines, and body copy. Each row below is one ad that will be created on Facebook.'}
             </p>
 
@@ -2115,8 +2122,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                     <div className="mt-0.5 text-xl font-bold text-gray-900">{driveManifestCreatesSeparateAdsets ? new Set(activeAds.map(ad => ad.creativeId)).size : activeAds.length} <span className="text-sm font-medium text-gray-500">/ {driveManifestCreatesSeparateAdsets ? new Set(adsData.map(ad => ad.creativeId)).size : adsData.length}</span></div>
                                 </div>
                                 <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
-                                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Feed + Stories pairs</div>
-                                    <div className="mt-0.5 text-xl font-bold text-gray-900">{activeAds.filter(ad => ad.dualPlacement).length}</div>
+                                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Placement inventory</div>
+                                    <div className="mt-0.5 text-xl font-bold text-gray-900">{driveReviewInventory || '—'}</div>
                                 </div>
                                 <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
                                     <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Copy ready</div>
