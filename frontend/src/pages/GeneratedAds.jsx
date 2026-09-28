@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import React, { useState, useEffect, useMemo } from 'react';
 import { Download, Trash2, Search, Filter, CheckSquare, Square, FileDown, ExternalLink, FileText, Image, LayoutGrid, List, Film, Rocket, X, Zap, AlertTriangle } from 'lucide-react';
 import { useBrands } from '../context/BrandContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import PushToMetaModal from '../components/PushToMetaModal';
 import BatchPushModal from '../components/BatchPushModal';
 
@@ -74,6 +74,8 @@ export default function GeneratedAds() {
     const { showError, showWarning, showSuccess } = useToast();
     const { authFetch } = useAuth();
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
+    const focusedGeneratedAdId = searchParams.get('adId');
     const [ads, setAds] = useState([]);
     const [loading, setLoading] = useState(true);
     const [selectedBundles, setSelectedBundles] = useState(new Set());
@@ -196,6 +198,7 @@ export default function GeneratedAds() {
     // Filter bundles
     const filteredBundles = useMemo(() => {
         const filtered = bundles.filter(bundle => {
+            const matchesFocusedAd = !focusedGeneratedAdId || bundle.some(ad => ad.id === focusedGeneratedAdId);
             // Check if any ad in the bundle matches the search term
             const matchesSearch = bundle.some(ad =>
                 (ad.headline?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
@@ -204,7 +207,7 @@ export default function GeneratedAds() {
             );
             const matchesNiche = selectedNiche === '' || bundle.some(ad => (ad.niche || ad.overlay_niche_line) === selectedNiche);
             const matchesAngle = selectedAngle === '' || bundle.some(ad => ad.angle === selectedAngle);
-            return (searchTerm === '' || matchesSearch) && matchesNiche && matchesAngle;
+            return matchesFocusedAd && (searchTerm === '' || matchesSearch) && matchesNiche && matchesAngle;
         });
 
         return [...filtered].sort((a, b) => {
@@ -225,7 +228,7 @@ export default function GeneratedAds() {
             const dateB = new Date(adB?.created_at || 0);
             return dateB - dateA;
         });
-    }, [bundles, searchTerm, selectedNiche, selectedAngle, sortMode]);
+    }, [bundles, focusedGeneratedAdId, searchTerm, selectedNiche, selectedAngle, sortMode]);
 
     const topAngles = useMemo(() => {
         const groups = {};
@@ -489,6 +492,12 @@ export default function GeneratedAds() {
 
             {/* Filters and Actions */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+                {focusedGeneratedAdId && (
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2.5">
+                        <p className="text-sm text-violet-900">Showing the BHM creative linked from a Research test. This confirms the local handoff only—not delivery or performance.</p>
+                        <button type="button" onClick={() => setSearchParams({})} className="text-xs font-semibold text-violet-700 hover:text-violet-900">Show all ads</button>
+                    </div>
+                )}
                 <div className="flex flex-col md:flex-row gap-4 mb-4">
                     {/* Search */}
                     <div className="flex-1 relative">
