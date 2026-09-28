@@ -707,6 +707,10 @@ class ResearchTestBacklogItem(Base):
     vertical_id = Column(String, nullable=False, index=True)
     advertiser = Column(String, nullable=True)
     scraped_ad_id = Column(String, ForeignKey('scraped_ads.id', ondelete='SET NULL'), nullable=True, index=True)
+    # Immutable evidence context captured when the buyer creates the decision.
+    # The live ScrapedAd can later be cleaned from the catalog; that must not
+    # erase the source rationale for a queued BHM test.
+    source_snapshot = Column(JSON, nullable=True)
     hypothesis = Column(Text, nullable=False)
     status = Column(String, nullable=False, default='draft', index=True)
     notes = Column(Text, nullable=True)

@@ -129,6 +129,21 @@ class TestResearchTestBacklog:
         assert item["status"] == "draft"
         assert item["source"]["id"] == ad.id
         assert item["source"]["brand_name"] == ad.brand_name
+        stored = db_session.query(ResearchTestBacklogItem).filter(ResearchTestBacklogItem.id == item_id).one()
+        assert stored.source_snapshot["id"] == ad.id
+        assert stored.source_snapshot["headline"] == ad.headline
+        source_ad_id, source_search_id = ad.id, ad.search_id
+
+        # Normal catalog cleanup must not erase the evidence that informed a
+        # buyer-owned test decision. The API falls back to its immutable
+        # source snapshot and labels it as such rather than implying it is a
+        # current Meta observation.
+        db_session.delete(ad)
+        db_session.commit()
+        snapshot_listed = client.get("/api/v1/research/test-backlog", headers=auth_headers)
+        snapshot_item = next(row for row in snapshot_listed.json() if row["id"] == item_id)
+        assert snapshot_item["source"]["id"] == source_ad_id
+        assert snapshot_item["source_is_snapshot"] is True
 
         update = client.patch(
             f"/api/v1/research/test-backlog/{item_id}",
@@ -152,7 +167,6 @@ class TestResearchTestBacklog:
         assert cross_vertical.status_code == 400
 
         db_session.query(ResearchTestBacklogItem).filter(ResearchTestBacklogItem.id == item_id).delete()
-        db_session.query(ScrapedAd).filter(ScrapedAd.id == ad.id).delete()
         db_session.query(ScrapedAd).filter(ScrapedAd.id == cross_vertical_ad.id).delete()
-        db_session.query(SavedSearch).filter(SavedSearch.id.in_([ad.search_id, cross_vertical_ad.search_id])).delete(synchronize_session=False)
+        db_session.query(SavedSearch).filter(SavedSearch.id.in_([source_search_id, cross_vertical_ad.search_id])).delete(synchronize_session=False)
         db_session.commit()

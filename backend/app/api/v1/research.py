@@ -2834,10 +2834,13 @@ def get_research_test_backlog(db: Session = Depends(get_db), current_user: User 
         # so two tabs (or a reopened test) could both run the full build
         # wizard only to have the second Push to Meta click hit a 409.
         "launch_in_progress": item.launch_claim_id is not None,
-        # Source context is returned only from the user's own retained
-        # catalog. It is strategy context for the next build, never a claim
-        # about delivery or performance.
-        "source": _serialize_scraped_ad(item.scraped_ad) if item.scraped_ad else None,
+        # Preserve the exact source context that informed this decision even
+        # if routine catalog cleanup later removes the linked row. Prefer the
+        # live row while present, then fall back to the immutable snapshot.
+        # It is strategy context for the next build, never a claim about
+        # delivery or performance.
+        "source": _serialize_scraped_ad(item.scraped_ad) if item.scraped_ad else item.source_snapshot,
+        "source_is_snapshot": bool(not item.scraped_ad and item.source_snapshot),
     } for item in items]
 
 
@@ -2845,6 +2848,7 @@ def get_research_test_backlog(db: Session = Depends(get_db), current_user: User 
 def create_research_test_backlog_item(request: ResearchTestBacklogCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     from app.models import ResearchTestBacklogItem, ScrapedAd, SavedSearch, Vertical
     _watchlist_vertical_or_404(request.vertical_id)
+    source_snapshot = None
     if request.scraped_ad_id:
         source_ad = db.query(ScrapedAd).filter(ScrapedAd.id == request.scraped_ad_id).first()
         if not source_ad:
@@ -2854,7 +2858,8 @@ def create_research_test_backlog_item(request: ResearchTestBacklogCreate, db: Se
         ).filter(SavedSearch.id == source_ad.search_id).scalar()
         if source_vertical != _configured_vertical_label(request.vertical_id):
             raise HTTPException(status_code=400, detail="Research source ad is not retained in the selected vertical")
-    item = ResearchTestBacklogItem(vertical_id=request.vertical_id, advertiser=(request.advertiser or "").strip() or None, scraped_ad_id=request.scraped_ad_id, hypothesis=request.hypothesis.strip(), notes=(request.notes or "").strip() or None, created_by=current_user.id)
+        source_snapshot = _serialize_scraped_ad(source_ad)
+    item = ResearchTestBacklogItem(vertical_id=request.vertical_id, advertiser=(request.advertiser or "").strip() or None, scraped_ad_id=request.scraped_ad_id, source_snapshot=source_snapshot, hypothesis=request.hypothesis.strip(), notes=(request.notes or "").strip() or None, created_by=current_user.id)
     db.add(item); db.commit(); db.refresh(item)
     return {"id": item.id, "status": item.status, "hypothesis": item.hypothesis}
 
