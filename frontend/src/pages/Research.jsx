@@ -1211,6 +1211,18 @@ function LiveCaptureReceipt({ receipt, onDismiss }) {
   </section>;
 }
 
+function WatchlistTargetedRefresh({ watchlist, onRefreshAdvertiser, refreshingAdvertiserId }) {
+  const items = watchlist?.items || [];
+  const [selectedId, setSelectedId] = useState('');
+  const activeId = items.some(item => item.id === selectedId) ? selectedId : items[0]?.id;
+  const selected = items.find(item => item.id === activeId);
+  if (!selected) return null;
+  return <section className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50/60 px-4 py-3" aria-label="Targeted watchlist refresh">
+    <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-700">Targeted Meta refresh</p><p className="mt-1 text-xs text-slate-600">Refresh one tracked advertiser with a manual 30-ad Meta capture. This stays in Watchlist and updates retained evidence only.</p></div>
+    <div className="flex flex-wrap items-center gap-2"><select value={activeId || ''} onChange={event => setSelectedId(event.target.value)} disabled={Boolean(refreshingAdvertiserId)} className="max-w-52 rounded-lg border border-indigo-200 bg-white px-2.5 py-2 text-sm text-slate-700 disabled:opacity-50">{items.map(item => <option key={item.id} value={item.id}>{item.advertiser}</option>)}</select><button type="button" onClick={() => onRefreshAdvertiser(selected)} disabled={Boolean(refreshingAdvertiserId)} className="rounded-lg bg-indigo-700 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-800 disabled:opacity-50">{refreshingAdvertiserId === selected.id ? 'Capturing…' : 'Refresh advertiser'}</button></div>
+  </section>;
+}
+
 function WatchlistPanel({ watchlist, loading, error, onExplore, onBuild, onAddTest, onMarkReviewed, onRemove, onRefresh, refreshing, verticalLabel }) {
   const [draftWatchlistId, setDraftWatchlistId] = useState(null);
   if (loading) return <div className="rounded-xl border border-slate-200 bg-white px-5 py-12 text-center text-sm text-slate-500">Checking tracked advertisers for new retained creative…</div>;
@@ -1322,6 +1334,7 @@ export default function Research() {
   const [testBacklog, setTestBacklog] = useState([]);
   const [testBacklogLoading, setTestBacklogLoading] = useState(false);
   const [capturingAdvertiser, setCapturingAdvertiser] = useState(false);
+  const [refreshingWatchlistAdvertiserId, setRefreshingWatchlistAdvertiserId] = useState('');
   const [lastCaptureReceipt, setLastCaptureReceipt] = useState(null);
   const [visibleCardCount, setVisibleCardCount] = useState(RESEARCH_INITIAL_CARD_COUNT);
   const [savedAds, setSavedAds] = useState([]);
@@ -1624,6 +1637,18 @@ export default function Research() {
       loadSavedAds();
     } catch (error) { showError(error.message || 'Could not capture advertiser research'); }
     finally { setCapturingAdvertiser(false); }
+  };
+
+  const handleTargetedWatchlistRefresh = async (item) => {
+    if (!item || capturingAdvertiser || refreshingWatchlistAdvertiserId) return;
+    setCapturingAdvertiser(true);
+    setRefreshingWatchlistAdvertiserId(item.id);
+    try {
+      const result = await captureResearchAdvertiser(activeVertical, item.advertiser, 30);
+      showSuccess(`${item.advertiser}: ${result.new_ads} new retained capture${result.new_ads === 1 ? '' : 's'} · ${result.duplicates || 0} already cataloged`);
+      await Promise.all([loadWatchlist(), loadAdvertiserDirectory()]);
+    } catch (error) { showError(error.message || 'Could not refresh tracked advertiser'); }
+    finally { setCapturingAdvertiser(false); setRefreshingWatchlistAdvertiserId(''); }
   };
 
   const handleMarkWatchlistReviewed = async (watchlistId) => {
@@ -2470,7 +2495,7 @@ export default function Research() {
       ) : researchView === 'advertisers' ? (
         <AdvertiserDirectory directory={advertiserDirectory} loading={advertiserDirectoryLoading} error={advertiserDirectoryError} onExplore={exploreAdvertiser} onWatch={watchlistEnabled ? handleAddToWatchlist : null} onCapture={watchlistEnabled ? handleCaptureAdvertiser : null} capturing={capturingAdvertiser} watchedAdvertisers={watchedAdvertisers} />
       ) : researchView === 'watchlist' && watchlistEnabled ? (
-        <WatchlistPanel watchlist={watchlist} loading={watchlistLoading} error={watchlistError} onExplore={exploreAdvertiser} onBuild={handleUseAsInspiration} onAddTest={handleCreateTestBacklog} onMarkReviewed={handleMarkWatchlistReviewed} onRemove={handleRemoveFromWatchlist} onRefresh={handleWatchlistRefresh} refreshing={refreshing} verticalLabel={currentVerticalLabel} />
+        <><WatchlistTargetedRefresh watchlist={watchlist} onRefreshAdvertiser={handleTargetedWatchlistRefresh} refreshingAdvertiserId={refreshingWatchlistAdvertiserId} /><WatchlistPanel watchlist={watchlist} loading={watchlistLoading} error={watchlistError} onExplore={exploreAdvertiser} onBuild={handleUseAsInspiration} onAddTest={handleCreateTestBacklog} onMarkReviewed={handleMarkWatchlistReviewed} onRemove={handleRemoveFromWatchlist} onRefresh={handleWatchlistRefresh} refreshing={refreshing} verticalLabel={currentVerticalLabel} /></>
       ) : researchView === 'tests' && watchlistEnabled ? (
         <ResearchTestBacklog items={testBacklog} loading={testBacklogLoading} verticalId={activeVertical} verticalLabel={currentVerticalLabel} onCreate={handleCreateTestBacklog} onStatusChange={handleTestBacklogStatus} onBuild={handleBuildTestBacklogItem} />
       ) : <>
