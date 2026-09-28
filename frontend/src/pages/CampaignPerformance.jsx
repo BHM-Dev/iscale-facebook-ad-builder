@@ -1726,6 +1726,10 @@ export default function CampaignPerformance() {
   const [campaignBudgetInput, setCampaignBudgetInput] = useState('');
   const [campaignBudgetType, setCampaignBudgetType] = useState('CBO');
   const [savingCampaignBudget, setSavingCampaignBudget] = useState(null);
+  // Budget inputs are intentionally editable inline for speed, but the actual
+  // Meta write needs an explicit last look at the amount and scope. A stray
+  // Enter key or an extra zero should never silently change live spend.
+  const [budgetChangeConfirm, setBudgetChangeConfirm] = useState(null);
   const [highlightedAdsetId, setHighlightedAdsetId] = useState(null);
   const rowRefs = useRef({});
   const scrolledToRef = useRef(null); // tracks which adsetId we've already scrolled to
@@ -2133,12 +2137,22 @@ export default function CampaignPerformance() {
     finally { setAssigningBrand(null); }
   };
 
-  const saveBudget = async (fbAdsetId) => {
+  const requestAdsetBudgetChange = (fbAdsetId, adsetName, currentBudgetCents) => {
     const dollars = parseFloat(budgetInput);
-    if (!dollars || dollars < 1) {
+    if (!Number.isFinite(dollars) || dollars < 1) {
       showError('Enter a valid budget ($1 minimum)');
       return;
     }
+    setBudgetChangeConfirm({
+      type: 'adset',
+      id: fbAdsetId,
+      name: adsetName,
+      dollars,
+      currentDollars: currentBudgetCents != null ? currentBudgetCents / 100 : null,
+    });
+  };
+
+  const saveBudget = async (fbAdsetId, dollars) => {
     setSavingBudget(fbAdsetId);
     try {
       const dailyBudgetCents = Math.round(dollars * 100);
@@ -2163,13 +2177,25 @@ export default function CampaignPerformance() {
     }
   };
 
-  const saveCampaignBudget = async (fbCampaignId) => {
+  const requestCampaignBudgetChange = (fbCampaignId, campaignName, currentBudgetCents) => {
     const isCBO = campaignBudgetType === 'CBO';
     const dollars = parseFloat(campaignBudgetInput);
-    if (isCBO && (!dollars || dollars < 1)) {
+    if (isCBO && (!Number.isFinite(dollars) || dollars < 1)) {
       showError('Enter a valid budget ($1 minimum)');
       return;
     }
+    setBudgetChangeConfirm({
+      type: 'campaign',
+      id: fbCampaignId,
+      name: campaignName,
+      budgetType: campaignBudgetType,
+      dollars: isCBO ? dollars : null,
+      currentDollars: currentBudgetCents != null ? currentBudgetCents / 100 : null,
+    });
+  };
+
+  const saveCampaignBudget = async (fbCampaignId, budgetType, dollars) => {
+    const isCBO = budgetType === 'CBO';
 
     setSavingCampaignBudget(fbCampaignId);
     try {
@@ -2193,6 +2219,14 @@ export default function CampaignPerformance() {
     } finally {
       setSavingCampaignBudget(null);
     }
+  };
+
+  const confirmBudgetChange = async () => {
+    const change = budgetChangeConfirm;
+    setBudgetChangeConfirm(null);
+    if (!change) return;
+    if (change.type === 'adset') await saveBudget(change.id, change.dollars);
+    else await saveCampaignBudget(change.id, change.budgetType, change.dollars);
   };
 
   // Blended CPL across all adsets with data — mirrors Dashboard.jsx logic.
@@ -2919,7 +2953,7 @@ export default function CampaignPerformance() {
                                       value={campaignBudgetInput}
                                       onChange={e => setCampaignBudgetInput(e.target.value)}
                                       onKeyDown={e => {
-                                        if (e.key === 'Enter') saveCampaignBudget(group.fbCampaignId);
+                                        if (e.key === 'Enter') requestCampaignBudgetChange(group.fbCampaignId, group.campaignName, group.campaignDailyBudget);
                                         if (e.key === 'Escape') setBudgetPopover(null);
                                       }}
                                       placeholder="e.g. 500"
@@ -2945,7 +2979,7 @@ export default function CampaignPerformance() {
                                   Cancel
                                 </button>
                                 <button
-                                  onClick={() => saveCampaignBudget(group.fbCampaignId)}
+                                  onClick={() => requestCampaignBudgetChange(group.fbCampaignId, group.campaignName, group.campaignDailyBudget)}
                                   disabled={savingCampaignBudget === group.fbCampaignId}
                                   className="flex-1 py-1.5 text-xs rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50"
                                 >
@@ -3062,7 +3096,7 @@ export default function CampaignPerformance() {
                                             value={budgetInput}
                                             onChange={e => setBudgetInput(e.target.value)}
                                             onKeyDown={e => {
-                                              if (e.key === 'Enter') saveBudget(adset.fb_adset_id);
+                                              if (e.key === 'Enter') requestAdsetBudgetChange(adset.fb_adset_id, adset.name, adset.daily_budget);
                                               if (e.key === 'Escape') { setEditingBudget(null); setBudgetInput(''); }
                                             }}
                                             className="w-20 text-xs border border-gray-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
@@ -3070,7 +3104,7 @@ export default function CampaignPerformance() {
                                           />
                                           <span className="text-xs text-gray-400">/day</span>
                                           <button
-                                            onClick={() => saveBudget(adset.fb_adset_id)}
+                                            onClick={() => requestAdsetBudgetChange(adset.fb_adset_id, adset.name, adset.daily_budget)}
                                             disabled={savingBudget === adset.fb_adset_id}
                                             className="text-green-600 hover:text-green-700 disabled:opacity-40"
                                             title="Save budget"
@@ -3276,6 +3310,30 @@ export default function CampaignPerformance() {
             <button type="button" onClick={confirmAdsetAction} className={`rounded-lg px-4 py-2 text-sm font-semibold text-white ${adsetActionConfirm.type === 'pause' ? 'bg-red-600 hover:bg-red-700' : 'bg-gray-800 hover:bg-gray-900'}`}>
               {adsetActionConfirm.type === 'pause' ? 'Pause in Meta' : 'Remove from app'}
             </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {budgetChangeConfirm && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" role="presentation">
+        <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" role="dialog" aria-modal="true" aria-labelledby="budget-change-confirm-title">
+          <h2 id="budget-change-confirm-title" className="text-lg font-bold text-gray-900">
+            {budgetChangeConfirm.type === 'campaign' ? 'Update campaign budget in Meta?' : 'Update ad set budget in Meta?'}
+          </h2>
+          <p className="mt-3 break-words text-sm font-semibold text-gray-800">{budgetChangeConfirm.name || budgetChangeConfirm.id}</p>
+          {budgetChangeConfirm.type === 'campaign' && budgetChangeConfirm.budgetType === 'ABO' ? (
+            <p className="mt-2 text-sm leading-6 text-gray-600">
+              This removes the campaign-level budget and switches spend control to the ad sets. Review every ad set budget before delivery continues.
+            </p>
+          ) : (
+            <p className="mt-2 text-sm leading-6 text-gray-600">
+              This changes the live daily budget from <strong>{budgetChangeConfirm.currentDollars != null ? `$${budgetChangeConfirm.currentDollars.toLocaleString()}` : 'the current Meta value'}</strong> to <strong>{`$${budgetChangeConfirm.dollars.toLocaleString()}/day`}</strong>. The change takes effect in Meta immediately.
+            </p>
+          )}
+          <div className="mt-6 flex justify-end gap-3">
+            <button type="button" onClick={() => setBudgetChangeConfirm(null)} className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Cancel</button>
+            <button type="button" onClick={confirmBudgetChange} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Update in Meta</button>
           </div>
         </div>
       </div>
