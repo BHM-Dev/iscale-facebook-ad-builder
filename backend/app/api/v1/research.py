@@ -2827,10 +2827,17 @@ def get_research_test_backlog(db: Session = Depends(get_db), current_user: User 
 
 @router.post("/test-backlog", status_code=201)
 def create_research_test_backlog_item(request: ResearchTestBacklogCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
-    from app.models import ResearchTestBacklogItem, ScrapedAd
+    from app.models import ResearchTestBacklogItem, ScrapedAd, SavedSearch, Vertical
     _watchlist_vertical_or_404(request.vertical_id)
-    if request.scraped_ad_id and not db.query(ScrapedAd.id).filter(ScrapedAd.id == request.scraped_ad_id).first():
-        raise HTTPException(status_code=404, detail="Research source ad not found")
+    if request.scraped_ad_id:
+        source_ad = db.query(ScrapedAd).filter(ScrapedAd.id == request.scraped_ad_id).first()
+        if not source_ad:
+            raise HTTPException(status_code=404, detail="Research source ad not found")
+        source_vertical = db.query(Vertical.name).join(
+            SavedSearch, SavedSearch.vertical_id == Vertical.id
+        ).filter(SavedSearch.id == source_ad.search_id).scalar()
+        if source_vertical != _configured_vertical_label(request.vertical_id):
+            raise HTTPException(status_code=400, detail="Research source ad is not retained in the selected vertical")
     item = ResearchTestBacklogItem(vertical_id=request.vertical_id, advertiser=(request.advertiser or "").strip() or None, scraped_ad_id=request.scraped_ad_id, hypothesis=request.hypothesis.strip(), notes=(request.notes or "").strip() or None, created_by=current_user.id)
     db.add(item); db.commit(); db.refresh(item)
     return {"id": item.id, "status": item.status, "hypothesis": item.hypothesis}

@@ -1,10 +1,21 @@
 """Acceptance tests for workspace-shared Research boards."""
 from uuid import uuid4
 
-from app.models import ResearchBoard, ResearchBoardItem, ResearchTestBacklogItem, ScrapedAd
+from app.models import ResearchBoard, ResearchBoardItem, ResearchTestBacklogItem, SavedSearch, ScrapedAd, Vertical
 
 
-def create_test_ad(db_session):
+def create_test_ad(db_session, vertical_name=None):
+    search_id = None
+    if vertical_name:
+        vertical = db_session.query(Vertical).filter(Vertical.name == vertical_name).first()
+        if not vertical:
+            vertical = Vertical(name=vertical_name, description="Test research vertical")
+            db_session.add(vertical)
+            db_session.flush()
+        search = SavedSearch(query="Board test query", vertical_id=vertical.id, search_type="one_time")
+        db_session.add(search)
+        db_session.flush()
+        search_id = search.id
     ad = ScrapedAd(
         brand_name="Board Test Advertiser",
         headline="Board test headline",
@@ -12,6 +23,7 @@ def create_test_ad(db_session):
         ad_link=f"https://www.facebook.com/ads/library/?id={uuid4()}",
         external_id=f"board-test-{uuid4()}",
         is_saved=True,
+        search_id=search_id,
     )
     db_session.add(ad)
     db_session.commit()
@@ -25,7 +37,7 @@ class TestResearchBoards:
         assert client.post("/api/v1/research/boards", json={"name": "Unauthenticated"}).status_code == 401
 
     def test_shared_board_crud_and_independent_membership(self, client, auth_headers, db_session):
-        ad = create_test_ad(db_session)
+        ad = create_test_ad(db_session, vertical_name="Commercial Insurance")
 
         first = client.post(
             "/api/v1/research/boards",
@@ -126,6 +138,21 @@ class TestResearchTestBacklog:
         assert update.status_code == 200
         assert update.json()["status"] == "building"
 
+        cross_vertical_ad = create_test_ad(db_session, vertical_name="Auto Insurance")
+        cross_vertical = client.post(
+            "/api/v1/research/test-backlog",
+            json={
+                "vertical_id": "commercial_insurance",
+                "advertiser": cross_vertical_ad.brand_name,
+                "scraped_ad_id": cross_vertical_ad.id,
+                "hypothesis": "This must not cross research verticals.",
+            },
+            headers=auth_headers,
+        )
+        assert cross_vertical.status_code == 400
+
         db_session.query(ResearchTestBacklogItem).filter(ResearchTestBacklogItem.id == item_id).delete()
         db_session.query(ScrapedAd).filter(ScrapedAd.id == ad.id).delete()
+        db_session.query(ScrapedAd).filter(ScrapedAd.id == cross_vertical_ad.id).delete()
+        db_session.query(SavedSearch).filter(SavedSearch.id.in_([ad.search_id, cross_vertical_ad.search_id])).delete(synchronize_session=False)
         db_session.commit()
