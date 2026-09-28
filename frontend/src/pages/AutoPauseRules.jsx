@@ -793,6 +793,7 @@ export default function AutoPauseRules() {
   const [checking, setChecking] = useState(false);
   const [showAddRule, setShowAddRule] = useState(false);
   const [editingRule, setEditingRule] = useState(null);
+  const [rulePendingDeletion, setRulePendingDeletion] = useState(null);
   const [lastCheckResult, setLastCheckResult] = useState(null);
 
   const loadRules = useCallback(async () => {
@@ -846,7 +847,6 @@ export default function AutoPauseRules() {
   }, [showAddRule, adsets, ads.length, loadAds]);
 
   const deleteRule = async (ruleId) => {
-    if (!window.confirm('Delete this auto-pause rule? This cannot be undone.')) return;
     try {
       const res = await authFetch(`${API_BASE}/auto-pause/rules/${ruleId}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to delete rule');
@@ -1133,7 +1133,7 @@ export default function AutoPauseRules() {
                       {rule.is_active ? <PauseCircle size={16} /> : <PlayCircle size={16} />}
                     </button>
                     <button
-                      onClick={() => deleteRule(rule.id)}
+                      onClick={() => setRulePendingDeletion(rule)}
                       className="p-1.5 rounded-lg hover:bg-red-50 transition-colors text-gray-400 hover:text-red-500"
                       title="Delete rule"
                     >
@@ -1198,6 +1198,20 @@ export default function AutoPauseRules() {
           onClose={() => setEditingRule(null)}
           onSaved={loadRules}
         />
+      )}
+
+      {rulePendingDeletion && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" role="presentation">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" role="dialog" aria-modal="true" aria-labelledby="delete-rule-title">
+            <h2 id="delete-rule-title" className="text-lg font-bold text-gray-900">Delete auto-pause rule?</h2>
+            <p className="mt-3 text-sm font-semibold text-gray-800">{rulePendingDeletion.scope === 'ad' ? (rulePendingDeletion.ad_name || rulePendingDeletion.fb_ad_id) : (rulePendingDeletion.adset_name || rulePendingDeletion.adset_id)}</p>
+            <p className="mt-2 text-sm leading-6 text-gray-600">This permanently removes the rule from the app. It does not change the ad or ad set in Meta.</p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={() => setRulePendingDeletion(null)} className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Cancel</button>
+              <button type="button" onClick={() => { const ruleId = rulePendingDeletion.id; setRulePendingDeletion(null); deleteRule(ruleId); }} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">Delete rule</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
