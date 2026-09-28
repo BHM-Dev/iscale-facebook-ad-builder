@@ -36,6 +36,7 @@ def test_commercial_catalog_keeps_validated_external_segment_rows():
     """External imports are scoped to a configured vertical at write time."""
     segment_led_external = SimpleNamespace(
         platform="external",
+        creative_intel={"capture_source": "external_research_import"},
         brand_name="RigCover.com",
         headline="Security firms: coverage tied to the work you do",
         ad_copy="Compare options for your operation.",

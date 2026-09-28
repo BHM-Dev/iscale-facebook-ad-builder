@@ -503,8 +503,8 @@ def _sort_research_ads(ads, sort_by):
     """Sort source-backed research signals with unknown dates last."""
     if sort_by == "longest_running":
         return sorted(ads, key=lambda ad: (
-            ad.platform == "external" or _parse_research_date(ad.start_date) is None,
-            _parse_research_date(ad.start_date) or datetime.max,
+            getattr(ad, "platform", None) == "external" or _parse_research_date(getattr(ad, "start_date", None)) is None,
+            _parse_research_date(getattr(ad, "start_date", None)) or datetime.max,
         ))
     if sort_by == "most_sightings":
         return sorted(ads, key=lambda ad: (ad.seen_count is None, -(ad.seen_count or 0)))
