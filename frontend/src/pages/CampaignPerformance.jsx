@@ -922,6 +922,10 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
   const [adStatuses, setAdStatuses] = useState({}); // local optimistic status overrides
   const [remixingAd, setRemixingAd] = useState(null);
   const [quickAd, setQuickAd] = useState(null);
+  // Pausing is an immediate Meta delivery change. Keep the individual-ad path
+  // consistent with the ad-set control below instead of making a dense-table
+  // misclick an instant spend decision.
+  const [adActionConfirm, setAdActionConfirm] = useState(null);
 
   // "Quick Ad" — the template-free launch path (AdBuilder-QuickAd-Feature-Brief.md).
   // Unlike Remix/Quick Variations/Quick Generate above (all AI-copy-assist tools that
@@ -1016,6 +1020,12 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
     }
   };
 
+  const confirmAdPause = async () => {
+    const ad = adActionConfirm;
+    setAdActionConfirm(null);
+    if (ad) await toggleAdStatus(ad);
+  };
+
   if (adsLoading) return (
     <div className="mt-3 pl-10 text-xs text-gray-400 animate-pulse">Loading creatives...</div>
   );
@@ -1036,6 +1046,7 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
   const hasRoas = ads.some(a => a.roas != null);
 
   return (
+    <>
     <div className="mt-3 rounded-lg border border-gray-100 overflow-hidden">
       <div className="overflow-x-auto">
       <table className="w-full text-xs">
@@ -1198,7 +1209,10 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
                     </button>
                     {/* Pause / Resume */}
                     <button
-                      onClick={() => toggleAdStatus(ad)}
+                      onClick={() => {
+                        if (isPaused) toggleAdStatus(ad);
+                        else setAdActionConfirm(ad);
+                      }}
                       disabled={isPausing}
                       className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
                         isPaused
@@ -1222,6 +1236,22 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
       </table>
       </div>
     </div>
+    {adActionConfirm && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" role="presentation">
+        <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" role="dialog" aria-modal="true" aria-labelledby="ad-action-confirm-title">
+          <h2 id="ad-action-confirm-title" className="text-lg font-bold text-gray-900">Pause ad in Meta?</h2>
+          <p className="mt-3 break-words text-sm font-semibold text-gray-800">{adActionConfirm.ad_name || adActionConfirm.ad_id}</p>
+          <p className="mt-2 text-sm leading-6 text-gray-600">
+            This stops delivery for this ad immediately. It does not change the campaign or ad set; you can resume the ad here or in Ads Manager later.
+          </p>
+          <div className="mt-6 flex justify-end gap-3">
+            <button type="button" onClick={() => setAdActionConfirm(null)} className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Cancel</button>
+            <button type="button" onClick={confirmAdPause} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">Pause in Meta</button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
