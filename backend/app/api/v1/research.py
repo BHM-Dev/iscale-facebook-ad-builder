@@ -16,7 +16,7 @@ from app.schemas.research import (
     AdSearchRequest, ScrapedAdResponse, ScrapedAdCreate, ScrapedAdSearchResult, SavedSearchResponse,
     BrandScrapeCreate, BrandScrapeResponse, BrandScrapeListResponse, AdLibraryImportRequest,
     ExternalResearchImportRequest,
-    ResearchBoardCreate, ResearchBoardItemCreate, ResearchBoardResponse, ResearchBoardItemResponse, ResearchAdvertiserWatchlistCreate,
+    ResearchBoardCreate, ResearchBoardItemCreate, ResearchBoardResponse, ResearchBoardItemResponse, ResearchAdvertiserWatchlistCreate, ResearchTestBacklogCreate, ResearchTestBacklogUpdate,
     ResearchMediaAttachment, ResearchBriefCuration, ResearchCopilotQuery,
 )
 from app.services.research_service import ResearchService
@@ -2735,6 +2735,36 @@ def delete_advertiser_watchlist(
     db.delete(watchlist)
     db.commit()
     return {"message": "Advertiser removed from watchlist"}
+
+
+@router.get("/test-backlog")
+def get_research_test_backlog(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    from app.models import ResearchTestBacklogItem
+    return [{"id": item.id, "vertical_id": item.vertical_id, "advertiser": item.advertiser, "scraped_ad_id": item.scraped_ad_id, "hypothesis": item.hypothesis, "status": item.status, "notes": item.notes, "created_at": _serialize_research_datetime(item.created_at)} for item in db.query(ResearchTestBacklogItem).filter(ResearchTestBacklogItem.created_by == current_user.id).order_by(ResearchTestBacklogItem.updated_at.desc()).all()]
+
+
+@router.post("/test-backlog", status_code=201)
+def create_research_test_backlog_item(request: ResearchTestBacklogCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    from app.models import ResearchTestBacklogItem, ScrapedAd
+    _watchlist_vertical_or_404(request.vertical_id)
+    if request.scraped_ad_id and not db.query(ScrapedAd.id).filter(ScrapedAd.id == request.scraped_ad_id).first():
+        raise HTTPException(status_code=404, detail="Research source ad not found")
+    item = ResearchTestBacklogItem(vertical_id=request.vertical_id, advertiser=(request.advertiser or "").strip() or None, scraped_ad_id=request.scraped_ad_id, hypothesis=request.hypothesis.strip(), notes=(request.notes or "").strip() or None, created_by=current_user.id)
+    db.add(item); db.commit(); db.refresh(item)
+    return {"id": item.id, "status": item.status, "hypothesis": item.hypothesis}
+
+
+@router.patch("/test-backlog/{item_id}")
+def update_research_test_backlog_item(item_id: str, request: ResearchTestBacklogUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    from app.models import ResearchTestBacklogItem
+    item = db.query(ResearchTestBacklogItem).filter(ResearchTestBacklogItem.id == item_id, ResearchTestBacklogItem.created_by == current_user.id).first()
+    if not item: raise HTTPException(status_code=404, detail="Research test not found")
+    if request.status is not None:
+        if request.status not in {"draft", "building", "launched", "learned", "archived"}: raise HTTPException(status_code=400, detail="Invalid research test status")
+        item.status = request.status
+    if request.notes is not None: item.notes = request.notes.strip() or None
+    db.commit(); db.refresh(item)
+    return {"id": item.id, "status": item.status, "notes": item.notes}
 
 
 @router.delete("/config-verticals/{config_id}/ads")

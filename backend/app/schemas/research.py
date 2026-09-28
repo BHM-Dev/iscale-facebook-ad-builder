@@ -66,6 +66,19 @@ class ResearchAdvertiserWatchlistCreate(BaseModel):
     advertiser: str = Field(min_length=1, max_length=200)
 
 
+class ResearchTestBacklogCreate(BaseModel):
+    vertical_id: str = Field(min_length=1, max_length=100)
+    hypothesis: str = Field(min_length=1, max_length=2000)
+    advertiser: Optional[str] = Field(default=None, max_length=200)
+    scraped_ad_id: Optional[str] = Field(default=None, max_length=200)
+    notes: Optional[str] = Field(default=None, max_length=4000)
+
+
+class ResearchTestBacklogUpdate(BaseModel):
+    status: Optional[str] = Field(default=None, max_length=30)
+    notes: Optional[str] = Field(default=None, max_length=4000)
+
+
 class ResearchBoardResponse(BaseModel):
     id: str
     name: str

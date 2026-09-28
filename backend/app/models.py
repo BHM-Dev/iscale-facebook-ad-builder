@@ -699,6 +699,26 @@ class ResearchAdvertiserWatchlist(Base):
     )
 
 
+class ResearchTestBacklogItem(Base):
+    """A buyer-owned test decision derived from retained research evidence."""
+    __tablename__ = "research_test_backlog_items"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    vertical_id = Column(String, nullable=False, index=True)
+    advertiser = Column(String, nullable=True)
+    scraped_ad_id = Column(String, ForeignKey('scraped_ads.id', ondelete='SET NULL'), nullable=True, index=True)
+    hypothesis = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default='draft', index=True)
+    notes = Column(Text, nullable=True)
+    generated_ad_id = Column(String, ForeignKey('generated_ads.id', ondelete='SET NULL'), nullable=True)
+    created_by = Column(String, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    scraped_ad = relationship("ScrapedAd")
+    generated_ad = relationship("GeneratedAd")
+
+
 class LaunchPack(Base):
     """A workspace-shared, exact Meta launch target reusable by media buyers."""
     __tablename__ = "launch_packs"
