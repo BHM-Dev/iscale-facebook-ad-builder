@@ -504,11 +504,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
     const [driveSectionOverrides, setDriveSectionOverrides] = useState({});
     const [driveParentOverrides, setDriveParentOverrides] = useState({});
     const [selectedDriveParentKey, setSelectedDriveParentKey] = useState(null);
+    const driveAdsetFocusAppliedRef = useRef(false);
     // Reset on open: as component state this survived closing the modal, so a
     // buyer returning the next day met a 7-tile library with the format pills
     // still reading "All 288" and nothing indicating a filter was on.
     useEffect(() => {
         if (showDriveLibraryModal) {
+            driveAdsetFocusAppliedRef.current = false;
             setShowBlockedDriveOnly(false);
             setShowNeedsCopyDriveOnly(false);
             setShowLaunchReadyDriveOnly(preferLaunchReady);
@@ -749,12 +751,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
         // Painting Contractors must open that child package, not a generic
         // Commercial Insurance parent whose contents are still collapsed.
         driveSections.forEach(section => {
-            const score = scoreDriveFolderForAdset(section.label, adsetName);
+            const packageScore = scoreDriveFolderForAdset(section.label, adsetName);
+            const parentScore = scoreDriveFolderForAdset(section.parentLabel, adsetName);
+            const score = Math.max(packageScore, parentScore);
             if (score > bestMatch.score) {
                 bestMatch = {
                     parentKey: section.parentLabel || section.key,
                     sectionKey: section.key,
-                    label: section.label,
+                    label: packageScore >= parentScore ? section.label : section.parentLabel,
                     score,
                 };
             }
@@ -767,12 +771,16 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
     // unexplained empty workspace.
     useEffect(() => {
         if (!driveParents.some(parent => parent.key === selectedDriveParentKey)) {
-            const nextParentKey = preferredDriveFocus.parentKey || driveParents[0]?.key || null;
-            setSelectedDriveParentKey(nextParentKey);
-            if (preferredDriveFocus.parentKey) {
-                setDriveParentOverrides(current => ({ ...current, [preferredDriveFocus.parentKey]: true }));
-                setDriveSectionOverrides(current => ({ ...current, [preferredDriveFocus.sectionKey]: true }));
-            }
+            setSelectedDriveParentKey(driveParents[0]?.key || null);
+        }
+        // The Drive list can arrive before the selected ad set. Apply this
+        // contextual focus once when its niche becomes available, rather than
+        // freezing the rail on whichever folder loaded first.
+        if (preferredDriveFocus.parentKey && !driveAdsetFocusAppliedRef.current) {
+            driveAdsetFocusAppliedRef.current = true;
+            setSelectedDriveParentKey(preferredDriveFocus.parentKey);
+            setDriveParentOverrides(current => ({ ...current, [preferredDriveFocus.parentKey]: true }));
+            setDriveSectionOverrides(current => ({ ...current, [preferredDriveFocus.sectionKey]: true }));
         }
     }, [driveParents, preferredDriveFocus, selectedDriveParentKey]);
     const visibleDriveParents = selectedDriveParentKey
