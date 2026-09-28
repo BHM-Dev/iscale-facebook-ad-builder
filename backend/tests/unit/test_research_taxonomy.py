@@ -83,3 +83,6 @@ def test_watchlist_only_surfaces_new_catalog_changes_since_last_review():
     assert 'New audience segment: security firms' in labels
     assert summary['review_value'] > 0
     assert summary['review_priority'] == 'high'
+    assert summary['refresh_status'] == 'stale'
+    assert summary['days_since_latest_capture'] is not None
+    assert 'more than 14 days old' in summary['refresh_reason']

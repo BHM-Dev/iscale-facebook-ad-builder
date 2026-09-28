@@ -2554,6 +2554,24 @@ def _watchlist_summary(watchlist, ads: list[dict]) -> dict:
     prior_ads = [ad for ad in advertiser_ads if ad not in new_ads]
     seen_dates = [_parse_research_date(ad.get("last_seen")) for ad in advertiser_ads]
     latest_seen = max((value for value in seen_dates if value), default=None)
+    # Freshness is only about the retained catalog, not the advertiser's live
+    # delivery.  Keep it separate from the "new since reviewed" signal: an
+    # advertiser can have no new captures simply because the vertical has not
+    # been refreshed recently.
+    now = datetime.utcnow()
+    days_since_latest_capture = (now - latest_seen).days if latest_seen else None
+    if days_since_latest_capture is None:
+        refresh_status = "missing"
+        refresh_reason = "No retained capture yet"
+    elif days_since_latest_capture <= 7:
+        refresh_status = "fresh"
+        refresh_reason = "Retained catalog evidence captured in the last 7 days"
+    elif days_since_latest_capture <= 14:
+        refresh_status = "due"
+        refresh_reason = "Retained catalog evidence is 8–14 days old"
+    else:
+        refresh_status = "stale"
+        refresh_reason = "Retained catalog evidence is more than 14 days old"
     changes = _watchlist_changes(new_ads, prior_ads)
     # Review value ranks the freshness and inspectability of catalog evidence.
     # It is deliberately not an estimate of ad spend, performance, or scale.
@@ -2570,6 +2588,9 @@ def _watchlist_summary(watchlist, ads: list[dict]) -> dict:
         "current_capture_count": len(advertiser_ads),
         "new_capture_count": len(new_ads),
         "latest_seen": _serialize_research_datetime(latest_seen),
+        "days_since_latest_capture": days_since_latest_capture,
+        "refresh_status": refresh_status,
+        "refresh_reason": refresh_reason,
         "changes": changes,
         "review_value": review_value,
         "review_priority": "high" if review_value >= 60 else "medium" if review_value >= 25 else "low",
@@ -2592,11 +2613,14 @@ def get_advertiser_watchlist(
     ).order_by(ResearchAdvertiserWatchlist.created_at.desc()).all()
     ads = get_vertical_browse_ads(config_id=config_id, limit=500, db=db, current_user=current_user)
     items = [_watchlist_summary(watchlist, ads) for watchlist in watchlists]
-    items.sort(key=lambda item: (-item["review_value"], -item["new_capture_count"], item["advertiser"].casefold()))
+    refresh_order = {"missing": 0, "stale": 1, "due": 2, "fresh": 3}
+    items.sort(key=lambda item: (refresh_order[item["refresh_status"]], -item["review_value"], -item["new_capture_count"], item["advertiser"].casefold()))
     return {
         "vertical": config_id,
         "items": items,
+        "refresh_queue_count": sum(item["refresh_status"] in {"missing", "stale", "due"} for item in items),
         "limitations": "Changes reflect newly retained catalog captures since you last marked an advertiser reviewed—not spend, performance, or live delivery.",
+        "freshness_limitations": "Freshness reflects when this retained catalog last captured the advertiser. Refreshing the vertical is manual and may not return every live ad.",
     }
 
 
