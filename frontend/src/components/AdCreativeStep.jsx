@@ -64,6 +64,32 @@ const normalizeMetaCta = (value) => {
     return CTA_OPTIONS.includes(normalized) ? normalized : '';
 };
 
+// Drive is a shared library, but a media buyer's current ad set provides a
+// strong, low-risk hint about where to begin. This only chooses the initial
+// folder focus; it never filters out other creative or invents a brand match.
+const normalizeDriveFolderHint = (value) => String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const DRIVE_FOLDER_HINT_STOP_WORDS = new Set([
+    'ad', 'ads', 'campaign', 'commercial', 'creative', 'final', 'fresh',
+    'insurance', 'launch', 'meta', 'new', 'scale', 'test', 'upload',
+    'variation', 'variations', 'winner', 'winners',
+]);
+
+const scoreDriveFolderForAdset = (folderKey, adsetName) => {
+    const folder = normalizeDriveFolderHint(String(folderKey || '').split(' / ').pop());
+    const adset = normalizeDriveFolderHint(adsetName);
+    if (!folder || !adset || folder.length < 4) return 0;
+    if (adset.includes(folder)) return 10_000 + folder.length;
+    const folderWords = folder.split(' ').filter(word => word.length > 2 && !DRIVE_FOLDER_HINT_STOP_WORDS.has(word));
+    const adsetWords = new Set(adset.split(' ').filter(word => word.length > 2 && !DRIVE_FOLDER_HINT_STOP_WORDS.has(word)));
+    const matchedWords = folderWords.filter(word => adsetWords.has(word));
+    return matchedWords.length >= 2 ? (matchedWords.length * 100) + folder.length : 0;
+};
+
 // Derived on every read from `cta` + `rawCta`, never stored as its own mutable
 // field — a stored "was this invalid" flag went stale the moment `cta` was
 // corrected by a Drive refresh or a manual dropdown pick (neither writer knew
@@ -487,6 +513,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
             setShowNeedsCopyDriveOnly(false);
             setShowLaunchReadyDriveOnly(preferLaunchReady);
             setDriveSectionOverrides({});
+            // Re-evaluate the initial folder when this picker opens. Keeping a
+            // prior folder here made a Religious Organizations launch reopen on
+            // an unrelated niche selected during an earlier session.
+            setSelectedDriveParentKey(null);
         }
     }, [showDriveLibraryModal, preferLaunchReady]);
     const [showDriveLibraryHint, setShowDriveLibraryHint] = useState(
@@ -708,14 +738,40 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
         });
     }, [driveSections]);
 
+    const preferredDriveFocus = useMemo(() => {
+        const adsetName = adsetData?.name || '';
+        let bestMatch = { parentKey: null, sectionKey: null, label: '', score: 0 };
+        // Score actual package labels, not just the top-level rail label. Many
+        // commercial folders contain dozens of niche packages; a match for
+        // Painting Contractors must open that child package, not a generic
+        // Commercial Insurance parent whose contents are still collapsed.
+        driveSections.forEach(section => {
+            const score = scoreDriveFolderForAdset(section.label, adsetName);
+            if (score > bestMatch.score) {
+                bestMatch = {
+                    parentKey: section.parentLabel || section.key,
+                    sectionKey: section.key,
+                    label: section.label,
+                    score,
+                };
+            }
+        });
+        return bestMatch;
+    }, [driveSections, adsetData?.name]);
+
     // Present folders as a stable left rail. If a search or filter removes the
     // active folder, choose the first remaining folder instead of showing an
     // unexplained empty workspace.
     useEffect(() => {
         if (!driveParents.some(parent => parent.key === selectedDriveParentKey)) {
-            setSelectedDriveParentKey(driveParents[0]?.key || null);
+            const nextParentKey = preferredDriveFocus.parentKey || driveParents[0]?.key || null;
+            setSelectedDriveParentKey(nextParentKey);
+            if (preferredDriveFocus.parentKey) {
+                setDriveParentOverrides(current => ({ ...current, [preferredDriveFocus.parentKey]: true }));
+                setDriveSectionOverrides(current => ({ ...current, [preferredDriveFocus.sectionKey]: true }));
+            }
         }
-    }, [driveParents, selectedDriveParentKey]);
+    }, [driveParents, preferredDriveFocus, selectedDriveParentKey]);
     const visibleDriveParents = selectedDriveParentKey
         ? driveParents.filter(parent => parent.key === selectedDriveParentKey)
         : driveParents;
@@ -781,6 +837,27 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
         setDriveSectionOverrides({});
         setDriveParentOverrides({});
     }, [driveSearchTerm, driveFormatFilter, blockedFilterActive, needsCopyFilterActive, launchReadyFilterActive, driveRepairPairId]);
+    // The generic filter reset above intentionally clears manual expansion.
+    // Re-apply the current ad-set suggestion afterward, otherwise a large
+    // matched package can be focused but immediately collapsed on modal open.
+    useEffect(() => {
+        if (!preferredDriveFocus.parentKey || selectedDriveParentKey !== preferredDriveFocus.parentKey) return;
+        setDriveParentOverrides(current => current[preferredDriveFocus.parentKey] === true
+            ? current
+            : { ...current, [preferredDriveFocus.parentKey]: true });
+        setDriveSectionOverrides(current => current[preferredDriveFocus.sectionKey] === true
+            ? current
+            : { ...current, [preferredDriveFocus.sectionKey]: true });
+    }, [
+        driveSearchTerm,
+        driveFormatFilter,
+        blockedFilterActive,
+        needsCopyFilterActive,
+        launchReadyFilterActive,
+        driveRepairPairId,
+        preferredDriveFocus,
+        selectedDriveParentKey,
+    ]);
     const setAllDriveSections = (expanded) => {
         setDriveParentOverrides(Object.fromEntries(driveParents.map(parent => [parent.key, expanded])));
         setDriveSectionOverrides(Object.fromEntries(driveSections.map(section => [section.key, expanded])));
@@ -3500,6 +3577,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                     {mixedDriveCopyMatches.matchedPairs} pair{mixedDriveCopyMatches.matchedPairs !== 1 ? 's' : ''} matched copy from a strategy doc; {mixedDriveCopyMatches.unmatchedPairs} pair{mixedDriveCopyMatches.unmatchedPairs !== 1 ? 's' : ''} did not. Check the source files, then use Refresh copy from Drive.
                                 </div>
                             )}
+                            {preferredDriveFocus.parentKey && preferredDriveFocus.parentKey === selectedDriveParentKey && !driveSearchTerm.trim() && !driveRepairPairId && (
+                                <div className="mb-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                                    Starting in <strong>{preferredDriveFocus.label}</strong> from ad set: <strong>{adsetData?.name}</strong>. All folders remain available in the left rail.
+                                </div>
+                            )}
                             {(hasActiveDriveLibraryFilter || driveParents.length > 1) && (
                                 <div className="mb-2 flex flex-wrap items-center justify-end gap-2 text-[11px] font-semibold text-gray-500">
                                     <span className="mr-auto">
@@ -3543,7 +3625,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                 // real subfolder to name, so its one leaf renders straight into
                                 // tiles under the parent header instead of a second identical row
                                 // that would just repeat what the parent already said.
-                                const childSections = parent.rootLeaf ? [parent.rootLeaf] : parent.children;
+                                const childSections = parent.rootLeaf ? [parent.rootLeaf] : [...parent.children].sort((left, right) => {
+                                    // Put the inferred package first without hiding the rest of
+                                    // the parent. This makes a nested niche immediately visible
+                                    // instead of forcing a scan through a large shared folder.
+                                    const leftPreferred = left.key === preferredDriveFocus.sectionKey ? 1 : 0;
+                                    const rightPreferred = right.key === preferredDriveFocus.sectionKey ? 1 : 0;
+                                    return rightPreferred - leftPreferred;
+                                });
                                 const isFlatParent = Boolean(parent.rootLeaf);
                                 return (
                                 <div key={parent.key} className="mb-3 overflow-hidden rounded-lg border border-gray-200">
