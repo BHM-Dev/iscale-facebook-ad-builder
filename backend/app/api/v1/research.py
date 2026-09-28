@@ -2679,7 +2679,21 @@ async def capture_advertiser_for_research(
         vertical = Vertical(name=config["label"], description=f"Auto-created for {config['label']} research vertical")
         db.add(vertical); db.commit(); db.refresh(vertical)
     saved_search, ads = await ResearchService(db).search_and_save(AdSearchRequest(query=advertiser, platform="facebook", limit=limit, country="US", negative_keywords=config.get("negative_keywords", []), vertical_id=vertical.id, search_type="one_time"))
-    return {"advertiser": advertiser, "search_id": saved_search.id, "captured": len(ads), "new_ads": saved_search.ads_new or 0, "duplicates": saved_search.ads_duplicate or 0}
+    retained_advertisers = sorted({ad.brand_name for ad in ads if ad.brand_name}, key=str.casefold)
+    return {
+        "advertiser": advertiser,
+        "search_id": saved_search.id,
+        "capture_source": "Meta Ads Library",
+        "requested": saved_search.ads_requested or limit,
+        "returned": saved_search.ads_returned or 0,
+        "captured": len(ads),
+        "new_ads": saved_search.ads_new or 0,
+        "duplicates": saved_search.ads_duplicate or 0,
+        "retained_advertisers": retained_advertisers,
+        "evidence": _research_evidence_coverage([_serialize_scraped_ad(ad) for ad in ads]),
+        "captured_at": _serialize_research_datetime(saved_search.created_at),
+        "limitations": "This is a manual retained-catalog capture, not proof of current delivery, spend, performance, or complete advertiser coverage.",
+    }
 
 
 @router.post("/config-verticals/{config_id}/watchlist", status_code=201)

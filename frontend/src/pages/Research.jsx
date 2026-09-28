@@ -1171,6 +1171,24 @@ function AdvertiserDirectory({ directory, loading, error, onExplore, onWatch, on
   </section>;
 }
 
+function LiveCaptureReceipt({ receipt, onDismiss }) {
+  if (!receipt) return null;
+  const advertiserNames = receipt.retained_advertisers || [];
+  const evidence = receipt.evidence || {};
+  return <section className="rounded-xl border border-indigo-200 bg-indigo-50/60 px-4 py-3" aria-label="Live capture receipt">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-700">Live capture receipt</p>
+        <p className="mt-1 text-sm font-semibold text-slate-900">{receipt.advertiser} · {receipt.new_ads || 0} new retained, {receipt.duplicates || 0} already cataloged</p>
+        <p className="mt-1 text-xs leading-5 text-slate-600">{receipt.capture_source || 'Meta Ads Library'} · requested {receipt.requested ?? '—'} · {receipt.returned ?? '—'} passed the configured relevance rules · {receipt.captured ?? 0} retained. Evidence available across retained records: {evidence.evidence_coverage_count ?? 0}/4 fields.</p>
+        {advertiserNames.length > 0 && <p className="mt-1 text-xs text-slate-600">Retained page names: {advertiserNames.join(' · ')}</p>}
+        <p className="mt-1 text-[11px] leading-4 text-slate-500">{receipt.limitations || 'Retained catalog evidence only—not proof of current delivery, spend, performance, or complete coverage.'}</p>
+      </div>
+      <button type="button" onClick={onDismiss} className="text-xs font-semibold text-slate-500 hover:text-slate-800">Dismiss</button>
+    </div>
+  </section>;
+}
+
 function WatchlistPanel({ watchlist, loading, error, onExplore, onBuild, onAddTest, onMarkReviewed, onRemove, onRefresh, refreshing, verticalLabel }) {
   const [draftWatchlistId, setDraftWatchlistId] = useState(null);
   if (loading) return <div className="rounded-xl border border-slate-200 bg-white px-5 py-12 text-center text-sm text-slate-500">Checking tracked advertisers for new retained creative…</div>;
@@ -1282,6 +1300,7 @@ export default function Research() {
   const [testBacklog, setTestBacklog] = useState([]);
   const [testBacklogLoading, setTestBacklogLoading] = useState(false);
   const [capturingAdvertiser, setCapturingAdvertiser] = useState(false);
+  const [lastCaptureReceipt, setLastCaptureReceipt] = useState(null);
   const [visibleCardCount, setVisibleCardCount] = useState(RESEARCH_INITIAL_CARD_COUNT);
   const [savedAds, setSavedAds] = useState([]);
   const [savedAdIds, setSavedAdIds] = useState(new Set());
@@ -1364,6 +1383,7 @@ export default function Research() {
     activeSubVerticalRef.current = activeSubVertical;
     setQueryLoading(false);
     setBriefVisualFilter('all');
+    setLastCaptureReceipt(null);
   }, [activeVertical, activeSubVertical]);
 
   useEffect(() => {
@@ -1568,7 +1588,8 @@ export default function Research() {
     setCapturingAdvertiser(true);
     try {
       const result = await captureResearchAdvertiser(activeVertical, advertiser);
-      showSuccess(`${advertiser}: ${result.new_ads} new retained capture${result.new_ads === 1 ? '' : 's'}`);
+      setLastCaptureReceipt(result);
+      showSuccess(`${advertiser}: ${result.new_ads} new retained capture${result.new_ads === 1 ? '' : 's'} · ${result.duplicates || 0} already cataloged`);
       loadAdvertiserDirectory();
       loadWatchlist();
       // A targeted capture should land the buyer on the retained evidence it
@@ -2431,6 +2452,8 @@ export default function Research() {
       ) : researchView === 'tests' && watchlistEnabled ? (
         <ResearchTestBacklog items={testBacklog} loading={testBacklogLoading} verticalId={activeVertical} verticalLabel={currentVerticalLabel} onCreate={handleCreateTestBacklog} onStatusChange={handleTestBacklogStatus} onBuild={handleBuildTestBacklogItem} />
       ) : <>
+
+      <LiveCaptureReceipt receipt={lastCaptureReceipt} onDismiss={() => setLastCaptureReceipt(null)} />
 
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500" aria-label="Research catalog summary"><span className="font-semibold text-slate-800">{browseLoading ? 'Loading captures…' : `${catalogSummary.total} captured examples`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.newCount} new this week`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.videoCount} video`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.taggedCount} theme tagged`}</span>{catalogSummary.needsReviewCount > 0 && <><span className="text-slate-300">·</span><span className="text-amber-700">{catalogSummary.needsReviewCount} need relevance review</span></>}<span className="text-slate-300">·</span><span className="text-slate-400">Current vertical + filters</span></div>
       {!browseLoading && catalogSummary.total > 0 && catalogSummary.mediaCount === 0 && <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"><span>No retained assets in this filtered view. Source format labels are still shown, but they are not previews.</span><button type="button" onClick={() => setShowImportModal(true)} className="font-semibold text-indigo-700 hover:text-indigo-900">Import retained captures</button></div>}
