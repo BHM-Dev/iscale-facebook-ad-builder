@@ -1211,7 +1211,7 @@ function LiveCaptureReceipt({ receipt, onDismiss }) {
   </section>;
 }
 
-function WatchlistTargetedRefresh({ watchlist, onRefreshAdvertiser, refreshingAdvertiserId }) {
+function WatchlistTargetedRefresh({ watchlist, onRefreshAdvertiser, refreshingAdvertiserId, refreshingVertical }) {
   const items = watchlist?.items || [];
   const [selectedId, setSelectedId] = useState('');
   const activeId = items.some(item => item.id === selectedId) ? selectedId : items[0]?.id;
@@ -1219,7 +1219,7 @@ function WatchlistTargetedRefresh({ watchlist, onRefreshAdvertiser, refreshingAd
   if (!selected) return null;
   return <section className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50/60 px-4 py-3" aria-label="Targeted watchlist refresh">
     <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-700">Targeted Meta refresh</p><p className="mt-1 text-xs text-slate-600">Refresh one tracked advertiser with a manual 30-ad Meta capture. This stays in Watchlist and updates retained evidence only.</p></div>
-    <div className="flex flex-wrap items-center gap-2"><select value={activeId || ''} onChange={event => setSelectedId(event.target.value)} disabled={Boolean(refreshingAdvertiserId)} className="max-w-52 rounded-lg border border-indigo-200 bg-white px-2.5 py-2 text-sm text-slate-700 disabled:opacity-50">{items.map(item => <option key={item.id} value={item.id}>{item.advertiser}</option>)}</select><button type="button" onClick={() => onRefreshAdvertiser(selected)} disabled={Boolean(refreshingAdvertiserId)} className="rounded-lg bg-indigo-700 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-800 disabled:opacity-50">{refreshingAdvertiserId === selected.id ? 'Capturing…' : 'Refresh advertiser'}</button></div>
+    <div className="flex flex-wrap items-center gap-2"><select value={activeId || ''} onChange={event => setSelectedId(event.target.value)} disabled={Boolean(refreshingAdvertiserId) || refreshingVertical} className="max-w-52 rounded-lg border border-indigo-200 bg-white px-2.5 py-2 text-sm text-slate-700 disabled:opacity-50">{items.map(item => <option key={item.id} value={item.id}>{item.advertiser}</option>)}</select><button type="button" onClick={() => onRefreshAdvertiser(selected)} disabled={Boolean(refreshingAdvertiserId) || refreshingVertical} className="rounded-lg bg-indigo-700 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-800 disabled:opacity-50">{refreshingVertical ? 'Refreshing vertical…' : refreshingAdvertiserId === selected.id ? 'Capturing…' : 'Refresh advertiser'}</button></div>
   </section>;
 }
 
@@ -1640,7 +1640,7 @@ export default function Research() {
   };
 
   const handleTargetedWatchlistRefresh = async (item) => {
-    if (!item || capturingAdvertiser || refreshingWatchlistAdvertiserId) return;
+    if (!item || capturingAdvertiser || refreshing || refreshingWatchlistAdvertiserId) return;
     setCapturingAdvertiser(true);
     setRefreshingWatchlistAdvertiserId(item.id);
     try {
@@ -2495,7 +2495,7 @@ export default function Research() {
       ) : researchView === 'advertisers' ? (
         <AdvertiserDirectory directory={advertiserDirectory} loading={advertiserDirectoryLoading} error={advertiserDirectoryError} onExplore={exploreAdvertiser} onWatch={watchlistEnabled ? handleAddToWatchlist : null} onCapture={watchlistEnabled ? handleCaptureAdvertiser : null} capturing={capturingAdvertiser} watchedAdvertisers={watchedAdvertisers} />
       ) : researchView === 'watchlist' && watchlistEnabled ? (
-        <><WatchlistTargetedRefresh watchlist={watchlist} onRefreshAdvertiser={handleTargetedWatchlistRefresh} refreshingAdvertiserId={refreshingWatchlistAdvertiserId} /><WatchlistPanel watchlist={watchlist} loading={watchlistLoading} error={watchlistError} onExplore={exploreAdvertiser} onBuild={handleUseAsInspiration} onAddTest={handleCreateTestBacklog} onMarkReviewed={handleMarkWatchlistReviewed} onRemove={handleRemoveFromWatchlist} onRefresh={handleWatchlistRefresh} refreshing={refreshing} verticalLabel={currentVerticalLabel} /></>
+        <><WatchlistTargetedRefresh watchlist={watchlist} onRefreshAdvertiser={handleTargetedWatchlistRefresh} refreshingAdvertiserId={refreshingWatchlistAdvertiserId} refreshingVertical={refreshing} /><WatchlistPanel watchlist={watchlist} loading={watchlistLoading} error={watchlistError} onExplore={exploreAdvertiser} onBuild={handleUseAsInspiration} onAddTest={handleCreateTestBacklog} onMarkReviewed={handleMarkWatchlistReviewed} onRemove={handleRemoveFromWatchlist} onRefresh={handleWatchlistRefresh} refreshing={refreshing} verticalLabel={currentVerticalLabel} /></>
       ) : researchView === 'tests' && watchlistEnabled ? (
         <ResearchTestBacklog items={testBacklog} loading={testBacklogLoading} verticalId={activeVertical} verticalLabel={currentVerticalLabel} onCreate={handleCreateTestBacklog} onStatusChange={handleTestBacklogStatus} onBuild={handleBuildTestBacklogItem} />
       ) : <>
