@@ -48,6 +48,7 @@ def _format_research_context(research_inspiration: dict | None) -> str:
     body = research_inspiration.get("body") or ""
     cta = research_inspiration.get("cta") or ""
     analyst_takeaway = research_inspiration.get("analystTakeaway") or ""
+    watchlist_brief = research_inspiration.get("watchlistBrief") or ""
     research_board = research_inspiration.get("researchBoard") or ""
     strategy_fields = {
         "Hook type": research_inspiration.get("hook_type"),
@@ -76,6 +77,8 @@ def _format_research_context(research_inspiration: dict | None) -> str:
         lines.append(f"- Internal research board: {research_board}")
     if analyst_takeaway:
         lines.append(f"- Internal analyst takeaway (use as strategic guidance, not source copy): {analyst_takeaway[:500]}")
+    if watchlist_brief:
+        lines.append(f"- Internal watchlist test brief (use as strategic guidance, not source copy): {watchlist_brief[:1000]}")
     for label, value in strategy_fields.items():
         if value:
             lines.append(f"- Strategy {label}: {value}")

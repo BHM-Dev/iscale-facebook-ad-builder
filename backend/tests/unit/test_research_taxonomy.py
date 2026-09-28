@@ -81,3 +81,5 @@ def test_watchlist_only_surfaces_new_catalog_changes_since_last_review():
     assert 'New CTA: learn more' in labels
     assert 'New format: video' in labels
     assert 'New audience segment: security firms' in labels
+    assert summary['review_value'] > 0
+    assert summary['review_priority'] == 'high'

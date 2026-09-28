@@ -2554,6 +2554,13 @@ def _watchlist_summary(watchlist, ads: list[dict]) -> dict:
     prior_ads = [ad for ad in advertiser_ads if ad not in new_ads]
     seen_dates = [_parse_research_date(ad.get("last_seen")) for ad in advertiser_ads]
     latest_seen = max((value for value in seen_dates if value), default=None)
+    changes = _watchlist_changes(new_ads, prior_ads)
+    # Review value ranks the freshness and inspectability of catalog evidence.
+    # It is deliberately not an estimate of ad spend, performance, or scale.
+    review_value = min(100, len(new_ads) * 25 + len(changes) * 8 + sum(
+        int(bool(ad.get("thumbnail_url") or ad.get("media_url") or ad.get("media_preview_url"))) * 5
+        for ad in new_ads
+    ))
     return {
         "id": watchlist.id,
         "advertiser": watchlist.advertiser,
@@ -2563,7 +2570,9 @@ def _watchlist_summary(watchlist, ads: list[dict]) -> dict:
         "current_capture_count": len(advertiser_ads),
         "new_capture_count": len(new_ads),
         "latest_seen": _serialize_research_datetime(latest_seen),
-        "changes": _watchlist_changes(new_ads, prior_ads),
+        "changes": changes,
+        "review_value": review_value,
+        "review_priority": "high" if review_value >= 60 else "medium" if review_value >= 25 else "low",
         "new_ads": new_ads[:3],
     }
 
@@ -2583,7 +2592,7 @@ def get_advertiser_watchlist(
     ).order_by(ResearchAdvertiserWatchlist.created_at.desc()).all()
     ads = get_vertical_browse_ads(config_id=config_id, limit=500, db=db, current_user=current_user)
     items = [_watchlist_summary(watchlist, ads) for watchlist in watchlists]
-    items.sort(key=lambda item: (-item["new_capture_count"], item["advertiser"].casefold()))
+    items.sort(key=lambda item: (-item["review_value"], -item["new_capture_count"], item["advertiser"].casefold()))
     return {
         "vertical": config_id,
         "items": items,
