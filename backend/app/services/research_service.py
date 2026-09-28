@@ -11,6 +11,18 @@ from app.core.config import settings
 from sqlalchemy import func
 
 
+def stamp_live_capture_provenance(ads, request: AdSearchRequest) -> None:
+    """Persist the source facts needed to audit a live Ads Library capture."""
+    for ad_data in ads:
+        ad_data.source_query = request.query
+        ad_data.creative_intel = {
+            **(ad_data.creative_intel or {}),
+            "capture_source": "meta_ads_library",
+            "capture_query": request.query,
+            "capture_country": request.country,
+        }
+
+
 class ResearchService:
     def __init__(self, db: Session):
         self.db = db
@@ -288,6 +300,12 @@ class ResearchService:
 
         ads, _ = self._filter_ads_by_vertical_relevance(ads, request, vertical_label)
 
+        # Every live scrape needs durable provenance. The browser-facing UI
+        # calls this a Meta Ads Library capture, but the persisted row must
+        # carry the same source/query context so a later brief or test remains
+        # auditable after the temporary capture receipt is dismissed.
+        stamp_live_capture_provenance(ads, request)
+
         # Track statistics
         ads_requested = request.limit
         ads_returned = len(ads)
@@ -350,6 +368,7 @@ class ResearchService:
                 # dedupe should not permanently prevent visual retention.
                 existing.last_seen = datetime.utcnow()
                 existing.seen_count = (existing.seen_count or 0) + 1
+                existing.source_query = request.query
                 if not existing.media_url and ad_data.media_url:
                     existing.media_url = ad_data.media_url
                     existing.thumbnail_url = ad_data.thumbnail_url or ad_data.media_url

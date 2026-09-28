@@ -10,6 +10,8 @@ from app.api.v1.research import (
     _sort_research_ads,
     _watchlist_summary,
 )
+from app.schemas.research import AdSearchRequest, ScrapedAdCreate
+from app.services.research_service import stamp_live_capture_provenance
 
 
 def ad(**overrides):
@@ -106,3 +108,19 @@ def test_evidence_coverage_names_only_missing_retained_fields():
     assert coverage['evidence_coverage_count'] == 1
     assert coverage['evidence_fields'] == ['copy']
     assert coverage['evidence_gaps'] == ['visual', 'CTA', 'destination']
+
+
+def test_live_capture_provenance_preserves_existing_scraper_context():
+    ad = ScrapedAdCreate(
+        brand_name="Nerd Insure",
+        ad_link="https://www.facebook.com/ads/library/?id=123",
+        creative_intel={"ads_library_page_id": "page-123"},
+    )
+    stamp_live_capture_provenance([ad], AdSearchRequest(query="Nerdinsure", country="US"))
+    assert ad.source_query == "Nerdinsure"
+    assert ad.creative_intel == {
+        "ads_library_page_id": "page-123",
+        "capture_source": "meta_ads_library",
+        "capture_query": "Nerdinsure",
+        "capture_country": "US",
+    }
