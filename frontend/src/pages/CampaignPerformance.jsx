@@ -1591,7 +1591,7 @@ export default function CampaignPerformance() {
   const navigate = useNavigate();
   const { showSuccess, showError, showInfo, showWarning } = useToast();
   const { brands } = useBrands();
-  const { activeAccountId, activeAccountLoading } = useCampaign();
+  const { activeAccountId, activeAccountLoading, adAccounts, setActiveAccountId } = useCampaign();
   const adAccountId = activeAccountId || '';
   const [adsets, setAdsets]     = useState([]);
   const [rules, setRules]       = useState([]); // still needed for isFlagged + rule badges
@@ -1638,6 +1638,12 @@ export default function CampaignPerformance() {
   const [metricFilter, setMetricFilter] = useState({ metric: 'cpl', operator: 'lt', value: '' });
   const dashboardView = searchParams.get('view'); // derived live from URL — never stale
   const targetAdsetId = searchParams.get('adsetId');
+  // Launch receipts carry their account explicitly. The launcher has a separate
+  // account picker, so relying on the last global selection here can show the
+  // buyer a different account immediately after a successful launch. Only honor
+  // an account that is in the authenticated account list; URL parameters never
+  // grant access or trigger a Meta write.
+  const receiptAccountId = searchParams.get('accountId');
 
   // Bulk insights state — one API call replaces N per-row calls
   const [bulkInsights, setBulkInsights]       = useState(null);
@@ -1694,6 +1700,22 @@ export default function CampaignPerformance() {
   const rowRefs = useRef({});
   const scrolledToRef = useRef(null); // tracks which adsetId we've already scrolled to
   const adsetsRequestRef = useRef(0);
+
+  useEffect(() => {
+    if (!receiptAccountId || activeAccountLoading) return;
+    const normalizeAccountId = (value) => {
+      if (!value) return '';
+      const id = String(value);
+      return id.startsWith('act_') ? id : `act_${id}`;
+    };
+    const requestedAccountId = normalizeAccountId(receiptAccountId);
+    const hasRequestedAccount = adAccounts.some(account => (
+      normalizeAccountId(account.id || account.account_id || account.accountId) === requestedAccountId
+    ));
+    if (hasRequestedAccount && requestedAccountId !== activeAccountId) {
+      setActiveAccountId(requestedAccountId);
+    }
+  }, [receiptAccountId, activeAccountLoading, adAccounts, activeAccountId, setActiveAccountId]);
 
   const loadAdsets = useCallback(async () => {
     const requestId = ++adsetsRequestRef.current;

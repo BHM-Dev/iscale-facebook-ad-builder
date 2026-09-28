@@ -504,6 +504,16 @@ const FacebookCampaignWizardInner = () => {
     const receiptAdSetTargets = launchReceipt?.adSetTargets?.length
         ? launchReceipt.adSetTargets
         : [{ id: adsetData?.fbAdsetId || null, name: launchReceipt?.adsetName || adsetData?.name || 'Ad set not recorded' }];
+    // The launcher has its own account picker, while Campaign Performance uses
+    // the app-wide account scope. Carry the receipt's account across explicitly
+    // so a post-launch review cannot silently open a different account. When
+    // exactly one ad set was used, Campaign Performance can also expand and
+    // scroll to that precise row. This only changes client-side navigation.
+    const receiptAdSetId = receiptAdSetTargets.length === 1 ? receiptAdSetTargets[0]?.id : null;
+    const campaignPerformanceParams = new URLSearchParams();
+    if (selectedAdsManagerAccountId) campaignPerformanceParams.set('accountId', selectedAdsManagerAccountId);
+    if (receiptAdSetId) campaignPerformanceParams.set('adsetId', receiptAdSetId);
+    const campaignPerformanceHref = `/campaign-performance${campaignPerformanceParams.size ? `?${campaignPerformanceParams.toString()}` : ''}`;
     const receiptCreatedAds = Array.isArray(launchReceipt?.createdAds) ? launchReceipt.createdAds : [];
     const receiptVisibleAds = receiptCreatedAds.slice(0, 10);
     const receiptPageName = launchReceipt?.pageName || creativeData?.pageName || creativeData?.pageId || null;
@@ -918,8 +928,8 @@ const FacebookCampaignWizardInner = () => {
                                 <a href={adsManagerHref} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-amber-700">
                                     Open Ads Manager
                                 </a>
-                                <Link to="/campaign-performance" className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:border-amber-200 hover:text-amber-800">
-                                    Open Campaign Performance
+                                <Link to={campaignPerformanceHref} className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:border-amber-200 hover:text-amber-800">
+                                    {receiptAdSetId ? 'Review created ad set' : 'Open Campaign Performance'}
                                 </Link>
                                 <button type="button" onClick={prepareNextBatch} className="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:border-amber-200 hover:text-amber-800">
                                     Start a new batch
