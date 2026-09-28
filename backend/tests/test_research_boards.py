@@ -109,7 +109,7 @@ class TestResearchBoards:
 class TestResearchTestBacklog:
     def test_backlog_keeps_retained_source_context_and_allows_buyer_status_updates(self, client, auth_headers, db_session):
         """A research test is a buyer-owned decision, not a performance claim."""
-        ad = create_test_ad(db_session)
+        ad = create_test_ad(db_session, vertical_name="Commercial Insurance")
         create = client.post(
             "/api/v1/research/test-backlog",
             json={
