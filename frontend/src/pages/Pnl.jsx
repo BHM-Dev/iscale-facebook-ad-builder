@@ -111,8 +111,8 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
   }, [form.cost_type, summary]);
   const isProfitShare = form.cost_type === 'pct_of_profit';
   const threshold = isProfitShare ? Number(form.profit_threshold || 0) : 0;
-  const belowThreshold = isProfitShare && threshold > 0 && previewBase < threshold;
-  const previewAmount = belowThreshold ? 0 : isPercent ? previewBase * (Number(form.amount || 0) / 100) : Number(form.amount || 0);
+    const previewShareBase = isProfitShare ? Math.max(previewBase - threshold, 0) : previewBase;
+  const previewAmount = isPercent ? previewShareBase * (Number(form.amount || 0) / 100) : Number(form.amount || 0);
 
   const save = async () => {
     if (!form.label.trim()) {
@@ -207,10 +207,10 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
           </label>
           {isProfitShare && (
             <label className="sm:col-span-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Minimum net profit to start paying</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Net profit threshold (commission applies above this)</span>
               <input type="number" min="0" step="0.01" placeholder="0 = always pays" value={form.profit_threshold} onChange={e => setForm({ ...form, profit_threshold: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
               <span className="mt-1 block text-[11px] text-gray-400">
-                Checked each period against net profit after all other costs (retainer included). Below it the cost is $0; at or above it the percent applies to the full net profit.
+                Each period, the percent applies only to net profit (after retainer and all other costs) above this amount. At or below it the cost is $0.
               </span>
             </label>
           )}
@@ -223,10 +223,8 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
                 a confident $0 preview is worse than admitting we don't know yet. */}
             {isPercent && !summary
               ? 'Waiting for this period\'s figures before previewing the resolved cost…'
-              : belowThreshold
-                ? `Net profit ${money(previewBase, 2)} is below the ${money(threshold, 2)} threshold = ${money(0, 2)}`
               : isPercent
-                ? `${Number(form.amount || 0)}% of ${money(previewBase, 2)} = ${money(previewAmount, 2)}`
+                ? `${Number(form.amount || 0)}% of ${money(previewShareBase, 2)}${threshold > 0 ? ` (net profit ${money(previewBase, 2)} above the ${money(threshold, 0)} threshold)` : ''} = ${money(previewAmount, 2)}`
                 : `Resolved cost preview: ${money(previewAmount, 2)}`
             }
           </div>
@@ -574,10 +572,8 @@ export default function Pnl() {
                     )}
                     {entry.cost_type === 'pct_of_profit' && entry.profit_threshold > 0 && (
                       <div className="mt-1 text-[11px] text-gray-500">
-                        Pays only once the period&apos;s net profit (after retainer and all other costs) reaches {money(entry.profit_threshold, 0)}
-                        {entry.profit_base != null && entry.profit_base < entry.profit_threshold
-                          ? ` — currently ${money(entry.profit_base, 2)}, so $0.`
-                          : '; then the percent applies to the full net.'}
+                        {entry.amount}% of net profit above {money(entry.profit_threshold, 0)} per period (net = after retainer and all other costs)
+                        {entry.profit_base != null && ` — this period: ${money(entry.profit_base, 2)}`}
                       </div>
                     )}
                   </td>

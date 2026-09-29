@@ -568,13 +568,12 @@ def _overlap_months(entry: PnlCostEntry, start: date, end: date) -> int:
 
 
 def _profit_share(entry: PnlCostEntry, profit_base: Decimal, percent: Decimal) -> Decimal:
-    # Threshold gate: below it the commission is $0; at/above it the percent
-    # applies to the whole base (not just the excess). Base is net of every
-    # non-commission cost, retainer included.
+    # The percent applies only to profit ABOVE the threshold (Abel, 2026-09-29:
+    # $15k net on a $10k threshold pays 5% of $5k = $250). Base is net of every
+    # non-commission cost, retainer included. No threshold = whole base.
     threshold = _money(entry.profit_threshold) if entry.profit_threshold is not None else Decimal("0")
-    if profit_base < threshold:
-        return Decimal("0.00")
-    return (max(profit_base, Decimal("0")) * percent / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
+    excess = max(profit_base - threshold, Decimal("0"))
+    return (excess * percent / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
 def _resolve_costs(
