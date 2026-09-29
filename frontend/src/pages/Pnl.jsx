@@ -93,6 +93,7 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
     effective_from: entry?.effective_from ?? firstOfMonth(monthValue()),
     effective_to: entry?.effective_to ?? '',
     notes: entry?.notes ?? '',
+    profit_threshold: entry?.profit_threshold ?? '',
   }));
 
   const isAllAccounts = form.ad_account_id === '';
@@ -108,7 +109,10 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
     }
     return 0;
   }, [form.cost_type, summary]);
-  const previewAmount = isPercent ? previewBase * (Number(form.amount || 0) / 100) : Number(form.amount || 0);
+  const isProfitShare = form.cost_type === 'pct_of_profit';
+  const threshold = isProfitShare ? Number(form.profit_threshold || 0) : 0;
+  const belowThreshold = isProfitShare && threshold > 0 && previewBase < threshold;
+  const previewAmount = belowThreshold ? 0 : isPercent ? previewBase * (Number(form.amount || 0) / 100) : Number(form.amount || 0);
 
   const save = async () => {
     if (!form.label.trim()) {
@@ -122,6 +126,7 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
         ad_account_id: isAllAccounts ? null : form.ad_account_id,
         amount: Number(form.amount || 0),
         effective_to: form.effective_to || null,
+        profit_threshold: isProfitShare && form.profit_threshold !== '' ? Number(form.profit_threshold) : null,
       };
       const url = entry ? `${API_URL}/pnl/costs/${entry.id}` : `${API_URL}/pnl/costs`;
       const res = await authFetch(url, {
@@ -200,6 +205,15 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
             <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Effective to</span>
             <input type="date" value={form.effective_to} onChange={e => setForm({ ...form, effective_to: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
           </label>
+          {isProfitShare && (
+            <label className="sm:col-span-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Minimum net profit to start paying</span>
+              <input type="number" min="0" step="0.01" placeholder="0 = always pays" value={form.profit_threshold} onChange={e => setForm({ ...form, profit_threshold: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
+              <span className="mt-1 block text-[11px] text-gray-400">
+                Checked each period against net profit after all other costs (retainer included). Below it the cost is $0; at or above it the percent applies to the full net profit.
+              </span>
+            </label>
+          )}
           <label className="sm:col-span-2">
             <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Notes</span>
             <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={3} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
@@ -209,6 +223,8 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
                 a confident $0 preview is worse than admitting we don't know yet. */}
             {isPercent && !summary
               ? 'Waiting for this period\'s figures before previewing the resolved cost…'
+              : belowThreshold
+                ? `Net profit ${money(previewBase, 2)} is below the ${money(threshold, 2)} threshold = ${money(0, 2)}`
               : isPercent
                 ? `${Number(form.amount || 0)}% of ${money(previewBase, 2)} = ${money(previewAmount, 2)}`
                 : `Resolved cost preview: ${money(previewAmount, 2)}`
@@ -554,6 +570,14 @@ export default function Pnl() {
                     {entry.ad_account_id == null && (
                       <div className="mt-1 inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-600">
                         All accounts · full
+                      </div>
+                    )}
+                    {entry.cost_type === 'pct_of_profit' && entry.profit_threshold > 0 && (
+                      <div className="mt-1 text-[11px] text-gray-500">
+                        Pays only once the period&apos;s net profit (after retainer and all other costs) reaches {money(entry.profit_threshold, 0)}
+                        {entry.profit_base != null && entry.profit_base < entry.profit_threshold
+                          ? ` — currently ${money(entry.profit_base, 2)}, so $0.`
+                          : '; then the percent applies to the full net.'}
                       </div>
                     )}
                   </td>

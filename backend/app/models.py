@@ -908,6 +908,9 @@ class PnlCostEntry(Base):
     effective_from = Column(Date, nullable=False)  # first day of the first month it applies
     effective_to = Column(Date, nullable=True)     # NULL = ongoing
     notes = Column(Text, nullable=True)
+    # pct_of_profit only: commission pays $0 for any period whose profit base is
+    # below this dollar figure; at/above it, the percent applies to the full base.
+    profit_threshold = Column(Numeric(precision=12, scale=2), nullable=True)
     # RESERVED for Phase 2/3 — auto-captured creative platform spend (kie.ai, video gen)
     vendor = Column(String, nullable=True)
     source = Column(String, nullable=False, default="manual")  # manual|auto_kie|auto_video

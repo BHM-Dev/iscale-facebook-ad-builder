@@ -567,6 +567,16 @@ def _overlap_months(entry: PnlCostEntry, start: date, end: date) -> int:
     return (overlap_end.year - overlap_start.year) * 12 + overlap_end.month - overlap_start.month + 1
 
 
+def _profit_share(entry: PnlCostEntry, profit_base: Decimal, percent: Decimal) -> Decimal:
+    # Threshold gate: below it the commission is $0; at/above it the percent
+    # applies to the whole base (not just the excess). Base is net of every
+    # non-commission cost, retainer included.
+    threshold = _money(entry.profit_threshold) if entry.profit_threshold is not None else Decimal("0")
+    if profit_base < threshold:
+        return Decimal("0.00")
+    return (max(profit_base, Decimal("0")) * percent / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
+
+
 def _resolve_costs(
     db: Session,
     account_id: str,
@@ -611,7 +621,7 @@ def _resolve_costs(
     profit_base = revenue - spend - non_profit_costs
     for entry, share, allocation_basis in profit_entries:
         amount = _money(entry.amount)
-        resolved_amount = (max(profit_base, Decimal("0")) * amount / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
+        resolved_amount = _profit_share(entry, profit_base, amount)
         resolved.append(_serialize_cost(entry, resolved_amount, share, allocation_basis, profit_base=profit_base))
 
     total = sum((_money(item["resolved_amount"]) for item in resolved), Decimal("0"))
@@ -657,7 +667,7 @@ def _resolve_aggregate_costs(
     profit_base = revenue - spend - non_profit_costs
     for entry, allocation_basis in profit_entries:
         amount = _money(entry.amount)
-        resolved_amount = (max(profit_base, Decimal("0")) * amount / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
+        resolved_amount = _profit_share(entry, profit_base, amount)
         resolved.append(_serialize_cost(entry, resolved_amount, Decimal("1"), allocation_basis, profit_base=profit_base))
 
     total = sum((_money(item["resolved_amount"]) for item in resolved), Decimal("0"))
@@ -679,6 +689,7 @@ def _serialize_cost(entry: PnlCostEntry, resolved_amount: Decimal, share: Decima
         "effective_from": entry.effective_from.isoformat(),
         "effective_to": entry.effective_to.isoformat() if entry.effective_to else None,
         "notes": entry.notes,
+        "profit_threshold": _float(entry.profit_threshold) if entry.profit_threshold is not None else None,
         "vendor": entry.vendor,
         "source": entry.source,
         "profit_base": _float(profit_base) if profit_base is not None else None,
@@ -1020,6 +1031,7 @@ class CostEntryBody(BaseModel):
     effective_from: date
     effective_to: Optional[date] = None
     notes: Optional[str] = None
+    profit_threshold: Optional[Decimal] = Field(None, ge=0)
     vendor: Optional[str] = None
     source: str = "manual"
 
@@ -1034,6 +1046,7 @@ class CostEntryPatch(BaseModel):
     effective_from: Optional[date] = None
     effective_to: Optional[date] = None
     notes: Optional[str] = None
+    profit_threshold: Optional[Decimal] = Field(None, ge=0)
     vendor: Optional[str] = None
     source: Optional[str] = None
 
@@ -1542,6 +1555,7 @@ def create_cost(
         effective_from=body.effective_from,
         effective_to=body.effective_to,
         notes=body.notes,
+        profit_threshold=body.profit_threshold if body.cost_type == "pct_of_profit" else None,
         vendor=body.vendor,
         source=body.source,
         created_by=current_user.id,
@@ -1571,6 +1585,8 @@ def update_cost(
         if key == "label" and value is not None:
             value = value.strip()
         setattr(entry, key, value)
+    if entry.cost_type != "pct_of_profit":
+        entry.profit_threshold = None
     if entry.effective_to and entry.effective_from and entry.effective_to < entry.effective_from:
         raise HTTPException(status_code=400, detail="effective_to must be after effective_from")
     if entry.cost_type.startswith("pct_of_") and entry.amount > 100:
