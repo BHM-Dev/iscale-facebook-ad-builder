@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 STATE_KEY = "drive_changes_start_page_token"
 SUPPORTED_PREFIXES = ("image/", "video/")
+MEDIA_ASPECTS = ("1x1", "4x5", "9x16", "16x9")
+FEED_ASPECTS = ("1x1", "4x5", "16x9")
 TEXT_PREFIXES = ("text/",)
 GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
 
@@ -810,8 +812,12 @@ class DriveSyncService:
             return None
         if abs(ratio - 1) <= 0.03:
             return "1x1"
+        if abs(ratio - (4 / 5)) <= 0.03:
+            return "4x5"
         if abs(ratio - (9 / 16)) <= 0.03:
             return "9x16"
+        if abs(ratio - (16 / 9)) <= 0.03:
+            return "16x9"
         return None
 
     def _upload_file_to_r2(self, file_path: str, file_name: str, content_type: str) -> str:
@@ -2289,7 +2295,9 @@ class DriveSyncService:
                         re.IGNORECASE | re.MULTILINE,
                     ))
                     placement_fields = (
-                        (("4X5", "VIDEO", "4x5"), ("9X16", "VIDEO", "9x16"))
+                        (("16X9", "VIDEO", "16x9"), ("9X16", "VIDEO", "9x16"))
+                        if re.search(r"^[ \t]*16X9[ \t]+VIDEO\b", block, re.IGNORECASE | re.MULTILINE)
+                        else (("4X5", "VIDEO", "4x5"), ("9X16", "VIDEO", "9x16"))
                         if has_video_placements else
                         (("1X1", "IMAGE", "1x1"), ("9X16", "IMAGE", "9x16"))
                     )
@@ -2550,7 +2558,7 @@ class DriveSyncService:
         # Feed and 9X16 VIDEO for Stories/Reels.
         incomplete_entries = [
             copy_id for copy_id, entry in entries.items()
-            if not any(entry.get(aspect) for aspect in ("1x1", "4x5", "9x16"))
+            if not any(entry.get(aspect) for aspect in MEDIA_ASPECTS)
             or not entry.get("copy_file")
         ]
         if incomplete_entries:
@@ -2593,7 +2601,7 @@ class DriveSyncService:
         assets: Dict[str, Dict[str, Any]] = {}
         for copy_id, entry in manifest_data.get("entries", {}).items():
             copy = copy_blocks.get(copy_id.lower(), {})
-            for aspect in ("1x1", "4x5", "9x16"):
+            for aspect in MEDIA_ASPECTS:
                 file_name = entry.get(aspect)
                 if not file_name:
                     continue
@@ -2814,7 +2822,7 @@ class DriveSyncService:
         arbitrary listing order.
         """
         stem = os.path.splitext(file_name or "")[0].lower()
-        stem = re.sub(r"(?:^|[-_ ])(?:1x1|9x16)(?=$|[-_ ])", " ", stem, flags=re.IGNORECASE)
+        stem = re.sub(r"(?:^|[-_ ])(?:1x1|4x5|9x16|16x9)(?=$|[-_ ])", " ", stem, flags=re.IGNORECASE)
         normalized_stem = re.sub(r"[-_\s]+", " ", stem).strip()
         for alias, canonical in self._category_alias_replacements(category).items():
             normalized_stem = re.sub(
@@ -2938,12 +2946,12 @@ class DriveSyncService:
 
     def _media_aspect(self, item: Dict[str, Any]) -> Optional[str]:
         file_name = item.get("name") or ""
-        aspect_match = re.search(r"(?:^|[-_ ])(1x1|4x5|9x16)(?=$|[-_ .])", file_name, re.IGNORECASE)
+        aspect_match = re.search(r"(?:^|[-_ ])(1x1|4x5|9x16|16x9)(?=$|[-_ .])", file_name, re.IGNORECASE)
         if aspect_match:
             return aspect_match.group(1).lower()
         for folder_name in reversed(item.get("_parent_folder_path") or [item.get("_parent_folder_name") or ""]):
             folder_aspect = re.match(
-                r"^\s*(1x1|4x5|9x16)(?:\s+(?:images?|assets?|feed|stories|reels))?\s*$",
+                r"^\s*(1x1|4x5|9x16|16x9)(?:\s+(?:images?|assets?|feed|stories|reels))?\s*$",
                 folder_name,
                 re.IGNORECASE,
             )
@@ -2988,7 +2996,7 @@ class DriveSyncService:
         filename so that each uniquely named Feed/Stories pair stays intact.
         """
         stem = os.path.splitext(file_name or "")[0].lower()
-        stem = re.sub(r"(?:^|[-_ ])(?:1x1|4x5|9x16)(?=$|[-_ ])", " ", stem, flags=re.IGNORECASE)
+        stem = re.sub(r"(?:^|[-_ ])(?:1x1|4x5|9x16|16x9)(?=$|[-_ ])", " ", stem, flags=re.IGNORECASE)
         return re.sub(r"[-_\s]+", " ", stem).strip()
 
     def _ad_numbered_folder_copy_metadata(
@@ -3045,7 +3053,7 @@ class DriveSyncService:
             valid_singles: Dict[str, List[Any]] = {}
             ambiguous_candidates: List[Any] = []
             for identity, identity_candidates in candidates_by_identity.items():
-                by_aspect: Dict[str, List[Any]] = {"1x1": [], "4x5": [], "9x16": [], "unknown": []}
+                by_aspect: Dict[str, List[Any]] = {aspect: [] for aspect in (*MEDIA_ASPECTS, "unknown")}
                 for candidate in identity_candidates:
                     by_aspect[candidate[2]].append(candidate)
                 is_complete_pair = (
@@ -3053,9 +3061,10 @@ class DriveSyncService:
                     and (
                         len(by_aspect["1x1"]) == 1
                         or len(by_aspect["4x5"]) == 1
+                        or len(by_aspect["16x9"]) == 1
                     )
                     and not by_aspect["unknown"]
-                    and sum(len(by_aspect[aspect]) for aspect in ("1x1", "4x5", "9x16")) == 2
+                    and sum(len(by_aspect[aspect]) for aspect in MEDIA_ASPECTS) == 2
                 )
                 if identity and is_complete_pair:
                     valid_pairs[identity] = identity_candidates
@@ -3063,7 +3072,7 @@ class DriveSyncService:
                     allow_single_placements
                     and identity
                     and not by_aspect["unknown"]
-                    and sum(len(by_aspect[aspect]) for aspect in ("1x1", "4x5", "9x16")) == 1
+                    and sum(len(by_aspect[aspect]) for aspect in MEDIA_ASPECTS) == 1
                 ):
                     # Keep explicitly supplied Feed-only 4:5 statics and
                     # Stories-only 9:16 video as single placements. Never
@@ -3127,20 +3136,20 @@ class DriveSyncService:
         candidates = []
         for item in media_files:
             file_name = item.get("name") or ""
-            aspect_match = re.search(r"(?:^|[-_ ])(1x1|9x16)(?:[-_][A-Za-z0-9]+)?(?=\.[^.]+$)", file_name, re.IGNORECASE)
+            aspect_match = re.search(r"(?:^|[-_ ])(1x1|4x5|9x16|16x9)(?:[-_][A-Za-z0-9]+)?(?=\.[^.]+$)", file_name, re.IGNORECASE)
             if aspect_match:
                 aspect = aspect_match.group(1).lower()
             else:
                 folder_aspect = next(
                     (
                         re.match(
-                            r"^\s*(1x1|9x16)(?:\s+(?:images?|assets?|feed|stories|reels))?\s*$",
+                            r"^\s*(1x1|4x5|9x16|16x9)(?:\s+(?:images?|assets?|feed|stories|reels))?\s*$",
                             folder_name,
                             re.IGNORECASE,
                         )
                         for folder_name in reversed(item.get("_parent_folder_path") or [item.get("_parent_folder_name") or ""])
                         if re.match(
-                            r"^\s*(1x1|9x16)(?:\s+(?:images?|assets?|feed|stories|reels))?\s*$",
+                            r"^\s*(1x1|4x5|9x16|16x9)(?:\s+(?:images?|assets?|feed|stories|reels))?\s*$",
                             folder_name,
                             re.IGNORECASE,
                         )
@@ -3200,7 +3209,7 @@ class DriveSyncService:
                     candidate[1],
                     category_candidates[0][3]["category"],
                 )
-                by_identity.setdefault(identity, {"1x1": [], "9x16": []})[candidate[4]].append(candidate)
+                by_identity.setdefault(identity, {aspect: [] for aspect in MEDIA_ASPECTS})[candidate[4]].append(candidate)
 
             # Only a one-to-one filename identity is a trustworthy pair. A
             # listing-order zip can make feed A + story B look fully matched
@@ -3209,13 +3218,14 @@ class DriveSyncService:
             # separate entries for an explicit human review instead.
             pair_keys = sorted(
                 key for key, placements in by_identity.items()
-                if key and len(placements["1x1"]) == 1 and len(placements["9x16"]) == 1
+                if key and len(placements["9x16"]) == 1 and sum(len(placements[aspect]) for aspect in FEED_ASPECTS) == 1
             )
             copy_ids_by_drive_id: Dict[str, str] = {}
             for pair_index, key in enumerate(pair_keys, start=1):
                 copy_id = f"CATEGORY-{number:02d}" if pair_index == 1 else f"CATEGORY-{number:02d}-PAIR-{pair_index}"
-                for candidate in (*by_identity[key]["1x1"], *by_identity[key]["9x16"]):
-                    copy_ids_by_drive_id[candidate[0].get("id")] = copy_id
+                for aspect in MEDIA_ASPECTS:
+                    for candidate in by_identity[key][aspect]:
+                        copy_ids_by_drive_id[candidate[0].get("id")] = copy_id
 
             unpaired = [
                 candidate for candidate in category_candidates
@@ -3284,7 +3294,7 @@ class DriveSyncService:
             # which meant that file got no soft_tags at all and quietly never
             # merged/autofilled with no error anywhere (code-auditor pre-push
             # review, MEDIUM).
-            aspect_match = re.search(r"(?:^|[-_ ])(1x1|9x16)(?:[-_][A-Za-z0-9]+)?(?=\.[^.]+$)", file_name, re.IGNORECASE)
+            aspect_match = re.search(r"(?:^|[-_ ])(1x1|4x5|9x16|16x9)(?:[-_][A-Za-z0-9]+)?(?=\.[^.]+$)", file_name, re.IGNORECASE)
             if not aspect_match:
                 continue
             code_match = re.match(r"^(AD-[A-Z0-9]+-\d{2})-", file_name, re.IGNORECASE)
@@ -3433,7 +3443,7 @@ class DriveSyncService:
                     entries[current_id][pending_field] = value
                 pending_field = None
 
-            field_match = re.match(r"^(1x1|4x5|9x16|Copy file|Copy)(?:\s+(?:image|images|video|videos))?\s*(?::\s*(.*))?$", line, re.IGNORECASE)
+            field_match = re.match(r"^(1x1|4x5|9x16|16x9|Copy file|Copy)(?:\s+(?:image|images|video|videos))?\s*(?::\s*(.*))?$", line, re.IGNORECASE)
             if field_match:
                 key = field_match.group(1).lower()
                 if key in {"copy", "copy file"}:

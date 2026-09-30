@@ -141,6 +141,37 @@ LLC-RATE-01-SetItOnce-9x16.mp4
     }
 
 
+def test_handoff_manifest_accepts_landscape_video_feed_placement():
+    service = _service()
+    manifest = """PACKAGE: Commercial Insurance | Landscape Test
+FINAL HANDOFF MANIFEST — LAUNCHER COPY MAP
+
+AD-01
+Copy: landscape-copy.txt
+16X9 VIDEO
+landscape-16x9.mp4
+9X16 VIDEO
+stories-9x16.mp4
+"""
+
+    parsed = service._parse_handoff_manifest(manifest)
+
+    assert parsed["entries"]["AD 01"] == {
+        "copy_file": "landscape-copy.txt",
+        "16x9": "landscape-16x9.mp4",
+        "9x16": "stories-9x16.mp4",
+    }
+
+
+def test_media_aspect_recognizes_all_supported_video_placements():
+    service = _service()
+
+    assert [
+        service._media_aspect({"name": f"creative-{aspect}.mp4"})
+        for aspect in ("1x1", "4x5", "9x16", "16x9")
+    ] == ["1x1", "4x5", "9x16", "16x9"]
+
+
 def test_handoff_manifest_binds_the_live_video_pair_to_copy_metadata():
     service = _service()
     service._folder_metadata_cache = {}

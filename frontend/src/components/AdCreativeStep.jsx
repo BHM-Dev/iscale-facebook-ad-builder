@@ -128,11 +128,11 @@ const hasCompleteCopy = (copy = {}) => Boolean(
 
 const normalizeFilenameBase = (fileName = '') => {
     const withoutExt = fileName.replace(/\.[^.]+$/, '');
-    const aspectMatch = withoutExt.match(/(?:^|[_\-\s])(1x1|4x5|9x16)(?=$|[_\-\s])/i);
+    const aspectMatch = withoutExt.match(/(?:^|[_\-\s])(1x1|4x5|9x16|16x9)(?=$|[_\-\s])/i);
     if (!aspectMatch) return null;
     const aspect = aspectMatch[1].toLowerCase();
     const base = withoutExt
-        .replace(/(?:^|[_\-\s])(1x1|4x5|9x16)(?=$|[_\-\s])/i, ' ')
+        .replace(/(?:^|[_\-\s])(1x1|4x5|9x16|16x9)(?=$|[_\-\s])/i, ' ')
         .replace(/[_\-\s]+/g, ' ')
         .trim()
         .toLowerCase();
@@ -147,16 +147,16 @@ const folderPlacementHint = (asset) => {
         .split(/[\\/]/)
         .map(part => part.trim().toLowerCase())
         .filter(Boolean);
-    const aspectFolder = [...pathParts].reverse().find(part => /^(?:1x1|4x5|9x16)(?:\s+(?:images?|assets?))?$/.test(part));
+    const aspectFolder = [...pathParts].reverse().find(part => /^(?:1x1|4x5|9x16|16x9)(?:\s+(?:images?|assets?))?$/.test(part));
     if (aspectFolder?.startsWith('9x16')) return 'stories';
-    if (aspectFolder?.startsWith('1x1') || aspectFolder?.startsWith('4x5')) return 'feed';
+    if (aspectFolder?.startsWith('1x1') || aspectFolder?.startsWith('4x5') || aspectFolder?.startsWith('16x9')) return 'feed';
     return null;
 };
 
 const driveAssetPlacement = (asset) => {
     const tags = parseDriveTags(asset);
     if (tags.aspect === '9x16') return 'stories';
-    if (tags.aspect === '1x1' || tags.aspect === '4x5') return 'feed';
+    if (tags.aspect === '1x1' || tags.aspect === '4x5' || tags.aspect === '16x9') return 'feed';
     const folderHint = folderPlacementHint(asset);
     if (folderHint) return folderHint;
     const parsed = normalizeFilenameBase(asset.file_name || '');
@@ -192,7 +192,7 @@ const driveAssetMatchesQuery = (asset, query) => {
 const drivePackageSection = (group) => {
     const raw = group?.displayAsset?.folder_path || group?.assets?.[0]?.folder_path || '';
     const parts = String(raw).split(/[\\/]/).map(part => part.trim()).filter(Boolean);
-    if (parts.length && /^(?:1x1|9x16|4x5)(?:\s+(?:images?|assets?|videos?|creatives?))?$/i.test(parts[parts.length - 1])) parts.pop();
+    if (parts.length && /^(?:1x1|9x16|4x5|16x9)(?:\s+(?:images?|assets?|videos?|creatives?))?$/i.test(parts[parts.length - 1])) parts.pop();
     return parts.slice(0, 2).join(' / ') || 'Uncategorized';
 };
 
@@ -3287,8 +3287,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             Video placement *
                             <select value={driveUploadPlacement} onChange={(event) => setDriveUploadPlacement(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100">
                                 <option value="">Select placement…</option>
-                                <option value="1x1">Feed (1:1)</option>
-                                <option value="9x16">Stories &amp; Reels (9:16)</option>
+                                                    <option value="1x1">Feed (1:1)</option>
+                                                    <option value="4x5">Feed (4:5)</option>
+                                                    <option value="16x9">Feed (16:9)</option>
+                                                    <option value="9x16">Stories &amp; Reels (9:16)</option>
                             </select>
                         </label>
                     )}

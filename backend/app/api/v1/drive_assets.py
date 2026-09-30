@@ -117,10 +117,10 @@ def upload_drive_asset(
     allowed_extensions = ALLOWED_VIDEO_EXTENSIONS if is_video else ALLOWED_IMAGE_EXTENSIONS
     if not (mime_type.startswith("image/") or is_video) or extension not in allowed_extensions:
         raise HTTPException(status_code=400, detail="Only image and video files can be added to Creative Library")
-    if placement not in (None, "1x1", "9x16"):
-        raise HTTPException(status_code=400, detail="Placement must be 1x1 or 9x16")
+    if placement not in (None, "1x1", "4x5", "9x16", "16x9"):
+        raise HTTPException(status_code=400, detail="Placement must be 1x1, 4x5, 9x16, or 16x9")
     if is_video and placement is None:
-        raise HTTPException(status_code=400, detail="Choose Feed (1:1) or Stories/Reels (9:16) for a video")
+        raise HTTPException(status_code=400, detail="Choose Feed (1:1, 4:5, or 16:9) or Stories/Reels (9:16) for a video")
     max_size = MAX_VIDEO_SIZE if is_video else MAX_IMAGE_SIZE
     temp_path = None
 
