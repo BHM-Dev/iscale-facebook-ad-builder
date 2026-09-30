@@ -2265,7 +2265,7 @@ class DriveSyncService:
                 # reference. Parse that real format before treating a no-entry
                 # manifest as a harmless planning draft.
                 inline_blocks = list(re.finditer(
-                    r"^[ \t]*##[ \t]+(?:[A-Z0-9]+[-_ \t]+)*AD[-_ \t]?(\d+)\b[^\r\n]*$",
+                    r"^[ \t]*##[ \t]+(?:(?:[A-Z0-9]+[-_ \t]+)*AD[-_ \t]?(\d+)|(?:[A-Z0-9]+[-_ \t]+)+?(\d+))\b[^\r\n]*$",
                     manifest_text,
                     re.IGNORECASE | re.MULTILINE,
                 ))
@@ -2279,7 +2279,8 @@ class DriveSyncService:
                         continue
                     media_by_name.setdefault((item.get("name") or "").lower(), []).append(item)
                 for index, heading in enumerate(inline_blocks):
-                    expected_numbers.add(int(heading.group(1)))
+                    heading_number = int(heading.group(1) or heading.group(2))
+                    expected_numbers.add(heading_number)
                     block = manifest_text[heading.end():inline_blocks[index + 1].start() if index + 1 < len(inline_blocks) else len(manifest_text)]
                     declared_names = []
                     has_video_placements = bool(re.search(
@@ -2300,7 +2301,7 @@ class DriveSyncService:
                         )
                         if not field:
                             raise RuntimeError(
-                                f"Drive handoff manifest inline AD {heading.group(1)} is missing its {aspect} {media_kind.lower()}"
+                                f"Drive handoff manifest inline AD {heading_number} is missing its {aspect} {media_kind.lower()}"
                             ) from exc
                         declared_names.append((normalized_aspect, field.group(1).strip()))
                     for aspect, name in declared_names:
@@ -2311,15 +2312,15 @@ class DriveSyncService:
                             raise RuntimeError(f"Drive handoff manifest references ambiguous media {name}") from exc
                         media = matching_media[0]
                         media_ad_number = self._ad_number_from_file_name(media.get("name") or "")
-                        if media_ad_number is not None and media_ad_number != int(heading.group(1)):
-                            raise RuntimeError(f"Drive handoff manifest inline AD {heading.group(1)} references media from another ad") from exc
+                        if media_ad_number is not None and media_ad_number != heading_number:
+                            raise RuntimeError(f"Drive handoff manifest inline AD {heading_number} references media from another ad") from exc
                         if self._media_aspect(media) != aspect:
-                            raise RuntimeError(f"Drive handoff manifest inline AD {heading.group(1)} declares {aspect} with the wrong media aspect") from exc
+                            raise RuntimeError(f"Drive handoff manifest inline AD {heading_number} declares {aspect} with the wrong media aspect") from exc
                         if media.get("id") in declared_media_ids:
                             raise RuntimeError(f"Drive handoff manifest declares media more than once: {name}") from exc
                         declared_media_ids.add(media.get("id"))
                         declared_media.append(media)
-                    declared_media_by_ad[int(heading.group(1))] = declared_names and [
+                    declared_media_by_ad[heading_number] = declared_names and [
                         media_by_name[name.lower()][0] for _, name in declared_names
                     ]
                 if len(expected_numbers) != len(inline_blocks):
@@ -2841,7 +2842,7 @@ class DriveSyncService:
         text_body = re.sub(r"[\ufeff\u200b\u200c\u200d]", "", text_body or "")
         text_body = text_body.replace("\u00a0", " ")
         headings = list(re.finditer(
-            r"^[ \t]*(?![^\n]*\.(?:txt|png|jpe?g|webp|gif|mp4)\s*$)(?:#{1,6}[ \t]*)?(?:[A-Z0-9]+[-_ \t]+)*AD[-_ \t]?(\d+)\b.*$",
+            r"^[ \t]*(?![^\n]*\.(?:txt|png|jpe?g|webp|gif|mp4)\s*$)(?:(?:#{1,6}[ \t]*)?(?:[A-Z0-9]+[-_ \t]+)*AD[-_ \t]?(\d+)|(?:#{1,6}[ \t]+)(?:[A-Z0-9]+[-_ \t]+)+?(\d+))\b.*$",
             text_body,
             re.IGNORECASE | re.MULTILINE,
         ))
@@ -2857,7 +2858,7 @@ class DriveSyncService:
         landing_page = landing_match.group(1).strip() if landing_match else None
 
         for index, heading in enumerate(headings):
-            number = int(heading.group(1))
+            number = int(heading.group(1) or heading.group(2))
             if number in seen_numbers:
                 # Two unrelated versions of AD 1 in one package are ambiguous;
                 # fail closed instead of attaching one version arbitrarily.
