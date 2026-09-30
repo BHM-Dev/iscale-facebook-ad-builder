@@ -272,11 +272,13 @@ def _merge_drive_sync_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         "processed": 0, "created": 0, "updated": 0, "skipped": 0,
         "archived": 0, "unmatched_brand": 0, "errors": 0, "unverified": 0,
         "scoped_files_found": 0,
+        "scoped_errors": [],
         "next_page_token_saved": False, "copy_health": None,
     }
     for result in results:
         for key in ("processed", "created", "updated", "skipped", "archived", "unmatched_brand", "errors", "unverified", "scoped_files_found"):
             merged[key] += result.get(key, 0)
+        merged["scoped_errors"].extend(result.get("scoped_errors", []))
         merged["next_page_token_saved"] = merged["next_page_token_saved"] or result.get("next_page_token_saved", False)
         if result.get("copy_health") is not None:
             # Both calls audit the same whole-library health summary — the

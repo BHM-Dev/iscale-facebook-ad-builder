@@ -368,6 +368,10 @@ class DriveSyncService:
                 self._process_file(file_meta, result)
         except Exception as exc:
             result["errors"] += 1
+            if "scoped_files_found" in result:
+                result.setdefault("scoped_errors", []).append(
+                    f'{file_meta.get("name") or file_meta.get("id")}: {exc}'
+                )
             logger.warning(
                 "Drive sync failed to process %s: %s",
                 file_meta.get("name") or file_meta.get("id") or "unknown file",

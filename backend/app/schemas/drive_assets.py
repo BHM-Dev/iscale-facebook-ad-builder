@@ -33,6 +33,7 @@ class DriveSyncResult(BaseModel):
     errors: int = 0
     unverified: int = 0
     scoped_files_found: int = 0
+    scoped_errors: List[str] = Field(default_factory=list)
     next_page_token_saved: bool = False
     copy_health: Optional[Dict[str, Any]] = None
 
