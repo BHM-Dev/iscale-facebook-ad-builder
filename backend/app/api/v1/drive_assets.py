@@ -180,11 +180,15 @@ def upload_drive_asset(
 @router.post("/sync-now", response_model=DriveSyncResult)
 def sync_drive_assets_now(
     backfill: bool = Query(default=False),
+    folder_id: str | None = None,
     db: Session = Depends(get_db),
     _current_user: User = Depends(get_current_active_user),
 ):
     try:
-        return DriveSyncService(db).sync_once(backfill=backfill)
+        sync_kwargs = {"backfill": backfill}
+        if folder_id:
+            sync_kwargs["folder_id"] = folder_id
+        return DriveSyncService(db).sync_once(**sync_kwargs)
     except HTTPException:
         raise
     except Exception as exc:

@@ -200,7 +200,12 @@ class DriveSyncService:
         result["copy_health"] = self.get_copy_health_summary()
         return result
 
-    def sync_once(self, backfill: bool = False, defer_copy_resolution: bool = False) -> Dict[str, Any]:
+    def sync_once(
+        self,
+        backfill: bool = False,
+        defer_copy_resolution: bool = False,
+        folder_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         result = {
             "processed": 0,
             "created": 0,
@@ -229,6 +234,13 @@ class DriveSyncService:
                 )
             drive = self._client()
             page_token = self._get_state_token()
+            if folder_id:
+                for file_meta in self._changed_folder_walk(drive, folder_id):
+                    result["processed"] += 1
+                    self._process_file_isolated(file_meta, result)
+                result = self._attach_copy_health(result)
+                self.db.commit()
+                return result
             # Only defer per-file copy resolution when the caller guarantees a
             # refresh_copy_metadata() pass immediately follows (today, only
             # refresh_drive_copy_metadata's combined endpoint). A standalone
