@@ -181,6 +181,7 @@ def upload_drive_asset(
 def sync_drive_assets_now(
     backfill: bool = Query(default=False),
     folder_id: str | None = None,
+    brand_name: str | None = None,
     db: Session = Depends(get_db),
     _current_user: User = Depends(get_current_active_user),
 ):
@@ -188,6 +189,8 @@ def sync_drive_assets_now(
         sync_kwargs = {"backfill": backfill}
         if folder_id:
             sync_kwargs["folder_id"] = folder_id
+            if brand_name:
+                sync_kwargs["brand_name"] = brand_name
         return DriveSyncService(db).sync_once(**sync_kwargs)
     except HTTPException:
         raise

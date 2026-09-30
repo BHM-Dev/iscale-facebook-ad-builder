@@ -205,6 +205,7 @@ class DriveSyncService:
         backfill: bool = False,
         defer_copy_resolution: bool = False,
         folder_id: Optional[str] = None,
+        brand_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         result = {
             "processed": 0,
@@ -235,7 +236,21 @@ class DriveSyncService:
             drive = self._client()
             page_token = self._get_state_token()
             if folder_id:
-                for file_meta in self._changed_folder_walk(drive, folder_id, require_root=False):
+                # A newly-created shared-drive subtree can be listable while
+                # Drive still rejects parent-chain reads for its children.
+                # Scoped recovery is already bounded by the supplied folder;
+                # carry the explicitly selected brand through that walk so it
+                # does not discard valid media merely because ancestry is
+                # temporarily unreadable.
+                scoped_brand = (brand_name or "").strip() or None
+                if scoped_brand and not self._match_brand_id(scoped_brand):
+                    raise HTTPException(status_code=400, detail=f"Unknown Drive brand folder: {scoped_brand}")
+                for file_meta in self._changed_folder_walk(
+                    drive,
+                    folder_id,
+                    require_root=False,
+                    scoped_brand_name=scoped_brand,
+                ):
                     result["processed"] += 1
                     self._process_file_isolated(file_meta, result)
                 result = self._attach_copy_health(result)
@@ -908,14 +923,15 @@ class DriveSyncService:
         drive,
         folder_id: Optional[str],
         require_root: bool = True,
+        scoped_brand_name: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """List files below one changed folder without scanning the sync root."""
         if not folder_id or (require_root and not self._folder_chain_to_root(folder_id)):
             return []
         files: List[Dict[str, Any]] = []
-        queue = [folder_id]
+        queue = [(folder_id, [])]
         while queue:
-            current_id = queue.pop(0)
+            current_id, relative_path = queue.pop(0)
             page_token = None
             while True:
                 response = drive.files().list(
@@ -928,8 +944,14 @@ class DriveSyncService:
                 ).execute()
                 for item in response.get("files", []):
                     if item.get("mimeType") == "application/vnd.google-apps.folder":
-                        queue.append(item["id"])
+                        queue.append((item["id"], [*relative_path, item.get("name", "")]))
                     else:
+                        if scoped_brand_name:
+                            item = dict(item)
+                            item["_scoped_drive_path"] = {
+                                "brand_folder": scoped_brand_name,
+                                "folder_path": "/".join(relative_path),
+                            }
                         files.append(item)
                 page_token = response.get("nextPageToken")
                 if not page_token:
@@ -1231,6 +1253,12 @@ class DriveSyncService:
         return result.rowcount or 0
 
     def _resolve_drive_path(self, file_meta: Dict[str, Any]) -> Optional[ResolvedDrivePath]:
+        scoped_path = file_meta.get("_scoped_drive_path")
+        if scoped_path and scoped_path.get("brand_folder"):
+            return ResolvedDrivePath(
+                brand_folder=scoped_path["brand_folder"],
+                folder_path=scoped_path.get("folder_path", ""),
+            )
         chain = self._parent_chain(file_meta)
         if not chain:
             return None
