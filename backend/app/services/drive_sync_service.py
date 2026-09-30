@@ -235,7 +235,7 @@ class DriveSyncService:
             drive = self._client()
             page_token = self._get_state_token()
             if folder_id:
-                for file_meta in self._changed_folder_walk(drive, folder_id):
+                for file_meta in self._changed_folder_walk(drive, folder_id, require_root=False):
                     result["processed"] += 1
                     self._process_file_isolated(file_meta, result)
                 result = self._attach_copy_health(result)
@@ -903,9 +903,14 @@ class DriveSyncService:
                     break
         return files
 
-    def _changed_folder_walk(self, drive, folder_id: Optional[str]) -> List[Dict[str, Any]]:
+    def _changed_folder_walk(
+        self,
+        drive,
+        folder_id: Optional[str],
+        require_root: bool = True,
+    ) -> List[Dict[str, Any]]:
         """List files below one changed folder without scanning the sync root."""
-        if not folder_id or not self._folder_chain_to_root(folder_id):
+        if not folder_id or (require_root and not self._folder_chain_to_root(folder_id)):
             return []
         files: List[Dict[str, Any]] = []
         queue = [folder_id]
