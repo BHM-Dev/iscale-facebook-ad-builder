@@ -205,6 +205,54 @@ Save Up To 30% If You Compare
     assert result["assets"]["llc-rate-01-setitonce-4x5.mp4"]["copy"]["headline"] == "Lower Business Insurance in 2 Minutes"
 
 
+def test_inline_manifest_accepts_feed_and_stories_video_fields():
+    service = _service()
+    service._folder_metadata_cache = {}
+    manifest = {
+        "id": "manifest",
+        "name": "LLC-RATE-HANDOFF-MANIFEST.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-30T12:36:26.063Z",
+    }
+    feed = {
+        "id": "feed-video",
+        "name": "LLC-RATE-01-SetItOnce-4x5.mp4",
+        "mimeType": "video/mp4",
+    }
+    stories = {
+        "id": "stories-video",
+        "name": "LLC-RATE-01-SetItOnce-9x16.mp4",
+        "mimeType": "video/mp4",
+    }
+    manifest_text = """PACKAGE: Commercial Insurance | LLC Rate Check
+FINAL HANDOFF MANIFEST — LAUNCHER COPY MAP
+
+Meta Button
+Get Quote
+
+## AD 01 — Set It Once
+PRIMARY TEXT
+Most business owners should check their commercial insurance price.
+HEADLINE
+Lower Business Insurance in 2 Minutes
+DESCRIPTION
+Save Up To 30% If You Compare
+4X5 VIDEO
+LLC-RATE-01-SetItOnce-4x5.mp4
+9X16 VIDEO
+LLC-RATE-01-SetItOnce-9x16.mp4
+"""
+    service._list_folder_subtree = lambda folder_id: [manifest, feed, stories]
+    service._download_text_file = lambda file_id: manifest_text
+
+    result = service._folder_copy_metadata("package", force=True)
+
+    assert set(result["assets"]) == {
+        "llc-rate-01-setitonce-4x5.mp4",
+        "llc-rate-01-setitonce-9x16.mp4",
+    }
+
+
 def test_copy_file_uses_id_headers_as_blocks_across_divider_styles():
     service = _service()
     copy_file = """==================================================

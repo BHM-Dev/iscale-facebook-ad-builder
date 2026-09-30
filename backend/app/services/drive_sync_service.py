@@ -2270,6 +2270,7 @@ class DriveSyncService:
                     re.IGNORECASE | re.MULTILINE,
                 ))
                 declared_media = []
+                declared_media_by_ad = {}
                 declared_media_ids = set()
                 expected_numbers = set()
                 media_by_name = {}
@@ -2281,11 +2282,27 @@ class DriveSyncService:
                     expected_numbers.add(int(heading.group(1)))
                     block = manifest_text[heading.end():inline_blocks[index + 1].start() if index + 1 < len(inline_blocks) else len(manifest_text)]
                     declared_names = []
-                    for aspect in ("1X1", "9X16"):
-                        image = re.search(rf"^[ \t]*{aspect}[ \t]+IMAGE[ \t]*\r?\n[ \t]*([^\r\n]+)", block, re.IGNORECASE | re.MULTILINE)
-                        if not image:
-                            raise RuntimeError(f"Drive handoff manifest inline AD {heading.group(1)} is missing its {aspect} image") from exc
-                        declared_names.append((aspect, image.group(1).strip()))
+                    has_video_placements = bool(re.search(
+                        r"^[ \t]*(?:4X5|9X16)[ \t]+VIDEO\b",
+                        block,
+                        re.IGNORECASE | re.MULTILINE,
+                    ))
+                    placement_fields = (
+                        (("4X5", "VIDEO", "4x5"), ("9X16", "VIDEO", "9x16"))
+                        if has_video_placements else
+                        (("1X1", "IMAGE", "1x1"), ("9X16", "IMAGE", "9x16"))
+                    )
+                    for aspect, media_kind, normalized_aspect in placement_fields:
+                        field = re.search(
+                            rf"^[ \t]*{aspect}[ \t]+{media_kind}[ \t]*\r?\n[ \t]*([^\r\n]+)",
+                            block,
+                            re.IGNORECASE | re.MULTILINE,
+                        )
+                        if not field:
+                            raise RuntimeError(
+                                f"Drive handoff manifest inline AD {heading.group(1)} is missing its {aspect} {media_kind.lower()}"
+                            ) from exc
+                        declared_names.append((normalized_aspect, field.group(1).strip()))
                     for aspect, name in declared_names:
                         matching_media = media_by_name.get(name.lower(), [])
                         if not matching_media:
@@ -2293,20 +2310,29 @@ class DriveSyncService:
                         if len(matching_media) != 1:
                             raise RuntimeError(f"Drive handoff manifest references ambiguous media {name}") from exc
                         media = matching_media[0]
-                        if self._ad_number_from_file_name(media.get("name") or "") != int(heading.group(1)):
+                        media_ad_number = self._ad_number_from_file_name(media.get("name") or "")
+                        if media_ad_number is not None and media_ad_number != int(heading.group(1)):
                             raise RuntimeError(f"Drive handoff manifest inline AD {heading.group(1)} references media from another ad") from exc
-                        if self._media_aspect(media) != aspect.lower():
+                        if self._media_aspect(media) != aspect:
                             raise RuntimeError(f"Drive handoff manifest inline AD {heading.group(1)} declares {aspect} with the wrong media aspect") from exc
                         if media.get("id") in declared_media_ids:
                             raise RuntimeError(f"Drive handoff manifest declares media more than once: {name}") from exc
                         declared_media_ids.add(media.get("id"))
                         declared_media.append(media)
+                    declared_media_by_ad[int(heading.group(1))] = declared_names and [
+                        media_by_name[name.lower()][0] for _, name in declared_names
+                    ]
                 if len(expected_numbers) != len(inline_blocks):
                     raise RuntimeError("Drive handoff manifest declares the same inline AD more than once") from exc
                 inline_sections = self._parse_ad_copy_doc(manifest_text)
                 if inline_blocks and set(inline_sections) != expected_numbers:
                     raise RuntimeError("Drive handoff manifest has incomplete inline copy sections") from exc
-                inline_metadata = self._ad_numbered_folder_copy_metadata(folder_id, declared_media, manifest_text)
+                inline_metadata = self._ad_numbered_folder_copy_metadata(
+                    folder_id,
+                    declared_media,
+                    manifest_text,
+                    declared_media_by_ad=declared_media_by_ad,
+                )
                 if inline_metadata.get("assets") or inline_metadata.get("assets_by_drive_id"):
                     inline_metadata["_copy_source_drive_file_id"] = manifest.get("id")
                     inline_metadata["_copy_source_drive_modified_time"] = manifest.get("modifiedTime")
@@ -2869,7 +2895,7 @@ class DriveSyncService:
             if primary_label:
                 primary_body = block[primary_label.end():]
                 primary_body = re.split(
-                    r"^\s*(?:CTA|HEADLINE|DESCRIPTION|(?:1X1|9X16)\s+IMAGE|IMAGE)\s*:?.*$",
+                    r"^\s*(?:CTA|HEADLINE|DESCRIPTION|(?:1X1|4X5|9X16)\s+(?:IMAGE|VIDEO)|IMAGE)\s*:?.*$",
                     primary_body,
                     maxsplit=1,
                     flags=re.IGNORECASE | re.MULTILINE,
@@ -2884,7 +2910,7 @@ class DriveSyncService:
                     # field within this already AD-bounded block.
                     primary_body = block[headline_match.end():]
                     primary_body = re.split(
-                        r"^\s*(?:CTA|DESCRIPTION|(?:1X1|9X16)\s+IMAGE|IMAGE)\s*:?.*$",
+                        r"^\s*(?:CTA|DESCRIPTION|(?:1X1|4X5|9X16)\s+(?:IMAGE|VIDEO)|IMAGE)\s*:?.*$",
                         primary_body,
                         maxsplit=1,
                         flags=re.IGNORECASE | re.MULTILINE,
@@ -2964,7 +2990,14 @@ class DriveSyncService:
         stem = re.sub(r"(?:^|[-_ ])(?:1x1|4x5|9x16)(?=$|[-_ ])", " ", stem, flags=re.IGNORECASE)
         return re.sub(r"[-_\s]+", " ", stem).strip()
 
-    def _ad_numbered_folder_copy_metadata(self, folder_id, media_files, text_body, allow_single_placements=False):
+    def _ad_numbered_folder_copy_metadata(
+        self,
+        folder_id,
+        media_files,
+        text_body,
+        allow_single_placements=False,
+        declared_media_by_ad=None,
+    ):
         sections = self._parse_ad_copy_doc(text_body)
         if not sections:
             # An incomplete draft can still reach this lower-level resolver
@@ -2978,13 +3011,22 @@ class DriveSyncService:
             return {"assets": {}, "assets_by_drive_id": {}}
 
         candidates_by_ad: Dict[int, List[Any]] = {}
-        for item in media_files:
-            file_name = item.get("name") or ""
-            ad_number = self._ad_number_from_file_name(file_name)
-            aspect = self._media_aspect(item)
-            if ad_number not in sections:
-                continue
-            candidates_by_ad.setdefault(ad_number, []).append((item, file_name, aspect or "unknown"))
+        if declared_media_by_ad:
+            for ad_number, items in declared_media_by_ad.items():
+                if ad_number not in sections:
+                    continue
+                for item in items:
+                    file_name = item.get("name") or ""
+                    aspect = self._media_aspect(item)
+                    candidates_by_ad.setdefault(ad_number, []).append((item, file_name, aspect or "unknown"))
+        else:
+            for item in media_files:
+                file_name = item.get("name") or ""
+                ad_number = self._ad_number_from_file_name(file_name)
+                aspect = self._media_aspect(item)
+                if ad_number not in sections:
+                    continue
+                candidates_by_ad.setdefault(ad_number, []).append((item, file_name, aspect or "unknown"))
 
         assets: Dict[str, Dict[str, Any]] = {}
         assets_by_drive_id: Dict[str, Dict[str, Any]] = {}
