@@ -3047,12 +3047,16 @@ class DriveSyncService:
                 by_aspect: Dict[str, List[Any]] = {"1x1": [], "4x5": [], "9x16": [], "unknown": []}
                 for candidate in identity_candidates:
                     by_aspect[candidate[2]].append(candidate)
-                if (
-                    identity
-                    and len(by_aspect["1x1"]) == 1
-                    and len(by_aspect["9x16"]) == 1
+                is_complete_pair = (
+                    len(by_aspect["9x16"]) == 1
+                    and (
+                        len(by_aspect["1x1"]) == 1
+                        or len(by_aspect["4x5"]) == 1
+                    )
                     and not by_aspect["unknown"]
-                ):
+                    and sum(len(by_aspect[aspect]) for aspect in ("1x1", "4x5", "9x16")) == 2
+                )
+                if identity and is_complete_pair:
                     valid_pairs[identity] = identity_candidates
                 elif (
                     allow_single_placements
