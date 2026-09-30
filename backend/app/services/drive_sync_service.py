@@ -1270,9 +1270,26 @@ class DriveSyncService:
                     supportsAllDrives=True,
                 ).execute()
             except HttpError as exc:
-                logger.warning("Could not resolve Drive parent %s: %s", current_id, exc)
-                self._path_cache[folder_id] = None
-                return None
+                # Some shared-drive items can be returned by a children list
+                # while a direct files.get is rejected by Drive's ACL layer.
+                # The list endpoint applies the parent scope differently and
+                # is a safe, single-item fallback; this keeps a newly-created
+                # package recoverable without crawling the library root.
+                try:
+                    listed = drive.files().list(
+                        q=f"id = '{current_id}' and trashed = false",
+                        spaces="drive",
+                        fields="files(id,name,parents)",
+                        includeItemsFromAllDrives=True,
+                        supportsAllDrives=True,
+                    ).execute().get("files", [])
+                except HttpError:
+                    listed = []
+                if not listed:
+                    logger.warning("Could not resolve Drive parent %s: %s", current_id, exc)
+                    self._path_cache[folder_id] = None
+                    return None
+                item = listed[0]
             chain.append({"id": item["id"], "name": item.get("name", "")})
             if item["id"] == self.root_folder_id:
                 self._path_cache[folder_id] = chain
