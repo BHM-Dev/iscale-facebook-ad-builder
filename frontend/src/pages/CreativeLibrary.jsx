@@ -75,10 +75,10 @@ export default function CreativeLibrary() {
   const syncNow = async () => {
     setSyncing(true);
     try {
-      // Re-walk Drive on demand so metadata-only changes (for example a copy
-      // document added after the images were imported) backfill existing rows.
-      // The backend refreshes tags without re-uploading unchanged media.
-      const res = await authFetch(`${API_URL}/drive-assets/sync-now?backfill=true`, { method: 'POST' });
+      // Use Drive's changes checkpoint. This picks up new, modified, and
+      // removed files without re-walking the entire library. Copy-document
+      // changes have their own scoped Refresh copy matches action below.
+      const res = await authFetch(`${API_URL}/drive-assets/sync-now`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data.detail || 'Drive sync failed');
