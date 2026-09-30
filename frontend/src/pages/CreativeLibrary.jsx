@@ -78,9 +78,11 @@ export default function CreativeLibrary() {
       // Use Drive's changes checkpoint. This picks up new, modified, and
       // removed files without re-walking the entire library. Copy-document
       // changes have their own scoped Refresh copy matches action below.
-      const scopedFolderId = new URLSearchParams(window.location.search).get('folder_id');
+      const searchParams = new URLSearchParams(window.location.search);
+      const scopedFolderId = searchParams.get('folder_id');
+      const scopedBrandName = searchParams.get('brand_name');
       const syncUrl = scopedFolderId
-        ? `${API_URL}/drive-assets/sync-now?folder_id=${encodeURIComponent(scopedFolderId)}`
+        ? `${API_URL}/drive-assets/sync-now?folder_id=${encodeURIComponent(scopedFolderId)}${scopedBrandName ? `&brand_name=${encodeURIComponent(scopedBrandName)}` : ''}`
         : `${API_URL}/drive-assets/sync-now`;
       const res = await authFetch(syncUrl, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
