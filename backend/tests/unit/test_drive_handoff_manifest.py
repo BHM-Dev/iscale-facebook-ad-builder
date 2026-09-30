@@ -114,6 +114,97 @@ AD-DEALER-CR-00-DealerOperations-9x16.jpg
     }
 
 
+def test_handoff_manifest_accepts_feed_and_stories_video_placements():
+    service = _service()
+    manifest = """PACKAGE: Commercial Insurance | LLC Rate Check
+FINAL HANDOFF MANIFEST — LAUNCHER COPY MAP
+
+Meta Button
+Get Quote
+
+LLC-RATE-01
+Copy: LLC-RATE-Ad-Copy.txt
+4X5 VIDEO
+LLC-RATE-01-SetItOnce-4x5.mp4
+9X16 VIDEO
+LLC-RATE-01-SetItOnce-9x16.mp4
+"""
+
+    parsed = service._parse_handoff_manifest(manifest)
+
+    assert parsed["entries"] == {
+        "LLC RATE 01": {
+            "copy_file": "LLC-RATE-Ad-Copy.txt",
+            "4x5": "LLC-RATE-01-SetItOnce-4x5.mp4",
+            "9x16": "LLC-RATE-01-SetItOnce-9x16.mp4",
+        }
+    }
+
+
+def test_handoff_manifest_binds_the_live_video_pair_to_copy_metadata():
+    service = _service()
+    service._folder_metadata_cache = {}
+    manifest = {
+        "id": "manifest",
+        "name": "LLC-RATE-HANDOFF-MANIFEST.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-30T12:36:26.063Z",
+    }
+    copy_file = {
+        "id": "copy",
+        "name": "LLC-RATE-Ad-Copy.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-30T12:36:25.000Z",
+    }
+    feed = {
+        "id": "feed-video",
+        "name": "LLC-RATE-01-SetItOnce-4x5.mp4",
+        "mimeType": "video/mp4",
+    }
+    stories = {
+        "id": "stories-video",
+        "name": "LLC-RATE-01-SetItOnce-9x16.mp4",
+        "mimeType": "video/mp4",
+    }
+    manifest_text = """PACKAGE: Commercial Insurance | LLC Rate Check
+FINAL HANDOFF MANIFEST — LAUNCHER COPY MAP
+
+Meta Button
+Get Quote
+
+LLC-RATE-01
+Copy: LLC-RATE-Ad-Copy.txt
+4X5 VIDEO
+LLC-RATE-01-SetItOnce-4x5.mp4
+9X16 VIDEO
+LLC-RATE-01-SetItOnce-9x16.mp4
+"""
+    copy_text = """LLC-RATE-01
+PRIMARY TEXT
+Most business owners should check their commercial insurance price.
+HEADLINE
+Lower Business Insurance in 2 Minutes
+DESCRIPTION
+Save Up To 30% If You Compare
+"""
+    files = [manifest, copy_file, feed, stories]
+    service._list_folder_subtree = lambda folder_id: files
+    service._download_text_file = lambda file_id: {
+        "manifest": manifest_text,
+        "copy": copy_text,
+    }[file_id]
+
+    result = service._folder_copy_metadata("package", force=True)
+
+    assert set(result["assets"]) == {
+        "llc-rate-01-setitonce-4x5.mp4",
+        "llc-rate-01-setitonce-9x16.mp4",
+    }
+    assert result["assets"]["llc-rate-01-setitonce-4x5.mp4"]["aspect"] == "4x5"
+    assert result["assets"]["llc-rate-01-setitonce-9x16.mp4"]["aspect"] == "9x16"
+    assert result["assets"]["llc-rate-01-setitonce-4x5.mp4"]["copy"]["headline"] == "Lower Business Insurance in 2 Minutes"
+
+
 def test_copy_file_uses_id_headers_as_blocks_across_divider_styles():
     service = _service()
     copy_file = """==================================================

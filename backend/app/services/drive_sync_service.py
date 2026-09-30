@@ -2412,9 +2412,14 @@ class DriveSyncService:
             raise NonActionableHandoffManifestError(
                 "Drive handoff manifest contained no copy entries"
             )
+        # A handoff entry may be a 1:1 + 9:16 image pair, a 4:5 + 9:16
+        # video pair, or a single explicit placement. Do not require the
+        # historic 1x1 field: Joel's current video route uses 4X5 VIDEO for
+        # Feed and 9X16 VIDEO for Stories/Reels.
         incomplete_entries = [
             copy_id for copy_id, entry in entries.items()
-            if not entry.get("1x1") or not entry.get("9x16") or not entry.get("copy_file")
+            if not any(entry.get(aspect) for aspect in ("1x1", "4x5", "9x16"))
+            or not entry.get("copy_file")
         ]
         if incomplete_entries:
             raise RuntimeError(
@@ -2456,7 +2461,7 @@ class DriveSyncService:
         assets: Dict[str, Dict[str, Any]] = {}
         for copy_id, entry in manifest_data.get("entries", {}).items():
             copy = copy_blocks.get(copy_id.lower(), {})
-            for aspect in ("1x1", "9x16"):
+            for aspect in ("1x1", "4x5", "9x16"):
                 file_name = entry.get(aspect)
                 if not file_name:
                     continue
@@ -3276,7 +3281,7 @@ class DriveSyncService:
                     entries[current_id][pending_field] = value
                 pending_field = None
 
-            field_match = re.match(r"^(1x1|9x16|Copy file|Copy)\s*(?::\s*(.*))?$", line, re.IGNORECASE)
+            field_match = re.match(r"^(1x1|4x5|9x16|Copy file|Copy)(?:\s+(?:image|images|video|videos))?\s*(?::\s*(.*))?$", line, re.IGNORECASE)
             if field_match:
                 key = field_match.group(1).lower()
                 if key in {"copy", "copy file"}:
