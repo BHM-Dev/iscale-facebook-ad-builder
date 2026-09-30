@@ -271,10 +271,11 @@ def _merge_drive_sync_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     merged = {
         "processed": 0, "created": 0, "updated": 0, "skipped": 0,
         "archived": 0, "unmatched_brand": 0, "errors": 0, "unverified": 0,
+        "scoped_files_found": 0,
         "next_page_token_saved": False, "copy_health": None,
     }
     for result in results:
-        for key in ("processed", "created", "updated", "skipped", "archived", "unmatched_brand", "errors", "unverified"):
+        for key in ("processed", "created", "updated", "skipped", "archived", "unmatched_brand", "errors", "unverified", "scoped_files_found"):
             merged[key] += result.get(key, 0)
         merged["next_page_token_saved"] = merged["next_page_token_saved"] or result.get("next_page_token_saved", False)
         if result.get("copy_health") is not None:

@@ -32,6 +32,7 @@ class DriveSyncResult(BaseModel):
     unmatched_brand: int = 0
     errors: int = 0
     unverified: int = 0
+    scoped_files_found: int = 0
     next_page_token_saved: bool = False
     copy_health: Optional[Dict[str, Any]] = None
 

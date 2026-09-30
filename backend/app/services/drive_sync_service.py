@@ -245,12 +245,14 @@ class DriveSyncService:
                 scoped_brand = (brand_name or "").strip() or None
                 if scoped_brand and not self._match_brand_id(scoped_brand):
                     raise HTTPException(status_code=400, detail=f"Unknown Drive brand folder: {scoped_brand}")
-                for file_meta in self._changed_folder_walk(
+                scoped_files = self._changed_folder_walk(
                     drive,
                     folder_id,
                     require_root=False,
                     scoped_brand_name=scoped_brand,
-                ):
+                )
+                result["scoped_files_found"] = len(scoped_files)
+                for file_meta in scoped_files:
                     result["processed"] += 1
                     self._process_file_isolated(file_meta, result)
                 result = self._attach_copy_health(result)

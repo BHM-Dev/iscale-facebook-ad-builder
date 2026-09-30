@@ -97,7 +97,10 @@ export default function CreativeLibrary() {
         const names = exceptions.slice(0, 3).map(item => item.package).join('; ');
         showWarning(`Drive sync complete, but ${data.copy_health.exception_assets} asset${data.copy_health.exception_assets === 1 ? '' : 's'} need copy repair in: ${names}${exceptions.length > 3 ? ' (and more)' : ''}.${manualCopyAssets ? ` ${manualCopyAssets} asset${manualCopyAssets === 1 ? '' : 's'} intentionally require manual copy.` : ''}${exclusionNames ? ` Intentional exclusions: ${exclusionNames}${exclusions.length > 3 ? ' (and more)' : ''}.` : ''}`);
       } else {
-        showSuccess(`Drive sync complete: ${data.created || 0} new, ${data.updated || 0} updated, ${data.archived || 0} archived${manualCopyAssets ? `. ${manualCopyAssets} asset${manualCopyAssets === 1 ? '' : 's'} intentionally require manual copy` : ''}${exclusionNames ? `. Intentional exclusions: ${exclusionNames}${exclusions.length > 3 ? ' (and more)' : ''}` : ''}`);
+        const diagnostics = scopedFolderId
+          ? ` ${data.processed || 0} files processed${data.errors ? `, ${data.errors} errors` : ''}${data.skipped ? `, ${data.skipped} skipped` : ''}.`
+          : '';
+        showSuccess(`Drive sync complete: ${data.created || 0} new, ${data.updated || 0} updated, ${data.archived || 0} archived.${diagnostics}${manualCopyAssets ? ` ${manualCopyAssets} asset${manualCopyAssets === 1 ? '' : 's'} intentionally require manual copy.` : ''}${exclusionNames ? ` Intentional exclusions: ${exclusionNames}${exclusions.length > 3 ? ' (and more)' : ''}.` : ''}`);
       }
       await fetchAssets();
     } catch (error) {
