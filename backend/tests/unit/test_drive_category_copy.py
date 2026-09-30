@@ -2429,3 +2429,76 @@ def test_sync_once_isolates_a_bad_removed_and_trashed_file_and_commits_good_chan
     # _archive_by_drive_id_isolated's savepoint; the 1 real file goes through
     # _process_file_isolated's savepoint.
     assert service.db.nested_entries == 5
+
+
+def test_incremental_sync_walks_only_a_new_folder_subtree():
+    """A newly added package folder must reveal its existing media without a root walk."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service.root_folder_id = "sync-root"
+    service._copy_packages_refreshed_in_sync = set()
+    service._validate_tables = lambda: None
+    service._get_state_token = lambda: "existing-checkpoint"
+    service._folder_chain_to_root = lambda folder_id: (
+        [{"id": folder_id, "name": "New Package"}, {"id": "sync-root", "name": "Root"}]
+        if folder_id == "new-folder" else None
+    )
+
+    class FakeChangesRequest:
+        def execute(self):
+            return {
+                "changes": [{
+                    "file": {
+                        "id": "new-folder",
+                        "name": "New Package",
+                        "mimeType": "application/vnd.google-apps.folder",
+                    },
+                }],
+                "nextPageToken": None,
+                "newStartPageToken": "next-checkpoint",
+            }
+
+    class FakeFilesRequest:
+        def __init__(self, folder_id):
+            self.folder_id = folder_id
+
+        def execute(self):
+            assert self.folder_id == "new-folder"
+            return {
+                "files": [
+                    {"id": "feed-video", "name": "feed.mp4", "mimeType": "video/mp4"},
+                    {"id": "stories-video", "name": "stories.mp4", "mimeType": "video/mp4"},
+                ],
+                "nextPageToken": None,
+            }
+
+    class FakeChanges:
+        def list(self, **kwargs):
+            return FakeChangesRequest()
+
+    class FakeFiles:
+        def list(self, **kwargs):
+            return FakeFilesRequest(kwargs["q"].split("'")[1])
+
+    class FakeDrive:
+        def changes(self):
+            return FakeChanges()
+
+        def files(self):
+            return FakeFiles()
+
+    service._client = lambda: FakeDrive()
+    service._set_state_token = lambda token: setattr(service, "_saved_token", token)
+    processed = []
+    service._process_file = lambda file_meta, result: processed.append(file_meta["id"])
+    service._mark_package_copy_unverified = lambda file_meta, reason: None
+    service.get_copy_health_summary = lambda: {
+        "exception_assets": 0, "packages_with_exceptions": 0, "exceptions": [],
+    }
+    service.db = _SavepointTrackingDB()
+
+    result = service.sync_once(backfill=False)
+
+    assert processed == ["feed-video", "stories-video"]
+    assert result["processed"] == 3  # folder event + its two discovered children
+    assert result["errors"] == 0
+    assert service._saved_token == "next-checkpoint"

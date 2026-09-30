@@ -303,6 +303,15 @@ class DriveSyncService:
                     if file_meta.get("trashed"):
                         result["archived"] += self._archive_by_drive_id_isolated(file_meta.get("id"), result)
                         continue
+                    if file_meta.get("mimeType") == "application/vnd.google-apps.folder":
+                        # Drive changes report a newly created folder, but not
+                        # every child already inside it. Discover only this
+                        # changed subtree so adding a package folder does not
+                        # turn an incremental sync back into a library walk.
+                        for child in self._changed_folder_walk(drive, file_meta.get("id")):
+                            result["processed"] += 1
+                            self._process_file_isolated(child, result)
+                        continue
                     self._process_file_isolated(file_meta, result)
 
                 if response.get("newStartPageToken"):
@@ -866,6 +875,34 @@ class DriveSyncService:
             while True:
                 response = drive.files().list(
                     q=f"'{folder_id}' in parents and trashed = false",
+                    spaces="drive",
+                    pageToken=page_token,
+                    fields="nextPageToken,files(id,name,mimeType,parents,modifiedTime,trashed,size,webViewLink)",
+                    includeItemsFromAllDrives=True,
+                    supportsAllDrives=True,
+                ).execute()
+                for item in response.get("files", []):
+                    if item.get("mimeType") == "application/vnd.google-apps.folder":
+                        queue.append(item["id"])
+                    else:
+                        files.append(item)
+                page_token = response.get("nextPageToken")
+                if not page_token:
+                    break
+        return files
+
+    def _changed_folder_walk(self, drive, folder_id: Optional[str]) -> List[Dict[str, Any]]:
+        """List files below one changed folder without scanning the sync root."""
+        if not folder_id or not self._folder_chain_to_root(folder_id):
+            return []
+        files: List[Dict[str, Any]] = []
+        queue = [folder_id]
+        while queue:
+            current_id = queue.pop(0)
+            page_token = None
+            while True:
+                response = drive.files().list(
+                    q=f"'{current_id}' in parents and trashed = false",
                     spaces="drive",
                     pageToken=page_token,
                     fields="nextPageToken,files(id,name,mimeType,parents,modifiedTime,trashed,size,webViewLink)",
