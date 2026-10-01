@@ -508,7 +508,9 @@ export async function createFacebookAdSet(adsetData, campaignId, adAccountId, bu
  * @param {string|null} imageHash - Image hash for image ads (null for video)
  * @param {string} pageId - Facebook page ID
  * @param {string} adAccountId - Facebook ad account ID
- * @param {Object|null} videoData - Video data: { video_id, thumbnail_url } for video ads
+ * @param {Object|null} videoData - Video data: { video_id, thumbnail_url } for video ads.
+ *   `secondary_video_id` creates one placement-customized ad with a separate
+ *   Stories/Reels video alongside the Feed video.
  * @param {string|null} secondaryImageHash - Meta image hash of the 9x16 vertical
  *   asset (Bulk Match Import only). When provided alongside imageHash, the backend
  *   builds a dual-placement creative (Feed square + Stories/Reels vertical, same
@@ -533,6 +535,9 @@ export async function createFacebookCreative(creativeData, imageHash, pageId, ad
         // Add image or video data
         if (videoData && videoData.video_id) {
             payload.video_id = videoData.video_id;
+            if (videoData.secondary_video_id) {
+                payload.secondary_video_id = videoData.secondary_video_id;
+            }
             if (videoData.thumbnail_url) {
                 payload.thumbnail_url = videoData.thumbnail_url;
             }
@@ -628,8 +633,8 @@ export async function searchLocations(query, type = 'city', adAccountId) {
  * @param {string} campaignId - Campaign ID
  * @param {Object} adsetData - Ad set data with fbAdsetId
  * @param {Object} creativeData - Creative data with imageUrl or videoUrl. An optional
- *   `secondaryImageUrl` (Bulk Match Import's 9x16 asset) is uploaded to Meta too and
- *   passed through as the Stories/Reels vertical image alongside the Feed square.
+ *   `secondaryImageUrl` (or `secondaryVideoUrl`) is uploaded to Meta too and
+ *   passed through as the Stories/Reels vertical asset alongside the Feed asset.
  * @param {Object} adData - Ad data
  * @param {string} pageId - Facebook page ID
  * @param {string} adAccountId - Facebook ad account ID
@@ -666,6 +671,16 @@ export async function createCompleteAd(campaignId, adsetData, creativeData, adDa
                 video_id: videoResult.video_id,
                 thumbnail_url: creativeData.thumbnailUrl || (videoResult.thumbnails && videoResult.thumbnails[0])
             };
+            if (creativeData.secondaryVideoUrl) {
+                await pauseBetweenWrites();
+                const secondaryVideoResult = await uploadVideoToFacebook(
+                    creativeData.secondaryVideoUrl,
+                    adAccountId,
+                    true,
+                    600
+                );
+                videoData.secondary_video_id = secondaryVideoResult.video_id;
+            }
         } else {
             // 1. Upload image(s). The 9x16 vertical (if present) is required
             // together with the 1x1 for the dual-placement path — both must
@@ -700,6 +715,7 @@ export async function createCompleteAd(campaignId, adsetData, creativeData, adDa
             imageHash,
             secondaryImageHash,
             videoId: videoData?.video_id || null,
+            secondaryVideoId: videoData?.secondary_video_id || null,
             thumbnailUrl: videoData?.thumbnail_url || null,
             creativeId,
             adId

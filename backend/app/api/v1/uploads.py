@@ -13,7 +13,7 @@ router = APIRouter()
 
 # Security: Define allowed file types and size limits
 ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
-ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.webm'}
+ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.webm', '.m4v', '.mpeg', '.mpg', '.3gp'}
 ALLOWED_EXTENSIONS = ALLOWED_IMAGE_EXTENSIONS | ALLOWED_VIDEO_EXTENSIONS
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB for images
 MAX_VIDEO_SIZE = 500 * 1024 * 1024  # 500MB for videos

@@ -2497,7 +2497,7 @@ class DriveSyncService:
             headings = [
                 int(match.group(1))
                 for match in re.finditer(
-                    r"^[ \t]*(?![^\n]*\.(?:txt|png|jpe?g|webp|gif|mp4)\s*$)(?:#{1,6}[ \t]*)?(?:[A-Z0-9]+[-_ \t]+)*AD[-_ \t]?(\d+)\b.*$",
+                    r"^[ \t]*(?![^\n]*\.(?:txt|png|jpe?g|webp|gif|mp4|mov|avi|webm|m4v|mpeg|mpg|3gp)\s*$)(?:#{1,6}[ \t]*)?(?:[A-Z0-9]+[-_ \t]+)*AD[-_ \t]?(\d+)\b.*$",
                     normalized,
                     re.IGNORECASE | re.MULTILINE,
                 )
@@ -2850,7 +2850,7 @@ class DriveSyncService:
         text_body = re.sub(r"[\ufeff\u200b\u200c\u200d]", "", text_body or "")
         text_body = text_body.replace("\u00a0", " ")
         headings = list(re.finditer(
-            r"^[ \t]*(?![^\n]*\.(?:txt|png|jpe?g|webp|gif|mp4)\s*$)(?:(?:#{1,6}[ \t]*)?(?:[A-Z0-9]+[-_ \t]+)*AD[-_ \t]?(\d+)|(?:#{1,6}[ \t]+)(?:[A-Z0-9]+[-_ \t]+)+?(\d+))\b.*$",
+            r"^[ \t]*(?![^\n]*\.(?:txt|png|jpe?g|webp|gif|mp4|mov|avi|webm|m4v|mpeg|mpg|3gp)\s*$)(?:(?:#{1,6}[ \t]*)?(?:[A-Z0-9]+[-_ \t]+)*AD[-_ \t]?(\d+)|(?:#{1,6}[ \t]+)(?:[A-Z0-9]+[-_ \t]+)+?(\d+))\b.*$",
             text_body,
             re.IGNORECASE | re.MULTILINE,
         ))
@@ -3558,7 +3558,7 @@ class DriveSyncService:
             return None
         if self._HANDOFF_NON_ID_LABEL.fullmatch(line):
             return None
-        if not allow_embedded and re.search(r"\.(?:txt|png|jpe?g|webp|gif|mp4)\b", line, re.IGNORECASE):
+        if not allow_embedded and re.search(r"\.(?:txt|png|jpe?g|webp|gif|mp4|mov|avi|webm|m4v|mpeg|mpg|3gp)\b", line, re.IGNORECASE):
             return None
 
         explicit_match = re.match(r"^(?:Copy|Ad)\s+ID\s*:\s*(.+)$", line, re.IGNORECASE)

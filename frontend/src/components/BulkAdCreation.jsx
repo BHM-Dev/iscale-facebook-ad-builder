@@ -39,9 +39,11 @@ const hasUsableCreativeAsset = (creative) => {
         ? (creative.file || creative.videoUrl || creative.previewUrl)
         : (creative.file || creative.imageUrl || creative.previewUrl);
     if (!primaryAsset) return false;
-    // A paired Drive creative promises Meta a distinct Stories image through
-    // asset-feed-spec. A half-pair is not a usable launch asset.
-    return !creative.dualPlacement || Boolean(creative.secondaryImageUrl);
+    // A paired Drive creative promises Meta a distinct Stories/Reels asset
+    // through asset-feed-spec. A half-pair is not a usable launch asset.
+    return !creative.dualPlacement || Boolean(
+        creative.mediaType === 'video' ? creative.secondaryVideoUrl : creative.secondaryImageUrl
+    );
 };
 
 // Best-effort domain for the preview card's link strip — falls back to the raw
@@ -510,6 +512,10 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const computeAdName = (pattern, { headlineIndex, bodyIndex, creativeId, mediaType }) => {
         const creativeIndex = creativeData.creatives.findIndex(c => c.id === creativeId);
         const creative = creativeIndex >= 0 ? creativeData.creatives[creativeIndex] : null;
+        // Drive filenames are the buyer's source-of-truth ad names. Do not
+        // append the generated H/B suffix to them: Abel uses these names to
+        // identify the exact file in Ads Manager.
+        if (creative?.source === 'drive' && creative.name?.trim()) return creative.name.trim();
         const mediaLabel = mediaType === 'video' ? 'Video' : 'Image';
         return resolveNamingTemplate(pattern, {
             campaign_name: campaignData.name || '',
@@ -859,7 +865,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         const description = Object.prototype.hasOwnProperty.call(ad, 'descriptionOverride')
             ? ad.descriptionOverride || ''
             : creative?.description ?? creativeData.description ?? '';
-        const websiteUrl = creativeData.websiteUrl || '';
+        const websiteUrl = ad.websiteUrlOverride || creativeData.websiteUrl || '';
         const ctaOverrideIsAuthoritative = Object.prototype.hasOwnProperty.call(ad, 'ctaOverride')
             && (isDriveCreative || Boolean(ad.ctaOverride));
         const cta = ctaOverrideIsAuthoritative
@@ -1140,7 +1146,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             if (creative?.source !== 'drive') return false;
             const headline = (ad.headlineOverride || '').trim();
             const body = (ad.bodyOverride || '').trim();
-            const websiteUrl = creativeData.websiteUrl || '';
+            const websiteUrl = ad.websiteUrlOverride || creativeData.websiteUrl || '';
             const cta = Object.prototype.hasOwnProperty.call(ad, 'ctaOverride') && (isDriveManifest || Boolean(ad.ctaOverride))
                 ? ad.ctaOverride
                 : creative?.cta || '';
@@ -1304,8 +1310,18 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             }
             // ── Step 2: Ad Set(s) ─────────────────────────────────────────────────
             // Base payload shared between all ad sets
+            const newAdsetStatus = adsetData.isExisting ? adsetData.status : 'ACTIVE';
+            // New child objects should be ready under a new paused campaign.
+            // When Joel adds to an existing ad set, inherit that ad set's
+            // requested status so an already-paused target cannot unexpectedly
+            // begin delivery.
+            const launchAdStatus = adsetData.isExisting ? (adsetData.status || 'PAUSED') : 'ACTIVE';
             const baseAdsetPayload = {
                 ...adsetData,
+                // A new campaign is intentionally held at the campaign level;
+                // its child ad sets should be ready to deliver once the buyer
+                // activates the campaign.
+                status: newAdsetStatus,
                 ...(campaignData.budgetType === 'CBO' && {
                     bidStrategy: campaignData.bidStrategy,
                     bidAmount: campaignData.bidAmount
@@ -1452,6 +1468,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             ...adsetData,
+                            status: newAdsetStatus,
                             // A per-media launch creates a distinct local row
                             // for each newly-created Meta ad set. Do not carry
                             // the wizard's selected/local id into every save,
@@ -1534,6 +1551,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             if (!perMediaMode) {
                 const adsetSaveBody = {
                     ...adsetData,
+                    status: newAdsetStatus,
                     campaignId: campaignData.id,
                     fbAdsetId: fbFeedAdsetId,
                     dailyBudget: adsetData.dailyBudget ? Number(adsetData.dailyBudget) : null,
@@ -1581,6 +1599,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
                                 ...adsetSaveBody,
+                                status: newAdsetStatus,
                                 id: storiesAdsetLocalId,
                                 name: `${adsetData.name} - Stories & Reels`,
                                 fbAdsetId: fbStoriesAdsetId
@@ -1671,11 +1690,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         videoUrl: isVideo ? (specificCreative?.videoUrl || specificCreative?.previewUrl) : undefined,
                         imageFile: !isVideo && specificCreative ? specificCreative.file : null,
                         videoFile: isVideo && specificCreative ? specificCreative.file : null,
-                        // Feed+Stories Drive pairs carry a secondaryImageUrl — createCompleteAd
-                        // already uploads it and passes secondary_image_hash through to Meta's
-                        // asset_feed_spec dual-placement path (same mechanism Bulk Match Import
-                        // ships). Never set for video creatives — that path is image-only.
+                        // Feed+Stories Drive pairs carry a secondary image/video URL —
+                        // createCompleteAd uploads both and passes the matching
+                        // asset-feed spec variant through to Meta.
                         secondaryImageUrl: !isVideo ? specificCreative?.secondaryImageUrl : undefined,
+                        secondaryVideoUrl: isVideo ? specificCreative?.secondaryVideoUrl : undefined,
+                        creativeName: specificCreative?.source === 'drive'
+                            ? specificCreative.name
+                            : creativeData.creativeName,
                         // Gated on THIS ad's own creative source, never the batch-wide
                         // isDriveManifest flag — a mixed batch (some drive, some not)
                         // would otherwise strip a non-drive ad's creativeData.* fallback
@@ -1697,7 +1719,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         cta: Object.prototype.hasOwnProperty.call(ad, 'ctaOverride') && (specificCreative?.source === 'drive' || Boolean(ad.ctaOverride))
                             ? ad.ctaOverride
                             : (specificCreative?.cta || creativeData.cta),
-                        websiteUrl: creativeData.websiteUrl
+                        websiteUrl: ad.websiteUrlOverride || creativeData.websiteUrl
                     };
 
                     if (!creativeData.pageId) {
@@ -1711,11 +1733,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         }));
                     }
 
+                    const launchAdData = { ...ad, status: launchAdStatus };
                     const result = await createCompleteAd(
                         fbCampaignId,
                         { ...adsetData, fbAdsetId: adFbAdsetId },
                         adSpecificCreativeData,
-                        ad,
+                        launchAdData,
                         creativeData.pageId,
                         selectedAdAccount.accountId,
                         campaignData.budgetType,
@@ -1735,12 +1758,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             id: ad.id,
                             adsetId: adLocalAdsetId,
                             name: ad.name,
-                            creativeName: creativeData.creativeName,
+                            creativeName: adSpecificCreativeData.creativeName || ad.name,
                             mediaType: isVideo ? 'video' : 'image',
                             imageUrl: adSpecificCreativeData.imageUrl,
                             secondaryImageUrl: adSpecificCreativeData.secondaryImageUrl,
+                            secondaryVideoUrl: adSpecificCreativeData.secondaryVideoUrl,
                             videoUrl: adSpecificCreativeData.videoUrl,
                             videoId: result.videoId,
+                            secondaryVideoId: result.secondaryVideoId,
                             thumbnailUrl: result.thumbnailUrl,
                             // Persist the exact per-ad copy used for this creative.
                             // Drive selections can carry different matched copy per
@@ -1751,7 +1776,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             description: adSpecificCreativeData.description,
                             cta: adSpecificCreativeData.cta,
                             websiteUrl: adSpecificCreativeData.websiteUrl,
-                            status: 'PAUSED',
+                            status: launchAdStatus,
                             fbAdId: result.adId,
                             fbCreativeId: result.creativeId
                         })
@@ -1941,7 +1966,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             )}
             <p className="text-gray-600 mb-6">
                 {isDriveManifest
-                    ? `Creative review: ${driveReviewInventory || 'no selected creatives'}. Each selected row becomes one paused ad in ${driveReviewDestination}. Use the compact manifest to organize, inspect, and select rows without reviewing a wall of full-size ad previews.`
+                    ? `Creative review: ${driveReviewInventory || 'no selected creatives'}. Each selected row becomes one active ad beneath the paused campaign in ${driveReviewDestination}. Use the compact manifest to organize, inspect, and select rows without reviewing a wall of full-size ad previews.`
                     : 'The app has automatically generated one ad for every combination of your images, headlines, and body copy. Each row below is one ad that will be created on Facebook.'}
             </p>
 
@@ -1950,7 +1975,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 <h3 className="font-semibold text-blue-900 mb-2">Summary</h3>
                 <div className="text-sm text-blue-800 space-y-1">
                     <div className="rounded-md border border-blue-200 bg-white/70 px-3 py-2 text-blue-950">
-                        <strong>Meta will create {activeAds.length} paused ad{activeAds.length !== 1 ? 's' : ''}</strong>
+                        <strong>Meta will create {activeAds.length} active ad{activeAds.length !== 1 ? 's' : ''} beneath the paused campaign</strong>
                         {perMediaModeActive
                             ? ` across ${new Set(activeAds.map(ad => ad.creativeId)).size} new ad set${new Set(activeAds.map(ad => ad.creativeId)).size !== 1 ? 's' : ''}.`
                             : adsetData.isExisting
@@ -2052,7 +2077,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         return (
                             <div className="mt-2 pt-2 border-t border-blue-200 text-sm space-y-1">
                                 <div className="font-semibold text-blue-800">
-                                    🗂 Creates {activeAds.length} ad{activeAds.length !== 1 ? 's' : ''} in {distinctMediaCount} new ad set{distinctMediaCount !== 1 ? 's' : ''} — one ad set per media file
+                                    🗂 Creates {activeAds.length} active ad{activeAds.length !== 1 ? 's' : ''} in {distinctMediaCount} new ad set{distinctMediaCount !== 1 ? 's' : ''} — one ad set per media file
                                 </div>
                                 {isMixedFormat && (
                                     <div className="text-blue-700">Each ad set targets Feed (1:1) or Stories & Reels (9:16) based on that file's own format.</div>
@@ -2216,8 +2241,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                                     />
                                                     <div className="flex min-w-0 items-center gap-3">
                                                         <div className="flex h-12 w-[58px] shrink-0 gap-0.5 overflow-hidden rounded-md border border-gray-200 bg-gray-100">
-                                                            {row.creative?.previewUrl && <img src={row.creative.previewUrl} alt="Feed creative" className="w-1/2 object-cover" />}
-                                                            {row.creative?.secondaryImageUrl ? <img src={row.creative.secondaryImageUrl} alt="Stories creative" className="w-1/2 object-cover" /> : row.creative?.previewUrl && <img src={row.creative.previewUrl} alt="Creative" className="w-1/2 object-cover" />}
+                                                            {row.creative?.previewUrl && (row.creative.mediaType === 'video'
+                                                                ? <video src={row.creative.videoUrl || row.creative.previewUrl} aria-label="Feed video creative" className="w-1/2 object-cover" muted playsInline controls />
+                                                                : <img src={row.creative.previewUrl} alt="Feed creative" className="w-1/2 object-cover" />)}
+                                                            {row.creative?.secondaryImageUrl
+                                                                ? <img src={row.creative.secondaryImageUrl} alt="Stories creative" className="w-1/2 object-cover" />
+                                                                : row.creative?.secondaryVideoUrl
+                                                                    ? <video src={row.creative.secondaryVideoUrl} aria-label="Stories video creative" className="w-1/2 object-cover" muted playsInline controls />
+                                                                    : row.creative?.previewUrl && <img src={row.creative.previewUrl} alt="Creative" className="w-1/2 object-cover" />}
                                                         </div>
                                                         <div className="min-w-0">
                                                             <div className="truncate text-sm font-semibold text-gray-900">{row.adsetName}</div>
@@ -2429,15 +2460,19 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                         against Meta on launch. Say that plainly instead of rendering
                                         a normal-looking card with a blank media area. */}
                                     {creative && row.assetReady ? (
-                                        <div className={`bg-gray-200 relative ${ad.dualPlacement && creative.secondaryImageUrl ? 'flex aspect-[16/9]' : ad.format === 'stories' ? 'aspect-[9/16]' : 'aspect-square'}`}>
-                                            {ad.dualPlacement && creative.secondaryImageUrl ? (
+                                        <div className={`bg-gray-200 relative ${ad.dualPlacement && (creative.secondaryImageUrl || creative.secondaryVideoUrl) ? 'flex items-start gap-2 p-2' : ad.format === 'stories' ? 'aspect-[9/16]' : 'aspect-[4/5]'}`}>
+                                            {ad.dualPlacement && (creative.secondaryImageUrl || creative.secondaryVideoUrl) ? (
                                                 <>
-                                                    <div className="relative w-1/2 border-r-2 border-white">
-                                                        <img src={creative.previewUrl} alt="Feed 1:1 preview" className="w-full h-full object-cover" />
-                                                        <span className="absolute bottom-2 left-2 rounded bg-blue-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">Feed 1:1</span>
+                                                    <div className="relative w-1/2 aspect-[4/5] bg-black">
+                                                        {creative.mediaType === 'video'
+                                                            ? <video src={creative.videoUrl || creative.previewUrl} aria-label="Feed video preview" className="w-full h-full object-contain" muted playsInline controls />
+                                                            : <img src={creative.previewUrl} alt="Feed creative preview" className="w-full h-full object-contain" />}
+                                                        <span className="absolute bottom-2 left-2 rounded bg-blue-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">Feed 4:5</span>
                                                     </div>
-                                                    <div className="relative w-1/2">
-                                                        <img src={creative.secondaryImageUrl} alt="Stories 9:16 preview" className="w-full h-full object-cover" />
+                                                    <div className="relative w-1/2 aspect-[9/16] bg-black">
+                                                        {creative.mediaType === 'video'
+                                                            ? <video src={creative.secondaryVideoUrl} aria-label="Stories video preview" className="w-full h-full object-contain" muted playsInline controls />
+                                                            : <img src={creative.secondaryImageUrl} alt="Stories creative preview" className="w-full h-full object-contain" />}
                                                         <span className="absolute bottom-2 left-2 rounded bg-purple-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">Stories 9:16</span>
                                                     </div>
                                                 </>
@@ -2482,7 +2517,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                         // (~line 680) — matching it exactly, not just the
                                         // two-tier headline/body shape, since cta has its own
                                         // separate ad.ctaOverride tier the others don't.
-                                        const websiteUrl = creativeData.websiteUrl;
+                                        const websiteUrl = ad.websiteUrlOverride || creativeData.websiteUrl;
                                         const cta = Object.prototype.hasOwnProperty.call(ad, 'ctaOverride') && (creative?.source === 'drive' || Boolean(ad.ctaOverride))
                                             ? ad.ctaOverride
                                             : creative?.cta || creativeData.cta;
@@ -2591,7 +2626,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 </ul>
                             </div>
                             <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
-                                Any ads that <strong>did</strong> create are live in Meta as <strong>PAUSED</strong> — they won't spend until you activate them in Ads Manager.
+                                Any ads that <strong>did</strong> create are <strong>ACTIVE beneath the paused campaign</strong> in Meta — they won't spend until you activate the campaign.
                             </div>
                         </div>
                     )}
@@ -2650,8 +2685,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 {placementLaunchBlocked
                                     ? 'Choose compatible ad set before launching'
                                     : isDriveManifest && driveManifestCreatesSeparateAdsets
-                                    ? `Create ${activeAds.length} paused ad${activeAds.length !== 1 ? 's' : ''} in ${activeAds.length} new ad set${activeAds.length !== 1 ? 's' : ''} on Facebook`
-                                    : `Create ${activeAds.length} paused ad${activeAds.length !== 1 ? 's' : ''} on Facebook`}
+                                    ? `Create ${activeAds.length} active ad${activeAds.length !== 1 ? 's' : ''} in ${activeAds.length} new ad set${activeAds.length !== 1 ? 's' : ''} under the paused campaign on Facebook`
+                                    : `Create ${activeAds.length} active ad${activeAds.length !== 1 ? 's' : ''} on Facebook`}
                             </button>
                         )}
                     </div>
@@ -2842,8 +2877,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                     to a different ad (joel-perspective review). */}
                                 <div key={selectedManifestRow.ad.id} className="flex-1 space-y-3 overflow-y-auto p-4 animate-fade-in">
                                     <div className="flex h-32 gap-1 overflow-hidden rounded-lg bg-gray-100">
-                                        {selectedManifestRow.creative?.previewUrl && <div className="relative w-1/2"><img src={selectedManifestRow.creative.previewUrl} alt="Feed 1:1 preview" className="h-full w-full object-cover" /><span className="absolute bottom-1 left-1 rounded bg-blue-600 px-1 py-0.5 text-[9px] font-semibold text-white">Feed 1:1</span></div>}
+                                        {selectedManifestRow.creative?.previewUrl && <div className="relative w-1/2">{selectedManifestRow.creative.mediaType === 'video' ? <video src={selectedManifestRow.creative.videoUrl || selectedManifestRow.creative.previewUrl} aria-label="Feed video preview" className="h-full w-full object-cover" muted playsInline controls /> : <img src={selectedManifestRow.creative.previewUrl} alt="Feed 1:1 preview" className="h-full w-full object-cover" />}<span className="absolute bottom-1 left-1 rounded bg-blue-600 px-1 py-0.5 text-[9px] font-semibold text-white">Feed</span></div>}
                                         {selectedManifestRow.creative?.secondaryImageUrl && <div className="relative w-1/2"><img src={selectedManifestRow.creative.secondaryImageUrl} alt="Stories 9:16 preview" className="h-full w-full object-cover" /><span className="absolute bottom-1 left-1 rounded bg-purple-600 px-1 py-0.5 text-[9px] font-semibold text-white">Stories 9:16</span></div>}
+                                        {selectedManifestRow.creative?.secondaryVideoUrl && <div className="relative w-1/2"><video src={selectedManifestRow.creative.secondaryVideoUrl} aria-label="Stories 9:16 video preview" className="h-full w-full object-cover" muted playsInline controls /><span className="absolute bottom-1 left-1 rounded bg-purple-600 px-1 py-0.5 text-[9px] font-semibold text-white">Stories 9:16</span></div>}
                                     </div>
                                     <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">This copy belongs only to this ad. A Meta description is optional.</p>
                                     <label className="block text-xs font-semibold text-gray-700">Primary text *<textarea rows="4" value={selectedManifestRow.body} onChange={(event) => updateManifestField(selectedManifestRow, 'body', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
@@ -2888,7 +2924,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         </p>
                         {progress.status === 'Complete!' ? (
                             <p className="text-sm text-amber-700 mt-3 font-medium">
-                                All ads are <strong>PAUSED</strong> in Meta — go to Ads Manager to activate them when ready.
+                                The campaign is <strong>PAUSED</strong>; its ad sets and ads are active beneath it. Activate the campaign in Ads Manager when ready.
                             </p>
                         ) : (
                             <p className="text-sm text-gray-500 mt-3">

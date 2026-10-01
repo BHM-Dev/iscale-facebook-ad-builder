@@ -277,6 +277,8 @@ class FacebookAd(Base):
     # comment in create_creative for the same caveat). ad_number traces the
     # row back to the source batch's copy doc (e.g. "AD 12").
     secondary_image_url = Column(String, nullable=True)
+    secondary_video_url = Column(String, nullable=True)
+    secondary_video_id = Column(String, nullable=True)
     ad_number = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

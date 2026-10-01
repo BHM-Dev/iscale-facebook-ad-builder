@@ -28,16 +28,16 @@ This repo is worked on by both **Codex** and **OpenAI Codex**. Use the right too
 Facebook ad builder used daily by Joel Welch (media buyer). Connects to Meta Ads API. Manages the full lifecycle: competitor research → ad creation → campaign launch → performance monitoring.
 
 **Tech stack:** React 19 + Vite + TailwindCSS (frontend) | FastAPI + PostgreSQL (backend) | Python 3.11+  
-**Hosting:** AWS Lightsail VPS (Golden's server). NOT Railway — do not reference Railway dashboard or Railway env vars.  
+**Hosting:** AWS Lightsail VPS with repository-controlled auto-publishing. NOT Railway — do not reference Railway dashboard or Railway env vars.
 **Repo:** `BHM-Dev/iscale-facebook-ad-builder`  
-**Deploy:** Push directly to `BHM-Dev:develop` (`git push origin develop`). VPS auto-deploys on every push. **Only message Golden if the push includes a DB migration.**  
+**Deploy:** Push directly to `BHM-Dev:develop` (`git push origin develop`). The VPS and database migrations auto-publish from every push; no Golden approval, notification, manual restart, or migration handoff is required.
 **Storage:** Cloudflare R2 (S3-compatible) for generated/uploaded images when `r2_enabled` is true.
 
 ---
 
 ## Communication Permission
 
-- **Never send Slack messages, DMs, channel posts, deployment updates, review updates, or other team notifications without Steven's explicit approval first.** Approval must identify the exact recipient/channel and message purpose; when in doubt, do not send.
+- **Never send Slack messages, DMs, channel posts, deployment updates, review updates, or other team notifications without Steven's explicit approval first.** Approval must identify the exact recipient/channel and message purpose; when in doubt, do not send. This does not block code pushes or auto-publishing.
 - **Do not send any message to `#media-buys` (`C08G7PJJ6NB`).** This is an absolute project rule and remains in force unless Steven explicitly replaces it in a future request.
 - This rule overrides routine deployment/review communication defaults elsewhere in this file. Prepare the proposed message in chat and wait for approval instead.
 
@@ -50,16 +50,15 @@ Facebook ad builder used daily by Joel Welch (media buyer). Connects to Meta Ads
 - **Completion gate:** Before ending an implementation turn, verify: (1) requested behavior is implemented, (2) relevant tests/build checks pass, (3) live proof is run when production behavior is in scope, and (4) any remaining blocker is stated with the exact approval or external-state change required. If any gate is incomplete, keep working or report the concrete blocker instead of presenting the task as complete.
 - **Interpretation rule:** If the user asks a question inside an active build thread, answer it while continuing the build; do not treat the question as a replacement for the build unless the user explicitly says it replaces the task.
 
-## Infrastructure (Current — 2026-09-28 and later)
+## Infrastructure (Current — 2026-09-30 and later)
 
-- Env vars are set directly on the VPS by Golden. Never set them via Railway.
-- To request a new env var: message Golden in `C041GSZD1NG` with the var name — he adds it server-side and restarts.
-- Deployment = pushing to `develop` auto-deploys the VPS; do **not** ask Golden for a routine restart. Verify the public revision at `https://adbuilder.velocitymx.io/api/v1/version` and require its `commit` to equal the pushed SHA before attributing a live symptom to source code. Golden is only needed for new server configuration or a confirmed deployment-pipeline failure.
+- Environment and database changes are handled by the repository's automated deployment path. Do not route routine configuration, migration, restart, or deployment work through Golden.
+- Deployment = pushing to `develop` auto-publishes the VPS and applies pending migrations. Verify the public revision at `https://adbuilder.velocitymx.io/api/v1/version` and require its `commit` to equal the pushed SHA before attributing a live symptom to source code.
 - `REDTRACK_API_KEY` — confirmed added 2026-04-27.
 - `SWITCHBOARD_EVERFLOW_API_KEY` — pending. Source of truth for P&L billable revenue on validated Switchboard accounts.
 - `SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS` — pending. Comma-separated Meta account allow-list for accounts that should use Switchboard revenue instead of RedTrack.
 - `SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS` — pending. JSON map of Meta account id to exact Switchboard offer names, e.g. `{"act_...":["Get Business Coverage"]}`. Required so commercial, auto, and eventually home-services revenue stay tied to the matching Meta spend account.
-- `SLACK_BOT_TOKEN` — confirm status with Golden.
+- `SLACK_BOT_TOKEN` — managed through the automated deployment environment.
 
 ## Switchboard Everflow Portal
 
@@ -197,7 +196,7 @@ URLs from Meta's CDN expire within minutes to hours. `reconstruct-from-url` endp
 Uses Gemini (`gemini-flash-latest`) via `backend/app/api/v1/copy_generation.py`.  
 Framework: Eugene Schwartz Breakthrough Advertising — 5-stage awareness diagnosis (Unaware → Problem-Aware → Solution-Aware → Product-Aware → Most Aware) + market sophistication diagnosis.  
 Avatar voice matching baked in by vertical: auto insurance, commercial, personal loans, debt relief, reverse mortgage.  
-**Pending:** Swap to OpenAI (`gpt-5.1` for `/generate`, `gpt-4.1-mini` for `/remix-variations`) once Golden adds API keys to the VPS.
+**Pending:** Swap to OpenAI (`gpt-5.1` for `/generate`, `gpt-4.1-mini` for `/remix-variations`) once the keys are available in the automated deployment environment.
 
 ### Key API Endpoints
 
@@ -295,8 +294,8 @@ Run through every item before committing or pushing any backend change. These bu
 
 ### Final gate
 - [ ] Read the diff one more time (`git diff HEAD`). Ask: "If this breaks, what's the symptom and the 5-minute fix?"
-- [ ] If it involves a DB migration: Golden applies it on VPS restart. Verify the fix path is clear.
-- [ ] Does this push include a DB migration? If yes → **message Golden in `C041GSZD1NG`** with the `alembic upgrade head` instruction. Code-only pushes don't need a message.
+- [ ] If it involves a DB migration: confirm the migration is linear, idempotent, and will be applied by the automated deployment path.
+- [ ] Do not send a Golden handoff for migrations; pushes apply code and pending migrations automatically.
 
 ---
 
@@ -409,7 +408,7 @@ Custom modal with backdrop blur, clear title, red button for destructive actions
 
 ## Environment Variables
 
-**Server (VPS, managed by Golden — request via `C041GSZD1NG`):**
+**Server (VPS, managed by the automated deployment path):**
 
 | Var | Status |
 |-----|--------|
@@ -424,7 +423,7 @@ Custom modal with backdrop blur, clear title, red button for destructive actions
 | `SWITCHBOARD_EVERFLOW_API_KEY` | Pending — Switchboard affiliate-realm revenue source for P&L |
 | `SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS` | Pending — comma-separated Meta accounts that use Switchboard revenue |
 | `SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS` | Pending — JSON account→offer map; e.g. Commercial Insurance → `Get Business Coverage`, Auto → `Fast Auto Quote.org` |
-| `SLACK_BOT_TOKEN` | Confirm with Golden |
+| `SLACK_BOT_TOKEN` | Managed through the automated deployment environment |
 | `SLACK_SIGNING_SECRET` | Needed for Slack intelligence bot (Phase 2, not yet built) |
 
 **Local dev (`.env.local` in project root):** Connects to production VPS DB + R2 for shared data.
@@ -456,12 +455,11 @@ API docs: `http://localhost:8000/api/v1/docs`
 
 ## Deployment Checklist
 
-1. Push to `sunbunzz627` fork
-2. Open PR targeting `BHM-Dev:develop`
-3. If PR includes a DB migration → message Golden in `C041GSZD1NG` with the `alembic upgrade head` instruction
-4. Code-only pushes → no message to Golden needed (server restarts on his schedule)
-5. Golden merges, pulls to VPS, restarts server
-6. Post-deploy: check server logs for `Uvicorn running on http://0.0.0.0:8080`
+1. Run the required reviews and tests.
+2. Push directly to `develop` (`git push origin develop`).
+3. The automated deployment applies code and pending migrations.
+4. Verify `https://adbuilder.velocitymx.io/api/v1/version` reports the pushed commit.
+5. Complete the required production live proof; do not claim completion from local tests alone.
 
 ---
 
@@ -479,8 +477,8 @@ API docs: `http://localhost:8000/api/v1/docs`
 - [x] `--timeout-keep-alive 300` on uvicorn — fixes Ad Remix connection drops during kie.ai polling
 
 ### Still pending
-- [ ] **Steven's admin account** — bootstrap curl command ready, waiting on Golden to confirm `SECRET_KEY` value or run it on VPS
-- [ ] OpenAI API swap (waiting on Golden to add keys): `gpt-5.1` for `/generate`, `gpt-4.1-mini` for `/remix-variations`
+- [ ] **Steven's admin account** — bootstrap curl command ready, pending execution through the authenticated deployment/admin workflow
+- [ ] OpenAI API swap (waiting on keys in the automated deployment environment): `gpt-5.1` for `/generate`, `gpt-4.1-mini` for `/remix-variations`
 - [ ] ImageAds "Quick Generate" mode — skip wizard, go straight to niche+copy+generate for media buyers with existing copy
 - [ ] Rename "Ad Remix" nav link → "Build New Ad"
 - [ ] Slack Campaign Intelligence Bot — spec at `SLACK_INTELLIGENCE_SPEC.md`
@@ -497,6 +495,6 @@ API docs: `http://localhost:8000/api/v1/docs`
 
 | Person | Role | Slack | When to contact |
 |--------|------|-------|-----------------|
-| Golden | Dev lead, VPS admin | `C041GSZD1NG` | ONLY when push includes a DB migration. Code-only pushes = no message needed. |
+| Golden | Development/infrastructure history | `C041GSZD1NG` | No routine project contact; auto-publishing handles deployment and migrations. |
 | Joel Welch | Primary user (media buyer) | `C08G7PJJ6NB` | Bug reports, UX feedback |
 | Steven Sun | CEO / product decisions | — | All product decisions |

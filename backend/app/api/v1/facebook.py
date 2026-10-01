@@ -957,6 +957,8 @@ def save_ad_locally(
         # verification (see the url_tags comment in create_creative for
         # the same caveat).
         local_ad.secondary_image_url = ad_data.get('secondaryImageUrl')
+        local_ad.secondary_video_url = ad_data.get('secondaryVideoUrl')
+        local_ad.secondary_video_id = ad_data.get('secondaryVideoId')
         local_ad.ad_number = ad_data.get('adNumber')
         db.commit()
         db.refresh(local_ad)

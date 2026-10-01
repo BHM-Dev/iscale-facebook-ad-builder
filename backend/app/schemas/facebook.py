@@ -18,6 +18,8 @@ class FacebookAdBase(BaseModel):
     # currently wired to any route (the /ads/save route takes a raw dict),
     # kept here for schema parity if that route is ever tightened.
     secondary_image_url: Optional[str] = None
+    secondary_video_url: Optional[str] = None
+    secondary_video_id: Optional[str] = None
     ad_number: Optional[str] = None
 
 class FacebookAdCreate(FacebookAdBase):

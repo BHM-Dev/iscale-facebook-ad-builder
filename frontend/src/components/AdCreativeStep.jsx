@@ -18,7 +18,11 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 const LEGACY_CREATIVE_EDITOR_ENABLED = import.meta.env.VITE_ENABLE_LEGACY_CREATIVE_EDITOR === 'true';
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
-const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm'];
+// Keep the picker and validation aligned with Drive's common video MIME types.
+const ALLOWED_VIDEO_TYPES = [
+    'video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm',
+    'video/x-m4v', 'video/mpeg', 'video/3gpp'
+];
 
 // Meta copy limits
 // Headline: 255 hard limit (truncated after ~27 chars in feed)
@@ -1014,8 +1018,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
             const group = driveGroupById.get(id);
             if (!group) return sum;
             const canMergeAsPair = group.isPair
-                && group.feedAsset?.format !== 'video'
-                && group.storiesAsset?.format !== 'video';
+                && group.feedAsset?.format === group.storiesAsset?.format;
             if (canMergeAsPair) return sum + 1; // one dualPlacement creative
             if (group.isPair) return sum + 2; // video-fallback: two real distinct creatives already
             return group.displayAsset ? sum + 1 : sum;
@@ -1028,7 +1031,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
         // ad per media group; their copy is fixed per card rather than
         // multiplied by the shared variant fields.
         return selectedGroups.reduce((sum, group) => {
-            const canMergeAsPair = group.isPair && group.feedAsset?.format !== 'video' && group.storiesAsset?.format !== 'video';
+            const canMergeAsPair = group.isPair && group.feedAsset?.format === group.storiesAsset?.format;
             const mediaCount = canMergeAsPair ? 1 : group.isPair ? 2 : group.displayAsset ? 1 : 0;
             return sum + mediaCount;
         }, 0);
@@ -1519,20 +1522,16 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
             // Bulk fallback), so it remains visible/editable and can advance.
             const groupCta = normalizeMetaCta(group.cta) || normalizeMetaCta(creativeData.cta);
             const groupWebsiteUrl = group.landingPage || defaultUrlForDriveGroup(group) || creativeData.websiteUrl || '';
-            // A real pair (both an image feed asset AND an image stories asset —
-            // create_creative's dual-placement path is image-only, never video,
-            // per its own docstring) becomes ONE creative carrying both URLs, so
+            // A real same-media pair becomes ONE creative carrying both URLs, so
             // it flows through BulkAdCreation as a single ad/ad-set entry that
-            // Meta shows with the right image per placement — reusing the exact
-            // secondary_image_hash mechanism Bulk Match Import already ships and
-            // that's already been through Meta-API domain review, not inventing
-            // a new one. Falls back to two independent creatives (today's
-            // behavior) whenever the pair isn't two real images.
+            // Meta shows with the right asset per placement. Images use image
+            // hashes; videos use video ids in the equivalent asset-feed-spec
+            // path. Mixed image/video pairs remain independent because Meta
+            // cannot use one asset-feed creative to switch media types.
             const canMergeAsPair = group.isPair
-                && group.feedAsset?.format !== 'video'
-                && group.storiesAsset?.format !== 'video';
+                && group.feedAsset?.format === group.storiesAsset?.format;
 
-            if (canMergeAsPair) {
+            if (canMergeAsPair && group.feedAsset?.format !== 'video') {
                 return [{
                     id: `drive_${group.feedAsset.id}_${group.storiesAsset.id}`,
                     file: null,
@@ -1540,9 +1539,40 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                     thumbnailUrl: group.feedAsset.thumbnail_r2_key || group.feedAsset.r2_key,
                     imageUrl: group.feedAsset.r2_key,
                     secondaryImageUrl: group.storiesAsset.r2_key,
+                    videoUrl: undefined,
                     secondaryThumbnailUrl: group.storiesAsset.thumbnail_r2_key || group.storiesAsset.r2_key,
                     name: group.feedAsset.file_name,
                     mediaType: 'image',
+                    format: 'feed',
+                    source: 'drive',
+                    dualPlacement: true,
+                    drivePairId: group.id,
+                    driveAssetIds: [group.feedAsset.id, group.storiesAsset.id],
+                    driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || group.copyPairingAmbiguous || false,
+                    driveCopyRefusedForOtherFile: group.copyRefusedForOtherFile || false,
+                    driveCopyIntegrityReason: group.copyIntegrityReason || null,
+                    category: group.category || group.feedAsset?.brand_name || 'Uncategorized',
+                    headline: matchedCopy.headline || '',
+                    body: matchedCopy.primary_text || '',
+                    description: matchedCopy.description || '',
+                    cta: groupCta,
+                    rawCta: group.rawCta || '',
+                    ctaSource: group.cta ? 'Drive' : groupCta ? 'Creative default' : '',
+                    websiteUrl: groupWebsiteUrl
+                }];
+            }
+
+            if (canMergeAsPair && group.feedAsset?.format === 'video') {
+                return [{
+                    id: `drive_${group.feedAsset.id}_${group.storiesAsset.id}`,
+                    file: null,
+                    previewUrl: group.feedAsset.r2_key,
+                    videoUrl: group.feedAsset.r2_key,
+                    thumbnailUrl: group.feedAsset.thumbnail_r2_key || group.feedAsset.r2_key,
+                    secondaryVideoUrl: group.storiesAsset.r2_key,
+                    secondaryThumbnailUrl: group.storiesAsset.thumbnail_r2_key || group.storiesAsset.r2_key,
+                    name: group.feedAsset.file_name,
+                    mediaType: 'video',
                     format: 'feed',
                     source: 'drive',
                     dualPlacement: true,
@@ -2275,8 +2305,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
     };
 
     const handleNext = () => {
-        // Validate required fields
-        if (!creativeData.creativeName) {
+        // Match-import still uses a single source name for its CSV/folder
+        // workflow. Standard Drive/library launches name each Meta ad from
+        // its selected media filename instead.
+        if (isMatchImport && !creativeData.creativeName) {
             showWarning('Please enter a creative name');
             return;
         }
@@ -2468,8 +2500,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
             )}
 
             <div className="space-y-6">
-                {/* Creative Name */}
-                <div>
+                {/* Creative Name is only a Match Import source label. Standard
+                    Drive/library launches use each media filename as the Meta
+                    ad name, so a second shared field is misleading. */}
+                {isMatchImport && <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                         Creative Name *
                     </label>
@@ -2480,7 +2514,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                         placeholder="e.g. Summer Sale – June 2025"
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                     />
-                </div>
+                </div>}
 
                 {/* Facebook Page Selection */}
                 <div>
@@ -2686,10 +2720,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                                     <button type="button" onClick={() => setSelectedCopyCreativeId(creative.id)} onMouseEnter={(event) => { if (creative.mediaType !== 'video') { const previewWidth = creative.dualPlacement && creative.secondaryImageUrl ? 780 : 400; const previewHeight = 560; const availableWidth = Math.min(previewWidth, window.innerWidth - 24); const availableHeight = Math.min(previewHeight, window.innerHeight - 24); setHoveredCreativePreview({ ...creative, x: Math.max(12, Math.min(event.clientX + 18, window.innerWidth - availableWidth - 12)), y: Math.max(12, Math.min(event.clientY + 18, window.innerHeight - availableHeight - 12)) }); } }} onMouseLeave={() => setHoveredCreativePreview(current => current?.id === creative.id ? null : current)} className="grid min-w-0 grid-cols-[100px_minmax(0,1fr)] gap-4 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500 md:grid-cols-[116px_minmax(0,1fr)_132px]" title={creative.mediaType !== 'video' ? 'Hover to inspect this creative at a larger size' : undefined}>
                                                     <div className="flex h-20 w-[108px] gap-1 overflow-hidden rounded-md border border-gray-200 bg-gray-100 p-1">
                                                         {creative.previewUrl && (creative.mediaType === 'video'
-                                                            ? <video src={creative.videoUrl || creative.previewUrl} aria-label="Video creative" className={creative.dualPlacement && creative.secondaryImageUrl ? 'w-1/2 object-contain' : 'w-full object-contain'} muted playsInline preload="metadata" />
+                                                            ? <video src={creative.videoUrl || creative.previewUrl} aria-label="Video creative" className={creative.dualPlacement && (creative.secondaryImageUrl || creative.secondaryVideoUrl) ? 'w-1/2 object-contain' : 'w-full object-contain'} muted playsInline preload="metadata" />
                                                             : <img src={creative.previewUrl} alt="Feed creative" className={creative.dualPlacement && creative.secondaryImageUrl ? 'w-1/2 object-contain' : 'w-full object-contain'} />
                                                         )}
                                                         {creative.dualPlacement && creative.secondaryImageUrl && <img src={creative.secondaryImageUrl} alt="Stories creative" className="w-1/2 object-contain" />}
+                                                        {creative.dualPlacement && creative.secondaryVideoUrl && <video src={creative.secondaryVideoUrl} aria-label="Stories video creative" className="w-1/2 object-contain" muted playsInline preload="metadata" />}
                                                     </div>
                                                     <div className="min-w-0">
                                                         <div className="break-words text-sm font-semibold leading-5 text-gray-900">Ad {index + 1} · {creative.name || 'Untitled creative'}</div>
@@ -2713,8 +2748,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                             <div className={`flex justify-center gap-3 overflow-hidden rounded-lg bg-gray-100 p-3 ${selectedCreative.dualPlacement ? 'min-h-[360px]' : (selectedCreative.format || 'feed') === 'stories' ? 'h-[460px]' : 'aspect-square max-h-[480px]'}`}>
                                                 {selectedCreative.previewUrl && <figure className={selectedCreative.dualPlacement ? 'flex min-w-0 flex-1 flex-col items-center' : 'flex h-full min-w-0 items-center justify-center'}>{selectedCreative.mediaType === 'video'
                                                     ? <video src={selectedCreative.videoUrl || selectedCreative.previewUrl} aria-label="Selected video creative preview" className="h-full max-w-full object-contain" controls muted playsInline preload="metadata" />
-                                                    : <img src={selectedCreative.previewUrl} alt="Selected creative preview" className="h-full max-w-full object-contain" />}{selectedCreative.dualPlacement && <figcaption className="pt-1 text-[11px] text-gray-500">Feed (1:1)</figcaption>}</figure>}
+                                                    : <img src={selectedCreative.previewUrl} alt="Selected creative preview" className="h-full max-w-full object-contain" />}{selectedCreative.dualPlacement && <figcaption className="pt-1 text-[11px] text-gray-500">Feed</figcaption>}</figure>}
                                                 {selectedCreative.dualPlacement && selectedCreative.secondaryImageUrl && <figure className="flex min-w-0 flex-1 flex-col items-center"><img src={selectedCreative.secondaryImageUrl} alt="Stories creative preview" className="h-full max-w-full object-contain" /><figcaption className="pt-1 text-[11px] text-gray-500">Stories (9:16)</figcaption></figure>}
+                                                {selectedCreative.dualPlacement && selectedCreative.secondaryVideoUrl && <figure className="flex min-w-0 flex-1 flex-col items-center"><video src={selectedCreative.secondaryVideoUrl} aria-label="Selected Stories video preview" className="h-full max-w-full object-contain" controls muted playsInline preload="metadata" /><figcaption className="pt-1 text-[11px] text-gray-500">Stories (9:16)</figcaption></figure>}
                                             </div>
                                             <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                                                 <div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-gray-800">Media placement</span><span className="text-[11px] text-gray-500">{selectedCreative.dualPlacement ? 'Feed + Stories linked' : (selectedCreative.format || 'feed') === 'stories' ? 'Stories & Reels (9:16)' : 'Feed (1:1)'}</span></div>
@@ -2807,7 +2843,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                             <div className="flex gap-3">
                                                 <div className="flex w-20 h-20 shrink-0 gap-1 overflow-hidden rounded-md bg-gray-100">
                                                     {creative.previewUrl && (
-                                                        <div className={`relative h-full ${creative.dualPlacement && creative.secondaryImageUrl ? 'w-1/2' : 'w-full'}`}>
+                                                        <div className={`relative h-full ${creative.dualPlacement && (creative.secondaryImageUrl || creative.secondaryVideoUrl) ? 'w-1/2' : 'w-full'}`}>
                                                             {creative.mediaType === 'video' ? (
                                                                 <video src={creative.previewUrl} className="h-full w-full object-cover" muted playsInline preload="metadata" />
                                                             ) : (
@@ -2826,6 +2862,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                                     {creative.dualPlacement && creative.secondaryImageUrl && (
                                                         <div className="relative h-full w-1/2">
                                                             <img src={creative.secondaryThumbnailUrl || creative.secondaryImageUrl} alt={`${creative.name} Stories`} className="h-full w-full object-cover" loading="lazy" decoding="async" />
+                                                            <span className="absolute bottom-1 left-1 rounded bg-purple-600 px-1 py-0.5 text-[9px] font-semibold text-white">Stories 9:16</span>
+                                                        </div>
+                                                    )}
+                                                    {creative.dualPlacement && creative.secondaryVideoUrl && (
+                                                        <div className="relative h-full w-1/2">
+                                                            <video src={creative.secondaryVideoUrl} aria-label={`${creative.name} Stories`} className="h-full w-full object-cover" muted playsInline preload="metadata" />
                                                             <span className="absolute bottom-1 left-1 rounded bg-purple-600 px-1 py-0.5 text-[9px] font-semibold text-white">Stories 9:16</span>
                                                         </div>
                                                     )}
@@ -3280,7 +3322,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                     </label>
                     <label className="mt-4 block text-sm font-medium text-gray-700">
                         Image or video
-                        <input type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/x-msvideo,video/webm" onChange={(event) => { setDriveUploadFile(event.target.files?.[0] || null); setDriveUploadPlacement(''); }} className="mt-1 block w-full text-sm text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:font-semibold file:text-indigo-700 hover:file:bg-indigo-100" />
+                        <input type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/x-msvideo,video/webm,video/x-m4v,video/mpeg,video/3gpp" onChange={(event) => { setDriveUploadFile(event.target.files?.[0] || null); setDriveUploadPlacement(''); }} className="mt-1 block w-full text-sm text-gray-600 file:mr-3 file:rounded-md file:bg-indigo-50 file:px-3 file:py-2 file:font-semibold file:text-indigo-700 hover:file:bg-indigo-100" />
                     </label>
                     {driveUploadFile?.type.startsWith('video/') && (
                         <label className="mt-4 block text-sm font-medium text-gray-700">

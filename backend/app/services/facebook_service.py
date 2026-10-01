@@ -1175,7 +1175,7 @@ class FacebookService:
             ext = '.mp4'
             if '.' in video_path_or_url.split('/')[-1]:
                 url_ext = video_path_or_url.split('.')[-1].split('?')[0].lower()
-                if url_ext in ['mp4', 'mov', 'avi', 'webm']:
+                if url_ext in ['mp4', 'mov', 'avi', 'webm', 'm4v', 'mpeg', 'mpg', '3gp']:
                     ext = '.' + url_ext
 
             with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
@@ -1380,12 +1380,15 @@ class FacebookService:
         image_hash = creative_data.get('image_hash')
         secondary_image_hash = creative_data.get('secondary_image_hash') or creative_data.get('secondaryImageHash')
         video_id = creative_data.get('video_id')
+        secondary_video_id = creative_data.get('secondary_video_id') or creative_data.get('secondaryVideoId')
         website_url = (creative_data.get('website_url') or creative_data.get('websiteUrl') or '').strip()
 
         if not page_id:
             raise ValueError('page_id is required to create an ad creative')
         if not image_hash and not video_id:
             raise ValueError('Either image_hash or video_id is required')
+        if secondary_video_id and not video_id:
+            raise ValueError('A Stories/Reels video requires a Feed video')
         # The supported /me/accounts lookup cannot prove an account/Page
         # pairing.  The creative write below is made against this exact ad
         # account, and Meta is the authoritative validator for that pairing.
@@ -1413,7 +1416,58 @@ class FacebookService:
         # (set below, after the params dict is built). The link stays clean.
 
         # Determine creative type: video, lead gen, or standard image/link
-        if video_id:
+        if video_id and secondary_video_id and not lead_gen_form_id:
+            # Dual-placement video creative: one Meta ad with a Feed video and
+            # a Stories/Reels video selected by placement. This is the video
+            # equivalent of the image asset_feed_spec path below. The previous
+            # implementation could only express this for images, so a Drive
+            # Feed/Stories video pair was split into two ad sets and two ads.
+            instagram_user_id = (
+                creative_data.get('instagram_user_id')
+                or creative_data.get('instagramUserId')
+                or creative_data.get('instagramId')
+                or creative_data.get('instagram_actor_id')
+                or self._get_page_instagram_user_id(page_id)
+            )
+            has_instagram = bool(instagram_user_id)
+            object_story_spec = {'page_id': page_id}
+            if has_instagram:
+                object_story_spec['instagram_user_id'] = instagram_user_id
+            else:
+                print(f"⚠️  Page {page_id} has no linked Instagram account — "
+                      f"dual-placement video will run Facebook-only (no Stories/Reels IG placement).")
+
+            asset_feed_spec = {
+                'ad_formats': ['SINGLE_VIDEO'],
+                'videos': [
+                    {'video_id': video_id, 'adlabels': [{'name': 'feed_video'}]},
+                    {'video_id': secondary_video_id, 'adlabels': [{'name': 'story_video'}]},
+                ],
+                'bodies': [{'text': primary_text}],
+                'titles': [{'text': headline}],
+                'link_urls': [{'website_url': website_url}],
+                'call_to_action_types': [cta],
+                **({'descriptions': [{'text': creative_data.get('description')}]} if creative_data.get('description') else {}),
+                'asset_customization_rules': [
+                    {
+                        'customization_spec': {
+                            'publisher_platforms': ['facebook', 'instagram'] if has_instagram else ['facebook'],
+                            'facebook_positions': ['feed'],
+                            **({'instagram_positions': ['stream']} if has_instagram else {}),
+                        },
+                        'video_label': {'name': 'feed_video'},
+                    },
+                    {
+                        'customization_spec': {
+                            'publisher_platforms': ['facebook', 'instagram'] if has_instagram else ['facebook'],
+                            'facebook_positions': ['story'],
+                            **({'instagram_positions': ['story', 'reels']} if has_instagram else {}),
+                        },
+                        'video_label': {'name': 'story_video'},
+                    },
+                ],
+            }
+        elif video_id:
             # Video creative — CTA value depends on whether this is lead gen or link-click
             if lead_gen_form_id:
                 lead_gen_cta = cta if cta not in ('LEARN_MORE', 'SHOP_NOW', 'BOOK_TRAVEL', 'WATCH_MORE') else 'SIGN_UP'
@@ -1582,7 +1636,7 @@ class FacebookService:
                 params[AdCreative.Field.degrees_of_freedom_spec] = {
                     'creative_features_spec': enabled_features
                 }
-        if secondary_image_hash and not video_id and not lead_gen_form_id:
+        if (secondary_image_hash or secondary_video_id) and not lead_gen_form_id:
             params[AdCreative.Field.asset_feed_spec] = asset_feed_spec
 
         # RedTrack tracking macros go in the creative's url_tags field. Meta expands
@@ -1606,7 +1660,7 @@ class FacebookService:
                     # below) until this is verified live against a real push.
                     # Remove whichever one turns out unnecessary/wrong once
                     # confirmed — do not remove either speculatively.
-                    if secondary_image_hash and not video_id and not lead_gen_form_id:
+                    if (secondary_image_hash or secondary_video_id) and not lead_gen_form_id:
                         asset_feed_spec['link_urls'][0]['url_tags'] = url_tags
             except Exception as _e:
                 # Never let macro enforcement block a push — flag and continue without url_tags.

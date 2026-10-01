@@ -123,7 +123,7 @@ const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaig
                 <div className="flex items-baseline justify-between gap-3 text-sm py-1">
                     <span className="text-gray-500">Status</span>
                     <span className={`text-right font-semibold ${currentStep >= 6 ? 'text-emerald-700' : 'text-gray-700'}`}>
-                        {currentStep >= 6 ? 'Launched (paused)' : 'Not launched'}
+                        {currentStep >= 6 ? 'Launch completed' : 'Not launched'}
                     </span>
                 </div>
             </div>
@@ -443,7 +443,7 @@ const FacebookCampaignWizardInner = () => {
         { id: 3, label: 'Ad Set', icon: Users, description: 'Pick an existing ad set or create a new one.' },
         { id: 4, label: 'Creative', icon: ImageIcon, description: 'Add media, copy, and destination details.' },
         { id: 5, label: 'Review', icon: Megaphone, description: 'Check every ad before it reaches Meta.' },
-        { id: 6, label: 'Launch', icon: CheckCircle2, description: 'Ads are created as paused, ready to activate.' },
+        { id: 6, label: 'Launch', icon: CheckCircle2, description: 'Campaign is paused; ad sets and ads are ready.' },
     ];
 
     // Manual navigation always wins over the auto-advance chain — the instant Joel
@@ -525,7 +525,7 @@ const FacebookCampaignWizardInner = () => {
 
     const copyLaunchReceipt = async () => {
         const lines = [
-            ...(receiptCreatedAt ? [`Created: ${receiptCreatedAt} (paused at creation; verify current status in Ads Manager)`] : []),
+            ...(receiptCreatedAt ? [`Created: ${receiptCreatedAt} (requested hierarchy applied; verify effective delivery status in Ads Manager)`] : []),
             `Account: ${launchReceipt?.accountName || selectedAdAccount?.name || 'Not recorded'}`,
             `Campaign: ${launchReceipt?.campaignName || campaignData?.name || 'Not recorded'}${launchReceipt?.campaignId ? ` (${launchReceipt.campaignId})` : ''}`,
             ...(receiptPageName ? [`Facebook Page: ${receiptPageName}${launchReceipt?.pageId && launchReceipt.pageId !== receiptPageName ? ` (${launchReceipt.pageId})` : ''}`] : []),
@@ -879,9 +879,9 @@ const FacebookCampaignWizardInner = () => {
                             <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-center">
                                 <CheckCircle2 className="mx-auto mb-4 text-emerald-600" size={56} />
                                 <p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">Launch receipt</p>
-                                <h2 className="mt-2 text-3xl font-bold text-gray-900">Ads created as paused</h2>
+                                <h2 className="mt-2 text-3xl font-bold text-gray-900">Launch completed</h2>
                                 <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-gray-700">
-                                    Meta created these ads as paused. This receipt stays available in this browser tab after a refresh, but verify their current status in Ads Manager before activating anything.
+                                    For a new campaign, the campaign is requested paused while new ad sets and ads are ready beneath it. Existing campaigns and ad sets preserve their selected delivery state. Verify the hierarchy in Ads Manager before spending.
                                 </p>
                             </div>
 
@@ -902,7 +902,7 @@ const FacebookCampaignWizardInner = () => {
                                         <p className="mt-1 truncate text-xs text-gray-600" title={launchReceipt?.campaignName || campaignData?.name}>{launchReceipt?.campaignName || campaignData?.name || 'Campaign not recorded'}{launchReceipt?.campaignId ? ` · ${launchReceipt.campaignId}` : ''}</p>
                                     </div>
                                 </div>
-                                {receiptCreatedAt && <p className="mt-4 border-t border-gray-100 pt-4 text-xs text-gray-500">Created {receiptCreatedAt} · Paused status was confirmed at creation; verify current status in Ads Manager.</p>}
+                                {receiptCreatedAt && <p className="mt-4 border-t border-gray-100 pt-4 text-xs text-gray-500">Created {receiptCreatedAt} · Requested delivery states were sent to Meta; verify effective campaign, ad-set, and ad status in Ads Manager.</p>}
                                 {(receiptPageName || receiptDestinationUrl) && <div className="mt-4 grid gap-3 border-t border-gray-100 pt-4 text-xs sm:grid-cols-2"><div><p className="font-semibold uppercase tracking-wide text-gray-400">Facebook Page</p><p className="mt-1 break-words font-medium text-gray-800">{receiptPageName || 'Not recorded'}{launchReceipt?.pageId && launchReceipt.pageId !== receiptPageName ? ` · ${launchReceipt.pageId}` : ''}</p></div><div><p className="font-semibold uppercase tracking-wide text-gray-400">Destination URL</p><p className="mt-1 break-all font-medium text-gray-800">{receiptDestinationUrl || 'Not recorded'}</p></div></div>}
                                 <div className="mt-4 border-t border-gray-100 pt-4">
                                     <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ad sets to verify</p><button type="button" onClick={copyLaunchReceipt} className="text-xs font-semibold text-amber-700 hover:text-amber-900">Copy full receipt</button></div>
@@ -920,7 +920,7 @@ const FacebookCampaignWizardInner = () => {
                                     </div>
                                 )}
                                 <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                                    Next: activate the new ads and any newly created ad sets in Ads Manager. If you reused a campaign or ad set and it is paused, enable it too.
+                                    Next: review the exact campaign, ad set, ad names, placements, and effective statuses in Ads Manager, then activate only when ready.
                                 </div>
                             </div>
 

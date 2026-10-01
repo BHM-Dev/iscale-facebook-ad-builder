@@ -363,6 +363,40 @@ class TestCreateCreativeDualPlacement:
         assert oss["instagram_user_id"] == "legacy_ig_id"
         assert "instagram_actor_id" not in oss
 
+    def test_create_creative_with_secondary_video_builds_dual_placement_spec(self):
+        """Feed + Stories video pairs stay one Meta ad with placement media."""
+        from facebook_business.adobjects.adcreative import AdCreative
+
+        service = self._make_service_with_mock_account()
+        creative_data = {
+            "page_id": "123456",
+            "video_id": "feed_video_123",
+            "secondary_video_id": "story_video_456",
+            "website_url": "https://example.com/offer",
+            "primary_text": "Body copy",
+            "headline": "Headline",
+            "cta": "LEARN_MORE",
+            "instagram_user_id": "ig_user_789",
+        }
+        service.create_creative(creative_data)
+
+        params = service.account.create_ad_creative.call_args.kwargs["params"]
+        oss = params[AdCreative.Field.object_story_spec]
+        assert "video_data" not in oss
+        assert oss["instagram_user_id"] == "ig_user_789"
+
+        afs = params[AdCreative.Field.asset_feed_spec]
+        assert afs["ad_formats"] == ["SINGLE_VIDEO"]
+        assert {video["video_id"] for video in afs["videos"]} == {"feed_video_123", "story_video_456"}
+        rule_by_label = {
+            rule["video_label"]["name"]: rule["customization_spec"]
+            for rule in afs["asset_customization_rules"]
+        }
+        assert rule_by_label["feed_video"]["facebook_positions"] == ["feed"]
+        assert rule_by_label["feed_video"]["instagram_positions"] == ["stream"]
+        assert rule_by_label["story_video"]["facebook_positions"] == ["story"]
+        assert rule_by_label["story_video"]["instagram_positions"] == ["story", "reels"]
+
 
 class TestCampaignStateInsights:
     def test_state_breakdown_uses_its_own_bounded_meta_session(self):
