@@ -134,6 +134,10 @@ const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaig
 
 const FacebookCampaignWizardInner = () => {
     const [currentStep, setCurrentStep] = useState(1);
+    // Keep every step reached in this wizard directly selectable. `currentStep`
+    // alone is not enough: after moving back from Creative to Campaign, Creative
+    // is still a valid saved workspace and must remain one click away.
+    const [furthestStepReached, setFurthestStepReached] = useState(1);
     // The Creative workspace is the launcher's working surface. Keep the
     // supporting plan collapsed initially so it never steals vertical space
     // from the ad rows or preview; its button always exposes the current ad
@@ -179,6 +183,10 @@ const FacebookCampaignWizardInner = () => {
     // A completed receipt is retained only for this browser tab. Restore the
     // completion view after a refresh so a successful Meta write does not look
     // like it disappeared; starting a new batch clears it explicitly.
+    useEffect(() => {
+        setFurthestStepReached(previous => Math.max(previous, currentStep));
+    }, [currentStep]);
+
     useEffect(() => {
         if (!restoredReceiptRef.current && !hasPendingLaunchIntent && launchReceipt && currentStep === 1) {
             restoredReceiptRef.current = true;
@@ -468,16 +476,12 @@ const FacebookCampaignWizardInner = () => {
         }
     };
 
-    // Lets Joel jump directly back to any already-completed step (e.g. Ad Account)
-    // instead of clicking Back repeatedly — the step tracker rendered these as
-    // plain non-interactive icons before, which was the ONLY way to switch ad
-    // account/campaign/ad set once past Step 1. That became a real dead end once
-    // the page-level "Meta account" banner was hidden on this route (it never
-    // actually drove this wizard anyway — see the comment in Layout.jsx — but at
-    // least it LOOKED like an escape hatch). Only completed steps are clickable;
-    // you can't skip ahead to a step you haven't reached yet.
+    // Lets Joel jump directly to any step already reached (e.g. Creative after
+    // briefly checking Campaign) instead of clicking Back/Next repeatedly. The
+    // step data lives in CampaignContext, so moving around the rail does not
+    // discard the saved selections. Future, never-visited steps remain locked.
     const goToStep = (stepId) => {
-        if (stepId >= currentStep) return;
+        if (stepId > furthestStepReached) return;
         if (quickAdTarget) stopQuickAd(null);
         if (driveLaunchActive) stopDriveLaunch(null);
         if (currentStep === 6) setLaunchReceipt(null);
@@ -715,28 +719,28 @@ const FacebookCampaignWizardInner = () => {
                         <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Launch Steps</div>
                         <ol className="space-y-1">
                             {steps.map((step) => {
-                                const isCompleted = step.id < currentStep;
+                                const isVisited = step.id <= furthestStepReached;
                                 const isCurrent = step.id === currentStep;
-                                const isBlocked = step.id > currentStep;
+                                const isBlocked = !isVisited;
                                 return (
                                     <li key={step.id}>
                                         <button
                                             type="button"
                                             onClick={() => goToStep(step.id)}
-                                            disabled={!isCompleted}
+                                            disabled={!isVisited}
                                             title={isBlocked
                                                 ? 'Complete the steps above first'
-                                                : isCompleted
+                                                : isVisited && !isCurrent
                                                     ? `Edit ${step.label} — your current selections stay saved`
                                                     : undefined}
-                                            aria-label={isCompleted ? `Edit ${step.label}; current selections stay saved` : step.label}
-                                            className={`w-full flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${isCurrent ? 'bg-amber-50 border border-amber-200' : isCompleted ? 'hover:bg-gray-50 cursor-pointer' : 'cursor-default'}`}
+                                            aria-label={isVisited && !isCurrent ? `Edit ${step.label}; current selections stay saved` : step.label}
+                                            className={`w-full flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${isCurrent ? 'bg-amber-50 border border-amber-200' : isVisited ? 'hover:bg-gray-50 cursor-pointer' : 'cursor-default'}`}
                                         >
-                                            <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${isCompleted || isCurrent ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-400'}`}>
-                                                {isCompleted ? <Check size={14} /> : <step.icon size={13} />}
+                                            <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${isVisited ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                                                {isVisited && !isCurrent ? <Check size={14} /> : <step.icon size={13} />}
                                             </span>
                                             <span className="min-w-0">
-                                                <span className={`block text-sm font-medium ${isCurrent ? 'text-amber-900' : isCompleted ? 'text-gray-700' : 'text-gray-400'}`}>
+                                                <span className={`block text-sm font-medium ${isCurrent ? 'text-amber-900' : isVisited ? 'text-gray-700' : 'text-gray-400'}`}>
                                                     {step.label}
                                                 </span>
                                                 {isCurrent && (
@@ -779,23 +783,23 @@ const FacebookCampaignWizardInner = () => {
                             style={{ width: `${((currentStep - 1) / (steps.length - 1)) * 100}%` }}
                         />
                         {steps.map((step) => {
-                            const isCompleted = step.id < currentStep;
+                            const isVisited = step.id <= furthestStepReached;
                             const isCurrent = step.id === currentStep;
                             return (
                                 <button
                                     key={step.id}
                                     type="button"
                                     onClick={() => goToStep(step.id)}
-                                    disabled={!isCompleted}
-                                    className={`flex flex-col items-center gap-2 bg-white px-2 ${isCompleted ? 'cursor-pointer' : 'cursor-default'}`}
+                                    disabled={!isVisited}
+                                    className={`flex flex-col items-center gap-2 bg-white px-2 ${isVisited ? 'cursor-pointer' : 'cursor-default'}`}
                                 >
                                     <div
-                                        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${isCompleted || isCurrent
+                                        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${isVisited
                                             ? 'bg-amber-600 text-white shadow-md scale-110'
                                             : 'bg-gray-100 text-gray-400'
-                                            } ${isCompleted ? 'hover:scale-125' : ''}`}
-                                    >
-                                        {isCompleted ? (
+                                            } ${isVisited && !isCurrent ? 'hover:scale-125' : ''}`}
+                                        >
+                                        {isVisited && !isCurrent ? (
                                             <CheckCircle2 size={20} />
                                         ) : (
                                             <step.icon size={20} />
