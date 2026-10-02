@@ -32,6 +32,13 @@ logger = logging.getLogger(__name__)
 # access is insufficient for this explicit buyer action.
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 STATE_KEY = "drive_changes_start_page_token"
+RETRY_LEDGER_KEY = "drive_failed_files"
+# Every sync cycle (30 min) for the first few attempts, then every 6 hours, and
+# never past the cap. A new deploy resets attempts, since a code fix is the usual cure.
+RETRY_FAST_ATTEMPTS = 4
+RETRY_MAX_ATTEMPTS = 12
+RETRY_SLOW_INTERVAL_SECONDS = 6 * 3600
+RETRY_PRUNE_AFTER_SECONDS = 30 * 86400
 SUPPORTED_PREFIXES = ("image/", "video/")
 MEDIA_ASPECTS = ("1x1", "4x5", "9x16", "16x9")
 FEED_ASPECTS = ("1x1", "4x5", "16x9")
@@ -257,6 +264,7 @@ class DriveSyncService:
                 for file_meta in scoped_files:
                     result["processed"] += 1
                     self._process_file_isolated(file_meta, result)
+                self._ledger_flush()
                 result = self._attach_copy_health(result)
                 self.db.commit()
                 return result
@@ -308,6 +316,7 @@ class DriveSyncService:
                         final_token = response.get("newStartPageToken") or final_token
                     self._set_state_token(final_token)
                     result["next_page_token_saved"] = True
+                self._ledger_flush()
                 result = self._attach_copy_health(result)
                 self.db.commit()
                 return result
@@ -350,6 +359,11 @@ class DriveSyncService:
                     result["next_page_token_saved"] = True
                 next_token = response.get("nextPageToken")
 
+            try:
+                self._retry_failed_files(drive, result)
+            except Exception as exc:
+                logger.warning("Drive retry pass failed; continuing sync: %s", exc)
+            self._ledger_flush()
             result = self._attach_copy_health(result)
             self.db.commit()
             return result
@@ -359,8 +373,215 @@ class DriveSyncService:
             slack_service.send_drive_sync_alert(type(exc).__name__, str(exc))
             raise
 
+    def _retry_state(self) -> Dict[str, Any]:
+        return self.__dict__.setdefault(
+            "_retry_state_store", {"ledger": None, "copy_failed": set(), "processed": set(), "load_ok": True, "loaded_json": None}
+        )
+
+    def _ledger(self) -> Dict[str, Dict[str, Any]]:
+        state = self._retry_state()
+        if state["ledger"] is None:
+            # Bookkeeping must never be able to break a sync: any failure here
+            # degrades to "no retry history" rather than raising.
+            try:
+                with self.db.begin_nested():
+                    row = self.db.execute(
+                        text("SELECT value FROM drive_sync_state WHERE key = :key"),
+                        {"key": RETRY_LEDGER_KEY},
+                    ).first()
+                loaded = json.loads(row[0]) if row and row[0] else {}
+                state["load_ok"] = True
+            except Exception as exc:
+                logger.warning("Could not load Drive retry ledger: %s", exc)
+                loaded = {}
+                # Never overwrite saved retry history with a ledger we failed to read.
+                state["load_ok"] = False
+            loaded = loaded if isinstance(loaded, dict) else {}
+            loaded = {k: v for k, v in loaded.items() if isinstance(v, dict)}
+            state["loaded_json"] = json.dumps(loaded, sort_keys=True)
+            cutoff = datetime.now(timezone.utc).timestamp() - RETRY_PRUNE_AFTER_SECONDS
+            for key, entry in list(loaded.items()):
+                try:
+                    stale = (
+                        int(entry.get("attempts") or 0) >= RETRY_MAX_ATTEMPTS
+                        and datetime.fromisoformat(entry.get("first_failed")).timestamp() < cutoff
+                    )
+                except (TypeError, ValueError):
+                    stale = False
+                if stale:
+                    del loaded[key]
+            state["ledger"] = loaded
+        return state["ledger"]
+
+    def _ledger_flush(self) -> None:
+        state = self._retry_state()
+        if state["ledger"] is None or state.get("load_ok") is False:
+            return
+        if json.dumps(state["ledger"], sort_keys=True) == state.get("loaded_json"):
+            return
+        try:
+            with self.db.begin_nested():
+                self.db.execute(
+                    text(
+                        """
+                        INSERT INTO drive_sync_state (key, value, updated_at)
+                        VALUES (:key, :value, NOW())
+                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+                        """
+                    ),
+                    {"key": RETRY_LEDGER_KEY, "value": json.dumps(state["ledger"])},
+                )
+        except Exception as exc:
+            logger.warning("Could not save Drive retry ledger: %s", exc)
+
+    def _ledger_note_failure(self, drive_file_id: Optional[str], name: Optional[str], error: Any, kind: str) -> None:
+        if not drive_file_id:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        ledger = self._ledger()
+        entry = ledger.get(drive_file_id) or {"first_failed": now, "attempts": 0}
+        entry.update({
+            "name": name or entry.get("name") or drive_file_id,
+            "kind": kind,
+            "error": str(error)[:500],
+            "attempts": int(entry.get("attempts") or 0) + 1,
+            "last_attempt": now,
+            "code": os.getenv("GIT_COMMIT", "unknown"),
+        })
+        ledger[drive_file_id] = entry
+
+    def _ledger_resolve(self, drive_file_id: Optional[str]) -> None:
+        if drive_file_id and drive_file_id in self._ledger():
+            del self._ledger()[drive_file_id]
+
+    @staticmethod
+    def _retry_is_due(entry: Dict[str, Any], now: datetime, current_code: str) -> bool:
+        """A fixed-in-code failure must not wait out a backoff: a different
+        commit than the one that last failed it is always due, attempts reset."""
+        attempts = int(entry.get("attempts") or 0)
+        if current_code != "unknown" and entry.get("code") != current_code:
+            return True
+        if attempts >= RETRY_MAX_ATTEMPTS:
+            return False
+        if attempts < RETRY_FAST_ATTEMPTS:
+            return True
+        try:
+            last = datetime.fromisoformat(entry.get("last_attempt"))
+        except (TypeError, ValueError):
+            return True
+        return (now - last).total_seconds() >= RETRY_SLOW_INTERVAL_SECONDS
+
+    def _retry_failed_files(self, drive, result: Dict[str, Any]) -> None:
+        """Re-process files that failed earlier. The Drive change feed only
+        reports a file once, so without this a file that failed (or imported
+        without copy) stays that way until someone edits it in Drive."""
+        ledger = self._ledger()
+        if not ledger:
+            return
+        now = datetime.now(timezone.utc)
+        current_code = os.getenv("GIT_COMMIT", "unknown")
+        processed = self._retry_state()["processed"]
+        retried = recovered = 0
+
+        def count_attempt(entry: Dict[str, Any], error: Any = None) -> None:
+            entry["attempts"] = int(entry.get("attempts") or 0) + 1
+            entry["last_attempt"] = datetime.now(timezone.utc).isoformat()
+            entry["code"] = current_code
+            if error is not None:
+                entry["error"] = str(error)[:500]
+
+        for drive_file_id, entry in list(ledger.items()):
+            if drive_file_id in processed or not self._retry_is_due(entry, now, current_code):
+                continue
+            if current_code != "unknown" and entry.get("code") != current_code:
+                entry["attempts"] = 0
+            try:
+                file_meta = drive.files().get(
+                    fileId=drive_file_id,
+                    fields="id,name,mimeType,parents,modifiedTime,trashed,size,webViewLink",
+                    supportsAllDrives=True,
+                ).execute()
+            except HttpError as exc:
+                if getattr(exc.resp, "status", None) == 404:
+                    # Deleted from Drive: retire the row as the change feed would have.
+                    result["archived"] += self._archive_by_drive_id_isolated(drive_file_id, result)
+                    ledger.pop(drive_file_id, None)
+                else:
+                    logger.warning("Drive retry could not fetch %s: %s", entry.get("name"), exc)
+                    count_attempt(entry, exc)
+                continue
+            except Exception as exc:
+                logger.warning("Drive retry could not fetch %s: %s", entry.get("name"), exc)
+                count_attempt(entry, exc)
+                continue
+            retried += 1
+            if file_meta.get("trashed"):
+                result["archived"] += self._archive_by_drive_id_isolated(drive_file_id, result)
+                ledger.pop(drive_file_id, None)
+                continue
+            was_copy_kind = entry.get("kind") == "copy"
+            attempts_before = int(entry.get("attempts") or 0)
+            self._process_file_isolated(file_meta, result)
+            current = self._ledger().get(drive_file_id)
+            if current is None:
+                recovered += 1
+                if was_copy_kind:
+                    self._refresh_package_after_recovery(file_meta)
+            elif int(current.get("attempts") or 0) == attempts_before:
+                # Skipped or short-circuited without resolving: still counts.
+                count_attempt(current)
+        result["retried"] = retried
+        result["recovered"] = recovered
+        if retried:
+            logger.info("Drive retry: %s file(s) retried, %s recovered", retried, recovered)
+
+    def _refresh_package_after_recovery(self, file_meta: Dict[str, Any]) -> None:
+        """A failed copy parse unverified every asset in the package, not just
+        this file. Once the copy resolves again, re-verify the siblings too."""
+        try:
+            package_folder = self._find_package_folder(file_meta) or self._find_strategy_package_folder(file_meta)
+            refreshed = self.__dict__.setdefault("_copy_packages_refreshed_in_sync", set())
+            if not package_folder or package_folder in refreshed:
+                return
+            refreshed.add(package_folder)
+            with self.db.begin_nested():
+                self._refresh_folder_copy_metadata(file_meta, metadata_folder=package_folder)
+        except Exception as exc:
+            logger.warning("Could not re-verify package after Drive copy recovery for %s: %s", file_meta.get("name"), exc)
+
+    def _safe_metadata_for_media_file(
+        self, file_meta: Dict[str, Any], file_name: str, result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Resolve copy for a media file without letting a copy-parsing failure
+        stop the media itself from importing.
+
+        An unreadable manifest used to abort the whole file, so the creative
+        simply was not in the library. Importing it flagged as unverified lets a
+        buyer see it (and see why it can't launch), and queues it for retry.
+        """
+        try:
+            return self._metadata_for_media_file(file_meta, file_name)
+        except Exception as exc:
+            logger.warning("Importing %s without copy; copy could not be resolved: %s", file_name, exc)
+            result["unverified"] = result.get("unverified", 0) + 1
+            drive_file_id = file_meta.get("id")
+            self._retry_state()["copy_failed"].add(drive_file_id)
+            self._ledger_note_failure(drive_file_id, file_name, exc, kind="copy")
+            try:
+                self._mark_package_copy_unverified(file_meta, str(exc))
+            except Exception:
+                logger.warning("Could not mark package unverified for %s", file_name, exc_info=True)
+            return {
+                "copy_refresh_status": "unverified",
+                "copy_refresh_error": f"Imported without copy: {exc}"[:500],
+                "copy_import_unresolved": True,
+            }
+
     def _process_file_isolated(self, file_meta: Dict[str, Any], result: Dict[str, Any]) -> None:
         """Contain a bad Drive object without abandoning prior batch work."""
+        drive_file_id = file_meta.get("id")
+        state = self._retry_state()
+        state["processed"].add(drive_file_id)
         try:
             # Database failures poison a PostgreSQL transaction until rollback.
             # A savepoint is therefore essential—not merely try/except—so an
@@ -368,8 +589,12 @@ class DriveSyncService:
             # their changes for the batch's final commit.
             with self.db.begin_nested():
                 self._process_file(file_meta, result)
+            if drive_file_id not in state["copy_failed"] and (self._ledger().get(drive_file_id) or {}).get("kind") != "copy":
+                self._ledger_resolve(drive_file_id)
         except Exception as exc:
             result["errors"] += 1
+            if self._is_supported_media(file_meta.get("mimeType") or "", file_meta.get("name") or ""):
+                self._ledger_note_failure(drive_file_id, file_meta.get("name"), exc, kind="file")
             if "scoped_files_found" in result:
                 result.setdefault("scoped_errors", []).append(
                     f'{file_meta.get("name") or file_meta.get("id")}: {exc}'
@@ -1094,13 +1319,25 @@ class DriveSyncService:
             # Drive metadata can change without the binary changing (for
             # example, a copy doc or manifest is added after image upload).
             # Refresh tags so existing rows can backfill placement/copy data.
-            soft_tags = self._metadata_for_media_file(file_meta, file_name)
+            soft_tags = self._safe_metadata_for_media_file(file_meta, file_name, result)
+            try:
+                parsed_tags = json.loads(existing["soft_tags"] or "{}")
+                existing_tags = parsed_tags if isinstance(parsed_tags, dict) else {}
+            except (TypeError, json.JSONDecodeError):
+                existing_tags = {}
+            was_unresolved = bool(existing_tags.get("copy_import_unresolved"))
+            if was_unresolved and not soft_tags:
+                # Still no copy source to read: keep it flagged and keep retrying
+                # rather than silently dropping it from the retry queue.
+                self._retry_state()["copy_failed"].add(drive_file_id)
+                self._ledger_note_failure(drive_file_id, file_name, "no copy source found yet", kind="copy")
             if soft_tags:
-                try:
-                    parsed_tags = json.loads(existing["soft_tags"] or "{}")
-                    existing_tags = parsed_tags if isinstance(parsed_tags, dict) else {}
-                except (TypeError, json.JSONDecodeError):
-                    existing_tags = {}
+                if was_unresolved and not soft_tags.get("copy_import_unresolved"):
+                    # A real match is what clears the import-time unverified flag;
+                    # the plain merge below would otherwise keep it forever.
+                    for stale_key in ("copy_refresh_status", "copy_refresh_error", "copy_import_unresolved"):
+                        existing_tags.pop(stale_key, None)
+                    self._ledger_resolve(drive_file_id)
                 merged_tags = {**existing_tags, **soft_tags}
                 self.db.execute(
                     text("""
@@ -1124,7 +1361,7 @@ class DriveSyncService:
         content = self._download_file(drive_file_id)
         r2_key = self._upload_to_r2(content, file_name, mime_type)
         thumbnail_r2_key = self._upload_image_thumbnail(content, media_format)
-        soft_tags = self._metadata_for_media_file(file_meta, file_name)
+        soft_tags = self._safe_metadata_for_media_file(file_meta, file_name, result)
 
         params = {
             "id": existing["id"] if existing else str(uuid.uuid4()),

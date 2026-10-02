@@ -2428,7 +2428,8 @@ def test_sync_once_isolates_a_bad_removed_and_trashed_file_and_commits_good_chan
     # 5 changes total: 4 archive attempts (2 removed + 2 trashed) go through
     # _archive_by_drive_id_isolated's savepoint; the 1 real file goes through
     # _process_file_isolated's savepoint.
-    assert service.db.nested_entries == 5
+    # 5 per-item savepoints, plus one to load the retry ledger (the save is skipped when unchanged).
+    assert service.db.nested_entries == 6
 
 
 def test_incremental_sync_walks_only_a_new_folder_subtree():
