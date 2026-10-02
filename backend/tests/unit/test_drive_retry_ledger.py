@@ -258,3 +258,40 @@ def test_old_exhausted_entries_are_pruned_on_load():
     service = DriveSyncService.__new__(DriveSyncService)
     service.db = _DB()
     assert set(service._ledger()) == {"fresh"}
+
+
+def test_only_files_still_failing_after_retries_are_alert_worthy_and_only_once():
+    from app.services.drive_sync_service import RETRY_ALERT_AT_ATTEMPTS
+
+    service = _service({
+        "fresh": _entry(1),
+        "exhausted": _entry(RETRY_ALERT_AT_ATTEMPTS),
+        "told": {**_entry(RETRY_ALERT_AT_ATTEMPTS), "alerted": True},
+    })
+    flushed = []
+    service._ledger_flush = lambda: flushed.append(True) or True
+
+    class _DB:
+        def commit(self):
+            flushed.append("commit")
+
+    service.db = _DB()
+
+    pending = service.unalerted_exhausted_failures()
+    assert [item["drive_file_id"] for item in pending] == ["exhausted"]
+
+    service.acknowledge_failure_alerts(["exhausted"])
+    assert service.unalerted_exhausted_failures() == []
+    assert flushed == [True, "commit"]
+
+
+def test_a_new_deploy_re_arms_the_alert_for_an_exhausted_failure():
+    service = _service({"x": {**_entry(RETRY_MAX_ATTEMPTS, code="old"), "alerted": True}})
+    service._process_file_isolated = lambda meta, result: None
+    import os
+    os.environ["GIT_COMMIT"] = "newsha"
+    try:
+        service._retry_failed_files(_FakeDrive({"x": {"id": "x", "name": "x.mp4"}}), {"archived": 0, "errors": 0})
+    finally:
+        os.environ.pop("GIT_COMMIT", None)
+    assert "alerted" not in service._ledger()["x"]

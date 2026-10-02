@@ -339,7 +339,7 @@ def send_offer_performance_monitor_down_alert(error: str) -> None:
         logger.warning("Offer performance monitor-down alert error: %s", e)
 
 
-def send_drive_sync_alert(summary: str, detail: str = "") -> None:
+def send_drive_sync_alert(summary: str, detail: str = "") -> bool:
     """Post a loud alert for Drive creative sync failures.
 
     Deliberately independent of SLACK_ALERT_CHANNEL and the #media-buys pause:
@@ -349,7 +349,7 @@ def send_drive_sync_alert(summary: str, detail: str = "") -> None:
     token = _token()
     if not token:
         logger.warning("Drive sync alert skipped because SLACK_BOT_TOKEN is not set: %s", summary)
-        return
+        return False
 
     text = f":warning: *Google Drive creative sync failed:* {summary}"
     if detail:
@@ -370,5 +370,8 @@ def send_drive_sync_alert(summary: str, detail: str = "") -> None:
         data = resp.json()
         if not data.get("ok"):
             logger.warning("Drive sync Slack alert failed: %s", data.get("error"))
+            return False
+        return True
     except Exception as e:
         logger.warning("Drive sync Slack alert error: %s", e)
+        return False

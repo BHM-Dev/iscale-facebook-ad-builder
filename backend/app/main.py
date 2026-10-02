@@ -389,15 +389,23 @@ async def startup_event():
                 if not changed:
                     print("ℹ️  Drive creative sync: no asset changes")
                 if errors:
-                    # Per-file failures are isolated (drive_sync_service._process_file_isolated /
-                    # _archive_by_drive_id_isolated) and no longer raise out of sync_once, so they
-                    # would otherwise go unreported. Surface them explicitly instead of only the
-                    # aggregate count above.
                     print(f"⚠️  Drive creative sync: {errors} file(s) failed and were isolated (see warnings above)")
-                    slack_service.send_drive_sync_alert(
-                        f"{errors} file(s) failed during isolated sync",
-                        "Check backend logs for the affected Drive file names/ids.",
+                # Failed files are retried automatically each cycle (and after each
+                # deploy), so Slack only hears about the ones still failing after
+                # those retries, once each.
+                exhausted = result.get("retries_exhausted") or []
+                if exhausted:
+                    lines = [f"{item['name']} — {item.get('error') or 'unknown error'}" for item in exhausted[:8]]
+                    if len(exhausted) > 8:
+                        lines.append(f"…and {len(exhausted) - 8} more")
+                    sent = slack_service.send_drive_sync_alert(
+                        f"{len(exhausted)} file(s) still failing after automatic retries",
+                        "\n> ".join(lines),
                     )
+                    if sent:
+                        # Only the files named in the message count as told; any beyond
+                        # the first 8 alert on a following cycle.
+                        DriveSyncService(db).acknowledge_failure_alerts([item["drive_file_id"] for item in exhausted[:8]])
             except Exception as exc:
                 print(f"⚠️  Drive creative sync error: {exc}")
             finally:

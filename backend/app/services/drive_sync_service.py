@@ -37,6 +37,9 @@ RETRY_LEDGER_KEY = "drive_failed_files"
 # never past the cap. A new deploy resets attempts, since a code fix is the usual cure.
 RETRY_FAST_ATTEMPTS = 4
 RETRY_MAX_ATTEMPTS = 12
+# The original failure counts as attempt 1, so this alerts after 3 failed retries
+# (~1.5h of 30-minute cycles). Retrying then continues quietly on the slow schedule.
+RETRY_ALERT_AT_ATTEMPTS = RETRY_FAST_ATTEMPTS
 RETRY_SLOW_INTERVAL_SECONDS = 6 * 3600
 RETRY_PRUNE_AFTER_SECONDS = 30 * 86400
 SUPPORTED_PREFIXES = ("image/", "video/")
@@ -413,12 +416,12 @@ class DriveSyncService:
             state["ledger"] = loaded
         return state["ledger"]
 
-    def _ledger_flush(self) -> None:
+    def _ledger_flush(self) -> bool:
         state = self._retry_state()
         if state["ledger"] is None or state.get("load_ok") is False:
-            return
+            return False
         if json.dumps(state["ledger"], sort_keys=True) == state.get("loaded_json"):
-            return
+            return True
         try:
             with self.db.begin_nested():
                 self.db.execute(
@@ -433,6 +436,8 @@ class DriveSyncService:
                 )
         except Exception as exc:
             logger.warning("Could not save Drive retry ledger: %s", exc)
+            return False
+        return True
 
     def _ledger_note_failure(self, drive_file_id: Optional[str], name: Optional[str], error: Any, kind: str) -> None:
         if not drive_file_id:
@@ -495,6 +500,7 @@ class DriveSyncService:
                 continue
             if current_code != "unknown" and entry.get("code") != current_code:
                 entry["attempts"] = 0
+                entry.pop("alerted", None)
             try:
                 file_meta = drive.files().get(
                     fileId=drive_file_id,
@@ -531,9 +537,40 @@ class DriveSyncService:
                 # Skipped or short-circuited without resolving: still counts.
                 count_attempt(current)
         result["retried"] = retried
+        result["retries_exhausted"] = self.unalerted_exhausted_failures()
         result["recovered"] = recovered
         if retried:
             logger.info("Drive retry: %s file(s) retried, %s recovered", retried, recovered)
+
+    def unalerted_exhausted_failures(self) -> List[Dict[str, Any]]:
+        """Files still failing after their retries that nobody has been told about."""
+        out = []
+        for drive_file_id, entry in self._ledger().items():
+            try:
+                attempts = int(entry.get("attempts") or 0)
+            except (TypeError, ValueError):
+                continue
+            if attempts >= RETRY_ALERT_AT_ATTEMPTS and not entry.get("alerted"):
+                out.append({
+                    "drive_file_id": drive_file_id,
+                    "name": entry.get("name") or drive_file_id,
+                    "kind": entry.get("kind"),
+                    "error": entry.get("error"),
+                    "attempts": attempts,
+                })
+        return out
+
+    def acknowledge_failure_alerts(self, drive_file_ids: List[str]) -> None:
+        """Record that these failures were reported, so each is alerted once."""
+        ledger = self._ledger()
+        for drive_file_id in drive_file_ids:
+            if drive_file_id in ledger:
+                ledger[drive_file_id]["alerted"] = True
+        if not self._ledger_flush():
+            # The alert went out but the "told" marker could not be saved, so it
+            # will repeat next cycle until the ledger is writable again.
+            logger.error("Drive failure alert sent but could not be recorded; it will repeat")
+        self.db.commit()
 
     def _refresh_package_after_recovery(self, file_meta: Dict[str, Any]) -> None:
         """A failed copy parse unverified every asset in the package, not just
