@@ -70,7 +70,7 @@ function IssueChip({ issue, blocking = false }) {
 }
 
 export default function DrivePackageHealth() {
-  const { showError, showInfo } = useToast();
+  const { showError, showInfo, showSuccess, showWarning } = useToast();
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   // Tracked separately from `report`. Clearing the report on failure made a
@@ -82,6 +82,10 @@ export default function DrivePackageHealth() {
   const [rebuilding, setRebuilding] = useState(false);
   const [onlyIssues, setOnlyIssues] = useState(false);
   const [showArchive, setShowArchive] = useState(false);
+  const [manifestText, setManifestText] = useState('');
+  const [manifestFolderId, setManifestFolderId] = useState('');
+  const [manifestResult, setManifestResult] = useState(null);
+  const [validatingManifest, setValidatingManifest] = useState(false);
 
   const loadReport = async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
@@ -115,6 +119,33 @@ export default function DrivePackageHealth() {
       const message = err.message || 'Could not start the Drive inspection';
       setError(message);
       showError(message);
+    }
+  };
+
+  const validateManifest = async () => {
+    if (!manifestText.trim()) {
+      showWarning('Paste your copy file first.');
+      return;
+    }
+    setValidatingManifest(true);
+    try {
+      const response = await authFetch(`${API_URL}/drive-assets/validate-manifest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: manifestText,
+          ...(manifestFolderId.trim() ? { folder_id: manifestFolderId.trim() } : {}),
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || 'Could not check this copy file');
+      setManifestResult(data);
+      if (!data.ok) showWarning('This copy file is not ready yet. Fix the items listed, then check it again.');
+      else showSuccess(data.warnings?.length ? 'Ready to save to Drive (with a few notes).' : 'Ready to save to Drive.');
+    } catch (err) {
+      showError(err.message || 'Could not check this copy file');
+    } finally {
+      setValidatingManifest(false);
     }
   };
 
@@ -171,6 +202,27 @@ export default function DrivePackageHealth() {
               : 'Not inspected yet · rebuilt hourly'}
             {rebuilding ? ' · inspecting now…' : ''}
           </p>
+          {report?.drive_media_total !== undefined && (
+            <div className="mt-2 text-sm">
+              <p className={`font-medium ${report.missing_total > 0 || report.stale ? 'text-amber-700' : 'text-gray-600'}`}>
+                In Drive: {(report.drive_media_total ?? 0).toLocaleString()} files · In the picker: {(report.library_media_total ?? 0).toLocaleString()}
+                {report.age_seconds != null ? ` · checked ${Math.max(0, Math.floor(report.age_seconds / 60))} min ago` : ''}
+                {report.stale ? ' · this check is overdue, so numbers may be out of date' : ''}
+              </p>
+              {report.missing_total > 0 && (
+                <div className="mt-1 text-amber-800">
+                  <p>{report.missing_total.toLocaleString()} file{report.missing_total === 1 ? ' is' : 's are'} in Drive but not in the picker yet. New uploads usually appear within an hour; if a package is still listed here after the next check, tell Steve.</p>
+                  {report.missing_packages?.length > 0 && (
+                    <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs">
+                      {report.missing_packages.map((pkg) => (
+                        <li key={pkg.folder_id}>{pkg.path} — {pkg.missing_count} of {pkg.media_count} not in the picker</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <button
           type="button"
@@ -258,6 +310,76 @@ export default function DrivePackageHealth() {
       </div>
       )}
 
+      <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-gray-900">Check a copy file</h2>
+            <p className="mt-1 max-w-2xl text-sm text-gray-600">Paste your copy file (the one ending in HANDOFF-MANIFEST.txt) before saving it to Drive. This tells you what to fix so the ads import with the right copy. Nothing is saved by checking.</p>
+          </div>
+          <button
+            type="button"
+            onClick={validateManifest}
+            disabled={validatingManifest || !manifestText.trim()}
+            className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {validatingManifest ? <RefreshCw size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+            {validatingManifest ? 'Checking…' : 'Check copy file'}
+          </button>
+          {!manifestText.trim() && <p className="w-full text-xs text-gray-500 sm:w-auto sm:self-end">Paste your file below to enable the check.</p>}
+        </div>
+        <textarea
+          value={manifestText}
+          onChange={(event) => { setManifestText(event.target.value); setManifestResult(null); }}
+          placeholder={'PACKAGE: Vertical | Package name\nFINAL HANDOFF MANIFEST — LAUNCHER COPY MAP\n\nMeta Button\nGet Quote\n\n## PKG-01-IMG\n...'}
+          rows={12}
+          className="mt-4 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-xs text-gray-800 shadow-inner focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+        />
+        <label className="mt-3 block max-w-md text-xs font-semibold text-gray-600">
+          Drive folder link (optional)
+          <input
+            value={manifestFolderId}
+            onChange={(event) => { setManifestFolderId(event.target.value); setManifestResult(null); }}
+            placeholder="Paste the package folder's link to also check the filenames"
+            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+          />
+        </label>
+        {manifestResult && (
+          <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
+            <div className={`rounded-lg px-4 py-3 text-base font-semibold ${manifestResult.ok ? 'bg-emerald-100 text-emerald-900' : 'bg-red-100 text-red-900'}`}>
+              {manifestResult.ok
+                ? (manifestResult.warnings?.length
+                    ? `Ready to save to Drive — ${manifestResult.warnings.length} note${manifestResult.warnings.length === 1 ? '' : 's'} below`
+                    : 'Ready to save to Drive')
+                : `Not ready — ${manifestResult.errors.length} thing${manifestResult.errors.length === 1 ? '' : 's'} to fix`}
+              {manifestResult.package && <span className="ml-2 text-sm font-normal opacity-80">{manifestResult.package}</span>}
+            </div>
+            {manifestResult.errors?.length > 0 && (
+              <div className="mt-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Fix these</p>
+                <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-red-800">{manifestResult.errors.map((item) => <li key={item}>{item}</li>)}</ul>
+              </div>
+            )}
+            {manifestResult.warnings?.length > 0 && (
+              <div className="mt-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Worth a look (won't stop it importing)</p>
+                <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-amber-800">{manifestResult.warnings.map((item) => <li key={item}>{item}</li>)}</ul>
+              </div>
+            )}
+            {manifestResult.entries && Object.keys(manifestResult.entries).length > 0 && (
+              <div className="mt-4 overflow-x-auto">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-600">Ads we found</p>
+                <table className="mt-1 w-full min-w-[540px] text-left text-xs">
+                  <thead className="text-gray-500"><tr><th className="py-1 pr-3">Ad</th><th className="py-1 pr-3">Headline</th><th className="py-1">Placements</th></tr></thead>
+                  <tbody className="divide-y divide-gray-200">{Object.values(manifestResult.entries).map((entry) => (
+                    <tr key={entry.copy_id} className="align-top"><td className="py-2 pr-3 font-mono text-gray-700">{entry.copy_id}</td><td className="py-2 pr-3 text-gray-700">{entry.headline || '—'}</td><td className="py-2 text-gray-600">{(entry.placements || []).map((placement) => `${placement.aspect} ${placement.media_type}`).join(' · ') || '—'}</td></tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
       <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="border-b border-gray-200 px-5 py-4"><h2 className="font-semibold text-gray-900">Packages</h2></div>
         {loading ? (
@@ -305,7 +427,20 @@ export default function DrivePackageHealth() {
                     </a>
                   </td>
                   <td className="px-4 py-4 text-right tabular-nums text-gray-700">{item.media_count}</td>
-                  <td className="px-4 py-4 text-gray-700">{item.copy_source.replace(/_/g, ' ')}</td>
+                  <td className="px-4 py-4 text-gray-700">
+                    <div>{item.copy_source.replace(/_/g, ' ')}</div>
+                    {item.manifest_status && (
+                      <div className={`mt-1 text-xs font-medium ${item.manifest_status === 'error' ? 'text-red-700' : item.manifest_status === 'warn' ? 'text-amber-700' : 'text-emerald-700'}`}>
+                        Copy file: {item.manifest_status === 'error' ? 'has problems' : item.manifest_status === 'warn' ? 'has notes' : 'looks good'}
+                      </div>
+                    )}
+                    {item.manifest_messages?.length > 0 && (
+                      <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs text-gray-600">
+                        {item.manifest_messages.slice(0, 5).map((entry) => <li key={entry.message} className={entry.severity === 'error' ? 'text-red-700' : 'text-amber-700'}>{entry.message}</li>)}
+                        {item.manifest_messages.length > 5 && <li>…and {item.manifest_messages.length - 5} more (paste the file into "Check a copy file" to see all)</li>}
+                      </ul>
+                    )}
+                  </td>
                   <td className="px-5 py-4">
                     <div className="flex max-w-sm flex-wrap items-center gap-1.5">
                       {willRefuse(item) && (

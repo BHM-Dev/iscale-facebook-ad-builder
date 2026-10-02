@@ -1,9 +1,12 @@
 from typing import Any, Dict, List, Optional
 
+import logging
 import os
+import re
 import tempfile
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Response, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -12,12 +15,35 @@ from app.database import get_db
 from app.models import User
 from app.schemas.drive_assets import DriveAsset, DriveCopyHealth, DriveCopyRefreshRequest, DriveSyncResult
 from app.services.drive_sync_service import DriveSyncService
+from app.services.drive_manifest_validator import validate_handoff_manifest
 
 
 MAX_IMAGE_SIZE = 10 * 1024 * 1024
 MAX_VIDEO_SIZE = 500 * 1024 * 1024
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".webm", ".m4v", ".mpeg", ".mpg", ".3gp"}
+
+
+logger = logging.getLogger(__name__)
+
+# A real manifest is ~10 KB. The cap keeps a stray paste (or a hostile one) from
+# tying up the single backend worker in the copy parser's regexes.
+MAX_MANIFEST_CHARS = 200_000
+
+
+class ManifestValidationRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=MAX_MANIFEST_CHARS)
+    folder_id: Optional[str] = Field(None, max_length=400)
+
+
+def _drive_folder_id(value: Optional[str]) -> Optional[str]:
+    """Accept a bare folder id or a pasted Drive folder URL."""
+    cleaned = (value or "").strip()
+    if not cleaned:
+        return None
+    match = re.search(r"/folders/([A-Za-z0-9_-]+)", cleaned) or re.search(r"[?&]id=([A-Za-z0-9_-]+)", cleaned)
+    candidate = match.group(1) if match else cleaned
+    return candidate if re.fullmatch(r"[A-Za-z0-9_-]{10,}", candidate) else None
 
 router = APIRouter()
 
@@ -29,6 +55,49 @@ def _table_exists(db: Session, table_name: str) -> bool:
             {"table_name": table_name},
         ).scalar()
     )
+
+
+@router.post("/validate-manifest")
+def validate_drive_manifest(
+    payload: ManifestValidationRequest,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_active_user),
+):
+    """Validate pasted copy, optionally checking filenames against a Drive folder."""
+    folder_media_names = None
+    folder_warning = None
+    if payload.folder_id and payload.folder_id.strip():
+        folder_id = _drive_folder_id(payload.folder_id)
+        if not folder_id:
+            folder_warning = "That doesn't look like a Drive folder link or ID, so the file names weren't checked against Drive."
+        else:
+            try:
+                service = DriveSyncService(db)
+                # Only folders inside the creative library: this endpoint must not
+                # become a way to list arbitrary Drive folders.
+                if not service._folder_chain_to_root(folder_id):
+                    folder_warning = "That folder isn't inside the creative library, so the file names weren't checked against Drive."
+                else:
+                    # One package is a few dozen files; a small cap stops a brand-level
+                    # folder from holding the single backend worker for minutes.
+                    folder_media_names = [
+                        item.get("name", "")
+                        for item in service._list_folder_subtree(folder_id, max_files=400)
+                        if service._is_supported_media(item.get("mimeType", ""), item.get("name", ""))
+                    ]
+            except RuntimeError:
+                folder_warning = "That folder holds too many files to check here. Paste the link to a single package's folder instead."
+            except Exception:
+                # Paste-only validation stays useful when Drive is unavailable;
+                # say so explicitly instead of implying the files were checked.
+                logger.exception("validate-manifest: Drive folder check failed")
+                folder_warning = "Couldn't reach Drive to check the folder, so the file names weren't checked."
+
+    result = validate_handoff_manifest(payload.text, folder_media_names=folder_media_names)
+    if folder_warning:
+        result["warnings"] = [*result["warnings"], folder_warning]
+        result["messages"] = [*result.get("messages", []), {"severity": "warning", "message": folder_warning}]
+    return result
 
 
 @router.get("", response_model=List[DriveAsset])

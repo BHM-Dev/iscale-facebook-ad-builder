@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -17,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_current_active_user
 from app.database import SessionLocal, get_db
 from app.models import User
+from app.services.drive_manifest_validator import validate_handoff_manifest
 from app.services.drive_sync_service import DriveSyncService
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,9 @@ STATE_KEY = "package_health_report"
 # every deploy -- an in-memory cache meant the first person to open the page after
 # each deploy paid the full multi-minute walk.
 _rebuild_lock = Lock()
+# (manifest file id, modifiedTime, media-name hash) -> validator result. Process-local;
+# a deploy clears it, which only costs one round of downloads.
+_MANIFEST_VALIDATION_CACHE: Dict[Tuple[Any, Any, int], Dict[str, Any]] = {}
 _rebuilding = False
 
 
@@ -159,6 +164,10 @@ def _copy_source_for_text(service: DriveSyncService, item: Dict[str, Any]) -> Op
     """Classify a text document by content. Downloads -- callers should skip it
     for any package already resolved by the name-only manifest pass."""
     name = (item.get("name") or "").lower()
+    if service._is_readme_meta_handoff_file(name):
+        return "readme_meta_handoff"
+    if service._is_final_meta_launch_brief_file(name):
+        return "final_launch_brief"
     if "handoff" in name and "manifest" in name:
         return "handoff_manifest"
     try:
@@ -167,11 +176,66 @@ def _copy_source_for_text(service: DriveSyncService, item: Dict[str, Any]) -> Op
         # An unreadable document is not treated as a source. The report's
         # no_copy_source flag deliberately makes that visible to its owner.
         return None
-    if service._looks_like_strategy_copy_doc(text) or service._looks_like_ad_copy_doc(text):
+    source_kind = service._copy_document_kind(text)
+    if source_kind == "strategy":
         return "strategy_doc"
-    if service._looks_like_category_copy_doc(text):
+    if source_kind == "category":
         return "category_doc"
+    if source_kind == "ad":
+        return "ad_copy_doc"
     return None
+
+
+def _normalize_package_path(path: str) -> tuple[str, ...]:
+    """Normalize both ``A / B / C`` and ``A/B/C/placement`` path shapes."""
+    normalized = str(path or "").replace("\\", "/")
+    return tuple(
+        " ".join(part.split()).casefold()
+        for part in normalized.split("/")
+        if part.strip()
+    )
+
+
+def _package_key(package_path: str) -> tuple[str, ...]:
+    """Package path as stored in ``drive_assets.folder_path`` terms.
+
+    The snapshot path leads with the brand folder ("Commercial Insurance / Commercial
+    Van Insurance / CA-PROVEN ..."); ``drive_assets.folder_path`` drops it (the brand
+    lives in ``brand_id``), giving "Commercial Van Insurance/CA-PROVEN .../1x1 Feed
+    Images". Verified against production 2026-10-02.
+    """
+    return _normalize_package_path(package_path)[1:]
+
+
+def _library_counts_by_package(db: Session, packages: List[Dict[str, Any]]) -> Dict[str, int]:
+    """Count active library rows under each Drive package path.
+
+    Each row is attributed to the deepest package whose path is a prefix of its
+    folder path, so nested packages never steal their children's rows.
+    """
+    counts = {package["folder_id"]: 0 for package in packages}
+    if not packages:
+        return counts
+    # Same-named packages in two brands share a key once the brand segment is dropped.
+    # Rows can't be told apart, so credit every candidate rather than raise a false
+    # "missing" on the one that loses.
+    package_by_key: Dict[tuple, List[str]] = {}
+    for package in packages:
+        key = _package_key(package["path"])
+        if key:
+            package_by_key.setdefault(key, []).append(package["folder_id"])
+    rows = db.execute(
+        text("SELECT folder_path FROM drive_assets WHERE COALESCE(archived, FALSE) = FALSE")
+    ).all()
+    for row in rows:
+        parts = _normalize_package_path(row[0])
+        for length in range(len(parts), 0, -1):
+            folder_ids = package_by_key.get(parts[:length])
+            if folder_ids:
+                for folder_id in folder_ids:
+                    counts[folder_id] += 1
+                break
+    return counts
 
 
 def build_package_health_report(service: DriveSyncService) -> Dict[str, Any]:
@@ -210,7 +274,16 @@ def build_package_health_report(service: DriveSyncService) -> Dict[str, Any]:
         elif service._is_text_file(mime_type, name):
             text_items.append(item)
 
-    source_rank = {"none": 0, "category_doc": 1, "strategy_doc": 2, "handoff_manifest": 3}
+    source_rank = {
+        "none": 0,
+        "category_doc": 1,
+        "strategy_doc": 2,
+        "ad_copy_doc": 3,
+        "readme_meta_handoff": 4,
+        "final_launch_brief": 5,
+        "handoff_manifest": 6,
+        "inline_variant": 7,
+    }
 
     # Resolve each text file to its package once, and drop the ones that sit
     # outside any media-bearing package -- those can never contribute a source.
@@ -230,6 +303,7 @@ def build_package_health_report(service: DriveSyncService) -> Dict[str, Any]:
             record = packages[package_id]
             record["has_manifest"] = True
             record["copy_source"] = "handoff_manifest"
+            record["manifest_item"] = item
 
     # Pass 2 downloads, so it is the expensive one. Only packages with no source
     # yet are worth inspecting, and each stops at its first recognized document.
@@ -267,6 +341,7 @@ def build_package_health_report(service: DriveSyncService) -> Dict[str, Any]:
     collisions.sort(key=lambda entry: (-len(entry["packages"]), entry["basename"].lower()))
 
     result_packages = []
+    package_rows = []
     for package_id, record in sorted(packages.items(), key=lambda pair: pair[1]["path"].lower()):
         names = [item.get("name", "").lower() for item in record["media"]]
         issues = []
@@ -278,7 +353,7 @@ def build_package_health_report(service: DriveSyncService) -> Dict[str, Any]:
             issues.append("duplicate_basename_across_packages")
         if len(names) != len(set(names)):
             issues.append("duplicate_basename_within_package")
-        result_packages.append({
+        package_row = {
             "folder_id": package_id,
             "path": record["path"],
             "depth": record["depth"],
@@ -286,12 +361,73 @@ def build_package_health_report(service: DriveSyncService) -> Dict[str, Any]:
             "has_manifest": record["has_manifest"],
             "copy_source": record["copy_source"],
             "issues": issues,
-        })
+        }
+        if record.get("manifest_item"):
+            manifest_item = record["manifest_item"]
+            try:
+                media_names = [item.get("name", "") for item in record["media"]]
+                cache_key = (
+                    manifest_item.get("id"),
+                    manifest_item.get("modifiedTime"),
+                    hash(tuple(sorted(media_names))),
+                )
+                validation = _MANIFEST_VALIDATION_CACHE.get(cache_key)
+                if validation is None:
+                    # Download only when the manifest or its folder contents changed:
+                    # the hourly walk used to be download-free for a reason.
+                    manifest_text = service._download_text_file(manifest_item["id"])
+                    validation = validate_handoff_manifest(
+                        manifest_text,
+                        folder_media_names=media_names,
+                        file_name=manifest_item.get("name"),
+                    )
+                    if len(_MANIFEST_VALIDATION_CACHE) >= 500:
+                        _MANIFEST_VALIDATION_CACHE.clear()
+                    _MANIFEST_VALIDATION_CACHE[cache_key] = validation
+                package_row["copy_source"] = validation.get("source_kind") or "handoff_manifest"
+                package_row["manifest_status"] = "ok" if validation["ok"] and not validation["warnings"] else (
+                    "warn" if validation["ok"] else "error"
+                )
+                package_row["manifest_messages"] = [
+                    *[{"severity": "error", "message": message} for message in validation["errors"]],
+                    *[{"severity": "warning", "message": message} for message in validation["warnings"]],
+                ][:10]
+            except Exception as exc:
+                package_row["manifest_status"] = "error"
+                package_row["manifest_messages"] = [{
+                    "severity": "error",
+                    "message": f"Could not read manifest: {str(exc)[:300]}",
+                }]
+        result_packages.append(package_row)
+        package_rows.append(package_row)
+
+    library_counts = _library_counts_by_package(service.db, package_rows) if getattr(service, "db", None) is not None else {
+        package["folder_id"]: 0 for package in package_rows
+    }
+    drive_media_total = sum(package["media_count"] for package in package_rows)
+    library_media_total = sum(library_counts.values())
+    missing_packages = []
+    for package in result_packages:
+        package["library_count"] = library_counts.get(package["folder_id"], 0)
+        missing_count = max(package["media_count"] - package["library_count"], 0)
+        if missing_count:
+            missing_packages.append({
+                "folder_id": package["folder_id"],
+                "path": package["path"],
+                "media_count": package["media_count"],
+                "library_count": package["library_count"],
+                "missing_count": missing_count,
+            })
+    missing_packages.sort(key=lambda package: (-package["missing_count"], package["path"].casefold()))
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "packages": result_packages,
         "collisions": collisions,
+        "drive_media_total": drive_media_total,
+        "library_media_total": library_media_total,
+        "missing_total": sum(package["missing_count"] for package in missing_packages),
+        "missing_packages": missing_packages[:10],
     }
 
 

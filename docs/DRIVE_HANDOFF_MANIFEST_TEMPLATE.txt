@@ -16,10 +16,10 @@ HOW TO USE THIS FILE
    Image blocks use 1X1 IMAGE / 9X16 IMAGE; video blocks use 4X5 VIDEO / 9X16 VIDEO.
 5. One Meta button for the whole file. If one ad needs a different button, put it
    in its own package/file for now.
-6. Save it to Drive. The Ad Builder picks it up on the next hourly sync. Then check
-   the "Package health" button in the Drive library picker: if your package isn't
-   listed, or shows a problem, tell Steve. (A paste-and-check box is coming; when it
-   is live you'll paste the file there BEFORE saving.)
+6. BEFORE saving to Drive, check it: open the Drive library picker, click the
+   "Package health" button, and paste your file into "Check a copy file". It tells
+   you the line numbers to fix. When it says "Ready to save to Drive", save it.
+   The Ad Builder picks it up on the next hourly sync.
 -----------------------------------------------------------------
 
 PACKAGE: <Vertical> | <Package name>
