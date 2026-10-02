@@ -997,6 +997,29 @@ class DriveAsset(Base):
     product = relationship("Product")
 
 
+class DriveSyncRun(Base):
+    """One row per Drive sync / reconcile / copy-refresh run (see services/drive_sync_run_log.py)."""
+    __tablename__ = "drive_sync_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    kind = Column(String, nullable=False, index=True)  # incremental|backfill|scoped|reconcile|copy_refresh|health_snapshot
+    started_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String, nullable=False)  # ok|ok_with_errors|error|skipped_locked
+    processed = Column(Integer, nullable=False, default=0)
+    created = Column(Integer, nullable=False, default=0)
+    updated = Column(Integer, nullable=False, default=0)
+    archived = Column(Integer, nullable=False, default=0)
+    errors = Column(Integer, nullable=False, default=0)
+    error_summary = Column(String, nullable=True)  # <=500 chars, never secrets
+    triggered_by = Column(String, nullable=True)
+    # RESERVED for later phases -- always NULL in the MVP.
+    package_folder_id = Column(String, nullable=True)
+    token_before = Column(String, nullable=True)
+    token_after = Column(String, nullable=True)
+    meta = Column(Text, nullable=True)
+
+
 class DriveSyncState(Base):
     """Singleton key/value store for the Drive changes.list startPageToken checkpoint."""
     __tablename__ = "drive_sync_state"

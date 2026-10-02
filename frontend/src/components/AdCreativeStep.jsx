@@ -528,6 +528,42 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
             setSelectedDriveParentKey(null);
         }
     }, [showDriveLibraryModal, preferLaunchReady]);
+    // Drift line: how the hourly Drive walk compares to what the picker can show.
+    // Informational only -- it never blocks selection and fails silent if the
+    // snapshot is missing. Count fields appear once the health snapshot carries them.
+    const [driveSyncStatus, setDriveSyncStatus] = useState(null);
+    useEffect(() => {
+        if (!showDriveLibraryModal) return undefined;
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await authFetch(`${API_URL}/drive/package-health`, { cache: 'no-store' });
+                if (!res.ok) { if (!cancelled) setDriveSyncStatus({ unavailable: true }); return; }
+                const data = await res.json();
+                if (!cancelled && !data?.generated_at) { setDriveSyncStatus({ unavailable: true }); return; }
+                if (!cancelled && data?.generated_at) {
+                    setDriveSyncStatus({
+                        generatedAt: data.generated_at,
+                        stale: Boolean(data.stale),
+                        driveTotal: data.drive_media_total ?? null,
+                        libraryTotal: data.library_media_total ?? null,
+                        missingTotal: data.missing_total ?? null,
+                    });
+                }
+            } catch {
+                // Status line is a convenience; the picker works without it.
+                if (!cancelled) setDriveSyncStatus({ unavailable: true });
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [showDriveLibraryModal]);
+    const driveSyncAgeLabel = (() => {
+        if (!driveSyncStatus?.generatedAt) return '';
+        const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(driveSyncStatus.generatedAt)) / 60000));
+        if (!Number.isFinite(minutes)) return '';
+        return minutes < 120 ? `${minutes} min ago` : `${Math.floor(minutes / 60)} h ago`;
+    })();
+    const driveSyncNeedsAttention = Boolean(driveSyncStatus && !driveSyncStatus.unavailable && (driveSyncStatus.stale || (driveSyncStatus.missingTotal ?? 0) > 0));
     const [showDriveLibraryHint, setShowDriveLibraryHint] = useState(
         () => safeLocalStorageGet('driveLibraryHintSeen') !== 'true'
     );
@@ -3368,7 +3404,27 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2">
                 <div className="bg-white rounded-xl shadow-xl w-full max-w-7xl h-[calc(100dvh-1rem)] flex flex-col">
                     <div className="flex items-center justify-between p-2 border-b">
-                        <h3 className="text-lg font-semibold">Select from Drive Creative Library</h3>
+                        <div className="min-w-0">
+                            <h3 className="text-lg font-semibold">Select from Drive Creative Library</h3>
+                            {driveSyncStatus?.unavailable && (
+                                <p className="text-[11px] text-gray-500">Drive sync status unavailable right now — new uploads may not be listed yet.</p>
+                            )}
+                            {driveSyncStatus && !driveSyncStatus.unavailable && driveSyncAgeLabel && (
+                                <p className={`text-[11px] ${driveSyncNeedsAttention ? 'text-amber-700' : 'text-gray-500'}`}>
+                                    {driveSyncStatus.driveTotal != null && driveSyncStatus.libraryTotal != null
+                                        ? `In Drive: ${driveSyncStatus.driveTotal.toLocaleString()} · In picker: ${driveSyncStatus.libraryTotal.toLocaleString()} · `
+                                        : ''}
+                                    Drive sync checked {driveSyncAgeLabel}
+                                    {driveSyncStatus.stale ? ` — the check hasn't run recently, so new uploads may be missing` : ''}
+                                    {(driveSyncStatus.missingTotal ?? 0) > 0
+                                        ? ` · ${driveSyncStatus.missingTotal} file${driveSyncStatus.missingTotal === 1 ? '' : 's'} in Drive ${driveSyncStatus.missingTotal === 1 ? "isn't" : "aren't"} in the picker yet (sync runs hourly)`
+                                        : ''}
+                                    {driveSyncNeedsAttention && (
+                                        <> · <a href="/drive-package-health" target="_blank" rel="noreferrer" className="font-semibold underline">Open Package Health</a></>
+                                    )}
+                                </p>
+                            )}
+                        </div>
                         <div className="flex items-center gap-2">
                             <button
                                 type="button"

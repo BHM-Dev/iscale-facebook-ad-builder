@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.uploads import get_s3_client
 from app.core.config import settings
 from app.services import slack_service
+from app.services.drive_sync_run_log import logged_method
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +213,9 @@ class DriveSyncService:
         result["copy_health"] = self.get_copy_health_summary()
         return result
 
+    @logged_method(lambda self, backfill=False, defer_copy_resolution=False, folder_id=None, brand_name=None: (
+        "scoped" if folder_id else "backfill" if backfill else "incremental"
+    ))
     def sync_once(
         self,
         backfill: bool = False,
@@ -392,6 +396,7 @@ class DriveSyncService:
             slack_service.send_drive_sync_alert(type(exc).__name__, str(exc))
             raise
 
+    @logged_method("reconcile")
     def reconcile_missing_media(self, max_import: int = 100) -> Dict[str, Any]:
         """Import Drive media that exists in the library but has no database row.
 
@@ -726,6 +731,7 @@ class DriveSyncService:
             logger.warning("Drive sync failed to archive removed file %s: %s", drive_file_id or "unknown file", exc)
             return 0
 
+    @logged_method("copy_refresh")
     def refresh_copy_metadata(self) -> Dict[str, Any]:
         """Refresh copy tags without reprocessing every Drive media binary.
 
@@ -842,6 +848,7 @@ class DriveSyncService:
             logger.exception("Drive copy metadata refresh failed")
             raise
 
+    @logged_method("copy_refresh")
     def refresh_copy_metadata_for_sources(self, source_file_ids: List[str]) -> Dict[str, Any]:
         """Refresh only the current batch's known copy documents.
 
@@ -934,6 +941,7 @@ class DriveSyncService:
             logger.exception("Targeted Drive copy refresh failed")
             raise
 
+    @logged_method("copy_refresh")
     def refresh_copy_metadata_for_drive_files(self, drive_file_ids: List[str]) -> Dict[str, Any]:
         """Refresh the packages that contain the selected Drive media files.
 

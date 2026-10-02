@@ -1,0 +1,74 @@
+!! DELETE EVERYTHING ABOVE THE "PACKAGE:" LINE BEFORE SAVING TO DRIVE !!
+
+HOW TO USE THIS FILE
+-----------------------------------------------------------------
+1. Save a copy in the package's Drive folder. Name it so it ends in
+   HANDOFF-MANIFEST.txt -- for example CA-PROVEN-HANDOFF-MANIFEST.txt
+   (use the package/folder name at the front).
+2. Fill in one block per ad. A block = one headline/body + the files that use it.
+   Two sample blocks are below: an IMAGE block (1X1 + 9X16) and a VIDEO block
+   (4X5 + 9X16). Delete the one you don't need, and replace every <placeholder>
+   and every sample filename.
+3. Filenames must match the file in the folder EXACTLY, including the extension.
+   Copy the name from Drive; don't retype it.
+4. Keep each label (PRIMARY TEXT, HEADLINE, DESCRIPTION, 1X1 IMAGE, 4X5 VIDEO ...)
+   in capitals on its own line, with the value on the line(s) below it.
+   Image blocks use 1X1 IMAGE / 9X16 IMAGE; video blocks use 4X5 VIDEO / 9X16 VIDEO.
+5. One Meta button for the whole file. If one ad needs a different button, put it
+   in its own package/file for now.
+6. Save it to Drive. The Ad Builder picks it up on the next hourly sync. Then check
+   the Package Health page (Facebook > Drive Package Health): if your package isn't
+   listed, or shows a problem, tell Steve. (A paste-and-check box is coming; when it
+   is live you'll paste the file there BEFORE saving.)
+-----------------------------------------------------------------
+
+PACKAGE: <Vertical> | <Package name>
+FINAL HANDOFF MANIFEST — LAUNCHER COPY MAP
+
+Purpose
+Copy and filenames for the Ad Builder, one block per ad.
+
+Meta Button
+Get Quote
+
+==================================================
+
+## PKG-01-IMG
+
+PRIMARY TEXT
+First line of the ad text.
+
+Second paragraph of the ad text.
+
+HEADLINE
+One-line headline
+
+DESCRIPTION
+Optional one-line description
+
+1X1 IMAGE
+PKG-01-Name-IMG-1x1.jpg
+
+9X16 IMAGE
+PKG-01-Name-IMG-9x16.jpg
+
+==================================================
+
+## PKG-02-V1
+
+PRIMARY TEXT
+Ad text for a video ad.
+
+HEADLINE
+Video headline
+
+DESCRIPTION
+Optional one-line description
+
+4X5 VIDEO
+PKG-02-Name-V1-4x5.mp4
+
+9X16 VIDEO
+PKG-02-Name-V1-9x16.mp4
+
+==================================================
