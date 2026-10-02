@@ -342,9 +342,10 @@ def send_offer_performance_monitor_down_alert(error: str) -> None:
 def send_drive_sync_alert(summary: str, detail: str = "") -> bool:
     """Post a loud alert for Drive creative sync failures.
 
-    Deliberately independent of SLACK_ALERT_CHANNEL and the #media-buys pause:
-    Steve approved #media-buys for this alert only, and prod's SLACK_ALERT_CHANNEL
-    is set-but-empty, which made every alert post to channel "" (channel_not_found).
+    Deliberately independent of SLACK_ALERT_CHANNEL and the #media-buys pause: it
+    goes to Steve's DM only (the team doesn't want these in shared channels), and
+    prod's SLACK_ALERT_CHANNEL is set-but-empty, which made every alert post to
+    channel "" (channel_not_found).
     """
     token = _token()
     if not token:
@@ -360,7 +361,7 @@ def send_drive_sync_alert(summary: str, detail: str = "") -> bool:
             SLACK_API_URL,
             headers={"Authorization": f"Bearer {token}"},
             json={
-                "channel": os.getenv("DRIVE_SYNC_ALERT_CHANNEL") or DEFAULT_CHANNEL,
+                "channel": os.getenv("DRIVE_SYNC_ALERT_CHANNEL") or STEVE_DM,
                 "text": text,
                 "unfurl_links": False,
                 "unfurl_media": False,

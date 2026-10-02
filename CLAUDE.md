@@ -21,7 +21,7 @@ This repo is worked on by both **Claude Code** and **OpenAI Codex**. Use the rig
 
 **Codex limitations:** No MCP servers (can't DM Golden, can't read Slack/Loom, can't control browser). For anything requiring those, switch to Claude Code.
 
-**Communication hard stop:** Do not send any message to `#media-buys` (`C08G7PJJ6NB`) unless Steven explicitly replaces this rule in a future request. **Exception (Steven, 2026-10-02):** the Google Drive creative-sync failure alert (`send_drive_sync_alert`) may post to `#media-buys`; every other alert stays paused.
+**Communication hard stop:** Do not send any message to `#media-buys` (`C08G7PJJ6NB`) unless Steven explicitly replaces this rule in a future request. **Drive sync alerts (Steven, 2026-10-02):** `send_drive_sync_alert` goes to Steven's Slack DM only — never to `#media-buys` or any team channel.
 
 ---
 
