@@ -2155,6 +2155,9 @@ def test_sync_once_isolates_a_bad_file_and_commits_successful_files():
         def scalar(self):
             return True
 
+        def first(self):
+            return None  # no saved retry ledger yet
+
     class FakeDB:
         committed = False
         rolled_back = False
@@ -3079,3 +3082,163 @@ def test_no_root_folder_configured_never_archives_as_outside():
     service._process_file(dict(_MEDIA), result)
 
     assert result["archived"] == 0 and result["skipped"] == 1
+
+
+class _BrandRows:
+    def __init__(self, names):
+        self._rows = [{"id": f"id-{i}", "name": n} for i, n in enumerate(names)]
+
+    def execute(self, *_a, **_k):
+        rows = self._rows
+
+        class _R:
+            def mappings(self):
+                return self
+
+            def all(self):
+                return rows
+
+        return _R()
+
+
+def _brand_matcher(*names):
+    service = DriveSyncService.__new__(DriveSyncService)
+    service.db = _BrandRows(names)
+    return service._match_brand_id
+
+
+def test_brand_match_exact_and_alias_and_typo():
+    match = _brand_matcher("Commercial Insurance", "Resource Help Online - RHO")
+    assert match("Commercial Insurance") == "id-0"
+    assert match("commercial   insurance") == "id-0"
+    assert match("RHO") == "id-1"
+    assert match("Resource Help Online") == "id-1"
+    assert match("Commercial Insurence") == "id-0"  # one-letter typo still lands
+
+
+def test_brand_match_refuses_lookalike_folders():
+    match = _brand_matcher("Commercial Insurance", "Resource Help Online - RHO")
+    assert match("Commercial Insurance - Legacy") is None
+    assert match("Commercial Auto") is None
+    assert match("Auto Insurance") is None
+    assert match("") is None
+
+
+def test_brand_match_refuses_ambiguous_fuzzy_and_ambiguous_alias():
+    assert _brand_matcher("Acme Home Services", "Acme Home Service")("Acme Home Servce") is None
+    assert _brand_matcher("Alpha - RHO", "Beta - RHO")("RHO") is None
+
+
+def test_ledger_save_failure_is_counted_as_a_run_error():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._retry_state = lambda: {"ledger": {"x": {}}, "load_ok": True}
+    service._ledger_flush = lambda: False
+    result = {"errors": 0}
+    service._ledger_flush_or_flag(result)
+    assert result["errors"] == 1 and result["ledger_unsaved"] is True
+
+    ok = {"errors": 0}
+    service._ledger_flush = lambda: True
+    service._ledger_flush_or_flag(ok)
+    assert ok["errors"] == 0
+
+
+def test_shortcuts_are_counted_and_named_not_silently_skipped():
+    service = DriveSyncService.__new__(DriveSyncService)
+    result = {"skipped": 0}
+    service._process_file(
+        {"id": "s1", "name": "Link to hero.mp4", "mimeType": "application/vnd.google-apps.shortcut"}, result,
+    )
+    assert result["shortcuts_skipped"] == 1 and result["shortcut_names"] == ["Link to hero.mp4"]
+    assert result["skipped"] == 1
+
+
+def test_changed_folder_walk_raises_on_lookup_failure_but_not_when_outside_library():
+    from app.services.drive_sync_service import FolderLookupFailed
+
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_chain_to_root = lambda folder_id: None
+    service._chain_lookup_failures = {"f-fail"}
+    with pytest.raises(FolderLookupFailed):
+        service._changed_folder_walk(None, "f-fail")
+    assert service._changed_folder_walk(None, "f-elsewhere") == []
+
+
+def _ghost_fixture(candidates, previous):
+    from googleapiclient.errors import HttpError
+
+    class _Resp:
+        def __init__(self, status):
+            self.status = status
+            self.reason = "x"
+
+    class _Files:
+        def get(self, fileId, **_k):
+            class _Call:
+                def execute(self_inner):
+                    if fileId == "trashed":
+                        return {"id": fileId, "trashed": True}
+                    if fileId == "live":
+                        return {"id": fileId, "trashed": False}
+                    if fileId == "flaky":
+                        raise HttpError(_Resp(500), b"{}")
+                    raise HttpError(_Resp(404), b'{"error": {"errors": [{"reason": "notFound"}]}}')
+
+            return _Call()
+
+    class _Drive:
+        def files(self):
+            return _Files()
+
+    saved = {}
+
+    class _DB:
+        def execute(self, stmt, params=None):
+            sql = str(stmt)
+
+            class _R:
+                def all(self_inner):
+                    return [(c,) for c in candidates]
+
+                def first(self_inner):
+                    import json as _j
+                    return (_j.dumps(previous),)
+
+            if "INSERT INTO drive_sync_state" in sql:
+                saved["value"] = params["v"]
+            return _R()
+
+    archived = []
+    service = DriveSyncService.__new__(DriveSyncService)
+    service.db = _DB()
+    service._archive_by_drive_id_isolated = lambda fid, _r: archived.append(fid) or 1
+    return service, _Drive(), archived, saved
+
+
+def test_ghost_sweep_archives_trashed_now_but_404_only_on_second_sighting():
+    import json
+    service, drive, archived, saved = _ghost_fixture(["seen", "trashed", "live", "gone", "flaky"], previous=[])
+    result = {"archived": 0}
+    service._sweep_ghost_rows(drive, {"seen"}, result)
+    assert archived == ["trashed"]  # 404 'gone' is only a first sighting
+    assert json.loads(saved["value"]) == ["gone"]
+
+    service, drive, archived, saved = _ghost_fixture(["seen", "trashed", "live", "gone", "flaky"], previous=["gone"])
+    result = {"archived": 0}
+    service._sweep_ghost_rows(drive, {"seen"}, result)
+    assert sorted(archived) == ["gone", "trashed"]
+    assert result["ghosts_archived"] == 2 and json.loads(saved["value"]) == []
+
+
+def test_ghost_sweep_mass_event_never_archives_on_404():
+    ids = [f"gone{i}" for i in range(40)]
+    service, drive, archived, saved = _ghost_fixture(ids, previous=ids)
+    result = {"archived": 0}
+    service._sweep_ghost_rows(drive, set(), result)
+    assert archived == [] and result["ghost_mass_event"] is True
+
+
+def test_brand_match_handles_parenthesised_alias():
+    match = _brand_matcher("Resource Help Online (RHO)", "Commercial Insurance")
+    assert match("Resource Help Online") == "id-0"
+    assert match("RHO") == "id-0"

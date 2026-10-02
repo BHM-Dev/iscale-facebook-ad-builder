@@ -80,6 +80,10 @@ def _drive_error_reason(exc: HttpError) -> str:
     return ""
 
 
+class FolderLookupFailed(RuntimeError):
+    """Drive would not tell us where a changed folder lives; retry it, don't drop it."""
+
+
 def is_permanent_drive_error(exc: HttpError) -> bool:
     """True only when Drive is telling us the file is gone or off-limits for good.
 
@@ -313,7 +317,7 @@ class DriveSyncService:
                 for file_meta in scoped_files:
                     result["processed"] += 1
                     self._process_file_isolated(file_meta, result)
-                self._ledger_flush()
+                self._ledger_flush_or_flag(result)
                 result = self._attach_copy_health(result)
                 self.db.commit()
                 return result
@@ -365,7 +369,7 @@ class DriveSyncService:
                         final_token = response.get("newStartPageToken") or final_token
                     self._set_state_token(final_token)
                     result["next_page_token_saved"] = True
-                self._ledger_flush()
+                self._ledger_flush_or_flag(result)
                 result = self._attach_copy_health(result)
                 self.db.commit()
                 return result
@@ -397,9 +401,17 @@ class DriveSyncService:
                         # every child already inside it. Discover only this
                         # changed subtree so adding a package folder does not
                         # turn an incremental sync back into a library walk.
-                        for child in self._changed_folder_walk(drive, file_meta.get("id")):
+                        try:
+                            children = self._changed_folder_walk(drive, file_meta.get("id"))
+                        except FolderLookupFailed as exc:
+                            result["errors"] += 1
+                            self._ledger_note_failure(file_meta.get("id"), file_meta.get("name"), exc, kind="folder")
+                            self._retry_state()["processed"].add(file_meta.get("id"))
+                            continue
+                        for child in children:
                             result["processed"] += 1
                             self._process_file_isolated(child, result)
+                        self._ledger_resolve(file_meta.get("id"))
                         continue
                     self._process_file_isolated(file_meta, result)
 
@@ -412,7 +424,7 @@ class DriveSyncService:
                 self._retry_failed_files(drive, result)
             except Exception as exc:
                 logger.warning("Drive retry pass failed; continuing sync: %s", exc)
-            self._ledger_flush()
+            self._ledger_flush_or_flag(result)
             result = self._attach_copy_health(result)
             self.db.commit()
             return result
@@ -460,8 +472,10 @@ class DriveSyncService:
             known = {
                 row[0] for row in self.db.execute(text("SELECT drive_file_id FROM drive_assets")).all()
             }
+            walked = self._initial_folder_walk(drive)
+            walked_ids = {file_meta.get("id") for file_meta in walked}
             missing = [
-                file_meta for file_meta in self._initial_folder_walk(drive)
+                file_meta for file_meta in walked
                 if file_meta.get("id") not in known
                 and self._is_supported_media(file_meta.get("mimeType") or "", file_meta.get("name", ""))
             ]
@@ -470,13 +484,85 @@ class DriveSyncService:
             for file_meta in missing[:max_import]:
                 result["processed"] += 1
                 self._process_file_isolated(file_meta, result)
-            self._ledger_flush()
+            self._sweep_ghost_rows(drive, walked_ids, result)
+            self._ledger_flush_or_flag(result)
             self.db.commit()
             return result
         except Exception:
             self.db.rollback()
             logger.exception("Drive reconcile failed")
             raise
+
+    GHOST_SWEEP_CAP = 25
+    GHOST_STATE_KEY = "ghost_sweep_pending"
+
+    def _sweep_ghost_rows(self, drive, walked_ids: set, result: Dict[str, Any]) -> None:
+        """Retire active library rows whose Drive file is gone.
+
+        The other half of reconcile: a row the walk did not see inflates the library count and
+        can mask a real missing file in the same package. Each candidate is re-read from Drive
+        before anything changes, and the bar is deliberately high because Drive answers 404 both
+        for "deleted" and for "the service account lost access to this folder":
+          - trashed=true archives immediately (Drive says so explicitly);
+          - a 404/403 archives only if the same file was ALSO a ghost on the previous run;
+          - if a large share of the library looks like ghosts, nothing is archived on a 404 and the
+            run says so (that pattern is a permissions change, not 25 coincidental deletions).
+        """
+        rows = self.db.execute(
+            text("SELECT drive_file_id FROM drive_assets WHERE archived = FALSE ORDER BY synced_at ASC")
+        ).all()
+        candidates = [row[0] for row in rows if row[0] and row[0] not in walked_ids]
+        result["ghost_candidates"] = len(candidates)
+
+        previous: set = set()
+        try:
+            row = self.db.execute(
+                text("SELECT value FROM drive_sync_state WHERE key = :k"), {"k": self.GHOST_STATE_KEY},
+            ).first()
+            previous = set(json.loads(row[0])) if row and row[0] else set()
+        except Exception:
+            logger.warning("Ghost sweep could not read its pending list; treating all as first sightings", exc_info=True)
+
+        # Rows awaiting their second sighting go first, so live-but-outside rows can't starve them.
+        candidates.sort(key=lambda fid: fid not in previous)
+        mass_event = len(candidates) > self.GHOST_SWEEP_CAP
+        if mass_event:
+            result["ghost_mass_event"] = True
+        still_pending: set = set()
+        for drive_file_id in candidates[: self.GHOST_SWEEP_CAP * 4]:
+            try:
+                meta = drive.files().get(
+                    fileId=drive_file_id, fields="id,trashed", supportsAllDrives=True,
+                ).execute()
+            except HttpError as exc:
+                if is_permanent_drive_error(exc):
+                    if mass_event or drive_file_id not in previous:
+                        still_pending.add(drive_file_id)  # confirm on the next run
+                    elif result.get("ghosts_archived", 0) < self.GHOST_SWEEP_CAP:
+                        retired = self._archive_by_drive_id_isolated(drive_file_id, result)
+                        result["archived"] += retired
+                        result["ghosts_archived"] = result.get("ghosts_archived", 0) + retired
+                continue
+            except Exception as exc:
+                logger.warning("Ghost sweep could not check %s: %s", drive_file_id, exc)
+                continue
+            if meta.get("trashed") and result.get("ghosts_archived", 0) < self.GHOST_SWEEP_CAP:
+                retired = self._archive_by_drive_id_isolated(drive_file_id, result)
+                result["archived"] += retired
+                result["ghosts_archived"] = result.get("ghosts_archived", 0) + retired
+        result["ghosts_pending"] = len(still_pending)
+        try:
+            self.db.execute(
+                text(
+                    """
+                    INSERT INTO drive_sync_state (key, value, updated_at) VALUES (:k, :v, NOW())
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+                    """
+                ),
+                {"k": self.GHOST_STATE_KEY, "v": json.dumps(sorted(still_pending))},
+            )
+        except Exception:
+            logger.warning("Ghost sweep could not save its pending list", exc_info=True)
 
     def _retry_state(self) -> Dict[str, Any]:
         return self.__dict__.setdefault(
@@ -549,6 +635,22 @@ class DriveSyncService:
             return False
         return True
 
+    def _ledger_flush_or_flag(self, result: Dict[str, Any]) -> None:
+        """Save the retry ledger; if that fails, say so in the run result rather than only the log.
+
+        An unsaved ledger means this run's failures will not be retried, which is exactly the
+        silent-loss path the ledger exists to close, so it counts as an error on the run.
+        """
+        if self._ledger_flush():
+            return
+        state = self._retry_state()
+        if state.get("ledger") is None:
+            return  # nothing was loaded, so nothing was lost
+        if state.get("load_ok") is False and not state.get("ledger"):
+            return  # unreadable ledger and this run noted nothing, so nothing was lost
+        result["errors"] = result.get("errors", 0) + 1
+        result["ledger_unsaved"] = True
+
     def _ledger_note_failure(self, drive_file_id: Optional[str], name: Optional[str], error: Any, kind: str) -> None:
         if not drive_file_id:
             return
@@ -597,6 +699,11 @@ class DriveSyncService:
         current_code = os.getenv("GIT_COMMIT", "unknown")
         processed = self._retry_state()["processed"]
         retried = recovered = 0
+        # Transient lookup failures were remembered for this run only; forget them so a retry
+        # asks Drive again instead of replaying the same cached failure.
+        for failed_id in list(self.__dict__.get("_chain_lookup_failures", set())):
+            self._path_cache.pop(failed_id, None)
+        self.__dict__.get("_chain_lookup_failures", set()).clear()
 
         def count_attempt(entry: Dict[str, Any], error: Any = None) -> None:
             entry["attempts"] = int(entry.get("attempts") or 0) + 1
@@ -634,6 +741,18 @@ class DriveSyncService:
             if file_meta.get("trashed"):
                 result["archived"] += self._archive_by_drive_id_isolated(drive_file_id, result)
                 ledger.pop(drive_file_id, None)
+                continue
+            if file_meta.get("mimeType") == "application/vnd.google-apps.folder":
+                try:
+                    children = self._changed_folder_walk(drive, drive_file_id)
+                except FolderLookupFailed as exc:
+                    count_attempt(entry, exc)
+                    continue
+                for child in children:
+                    result["processed"] += 1
+                    self._process_file_isolated(child, result)
+                ledger.pop(drive_file_id, None)
+                recovered += 1
                 continue
             was_copy_kind = entry.get("kind") == "copy"
             attempts_before = int(entry.get("attempts") or 0)
@@ -1361,7 +1480,15 @@ class DriveSyncService:
         scoped_brand_name: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """List files below one changed folder without scanning the sync root."""
-        if not folder_id or (require_root and not self._folder_chain_to_root(folder_id)):
+        if not folder_id:
+            return []
+        if require_root and not self._folder_chain_to_root(folder_id):
+            if folder_id in self.__dict__.get("_chain_lookup_failures", set()):
+                # The lookup FAILED (as opposed to the folder living outside the library). The
+                # change feed reports this folder once, so returning [] would hide every file in it.
+                raise FolderLookupFailed(
+                    "Could not look up this folder's location in Drive; it will be retried automatically"
+                )
             return []
         files: List[Dict[str, Any]] = []
         queue = [(folder_id, [])]
@@ -1396,6 +1523,16 @@ class DriveSyncService:
     def _process_file(self, file_meta: Dict[str, Any], result: Dict[str, Any]) -> None:
         drive_file_id = file_meta.get("id")
         mime_type = file_meta.get("mimeType") or ""
+        if mime_type == "application/vnd.google-apps.shortcut":
+            # A shortcut points at a file that lives somewhere else; indexing it would double-count
+            # or pull media from outside the library. Skipping silently is how a creative "goes
+            # missing", so count it and name it in the run log instead.
+            result["shortcuts_skipped"] = result.get("shortcuts_skipped", 0) + 1
+            names = result.setdefault("shortcut_names", [])
+            if file_meta.get("name") and file_meta["name"] not in names and len(names) < 5:
+                names.append(file_meta["name"])
+            result["skipped"] += 1
+            return
         if not drive_file_id or not self._is_supported_media(mime_type, file_meta.get("name", "")):
             if drive_file_id and self._is_text_file(mime_type, file_meta.get("name", "")):
                 # A manifest/copy document can arrive after its media files.
@@ -1815,20 +1952,49 @@ class DriveSyncService:
         self.__dict__.setdefault("_chain_outside_library", set()).add(folder_id)
         return None
 
+    # Fuzzy matching is only a typo net. A folder like "Commercial Insurance - Legacy" scores
+    # ~0.8 against "Commercial Insurance" and must NOT be attached to it, so the bar is high and
+    # the winner has to clearly beat the runner-up. Anything ambiguous comes back unmatched, which
+    # the sync-run log names, rather than silently filing media under the wrong brand.
+    BRAND_FUZZY_MIN_SCORE = 0.90
+    BRAND_FUZZY_MIN_MARGIN = 0.08
+
     def _match_brand_id(self, brand_folder: str) -> Optional[str]:
         rows = self.db.execute(text("SELECT id, name FROM brands")).mappings().all()
         normalized_folder = self._normalize_name(brand_folder)
-        best_id = None
-        best_score = 0.0
+        if not normalized_folder:
+            return None
+
+        # 1. Exact normalized match on the full brand name.
         for row in rows:
-            normalized_brand = self._normalize_name(row["name"])
-            if normalized_folder == normalized_brand:
+            if normalized_folder == self._normalize_name(row["name"]):
                 return row["id"]
-            score = SequenceMatcher(None, normalized_folder, normalized_brand).ratio()
-            if score > best_score:
-                best_id = row["id"]
-                best_score = score
-        return best_id if best_score >= 0.72 else None
+
+        # 2. Exact match on a name part: "Resource Help Online - RHO" also answers to "RHO".
+        alias_hits = {
+            row["id"]
+            for row in rows
+            for part in re.split(r"\s+[-|\u2013\u2014]\s+|\s*\|\s*|\s*[()]\s*", row["name"] or "")
+            if self._normalize_name(part) == normalized_folder
+        }
+        if len(alias_hits) == 1:
+            return next(iter(alias_hits))
+        if len(alias_hits) > 1:
+            return None
+
+        # 3. Typo-tolerant fallback, only when there is a single clear winner.
+        scored = sorted(
+            (
+                (SequenceMatcher(None, normalized_folder, self._normalize_name(row["name"])).ratio(), row["id"])
+                for row in rows
+            ),
+            reverse=True,
+        )
+        if not scored or scored[0][0] < self.BRAND_FUZZY_MIN_SCORE:
+            return None
+        if len(scored) > 1 and scored[0][0] - scored[1][0] < self.BRAND_FUZZY_MIN_MARGIN:
+            return None
+        return scored[0][1]
 
     def _is_supported_media(self, mime_type: str, file_name: str) -> bool:
         if mime_type.startswith(SUPPORTED_PREFIXES):

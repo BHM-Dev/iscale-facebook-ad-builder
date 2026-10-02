@@ -25,11 +25,33 @@ _COUNT_KEYS = ("processed", "created", "updated", "archived", "errors")
 def _write_row(db, kind: str, started_at: datetime, status: str, result: Optional[dict], error: Optional[str]) -> None:
     try:
         counts = {key: int((result or {}).get(key) or 0) for key in _COUNT_KEYS}
-        unmatched = int((result or {}).get("unmatched_brand") or 0)
-        if unmatched and not error:
-            # Not a failure, but files were skipped because their top folder matches no brand.
-            names = ", ".join((result or {}).get("unmatched_brand_names") or [])
-            error = f"{unmatched} file(s) skipped: folder matches no brand" + (f" ({names})" if names else "")
+        if not error:
+            # Informational, not a failure: the run succeeded but skipped things a human should
+            # know about. Prefixed "Note:" so an ok run's summary is never mistaken for an error.
+            notes = []
+            unmatched = int((result or {}).get("unmatched_brand") or 0)
+            if unmatched:
+                names = ", ".join((result or {}).get("unmatched_brand_names") or [])
+                notes.append(f"{unmatched} file(s) skipped: folder matches no brand" + (f" ({names})" if names else ""))
+            shortcuts = int((result or {}).get("shortcuts_skipped") or 0)
+            if shortcuts:
+                names = ", ".join((result or {}).get("shortcut_names") or [])
+                notes.append(
+                    f"{shortcuts} Drive shortcut(s) to a file or folder ignored; put the real file (not a shortcut) in the package folder"
+                    + (f" ({names})" if names else "")
+                )
+            ghosts = int((result or {}).get("ghosts_archived") or 0)
+            if ghosts:
+                notes.append(f"{ghosts} library row(s) retired because their Drive file is gone")
+            if (result or {}).get("ghost_mass_event"):
+                notes.append(
+                    f"{(result or {}).get('ghost_candidates')} library rows are missing from the Drive walk; "
+                    "not archived (looks like a Drive sharing change, check the service account's access)"
+                )
+            if (result or {}).get("ledger_unsaved"):
+                notes.append("the retry list could not be saved, so this run's failures may not be retried")
+            if notes:
+                error = "Note: " + "; ".join(notes)
         run_db = Session(bind=db.get_bind())
         try:
             run_db.execute(

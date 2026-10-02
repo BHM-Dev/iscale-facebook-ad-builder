@@ -394,7 +394,9 @@ async def startup_event():
                     load_state=load_state,
                     save_state=save_state,
                     heal=heal_package,
-                    alert=lambda summary, detail: slack_service.send_drive_sync_alert(summary, detail),
+                    alert=lambda summary, detail: slack_service.send_drive_sync_alert(
+                        summary, detail, headline="Google Drive library is out of step with Drive"
+                    ),
                 )
                 if outcome["gaps"]:
                     print(f"🩹 Drive drift guard: {outcome['gaps']} package(s) with gaps, re-synced {len(outcome['healed'])}, {outcome['persistent']} persistent")
