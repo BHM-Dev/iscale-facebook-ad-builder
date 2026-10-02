@@ -196,6 +196,16 @@ def _normalize_package_path(path: str) -> tuple[str, ...]:
     )
 
 
+# Mirrors frontend/src/lib/drivePackageHealth.js (isArchivedPath): a path SEGMENT that
+# ends in "legacy images" / "archive". Retired creative is deliberately not kept in
+# the picker, so it must not count as "missing".
+_ARCHIVE_SEGMENT_RE = re.compile(r"(?:^|[\s|-])(?:legacy images|archive|archived)$", re.IGNORECASE)
+
+
+def _is_archived_package_path(path: str) -> bool:
+    return any(_ARCHIVE_SEGMENT_RE.search(segment.strip()) for segment in str(path or "").split(" / "))
+
+
 def _package_key(package_path: str) -> tuple[str, ...]:
     """Package path as stored in ``drive_assets.folder_path`` terms.
 
@@ -404,21 +414,30 @@ def build_package_health_report(service: DriveSyncService) -> Dict[str, Any]:
     library_counts = _library_counts_by_package(service.db, package_rows) if getattr(service, "db", None) is not None else {
         package["folder_id"]: 0 for package in package_rows
     }
-    drive_media_total = sum(package["media_count"] for package in package_rows)
-    library_media_total = sum(library_counts.values())
+    # Totals cover live packages only, so "In Drive" and "In the picker" are comparable.
+    # Archive folders are intentionally not imported and are reported separately below.
+    live_rows = [package for package in package_rows if not _is_archived_package_path(package["path"])]
+    drive_media_total = sum(package["media_count"] for package in live_rows)
+    library_media_total = sum(library_counts.get(package["folder_id"], 0) for package in live_rows)
     missing_packages = []
+    archive_missing_total = 0
     for package in result_packages:
         package["library_count"] = library_counts.get(package["folder_id"], 0)
         missing_count = max(package["media_count"] - package["library_count"], 0)
-        if missing_count:
-            missing_packages.append({
-                "folder_id": package["folder_id"],
-                "path": package["path"],
-                "media_count": package["media_count"],
-                "library_count": package["library_count"],
-                "missing_count": missing_count,
-            })
+        if not missing_count:
+            continue
+        if _is_archived_package_path(package["path"]):
+            archive_missing_total += missing_count
+            continue
+        missing_packages.append({
+            "folder_id": package["folder_id"],
+            "path": package["path"],
+            "media_count": package["media_count"],
+            "library_count": package["library_count"],
+            "missing_count": missing_count,
+        })
     missing_packages.sort(key=lambda package: (-package["missing_count"], package["path"].casefold()))
+    missing_total = sum(package["missing_count"] for package in missing_packages)
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -426,8 +445,10 @@ def build_package_health_report(service: DriveSyncService) -> Dict[str, Any]:
         "collisions": collisions,
         "drive_media_total": drive_media_total,
         "library_media_total": library_media_total,
-        "missing_total": sum(package["missing_count"] for package in missing_packages),
+        "missing_total": missing_total,
         "missing_packages": missing_packages[:10],
+        # Files in retired archive folders that are not in the picker -- expected, shown for completeness.
+        "archive_not_imported_total": archive_missing_total,
     }
 
 

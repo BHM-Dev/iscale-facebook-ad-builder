@@ -347,3 +347,12 @@ def test_same_named_packages_in_two_brands_do_not_raise_false_missing():
     db = _LibraryDb(["Category/CA-PROVEN/1x1 Feed Images"])
 
     assert _library_counts_by_package(db, packages) == {"a": 1, "b": 1}
+
+
+def test_archive_folders_are_recognised_but_live_relaunch_packages_are_not():
+    from app.api.v1.drive_health import _is_archived_package_path
+
+    assert _is_archived_package_path("Commercial Insurance / Commercial Insurance - LEGACY IMAGES / Winery / Final Creatives")
+    assert _is_archived_package_path("Brand / Old Stuff - Archive / Pkg")
+    assert not _is_archived_package_path("Commercial Insurance / Barber Shops | Legacy Control Relaunch")
+    assert not _is_archived_package_path("Commercial Insurance / Commercial Van Insurance / CA-PROVEN | Commercial Auto Video + Static")
