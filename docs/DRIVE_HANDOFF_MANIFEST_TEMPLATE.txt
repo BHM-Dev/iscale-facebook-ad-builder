@@ -17,7 +17,7 @@ HOW TO USE THIS FILE
 5. One Meta button for the whole file. If one ad needs a different button, put it
    in its own package/file for now.
 6. Save it to Drive. The Ad Builder picks it up on the next hourly sync. Then check
-   the Package Health page (Facebook > Drive Package Health): if your package isn't
+   the "Package health" button in the Drive library picker: if your package isn't
    listed, or shows a problem, tell Steve. (A paste-and-check box is coming; when it
    is live you'll paste the file there BEFORE saving.)
 -----------------------------------------------------------------
