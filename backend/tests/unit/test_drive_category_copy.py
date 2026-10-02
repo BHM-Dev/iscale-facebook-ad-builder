@@ -1,3 +1,6 @@
+import pytest
+
+import app.services.drive_sync_service as drive_sync_module
 from app.services.drive_sync_service import DriveSyncService, GOOGLE_DOC_MIME
 
 
@@ -2180,6 +2183,145 @@ def test_sync_once_isolates_a_bad_file_and_commits_successful_files():
     assert service.db.rolled_back is False
 
 
+def _sync_failure_service(monkeypatch, *, page_token, lock_acquired=True):
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._copy_packages_refreshed_in_sync = set()
+    service._validate_tables = lambda: None
+    service._client = lambda: object()
+    service._get_state_token = lambda: page_token
+    service._get_start_page_token = lambda drive: (_ for _ in ()).throw(RuntimeError("Drive unavailable"))
+    service._initial_folder_walk = lambda drive: (_ for _ in ()).throw(RuntimeError("Drive unavailable"))
+    service.blocked = []
+    service.alerts = []
+    service._persist_global_copy_block = lambda reason: service.blocked.append(reason)
+    monkeypatch.setattr(drive_sync_module.slack_service, "send_drive_sync_alert", lambda *args: service.alerts.append(args))
+
+    class Result:
+        def scalar(self):
+            return lock_acquired
+
+    class FakeDB:
+        def execute(self, *args, **kwargs):
+            return Result()
+        def rollback(self):
+            pass
+
+    service.db = FakeDB()
+    return service
+
+
+def test_full_walk_sync_failure_keeps_copy_matches_blocked_after_rollback(monkeypatch):
+    service = _sync_failure_service(monkeypatch, page_token=None)
+
+    with pytest.raises(RuntimeError, match="Drive unavailable"):
+        service.sync_once()
+
+    assert service.blocked == ["Global Drive sync failed before completion: Drive unavailable"]
+
+
+def test_backfill_sync_failure_keeps_copy_matches_blocked(monkeypatch):
+    service = _sync_failure_service(monkeypatch, page_token="tok")
+
+    with pytest.raises(RuntimeError, match="Drive unavailable"):
+        service.sync_once(backfill=True)
+
+    assert len(service.blocked) == 1
+
+
+def test_incremental_sync_failure_does_not_block_copy_matches(monkeypatch):
+    # Nothing would clear a block set here: unchanged copy docs are not revisited.
+    service = _sync_failure_service(monkeypatch, page_token="tok")
+    service._client = lambda: type("D", (), {"changes": lambda self: (_ for _ in ()).throw(RuntimeError("Drive unavailable"))})()
+
+    with pytest.raises(RuntimeError, match="Drive unavailable"):
+        service.sync_once()
+
+    assert service.blocked == []
+
+
+def test_folder_scoped_sync_failure_does_not_block_copy_matches(monkeypatch):
+    service = _sync_failure_service(monkeypatch, page_token=None)
+
+    service._changed_folder_walk = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("Drive unavailable"))
+
+    with pytest.raises(RuntimeError, match="Drive unavailable"):
+        service.sync_once(folder_id="folder-1")
+
+    assert service.blocked == []
+
+
+def test_concurrent_sync_409_does_not_block_copy_matches(monkeypatch):
+    service = _sync_failure_service(monkeypatch, page_token=None, lock_acquired=False)
+
+    with pytest.raises(drive_sync_module.HTTPException) as exc_info:
+        service.sync_once()
+
+    assert exc_info.value.status_code == 409
+    assert service.blocked == []
+    assert service.alerts == []  # lock contention is not a failure worth paging for
+
+
+def test_persist_global_copy_block_uses_independent_session_and_swallows_failure(monkeypatch):
+    events = []
+
+    class FakeSession:
+        def __init__(self, bind=None):
+            events.append(("session", bind))
+        def begin(self):
+            events.append("begin")
+            return self
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def close(self):
+            events.append("close")
+
+    class Boom(DriveSyncService):
+        def __init__(self, db):
+            self.db = db
+        def _mark_all_copy_assets_unverified(self, reason):
+            events.append(("mark", reason))
+            raise RuntimeError("secondary failure")
+
+    monkeypatch.setattr(drive_sync_module, "Session", FakeSession)
+    monkeypatch.setattr(drive_sync_module, "DriveSyncService", Boom)
+
+    service = DriveSyncService.__new__(DriveSyncService)
+    service.db = type("DB", (), {"get_bind": lambda self: "engine"})()
+
+    service._persist_global_copy_block("why")  # must not raise
+
+    assert events == [("session", "engine"), "begin", ("mark", "why"), "close"]
+
+
+def test_global_copy_refresh_failure_keeps_copy_matches_blocked_after_rollback():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._validate_tables = lambda: None
+    service._client = lambda: object()
+    service._mark_all_copy_assets_unverified = lambda reason: None
+    service._initial_folder_walk = lambda drive: (_ for _ in ()).throw(RuntimeError("listing failed"))
+    blocked = []
+    service._persist_global_copy_block = lambda reason: blocked.append(reason)
+
+    class Result:
+        def scalar(self):
+            return True
+
+    class FakeDB:
+        def execute(self, *args, **kwargs):
+            return Result()
+        def rollback(self):
+            pass
+
+    service.db = FakeDB()
+
+    with pytest.raises(RuntimeError, match="listing failed"):
+        service.refresh_copy_metadata()
+
+    assert blocked == ["Global Drive copy refresh failed before completion: listing failed"]
+
+
 def test_selected_media_refresh_failure_marks_media_and_package_unverified():
     """A source-less picker row must fail closed if its package cannot resolve."""
     service = DriveSyncService.__new__(DriveSyncService)
@@ -2503,3 +2645,105 @@ def test_incremental_sync_walks_only_a_new_folder_subtree():
     assert result["processed"] == 3  # folder event + its two discovered children
     assert result["errors"] == 0
     assert service._saved_token == "next-checkpoint"
+
+
+def test_copy_refresh_backfill_imports_only_new_supported_media_and_clears_caches():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._package_folder_cache = {"a": 1}
+    service._strategy_package_folder_cache = {"b": 2}
+    service._folder_metadata_cache = {"c": 3}
+    service._list_folder_subtree = lambda folder: [
+        {"id": "known", "name": "known-1x1.png", "mimeType": "image/png"},
+        {"id": "new", "name": "new-9x16.png", "mimeType": "image/png"},
+        {"id": "doc", "name": "copy.txt", "mimeType": "text/plain"},
+    ]
+    service._is_supported_media = lambda mime, name: mime.startswith("image/")
+    imported = []
+    service._process_file_isolated = lambda file_meta, result: imported.append(file_meta["id"])
+
+    class Result:
+        def all(self):
+            return [("known",)]
+
+    statements = []
+
+    class FakeDB:
+        def execute(self, statement, *args, **kwargs):
+            statements.append(str(statement))
+            return Result()
+
+    service.db = FakeDB()
+    result = {"processed": 0}
+
+    service._backfill_package_media_for_copy_refresh("pkg", result)
+
+    # Archived rows must count as known, or they are re-imported every refresh.
+    assert "archived" not in statements[0].lower()
+
+    assert imported == ["new"]
+    assert result["processed"] == 1
+    assert service._package_folder_cache == {}
+    assert service._strategy_package_folder_cache == {}
+    assert service._folder_metadata_cache == {}
+
+
+def test_reconcile_imports_only_media_missing_from_the_library():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._copy_packages_refreshed_in_sync = set()
+    service._validate_tables = lambda: None
+    service._client = lambda: object()
+    service._initial_folder_walk = lambda drive: [
+        {"id": "in-db", "name": "a.png", "mimeType": "image/png"},
+        {"id": "archived-in-db", "name": "b.png", "mimeType": "image/png"},
+        {"id": "gone", "name": "c.png", "mimeType": "image/png"},
+        {"id": "doc", "name": "copy.txt", "mimeType": "text/plain"},
+    ]
+    service._is_supported_media = lambda mime, name: mime.startswith("image/")
+    imported = []
+    service._process_file_isolated = lambda file_meta, result: imported.append(file_meta["id"])
+    service._ledger_flush = lambda: None
+
+    class Result:
+        def __init__(self, rows=None, scalar=None):
+            self.rows, self._scalar = rows, scalar
+        def all(self):
+            return self.rows
+        def scalar(self):
+            return self._scalar
+
+    class FakeDB:
+        committed = False
+        def execute(self, statement, *args, **kwargs):
+            if "pg_try_advisory_xact_lock" in str(statement):
+                return Result(scalar=True)
+            return Result(rows=[("in-db",), ("archived-in-db",)])
+        def commit(self):
+            self.committed = True
+        def rollback(self):
+            pass
+
+    service.db = FakeDB()
+
+    result = service.reconcile_missing_media()
+
+    assert imported == ["gone"]
+    assert result["missing"] == 1 and result["ran"] is True
+    assert service.db.committed is True
+
+
+def test_reconcile_does_nothing_when_another_sync_holds_the_lock():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._copy_packages_refreshed_in_sync = set()
+    service._validate_tables = lambda: None
+
+    class Result:
+        def scalar(self):
+            return False
+
+    class FakeDB:
+        def execute(self, *args, **kwargs):
+            return Result()
+
+    service.db = FakeDB()
+
+    assert service.reconcile_missing_media()["ran"] is False

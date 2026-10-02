@@ -230,6 +230,7 @@ class DriveSyncService:
             "unverified": 0,
             "next_page_token_saved": False,
         }
+        global_sync_started = False
 
         try:
             self._validate_tables()
@@ -247,6 +248,13 @@ class DriveSyncService:
                 )
             drive = self._client()
             page_token = self._get_state_token()
+            # A failed FULL walk (first sync, token reset, or backfill) can leave
+            # the database with a partial view of Drive, so keep existing copy
+            # matches blocked until a complete sync or copy refresh succeeds.
+            # An incremental sync rolls back before its page token is saved and
+            # simply re-reads the same changes next run, so a transient Drive
+            # error there must not block launches — nothing would clear it.
+            global_sync_started = not folder_id and bool(backfill or not page_token)
             if folder_id:
                 # A newly-created shared-drive subtree can be listable while
                 # Drive still rejects parent-chain reads for its children.
@@ -372,8 +380,63 @@ class DriveSyncService:
             return result
         except Exception as exc:
             self.db.rollback()
+            if global_sync_started:
+                self._persist_global_copy_block(
+                    f"Global Drive sync failed before completion: {exc}"
+                )
+            # "Already running" is contention, not a failure: a long reconcile or a
+            # manual refresh legitimately holds the lock. Never page for it.
+            if isinstance(exc, HTTPException) and exc.status_code == 409:
+                raise
             logger.exception("Drive creative sync failed")
             slack_service.send_drive_sync_alert(type(exc).__name__, str(exc))
+            raise
+
+    def reconcile_missing_media(self, max_import: int = 100) -> Dict[str, Any]:
+        """Import Drive media that exists in the library but has no database row.
+
+        The incremental change feed reports a file once. If that report is ever
+        lost or mishandled, the file is invisible in the picker forever (CA-PROVEN,
+        2026-10-02: 36 files in Drive, 0 in the database, token long past them).
+        This walks the library and imports only what is missing. Rows already in
+        the table -- including archived ones -- are left alone, so deliberately
+        archived media is never resurrected.
+        """
+        result = {
+            "processed": 0, "created": 0, "updated": 0, "skipped": 0, "archived": 0,
+            "unmatched_brand": 0, "errors": 0, "unverified": 0,
+            "missing": 0, "deferred": 0, "ran": False,
+        }
+        try:
+            self._validate_tables()
+            self._copy_packages_refreshed_in_sync.clear()
+            acquired = self.db.execute(
+                text("SELECT pg_try_advisory_xact_lock(hashtext(:lock_key))"),
+                {"lock_key": "drive_asset_sync"},
+            ).scalar()
+            if not acquired:
+                return result
+            result["ran"] = True
+            drive = self._client()
+            known = {
+                row[0] for row in self.db.execute(text("SELECT drive_file_id FROM drive_assets")).all()
+            }
+            missing = [
+                file_meta for file_meta in self._initial_folder_walk(drive)
+                if file_meta.get("id") not in known
+                and self._is_supported_media(file_meta.get("mimeType") or "", file_meta.get("name", ""))
+            ]
+            result["missing"] = len(missing)
+            result["deferred"] = max(len(missing) - max_import, 0)
+            for file_meta in missing[:max_import]:
+                result["processed"] += 1
+                self._process_file_isolated(file_meta, result)
+            self._ledger_flush()
+            self.db.commit()
+            return result
+        except Exception:
+            self.db.rollback()
+            logger.exception("Drive reconcile failed")
             raise
 
     def _retry_state(self) -> Dict[str, Any]:
@@ -682,6 +745,7 @@ class DriveSyncService:
             "unverified": 0,
             "next_page_token_saved": False,
         }
+        global_copy_block_started = False
         try:
             self._validate_tables()
             acquired = self.db.execute(
@@ -704,6 +768,7 @@ class DriveSyncService:
             self._mark_all_copy_assets_unverified(
                 "No current recognized Drive copy source was found during refresh"
             )
+            global_copy_block_started = True
             refreshed_package_folders = set()
             for file_meta in self._initial_folder_walk(drive):
                 if not self._is_text_file(file_meta.get("mimeType") or "", file_meta.get("name", "")):
@@ -770,6 +835,10 @@ class DriveSyncService:
             return result
         except Exception as exc:
             self.db.rollback()
+            if global_copy_block_started:
+                self._persist_global_copy_block(
+                    f"Global Drive copy refresh failed before completion: {exc}"
+                )
             logger.exception("Drive copy metadata refresh failed")
             raise
 
@@ -824,6 +893,7 @@ class DriveSyncService:
                         metadata_folder = self._metadata_folder_for_copy_document(file_meta)
                         if not metadata_folder:
                             raise RuntimeError("Could not resolve the Drive package for this copy source")
+                        self._backfill_package_media_for_copy_refresh(metadata_folder, result)
                         result["updated"] += self._refresh_folder_copy_metadata(
                             file_meta, metadata_folder=metadata_folder
                         )
@@ -918,6 +988,7 @@ class DriveSyncService:
                         if metadata_folder in refreshed_folders:
                             result["skipped"] += 1
                             continue
+                        self._backfill_package_media_for_copy_refresh(metadata_folder, result)
                         result["updated"] += self._refresh_folder_copy_metadata(
                             file_meta, metadata_folder=metadata_folder
                         )
@@ -2163,6 +2234,26 @@ class DriveSyncService:
             {"reason": str(reason)[:500]},
         )
 
+    def _persist_global_copy_block(self, reason: str) -> None:
+        """Persist a fail-closed marker after the caller transaction rolls back.
+
+        Global sync/refresh work can fail after this transaction has already
+        made partial changes. The caller must roll those changes back, but
+        doing so would also restore old verified copy tags. Use an independent
+        transaction so stale copy cannot remain launchable in another session.
+        """
+        emergency_db = Session(bind=self.db.get_bind())
+        try:
+            with emergency_db.begin():
+                emergency_service = DriveSyncService(emergency_db)
+                emergency_service._mark_all_copy_assets_unverified(reason)
+        except Exception:
+            # Preserve the original Drive error; this is a safety fallback and
+            # must not hide the failure that caused the refresh to abort.
+            logger.exception("Could not persist global Drive copy block")
+        finally:
+            emergency_db.close()
+
     def _mark_copy_source_unverified(self, source_drive_file_id: str, reason: str) -> None:
         """Revoke media tags attributed to a deleted/moved copy document."""
         result = self.db.execute(
@@ -2271,7 +2362,7 @@ class DriveSyncService:
                         q=f"'{current}' in parents and trashed = false",
                         spaces="drive",
                         pageToken=page_token,
-                        fields="nextPageToken,files(id,name,mimeType,modifiedTime)",
+                        fields="nextPageToken,files(id,name,mimeType,parents,modifiedTime,trashed,size,webViewLink)",
                         includeItemsFromAllDrives=True,
                         supportsAllDrives=True,
                     ).execute()
@@ -2298,6 +2389,49 @@ class DriveSyncService:
         if queue or len(collected) >= max_files:
             raise RuntimeError(f"Drive package subtree exceeded the safe {max_files}-file inspection limit")
         return collected
+
+    def _backfill_package_media_for_copy_refresh(
+        self,
+        package_folder: str,
+        result: Dict[str, Any],
+    ) -> None:
+        """Import newly added package media before applying refreshed copy tags.
+
+        The Creative picker tells Joel to refresh a repaired pair. A copy-only
+        refresh must therefore also discover a newly uploaded Feed or Stories
+        companion in that same package; otherwise the copy document can name a
+        real Drive file that has no local/R2 row and the pair remains broken
+        until an unrelated background sync happens.
+        """
+        # Archived rows count as known: they are deliberately hidden, and
+        # drive_file_id is unique, so re-importing one would only fail.
+        existing_ids = {
+            row[0]
+            for row in self.db.execute(text("SELECT drive_file_id FROM drive_assets")).all()
+        }
+        imported = 0
+        for file_meta in self._list_folder_subtree(package_folder):
+            drive_file_id = file_meta.get("id")
+            if not drive_file_id or drive_file_id in existing_ids:
+                continue
+            if not self._is_supported_media(file_meta.get("mimeType") or "", file_meta.get("name", "")):
+                continue
+            # A package holds a handful of placements; a large count means the
+            # wrong folder was resolved. Leave the rest to the daily reconcile
+            # rather than download a library inside a request-scoped refresh.
+            if imported >= 60:
+                break
+            imported += 1
+            result["processed"] += 1
+            self._process_file_isolated(file_meta, result)
+            existing_ids.add(drive_file_id)
+
+        # The package walk above may have populated path/metadata caches before
+        # the new media was imported. Force the authoritative copy walk below to
+        # see the just-imported row and its current Drive metadata.
+        self._package_folder_cache.clear()
+        self._strategy_package_folder_cache.clear()
+        self._folder_metadata_cache.clear()
 
     def _find_strategy_package_folder(self, file_meta: Dict[str, Any], max_depth: int = 4) -> Optional[str]:
         """Find the nearest ancestor containing a strategy-copy markdown document.

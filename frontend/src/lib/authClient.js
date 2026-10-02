@@ -1,3 +1,4 @@
+import { clearLaunchDraftSession } from './launchDraft';
 // Single source of truth for authenticated requests and token refresh.
 //
 // There used to be TWO independent implementations of this — one in
@@ -62,6 +63,7 @@ export const setTokens = ({ accessToken, refreshToken }) => {
 };
 
 export const clearTokens = () => {
+    clearLaunchDraftSession();
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
     sessionDead = false;

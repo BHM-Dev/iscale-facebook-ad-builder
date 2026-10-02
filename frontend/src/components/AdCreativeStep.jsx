@@ -176,14 +176,17 @@ const driveAssetMatchesQuery = (asset, query) => {
     return haystack.includes(query);
 };
 
-// Format filtering is GROUP-aware, never asset-aware. Filtering the raw assets
-// first and grouping the survivors splits a mixed-format pair (1x1 image +
-// 9x16 video) into a half-group that carries the SAME id as the merged pair --
-// the key is manifest:brand:package:copy_id, which has no format in it. Since
-// selection resolves ids through the unfiltered driveGroupById, selecting that
-// visible image half added the video half too and launched an ad the buyer
-// never saw (pre-push review, code-auditor: HIGH). Filtering whole groups keeps
-// an id meaning one fixed set of assets in every list.
+// Search at the group level, not the raw-file level. Feed and Stories members
+// of one manifest pair often have different placement folder names; filtering
+// raw assets first makes the visible tile look single-placement while the
+// selection id still resolves to the complete pair in driveGroupById.
+const driveGroupMatchesQuery = (group, query) => (
+    !query || group.assets.some(asset => driveAssetMatchesQuery(asset, query))
+);
+
+// Format filtering is GROUP-aware, never asset-aware. Filtering whole groups
+// keeps an id meaning one fixed set of assets in every list, including mixed
+// placement pairs whose members have different filenames or folder paths.
 // The picker was a single 964-tile grid with no structure -- "ads upon ads".
 // Drive's own folders are not decoration: the package folder is what copy docs
 // are keyed to, what package_folder_id pairs on, and what Drive Package Health
@@ -630,8 +633,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
             return buildDriveAssetGroups(driveAssets).filter(group => group.id === driveRepairPairId);
         }
         const query = driveSearchTerm.trim().toLowerCase();
-        const searched = driveAssets.filter(asset => driveAssetMatchesQuery(asset, query));
-        return filterGroupsByFormat(buildDriveAssetGroups(searched), driveFormatFilter);
+        const searched = buildDriveAssetGroups(driveAssets).filter(group => driveGroupMatchesQuery(group, query));
+        return filterGroupsByFormat(searched, driveFormatFilter);
     }, [driveAssets, driveSearchTerm, driveFormatFilter, driveRepairPairId]);
 
     // The repair path scopes the grid to a single pair and must win over the
@@ -978,6 +981,12 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
         () => allDriveAssetGroups.filter(isDriveGroupSelectionBlocked).length,
         [allDriveAssetGroups],
     );
+    // Distinct from "blocked" in general: these were verified once and then pulled
+    // back by a Drive sync/refresh that did not finish. They come back with Refresh copy.
+    const unverifiedCopyDriveGroupCount = useMemo(
+        () => allDriveAssetGroups.filter(group => group.copyRefreshUnverified).length,
+        [allDriveAssetGroups],
+    );
     const mixedDriveCopyMatches = useMemo(() => {
         const matchedPairs = driveAssetGroups.filter(group => group.isPair && hasCompleteCopy(group.copy || {})).length;
         const unmatchedPairs = driveAssetGroups.filter(group => group.isPair && !hasCompleteCopy(group.copy || {})).length;
@@ -1135,7 +1144,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
     // scoping fixed twice already.
     const driveCounts = useMemo(() => {
         const query = driveSearchTerm.trim().toLowerCase();
-        const searched = buildDriveAssetGroups(driveAssets.filter(asset => driveAssetMatchesQuery(asset, query)));
+        const searched = buildDriveAssetGroups(driveAssets).filter(group => driveGroupMatchesQuery(group, query));
         return {
             total: searched.length,
             image: filterGroupsByFormat(searched, 'image').length,
@@ -1520,7 +1529,13 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
             // fields. Assign the explicit Creative-step CTA and brand's single
             // default URL to that individual row at add time (never as a hidden
             // Bulk fallback), so it remains visible/editable and can advance.
-            const groupCta = normalizeMetaCta(group.cta) || normalizeMetaCta(creativeData.cta);
+            // Preserve an explicitly supplied but unsupported Drive CTA as
+            // blank so invalidCtaRawFor can stop launch with the actual value.
+            // Only use the Creative-step default when Drive supplied no CTA.
+            const rawGroupCta = String(group.rawCta || group.cta || '').trim();
+            const normalizedGroupCta = normalizeMetaCta(rawGroupCta);
+            const groupCta = normalizedGroupCta
+                || (!rawGroupCta ? normalizeMetaCta(creativeData.cta) : '');
             const groupWebsiteUrl = group.landingPage || defaultUrlForDriveGroup(group) || creativeData.websiteUrl || '';
             // A real same-media pair becomes ONE creative carrying both URLs, so
             // it flows through BulkAdCreation as a single ad/ad-set entry that
@@ -1557,7 +1572,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                     description: matchedCopy.description || '',
                     cta: groupCta,
                     rawCta: group.rawCta || '',
-                    ctaSource: group.cta ? 'Drive' : groupCta ? 'Creative default' : '',
+                    ctaSource: rawGroupCta ? 'Drive' : groupCta ? 'Creative default' : '',
                     websiteUrl: groupWebsiteUrl
                 }];
             }
@@ -1587,7 +1602,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                     description: matchedCopy.description || '',
                     cta: groupCta,
                     rawCta: group.rawCta || '',
-                    ctaSource: group.cta ? 'Drive' : groupCta ? 'Creative default' : '',
+                    ctaSource: rawGroupCta ? 'Drive' : groupCta ? 'Creative default' : '',
                     websiteUrl: groupWebsiteUrl
                 }];
             }
@@ -1619,7 +1634,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                     description: matchedCopy.description || '',
                     cta: groupCta,
                     rawCta: group.rawCta || '',
-                    ctaSource: group.cta ? 'Drive' : groupCta ? 'Creative default' : '',
+                    ctaSource: rawGroupCta ? 'Drive' : groupCta ? 'Creative default' : '',
                     websiteUrl: groupWebsiteUrl,
                     missingOppositePlacement: true,
                 }];
@@ -1650,7 +1665,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                 description: matchedCopy.description || '',
                 cta: groupCta,
                 rawCta: group.rawCta || '',
-                ctaSource: group.cta ? 'Drive' : groupCta ? 'Creative default' : '',
+                ctaSource: rawGroupCta ? 'Drive' : groupCta ? 'Creative default' : '',
                 websiteUrl: groupWebsiteUrl
             }));
         });
@@ -2388,7 +2403,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                 const invalidDriveCta = creativeData.creatives.find(c => invalidCtaRawFor(c));
                 if (invalidDriveCta) {
                     focusCopyCreative(invalidDriveCta.id);
-                    showWarning(`The Drive CTA for ${invalidDriveCta.name || 'one selected ad'} ("${invalidCtaRawFor(invalidDriveCta)}") is not a Meta-supported CTA. Correct it in Drive, then refresh the pair before continuing.`);
+                    showWarning(`The Drive CTA for ${invalidDriveCta.name || 'one selected ad'} ("${invalidCtaRawFor(invalidDriveCta)}") is not a Meta-supported CTA. Pick a supported CTA in that row's CTA dropdown, or correct it in Drive and refresh the pair.`);
                     return;
                 }
                 const missingDriveCta = creativeData.creatives.find(c => c.source === 'drive' && !c.cta?.trim());
@@ -2921,7 +2936,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                                                     ? 'Show this creative in the picker'
                                                                     : creative.drivePairId ? 'Open Drive to repair this pair' : 'Open Drive to repair copy mapping')
                                                                 : invalidDriveCta
-                                                                    ? `Open Drive to repair unsupported CTA: ${invalidCtaRawFor(creative)}`
+                                                                    ? `Drive CTA "${invalidCtaRawFor(creative)}" isn't a Meta CTA — pick one in the CTA dropdown below, or fix it in Drive`
                                                                 : `Edit the ${missingDriveFields.join(' + ')} below, or refresh from Drive`}
                                                         </button>
                                                     )}
@@ -3369,6 +3384,21 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                         </div>
                     </div>
                     <div className="flex flex-col gap-2 border-b p-2">
+                        {unverifiedCopyDriveGroupCount > 0 && (
+                            <div className="flex items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="alert">
+                                <span>
+                                    <strong>{unverifiedCopyDriveGroupCount} creative{unverifiedCopyDriveGroupCount === 1 ? '' : 's'} on hold:</strong> a Drive sync did not finish, so copy for {unverifiedCopyDriveGroupCount === 1 ? 'it is' : 'them is'} unverified and can&apos;t be selected until re-checked.
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={refreshDriveCopyMatches}
+                                    disabled={refreshingDriveCopy || driveLibraryLoading}
+                                    className="shrink-0 rounded-md bg-amber-600 px-2.5 py-1 font-semibold text-white hover:bg-amber-700 disabled:opacity-60"
+                                >
+                                    {refreshingDriveCopy ? 'Refreshing…' : 'Refresh copy'}
+                                </button>
+                            </div>
+                        )}
                         <label className="relative block w-full">
                             <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
                             <input

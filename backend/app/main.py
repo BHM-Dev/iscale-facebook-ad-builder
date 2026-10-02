@@ -411,6 +411,28 @@ async def startup_event():
             finally:
                 db.close()
 
+        def scheduled_drive_reconcile():
+            """Daily safety net: import Drive media the change feed never delivered."""
+            db = SessionLocal()
+            try:
+                from app.services.drive_sync_service import DriveSyncService
+                result = DriveSyncService(db).reconcile_missing_media()
+                if not result.get("ran"):
+                    print("ℹ️  Drive reconcile skipped: another sync holds the lock")
+                elif result["missing"]:
+                    print(
+                        f"⚠️  Drive reconcile found {result['missing']} media file(s) missing from the library: "
+                        f"{result['created']} imported, {result['errors']} failed, {result['deferred']} deferred"
+                    )
+                else:
+                    print("✅ Drive reconcile: library matches Drive")
+                # Files that fail to import land in the sync retry ledger, so the regular
+                # sync retries them and alerts once if they stay broken -- no daily repeat here.
+            except Exception as exc:
+                print(f"⚠️  Drive reconcile error: {exc}")
+            finally:
+                db.close()
+
         def scheduled_offer_performance_check():
             """Hourly: catch Everflow conversion-flow outages (e.g. an
             advertiser-side database crash) by comparing each tracked offer's
@@ -445,6 +467,7 @@ async def startup_event():
         scheduler.add_job(scheduled_check, 'interval', minutes=30, id='auto_pause_check')
         scheduler.add_job(scheduled_redtrack_sync, 'interval', minutes=30, id='redtrack_sync')
         scheduler.add_job(scheduled_drive_sync, 'interval', minutes=30, id='drive_creative_sync')
+        scheduler.add_job(scheduled_drive_reconcile, 'cron', hour=7, minute=40, timezone='UTC', id='drive_reconcile')
         # Hourly and offset to :20. This walks the whole Drive tree (~285s measured
         # against production) and shares Drive API quota with drive_creative_sync
         # above. As a plain 'interval' job it would start at the same T+60/T+120

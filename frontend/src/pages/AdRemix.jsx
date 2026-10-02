@@ -7,8 +7,42 @@ import { useAuth } from '../context/AuthContext';
 import BrandSelectionStep from '../components/steps/BrandSelectionStep';
 import ProductSelectionStep from '../components/steps/ProductSelectionStep';
 import ProfileSelectionStep from '../components/steps/ProfileSelectionStep';
+import { safeSessionStorageGet, safeSessionStorageRemove, safeSessionStorageSet } from '../lib/safeLocalStorage';
+import { AD_REMIX_DRAFT_SESSION_KEY } from '../lib/launchDraft';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+
+// Meta CDN image URLs held in blueprint/prefillSource expire within minutes to
+// hours (see CLAUDE.md), so an old draft would hand the generate step a dead URL.
+const AD_REMIX_DRAFT_MAX_AGE_MS = 30 * 60 * 1000;
+
+const restoreAdRemixDraft = () => {
+    // A fresh handoff (Remix drawer, template, research, upload) builds its own
+    // state. Layering it over a restored draft would leave the old ad's campaign,
+    // ad set, URL, brand and concepts attached to the new one.
+    try {
+        if (['pendingRemixCreative', 'pendingWinningAdTemplate', 'pendingResearchInspiration', 'pendingUploadedInspiration']
+            .some(key => localStorage.getItem(key))) {
+            safeSessionStorageRemove(AD_REMIX_DRAFT_SESSION_KEY);
+            return {};
+        }
+    } catch { /* storage unavailable: fall through to the normal restore */ }
+    const stored = safeSessionStorageGet(AD_REMIX_DRAFT_SESSION_KEY);
+    if (!stored) return {};
+    try {
+        const draft = JSON.parse(stored);
+        if (!draft || typeof draft !== 'object') return {};
+        const savedAt = Date.parse(draft.savedAt || '');
+        if (!Number.isFinite(savedAt) || Date.now() - savedAt > AD_REMIX_DRAFT_MAX_AGE_MS) {
+            safeSessionStorageRemove(AD_REMIX_DRAFT_SESSION_KEY);
+            return {};
+        }
+        return draft;
+    } catch {
+        safeSessionStorageRemove(AD_REMIX_DRAFT_SESSION_KEY);
+        return {};
+    }
+};
 
 const formatResearchAngle = (angle) => {
     if (!angle) return '';
@@ -93,25 +127,33 @@ const buildReferenceCopyContext = (template) => {
 };
 
 export default function AdRemix() {
+    const [restoredDraft] = useState(restoreAdRemixDraft);
     const { brands, customerProfiles } = useBrands();
     const { showError, showSuccess } = useToast();
     const { authFetch } = useAuth();
     const navigate = useNavigate();
-    const [currentStep, setCurrentStep] = useState(1);
+    // True only when this mount resumed an earlier session's work with no fresh handoff.
+    const [resumedDraft, setResumedDraft] = useState(() => Boolean(
+        restoredDraft.currentStep > 1 && !localStorage.getItem('pendingRemixCreative')
+    ));
+    // Age counts from when the draft was first saved, not the last refresh: the TTL
+    // exists because Meta image URLs inside it expire.
+    const draftSavedAtRef = useRef(restoredDraft.savedAt || null);
+    const [currentStep, setCurrentStep] = useState(() => restoredDraft.currentStep || 1);
     const [loading, setLoading] = useState(false);
-    const [blueprint, setBlueprint] = useState(null);
-    const [adConcept, setAdConcept] = useState(null);       // single concept (legacy)
-    const [adConcepts, setAdConcepts] = useState([]);        // 3 parallel variations
-    const [prefillSource, setPrefillSource] = useState(null); // winning ad data from performance page
-    const [researchInspiration, setResearchInspiration] = useState(null); // competitor ad from Research section
-    const [uploadedInspiration, setUploadedInspiration] = useState(null); // ad screenshot/image uploaded directly by Joel
-    const [winningAdTemplate, setWinningAdTemplate] = useState(null); // template from Browse Templates page
+    const [blueprint, setBlueprint] = useState(() => restoredDraft.blueprint || null);
+    const [adConcept, setAdConcept] = useState(() => restoredDraft.adConcept || null);       // single concept (legacy)
+    const [adConcepts, setAdConcepts] = useState(() => restoredDraft.adConcepts || []);        // 3 parallel variations
+    const [prefillSource, setPrefillSource] = useState(() => restoredDraft.prefillSource || null); // winning ad data from performance page
+    const [researchInspiration, setResearchInspiration] = useState(() => restoredDraft.researchInspiration || null); // competitor ad from Research section
+    const [uploadedInspiration, setUploadedInspiration] = useState(() => restoredDraft.uploadedInspiration || null); // ad screenshot/image uploaded directly by Joel
+    const [winningAdTemplate, setWinningAdTemplate] = useState(() => restoredDraft.winningAdTemplate || null); // template from Browse Templates page
     const [pendingBrandId, setPendingBrandId] = useState(null); // brand_id from drawer — resolved once brands load
-    const [pendingNiche, setPendingNiche] = useState('');       // niche from ad set name, passed through to Batch Generate
-    const [remixFbCampaignId, setRemixFbCampaignId] = useState(''); // Meta campaign ID from source ad — for push modal pre-selection
-    const [remixFbAdsetId, setRemixFbAdsetId] = useState('');       // Meta adset ID from source ad
-    const [remixLinkUrl, setRemixLinkUrl] = useState('');            // destination URL from source ad — pre-fills push modal
-    const [remixSourceAdId, setRemixSourceAdId] = useState('');      // Meta ad ID of the winner being remixed (provenance)
+    const [pendingNiche, setPendingNiche] = useState(() => restoredDraft.pendingNiche || '');       // niche from ad set name, passed through to Batch Generate
+    const [remixFbCampaignId, setRemixFbCampaignId] = useState(() => restoredDraft.remixFbCampaignId || ''); // Meta campaign ID from source ad — for push modal pre-selection
+    const [remixFbAdsetId, setRemixFbAdsetId] = useState(() => restoredDraft.remixFbAdsetId || '');       // Meta adset ID from source ad
+    const [remixLinkUrl, setRemixLinkUrl] = useState(() => restoredDraft.remixLinkUrl || '');            // destination URL from source ad — pre-fills push modal
+    const [remixSourceAdId, setRemixSourceAdId] = useState(() => restoredDraft.remixSourceAdId || '');      // Meta ad ID of the winner being remixed (provenance)
     const [copied, setCopied] = useState(false);
     const [uploadingRef, setUploadingRef] = useState(false);
     const [refPreview, setRefPreview] = useState('');
@@ -133,7 +175,7 @@ export default function AdRemix() {
     // preventing the profile/product auto-skip from immediately re-triggering.
     const skipAutoAdvance = useRef(false);
 
-    const [wizardData, setWizardData] = useState({
+    const [wizardData, setWizardData] = useState(() => restoredDraft.wizardData || {
         template: null,
         brand: null,
         product: null,
@@ -144,6 +186,28 @@ export default function AdRemix() {
             messaging: ''
         }
     });
+
+    useEffect(() => {
+        const saved = safeSessionStorageSet(AD_REMIX_DRAFT_SESSION_KEY, JSON.stringify({
+            savedAt: (draftSavedAtRef.current = draftSavedAtRef.current || new Date().toISOString()),
+            currentStep,
+            blueprint,
+            adConcept,
+            adConcepts,
+            prefillSource,
+            researchInspiration,
+            uploadedInspiration,
+            winningAdTemplate,
+            pendingNiche,
+            remixFbCampaignId,
+            remixFbAdsetId,
+            remixLinkUrl,
+            remixSourceAdId,
+            wizardData,
+        }));
+        // Never leave an older draft behind when the newer state does not fit.
+        if (!saved) safeSessionStorageRemove(AD_REMIX_DRAFT_SESSION_KEY);
+    }, [currentStep, blueprint, adConcept, adConcepts, prefillSource, researchInspiration, uploadedInspiration, winningAdTemplate, pendingNiche, remixFbCampaignId, remixFbAdsetId, remixLinkUrl, remixSourceAdId, wizardData]);
 
     // On mount: restore result if returning from Batch Generate
     useEffect(() => {
@@ -170,6 +234,11 @@ export default function AdRemix() {
             localStorage.removeItem('pendingResearchInspiration');
             localStorage.removeItem('pendingUploadedInspiration');
             setPrefillSource(creative);
+            // A fresh handoff must never inherit generated output from a draft
+            // restored for a different brand/ad — drop it so Joel regenerates.
+            setBlueprint(null);
+            setAdConcept(null);
+            setAdConcepts([]);
             // Carry niche through from the ad set name (parsed upstream in RemixDrawer)
             if (creative.niche) setPendingNiche(creative.niche);
             // Carry campaign / adset context and destination URL for the push modal
@@ -396,6 +465,8 @@ export default function AdRemix() {
     // Reset all state cleanly (instead of window.location.reload())
     const handleReset = () => {
         resetPushModal();
+        draftSavedAtRef.current = null;
+        safeSessionStorageRemove(AD_REMIX_DRAFT_SESSION_KEY);
         setCurrentStep(1);
         setBlueprint(null);
         setAdConcept(null);
@@ -494,6 +565,9 @@ export default function AdRemix() {
         ));
         // Carry niche through so BatchGenerate auto-populates the Niche/Context field
         if (pendingNiche) localStorage.setItem('pendingBatchNiche', pendingNiche);
+        // The result is handed off (remixResult above); a finished wizard must not
+        // reopen as the next "Build New Ad".
+        safeSessionStorageRemove(AD_REMIX_DRAFT_SESSION_KEY);
         navigate('/batch-generate');
     };
 
@@ -811,6 +885,18 @@ export default function AdRemix() {
                 </h1>
                 <p className="text-gray-600 mt-1">{researchInspiration ? 'Study a competitor creative and build an original ad in your brand voice.' : 'Start from a winning ad and rebuild it with your brand voice.'}</p>
             </div>
+
+            {resumedDraft && currentStep > 1 && currentStep < 6 && (
+                <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-900" role="alert">
+                    <span>
+                        Resumed your previous Build New Ad{wizardData?.brand?.name ? ` (${wizardData.brand.name})` : ''}. Check the brand, product and copy still match what you want to build.
+                    </span>
+                    <span className="flex shrink-0 gap-2">
+                        <button type="button" onClick={() => setResumedDraft(false)} className="rounded-md bg-amber-600 px-3 py-1 text-xs font-semibold text-white hover:bg-amber-700">Keep</button>
+                        <button type="button" onClick={() => { setResumedDraft(false); handleReset(); }} className="rounded-md border border-amber-400 bg-white px-3 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-100">Start over</button>
+                    </span>
+                </div>
+            )}
 
             {/* Progress Steps */}
             <div className="mb-8 bg-white rounded-xl shadow-sm border border-gray-200 p-6">

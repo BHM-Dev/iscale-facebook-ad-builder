@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, Target, Users, Image as ImageIcon, CreditCard, Megaphone, CheckCircle2, RefreshCw, ChevronUp, ChevronDown, BookmarkPlus } from 'lucide-react';
 import { authFetch } from '../lib/facebookApi';
-import { CampaignProvider, useCampaign } from '../context/CampaignContext';
+import { CampaignProvider, useCampaign, hasPendingLaunchIntent } from '../context/CampaignContext';
 import { useToast } from '../context/ToastContext';
 import AdAccountStep from '../components/AdAccountStep';
 import CampaignStep from '../components/CampaignStep';
@@ -10,6 +10,8 @@ import AdSetStep from '../components/AdSetStep';
 import AdCreativeStep from '../components/AdCreativeStep';
 import BulkAdCreation from '../components/BulkAdCreation';
 import BulkMatchImport from '../components/BulkMatchImport';
+import { safeSessionStorageGet, safeSessionStorageRemove, safeSessionStorageSet } from '../lib/safeLocalStorage';
+import { LAUNCH_RECEIPT_SESSION_KEY, WIZARD_DRAFT_SESSION_KEY, hasSavedLaunchDraft } from '../lib/launchDraft';
 
 // How long Quick Ad's auto-advance chain (Account → Campaign → Ad Set) is given to
 // fully resolve before giving up and letting Joel proceed manually from wherever it
@@ -20,6 +22,26 @@ const QUICK_AD_TIMEOUT_MS = 8000;
 // Same idea as Quick Ad's timeout, for the Drive Launch shortcut below — same
 // 3-step chain length (Account → Campaign → Ad Set), same failure shape.
 const DRIVE_LAUNCH_TIMEOUT_MS = 8000;
+
+const restoreWizardState = () => {
+    if (hasPendingLaunchIntent()) return {};
+    const stored = safeSessionStorageGet(WIZARD_DRAFT_SESSION_KEY);
+    if (!stored) return {};
+    try {
+        const parsed = JSON.parse(stored);
+        if (!parsed || typeof parsed !== 'object') return {};
+        // A step number is only meaningful with the data behind it. Past step 1
+        // that is the saved launch draft; step 6 is the receipt screen.
+        const step = parsed.currentStep || 1;
+        const hasDraft = hasSavedLaunchDraft();
+        const hasReceipt = Boolean(safeSessionStorageGet(LAUNCH_RECEIPT_SESSION_KEY));
+        if (step === 6 ? !hasReceipt : (step > 1 && !hasDraft)) return {};
+        return parsed;
+    } catch {
+        safeSessionStorageRemove(WIZARD_DRAFT_SESSION_KEY);
+        return {};
+    }
+};
 
 // Shared toggle UI for choosing how Step 5 will build ads. Lives at Step 4 so
 // the mode is known before the Creative form renders — Step 5 just reads it.
@@ -133,17 +155,18 @@ const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaig
 };
 
 const FacebookCampaignWizardInner = () => {
-    const [currentStep, setCurrentStep] = useState(1);
+    const [restoredWizardState] = useState(restoreWizardState);
+    const [currentStep, setCurrentStep] = useState(() => restoredWizardState.currentStep || 1);
     // Keep every step reached in this wizard directly selectable. `currentStep`
     // alone is not enough: after moving back from Creative to Campaign, Creative
     // is still a valid saved workspace and must remain one click away.
-    const [furthestStepReached, setFurthestStepReached] = useState(1);
+    const [furthestStepReached, setFurthestStepReached] = useState(() => restoredWizardState.furthestStepReached || 1);
     // The Creative workspace is the launcher's working surface. Keep the
     // supporting plan collapsed initially so it never steals vertical space
     // from the ad rows or preview; its button always exposes the current ad
     // count and expands the complete plan on demand.
     const [isLaunchPlanExpanded, setIsLaunchPlanExpanded] = useState(false);
-    const [batchMode, setBatchMode] = useState('combinations'); // 'combinations' | 'match-import'
+    const [batchMode, setBatchMode] = useState(() => restoredWizardState.batchMode || 'combinations'); // 'combinations' | 'match-import'
     const [formData, setFormData] = useState({
         adAccountId: null,
         campaignId: null,
@@ -163,22 +186,20 @@ const FacebookCampaignWizardInner = () => {
     // the intended target — so Joel never has to search for or click any of them,
     // he just watches it land on Creative.
     const { showWarning, showSuccess, showError } = useToast();
-    const { selectedAdAccount, campaignData, adsetData, creativeData, setAdsData, launchSummary, setLaunchSummary, launchReceipt, setLaunchReceipt } = useCampaign();
+    const { selectedAdAccount, campaignData, adsetData, creativeData, setAdsData, launchSummary, setLaunchSummary, launchReceipt, setLaunchReceipt, restoredDraftNotice, dismissRestoredDraft, discardLaunchDraft } = useCampaign();
     const restoredReceiptRef = useRef(false);
     // Snapshot a shortcut intent before its mount effect consumes the localStorage
     // key. A previous receipt must never interrupt a new Quick Ad, Launch Pack, or
     // Drive launch path in the same tab.
-    const [hasPendingLaunchIntent] = useState(() => {
-        try {
-            return Boolean(
-                localStorage.getItem('pendingQuickAd')
-                || localStorage.getItem('pendingLaunchPack')
-                || localStorage.getItem('pendingDriveLaunch')
-            );
-        } catch {
-            return false;
-        }
-    });
+    const [pendingLaunchIntent] = useState(hasPendingLaunchIntent);
+
+    useEffect(() => {
+        safeSessionStorageSet(WIZARD_DRAFT_SESSION_KEY, JSON.stringify({
+            currentStep,
+            furthestStepReached,
+            batchMode,
+        }));
+    }, [currentStep, furthestStepReached, batchMode]);
 
     // A completed receipt is retained only for this browser tab. Restore the
     // completion view after a refresh so a successful Meta write does not look
@@ -188,11 +209,11 @@ const FacebookCampaignWizardInner = () => {
     }, [currentStep]);
 
     useEffect(() => {
-        if (!restoredReceiptRef.current && !hasPendingLaunchIntent && launchReceipt && currentStep === 1) {
+        if (!restoredReceiptRef.current && !pendingLaunchIntent && launchReceipt && currentStep !== 6) {
             restoredReceiptRef.current = true;
             setCurrentStep(6);
         }
-    }, [currentStep, hasPendingLaunchIntent, launchReceipt]);
+    }, [currentStep, pendingLaunchIntent, launchReceipt]);
 
     // Switching between standard combinations and naming-convention import is a
     // different build path. Clear the previous path's counts before the new
@@ -628,6 +649,43 @@ const FacebookCampaignWizardInner = () => {
                         ({['ad account', 'campaign', 'ad set'][Math.min(currentStep, 3) - 1]}) —
                         you'll land on Creative in a moment.
                     </span>
+                </div>
+            )}
+
+            {restoredDraftNotice && currentStep < 6 && !quickAdResolved && !driveLaunchActive && (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="alert">
+                    <p className="font-semibold">
+                        Restored an unfinished launch{restoredDraftNotice.savedAt ? ` from ${new Date(restoredDraftNotice.savedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}.
+                    </p>
+                    <p className="mt-1 text-xs">
+                        {restoredDraftNotice.accountName || 'No ad account'}
+                        {' → '}{restoredDraftNotice.campaignName || 'no campaign'}
+                        {' → '}{restoredDraftNotice.adsetName || 'no ad set'}
+                        {` · ${restoredDraftNotice.creativeCount} creative${restoredDraftNotice.creativeCount === 1 ? '' : 's'}`}
+                        {restoredDraftNotice.adCount ? ` · ${restoredDraftNotice.adCount} ad${restoredDraftNotice.adCount === 1 ? '' : 's'} built` : ''}.
+                        {' '}The campaign and ad set may have changed in Ads Manager since — confirm the target on the Review step before launching.
+                    </p>
+                    {restoredDraftNotice.localFileCount > 0 && (
+                        <p className="mt-1 text-xs font-medium text-red-700">
+                            {restoredDraftNotice.localFileCount} uploaded file{restoredDraftNotice.localFileCount === 1 ? '' : 's'} could not survive the refresh and must be re-uploaded (Drive creatives are unaffected).
+                        </p>
+                    )}
+                    <div className="mt-2 flex gap-2">
+                        <button type="button" onClick={dismissRestoredDraft} className="rounded-md bg-amber-600 px-3 py-1 text-xs font-semibold text-white hover:bg-amber-700">Keep draft</button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                discardLaunchDraft();
+                                setCurrentStep(1);
+                                setFurthestStepReached(1);
+                                setBatchMode('combinations');
+                                setFormData({ adAccountId: null, campaignId: null, adSetId: null, creativeId: null });
+                            }}
+                            className="rounded-md border border-amber-400 bg-white px-3 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-100"
+                        >
+                            Discard and start over
+                        </button>
+                    </div>
                 </div>
             )}
 
