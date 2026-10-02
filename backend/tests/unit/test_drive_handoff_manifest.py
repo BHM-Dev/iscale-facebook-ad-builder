@@ -458,3 +458,110 @@ def test_package_folder_can_resolve_manifest_nested_beside_media():
 
     assert resolved == "package"
     assert service._package_folder_cache["ad-copy"] == "package"
+
+
+def _variant_manifest_service(manifest_text, media_names):
+    service = _service()
+    service._folder_metadata_cache = {}
+    manifest = {
+        "id": "manifest", "name": "CI-CALLOUT-HANDOFF-MANIFEST.txt",
+        "mimeType": "text/plain", "modifiedTime": "2026-10-01T15:25:49.311Z",
+    }
+    media = [
+        {"id": f"id-{name}", "name": name, "mimeType": "video/mp4" if name.endswith(".mp4") else "image/jpeg"}
+        for name in media_names
+    ]
+    service._list_folder_subtree = lambda folder_id: [manifest, *media]
+    service._download_text_file = lambda file_id: manifest_text
+    return service
+
+
+_VARIANT_BLOCK = """==================================================
+
+## {label}
+
+PRIMARY TEXT
+{primary}
+
+HEADLINE
+{headline}
+
+DESCRIPTION
+No Fees To Compare
+
+{aspect_a}
+{file_a}
+
+{aspect_b}
+{file_b}
+"""
+
+
+def _variant_manifest(blocks):
+    header = "PACKAGE: Commercial Insurance | CI-CALLOUT Talking Heads\nFINAL HANDOFF MANIFEST\n\nMeta Button\nGet Quote\n\n"
+    return header + "\n".join(_VARIANT_BLOCK.format(**block) for block in blocks)
+
+
+def test_inline_manifest_binds_multiple_variants_sharing_one_concept_number():
+    names = [
+        "CI-CALLOUT-01-Pastor-H1-4x5.mp4", "CI-CALLOUT-01-Pastor-H1-9x16.mp4",
+        "CI-CALLOUT-01-Pastor-H2-4x5.mp4", "CI-CALLOUT-01-Pastor-H2-9x16.mp4",
+        "CI-CALLOUT-01-Pastor-IMG-1x1.jpg", "CI-CALLOUT-01-Pastor-IMG-9x16.jpg",
+    ]
+    manifest = _variant_manifest([
+        {"label": "CI-CALLOUT-01-H1", "primary": "Primary one", "headline": "Headline H1",
+         "aspect_a": "4X5 VIDEO", "file_a": names[0], "aspect_b": "9X16 VIDEO", "file_b": names[1]},
+        {"label": "CI-CALLOUT-01-H2", "primary": "Primary one", "headline": "Headline H2",
+         "aspect_a": "4X5 VIDEO", "file_a": names[2], "aspect_b": "9X16 VIDEO", "file_b": names[3]},
+        {"label": "CI-CALLOUT-01-IMG", "primary": "Primary one", "headline": "Headline IMG",
+         "aspect_a": "1X1 IMAGE", "file_a": names[4], "aspect_b": "9X16 IMAGE", "file_b": names[5]},
+    ])
+    service = _variant_manifest_service(manifest, names)
+
+    result = service._folder_copy_metadata("package", force=True)
+
+    assert len(result["assets_by_drive_id"]) == 6
+    h1 = result["assets"]["ci-callout-01-pastor-h1-4x5.mp4"]
+    assert (h1["copy_id"], h1["aspect"], h1["copy"]["headline"], h1["cta"]) == (
+        "CI-CALLOUT-01-H1", "4x5", "Headline H1", "GET_QUOTE",
+    )
+    assert result["assets"]["ci-callout-01-pastor-h2-9x16.mp4"]["copy"]["headline"] == "Headline H2"
+    img = result["assets"]["ci-callout-01-pastor-img-1x1.jpg"]
+    assert (img["copy_id"], img["copy"]["headline"]) == ("CI-CALLOUT-01-IMG", "Headline IMG")
+    assert {m["copy_pairing_status"] for m in result["assets_by_drive_id"].values()} == {"paired"}
+
+
+def test_inline_manifest_still_rejects_a_genuinely_repeated_heading():
+    names = ["CI-CALLOUT-01-A-4x5.mp4", "CI-CALLOUT-01-A-9x16.mp4", "CI-CALLOUT-01-B-4x5.mp4", "CI-CALLOUT-01-B-9x16.mp4"]
+    block = {"label": "CI-CALLOUT-01-H1", "primary": "Primary", "headline": "Headline",
+             "aspect_a": "4X5 VIDEO", "aspect_b": "9X16 VIDEO"}
+    manifest = _variant_manifest([
+        {**block, "file_a": names[0], "file_b": names[1]},
+        {**block, "file_a": names[2], "file_b": names[3]},
+    ])
+    service = _variant_manifest_service(manifest, names)
+
+    try:
+        service._folder_copy_metadata("package", force=True)
+    except RuntimeError as exc:
+        assert "more than once" in str(exc)
+    else:
+        raise AssertionError("duplicate inline heading must stay blocked")
+
+
+def test_inline_manifest_variant_block_cannot_claim_another_variants_files():
+    names = ["CI-CALLOUT-01-P-H1-4x5.mp4", "CI-CALLOUT-01-P-H1-9x16.mp4", "CI-CALLOUT-01-P-H2-4x5.mp4", "CI-CALLOUT-01-P-H2-9x16.mp4"]
+    manifest = _variant_manifest([
+        {"label": "CI-CALLOUT-01-H1", "primary": "Primary", "headline": "Headline H1",
+         "aspect_a": "4X5 VIDEO", "file_a": names[2], "aspect_b": "9X16 VIDEO", "file_b": names[3]},
+        {"label": "CI-CALLOUT-01-H2", "primary": "Primary", "headline": "Headline H2",
+         "aspect_a": "4X5 VIDEO", "file_a": names[0], "aspect_b": "9X16 VIDEO", "file_b": names[1]},
+    ])
+    service = _variant_manifest_service(manifest, names)
+
+    try:
+        service._folder_copy_metadata("package", force=True)
+    except RuntimeError as exc:
+        assert "another variant" in str(exc)
+    else:
+        raise AssertionError("cross-variant media claim must stay blocked")

@@ -2278,6 +2278,7 @@ class DriveSyncService:
                 declared_media = []
                 declared_media_by_ad = {}
                 declared_media_ids = set()
+                declared_blocks = []
                 expected_numbers = set()
                 media_by_name = {}
                 for item in folder_files:
@@ -2331,8 +2332,21 @@ class DriveSyncService:
                     declared_media_by_ad[heading_number] = declared_names and [
                         media_by_name[name.lower()][0] for _, name in declared_names
                     ]
+                    declared_blocks.append((
+                        heading.group(0), block,
+                        [media_by_name[name.lower()][0] for _, name in declared_names],
+                    ))
                 if len(expected_numbers) != len(inline_blocks):
-                    raise RuntimeError("Drive handoff manifest declares the same inline AD more than once") from exc
+                    # Several variants of one concept (H1/H2/H3/IMG of
+                    # CI-CALLOUT-01) legitimately share a number. That is only
+                    # safe when every heading is itself unique and each block
+                    # names its own media, so bind copy per block instead of per
+                    # number. Genuinely repeated headings stay blocked.
+                    variant_metadata = self._inline_variant_manifest_metadata(
+                        folder_id, manifest, manifest_text, declared_blocks, exc,
+                    )
+                    self._folder_metadata_cache[folder_id] = variant_metadata
+                    return variant_metadata
                 inline_sections = self._parse_ad_copy_doc(manifest_text)
                 if inline_blocks and set(inline_sections) != expected_numbers:
                     raise RuntimeError("Drive handoff manifest has incomplete inline copy sections") from exc
@@ -2472,6 +2486,78 @@ class DriveSyncService:
 
         self._folder_metadata_cache[folder_id] = {"assets": {}}
         return self._folder_metadata_cache[folder_id]
+
+    def _inline_variant_manifest_metadata(self, folder_id, manifest, manifest_text, declared_blocks, cause):
+        """Bind inline manifest copy to media one heading at a time.
+
+        Used when several headings share one concept number, e.g.
+        ``CI-CALLOUT-01-H1``, ``-H2``, ``-H3`` and ``-IMG``. Each block carries
+        its own copy and names its own Feed/Stories files, so the heading label
+        (not the number) is the copy identity.
+        """
+        def label_of(heading_line: str) -> str:
+            cleaned = re.sub(r"^[#\s]+", "", heading_line).strip()
+            token = re.match(r"[A-Za-z0-9_-]+", cleaned)
+            return token.group(0) if token else cleaned
+
+        labels = [label_of(heading) for heading, _, _ in declared_blocks]
+        if len({label.lower() for label in labels}) != len(labels):
+            raise RuntimeError("Drive handoff manifest declares the same inline AD more than once") from cause
+
+        preamble = manifest_text[:manifest_text.find(declared_blocks[0][0])]
+
+        assets: Dict[str, Dict[str, Any]] = {}
+        assets_by_drive_id: Dict[str, Dict[str, Any]] = {}
+        for (heading_line, block, media_items), label in zip(declared_blocks, labels):
+            sections = self._parse_ad_copy_doc(f"{preamble}{heading_line}{block}")
+            if len(sections) != 1:
+                raise RuntimeError(
+                    f"Drive handoff manifest has incomplete inline copy section {label}"
+                ) from cause
+            section = next(iter(sections.values()))
+            # Variants share a concept number, so the filename's own variant
+            # token (H1 / IMG) is the only ownership signal left: a block that
+            # names another variant's files must not bind its copy to them.
+            variant_token = re.split(r"[-_]", label)[-1].lower()
+            if not variant_token.isdigit():
+                for item in media_items:
+                    stem_tokens = re.split(r"[-_ .]", (item.get("name") or "").lower())
+                    if variant_token not in stem_tokens:
+                        raise RuntimeError(
+                            f"Drive handoff manifest block {label} references media from another variant: {item.get('name')}"
+                        ) from cause
+            for item in media_items:
+                file_name = item.get("name") or ""
+                metadata = {
+                    "copy_id": label,
+                    "category": label,
+                    "aspect": self._media_aspect(item) or "unknown",
+                    "copy": {
+                        "headline": section["headline"],
+                        "primary_text": section["primary_text"],
+                        "description": section["description"],
+                    },
+                    "landing_page": section["landing_page"],
+                    "cta": section["cta"],
+                    "source": "ad_numbered_copy_doc",
+                    "copy_pairing_status": "paired" if len(media_items) == 2 else "single",
+                    "drive_file_id": item.get("id"),
+                    "package_folder_id": folder_id,
+                    "file_name": file_name,
+                }
+                if item.get("id"):
+                    assets_by_drive_id[item["id"]] = metadata
+                assets[file_name.lower()] = metadata
+
+        if not assets_by_drive_id:
+            raise RuntimeError("Drive handoff manifest has inline copy fields but no complete matching entries") from cause
+        return {
+            "assets": assets,
+            "assets_by_drive_id": assets_by_drive_id,
+            "_copy_source_drive_file_id": manifest.get("id"),
+            "_copy_source_drive_modified_time": manifest.get("modifiedTime"),
+            "_copy_source_drive_file_name": manifest.get("name"),
+        }
 
     def _copy_document_kind(self, text_body: str) -> Optional[str]:
         """Return the parser kind for a complete, supported copy source."""
