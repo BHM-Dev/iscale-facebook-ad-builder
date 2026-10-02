@@ -2530,6 +2530,10 @@ def test_sync_once_isolates_a_bad_removed_and_trashed_file_and_commits_good_chan
         def changes(self):
             return FakeChanges()
 
+        def files(self):
+            # The removed-change handler confirms with files.get: these files really are trashed.
+            return _Drive(meta={"id": "x", "trashed": True})
+
     service._client = lambda: FakeDrive()
     service._set_state_token = lambda token: setattr(service, "_saved_token", token)
 
@@ -2747,3 +2751,331 @@ def test_reconcile_does_nothing_when_another_sync_holds_the_lock():
     service.db = FakeDB()
 
     assert service.reconcile_missing_media()["ran"] is False
+
+
+# ---- change-feed `removed` handling, lookup failures, unmatched brands --------------------
+
+class _Resp:
+    def __init__(self, status):
+        self.status = status
+        self.reason = "test"
+
+
+def _http_error(status):
+    from googleapiclient.errors import HttpError
+
+    return HttpError(_Resp(status), b"{}")
+
+
+class _Drive:
+    def __init__(self, meta=None, error=None):
+        self._meta, self._error = meta, error
+
+    def files(self):
+        return self
+
+    def get(self, **kwargs):
+        return self
+
+    def execute(self):
+        if self._error:
+            raise self._error
+        return self._meta
+
+
+def _removed_service(monkeypatch):
+    service = DriveSyncService.__new__(DriveSyncService)
+    service.archived, service.processed = [], []
+    service._archive_by_drive_id_isolated = lambda fid, result: service.archived.append(fid) or 1
+    service._process_file_isolated = lambda meta, result: service.processed.append(meta["id"])
+    return service
+
+
+def test_removed_change_for_a_file_that_still_exists_is_refreshed_not_archived(monkeypatch):
+    service = _removed_service(monkeypatch)
+
+    archived = service._handle_removed_change(_Drive(meta={"id": "f1", "name": "a.png", "mimeType": "image/png"}), "f1", {})
+
+    assert archived == 0 and service.archived == [] and service.processed == ["f1"]
+
+
+def test_removed_change_for_an_unreadable_file_is_parked_for_a_second_check_not_archived(monkeypatch):
+    service = _removed_service(monkeypatch)
+    service._ledger_note_failure = lambda *a, **k: service.__dict__.setdefault("noted", []).append(a[0])
+    service._retry_state = lambda: {"processed": set()}
+
+    archived = service._handle_removed_change(_Drive(error=_http_error(404)), "f1", {"errors": 0})
+
+    assert archived == 0 and service.archived == [] and service.noted == ["f1"]
+
+
+def test_removed_change_for_a_trashed_file_is_archived(monkeypatch):
+    service = _removed_service(monkeypatch)
+
+    service._handle_removed_change(_Drive(meta={"id": "f1", "trashed": True}), "f1", {})
+
+    assert service.archived == ["f1"]
+
+
+def test_removed_change_for_a_folder_is_ignored(monkeypatch):
+    service = _removed_service(monkeypatch)
+
+    service._handle_removed_change(_Drive(meta={"id": "d1", "mimeType": "application/vnd.google-apps.folder"}), "d1", {})
+
+    assert service.archived == [] and service.processed == []
+
+
+def test_failed_parent_lookup_is_recorded_so_the_file_is_retried_not_skipped():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._path_cache = {}
+    service.root_folder_id = "root"
+    service._client = lambda: type("D", (), {
+        "files": lambda self: type("F", (), {
+            "get": lambda s, **k: type("E", (), {"execute": lambda s2: (_ for _ in ()).throw(_http_error(500))})(),
+            "list": lambda s, **k: type("E", (), {"execute": lambda s2: {"files": []}})(),
+        })(),
+    })()
+
+    assert service._folder_chain_to_root("folder-x") is None
+    assert "folder-x" in service._chain_lookup_failures
+
+
+def test_run_log_names_unmatched_brand_folders_without_calling_it_a_failure(monkeypatch):
+    import app.services.drive_sync_run_log as run_log
+
+    captured = {}
+
+    class Sess:
+        def __init__(self, bind=None): pass
+        def execute(self, stmt, params): captured.update(params)
+        def commit(self): pass
+        def close(self): pass
+
+    monkeypatch.setattr(run_log, "Session", Sess)
+    db = type("DB", (), {"get_bind": lambda self: object()})()
+
+    run_log._write_row(db, "incremental", __import__("datetime").datetime.now(), "ok",
+                       {"unmatched_brand": 3, "unmatched_brand_names": ["Odd Folder"]}, None)
+
+    assert "3 file(s) skipped" in captured["error_summary"] and "Odd Folder" in captured["error_summary"]
+
+
+def _process_file_service(chain_failures):
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._backfill_mode = False
+    service._chain_lookup_failures = set(chain_failures)
+    service._resolve_drive_path = lambda file_meta: None
+
+    class Mappings:
+        def first(self):
+            return None
+
+    class Result:
+        def mappings(self):
+            return Mappings()
+
+    class FakeDB:
+        def execute(self, *args, **kwargs):
+            return Result()
+
+    service.db = FakeDB()
+    return service
+
+
+_MEDIA = {"id": "m1", "name": "ad-01-1x1.png", "mimeType": "image/png", "parents": ["folder-x"],
+          "modifiedTime": "2026-10-01T09:00:00.000Z"}
+
+
+def test_media_whose_folder_lookup_failed_raises_so_the_retry_ledger_keeps_it():
+    service = _process_file_service({"folder-x"})
+
+    with pytest.raises(RuntimeError, match="retried automatically"):
+        service._process_file(dict(_MEDIA), {"skipped": 0, "unmatched_brand": 0})
+
+
+def test_media_genuinely_outside_the_library_is_still_skipped_quietly():
+    service = _process_file_service(set())
+    result = {"skipped": 0, "unmatched_brand": 0}
+
+    service._process_file(dict(_MEDIA), result)
+
+    assert result["skipped"] == 1
+
+
+def _http_error_with_reason(status, reason):
+    import json as _json
+    from googleapiclient.errors import HttpError
+
+    body = _json.dumps({"error": {"errors": [{"reason": reason}]}}).encode()
+    return HttpError(_Resp(status), body)
+
+
+def test_a_rate_limit_403_is_never_treated_as_a_deleted_file(monkeypatch):
+    service = _removed_service(monkeypatch)
+    service._ledger_note_failure = lambda *a, **k: service.__dict__.setdefault("noted", []).append(a[0])
+    service._retry_state = lambda: {"processed": set()}
+    result = {"errors": 0}
+
+    archived = service._handle_removed_change(
+        _Drive(error=_http_error_with_reason(403, "rateLimitExceeded")), "f1", result
+    )
+
+    assert archived == 0 and service.archived == [] and service.noted == ["f1"] and result["errors"] == 1
+
+
+def test_a_genuine_forbidden_403_is_parked_not_archived_on_one_look(monkeypatch):
+    service = _removed_service(monkeypatch)
+    service._ledger_note_failure = lambda *a, **k: service.__dict__.setdefault("noted", []).append(a[0])
+    service._retry_state = lambda: {"processed": set()}
+
+    service._handle_removed_change(_Drive(error=_http_error_with_reason(403, "forbidden")), "f1", {"errors": 0})
+
+    assert service.archived == [] and service.noted == ["f1"]
+
+
+def test_a_persistently_erroring_removed_id_is_parked_so_it_cannot_block_the_batch(monkeypatch):
+    service = _removed_service(monkeypatch)
+    service._ledger_note_failure = lambda *a, **k: service.__dict__.setdefault("noted", []).append(a[0])
+    service._retry_state = lambda: {"processed": set()}
+
+    archived = service._handle_removed_change(_Drive(error=_http_error(500)), "f1", {"errors": 0})
+
+    assert archived == 0 and service.noted == ["f1"]  # no exception: the sync carries on
+
+
+def test_a_hard_404_on_the_parent_lookup_is_not_flagged_for_endless_retries():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._path_cache = {}
+    service.root_folder_id = "root"
+    service._client = lambda: type("D", (), {
+        "files": lambda self: type("F", (), {
+            "get": lambda s, **k: type("E", (), {"execute": lambda s2: (_ for _ in ()).throw(_http_error(404))})(),
+            "list": lambda s, **k: type("E", (), {"execute": lambda s2: {"files": []}})(),
+        })(),
+    })()
+
+    assert service._folder_chain_to_root("gone-folder") is None
+    assert "gone-folder" not in service.__dict__.get("_chain_lookup_failures", set())
+
+
+def test_a_file_moved_out_of_the_library_has_its_stale_row_archived():
+    service = _process_file_service(set())
+    service.root_folder_id = "root"
+    service._chain_outside_library = {"folder-x"}
+    existing = {"id": "row-1", "drive_modified_time": None, "soft_tags": None}
+    executed = []
+
+    class Mappings:
+        def first(self):
+            return existing
+
+    class Result:
+        def mappings(self):
+            return Mappings()
+
+    class FakeDB:
+        def execute(self, statement, params=None):
+            executed.append((str(statement), params))
+            return Result()
+
+    service.db = FakeDB()
+    result = {"skipped": 0, "unmatched_brand": 0, "archived": 0}
+
+    service._process_file(dict(_MEDIA), result)
+
+    assert result["archived"] == 1 and any("archived = TRUE" in sql for sql, _ in executed)
+
+
+def test_a_corrupt_saved_ledger_resets_instead_of_freezing_all_future_failure_tracking():
+    service = DriveSyncService.__new__(DriveSyncService)
+
+    class Row:
+        def __getitem__(self, i):
+            return "{not json"
+
+    class Result:
+        def first(self):
+            return Row()
+
+    class Savepoint:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    class FakeDB:
+        def begin_nested(self): return Savepoint()
+        def execute(self, *a, **k): return Result()
+
+    service.db = FakeDB()
+
+    assert service._ledger() == {}
+    assert service._retry_state()["load_ok"] is True
+
+
+def test_a_non_http_error_from_the_check_also_cannot_block_the_batch(monkeypatch):
+    service = _removed_service(monkeypatch)
+    service._ledger_note_failure = lambda *a, **k: service.__dict__.setdefault("noted", []).append(a[0])
+    service._retry_state = lambda: {"processed": set()}
+
+    archived = service._handle_removed_change(_Drive(error=TimeoutError("socket timed out")), "f1", {"errors": 0})
+
+    assert archived == 0 and service.noted == ["f1"]
+
+
+def test_outside_library_archives_stop_at_the_circuit_breaker():
+    import app.services.drive_sync_service as module
+
+    service = _process_file_service(set())
+    service.root_folder_id = "root"
+    service._chain_outside_library = {"folder-x"}
+    service._outside_archives = module.OUTSIDE_LIBRARY_ARCHIVE_CAP
+    existing = {"id": "row-1", "drive_modified_time": None, "soft_tags": None}
+
+    class Mappings:
+        def first(self):
+            return existing
+
+    class Result:
+        def mappings(self):
+            return Mappings()
+
+    executed = []
+
+    class FakeDB:
+        def execute(self, statement, params=None):
+            executed.append(str(statement))
+            return Result()
+
+    service.db = FakeDB()
+    result = {"skipped": 0, "unmatched_brand": 0, "archived": 0}
+
+    service._process_file(dict(_MEDIA), result)
+
+    assert result["archived"] == 0 and result["skipped"] == 1
+    assert not any("archived = TRUE" in sql for sql in executed)
+
+
+def test_no_root_folder_configured_never_archives_as_outside():
+    service = _process_file_service(set())
+    service.root_folder_id = ""
+    service._chain_outside_library = {"folder-x"}
+    existing = {"id": "row-1", "drive_modified_time": None, "soft_tags": None}
+
+    class Mappings:
+        def first(self):
+            return existing
+
+    class Result:
+        def mappings(self):
+            return Mappings()
+
+    class FakeDB:
+        def execute(self, statement, params=None):
+            assert "archived = TRUE" not in str(statement)
+            return Result()
+
+    service.db = FakeDB()
+    result = {"skipped": 0, "unmatched_brand": 0, "archived": 0}
+
+    service._process_file(dict(_MEDIA), result)
+
+    assert result["archived"] == 0 and result["skipped"] == 1

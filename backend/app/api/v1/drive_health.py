@@ -447,6 +447,11 @@ def build_package_health_report(service: DriveSyncService) -> Dict[str, Any]:
         "library_media_total": library_media_total,
         "missing_total": missing_total,
         "missing_packages": missing_packages[:10],
+        # Compact full list for the drift guard (the page only shows the top 10).
+        "all_missing_packages": [
+            {"folder_id": pkg["folder_id"], "path": pkg["path"], "media_count": pkg["media_count"], "missing_count": pkg["missing_count"]}
+            for pkg in missing_packages
+        ],
         # Files in retired archive folders that are not in the picker -- expected, shown for completeness.
         "archive_not_imported_total": archive_missing_total,
     }

@@ -349,6 +349,58 @@ async def startup_event():
             finally:
                 db.close()
 
+        def _run_drive_drift_guard(db, report):
+            """Heal Drive-vs-picker gaps found by the snapshot; alert if they persist."""
+            import json as _json
+            from sqlalchemy import text as _text
+            from app.services import slack_service
+            from app.services.drive_drift_guard import STATE_KEY, run_guard
+            from app.services.drive_sync_service import DriveSyncService
+
+            def load_state():
+                row = db.execute(_text("SELECT value FROM drive_sync_state WHERE key = :k"), {"k": STATE_KEY}).first()
+                # End the read transaction now: the re-syncs below can run for minutes and
+                # must not leave this connection idle-in-transaction.
+                db.rollback()
+                try:
+                    return _json.loads(row[0]) if row and row[0] else None
+                except (TypeError, ValueError):
+                    return None
+
+            def save_state(state):
+                db.execute(
+                    _text("""
+                        INSERT INTO drive_sync_state (key, value, updated_at) VALUES (:k, :v, NOW())
+                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+                    """),
+                    {"k": STATE_KEY, "v": _json.dumps(state)},
+                )
+                db.commit()
+
+            def heal_package(folder_id):
+                heal_db = SessionLocal()
+                try:
+                    outcome = DriveSyncService(heal_db).sync_once(folder_id=folder_id)
+                    if outcome.get("errors"):
+                        # A re-sync that hit file errors did not heal the package; do not spend
+                        # one of its limited attempts on it.
+                        raise RuntimeError(f"re-sync finished with {outcome['errors']} error(s)")
+                finally:
+                    heal_db.close()
+
+            try:
+                outcome = run_guard(
+                    report,
+                    load_state=load_state,
+                    save_state=save_state,
+                    heal=heal_package,
+                    alert=lambda summary, detail: slack_service.send_drive_sync_alert(summary, detail),
+                )
+                if outcome["gaps"]:
+                    print(f"🩹 Drive drift guard: {outcome['gaps']} package(s) with gaps, re-synced {len(outcome['healed'])}, {outcome['persistent']} persistent")
+            except Exception as exc:
+                print(f"⚠️  Drive drift guard error: {exc}")
+
         def scheduled_drive_health_snapshot():
             """Precompute the Drive package health report into drive_sync_state.
 
@@ -366,6 +418,7 @@ async def startup_event():
                     f"{len(report.get('packages', []))} packages, {flagged} flagged, "
                     f"{len(report.get('collisions', []))} filename collisions"
                 )
+                _run_drive_drift_guard(db, report)
             except Exception as exc:
                 print(f"⚠️  Drive package health snapshot error: {exc}")
             finally:
@@ -423,6 +476,7 @@ async def startup_event():
                     print(
                         f"⚠️  Drive reconcile found {result['missing']} media file(s) missing from the library: "
                         f"{result['created']} imported, {result['errors']} failed, {result['deferred']} deferred"
+                        + (f", {result['unmatched_brand']} in folders matching no brand ({', '.join(result.get('unmatched_brand_names') or [])})" if result.get("unmatched_brand") else "")
                     )
                 else:
                     print("✅ Drive reconcile: library matches Drive")

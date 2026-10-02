@@ -25,6 +25,11 @@ _COUNT_KEYS = ("processed", "created", "updated", "archived", "errors")
 def _write_row(db, kind: str, started_at: datetime, status: str, result: Optional[dict], error: Optional[str]) -> None:
     try:
         counts = {key: int((result or {}).get(key) or 0) for key in _COUNT_KEYS}
+        unmatched = int((result or {}).get("unmatched_brand") or 0)
+        if unmatched and not error:
+            # Not a failure, but files were skipped because their top folder matches no brand.
+            names = ", ".join((result or {}).get("unmatched_brand_names") or [])
+            error = f"{unmatched} file(s) skipped: folder matches no brand" + (f" ({names})" if names else "")
         run_db = Session(bind=db.get_bind())
         try:
             run_db.execute(

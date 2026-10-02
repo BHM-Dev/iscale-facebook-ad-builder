@@ -43,6 +43,8 @@ RETRY_MAX_ATTEMPTS = 12
 RETRY_ALERT_AT_ATTEMPTS = RETRY_FAST_ATTEMPTS
 RETRY_SLOW_INTERVAL_SECONDS = 6 * 3600
 RETRY_PRUNE_AFTER_SECONDS = 30 * 86400
+# Most files one sync run may archive purely because their folder is outside the library root.
+OUTSIDE_LIBRARY_ARCHIVE_CAP = 25
 SUPPORTED_PREFIXES = ("image/", "video/")
 MEDIA_ASPECTS = ("1x1", "4x5", "9x16", "16x9")
 FEED_ASPECTS = ("1x1", "4x5", "16x9")
@@ -58,6 +60,38 @@ class ResolvedDrivePath:
 
 class NonActionableHandoffManifestError(RuntimeError):
     """A manifest-shaped planning file has no entries and is not a copy source."""
+
+
+_PERMANENT_403_REASONS = {"forbidden", "insufficientfilepermissions", "notfound", "appnotauthorizedtofile", "fileownerpermissionrequired"}
+
+
+def _drive_error_reason(exc: HttpError) -> str:
+    """The Drive API error 'reason' (e.g. rateLimitExceeded), lower-cased, or ''."""
+    try:
+        for detail in getattr(exc, "error_details", None) or []:
+            if isinstance(detail, dict) and detail.get("reason"):
+                return str(detail["reason"]).lower()
+        payload = json.loads(exc.content.decode("utf-8")) if getattr(exc, "content", None) else {}
+        errors = (payload.get("error") or {}).get("errors") or []
+        if errors and errors[0].get("reason"):
+            return str(errors[0]["reason"]).lower()
+    except Exception:  # noqa: BLE001 - classification must never raise
+        pass
+    return ""
+
+
+def is_permanent_drive_error(exc: HttpError) -> bool:
+    """True only when Drive is telling us the file is gone or off-limits for good.
+
+    Rate limits and server errors also arrive as 403/5xx; treating those as 'gone' is how a
+    busy moment would archive live files. An unknown 403 reason is treated as transient.
+    """
+    status = getattr(getattr(exc, "resp", None), "status", None)
+    if status == 404:
+        return True
+    if status == 403:
+        return _drive_error_reason(exc) in _PERMANENT_403_REASONS
+    return False
 
 
 class DriveSyncService:
@@ -324,7 +358,7 @@ class DriveSyncService:
                         for change in response.get("changes", []):
                             result["processed"] += 1
                             if change.get("removed"):
-                                result["archived"] += self._archive_by_drive_id_isolated(change.get("fileId"), result)
+                                result["archived"] += self._handle_removed_change(drive, change.get("fileId"), result)
                             elif change.get("file"):
                                 self._process_file_isolated(change["file"], result)
                         replay_token = response.get("nextPageToken")
@@ -352,7 +386,7 @@ class DriveSyncService:
                 for change in response.get("changes", []):
                     result["processed"] += 1
                     if change.get("removed"):
-                        result["archived"] += self._archive_by_drive_id_isolated(change.get("fileId"), result)
+                        result["archived"] += self._handle_removed_change(drive, change.get("fileId"), result)
                         continue
                     file_meta = change.get("file") or {}
                     if file_meta.get("trashed"):
@@ -460,7 +494,13 @@ class DriveSyncService:
                         text("SELECT value FROM drive_sync_state WHERE key = :key"),
                         {"key": RETRY_LEDGER_KEY},
                     ).first()
-                loaded = json.loads(row[0]) if row and row[0] else {}
+                try:
+                    loaded = json.loads(row[0]) if row and row[0] else {}
+                except ValueError:
+                    # The SAVED value is corrupt (the read itself worked). Freezing the ledger
+                    # here would silently drop every future failure; start clean and say so.
+                    logger.error("Drive retry ledger contained invalid JSON; resetting it")
+                    loaded = {}
                 state["load_ok"] = True
             except Exception as exc:
                 logger.warning("Could not load Drive retry ledger: %s", exc)
@@ -487,6 +527,8 @@ class DriveSyncService:
     def _ledger_flush(self) -> bool:
         state = self._retry_state()
         if state["ledger"] is None or state.get("load_ok") is False:
+            if state.get("load_ok") is False:
+                logger.error("Drive retry ledger could not be read; failures from this run were NOT saved")
             return False
         if json.dumps(state["ledger"], sort_keys=True) == state.get("loaded_json"):
             return True
@@ -576,8 +618,8 @@ class DriveSyncService:
                     supportsAllDrives=True,
                 ).execute()
             except HttpError as exc:
-                if getattr(exc.resp, "status", None) == 404:
-                    # Deleted from Drive: retire the row as the change feed would have.
+                if is_permanent_drive_error(exc):
+                    # Gone (or off-limits) on two checks a cycle apart: retire the row.
                     result["archived"] += self._archive_by_drive_id_isolated(drive_file_id, result)
                     ledger.pop(drive_file_id, None)
                 else:
@@ -720,6 +762,46 @@ class DriveSyncService:
                     file_meta.get("name") or file_meta.get("id") or "unknown file",
                     exc_info=True,
                 )
+
+    def _handle_removed_change(self, drive, drive_file_id: Optional[str], result: Dict[str, Any]) -> int:
+        """Act on a change-feed ``removed`` entry without trusting it blindly.
+
+        Drive sends ``removed`` for deletions but also when the service account merely
+        loses access (a folder moved out of scope, re-shared, restructured). Archiving on
+        the flag alone hid 462 files that still exist (2026-09-22). Confirm with the file
+        itself: genuinely gone/forbidden or trashed -> archive; still readable -> keep it and
+        refresh it (or archive it if it now lives outside the library). Anything uncertain
+        (rate limit, 5xx, timeout) is parked in the retry ledger and the batch carries on:
+        one stubborn id must never block every later change, and must never be archived by guess.
+        """
+        if not drive_file_id:
+            return 0
+        try:
+            meta = drive.files().get(
+                fileId=drive_file_id,
+                fields="id,name,mimeType,parents,modifiedTime,trashed,size,webViewLink",
+                supportsAllDrives=True,
+            ).execute()
+        except Exception as exc:  # noqa: BLE001 - HttpError, timeouts, SSL: none may stall the batch
+            # Even a hard 404/forbidden is NOT archived on this one look. Losing access to a file
+            # looks identical to deleting it, and access flaps (the 2026-09-22 incident). Park it:
+            # the retry pass re-checks on the next sync cycle and archives only if it is STILL gone.
+            permanent = isinstance(exc, HttpError) and is_permanent_drive_error(exc)
+            logger.warning(
+                "Drive removed-change for %s is %s; re-checking next cycle: %s",
+                drive_file_id, "unreadable" if permanent else "uncertain", exc,
+            )
+            if not permanent:
+                result["errors"] += 1
+            self._ledger_note_failure(drive_file_id, None, exc, kind="file")
+            self._retry_state()["processed"].add(drive_file_id)  # keep this run's retry pass off it
+            return 0
+        if meta.get("trashed"):
+            return self._archive_by_drive_id_isolated(drive_file_id, result)
+        if meta.get("mimeType") == "application/vnd.google-apps.folder":
+            return 0
+        self._process_file_isolated(meta, result)
+        return 0
 
     def _archive_by_drive_id_isolated(self, drive_file_id: Optional[str], result: Dict[str, Any]) -> int:
         """Give deletion events the same savepoint isolation as active files."""
@@ -1386,6 +1468,36 @@ class DriveSyncService:
 
         resolved = self._resolve_drive_path(file_meta)
         if not resolved:
+            # A folder lookup that FAILED (Drive rejected or timed out on the parent chain,
+            # typically right after a folder is created or moved) must not be dropped: the
+            # change feed reports a file once, so a silent skip hides it forever. Raising
+            # sends it through the retry ledger, which re-fetches it every cycle and alerts
+            # if it never recovers. A file that is merely outside the library still skips.
+            parents = file_meta.get("parents") or []
+            if parents and parents[0] in self.__dict__.get("_chain_lookup_failures", set()):
+                raise RuntimeError(
+                    "Could not look up this file's folder in Drive; it will be retried automatically"
+                )
+            if (
+                existing and parents and self.root_folder_id
+                and parents[0] in self.__dict__.get("_chain_outside_library", set())
+            ):
+                # Confirmed move OUT of the library: retire the row instead of leaving a
+                # ghost at its old path (which also masks real gaps in the package counts).
+                # Circuit breaker: a restructure or a wrong root id would look like thousands of
+                # files "leaving"; never archive more than a handful per run on this evidence.
+                done = self.__dict__.get("_outside_archives", 0)
+                if done >= OUTSIDE_LIBRARY_ARCHIVE_CAP:
+                    logger.error("Drive sync: outside-library archive cap reached; leaving %s active", drive_file_id)
+                    result["skipped"] += 1
+                    return
+                self.__dict__["_outside_archives"] = done + 1
+                self.db.execute(
+                    text("UPDATE drive_assets SET archived = TRUE, synced_at = NOW() WHERE id = :id AND archived = FALSE"),
+                    {"id": existing["id"]},
+                )
+                result["archived"] += 1
+                return
             result["skipped"] += 1
             return
 
@@ -1393,6 +1505,10 @@ class DriveSyncService:
         if not brand_id:
             logger.warning("Skipping Drive asset with unmatched brand folder: %s", resolved.brand_folder)
             result["unmatched_brand"] += 1
+            # Name the folders so the sync-run log can say which ones, not just how many.
+            names = result.setdefault("unmatched_brand_names", [])
+            if resolved.brand_folder not in names and len(names) < 5:
+                names.append(resolved.brand_folder)
             return
 
         if existing and existing["drive_modified_time"] and existing["drive_modified_time"].replace(tzinfo=timezone.utc) == modified_time:
@@ -1681,6 +1797,10 @@ class DriveSyncService:
                 if not listed:
                     logger.warning("Could not resolve Drive parent %s: %s", current_id, exc)
                     self._path_cache[folder_id] = None
+                    # "Drive would not answer right now" is worth retrying (see _process_file);
+                    # a hard 404/forbidden means the folder is gone or off-limits for good.
+                    if not is_permanent_drive_error(exc):
+                        self.__dict__.setdefault("_chain_lookup_failures", set()).add(folder_id)
                     return None
                 item = listed[0]
             chain.append({"id": item["id"], "name": item.get("name", "")})
@@ -1691,6 +1811,8 @@ class DriveSyncService:
             current_id = parents[0] if parents else None
 
         self._path_cache[folder_id] = None
+        # The chain ended without ever reaching the library root: this folder lives elsewhere.
+        self.__dict__.setdefault("_chain_outside_library", set()).add(folder_id)
         return None
 
     def _match_brand_id(self, brand_folder: str) -> Optional[str]:
