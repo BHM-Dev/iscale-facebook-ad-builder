@@ -1000,21 +1000,28 @@ class DriveSyncService:
                 self._strategy_package_folder_cache.clear()
                 self._folder_metadata_cache.clear()
                 try:
-                    metadata_folder = self._metadata_folder_for_copy_document(file_meta)
-                    if not metadata_folder or metadata_folder in refreshed_package_folders:
-                        continue
-                    # A package can keep a current copy document beside drafts,
-                    # ICP notes, and an older export. _folder_copy_metadata
-                    # selects the canonical source for the package itself, so
-                    # processing every recognized document only repeats the
-                    # same recursive Drive walk several times. One refresh per
-                    # package keeps the button responsive without changing
-                    # which source wins.
-                    refreshed_package_folders.add(metadata_folder)
-                    result["updated"] += self._refresh_folder_copy_metadata(
-                        file_meta,
-                        metadata_folder=metadata_folder,
-                    )
+                    # A malformed source or package-level database problem must
+                    # not poison the transaction for every other package in a
+                    # full refresh. The blanket fail-closed marker above is
+                    # intentionally durable only at the final commit; each
+                    # package refresh gets its own savepoint so good packages
+                    # can still become verified in the same run.
+                    with self.db.begin_nested():
+                        metadata_folder = self._metadata_folder_for_copy_document(file_meta)
+                        if not metadata_folder or metadata_folder in refreshed_package_folders:
+                            continue
+                        # A package can keep a current copy document beside drafts,
+                        # ICP notes, and an older export. _folder_copy_metadata
+                        # selects the canonical source for the package itself, so
+                        # processing every recognized document only repeats the
+                        # same recursive Drive walk several times. One refresh per
+                        # package keeps the button responsive without changing
+                        # which source wins.
+                        refreshed_package_folders.add(metadata_folder)
+                        result["updated"] += self._refresh_folder_copy_metadata(
+                            file_meta,
+                            metadata_folder=metadata_folder,
+                        )
                 except Exception as exc:
                     # Do not roll the whole refresh back and keep last week's
                     # copy silently launchable. Mark only this package's prior
@@ -1023,7 +1030,14 @@ class DriveSyncService:
                     # source document parses again.
                     result["errors"] += 1
                     logger.warning("Could not refresh Drive copy metadata for %s: %s", file_meta.get("name"), exc)
-                    self._mark_package_copy_unverified(file_meta, str(exc))
+                    try:
+                        with self.db.begin_nested():
+                            self._mark_package_copy_unverified(file_meta, str(exc))
+                    except Exception:
+                        # If the marker itself cannot be written, let the outer
+                        # transaction fail closed through _persist_global_copy_block
+                        # rather than presenting stale copy as launchable.
+                        raise
             result["unverified"] = int(
                 self.db.execute(
                     text(
@@ -1221,6 +1235,51 @@ class DriveSyncService:
             self.db.rollback()
             logger.exception("Targeted Drive media-package refresh failed")
             raise
+
+    def refresh_unverified_copy_assets(self, max_assets: int = 100) -> Dict[str, Any]:
+        """Retry recently persisted unverified media without requiring a button click.
+
+        A new creative and its copy source often arrive in separate Drive change
+        events. The media change can be processed first and correctly marked
+        unverified; if the later source event is missed or arrives after the
+        retry ledger reaches its cap, the picker can remain blocked forever.
+        This bounded pass reuses the same target-specific package resolver as the
+        launch flow, so it repairs only known unverified rows and never crawls
+        the whole library from the scheduler.
+        """
+        limit = max(1, min(int(max_assets or 100), 500))
+        rows = self.db.execute(
+            text(
+                """
+                SELECT drive_file_id, soft_tags
+                FROM drive_assets
+                WHERE archived = FALSE
+                  AND soft_tags ILIKE '%copy_refresh_status%'
+                ORDER BY synced_at ASC
+                LIMIT :scan_limit
+                """
+            ),
+            # Parse the JSON in Python. The health path deliberately tolerates
+            # legacy malformed soft_tags; an auto-repair query must not turn
+            # one malformed row into a failed scheduler run.
+            {"scan_limit": max(limit * 4, limit)},
+        ).all()
+        drive_file_ids = []
+        for row in rows:
+            try:
+                tags = json.loads(row[1] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(tags, dict) and tags.get("copy_refresh_status") == "unverified" and row[0]:
+                drive_file_ids.append(row[0])
+                if len(drive_file_ids) >= limit:
+                    break
+        if not drive_file_ids:
+            return {"processed": 0, "updated": 0, "errors": 0, "unverified": 0, "auto_repair": True}
+        result = self.refresh_copy_metadata_for_drive_files(drive_file_ids)
+        result["auto_repair"] = True
+        result["auto_repair_candidates"] = len(drive_file_ids)
+        return result
 
     def _client(self):
         if self._drive:

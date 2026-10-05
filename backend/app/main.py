@@ -433,6 +433,13 @@ async def startup_event():
                 from app.services.drive_sync_service import DriveSyncService
                 from app.services import slack_service
                 result = DriveSyncService(db).sync_once()
+                # New media and its copy document frequently land in separate
+                # Drive events. A media-first event is intentionally imported
+                # but marked unverified; immediately retry those known rows so
+                # the normal 30-minute sync heals them without requiring Joel
+                # to press Refresh copy in the launcher. This is bounded and
+                # package-targeted, not a whole-library crawl.
+                auto_repair = DriveSyncService(db).refresh_unverified_copy_assets()
                 changed = result.get("created", 0) + result.get("updated", 0) + result.get("archived", 0)
                 errors = result.get("errors", 0)
                 print(
@@ -445,6 +452,13 @@ async def startup_event():
                     print("ℹ️  Drive creative sync: no asset changes")
                 if errors:
                     print(f"⚠️  Drive creative sync: {errors} file(s) failed and were isolated (see warnings above)")
+                if auto_repair.get("processed") or auto_repair.get("errors"):
+                    print(
+                        "🔁 Drive copy auto-repair: "
+                        f"{auto_repair.get('processed', 0)} checked, "
+                        f"{auto_repair.get('updated', 0)} updated, "
+                        f"{auto_repair.get('errors', 0)} still failing"
+                    )
                 # Failed files are retried automatically each cycle (and after each
                 # deploy), so Slack only hears about the ones still failing after
                 # those retries, once each.

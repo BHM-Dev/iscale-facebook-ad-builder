@@ -2302,6 +2302,9 @@ def test_global_copy_refresh_failure_keeps_copy_matches_blocked_after_rollback()
     service = DriveSyncService.__new__(DriveSyncService)
     service._validate_tables = lambda: None
     service._client = lambda: object()
+    service._package_folder_cache = {}
+    service._strategy_package_folder_cache = {}
+    service._folder_metadata_cache = {}
     service._mark_all_copy_assets_unverified = lambda reason: None
     service._initial_folder_walk = lambda drive: (_ for _ in ()).throw(RuntimeError("listing failed"))
     blocked = []
@@ -2323,6 +2326,104 @@ def test_global_copy_refresh_failure_keeps_copy_matches_blocked_after_rollback()
         service.refresh_copy_metadata()
 
     assert blocked == ["Global Drive copy refresh failed before completion: listing failed"]
+
+
+def test_full_copy_refresh_isolates_package_failures_with_savepoints():
+    """One bad package must not roll back successful copy matches elsewhere."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._validate_tables = lambda: None
+    service._client = lambda: object()
+    service._package_folder_cache = {}
+    service._strategy_package_folder_cache = {}
+    service._folder_metadata_cache = {}
+    service._mark_all_copy_assets_unverified = lambda reason: None
+    service._initial_folder_walk = lambda drive: [
+        {"id": "bad-doc", "name": "Bad Strategy.md", "mimeType": "text/markdown"},
+        {"id": "good-doc", "name": "Good Strategy.md", "mimeType": "text/markdown"},
+    ]
+    service._is_text_file = lambda mime_type, name: True
+    service._download_text_file = lambda file_id: "recognized copy"
+    service._looks_like_strategy_copy_doc = lambda body: True
+    service._looks_like_category_copy_doc = lambda body: False
+    service._looks_like_ad_copy_doc = lambda body: False
+    service._is_handoff_manifest_file = lambda name: False
+    service._metadata_folder_for_copy_document = lambda file_meta: {
+        "bad-doc": "bad-package", "good-doc": "good-package"
+    }[file_meta["id"]]
+    service._refresh_folder_copy_metadata = lambda file_meta, metadata_folder: (
+        (_ for _ in ()).throw(RuntimeError("malformed package"))
+        if metadata_folder == "bad-package" else 3
+    )
+    marked = []
+    service._mark_package_copy_unverified = lambda file_meta, reason: marked.append(file_meta["id"])
+    service._attach_copy_health = lambda result: result
+
+    class Result:
+        def __init__(self, scalar_value):
+            self.scalar_value = scalar_value
+
+        def scalar(self):
+            return self.scalar_value
+
+    class Savepoint:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    class FakeDB:
+        committed = False
+
+        def execute(self, statement, *args, **kwargs):
+            sql = str(statement)
+            if "pg_try_advisory_xact_lock" in sql:
+                return Result(True)
+            return Result(0)
+
+        def begin_nested(self):
+            return Savepoint()
+
+        def commit(self):
+            self.committed = True
+
+        def rollback(self):
+            pass
+
+    service.db = FakeDB()
+    result = service.refresh_copy_metadata()
+
+    assert result["errors"] == 1
+    assert result["updated"] == 3
+    assert marked == ["bad-doc"]
+    assert service.db.committed is True
+
+
+def test_refresh_unverified_copy_assets_retries_a_bounded_targeted_batch():
+    service = DriveSyncService.__new__(DriveSyncService)
+    calls = []
+
+    class Rows:
+        def all(self):
+            return [
+                ("old-unverified", '{"copy_refresh_status":"unverified"}'),
+                ("new-unverified", '{"copy_refresh_status":"unverified"}'),
+            ]
+
+    class FakeDB:
+        def execute(self, statement, *args, **kwargs):
+            return Rows()
+
+    service.db = FakeDB()
+    service.refresh_copy_metadata_for_drive_files = lambda ids: calls.append(ids) or {
+        "processed": 2, "updated": 2, "errors": 0, "unverified": 0
+    }
+
+    result = service.refresh_unverified_copy_assets(max_assets=2)
+
+    assert calls == [["old-unverified", "new-unverified"]]
+    assert result["auto_repair"] is True
+    assert result["auto_repair_candidates"] == 2
 
 
 def test_selected_media_refresh_failure_marks_media_and_package_unverified():
