@@ -1464,6 +1464,55 @@ Organic body with no launch headline.
     assert result["assets_by_drive_id"]["ad1-feed"]["copy"]["headline"] == "Electrician headline"
 
 
+def test_partial_legacy_copy_supplements_a_complete_winner_copy_for_disjoint_media():
+    """A valid canonical AD section must not be lost to an unrelated winner batch."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+    legacy = {
+        "id": "legacy-copy",
+        "name": "03-Electrical-Ad-Copy.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T10:42:21Z",
+    }
+    winner = {
+        "id": "winner-copy",
+        "name": "03-Electrical-Winner-Variations-Ad-Copy.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T10:50:00Z",
+    }
+    legacy_feed = {"id": "legacy-feed", "name": "03-ELEC-AD1-Identity-1x1.jpg", "mimeType": "image/jpeg"}
+    legacy_story = {"id": "legacy-story", "name": "03-ELEC-AD1-Identity-9x16.jpg", "mimeType": "image/jpeg"}
+    winner_feed = {"id": "winner-feed", "name": "03-ELEC-AD2-Winner-1x1.jpg", "mimeType": "image/jpeg"}
+    winner_story = {"id": "winner-story", "name": "03-ELEC-AD2-Winner-9x16.jpg", "mimeType": "image/jpeg"}
+    documents = {
+        "legacy-copy": """AD 1 — Identity
+META HEADLINE
+Legacy headline
+PRIMARY TEXT
+Legacy body
+
+AD 5 — Trojan
+PRIMARY TEXT
+Organic body with no launch headline.
+""",
+        "winner-copy": """AD 2 — Winner
+Headline: Winner headline
+==========
+Winner body
+==========
+""",
+    }
+    service._list_folder_subtree = lambda folder_id: [legacy, winner, legacy_feed, legacy_story, winner_feed, winner_story]
+    service._download_text_file = lambda file_id: documents[file_id]
+
+    result = service._folder_copy_metadata("electrical-package")
+
+    assert result["assets_by_drive_id"]["legacy-feed"]["copy"]["headline"] == "Legacy headline"
+    assert result["assets_by_drive_id"]["legacy-feed"]["copy_source_drive_file_id"] == "legacy-copy"
+    assert result["assets_by_drive_id"]["winner-feed"]["copy"]["headline"] == "Winner headline"
+    assert result["assets_by_drive_id"]["winner-feed"]["copy_source_drive_file_id"] == "winner-copy"
+
+
 def test_package_copy_sources_merge_disjoint_launch_batches_with_per_asset_provenance():
     service = DriveSyncService.__new__(DriveSyncService)
     service._folder_metadata_cache = {}
