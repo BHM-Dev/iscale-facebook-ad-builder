@@ -34,12 +34,12 @@ logger = logging.getLogger(__name__)
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 STATE_KEY = "drive_changes_start_page_token"
 RETRY_LEDGER_KEY = "drive_failed_files"
-# Every sync cycle (30 min) for the first few attempts, then every 6 hours, and
+# Every sync cycle (10 min) for the first few attempts, then every 6 hours, and
 # never past the cap. A new deploy resets attempts, since a code fix is the usual cure.
 RETRY_FAST_ATTEMPTS = 4
 RETRY_MAX_ATTEMPTS = 12
 # The original failure counts as attempt 1, so this alerts after 3 failed retries
-# (~1.5h of 30-minute cycles). Retrying then continues quietly on the slow schedule.
+# (~30 min of 10-minute cycles). Retrying then continues quietly on the slow schedule.
 RETRY_ALERT_AT_ATTEMPTS = RETRY_FAST_ATTEMPTS
 RETRY_SLOW_INTERVAL_SECONDS = 6 * 3600
 RETRY_PRUNE_AFTER_SECONDS = 30 * 86400

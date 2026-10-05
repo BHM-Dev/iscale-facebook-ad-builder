@@ -536,13 +536,18 @@ async def startup_event():
 
         scheduler.add_job(scheduled_check, 'interval', minutes=30, id='auto_pause_check')
         scheduler.add_job(scheduled_redtrack_sync, 'interval', minutes=30, id='redtrack_sync')
-        scheduler.add_job(scheduled_drive_sync, 'interval', minutes=30, id='drive_creative_sync')
+        # Drive's changes feed is cheap when nothing changed. Ten-minute polling
+        # keeps newly added creative close to real time, while the bounded
+        # auto-repair pass above resolves copy that lands a few minutes later.
+        scheduler.add_job(scheduled_drive_sync, 'interval', minutes=10, id='drive_creative_sync')
         scheduler.add_job(scheduled_drive_reconcile, 'cron', hour=7, minute=40, timezone='UTC', id='drive_reconcile')
         # Hourly and offset to :20. This walks the whole Drive tree (~285s measured
         # against production) and shares Drive API quota with drive_creative_sync
         # above. As a plain 'interval' job it would start at the same T+60/T+120
         # boundaries that sync fires on and contend with it for the full walk;
-        # cron at minute=20 puts it between sync's :00 and :30 runs. It is a
+        # cron at minute=20 stays off the common on-the-hour maintenance
+        # boundary. The shared advisory lock still prevents overlap if a sync
+        # is running long. It is a
         # structural report, not a live metric, so hourly is ample.
         scheduler.add_job(scheduled_drive_health_snapshot, 'cron', minute=20, id='drive_health_snapshot')
         scheduler.add_job(scheduled_token_check, 'cron', hour=13, minute=0, timezone='UTC', id='token_expiry_check')
