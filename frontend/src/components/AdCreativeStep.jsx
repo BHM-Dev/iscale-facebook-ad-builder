@@ -1318,14 +1318,30 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                 .filter(assetId => !parseDriveTags(assetById.get(assetId)).copy_source_drive_file_id)
                 .map(assetId => assetById.get(assetId)?.drive_file_id)
                 .filter(Boolean))];
+            // With nothing selected, repair the rows that are actually held in
+            // this picker.  Sending an empty request used the maintenance
+            // fallback, which can inspect hundreds of unrelated historical
+            // failures serially and leave the visible Refresh button spinning
+            // for minutes. One media ID per blocked group is enough: the server
+            // resolves and refreshes its whole package, so Feed/Stories siblings
+            // recover together without turning this into a library-wide job.
+            const heldDriveFileIds = refreshAssetIds.length === 0
+                ? buildDriveAssetGroups(driveAssets)
+                    .filter(group => group.copyRefreshUnverified)
+                    .map(group => group.assets[0]?.drive_file_id)
+                    .filter(Boolean)
+                : [];
             const res = await authFetch(`${API_URL}/drive-assets/refresh-copy-metadata`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     source_file_ids: sourceFileIds,
-                    drive_file_ids: driveFileIds,
+                    drive_file_ids: driveFileIds.length ? driveFileIds : heldDriveFileIds,
                     force_full_refresh: false,
-                    skip_full_refresh: refreshAssetIds.length === 0,
+                    // Preserve the bounded server fallback only when this view
+                    // has no held rows to target (for example, a first-time
+                    // library with stale maintenance state but no visible data).
+                    skip_full_refresh: refreshAssetIds.length === 0 && heldDriveFileIds.length === 0,
                 }),
             });
             const data = await res.json().catch(() => ({}));

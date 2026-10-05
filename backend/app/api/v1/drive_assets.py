@@ -302,7 +302,10 @@ def refresh_drive_copy_metadata(
             # creatives.  Repair the held rows instead of re-crawling Drive:
             # the bounded resolver rechecks each creative in its own package
             # and leaves unrelated packages alone.
-            return service.refresh_unverified_copy_assets(max_assets=500)
+            # This is a maintenance fallback for callers without visible
+            # target rows. Keep it short: picker actions must never queue a
+            # serial inspection of a historic library while a buyer waits.
+            return service.refresh_unverified_copy_assets(max_assets=50)
         # A batch routinely contains BOTH kinds of row at once: assets with a
         # recorded copy source and source-less assets fresh off an import.
         # Each must resolve through its own path — a known source refreshes

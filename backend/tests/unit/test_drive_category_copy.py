@@ -2535,7 +2535,7 @@ def test_drive_sync_routes_keep_their_intended_service_composition(monkeypatch):
     assert route_module.refresh_drive_copy_metadata(
         payload=DriveCopyRefreshRequest(skip_full_refresh=True), db=db, _current_user=object()
     )["processed"] == 5
-    assert calls[-1] == ("repair_unverified", 500)
+    assert calls[-1] == ("repair_unverified", 50)
 
     class FakeResponse:
         headers = {}
