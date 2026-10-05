@@ -1432,6 +1432,38 @@ def test_package_copy_source_prefers_canonical_ad_copy_over_newer_winner_variati
     assert result["assets_by_drive_id"]["paint-ad1-feed"]["copy"]["headline"] == "Primary headline"
 
 
+def test_package_copy_source_keeps_complete_sections_when_a_legacy_ad_is_organic():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+    source = {
+        "id": "legacy-copy",
+        "name": "03-Electrical-Ad-Copy.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-09-22T10:42:21Z",
+    }
+    feed = {"id": "ad1-feed", "name": "03-ELEC-AD1-Identity-1x1.jpg", "mimeType": "image/jpeg"}
+    story = {"id": "ad1-story", "name": "03-ELEC-AD1-Identity-9x16.jpg", "mimeType": "image/jpeg"}
+    organic = {"id": "ad5-feed", "name": "03-ELEC-AD5-Trojan-1x1.jpg", "mimeType": "image/jpeg"}
+    document = """AD 1 — Identity
+META HEADLINE
+Electrician headline
+PRIMARY TEXT
+Electrician body
+
+AD 5 — Trojan
+PRIMARY TEXT
+Organic body with no launch headline.
+"""
+    service._list_folder_subtree = lambda folder_id: [source, feed, story, organic]
+    service._download_text_file = lambda file_id: document
+
+    result = service._folder_copy_metadata("electrical-package")
+
+    assert set(result["assets_by_drive_id"]) == {"ad1-feed", "ad1-story"}
+    assert result["assets_by_drive_id"]["ad1-feed"]["copy_source_drive_file_id"] == "legacy-copy"
+    assert result["assets_by_drive_id"]["ad1-feed"]["copy"]["headline"] == "Electrician headline"
+
+
 def test_package_copy_sources_merge_disjoint_launch_batches_with_per_asset_provenance():
     service = DriveSyncService.__new__(DriveSyncService)
     service._folder_metadata_cache = {}

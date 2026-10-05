@@ -3155,6 +3155,13 @@ class DriveSyncService:
                 return metadata
 
         copy_candidates = []
+        # A legacy AD-copy file can have one deliberately unsupported organic
+        # section (for example an AD 5 Trojan post with no Meta headline) while
+        # AD 1–4 are complete launch copy.  Do not let that one bad section
+        # strand every otherwise-valid pair.  Complete sources still win
+        # unconditionally; this list is considered only when the package has
+        # no complete ad/category source or usable manifest at all.
+        partial_copy_candidates = []
         unreadable_text_files = []
         for item in text_files:
             if self._is_handoff_manifest_for_folder(item, folder_id):
@@ -3167,10 +3174,14 @@ class DriveSyncService:
                 unreadable_text_files.append(item.get("name") or item.get("id"))
                 continue
             source_kind = self._copy_document_kind(candidate_text)
-            if source_kind and (
-                source_kind == "strategy" or self._copy_document_is_complete(candidate_text, source_kind)
-            ):
+            if not source_kind:
+                continue
+            if source_kind == "strategy" or self._copy_document_is_complete(candidate_text, source_kind):
                 copy_candidates.append((item, candidate_text, source_kind))
+            elif source_kind in {"ad", "category"}:
+                partial_copy_candidates.append((item, candidate_text, source_kind))
+        if not copy_candidates and partial_copy_candidates:
+            copy_candidates = partial_copy_candidates
         if copy_candidates:
             # A package can contain non-overlapping launch batches (for
             # example, an original A1-D5 export beside newer winner
