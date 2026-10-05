@@ -428,57 +428,96 @@ async def startup_event():
 
         def scheduled_drive_sync():
             """Pull shared Google Drive creative into the existing R2-backed library."""
+            for attempt in range(1, 3):
+                db = SessionLocal()
+                try:
+                    from app.services.drive_sync_service import DriveSyncService
+                    result = DriveSyncService(db).sync_once()
+                    # New media and its copy document frequently land in separate
+                    # Drive events. A media-first event is intentionally imported
+                    # but marked unverified; immediately retry those known rows so
+                    # this scheduled sync heals them without requiring Joel
+                    # to press Refresh copy in the launcher. This is bounded and
+                    # package-targeted, not a whole-library crawl.
+                    auto_repair = DriveSyncService(db).refresh_unverified_copy_assets()
+                    changed = result.get("created", 0) + result.get("updated", 0) + result.get("archived", 0)
+                    errors = result.get("errors", 0)
+                    print(
+                        "✅ Drive creative sync: "
+                        f"{result.get('processed', 0)} processed, {result.get('created', 0)} created, "
+                        f"{result.get('updated', 0)} updated, {result.get('archived', 0)} archived, "
+                        f"{result.get('skipped', 0)} skipped, {errors} errors"
+                    )
+                    if not changed:
+                        print("ℹ️  Drive creative sync: no asset changes")
+                    if errors:
+                        print(f"⚠️  Drive creative sync: {errors} file(s) failed and were isolated (see warnings above)")
+                    if auto_repair.get("processed") or auto_repair.get("errors"):
+                        print(
+                            "🔁 Drive copy auto-repair: "
+                            f"{auto_repair.get('processed', 0)} checked, "
+                            f"{auto_repair.get('updated', 0)} updated, "
+                            f"{auto_repair.get('errors', 0)} still failing"
+                        )
+                    # The persistent run log keeps exhausted file failures visible
+                    # to the recovery job and watchdog. Do not post operational
+                    # alerts to Slack from this scheduler.
+                    exhausted = result.get("retries_exhausted") or []
+                    if exhausted:
+                        lines = [f"{item['name']} — {item.get('error') or 'unknown error'}" for item in exhausted[:8]]
+                        if len(exhausted) > 8:
+                            lines.append(f"…and {len(exhausted) - 8} more")
+                        print(f"⚠️  Drive creative sync: {len(exhausted)} file(s) still failing after automatic retries: {'; '.join(lines)}")
+                    return
+                except Exception as exc:
+                    # The run logger records the failed attempt independently.
+                    # One immediate retry covers transient Drive/network failures
+                    # without waiting until tomorrow's scheduled sync.
+                    if attempt == 1 and getattr(exc, "status_code", None) != 409:
+                        print(f"⚠️  Drive creative sync attempt 1 failed; retrying once: {exc}")
+                        continue
+                    print(f"⚠️  Drive creative sync error: {exc}")
+                    return
+                finally:
+                    # Do not keep the attempt's connection open while a retry
+                    # starts a fresh transaction and advisory-lock attempt.
+                    db.close()
+
+        def scheduled_drive_recovery():
+            """Retry a failed daily sync or its remaining unverified creatives later that day."""
             db = SessionLocal()
             try:
                 from app.services.drive_sync_service import DriveSyncService
-                from app.services import slack_service
-                result = DriveSyncService(db).sync_once()
-                # New media and its copy document frequently land in separate
-                # Drive events. A media-first event is intentionally imported
-                # but marked unverified; immediately retry those known rows so
-                # the normal 30-minute sync heals them without requiring Joel
-                # to press Refresh copy in the launcher. This is bounded and
-                # package-targeted, not a whole-library crawl.
-                auto_repair = DriveSyncService(db).refresh_unverified_copy_assets()
-                changed = result.get("created", 0) + result.get("updated", 0) + result.get("archived", 0)
-                errors = result.get("errors", 0)
-                print(
-                    "✅ Drive creative sync: "
-                    f"{result.get('processed', 0)} processed, {result.get('created', 0)} created, "
-                    f"{result.get('updated', 0)} updated, {result.get('archived', 0)} archived, "
-                    f"{result.get('skipped', 0)} skipped, {errors} errors"
-                )
-                if not changed:
-                    print("ℹ️  Drive creative sync: no asset changes")
-                if errors:
-                    print(f"⚠️  Drive creative sync: {errors} file(s) failed and were isolated (see warnings above)")
-                if auto_repair.get("processed") or auto_repair.get("errors"):
+                row = db.execute(
+                    _text(
+                        """
+                        SELECT status
+                        FROM drive_sync_runs
+                        WHERE kind IN ('incremental', 'backfill')
+                        ORDER BY started_at DESC, id DESC
+                        LIMIT 1
+                        """
+                    )
+                ).first()
+                status = row[0] if row else None
+                if status in {"error", "ok_with_errors"}:
+                    print(f"🔁 Drive recovery: latest sync status is {status}; retrying the changes feed")
+                    db.close()
+                    db = None
+                    scheduled_drive_sync()
+                    return
+                result = DriveSyncService(db).refresh_unverified_copy_assets()
+                if result.get("auto_repair_candidates"):
                     print(
-                        "🔁 Drive copy auto-repair: "
-                        f"{auto_repair.get('processed', 0)} checked, "
-                        f"{auto_repair.get('updated', 0)} updated, "
-                        f"{auto_repair.get('errors', 0)} still failing"
+                        "🔁 Drive recovery: "
+                        f"{result.get('processed', 0)} unverified creative(s) checked, "
+                        f"{result.get('updated', 0)} updated, {result.get('errors', 0)} still failing"
                     )
-                # Failed files are retried automatically each cycle (and after each
-                # deploy), so Slack only hears about the ones still failing after
-                # those retries, once each.
-                exhausted = result.get("retries_exhausted") or []
-                if exhausted:
-                    lines = [f"{item['name']} — {item.get('error') or 'unknown error'}" for item in exhausted[:8]]
-                    if len(exhausted) > 8:
-                        lines.append(f"…and {len(exhausted) - 8} more")
-                    sent = slack_service.send_drive_sync_alert(
-                        f"{len(exhausted)} file(s) still failing after automatic retries",
-                        "\n> ".join(lines),
-                    )
-                    if sent:
-                        # Only the files named in the message count as told; any beyond
-                        # the first 8 alert on a following cycle.
-                        DriveSyncService(db).acknowledge_failure_alerts([item["drive_file_id"] for item in exhausted[:8]])
             except Exception as exc:
-                print(f"⚠️  Drive creative sync error: {exc}")
+                print(f"⚠️  Drive recovery error: {exc}")
             finally:
-                db.close()
+                if db is not None:
+                    db.close()
 
         def scheduled_drive_reconcile():
             """Daily safety net: import Drive media the change feed never delivered."""
@@ -533,6 +572,7 @@ async def startup_event():
         app.state.rt_sync_fn = scheduled_redtrack_sync
         app.state.token_check_fn = scheduled_token_check
         app.state.drive_sync_fn = scheduled_drive_sync
+        app.state.drive_recovery_fn = scheduled_drive_recovery
 
         scheduler.add_job(scheduled_check, 'interval', minutes=30, id='auto_pause_check')
         scheduler.add_job(scheduled_redtrack_sync, 'interval', minutes=30, id='redtrack_sync')
@@ -546,6 +586,17 @@ async def startup_event():
             minute=17,
             timezone='UTC',
             id='drive_creative_sync',
+        )
+        # Two bounded same-day recovery windows. They only replay the change
+        # feed after a failed/partial run; otherwise they re-check existing
+        # unverified rows without doing a full Drive crawl.
+        scheduler.add_job(
+            scheduled_drive_recovery,
+            'cron',
+            hour='12,17',
+            minute=17,
+            timezone='UTC',
+            id='drive_creative_recovery',
         )
         scheduler.add_job(scheduled_drive_reconcile, 'cron', hour=7, minute=40, timezone='UTC', id='drive_reconcile')
         # One daily structural report. It runs after the daily sync and
