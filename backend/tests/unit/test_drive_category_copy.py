@@ -2502,6 +2502,9 @@ def test_drive_sync_routes_keep_their_intended_service_composition(monkeypatch):
         def refresh_copy_metadata_for_drive_files(self, drive_file_ids):
             calls.append(("refresh_files", drive_file_ids))
             return {"processed": 4}
+        def refresh_unverified_copy_assets(self, max_assets):
+            calls.append(("repair_unverified", max_assets))
+            return {"processed": 5, "updated": 5, "errors": 0, "unverified": 0}
         def get_copy_health_summary(self):
             calls.append(("copy_health", {}))
             return {
@@ -2528,6 +2531,11 @@ def test_drive_sync_routes_keep_their_intended_service_composition(monkeypatch):
         payload=DriveCopyRefreshRequest(), db=db, _current_user=object()
     )["processed"] == 2
     assert calls[-1] == ("refresh_all", {})
+
+    assert route_module.refresh_drive_copy_metadata(
+        payload=DriveCopyRefreshRequest(skip_full_refresh=True), db=db, _current_user=object()
+    )["processed"] == 5
+    assert calls[-1] == ("repair_unverified", 500)
 
     class FakeResponse:
         headers = {}
