@@ -1077,7 +1077,7 @@ class DriveSyncService:
         result = {
             "processed": 0, "created": 0, "updated": 0, "skipped": 0,
             "archived": 0, "unmatched_brand": 0, "errors": 0,
-            "unverified": 0, "next_page_token_saved": False,
+            "unverified": 0, "scoped_errors": [], "next_page_token_saved": False,
         }
         unique_ids = list(dict.fromkeys(file_id for file_id in source_file_ids if file_id))
         if not unique_ids:
@@ -1171,7 +1171,7 @@ class DriveSyncService:
         result = {
             "processed": 0, "created": 0, "updated": 0, "skipped": 0,
             "archived": 0, "unmatched_brand": 0, "errors": 0,
-            "unverified": 0, "next_page_token_saved": False,
+            "unverified": 0, "scoped_errors": [], "next_page_token_saved": False,
         }
         unique_ids = list(dict.fromkeys(file_id for file_id in drive_file_ids if file_id))
         if not unique_ids:
@@ -1224,6 +1224,9 @@ class DriveSyncService:
                         refreshed_folders.add(metadata_folder)
                 except Exception as exc:
                     result["errors"] += 1
+                    result["scoped_errors"].append(
+                        f"{drive_file_id}: {str(exc)[:400]}"
+                    )
                     logger.warning("Could not refresh Drive creative package %s: %s", drive_file_id, exc)
                     # This row often has no copy source yet, so revoking by
                     # source-document ID is a no-op. Block the exact selected

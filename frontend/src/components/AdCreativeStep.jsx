@@ -1363,8 +1363,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                 const reason = (asset.reasons || []).join('; ');
                 return `${asset.package} — ${asset.file_name}${reason ? `: ${reason}` : ''}`;
             });
+            const scopedErrorDetail = (data.scoped_errors || []).slice(0, 2).join(' · ');
             const refreshMessage = batchSourceErrors
-                ? `Copy refresh completed with ${batchSourceErrors} selected creative package${batchSourceErrors === 1 ? '' : 's'} requiring repair. Those creatives are blocked until their current Drive copy refreshes successfully.`
+                ? `Copy refresh completed with ${batchSourceErrors} selected creative package${batchSourceErrors === 1 ? '' : 's'} requiring repair.${scopedErrorDetail ? ` ${scopedErrorDetail}` : ''} Those creatives are blocked until their current Drive copy refreshes successfully.`
                 : `Drive copy refreshed for ${data.updated || 0} asset${data.updated === 1 ? '' : 's'} and synchronized with active Drive rows.`;
             const refreshedAssets = await fetchDriveAssets({ throwOnError: true });
             const refreshedGroups = buildDriveAssetGroups(refreshedAssets || []);
