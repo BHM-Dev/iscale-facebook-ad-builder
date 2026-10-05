@@ -1188,6 +1188,14 @@ class DriveSyncService:
                     detail="A Drive sync is already running. Wait for it to finish, then refresh copy matches again.",
                 )
             drive = self._client()
+            # A picker repair commonly has both Feed and Stories rows from the
+            # same few packages. Start from a fresh view once, then retain the
+            # package walk caches across those rows. Clearing them inside the
+            # loop made a 20-group repair recursively list the same Drive
+            # folders dozens of times and left the UI spinning for minutes.
+            self.__dict__.setdefault("_package_folder_cache", {}).clear()
+            self.__dict__.setdefault("_strategy_package_folder_cache", {}).clear()
+            self.__dict__.setdefault("_folder_metadata_cache", {}).clear()
             refreshed_folders = set()
             for drive_file_id in unique_ids:
                 file_meta = None
@@ -1203,9 +1211,6 @@ class DriveSyncService:
                             file_meta.get("mimeType") or "", file_meta.get("name", "")
                         ):
                             raise RuntimeError("Selected Drive creative is unavailable or is no longer supported media")
-                        self._package_folder_cache.clear()
-                        self._strategy_package_folder_cache.clear()
-                        self._folder_metadata_cache.clear()
                         metadata_folder = self._find_package_folder(file_meta) or self._find_strategy_package_folder(file_meta)
                         if not metadata_folder:
                             raise RuntimeError("Could not resolve the Drive package for this selected creative")
