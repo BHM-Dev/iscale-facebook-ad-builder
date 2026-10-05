@@ -2850,7 +2850,7 @@ class DriveSyncService:
                         or self._looks_like_ad_copy_doc(text_body)
                     )
                 ):
-                    if self._is_package_container(current):
+                    if self._is_package_container(current) and not self._has_direct_copy_package_layout(folder_files):
                         # Same rule as _find_package_folder: a brand root holds many
                         # packages, so a copy doc anywhere in its subtree belongs to
                         # one specific child package. _strategy_folder_copy_metadata
@@ -2884,6 +2884,27 @@ class DriveSyncService:
         for folder_id in visited:
             self._strategy_package_folder_cache[folder_id] = resolved
         return resolved
+
+    @staticmethod
+    def _has_direct_copy_package_layout(folder_files: List[Dict[str, Any]]) -> bool:
+        """Recognize a legacy package living directly under a Drive root/brand.
+
+        A broad container can contain many descendants named ``Ad Copy`` and
+        must never borrow one of them for a sibling asset. A legacy package is
+        different: its own immediate children are exactly the conventional
+        ``Ad Copy`` and placement folders. Preserve the cross-package guard
+        while admitting that unambiguous package shape.
+        """
+        direct_child_names = {
+            (item.get("_parent_folder_path") or [""])[0].strip().lower()
+            for item in folder_files
+            if len(item.get("_parent_folder_path") or []) == 1
+        }
+        return (
+            any(name.startswith("ad copy") for name in direct_child_names)
+            and any(re.match(r"^1x1(?:\s|$)", name) for name in direct_child_names)
+            and any(re.match(r"^9x16(?:\s|$)", name) for name in direct_child_names)
+        )
 
     def _folder_copy_metadata(self, folder_id: str, force: bool = False) -> Dict[str, Any]:
         if not force and folder_id in self._folder_metadata_cache:

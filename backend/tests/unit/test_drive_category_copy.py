@@ -1513,6 +1513,22 @@ Winner body
     assert result["assets_by_drive_id"]["winner-feed"]["copy_source_drive_file_id"] == "winner-copy"
 
 
+def test_direct_legacy_package_layout_is_not_rejected_as_a_broad_container():
+    service = DriveSyncService.__new__(DriveSyncService)
+    package_files = [
+        {"_parent_folder_path": ["Ad Copy"]},
+        {"_parent_folder_path": ["1x1 Images"]},
+        {"_parent_folder_path": ["9x16 Images"]},
+    ]
+
+    assert service._has_direct_copy_package_layout(package_files) is True
+    assert service._has_direct_copy_package_layout([
+        {"_parent_folder_path": ["Electrical Contractors", "Ad Copy"]},
+        {"_parent_folder_path": ["Electrical Contractors", "1x1 Images"]},
+        {"_parent_folder_path": ["Electrical Contractors", "9x16 Images"]},
+    ]) is False
+
+
 def test_package_copy_sources_merge_disjoint_launch_batches_with_per_asset_provenance():
     service = DriveSyncService.__new__(DriveSyncService)
     service._folder_metadata_cache = {}
