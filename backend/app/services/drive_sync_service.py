@@ -2787,12 +2787,14 @@ class DriveSyncService:
             self._process_file_isolated(file_meta, result)
             existing_ids.add(drive_file_id)
 
-        # The package walk above may have populated path/metadata caches before
-        # the new media was imported. Force the authoritative copy walk below to
-        # see the just-imported row and its current Drive metadata.
-        self._package_folder_cache.clear()
-        self._strategy_package_folder_cache.clear()
-        self._folder_metadata_cache.clear()
+        # A package walk can populate this package's parsed metadata before a
+        # newly uploaded companion is imported. Evict only that package's
+        # parsed metadata so the authoritative copy walk below sees the new
+        # row. Do NOT clear the path caches here: a picker repair may contain
+        # many assets from the same package, and flushing them per asset makes
+        # the request recursively re-list the same Drive tree over and over.
+        # Folder ancestry cannot change as a consequence of importing a DB row.
+        self._folder_metadata_cache.pop(package_folder, None)
 
     def _find_strategy_package_folder(self, file_meta: Dict[str, Any], max_depth: int = 4) -> Optional[str]:
         """Find the nearest ancestor containing a strategy-copy markdown document.

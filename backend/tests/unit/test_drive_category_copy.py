@@ -2763,7 +2763,7 @@ def test_incremental_sync_walks_only_a_new_folder_subtree():
     assert service._saved_token == "next-checkpoint"
 
 
-def test_copy_refresh_backfill_imports_only_new_supported_media_and_clears_caches():
+def test_copy_refresh_backfill_imports_only_new_supported_media_and_keeps_path_caches():
     service = DriveSyncService.__new__(DriveSyncService)
     service._package_folder_cache = {"a": 1}
     service._strategy_package_folder_cache = {"b": 2}
@@ -2798,9 +2798,12 @@ def test_copy_refresh_backfill_imports_only_new_supported_media_and_clears_cache
 
     assert imported == ["new"]
     assert result["processed"] == 1
-    assert service._package_folder_cache == {}
-    assert service._strategy_package_folder_cache == {}
-    assert service._folder_metadata_cache == {}
+    # Importing a DB row cannot alter Drive folder ancestry. Preserving these
+    # cached path resolutions prevents one picker repair from recursively
+    # walking the same Drive package once per selected creative.
+    assert service._package_folder_cache == {"a": 1}
+    assert service._strategy_package_folder_cache == {"b": 2}
+    assert service._folder_metadata_cache == {"c": 3}
 
 
 def test_reconcile_imports_only_media_missing_from_the_library():
