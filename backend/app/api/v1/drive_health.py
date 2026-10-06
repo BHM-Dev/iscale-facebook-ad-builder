@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 STATE_KEY = "package_health_report"
+# Package Health is intentionally scheduled once a day.  Leave enough room for
+# its multi-minute Drive walk and a delayed scheduler tick before telling a
+# launcher that the daily check failed.  A two-hour threshold made every normal
+# daily snapshot look alarming for most of the day.
+PACKAGE_HEALTH_STALE_AFTER = timedelta(hours=30)
 
 # Guards against two rebuilds running at once. Not a cache lock: the snapshot
 # itself lives in Postgres, so it survives the container recreate that happens on
@@ -473,11 +478,13 @@ def get_drive_package_health(
     with _rebuild_lock:
         rebuilding = _rebuilding
     if snapshot and snapshot.get("generated_at"):
-        # Hourly job, so anything older than two hours means rebuilds are failing
-        # or the scheduler is not running. Either way the reader must be told.
+        # Daily job, so only a missed run (plus a reasonable grace window) is
+        # stale.  This health snapshot is distinct from the incremental sync:
+        # a manual sync can be current even while the last full structural walk
+        # is several hours old.
         try:
             age = datetime.now(timezone.utc) - datetime.fromisoformat(snapshot["generated_at"])
-            snapshot["stale"] = age > timedelta(hours=2)
+            snapshot["stale"] = age > PACKAGE_HEALTH_STALE_AFTER
             snapshot["age_seconds"] = int(age.total_seconds())
         except (TypeError, ValueError):
             snapshot["stale"] = True

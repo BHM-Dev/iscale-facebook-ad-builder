@@ -1,13 +1,23 @@
 import pytest
 
 import json
+from datetime import timedelta
 
-from app.api.v1.drive_health import _library_counts_by_package, build_package_health_report
+from app.api.v1.drive_health import (
+    PACKAGE_HEALTH_STALE_AFTER,
+    _library_counts_by_package,
+    build_package_health_report,
+)
 from app.services.drive_sync_service import DriveSyncService
 
 
 ROOT = {"id": "root", "name": "Drive"}
 BRAND = {"id": "brand", "name": "Commercial Insurance"}
+
+
+def test_daily_package_health_has_a_full_day_plus_grace_before_stale():
+    """The picker must not warn all day after a correctly scheduled daily run."""
+    assert PACKAGE_HEALTH_STALE_AFTER == timedelta(hours=30)
 
 
 def _file(file_id, name, parent_id, mime_type="image/png"):
