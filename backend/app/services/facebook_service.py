@@ -484,6 +484,20 @@ class FacebookService:
         }
         return account.get_campaigns(fields=fields, params=params)
 
+    def get_campaign_status(self, campaign_id):
+        """Read one campaign's delivery state without listing the account."""
+        try:
+            return dict(Campaign(str(campaign_id), api=self.api).api_get(fields=[
+                Campaign.Field.id,
+                Campaign.Field.name,
+                Campaign.Field.status,
+                Campaign.Field.effective_status,
+                Campaign.Field.daily_budget,
+                Campaign.Field.lifetime_budget,
+            ]))
+        except FacebookRequestError as e:
+            raise self._meta_error(e, 'Campaign status lookup failed') from e
+
     def create_campaign(self, campaign_data, ad_account_id=None):
         """Create a new campaign."""
         account = self._get_account(ad_account_id)
@@ -693,6 +707,20 @@ class FacebookService:
                 adset['campaign'] = campaign_map[cid]
 
         return adsets
+
+    def get_adset_status(self, adset_id):
+        """Read one ad set's delivery state without listing a campaign."""
+        try:
+            return dict(AdSet(str(adset_id), api=self.api).api_get(fields=[
+                AdSet.Field.id,
+                AdSet.Field.name,
+                AdSet.Field.status,
+                AdSet.Field.effective_status,
+                AdSet.Field.daily_budget,
+                AdSet.Field.lifetime_budget,
+            ]))
+        except FacebookRequestError as e:
+            raise self._meta_error(e, 'Ad set status lookup failed') from e
 
     # Ad set effective_status values Meta's account-level /adsets edge accepts
     # as an explicit filter. VERIFIED LIVE against act_521142087204815 on

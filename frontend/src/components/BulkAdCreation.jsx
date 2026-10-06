@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import React, { useEffect, useState } from 'react';
 import { Check, ChevronLeft, ChevronRight, Loader, Film, Image, X, Pencil } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
-import { createCompleteAd, createFacebookCampaign, createFacebookAdSet, getAdSets, getCampaigns, getRateLimitUsage } from '../lib/facebookApi';
+import { createCompleteAd, createFacebookCampaign, createFacebookAdSet, getAdsetStatus, getCampaignStatus, getRateLimitUsage } from '../lib/facebookApi';
 import {
     BULK_LAUNCH_BATCH_COOLDOWN_MS,
     BULK_LAUNCH_BATCH_SIZE,
@@ -218,10 +218,23 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const liveCheckAccountId = selectedAdAccount?.id || selectedAdAccount?.accountId;
     const liveCheckApplicable = Boolean(campaignData?.isExisting && liveCheckCampaignId && liveCheckAccountId);
     const liveCheckPending = liveCheckApplicable && !liveStatusRefresh.error && !liveStatusRefresh.completedAt;
-    const liveCheckNeedsAck = liveCheckApplicable && Boolean(liveStatusRefresh.error) && !liveStatusAcknowledged;
-    const liveLaunchHeld = liveCheckPending || liveCheckNeedsAck;
+    const liveCheckNeedsAck = liveCheckApplicable && Boolean(liveStatusRefresh.error) && !liveStatusRefresh.hardBlock && !liveStatusAcknowledged;
+    const liveLaunchHeld = liveCheckPending || liveCheckNeedsAck || Boolean(liveStatusRefresh.hardBlock);
     // After a failed check Joel may acknowledge and launch; cached statuses must not be shown as fact.
     const liveStatusUnverified = liveCheckApplicable && Boolean(liveStatusRefresh.error);
+    // Only claim LIVE/PAUSED when every status involved is a plain ACTIVE or PAUSED (and nothing is
+    // effectively blocked). Anything else (WITH_ISSUES, IN_PROCESS, empty...) must say "check Ads Manager".
+    const liveKnownStatus = (v) => v === 'ACTIVE' || v === 'PAUSED';
+    const liveDeliveryState = (() => {
+        if (liveStatusUnverified) return 'unverified';
+        const parts = [{ s: campaignData.status, e: campaignData.effectiveStatus }, ...(adsetData.isExisting ? [{ s: adsetData.status, e: adsetData.effectiveStatus }] : [])];
+        if (!parts.every(p => liveKnownStatus(p.s))) return 'unknown';
+        if (parts.every(p => p.s === 'ACTIVE' && (!p.e || p.e === 'ACTIVE'))) return 'LIVE';
+        if (parts.some(p => p.s === 'PAUSED')) return 'PAUSED';
+        return 'unknown';
+    })();
+    const liveRefreshQuietRef = React.useRef(false);
+    const liveLastCheckRef = React.useRef(0);
     const reconciliationProtectedIdsRef = React.useRef([]);
 
     // Campaign and ad-set selections are intentionally cached while Joel moves
@@ -232,29 +245,42 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         if (!liveCheckApplicable) return undefined;
         const campaignId = liveCheckCampaignId;
         const adsetId = liveCheckAdsetId;
-        const accountId = liveCheckAccountId;
         const checkAdset = Boolean(adsetData?.isExisting && adsetId);
         let cancelled = false;
+        const controller = new AbortController();
         let timeoutId;
-        setLiveStatusAcknowledged(false);
-        setLiveStatusRefresh({ loading: true, error: null, completedAt: null });
+        // Focus-triggered refreshes are quiet: keep the last good status visible and keep any
+        // acknowledgement. Only a real target change or a manual Retry resets them.
+        const quiet = liveRefreshQuietRef.current;
+        liveRefreshQuietRef.current = false;
+        if (!quiet) {
+            setLiveStatusAcknowledged(false);
+            setLiveStatusRefresh({ loading: true, error: null, completedAt: null });
+        }
         // authFetch has no request timeout of its own; without this a stalled Meta call would hold
         // Launch forever with no retry control.
         Promise.race([
-            Promise.all([getCampaigns(accountId), checkAdset ? getAdSets(campaignId) : Promise.resolve(null)]),
-            new Promise((_, reject) => { timeoutId = setTimeout(() => reject(new Error('Meta did not respond within 15 seconds.')), 15000); }),
+            Promise.all([getCampaignStatus(campaignId, { signal: controller.signal }), checkAdset ? getAdsetStatus(adsetId, { signal: controller.signal }) : Promise.resolve(null)]),
+            new Promise((_, reject) => { timeoutId = setTimeout(() => { controller.abort(); reject(Object.assign(new Error('Meta did not respond within 15 seconds.'), { httpStatus: 504 })); }, 15000); }),
         ])
-            .then(([campaigns, adsets]) => {
+            .then(([liveCampaign, liveAdset]) => {
                 if (cancelled) return;
-                const liveCampaign = campaigns.find(item => String(item.id) === String(campaignId));
-                if (!liveCampaign) throw new Error('The selected campaign was not found as Active or Paused in Meta (it may be archived or deleted). Go back and select it again.');
-                const liveAdset = checkAdset ? adsets.find(item => String(item.id) === String(adsetId)) : null;
-                if (checkAdset && !liveAdset) throw new Error('The selected ad set was not found in Meta (it may be archived or deleted). Go back and select it again.');
-                const liveDaily = liveCampaign.dailyBudget ? Number(liveCampaign.dailyBudget) / 100 : 0;
-                const liveLifetime = liveCampaign.lifetimeBudget ? Number(liveCampaign.lifetimeBudget) / 100 : 0;
+                // A refresh must never rewrite launch state while a launch is running.
+                if (launchInFlightRef.current) return;
+                const isGone = (o) => o && ['ARCHIVED', 'DELETED'].some(v => o.status === v || o.effective_status === v);
+                if (isGone(liveCampaign) || isGone(liveAdset)) {
+                    // Meta returns archived/deleted objects as a normal 200, not an error.
+                    const which = isGone(liveCampaign) ? 'campaign' : 'ad set';
+                    setLiveStatusRefresh({ loading: false, error: `The selected ${which} is ARCHIVED or DELETED in Meta. Go back and select an available campaign or ad set.`, hardBlock: true, completedAt: null });
+                    return;
+                }
+                liveLastCheckRef.current = Date.now();
+                const liveDaily = liveCampaign.daily_budget ? Number(liveCampaign.daily_budget) / 100 : 0;
+                const liveLifetime = liveCampaign.lifetime_budget ? Number(liveCampaign.lifetime_budget) / 100 : 0;
                 setCampaignData(prev => ({
                     ...prev,
                     status: liveCampaign.status || prev.status,
+                    effectiveStatus: liveCampaign.effective_status || prev.effectiveStatus,
                     // Budget fields follow Meta exactly (0 when absent) so a daily→lifetime or CBO
                     // switch made in Ads Manager can't leave the old number on Review.
                     budgetType: liveDaily > 0 || liveLifetime > 0 ? 'CBO' : 'ABO',
@@ -266,19 +292,44 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     setAdsetData(prev => ({
                         ...prev,
                         status: liveAdset.status || prev.status,
+                        effectiveStatus: liveAdset.effective_status || prev.effectiveStatus,
                         dailyBudget: liveAdset.daily_budget ? Number(liveAdset.daily_budget) / 100 : 0,
                         lifetimeBudget: liveAdset.lifetime_budget ? Number(liveAdset.lifetime_budget) / 100 : 0,
+                        budgetScheduleType: liveAdset.lifetime_budget > 0 && !liveAdset.daily_budget ? 'LIFETIME' : 'DAILY',
                     }));
                 }
-                setLiveStatusRefresh({ loading: false, error: null, completedAt: new Date().toISOString() });
+                setLiveStatusRefresh({ loading: false, error: null, hardBlock: false, completedAt: new Date().toISOString() });
             })
             .catch(error => {
                 if (cancelled) return;
                 console.error('Could not refresh selected Meta status:', error);
-                setLiveStatusRefresh({ loading: false, error: error.message || 'Could not reach Meta.', completedAt: null });
+                const hardBlock = error.httpStatus === 404 && error.metaErrorCode === 100;
+                // A transient failure on a quiet (focus) refresh must not downgrade a good, verified state.
+                if (quiet && !hardBlock) {
+                    setLiveStatusRefresh(prev => prev.hardBlock ? prev : (prev.completedAt ? { ...prev, loading: false } : { loading: false, error: error.message || 'Could not reach Meta.', hardBlock: false, completedAt: null }));
+                    return;
+                }
+                const message = hardBlock
+                    ? `${error.message || 'The selected Meta object is unavailable.'} Go back and select an available campaign or ad set.`
+                    : error.httpStatus === 429 || error.httpStatus === 504
+                        ? `${error.message || 'Meta could not be reached right now.'} You may acknowledge after checking Ads Manager.`
+                        : error.message || 'Could not reach Meta. You may acknowledge after checking Ads Manager.';
+                setLiveStatusRefresh({ loading: false, error: message, hardBlock, completedAt: null });
             });
-        return () => { cancelled = true; clearTimeout(timeoutId); };
+        return () => { cancelled = true; clearTimeout(timeoutId); controller.abort(); };
     }, [liveCheckApplicable, liveCheckCampaignId, liveCheckAdsetId, liveCheckAccountId, adsetData?.isExisting, liveStatusRetryNonce, setCampaignData, setAdsetData]);
+    useEffect(() => {
+        if (!liveCheckApplicable) return undefined;
+        const refreshOnFocus = () => {
+            // No refresh mid-launch, or when the last good check is under 30s old (alert dialogs and
+            // file pickers also fire focus, and each refresh costs Meta calls on a throttled account).
+            if (launchInFlightRef.current || Date.now() - liveLastCheckRef.current < 30000) return;
+            liveRefreshQuietRef.current = true;
+            setLiveStatusRetryNonce(nonce => nonce + 1);
+        };
+        window.addEventListener('focus', refreshOnFocus);
+        return () => window.removeEventListener('focus', refreshOnFocus);
+    }, [liveCheckApplicable]);
     const persistReconciliationBlock = (message, additionalProtectedIds = [], untrackedMetaMutation = false, additionalMetaIds = []) => {
         setRequiresReconciliation(true);
         setReconciliationHasUntrackedMetaMutation(prev => prev || untrackedMetaMutation);
@@ -1158,7 +1209,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         if (liveLaunchHeld) {
             showWarning(liveCheckPending
                 ? 'Still checking the latest campaign and ad set status in Meta. Try again in a moment.'
-                : 'The live Meta status check failed. Retry the check, or confirm you verified status in Ads Manager.');
+                : liveStatusRefresh.hardBlock
+                    ? 'The selected campaign or ad set is unavailable in Meta. Go back and select an available one.'
+                    : 'The live Meta status check failed. Retry the check, or confirm you verified status in Ads Manager.');
             return;
         }
         try {
@@ -2055,34 +2108,25 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 <div className={`mb-5 rounded-lg border px-4 py-3 text-sm ${liveStatusRefresh.error ? 'border-red-300 bg-red-50 text-red-900' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>
                     {liveStatusRefresh.error ? (
                         <div>
-                            <strong>Live status check failed.</strong> {liveStatusRefresh.error} Launch is on hold until you retry or confirm you checked Ads Manager.
+                            <strong>Live status check failed.</strong> {liveStatusRefresh.error} {liveStatusRefresh.hardBlock ? 'Go back and choose an available object.' : 'Launch is on hold until you retry or confirm you checked Ads Manager.'}
                             <div className="mt-2 flex flex-wrap items-center gap-3">
                                 <button type="button" onClick={() => setLiveStatusRetryNonce(n => n + 1)} className="rounded border border-red-400 bg-white px-2 py-1 text-xs font-semibold text-red-800 hover:bg-red-100">Retry check</button>
-                                <label className="flex items-center gap-1.5 text-xs font-medium">
-                                    <input type="checkbox" checked={liveStatusAcknowledged} onChange={(e) => setLiveStatusAcknowledged(e.target.checked)} />
-                                    I checked the campaign and ad set status in Ads Manager
-                                </label>
+                                {!liveStatusRefresh.hardBlock && (
+                                    <label className="flex items-center gap-1.5 text-xs font-medium">
+                                        <input type="checkbox" checked={liveStatusAcknowledged} onChange={(e) => setLiveStatusAcknowledged(e.target.checked)} />
+                                        I checked the campaign and ad set status in Ads Manager
+                                    </label>
+                                )}
+                                <a className="font-semibold underline" target="_blank" rel="noreferrer" href={`https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${String(liveCheckAccountId).replace(/^act_/, '')}&selected_campaign_ids=${liveCheckCampaignId}`}>Open Ads Manager</a>
                             </div>
                         </div>
                     ) : liveStatusRefresh.completedAt ? (
-                        <span><strong>Latest Meta status</strong> (checked {new Date(liveStatusRefresh.completedAt).toLocaleTimeString()}): campaign {campaignData.status || 'unknown'}{adsetData.isExisting ? ` · ad set ${adsetData.status || 'unknown'}` : ' · new ad sets will be created ACTIVE'}</span>
+                        <span className="flex flex-wrap items-center gap-x-3 gap-y-1"><strong>Latest Meta status</strong> (checked {Math.max(0, Math.floor((Date.now() - new Date(liveStatusRefresh.completedAt).getTime()) / 60000))} min ago): campaign {campaignData.status || 'unknown'}{campaignData.effectiveStatus && campaignData.effectiveStatus !== campaignData.status ? ` (effective ${campaignData.effectiveStatus})` : ''}{adsetData.isExisting ? ` · ad set ${adsetData.status || 'unknown'}${adsetData.effectiveStatus && adsetData.effectiveStatus !== adsetData.status ? ` (effective ${adsetData.effectiveStatus})` : ''}` : ' · new ad sets will be created ACTIVE'} <button type="button" className="font-semibold underline" onClick={() => setLiveStatusRetryNonce(n => n + 1)}>Refresh</button><a className="font-semibold underline" target="_blank" rel="noreferrer" href={`https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${String(liveCheckAccountId).replace(/^act_/, '')}&selected_campaign_ids=${liveCheckCampaignId}`}>Open Ads Manager</a></span>
                     ) : (
-                        <span>Checking the latest campaign{adsetData.isExisting ? ' and ad set' : ''} status in Meta… Launch is on hold until this finishes.</span>
+                        <span className="inline-flex items-center gap-2"><Loader size={14} className="animate-spin" /> Checking the latest campaign{adsetData.isExisting ? ' and ad set' : ''} status in Meta… Launch is on hold until this finishes.</span>
                     )}
                 </div>
             )}
-            {liveCheckApplicable && liveStatusRefresh.completedAt && campaignData.status === 'ACTIVE' && (!adsetData.isExisting || adsetData.status === 'ACTIVE') && (
-                <div role="alert" className="mb-5 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-semibold text-red-900">
-                    These ads will go LIVE and start spending as soon as they are created — the campaign{adsetData.isExisting ? ' and ad set are' : ' is'} ACTIVE.
-                </div>
-            )}
-
-            {liveCheckApplicable && liveStatusRefresh.completedAt && (campaignData.status === 'PAUSED' || (adsetData.isExisting && adsetData.status === 'PAUSED')) && (
-                <div className="mb-5 rounded-lg border border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-700">
-                    These ads will <strong>not spend yet</strong> — {campaignData.status === 'PAUSED' ? 'the campaign is PAUSED' : 'the ad set is PAUSED'}. They deliver once you turn {campaignData.status === 'PAUSED' && adsetData.isExisting && adsetData.status === 'PAUSED' ? 'both' : 'it'} on in Ads Manager.
-                </div>
-            )}
-
             {/* Summary */}
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
                 <h3 className="font-semibold text-blue-900 mb-2">Summary</h3>
@@ -2101,10 +2145,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             : <span className="ml-1 text-blue-800">The new campaign is created paused, so delivery will not begin until you activate it.</span>}
                     </div>
                     <div><strong>Campaign:</strong> {campaignData.name}</div>
-                    {campaignData.isExisting && (
-                        <div><strong>Campaign status:</strong> <span className="font-semibold text-amber-800">{liveStatusUnverified ? 'unverified — check Ads Manager' : (campaignData.status || 'Check Ads Manager')}</span> <span className="text-blue-700">(budget and delivery settings are managed in Ads Manager)</span></div>
-                    )}
-                    {campaignData.budgetType === 'CBO' && !campaignData.isExisting && (
+                    {campaignData.budgetType === 'CBO' && (
                         <div><strong>Campaign Budget:</strong> {campaignData.budgetScheduleType === 'LIFETIME'
                             ? `$${Number(campaignData.lifetimeBudget).toFixed(2)} total (lifetime)`
                             : `$${Number(campaignData.dailyBudget).toFixed(2)} / day`}
@@ -2117,6 +2158,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             : Number(adsetData.lifetimeBudget) > 0
                                 ? `$${Number(adsetData.lifetimeBudget).toFixed(2)} total (lifetime)`
                                 : (campaignData.budgetType === 'CBO' ? 'Using campaign budget (CBO) — set in Ads Manager' : 'Unavailable — verify in Ads Manager')}</div>
+                    )}
+                    {campaignData.isExisting && (
+                        <div className={`mt-2 rounded border px-3 py-2 text-xs font-medium ${liveStatusUnverified ? 'border-amber-300 bg-amber-50 text-amber-900' : liveDeliveryState === 'LIVE' ? 'border-red-300 bg-red-50 text-red-900' : 'border-gray-300 bg-gray-50 text-gray-700'}`}>
+                            <strong>Delivery:</strong> campaign {liveStatusUnverified ? 'unverified' : (campaignData.status || 'unknown')}{campaignData.effectiveStatus && campaignData.effectiveStatus !== campaignData.status ? ` (effective ${campaignData.effectiveStatus})` : ''}{adsetData.isExisting ? ` · ad set ${liveStatusUnverified ? 'unverified' : (adsetData.status || 'unknown')}${adsetData.effectiveStatus && adsetData.effectiveStatus !== adsetData.status ? ` (effective ${adsetData.effectiveStatus})` : ''}` : ''} · ads will be {liveDeliveryState === 'unverified' ? 'status unverified' : liveDeliveryState === 'unknown' ? 'status unclear — check Ads Manager' : liveDeliveryState}.
+                            {liveDeliveryState === 'unverified' || liveDeliveryState === 'unknown' ? ' Verify in Ads Manager before launching.' : liveDeliveryState === 'LIVE' ? ' These ads may start spending immediately.' : ` These ads will not spend until ${campaignData.status === 'PAUSED' && adsetData.isExisting && adsetData.status === 'PAUSED' ? 'the campaign and ad set are' : campaignData.status === 'PAUSED' ? 'the campaign is' : 'the ad set is'} turned on.`}
+                        </div>
                     )}
                     {campaignData.budgetType === 'ABO' && !adsetData.isExisting && (
                         <div><strong>Ad Set Budget:</strong> {adsetData.budgetScheduleType === 'LIFETIME'
@@ -2149,11 +2196,6 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     })()})</div>
                     {excludedAdIds.size > 0 && (
                         <div><strong>Excluded:</strong> {excludedAdIds.size} ad{excludedAdIds.size !== 1 ? 's' : ''} removed from this batch</div>
-                    )}
-                    {adsetData.isExisting && (
-                        <div className="mt-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
-                            <strong>Ad set status:</strong> {liveStatusUnverified ? 'unverified (last known ' + (adsetData.status || 'unknown') + ')' : (adsetData.status || 'PAUSED')} — new ads take the ad set's status. They deliver only when the ad set and its campaign are both active.
-                        </div>
                     )}
                     {adsetData.isExisting && batchHasDualPlacement && (
                         <div className={`mt-2 rounded px-2 py-1.5 text-xs font-medium ${existingPlacementStatus === 'unverified' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-800'}`}>
@@ -2746,6 +2788,19 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                     Launch stopped after {metaTouchedCount} of {launchOutcome.total ?? activeAds.length} ads reached Meta.
                                     {' '}{metaTouchedCount} ad{metaTouchedCount !== 1 ? 's were' : ' was'} created or may have been created; the rest failed or were not attempted — see below.
                                     <div className="mt-2 text-xs font-semibold text-gray-900">Do not replay the whole batch. Reconcile any created or uncertain rows in Ads Manager first, then use “Retry remaining ads” only when this screen confirms it is safe.</div>
+                                    <div className="mt-3 grid gap-1 text-xs">
+                                        {(launchOutcome.createdAdIds || []).map(id => {
+                                            const row = activeAds.find(ad => ad.id === id);
+                                            return <div key={`created-${id}`} className="text-emerald-800"><strong>Created:</strong> {row?.name || id}</div>;
+                                        })}
+                                        {(launchOutcome.uncertainAdIds || []).map(id => {
+                                            const row = activeAds.find(ad => ad.id === id);
+                                            return <div key={`unknown-${id}`} className="text-amber-800"><strong>Unknown:</strong> {row?.name || id} — reconcile in Ads Manager</div>;
+                                        })}
+                                        {errors.length > 0 && (launchOutcome.total ?? activeAds.length) - metaTouchedCount > 0 && (
+                                            <div className="text-red-800"><strong>Failed or not attempted:</strong> {Math.max(0, (launchOutcome.total ?? activeAds.length) - metaTouchedCount)} row{(launchOutcome.total ?? activeAds.length) - metaTouchedCount !== 1 ? 's' : ''}</div>
+                                        )}
+                                    </div>
                                 </div>
                             )}
                             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -2792,13 +2847,11 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             </div>
                         ) : errors.length > 0 ? (
                             <div className="flex items-center gap-3">
-                                {isDriveManifest ? (
-                                    <span className="max-w-md text-sm text-amber-800">
-                                        Launch outcome is not safe to replay automatically. Reconcile the named campaign/ad sets in Ads Manager before starting another launch.
-                                    </span>
-                                ) : <span className="max-w-md text-sm text-amber-800">Review the failure above. No Meta objects were created, so you can retry this existing campaign/ad set.</span>}
+                                {isDriveManifest && (requiresReconciliation || metaTouchedCount > 0) ? (
+                                    <span className="max-w-md text-sm text-amber-800">Created or uncertain Meta objects require reconciliation before retrying. Check the named rows above in Ads Manager.</span>
+                                ) : <span className="max-w-md text-sm text-amber-800">Review the failure above. No confirmed ad rows were created, so you can retry the remaining ads in this existing campaign/ad set.</span>}
                                 {campaignData?.isExisting && adsetData?.isExisting && (
-                                    <button type="button" onClick={handleSubmit} disabled={loading || liveLaunchHeld} className="shrink-0 rounded-lg bg-green-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-gray-300">Retry remaining ads</button>
+                                    <button type="button" onClick={handleSubmit} disabled={loading || liveLaunchHeld || requiresReconciliation || metaTouchedCount > 0} className="shrink-0 rounded-lg bg-green-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-gray-300">Retry {Math.max(1, (launchOutcome?.total ?? activeAds.length) - metaTouchedCount)} remaining ad{Math.max(1, (launchOutcome?.total ?? activeAds.length) - metaTouchedCount) !== 1 ? 's' : ''}</button>
                                 )}
                             </div>
                         ) : (

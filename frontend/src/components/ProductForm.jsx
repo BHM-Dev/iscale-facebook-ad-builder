@@ -176,7 +176,7 @@ const ProductForm = ({ onClose, onSave, initialData = null }) => {
                             className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                             placeholder="https://www.example.com/quote"
                         />
-                        <p className="mt-1 text-xs text-gray-500">Used to prefill campaign launch URLs when no Drive manifest URL is available.</p>
+                        <p className="mt-1 text-xs text-gray-500">Used to prefill campaign launch URLs when no Drive package URL is available.</p>
                     </div>
 
                     <div>

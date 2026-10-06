@@ -1,6 +1,7 @@
 import logging
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
+from requests.exceptions import Timeout as RequestsTimeout
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
 from app.services.facebook_service import FacebookService, FacebookAPIError
@@ -200,6 +201,36 @@ def read_campaigns(
         return [dict(c) for c in campaigns]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+def _is_meta_object_missing(e) -> bool:
+    """Meta returns code 100 for ANY invalid parameter; only subcode 33 (or an explicit
+    'does not exist' message) means the object is gone. Archived objects are NOT errors —
+    they read back with status/effective_status ARCHIVED and are gated by the frontend."""
+    return e.code == 100 and (e.subcode == 33 or 'does not exist' in str(e).lower())
+
+
+@router.get("/campaigns/{fb_campaign_id}")
+def read_campaign_status(
+    fb_campaign_id: str,
+    service: FacebookService = Depends(get_facebook_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    _assert_campaign_allowed(current_user, fb_campaign_id, db, service)
+    try:
+        data = service.get_campaign_status(fb_campaign_id)
+        return {key: data.get(key) for key in ('id', 'name', 'status', 'effective_status', 'daily_budget', 'lifetime_budget')}
+    except FacebookAPIError as e:
+        if _is_meta_object_missing(e):
+            raise HTTPException(status_code=404, detail={"message": "Campaign was not found in Meta (deleted, or not visible to this connection).", "code": e.code, "subcode": e.subcode})
+        if e.code in {4, 17, 32, 613} or (e.code is not None and 80000 <= e.code <= 80014):
+            raise HTTPException(status_code=429, detail={"message": "Meta rate-limited the campaign status check. Try again shortly.", "code": e.code, "subcode": e.subcode})
+        raise HTTPException(status_code=502, detail={"message": str(e), "code": e.code, "subcode": e.subcode})
+    except (TimeoutError, RequestsTimeout) as e:
+        raise HTTPException(status_code=504, detail="Campaign status check timed out.") from e
+    except Exception as e:
+        logger.exception("Campaign status lookup failed: %s", e)
+        raise HTTPException(status_code=502, detail="Campaign status check failed.") from e
 
 @router.post("/campaigns")
 def create_campaign(
@@ -670,6 +701,29 @@ def read_adsets(
         return [dict(a) for a in adsets]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/adsets/{fb_adset_id}")
+def read_adset_status(
+    fb_adset_id: str,
+    service: FacebookService = Depends(get_facebook_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    _assert_adset_allowed(current_user, fb_adset_id, db, service)
+    try:
+        data = service.get_adset_status(fb_adset_id)
+        return {key: data.get(key) for key in ('id', 'name', 'status', 'effective_status', 'daily_budget', 'lifetime_budget')}
+    except FacebookAPIError as e:
+        if _is_meta_object_missing(e):
+            raise HTTPException(status_code=404, detail={"message": "Ad set was not found in Meta (deleted, or not visible to this connection).", "code": e.code, "subcode": e.subcode})
+        if e.code in {4, 17, 32, 613} or (e.code is not None and 80000 <= e.code <= 80014):
+            raise HTTPException(status_code=429, detail={"message": "Meta rate-limited the ad-set status check. Try again shortly.", "code": e.code, "subcode": e.subcode})
+        raise HTTPException(status_code=502, detail={"message": str(e), "code": e.code, "subcode": e.subcode})
+    except (TimeoutError, RequestsTimeout) as e:
+        raise HTTPException(status_code=504, detail="Ad-set status check timed out.") from e
+    except Exception as e:
+        logger.exception("Ad-set status lookup failed: %s", e)
+        raise HTTPException(status_code=502, detail="Ad-set status check failed.") from e
 
 
 @router.get("/adsets/{fb_adset_id}/pages")

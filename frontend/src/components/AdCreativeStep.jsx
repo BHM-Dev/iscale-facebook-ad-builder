@@ -3858,6 +3858,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                             : !copyMatched
                                                 ? 'Drive has no copy for this creative. You can still select it and write the headline and primary text yourself.'
                                                 : (group.isPair ? `Feed: ${group.feedAsset?.file_name} · Stories: ${group.storiesAsset?.file_name}` : asset.file_name);
+                                    const cardDescriptionId = `drive-card-description-${String(group.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
                                     return (
                                         <div
                                             key={group.id}
@@ -3869,6 +3870,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                                 aria-label={`Select ad ${asset.file_name || 'creative'}${group.isPair ? ', Feed and Stories pair' : ''}`}
                                                 aria-pressed={isSelected}
                                                 aria-disabled={selectionBlocked}
+                                                aria-describedby={selectionBlocked ? cardDescriptionId : undefined}
                                                 title={cardTitle}
                                                 className={`absolute inset-0 z-10 h-full w-full rounded-xl text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500 ${selectionBlocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}
                                             />
@@ -3910,6 +3912,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                             >
                                                 <Maximize2 size={14} />
                                             </button>
+                                            {selectionBlocked && <span id={cardDescriptionId} className="sr-only">{cardTitle}</span>}
                                             {isSelected && (
                                                 <div className="pointer-events-none absolute bottom-10 right-2 z-20 inline-flex items-center gap-1 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm">
                                                     <Check size={12} />
@@ -3925,10 +3928,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                                 // BOTH flags, and the generic string would tell Joel to refresh,
                                                 // which cannot fix it. Full reason goes in the tooltip -- it names
                                                 // the file and the fix, and is far too long for the pill.
-                                                <div
-                                                    title={group.copyIntegrityReason || undefined}
-                                                    className="absolute bottom-10 left-2 bg-red-600 text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm"
-                                                >
+                                                <div className="absolute bottom-10 left-2 max-w-[calc(100%-1rem)] truncate rounded-full bg-red-600 px-2 py-1 text-[11px] font-semibold text-white shadow-sm">
                                                     {group.copyRefusedForOtherFile
                                                         ? 'Copy not matched — rename in Drive'
                                                         : group.copyRefreshUnverified
@@ -3945,8 +3945,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                                 // at all before, and an absent badge is invisible next
                                                 // to neighbours wearing a green one.
                                                 <div
-                                                    title="Drive has no copy for this creative. You can still select it and write the headline and primary text yourself."
-                                                    className="absolute bottom-10 left-2 rounded-full bg-white/85 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 shadow-sm"
+                                                    className="absolute bottom-10 left-2 max-w-[calc(100%-1rem)] truncate rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 shadow-sm"
                                                 >
                                                     {(group.landingPage || group.cta || tags.copy_id) ? 'No copy — URL only' : 'No copy in Drive'}
                                                 </div>
@@ -4000,7 +3999,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                     className="px-3 py-2 text-gray-500 hover:text-gray-800 font-medium"
                                     title="Clear only the pending Drive selection; already-added creatives are unchanged"
                                 >
-                                    Clear ({selectedDriveAssetIds.size})
+                                    Clear selection ({selectedDriveAssetIds.size})
                                 </button>
                             )}
                             <button onClick={() => setShowDriveLibraryModal(false)} className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">

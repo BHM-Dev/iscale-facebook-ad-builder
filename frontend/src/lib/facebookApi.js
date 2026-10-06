@@ -129,6 +129,17 @@ export async function getCampaigns(adAccountId) {
     }
 }
 
+export async function getCampaignStatus(campaignId, { signal } = {}) {
+    const response = await authFetch(`${API_BASE_URL}/campaigns/${encodeURIComponent(campaignId)}`, { signal });
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        const apiError = buildFacebookApiError(error, 'Failed to fetch campaign status');
+        apiError.httpStatus = response.status;
+        throw apiError;
+    }
+    return response.json();
+}
+
 /**
  * Get all pixels for a specific ad account
  */
@@ -219,6 +230,17 @@ export const getAdSets = async (campaignId, adAccountId) => {
         throw error;
     }
 };
+
+export async function getAdsetStatus(adsetId, { signal } = {}) {
+    const response = await authFetch(`${API_BASE_URL}/adsets/${encodeURIComponent(adsetId)}`, { signal });
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        const apiError = buildFacebookApiError(error, 'Failed to fetch ad-set status');
+        apiError.httpStatus = response.status;
+        throw apiError;
+    }
+    return response.json();
+}
 
 export const searchGeoLocations = async (query, adAccountId) => {
     try {
