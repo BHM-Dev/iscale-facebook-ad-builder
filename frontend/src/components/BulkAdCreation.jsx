@@ -1963,9 +1963,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     {reconciliationAmbiguousRecords.length > 1 && <div className="mt-1 text-xs font-semibold">Multiple pending batches are present. Resolve each from the tab that created it; this screen will not guess.</div>}
                 </div>
             )}
+            {reconciliationStorageUnavailable && (
+                <div role="alert" className="mb-5 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
+                    <strong>Browser storage is unavailable.</strong> This launch is locked for safety because the app cannot record reconciliation state. Re-enable site storage, then reload before trying again.
+                </div>
+            )}
             <p className="text-gray-600 mb-6">
                 {isDriveManifest
-                    ? `Creative review: ${driveReviewInventory || 'no selected creatives'}. Each selected row becomes one ${adsetData.isExisting ? '' : 'active '}ad beneath the ${campaignData.isExisting ? 'selected existing' : 'new paused'} campaign in ${driveReviewDestination}. Use the compact manifest to organize, inspect, and select rows without reviewing a wall of full-size ad previews.`
+                    ? `Review the selected creatives below. Each row becomes one ${adsetData.isExisting ? '' : 'active '}ad beneath the ${campaignData.isExisting ? 'selected existing' : 'new paused'} campaign in ${driveReviewDestination}. Use the compact manifest to inspect and organize the launch without reviewing a wall of full-size ad previews.`
                     : 'The app has automatically generated one ad for every combination of your images, headlines, and body copy. Each row below is one ad that will be created on Facebook.'}
             </p>
 
@@ -1987,14 +1992,17 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             : <span className="ml-1 text-blue-800">The new campaign is created paused, so delivery will not begin until you activate it.</span>}
                     </div>
                     <div><strong>Campaign:</strong> {campaignData.name}</div>
-                    {campaignData.budgetType === 'CBO' && (
+                    {campaignData.isExisting && (
+                        <div><strong>Campaign status:</strong> <span className="font-semibold text-amber-800">{campaignData.status || 'Check Ads Manager'}</span> <span className="text-blue-700">(budget and delivery settings are managed in Ads Manager)</span></div>
+                    )}
+                    {campaignData.budgetType === 'CBO' && !campaignData.isExisting && (
                         <div><strong>Campaign Budget:</strong> {campaignData.budgetScheduleType === 'LIFETIME'
                             ? `$${Number(campaignData.lifetimeBudget).toFixed(2)} total (lifetime)`
                             : `$${Number(campaignData.dailyBudget).toFixed(2)} / day`}
                         </div>
                     )}
                     <div><strong>Ad Set:</strong> {adsetData.name}</div>
-                    {campaignData.budgetType === 'ABO' && (
+                    {campaignData.budgetType === 'ABO' && !adsetData.isExisting && (
                         <div><strong>Ad Set Budget:</strong> {adsetData.budgetScheduleType === 'LIFETIME'
                             ? `$${Number(adsetData.lifetimeBudget).toFixed(2)} total (lifetime)`
                             : `$${Number(adsetData.dailyBudget).toFixed(2)} / day`}
@@ -2013,7 +2021,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             return parts.join(', ') || '0 files';
                         })()}
                     </div>
-                    <div><strong>{isDriveManifest ? (driveManifestCreatesSeparateAdsets ? 'Selected pairs / new ad sets' : 'Selected pairs / ads') : 'Total Ads to Create'}:</strong> {`${activeAds.length} / ${adsData.length}`} ({(() => {
+                    <div><strong>{isDriveManifest ? (driveManifestCreatesSeparateAdsets ? 'Selected creatives / new ad sets' : 'Selected creatives / ads') : 'Total Ads to Create'}:</strong> {`${activeAds.length} / ${adsData.length}`} ({(() => {
                         const hasPerCreativeCopy = creativeData.creatives?.some(c => c.headline || c.body);
                         if (hasPerCreativeCopy) return 'per-ad copy assignments';
                         const images = creativeData.creatives?.filter(c => c.mediaType !== 'video').length || 0;
@@ -2025,6 +2033,11 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     })()})</div>
                     {excludedAdIds.size > 0 && (
                         <div><strong>Excluded:</strong> {excludedAdIds.size} ad{excludedAdIds.size !== 1 ? 's' : ''} removed from this batch</div>
+                    )}
+                    {adsetData.isExisting && (
+                        <div className="mt-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
+                            <strong>Ad set status:</strong> {adsetData.status || 'PAUSED'} — new ads are created {adsetData.status || 'PAUSED'}. They deliver only when the ad set and its campaign are both active; status shown is as of when you picked this ad set.
+                        </div>
                     )}
                     {adsetData.isExisting && batchHasDualPlacement && (
                         <div className={`mt-2 rounded px-2 py-1.5 text-xs font-medium ${existingPlacementStatus === 'unverified' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-800'}`}>
@@ -2616,6 +2629,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 text-sm text-gray-700">
                                     Launch stopped after {metaTouchedCount} of {launchOutcome.total ?? activeAds.length} ads reached Meta.
                                     {' '}{metaTouchedCount} ad{metaTouchedCount !== 1 ? 's were' : ' was'} created or may have been created; the rest failed or were not attempted — see below.
+                                    <div className="mt-2 text-xs font-semibold text-gray-900">Do not replay the whole batch. Reconcile any created or uncertain rows in Ads Manager first, then use “Retry remaining ads” only when this screen confirms it is safe.</div>
                                 </div>
                             )}
                             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -2689,6 +2703,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                     ? 'Choose compatible ad set before launching'
                                     : isDriveManifest && driveManifestCreatesSeparateAdsets
                                     ? `Create ${activeAds.length} active ad${activeAds.length !== 1 ? 's' : ''} in ${activeAds.length} new ad set${activeAds.length !== 1 ? 's' : ''} under the ${campaignData.isExisting ? 'existing' : 'paused'} campaign on Facebook`
+                                    : campaignData.isExisting && adsetData.isExisting
+                                        ? `Create ${activeAds.length} ad${activeAds.length !== 1 ? 's' : ''} in the existing ad set (${adsetData.status || 'PAUSED'})`
                                     : `Create ${activeAds.length} active ad${activeAds.length !== 1 ? 's' : ''} on Facebook`}
                             </button>
                         )}

@@ -3843,34 +3843,35 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                             : alreadyAdded
                                                 ? 'border-blue-300'
                                                 : 'border-gray-200 hover:border-amber-300';
+                                    // The overlay button covers the whole card, so it owns the hover text.
+                                    // Must mirror the pill precedence below: a refused tile must never
+                                    // show "Refresh after fixing it", which cannot fix a filename collision.
+                                    const cardTitle = selectionBlocked
+                                        ? (group.copyRefusedForOtherFile
+                                            ? (group.copyIntegrityReason
+                                                || 'This file shares a filename with another package, so its copy could not be matched. Rename it in Drive to something unique to this package, then refresh copy from Drive.')
+                                            : needsRepair
+                                                ? 'The Drive copy source needs repair. Refresh after fixing it before launch.'
+                                                : 'Multiple or incomplete placements use this ad number. Resolve them in Drive before launch.')
+                                        : (group.copyIntegrityIssue || group.copyRefreshUnverified)
+                                            ? (group.copyIntegrityReason || (group.isPair ? `Feed: ${group.feedAsset?.file_name} · Stories: ${group.storiesAsset?.file_name}` : asset.file_name))
+                                            : !copyMatched
+                                                ? 'Drive has no copy for this creative. You can still select it and write the headline and primary text yourself.'
+                                                : (group.isPair ? `Feed: ${group.feedAsset?.file_name} · Stories: ${group.storiesAsset?.file_name}` : asset.file_name);
                                     return (
                                         <div
                                             key={group.id}
-                                            onClick={() => toggleDriveAssetSelection(group.id)}
-                                            onKeyDown={(event) => {
-                                                if (event.target !== event.currentTarget) return; // let the nested Preview button handle its own keys
-                                                if (selectionBlocked || (event.key !== 'Enter' && event.key !== ' ')) return;
-                                                event.preventDefault();
-                                                toggleDriveAssetSelection(group.id);
-                                            }}
-                                            role="button"
-                                            tabIndex={selectionBlocked ? -1 : 0}
-                                            aria-pressed={isSelected}
-                                            aria-disabled={selectionBlocked}
-                                            // Must mirror the badge's precedence below. This wrapper covers far
-                                            // more hit area than the badge, so leaving it on the old two-way branch
-                                            // meant hovering a refused tile popped "Refresh after fixing it" -- the
-                                            // exact instruction that cannot fix a filename collision.
-                                            title={selectionBlocked
-                                                ? (group.copyRefusedForOtherFile
-                                                    ? (group.copyIntegrityReason
-                                                        || 'This file shares a filename with another package, so its copy could not be matched. Rename it in Drive to something unique to this package, then refresh copy from Drive.')
-                                                    : needsRepair
-                                                        ? 'The Drive copy source needs repair. Refresh after fixing it before launch.'
-                                                        : 'Multiple or incomplete placements use this ad number. Resolve them in Drive before launch.')
-                                                : undefined}
-                                            className={`relative rounded-xl overflow-hidden border-2 bg-white transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-1 ${selectionBlocked ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'} ${borderClass}`}
+                                            className={`relative overflow-hidden rounded-xl border-2 bg-white transition-all ${selectionBlocked ? 'opacity-70' : ''} ${borderClass}`}
                                         >
+                                            <button
+                                                type="button"
+                                                onClick={() => toggleDriveAssetSelection(group.id)}
+                                                aria-label={`Select ad ${asset.file_name || 'creative'}${group.isPair ? ', Feed and Stories pair' : ''}`}
+                                                aria-pressed={isSelected}
+                                                aria-disabled={selectionBlocked}
+                                                title={cardTitle}
+                                                className={`absolute inset-0 z-10 h-full w-full rounded-xl text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500 ${selectionBlocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                                            />
                                             <div className={`flex h-[96px] gap-1.5 bg-gray-100 p-1 ${group.isPair && group.storiesAsset ? 'items-stretch' : 'items-center justify-center'}`}>
                                                 <div className={`relative ${group.isPair && group.storiesAsset ? 'w-1/2 min-w-0' : 'h-full w-full'}`}>
                                                 {asset.format === 'video' ? (
@@ -3903,14 +3904,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                             <button
                                                 type="button"
                                                 onClick={(event) => { event.stopPropagation(); drivePreviewTriggerRef.current = event.currentTarget; setDrivePreviewGroup(group); }}
-                                                className="absolute right-2 top-2 rounded-md bg-white/95 p-1 text-gray-700 shadow-sm hover:bg-white"
+                                                className="absolute right-2 top-2 z-20 rounded-md bg-white/95 p-1 text-gray-700 shadow-sm hover:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
                                                 aria-label={`Preview ${asset.file_name}`}
                                                 title="Preview full creative"
                                             >
                                                 <Maximize2 size={14} />
                                             </button>
                                             {isSelected && (
-                                                <div className="absolute top-9 right-2 inline-flex items-center gap-1 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm">
+                                                <div className="pointer-events-none absolute bottom-10 right-2 z-20 inline-flex items-center gap-1 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm">
                                                     <Check size={12} />
                                                     <span>Selected</span>
                                                 </div>
@@ -3997,8 +3998,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                     type="button"
                                     onClick={() => setSelectedDriveAssetIds(new Set())}
                                     className="px-3 py-2 text-gray-500 hover:text-gray-800 font-medium"
+                                    title="Clear only the pending Drive selection; already-added creatives are unchanged"
                                 >
-                                    Clear selection
+                                    Clear ({selectedDriveAssetIds.size})
                                 </button>
                             )}
                             <button onClick={() => setShowDriveLibraryModal(false)} className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">
