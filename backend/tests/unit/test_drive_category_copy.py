@@ -1295,6 +1295,27 @@ def test_manifest_in_ad_copy_subfolder_layout_still_resolves_to_its_package():
     assert resolved == SIBLING_PKG
 
 
+def test_nested_handoff_manifest_does_not_claim_its_parent_legacy_package():
+    """A new RB-style child batch must not strand legacy siblings beside it."""
+    parent_manifest = {
+        "id": "nested-manifest",
+        "name": "ELEC-RB-HANDOFF-MANIFEST.txt",
+        "mimeType": "text/plain",
+        "_direct_parent_folder_id": "rb-batch",
+        "_parent_folder_path": ["ELEC-RB | Personal Policy Gap"],
+    }
+    direct_copy_manifest = {
+        "id": "copy-manifest",
+        "name": "PACKAGE-HANDOFF-MANIFEST.txt",
+        "mimeType": "text/plain",
+        "_direct_parent_folder_id": "ad-copy",
+        "_parent_folder_path": ["Ad Copy"],
+    }
+
+    assert not DriveSyncService._is_handoff_manifest_for_folder(parent_manifest, "legacy-package")
+    assert DriveSyncService._is_handoff_manifest_for_folder(direct_copy_manifest, "legacy-package")
+
+
 def test_brand_root_is_a_package_container_but_a_package_is_not():
     service = _service({BRAND: ROOT, SIBLING_PKG: BRAND}, {})
 

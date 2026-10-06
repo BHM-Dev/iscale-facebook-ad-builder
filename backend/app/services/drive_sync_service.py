@@ -2107,14 +2107,27 @@ class DriveSyncService:
 
     @classmethod
     def _is_handoff_manifest_for_folder(cls, item: Dict[str, Any], folder_id: str) -> bool:
-        """README handoffs and final briefs are scoped to their direct package folder."""
+        """Return whether a handoff belongs to the package currently inspected.
+
+        A recursive package walk also sees manifests belonging to nested, newer
+        batches.  Those manifests must not replace the parent package's legacy
+        copy map: doing so maps the nested batch, then marks its older siblings
+        as absent and unverified.  A package-owned manifest is either directly
+        in that package or in its immediate ``Ad Copy`` child.  Retain the
+        metadata-free fallback for callers/tests that did not originate from
+        ``_list_folder_subtree``.
+        """
         file_name = item.get("name") or ""
-        return cls._is_handoff_manifest_file(file_name) and (
-            not (
-                cls._is_readme_meta_handoff_file(file_name)
-                or cls._is_final_meta_launch_brief_file(file_name)
-            )
-            or item.get("_direct_parent_folder_id") == folder_id
+        if not cls._is_handoff_manifest_file(file_name):
+            return False
+        if "_direct_parent_folder_id" not in item and "_parent_folder_path" not in item:
+            return True
+        if item.get("_direct_parent_folder_id") == folder_id:
+            return True
+        parent_path = item.get("_parent_folder_path") or []
+        return (
+            len(parent_path) == 1
+            and bool(re.match(r"^ad copy(?:\s|$)", parent_path[0] or "", re.IGNORECASE))
         )
 
     def _find_package_folder(self, file_meta: Dict[str, Any], max_depth: int = 4) -> Optional[str]:
