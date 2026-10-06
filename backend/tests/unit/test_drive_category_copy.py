@@ -1600,7 +1600,13 @@ def test_strategy_resolver_accepts_legacy_package_when_empty_placement_folders_r
         def get(self, **kwargs):
             class Request:
                 def execute(self):
-                    return {"id": "winner-batch", "parents": ["roofing"]}
+                    return {
+                        "id": "winner-batch",
+                        "parents": ["roofing"],
+                    } if kwargs["fileId"] == "winner-batch" else {
+                        "id": "placement",
+                        "parents": ["winner-batch"],
+                    }
             return Request()
 
         def list(self, **kwargs):
@@ -1620,7 +1626,7 @@ def test_strategy_resolver_accepts_legacy_package_when_empty_placement_folders_r
     service._client = lambda: FakeDrive()
     service._list_folder_subtree = lambda folder_id: (
         [{"id": "winner-media", "name": "06-ROOF-AD1-PhoneCall-1x1.jpg", "mimeType": "image/jpeg"}]
-        if folder_id == "winner-batch"
+        if folder_id in {"placement", "winner-batch"}
         else [
             {"id": "copy", "name": "06-Roofing-Contractors-Ad-Copy.txt", "mimeType": "text/plain",
              "_parent_folder_path": ["Ad Copy"]},
@@ -1635,7 +1641,7 @@ PRIMARY TEXT
 Coverage primary text.
 """
 
-    assert service._find_strategy_package_folder({"parents": ["winner-batch"]}) == "roofing"
+    assert service._find_strategy_package_folder({"parents": ["placement"]}) == "roofing"
 
 
 def test_package_copy_sources_merge_disjoint_launch_batches_with_per_asset_provenance():

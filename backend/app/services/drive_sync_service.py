@@ -2188,6 +2188,17 @@ class DriveSyncService:
                 # At this point we have checked both the media's placement folder
                 # and its likely package root. Do not climb into a brand root and
                 # borrow a manifest from an unrelated sibling package.
+                #
+                # A legacy package can insert a named batch between those two
+                # levels (``Winner Variations - v2/1x1 Images``).  Permit that
+                # one extra ascent only when the parent itself proves the direct
+                # legacy package shape.  This keeps the sibling-copy boundary
+                # intact while letting the batch use its parent's canonical copy.
+                parent = self._direct_legacy_package_parent(current)
+                if parent:
+                    current = parent
+                    depth += 1
+                    continue
                 break
             try:
                 info = drive.files().get(fileId=current, fields="id,parents", supportsAllDrives=True).execute()
@@ -2889,6 +2900,14 @@ class DriveSyncService:
                 # media but no recognized copy source, climbing into a brand
                 # root could borrow a sibling package's AD 1 copy. Stop here
                 # rather than manufacture a valid-looking cross-package pair.
+                # A named legacy batch between the placement and package root is
+                # the sole exception, and only when that direct parent has the
+                # canonical Ad Copy + 1x1 + 9x16 folder shape.
+                parent = self._direct_legacy_package_parent(current)
+                if parent:
+                    current = parent
+                    depth += 1
+                    continue
                 break
             try:
                 info = drive.files().get(fileId=current, fields="id,parents", supportsAllDrives=True).execute()
@@ -2972,6 +2991,28 @@ class DriveSyncService:
             logger.warning("Could not inspect direct legacy package layout for %s: %s", folder_id, exc)
             cache[folder_id] = False
         return cache[folder_id]
+
+    def _direct_legacy_package_parent(self, folder_id: str) -> Optional[str]:
+        """Return a verified legacy-package parent for a nested media batch.
+
+        This is intentionally not a general "keep climbing" rule.  It admits
+        exactly one parent whose immediate children prove the canonical legacy
+        layout, so a media folder can never inherit a sibling package's copy.
+        """
+        try:
+            info = self._client().files().get(
+                fileId=folder_id,
+                fields="id,parents",
+                supportsAllDrives=True,
+            ).execute()
+        except Exception as exc:
+            logger.warning("Could not resolve possible legacy package parent of %s: %s", folder_id, exc)
+            return None
+        parents = info.get("parents") or []
+        parent = parents[0] if parents else None
+        if parent and self._has_direct_legacy_copy_package_layout(parent, []):
+            return parent
+        return None
 
     def _folder_copy_metadata(self, folder_id: str, force: bool = False) -> Dict[str, Any]:
         if not force and folder_id in self._folder_metadata_cache:
