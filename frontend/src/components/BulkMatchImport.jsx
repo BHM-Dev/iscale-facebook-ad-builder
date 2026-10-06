@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { UploadCloud, Loader, FileText, Image as ImageIcon, CheckCircle2, AlertTriangle, XCircle, Pencil } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { createCompleteAd, createFacebookCampaign, createFacebookAdSet } from '../lib/facebookApi';
-import { CTA_OPTIONS, HEADLINE_LIMIT, BODY_LIMIT } from './AdCreativeStep';
+import { CTA_OPTIONS, HEADLINE_LIMIT, BODY_LIMIT } from './adCreativeConstants';
 import { INTER_REQUEST_DELAY_MS, delay, isRateLimitError } from '../lib/metaRateLimit';
 import CreativeEnhancementsPanel from './CreativeEnhancementsPanel';
 import {
@@ -166,7 +166,7 @@ const BulkMatchImport = ({ onNext, onBack }) => {
     const [reconciliationRecord, setReconciliationRecord] = useState(null);
     const [reconciliationExcludedAdNumbers, setReconciliationExcludedAdNumbers] = useState(() => new Set());
     const [showReconciliationConfirm, setShowReconciliationConfirm] = useState(false);
-    const [reconciliationStorageUnavailable, setReconciliationStorageUnavailable] = useState(false);
+    const [, setReconciliationStorageUnavailable] = useState(false);
     const [reconciliationPendingRecords, setReconciliationPendingRecords] = useState([]);
     const [reconciliationAmbiguousRecords, setReconciliationAmbiguousRecords] = useState([]);
     const [creativeEnhancements, setCreativeEnhancements] = useState({});

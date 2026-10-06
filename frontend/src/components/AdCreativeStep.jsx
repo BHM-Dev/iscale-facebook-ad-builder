@@ -10,6 +10,7 @@ import { resolveGlobalWebsiteUrl } from '../lib/driveCreativeSelection';
 import { cropImageToAspect } from '../lib/imageCrop';
 import { useBrands } from '../context/BrandContext';
 import CreativeEnhancementsPanel from './CreativeEnhancementsPanel';
+import { CTA_OPTIONS, HEADLINE_LIMIT, BODY_LIMIT } from './adCreativeConstants';
 import { countCreativeVariations } from '../lib/launchPlan';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -29,9 +30,7 @@ const ALLOWED_VIDEO_TYPES = [
 // Primary text: 2200 hard limit (truncated after ~125 chars in feed)
 // Description: 255 hard limit
 const HEADLINE_WARN = 40;
-export const HEADLINE_LIMIT = 255;
 const BODY_WARN = 125;
-export const BODY_LIMIT = 2200;
 const DESC_LIMIT = 255;
 
 // Commercial launches are always run from the DailyInsurance.news Page. The
@@ -47,21 +46,6 @@ const charCountClass = (len, warn, limit) => {
     if (len > warn) return 'text-amber-600';
     return 'text-gray-400';
 };
-
-// Facebook CTA types - confirmed working
-export const CTA_OPTIONS = [
-    'LEARN_MORE',
-    'SHOP_NOW',
-    'SIGN_UP',
-    'CONTACT_US',
-    'DOWNLOAD',
-    'BOOK_NOW',
-    'BUY_TICKETS',
-    'GET_QUOTE',
-    'GET_STARTED',
-    'APPLY_NOW',
-    'DONATE_NOW',
-];
 
 const normalizeMetaCta = (value) => {
     const normalized = String(value || '').trim().toUpperCase();
@@ -112,7 +96,7 @@ const parseDriveTags = (asset) => {
     if (typeof asset.soft_tags === 'object') return asset.soft_tags;
     try {
         return JSON.parse(asset.soft_tags);
-    } catch (e) {
+    } catch {
         return {};
     }
 };
@@ -1058,17 +1042,6 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
     // count cannot drift from what actually lands in creativeData.creatives.
     // A single Drive file remains native to its detected placement; only an
     // explicit Feed/Stories pair becomes a dual-placement creative.
-    const driveSelectionMediaCount = useMemo(() => {
-        return [...selectedDriveAssetIds].reduce((sum, id) => {
-            const group = driveGroupById.get(id);
-            if (!group) return sum;
-            const canMergeAsPair = group.isPair
-                && group.feedAsset?.format === group.storiesAsset?.format;
-            if (canMergeAsPair) return sum + 1; // one dualPlacement creative
-            if (group.isPair) return sum + 2; // video-fallback: two real distinct creatives already
-            return group.displayAsset ? sum + 1 : sum;
-        }, 0);
-    }, [selectedDriveAssetIds, driveGroupById]);
     const driveSelectionProjectedAdCount = useMemo(() => {
         const selectedGroups = [...selectedDriveAssetIds].map(id => driveGroupById.get(id)).filter(Boolean);
         // Every selected group stays in the editor now, including unmatched
@@ -1098,51 +1071,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
     // request), so the size of a just-started batch is fully visible in
     // creativeData immediately — no separate bookkeeping needed at the
     // trigger sites (manual duplicate).
-    const croppingCreatives = useMemo(
-        () => creativeData.creatives.filter(c => c.cropping),
-        [creativeData.creatives]
-    );
     const cropFailedCreatives = useMemo(
         () => creativeData.creatives.filter(c => c.cropFailed),
         [creativeData.creatives]
     );
-    const croppingCount = croppingCreatives.length;
     const cropFailedCount = cropFailedCreatives.length;
-    // Tracks "N of M done" for the progress banner via an id-keyed set rather
-    // than a raw high-water mark on the in-flight count — a first version
-    // used `Math.max(prev, croppingCount)`, which silently broke on two real
-    // cases (code-auditor pre-push review, HIGH + MEDIUM): (1) if Joel adds
-    // more images while an earlier batch is still draining, the new arrivals
-    // got absorbed into the old peak instead of extending the total, so the
-    // banner understated both numbers; (2) removing a still-cropping card
-    // (the grid's Trash2 button isn't disabled mid-crop) never shrank the
-    // total, so M stayed permanently overstated until the whole batch
-    // happened to finish. Fixed by tracking the actual set of card ids that
-    // have been part of the CURRENT batch: an id joins when it starts
-    // cropping, leaves if its card is deleted entirely (shrinking the total),
-    // and the whole set clears once nothing is in flight so the next batch
-    // starts clean. Computed via useMemo (not useEffect+state) specifically
-    // so there's no one-frame render where a fresh batch's total hasn't
-    // caught up yet — the auditor also confirmed that lag was independently
-    // reachable and could flash a negative "done" count.
-    const cropBatchIdsRef = useRef(new Set());
-    const cropBatchProgress = useMemo(() => {
-        const currentIds = new Set(creativeData.creatives.map(c => c.id));
-        const stillCroppingIds = croppingCreatives.map(c => c.id);
-
-        if (stillCroppingIds.length === 0) {
-            cropBatchIdsRef.current = new Set();
-            return { total: 0, done: 0 };
-        }
-
-        const ids = cropBatchIdsRef.current;
-        stillCroppingIds.forEach(id => ids.add(id));
-        [...ids].forEach(id => {
-            if (!currentIds.has(id)) ids.delete(id);
-        });
-
-        return { total: ids.size, done: ids.size - stillCroppingIds.length };
-    }, [creativeData.creatives, croppingCreatives]);
 
     // Re-runs every currently-failed crop from its own pristine source in one
     // click, rather than making Joel hunt down and retry each red banner
@@ -2490,7 +2423,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                     showWarning('Please enter a valid URL starting with http:// or https://');
                     return;
                 }
-            } catch (e) {
+            } catch {
                 showWarning('Please enter a valid URL (e.g., https://example.com)');
                 return;
             }
@@ -3914,6 +3847,15 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                         <div
                                             key={group.id}
                                             onClick={() => toggleDriveAssetSelection(group.id)}
+                                            onKeyDown={(event) => {
+                                                if (event.target !== event.currentTarget) return; // let the nested Preview button handle its own keys
+                                                if (selectionBlocked || (event.key !== 'Enter' && event.key !== ' ')) return;
+                                                event.preventDefault();
+                                                toggleDriveAssetSelection(group.id);
+                                            }}
+                                            role="button"
+                                            tabIndex={selectionBlocked ? -1 : 0}
+                                            aria-pressed={isSelected}
                                             aria-disabled={selectionBlocked}
                                             // Must mirror the badge's precedence below. This wrapper covers far
                                             // more hit area than the badge, so leaving it on the old two-way branch
@@ -3927,7 +3869,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                                         ? 'The Drive copy source needs repair. Refresh after fixing it before launch.'
                                                         : 'Multiple or incomplete placements use this ad number. Resolve them in Drive before launch.')
                                                 : undefined}
-                                            className={`relative rounded-xl overflow-hidden border-2 bg-white transition-all ${selectionBlocked ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'} ${borderClass}`}
+                                            className={`relative rounded-xl overflow-hidden border-2 bg-white transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-1 ${selectionBlocked ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'} ${borderClass}`}
                                         >
                                             <div className={`flex h-[96px] gap-1.5 bg-gray-100 p-1 ${group.isPair && group.storiesAsset ? 'items-stretch' : 'items-center justify-center'}`}>
                                                 <div className={`relative ${group.isPair && group.storiesAsset ? 'w-1/2 min-w-0' : 'h-full w-full'}`}>
@@ -3968,8 +3910,9 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                                 <Maximize2 size={14} />
                                             </button>
                                             {isSelected && (
-                                                <div className="absolute top-9 right-2 bg-amber-500 rounded-full p-0.5">
-                                                    <Check size={14} className="text-white" />
+                                                <div className="absolute top-9 right-2 inline-flex items-center gap-1 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm">
+                                                    <Check size={12} />
+                                                    <span>Selected</span>
                                                 </div>
                                             )}
                                             {group.copyPairingAmbiguous ? (
@@ -4049,6 +3992,15 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             )}
                         </div>
                         <div className="flex shrink-0 gap-3">
+                            {selectedDriveAssetIds.size > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedDriveAssetIds(new Set())}
+                                    className="px-3 py-2 text-gray-500 hover:text-gray-800 font-medium"
+                                >
+                                    Clear selection
+                                </button>
+                            )}
                             <button onClick={() => setShowDriveLibraryModal(false)} className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">
                                 Cancel
                             </button>

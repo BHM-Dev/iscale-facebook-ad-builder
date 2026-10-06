@@ -201,7 +201,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const [reconciliationStorageUnavailable, setReconciliationStorageUnavailable] = useState(false);
     const [reconciliationProtectedIds, setReconciliationProtectedIds] = useState([]);
     const [reconciliationHasUntrackedMetaMutation, setReconciliationHasUntrackedMetaMutation] = useState(false);
-    const [reconciliationConflictScope, setReconciliationConflictScope] = useState(null);
+    const [, setReconciliationConflictScope] = useState(null);
     const [reconciliationResolvedRecord, setReconciliationResolvedRecord] = useState(null);
     const [reconciliationAmbiguousRecords, setReconciliationAmbiguousRecords] = useState([]);
     const [reconciliationProtectedAdNumbers, setReconciliationProtectedAdNumbers] = useState([]);
@@ -386,7 +386,6 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 ...(parsedCurrent ? [parsedCurrent] : []),
             ].filter(item => item && item.blocked !== false);
             const pendingRecords = [...new Map(candidates.map(item => [item.scope, item])).values()];
-            const exactRecord = pendingRecords.find(item => item.scope === reconciliationScope);
             const resolvedRecord = pendingRecords.length === 1 ? pendingRecords[0] : null;
             const ambiguousRecords = pendingRecords.length > 1 ? pendingRecords : [];
             const parsed = resolvedRecord;
@@ -1966,7 +1965,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             )}
             <p className="text-gray-600 mb-6">
                 {isDriveManifest
-                    ? `Creative review: ${driveReviewInventory || 'no selected creatives'}. Each selected row becomes one active ad beneath the paused campaign in ${driveReviewDestination}. Use the compact manifest to organize, inspect, and select rows without reviewing a wall of full-size ad previews.`
+                    ? `Creative review: ${driveReviewInventory || 'no selected creatives'}. Each selected row becomes one ${adsetData.isExisting ? '' : 'active '}ad beneath the ${campaignData.isExisting ? 'selected existing' : 'new paused'} campaign in ${driveReviewDestination}. Use the compact manifest to organize, inspect, and select rows without reviewing a wall of full-size ad previews.`
                     : 'The app has automatically generated one ad for every combination of your images, headlines, and body copy. Each row below is one ad that will be created on Facebook.'}
             </p>
 
@@ -1975,7 +1974,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 <h3 className="font-semibold text-blue-900 mb-2">Summary</h3>
                 <div className="text-sm text-blue-800 space-y-1">
                     <div className="rounded-md border border-blue-200 bg-white/70 px-3 py-2 text-blue-950">
-                        <strong>Meta will create {activeAds.length} active ad{activeAds.length !== 1 ? 's' : ''} beneath the paused campaign</strong>
+                        <strong>Meta will create {activeAds.length} {adsetData.isExisting ? '' : 'active '}ad{activeAds.length !== 1 ? 's' : ''} beneath the {campaignData.isExisting ? 'selected existing' : 'new paused'} campaign</strong>
                         {perMediaModeActive
                             ? ` across ${new Set(activeAds.map(ad => ad.creativeId)).size} new ad set${new Set(activeAds.map(ad => ad.creativeId)).size !== 1 ? 's' : ''}.`
                             : adsetData.isExisting
@@ -1983,6 +1982,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 : isMixedFormat && !driveManifestHasDualPlacement
                                     ? ' across 2 new ad sets (Feed and Stories/Reels).'
                                     : ' in 1 new ad set.'}
+                        {campaignData.isExisting
+                            ? <span className="ml-1 text-blue-800">Existing campaign — {adsetData.isExisting ? `ads take the ad set's status (${adsetData.status || 'PAUSED'}) and deliver only if the campaign is also active.` : 'new ad sets and ads are created ACTIVE and will deliver as soon as the campaign is active. Check the campaign status in Ads Manager.'}</span>
+                            : <span className="ml-1 text-blue-800">The new campaign is created paused, so delivery will not begin until you activate it.</span>}
                     </div>
                     <div><strong>Campaign:</strong> {campaignData.name}</div>
                     {campaignData.budgetType === 'CBO' && (
@@ -2002,6 +2004,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     <div>
                         <strong>Media:</strong>{' '}
                         {(() => {
+                            if (isDriveManifest) return driveReviewInventory || '0 creatives';
                             const images = creativeData.creatives?.filter(c => c.mediaType !== 'video').length || 0;
                             const videos = creativeData.creatives?.filter(c => c.mediaType === 'video').length || 0;
                             const parts = [];
@@ -2626,7 +2629,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 </ul>
                             </div>
                             <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
-                                Any ads that <strong>did</strong> create are <strong>ACTIVE beneath the paused campaign</strong> in Meta — they won't spend until you activate the campaign.
+                                {campaignData.isExisting ? <>Any ads that <strong>did</strong> create now exist in Meta under the existing campaign — they may already be spending if the campaign and ad set are active. Check Ads Manager.</> : <>Any ads that <strong>did</strong> create are <strong>ACTIVE beneath the paused campaign</strong> in Meta — they won't spend until you activate the campaign.</>}
                             </div>
                         </div>
                     )}
@@ -2685,7 +2688,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 {placementLaunchBlocked
                                     ? 'Choose compatible ad set before launching'
                                     : isDriveManifest && driveManifestCreatesSeparateAdsets
-                                    ? `Create ${activeAds.length} active ad${activeAds.length !== 1 ? 's' : ''} in ${activeAds.length} new ad set${activeAds.length !== 1 ? 's' : ''} under the paused campaign on Facebook`
+                                    ? `Create ${activeAds.length} active ad${activeAds.length !== 1 ? 's' : ''} in ${activeAds.length} new ad set${activeAds.length !== 1 ? 's' : ''} under the ${campaignData.isExisting ? 'existing' : 'paused'} campaign on Facebook`
                                     : `Create ${activeAds.length} active ad${activeAds.length !== 1 ? 's' : ''} on Facebook`}
                             </button>
                         )}
@@ -2924,7 +2927,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         </p>
                         {progress.status === 'Complete!' ? (
                             <p className="text-sm text-amber-700 mt-3 font-medium">
-                                The campaign is <strong>PAUSED</strong>; its ad sets and ads are active beneath it. Activate the campaign in Ads Manager when ready.
+                                {campaignData.isExisting ? <>Ads were added to an <strong>existing campaign</strong> and follow its current status. Verify delivery state in Ads Manager.</> : <>The campaign is <strong>PAUSED</strong>; its ad sets and ads are active beneath it. Activate the campaign in Ads Manager when ready.</>}
                             </p>
                         ) : (
                             <p className="text-sm text-gray-500 mt-3">
