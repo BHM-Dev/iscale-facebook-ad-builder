@@ -1585,6 +1585,59 @@ def test_direct_legacy_package_layout_is_not_rejected_as_a_broad_container():
     ]) is False
 
 
+def test_strategy_resolver_accepts_legacy_package_when_empty_placement_folders_remain():
+    """A winner batch may move all media out of the legacy 1x1/9x16 folders."""
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._strategy_package_folder_cache = {}
+    service._direct_legacy_layout_cache = {}
+    service.root_folder_id = "root"
+    service._folder_chain_to_root = lambda folder_id: [
+        {"id": "roofing", "name": "06 - Roofing Contractors"},
+        {"id": "root", "name": "Commercial Van Insurance"},
+    ]
+
+    class FakeFiles:
+        def get(self, **kwargs):
+            class Request:
+                def execute(self):
+                    return {"id": "winner-batch", "parents": ["roofing"]}
+            return Request()
+
+        def list(self, **kwargs):
+            class Request:
+                def execute(self):
+                    return {"files": [
+                        {"name": "Ad Copy", "mimeType": "application/vnd.google-apps.folder"},
+                        {"name": "1x1 Images", "mimeType": "application/vnd.google-apps.folder"},
+                        {"name": "9x16 Images", "mimeType": "application/vnd.google-apps.folder"},
+                    ]}
+            return Request()
+
+    class FakeDrive:
+        def files(self):
+            return FakeFiles()
+
+    service._client = lambda: FakeDrive()
+    service._list_folder_subtree = lambda folder_id: (
+        [{"id": "winner-media", "name": "06-ROOF-AD1-PhoneCall-1x1.jpg", "mimeType": "image/jpeg"}]
+        if folder_id == "winner-batch"
+        else [
+            {"id": "copy", "name": "06-Roofing-Contractors-Ad-Copy.txt", "mimeType": "text/plain",
+             "_parent_folder_path": ["Ad Copy"]},
+            {"id": "winner-media", "name": "06-ROOF-AD1-PhoneCall-1x1.jpg", "mimeType": "image/jpeg",
+             "_parent_folder_path": ["Winner Variations - v2", "Feed"]},
+        ]
+    )
+    service._download_text_file = lambda file_id: """AD 1 — Phone Call
+META HEADLINE
+Coverage headline
+PRIMARY TEXT
+Coverage primary text.
+"""
+
+    assert service._find_strategy_package_folder({"parents": ["winner-batch"]}) == "roofing"
+
+
 def test_package_copy_sources_merge_disjoint_launch_batches_with_per_asset_provenance():
     service = DriveSyncService.__new__(DriveSyncService)
     service._folder_metadata_cache = {}

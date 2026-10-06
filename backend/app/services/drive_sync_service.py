@@ -2172,7 +2172,9 @@ class DriveSyncService:
                 for item in folder_items
             )
             if has_manifest and has_media:
-                if self._is_package_container(current):
+                if self._is_package_container(current) and not self._has_direct_legacy_copy_package_layout(
+                    current, folder_items
+                ):
                     # `current` is the sync root or a brand root: a folder that holds
                     # MANY packages, so any manifest in its subtree belongs to one
                     # specific child package and not to the file we walked up from.
@@ -2863,7 +2865,9 @@ class DriveSyncService:
                         or self._looks_like_ad_copy_doc(text_body)
                     )
                 ):
-                    if self._is_package_container(current) and not self._has_direct_copy_package_layout(folder_files):
+                    if self._is_package_container(current) and not self._has_direct_legacy_copy_package_layout(
+                        current, folder_files
+                    ):
                         # Same rule as _find_package_folder: a brand root holds many
                         # packages, so a copy doc anywhere in its subtree belongs to
                         # one specific child package. _strategy_folder_copy_metadata
@@ -2918,6 +2922,56 @@ class DriveSyncService:
             and any(re.match(r"^1x1(?:\s|$)", name) for name in direct_child_names)
             and any(re.match(r"^9x16(?:\s|$)", name) for name in direct_child_names)
         )
+
+    def _has_direct_legacy_copy_package_layout(
+        self, folder_id: str, folder_files: List[Dict[str, Any]]
+    ) -> bool:
+        """Recognize a legacy package even after its original placement folders empty.
+
+        `_list_folder_subtree` deliberately returns files, not folders.  That is
+        normally enough to recognize the old ``Ad Copy`` + ``1x1 Images`` +
+        ``9x16 Images`` package shape.  A later winner batch can move every
+        image into a child batch, however, leaving those two placement folders
+        empty.  The package still owns its canonical Ad Copy file and must be
+        usable for that child batch; otherwise a safe container guard turns a
+        valid repair into an unresolved package.
+
+        Inspect only this folder's immediate child names (not descendants),
+        cache the result for the request, and retain the three-folder shape.
+        That makes the exception just as narrow as the file-backed check and
+        cannot adopt a sibling package's copy from a broad brand root.
+        """
+        if self._has_direct_copy_package_layout(folder_files):
+            return True
+
+        cache = self.__dict__.setdefault("_direct_legacy_layout_cache", {})
+        if folder_id in cache:
+            return cache[folder_id]
+        try:
+            response = self._client().files().list(
+                q=f"'{folder_id}' in parents and trashed = false",
+                spaces="drive",
+                fields="files(name,mimeType)",
+                includeItemsFromAllDrives=True,
+                supportsAllDrives=True,
+            ).execute()
+            names = {
+                (item.get("name") or "").strip().lower()
+                for item in response.get("files", [])
+                if item.get("mimeType") == "application/vnd.google-apps.folder"
+            }
+            cache[folder_id] = (
+                any(name.startswith("ad copy") for name in names)
+                and any(re.match(r"^1x1(?:\s|$)", name) for name in names)
+                and any(re.match(r"^9x16(?:\s|$)", name) for name in names)
+            )
+        except Exception as exc:
+            # Preserve the fail-closed container behavior when Drive cannot
+            # establish the direct structure.  A later targeted refresh can
+            # retry; guessing here could attach a sibling's copy.
+            logger.warning("Could not inspect direct legacy package layout for %s: %s", folder_id, exc)
+            cache[folder_id] = False
+        return cache[folder_id]
 
     def _folder_copy_metadata(self, folder_id: str, force: bool = False) -> Dict[str, Any]:
         if not force and folder_id in self._folder_metadata_cache:
