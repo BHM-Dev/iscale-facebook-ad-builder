@@ -2927,6 +2927,28 @@ class DriveSyncService:
             folder_files = self._list_folder_subtree(folder_id)
         except Exception as exc:
             raise RuntimeError(f"Could not list Drive folder metadata {folder_id}") from exc
+        # A legacy package can retain its original direct ``Ad Copy`` and
+        # placement folders while a newer, self-contained handoff package is
+        # nested beside them (for example ``ELEC-RB | Personal Policy Gap``).
+        # The recursive listing is useful for normal packages, but the parent
+        # must not ingest a nested package's manifest or media: doing so makes
+        # one batch look "unmatched" whenever the other batch is refreshed.
+        # Each nested handoff remains visible when its own folder is resolved.
+        nested_package_paths = [
+            item.get("_parent_folder_path") or []
+            for item in folder_files
+            if self._is_handoff_manifest_file(item.get("name") or "")
+            and not self._is_handoff_manifest_for_folder(item, folder_id)
+            and item.get("_parent_folder_path")
+        ]
+        if nested_package_paths:
+            folder_files = [
+                item for item in folder_files
+                if not any(
+                    (item.get("_parent_folder_path") or [])[:len(nested_path)] == nested_path
+                    for nested_path in nested_package_paths
+                )
+            ]
         text_files = sorted(
             (
                 item for item in folder_files

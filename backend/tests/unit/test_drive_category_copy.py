@@ -1316,6 +1316,41 @@ def test_nested_handoff_manifest_does_not_claim_its_parent_legacy_package():
     assert DriveSyncService._is_handoff_manifest_for_folder(direct_copy_manifest, "legacy-package")
 
 
+def test_parent_copy_metadata_excludes_nested_handoff_batch_media():
+    service = DriveSyncService.__new__(DriveSyncService)
+    service._folder_metadata_cache = {}
+    legacy_feed = {
+        "id": "legacy-feed", "name": "AD1-1x1.jpg", "mimeType": "image/jpeg",
+        "_parent_folder_path": ["1x1 Images"],
+    }
+    legacy_story = {
+        "id": "legacy-story", "name": "AD1-9x16.jpg", "mimeType": "image/jpeg",
+        "_parent_folder_path": ["9x16 Images"],
+    }
+    legacy_copy = {
+        "id": "legacy-copy", "name": "Legacy-Ad-Copy.txt", "mimeType": "text/plain",
+        "modifiedTime": "2026-10-01T00:00:00Z", "_parent_folder_path": ["Ad Copy"],
+    }
+    nested_manifest = {
+        "id": "nested-manifest", "name": "RB-HANDOFF-MANIFEST.txt", "mimeType": "text/plain",
+        "modifiedTime": "2026-10-02T00:00:00Z", "_direct_parent_folder_id": "rb-package",
+        "_parent_folder_path": ["RB Package"],
+    }
+    nested_feed = {
+        "id": "nested-feed", "name": "RB-01-1x1.jpg", "mimeType": "image/jpeg",
+        "_parent_folder_path": ["RB Package", "1x1 Images"],
+    }
+    service._list_folder_subtree = lambda _: [legacy_feed, legacy_story, legacy_copy, nested_manifest, nested_feed]
+    service._download_text_file = lambda file_id: {
+        "legacy-copy": "AD 1\nMETA HEADLINE\nLegacy headline\nPRIMARY TEXT\nLegacy primary text.\n",
+        "nested-manifest": "ignored by parent",
+    }[file_id]
+
+    metadata = service._folder_copy_metadata("legacy-package")
+
+    assert set(metadata["assets_by_drive_id"]) == {"legacy-feed", "legacy-story"}
+
+
 def test_brand_root_is_a_package_container_but_a_package_is_not():
     service = _service({BRAND: ROOT, SIBLING_PKG: BRAND}, {})
 
