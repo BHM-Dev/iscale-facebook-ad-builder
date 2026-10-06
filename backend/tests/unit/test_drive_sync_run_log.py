@@ -70,3 +70,26 @@ def test_decorator_resolves_kind_from_call_arguments(rows):
     Service().sync()
 
     assert [r[0] for r in rows] == ["scoped", "incremental"]
+
+
+def test_active_run_is_written_before_work_and_finalized(monkeypatch):
+    events = []
+
+    monkeypatch.setattr(run_log, "_write_running_row", lambda db, kind, started_at: events.append(("start", kind)) or 42)
+    monkeypatch.setattr(
+        run_log,
+        "_finish_running_row",
+        lambda db, run_id, status, result, error: events.append(("finish", run_id, status, result, error)) or True,
+    )
+    monkeypatch.setattr(run_log, "_write_row", lambda *args: pytest.fail("fallback insert should not run"))
+
+    def work():
+        events.append(("work",))
+        return {"processed": 2}
+
+    assert run_log.logged_run(object(), "incremental", work) == {"processed": 2}
+    assert events == [
+        ("start", "incremental"),
+        ("work",),
+        ("finish", 42, "ok", {"processed": 2}, None),
+    ]

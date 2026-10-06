@@ -13,6 +13,8 @@ from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
+import httplib2
+from google_auth_httplib2 import AuthorizedHttp
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -51,6 +53,10 @@ MEDIA_ASPECTS = ("1x1", "4x5", "9x16", "16x9")
 FEED_ASPECTS = ("1x1", "4x5", "16x9")
 TEXT_PREFIXES = ("text/",)
 GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
+# A Drive request must never hold the PostgreSQL advisory sync lock forever.
+# googleapiclient otherwise creates an httplib2 transport with no socket
+# timeout, allowing a stalled Google connection to wedge every later sync.
+DRIVE_HTTP_TIMEOUT_SECONDS = 45
 
 
 @dataclass
@@ -1309,7 +1315,12 @@ class DriveSyncService:
             credentials_info,
             scopes=SCOPES,
         )
-        self._drive = build("drive", "v3", credentials=credentials, cache_discovery=False)
+        # An explicit transport must already be authorized; passing both
+        # `credentials` and `http` to discovery.build is unsupported.
+        # AuthorizedHttp keeps service-account refresh behavior while the
+        # httplib2 timeout bounds every Drive socket request.
+        http = AuthorizedHttp(credentials, http=httplib2.Http(timeout=DRIVE_HTTP_TIMEOUT_SECONDS))
+        self._drive = build("drive", "v3", http=http, cache_discovery=False)
         return self._drive
 
     def import_uploaded_media(

@@ -74,6 +74,10 @@ export default function CreativeLibrary() {
 
   const syncNow = async () => {
     setSyncing(true);
+    // The server bounds each Drive socket request. This UI watchdog prevents a
+    // broken connection from leaving the button in a permanent "Syncing" state.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
     try {
       // Use Drive's changes checkpoint. This picks up new, modified, and
       // removed files without re-walking the entire library. Copy-document
@@ -84,7 +88,7 @@ export default function CreativeLibrary() {
       const syncUrl = scopedFolderId
         ? `${API_URL}/drive-assets/sync-now?folder_id=${encodeURIComponent(scopedFolderId)}${scopedBrandName ? `&brand_name=${encodeURIComponent(scopedBrandName)}` : ''}`
         : `${API_URL}/drive-assets/sync-now`;
-      const res = await authFetch(syncUrl, { method: 'POST' });
+      const res = await authFetch(syncUrl, { method: 'POST', signal: controller.signal });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data.detail || 'Drive sync failed');
@@ -104,8 +108,11 @@ export default function CreativeLibrary() {
       }
       await fetchAssets();
     } catch (error) {
-      showError(error.message || 'Drive sync failed');
+      showError(error?.name === 'AbortError'
+        ? 'Drive sync took longer than five minutes. It is safe to reload before trying again.'
+        : (error.message || 'Drive sync failed'));
     } finally {
+      clearTimeout(timeoutId);
       setSyncing(false);
     }
   };
