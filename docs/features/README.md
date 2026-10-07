@@ -7,6 +7,7 @@ Claude) can see what exists and why before changing it. Update the file in the s
 | Section | File | Status |
 |---|---|---|
 | Campaign Performance (`/campaign-performance`) | [campaign-performance.md](campaign-performance.md) | Money-safety hardening shipped 2026-10-06/07; Pause/Resume live-click verification pending |
+| Dashboard (`/`) — budget/scale/pause actions | [dashboard.md](dashboard.md) | Live-budget confirm shipped 2026-10-07; click-through verification pending |
 | Ad Launcher (Campaign → Ad Set → Drive picker → Review → Launch) | [ad-launcher.md](ad-launcher.md) | Live status gate shipped; browser-verified 2026-10-06 |
 
 ## How to add / update an entry

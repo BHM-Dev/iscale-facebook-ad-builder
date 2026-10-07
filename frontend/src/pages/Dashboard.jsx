@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { budgetErrorMessage } from '../lib/budgetErrors';
+import { fetchLiveBudgetCents, budgetPercentChange } from '../lib/liveBudget';
+import BudgetConfirmModal from '../components/BudgetConfirmModal';
 import { AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown, PauseCircle, DollarSign, Zap, Info, ChevronRight } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
@@ -890,7 +892,7 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'PAUSED' }),
       });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(budgetErrorMessage(e, 'Failed')); }
       setPausedOverrides(prev => new Set(prev).add(fb_adset_id));
     } catch (e) {
       showError(e.message || 'Failed to pause ad set. Check your Meta connection and try again in Performance.');
@@ -906,101 +908,119 @@ export default function Dashboard() {
     return () => document.removeEventListener('click', handler);
   }, [budgetPopover]);
 
-  const saveCampaignBudget = async (fbCampaignId) => {
+  // All three budget actions (campaign edit, ad set edit, +20% scale) now go through ONE confirm that
+  // shows the LIVE Meta budget, and the server refuses >3x / <1/3 swings until a second red confirm.
+  const [budgetConfirm, setBudgetConfirm] = useState(null);
+  const [checkingBudget, setCheckingBudget] = useState(false);
+  const checkingBudgetRef = useRef(false); // ref guard: state updates are async, two clicks in one tick would both pass
+
+  const openBudgetConfirm = async ({ type, id, name, dollars, cachedCents, budgetType, scale, scaleKey }) => {
+    if (checkingBudgetRef.current) return;
+    checkingBudgetRef.current = true;
+    setCheckingBudget(true);
+    // Visible feedback while the live Meta read runs: the clicked Scale button shows its spinner.
+    if (scaleKey) setScalingAdset(prev => new Set(prev).add(scaleKey));
+    const skipLive = type === 'campaign' && budgetType === 'ABO';
+    const live = skipLive ? undefined : await fetchLiveBudgetCents(authFetch, API_URL, type, id);
+    checkingBudgetRef.current = false;
+    setCheckingBudget(false);
+    if (scaleKey) setScalingAdset(prev => { const next = new Set(prev); next.delete(scaleKey); return next; });
+    if (type === 'adset' && live === null) {
+      showError('This ad set has no daily budget of its own (lifetime budget, or its campaign uses CBO). Edit it in Ads Manager or change the campaign budget instead.');
+      return false;
+    }
+    const fromCents = live !== undefined ? live : cachedCents;
+    let toDollars = dollars != null ? Math.round(dollars * 100) / 100 : dollars; // never show/send sub-cent amounts
+    if (scale) {
+      if (!fromCents || fromCents <= 0) { showError('Set a budget first before scaling'); return false; }
+      toDollars = Math.round(fromCents * 1.2) / 100; // +20% of the LIVE budget, not the cached one
+    }
+    setBudgetConfirm({
+      type, id, name, dollars: toDollars, budgetType, scaleKey,
+      currentDollars: fromCents != null ? fromCents / 100 : null,
+      currentIsLive: live !== undefined,
+      scale: Boolean(scale),
+      confirmLabel: scale ? (live !== undefined ? 'Scale +20%' : 'Scale +20% (unverified)') : 'Update in Meta',
+    });
+    return true;
+  };
+
+  const saveCampaignBudget = (fbCampaignId, campaignName, cachedCents) => {
     const isCBO = campaignBudgetType === 'CBO';
     const dollars = parseFloat(campaignBudgetInput);
     if (isCBO && (!dollars || dollars < 1)) {
       showError('Enter a valid budget ($1 minimum)');
       return;
     }
-    setSavingCampaignBudget(fbCampaignId);
-    try {
-      const res = await authFetch(`${API_URL}/facebook/campaigns/${fbCampaignId}/budget`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          daily_budget_cents: isCBO ? Math.round(dollars * 100) : null,
-          budget_optimization: campaignBudgetType,
-        }),
-      });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e?.detail?.code === 'LARGE_BUDGET_CHANGE' ? `${budgetErrorMessage(e)} Make large changes from Campaign Performance, where they can be confirmed.` : budgetErrorMessage(e)); }
-      showSuccess(isCBO ? `Campaign budget set to $${dollars.toFixed(0)}/day` : 'Switched to ABO');
-      setBudgetPopover(null);
-      load(activeRange, { forceRefresh: true });
-    } catch (e) {
-      showError(e.message || 'Failed');
-    } finally {
-      setSavingCampaignBudget(null);
-    }
+    return openBudgetConfirm({ type: 'campaign', id: fbCampaignId, name: campaignName, dollars: isCBO ? dollars : null, cachedCents, budgetType: campaignBudgetType });
   };
 
-  const saveAdsetBudget = async (fbAdsetId) => {
+  const saveAdsetBudget = (fbAdsetId, adsetName, cachedCents) => {
     const dollars = parseFloat(budgetInput);
     if (!dollars || dollars < 1) {
       showError('Enter a valid budget');
       return;
     }
-    setSavingBudget(fbAdsetId);
+    return openBudgetConfirm({ type: 'adset', id: fbAdsetId, name: adsetName, dollars, cachedCents });
+  };
+
+  const scaleAdset = (a) => {
+    const isCBO = a.adset.campaign_budget_optimization === 'CBO' || !!a.adset.campaign_daily_budget;
+    const cachedCents = isCBO ? a.adset.campaign_daily_budget : a.adset.daily_budget;
+    if (!cachedCents || cachedCents <= 0) {
+      showError('Set a budget first before scaling');
+      return;
+    }
+    return openBudgetConfirm({
+      type: isCBO ? 'campaign' : 'adset',
+      id: isCBO ? a.fb_campaign_id : a.fb_adset_id,
+      name: isCBO ? (a.adset.campaign_name || a.fb_campaign_id) : (a.adset.name || a.fb_adset_id),
+      cachedCents, budgetType: isCBO ? 'CBO' : undefined, scale: true,
+      scaleKey: isCBO ? `cbo-${a.fb_campaign_id}` : a.fb_adset_id,
+    });
+  };
+
+  const applyBudgetChange = async () => {
+    const change = budgetConfirm;
+    setBudgetConfirm(null);
+    if (!change) return;
+    const isCampaign = change.type === 'campaign';
+    const cents = Math.round((change.dollars || 0) * 100);
+    const spinKey = change.scaleKey || change.id;
+    if (change.scaleKey) setScalingAdset(prev => new Set(prev).add(spinKey));
+    else if (isCampaign) setSavingCampaignBudget(change.id);
+    else setSavingBudget(change.id);
     try {
-      const res = await authFetch(`${API_URL}/facebook/adsets/${fbAdsetId}/budget`, {
+      const res = await authFetch(`${API_URL}/facebook/${isCampaign ? 'campaigns' : 'adsets'}/${change.id}/budget`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ daily_budget_cents: Math.round(dollars * 100) }),
+        body: JSON.stringify(isCampaign
+          ? { daily_budget_cents: change.budgetType === 'ABO' ? null : cents, budget_optimization: change.budgetType, confirm_large_change: Boolean(change.largeChange) }
+          : { daily_budget_cents: cents, confirm_large_change: Boolean(change.largeChange) }),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e?.detail?.code === 'LARGE_BUDGET_CHANGE' ? `${budgetErrorMessage(e)} Make large changes from Campaign Performance, where they can be confirmed.` : budgetErrorMessage(e)); }
-      showSuccess(`Budget set to $${dollars.toFixed(0)}/day`);
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        if (res.status === 409 && e?.detail?.code === 'LARGE_BUDGET_CHANGE') {
+          const cur = Number(e.detail.current_cents);
+          setBudgetConfirm({ ...change, largeChange: e.detail, currentDollars: Number.isFinite(cur) && cur > 0 ? cur / 100 : change.currentDollars, currentIsLive: Number.isFinite(cur) && cur > 0 });
+          return;
+        }
+        throw new Error(budgetErrorMessage(e, 'Failed'));
+      }
+      const fmt = (n) => (Number.isInteger(n) ? n : n.toFixed(2));
+      showSuccess(isCampaign && change.budgetType === 'ABO'
+        ? 'Switched to ABO'
+        : `${isCampaign ? 'Campaign' : 'Ad set'} "${change.name || change.id}" budget ${change.scaleKey ? 'scaled' : 'set'}: ${change.currentDollars != null ? `$${fmt(change.currentDollars)} → ` : ''}$${fmt(change.dollars)}/day${change.currentDollars > 0 ? ` (${budgetPercentChange(change.currentDollars, change.dollars)})` : ''}`);
+      setBudgetPopover(null);
       setEditingBudget(null);
       setBudgetInput('');
       load(activeRange, { forceRefresh: true });
     } catch (e) {
-      showError(e.message || 'Failed');
+      showError(e.message || 'Budget update failed');
     } finally {
+      setSavingCampaignBudget(null);
       setSavingBudget(null);
-    }
-  };
-
-  const scaleAdset = async (a) => {
-    const isCBO = a.adset.campaign_budget_optimization === 'CBO' || !!a.adset.campaign_daily_budget;
-    const currentCents = isCBO
-      ? a.adset.campaign_daily_budget
-      : a.adset.daily_budget;
-
-    if (!currentCents || currentCents <= 0) {
-      showError('Set a budget first before scaling');
-      return;
-    }
-
-    const newCents = Math.round(currentCents * 1.2);
-    const scaleKey = isCBO ? `cbo-${a.fb_campaign_id}` : a.fb_adset_id;
-    setScalingAdset(prev => new Set(prev).add(scaleKey));
-
-    try {
-      if (isCBO) {
-        const res = await authFetch(`${API_URL}/facebook/campaigns/${a.fb_campaign_id}/budget`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ daily_budget_cents: newCents, budget_optimization: 'CBO' }),
-        });
-        if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e?.detail?.code === 'LARGE_BUDGET_CHANGE' ? `${budgetErrorMessage(e)} Make large changes from Campaign Performance, where they can be confirmed.` : budgetErrorMessage(e)); }
-        showSuccess(`Campaign budget scaled to $${(newCents / 100).toFixed(0)}/day (+20%)`);
-      } else {
-        const res = await authFetch(`${API_URL}/facebook/adsets/${a.fb_adset_id}/budget`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ daily_budget_cents: newCents }),
-        });
-        if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e?.detail?.code === 'LARGE_BUDGET_CHANGE' ? `${budgetErrorMessage(e)} Make large changes from Campaign Performance, where they can be confirmed.` : budgetErrorMessage(e)); }
-        showSuccess(`Ad set budget scaled to $${(newCents / 100).toFixed(0)}/day (+20%)`);
-      }
-      load(activeRange, { forceRefresh: true });
-    } catch (e) {
-      showError(e.message || 'Scale failed');
-    } finally {
-      setScalingAdset(prev => {
-        const next = new Set(prev);
-        next.delete(scaleKey);
-        return next;
-      });
+      setScalingAdset(prev => { const next = new Set(prev); next.delete(spinKey); return next; });
     }
   };
 
@@ -1235,7 +1255,7 @@ export default function Dashboard() {
                     value={campaignBudgetInput}
                     onChange={e => setCampaignBudgetInput(e.target.value)}
                     onKeyDown={e => {
-                      if (e.key === 'Enter') saveCampaignBudget(fbCampaignId);
+                      if (e.key === 'Enter') saveCampaignBudget(fbCampaignId, adset.campaign_name, adset.campaign_daily_budget);
                       if (e.key === 'Escape') setBudgetPopover(null);
                     }}
                     placeholder="e.g. 500"
@@ -1253,11 +1273,11 @@ export default function Dashboard() {
                   Cancel
                 </button>
                 <button
-                  onClick={() => saveCampaignBudget(fbCampaignId)}
-                  disabled={savingCampaignBudget === fbCampaignId}
+                  onClick={() => saveCampaignBudget(fbCampaignId, adset.campaign_name, adset.campaign_daily_budget)}
+                  disabled={savingCampaignBudget === fbCampaignId || checkingBudget}
                   className="flex-1 py-1.5 text-xs rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50"
                 >
-                  {savingCampaignBudget === fbCampaignId ? 'Saving...' : 'Save'}
+                  {savingCampaignBudget === fbCampaignId ? 'Saving...' : checkingBudget ? 'Checking live budget…' : 'Save'}
                 </button>
               </div>
             </div>
@@ -1277,7 +1297,7 @@ export default function Dashboard() {
             value={budgetInput}
             onChange={e => setBudgetInput(e.target.value)}
             onKeyDown={e => {
-              if (e.key === 'Enter') saveAdsetBudget(adset.fb_adset_id);
+              if (e.key === 'Enter') saveAdsetBudget(adset.fb_adset_id, adset.name, adset.daily_budget);
               if (e.key === 'Escape') { setEditingBudget(null); setBudgetInput(''); }
             }}
             className="w-20 text-xs border border-gray-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
@@ -1285,8 +1305,8 @@ export default function Dashboard() {
           />
           <span className="text-xs text-gray-400">/day</span>
           <button
-            onClick={() => saveAdsetBudget(adset.fb_adset_id)}
-            disabled={savingBudget === adset.fb_adset_id}
+            onClick={() => saveAdsetBudget(adset.fb_adset_id, adset.name, adset.daily_budget)}
+            disabled={savingBudget === adset.fb_adset_id || checkingBudget}
             className="text-green-600 hover:text-green-700 disabled:opacity-40 text-xs"
           >
             ✓
@@ -1732,6 +1752,7 @@ export default function Dashboard() {
       />
 
     </div>
+    <BudgetConfirmModal change={budgetConfirm} onCancel={() => setBudgetConfirm(null)} onConfirm={applyBudgetChange} />
     </div>
   );
 }
