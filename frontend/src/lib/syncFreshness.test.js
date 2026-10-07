@@ -32,11 +32,17 @@ describe('summarizeSyncFreshness', () => {
         const r = summarizeSyncFreshness([{ fb_adset_id: '1', status: 'ACTIVE', synced_at: ago(2) }, { fb_adset_id: '2', status: 'PAUSED', campaign_status: 'ARCHIVED', synced_at: null }], NOW);
         expect(r.state).toBe('fresh');
     });
-    it('never-synced rows are called out, not hidden', () => {
+    it('never-synced rows are reported separately and do not pin the badge amber', () => {
         const partial = summarizeSyncFreshness([{ fb_adset_id: '1', status: 'ACTIVE', synced_at: ago(1) }, { fb_adset_id: '2', status: 'PAUSED', synced_at: null }], NOW);
-        expect(partial.state).toBe('stale');
-        expect(partial.label).toBe('1 of 2 ad sets never synced');
+        expect(partial.state).toBe('fresh');
+        expect(partial.label).toBe('Synced 1 min ago · 1 not refreshed');
+        expect(partial.neverCount).toBe(1);
         const none = summarizeSyncFreshness([{ fb_adset_id: '1', status: 'ACTIVE', synced_at: null }], NOW);
         expect(none.state).toBe('unknown');
+    });
+    it('still goes stale on old synced rows even with never-synced ones', () => {
+        const r = summarizeSyncFreshness([{ fb_adset_id: '1', status: 'ACTIVE', synced_at: ago(120) }, { fb_adset_id: '2', status: 'PAUSED', synced_at: null }], NOW);
+        expect(r.state).toBe('stale');
+        expect(r.label).toBe('Synced 2 h ago · 1 not refreshed');
     });
 });

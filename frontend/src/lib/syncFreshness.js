@@ -31,9 +31,10 @@ export const summarizeSyncFreshness = (adsets, now = Date.now()) => {
     }
     const oldest = Math.min(...known);
     const age = Math.max(0, now - oldest);
-    const stale = age > STALE_AFTER_MINUTES * 60000 || neverCount > 0;
-    const label = neverCount > 0
-        ? `${neverCount} of ${rows.length} ad sets never synced`
-        : `Synced ${relative(age)}`;
+    // Colour follows the age of rows a Sync CAN refresh. Rows that were never stamped even after a
+    // Sync (legacy duplicates, ad sets deleted in Meta, another account's) would otherwise pin the
+    // badge amber forever; they are reported separately instead of hidden.
+    const stale = age > STALE_AFTER_MINUTES * 60000;
+    const label = `Synced ${relative(age)}${neverCount > 0 ? ` · ${neverCount} not refreshed` : ''}`;
     return { state: stale ? 'stale' : 'fresh', label, neverCount, oldestAt: new Date(oldest).toISOString() };
 };

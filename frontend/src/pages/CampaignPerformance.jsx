@@ -2689,7 +2689,7 @@ export default function CampaignPerformance() {
             return (
               <span
                 className={`text-xs font-medium px-2 py-1 rounded-md border ${fresh.state === 'fresh' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-amber-50 text-amber-800 border-amber-300'}`}
-                title="Status and budgets come from the last Sync (spend, CPL and ROAS are live). If this is old, press Sync before changing budgets or status."
+                title={`Status and budgets come from the last Sync (spend, CPL and ROAS are live). If this is old, press Sync before changing budgets or status.${fresh.neverCount > 0 ? ` ${fresh.neverCount} ad set(s) were not found by Sync (legacy, deleted in Meta, or another account) and may show outdated status or budget.` : ''}`}
                 role="status"
               >
                 {fresh.label}
