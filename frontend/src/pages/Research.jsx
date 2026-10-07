@@ -227,7 +227,31 @@ const matchesReviewFilter = (ad, reviewFilter) => {
   if (reviewFilter === 'ready_to_review') return !isReviewed && normalized.relevance_status !== 'needs_review';
   if (reviewFilter === 'in_brief') return isReviewed;
   if (reviewFilter === 'needs_relevance') return normalized.relevance_status === 'needs_review';
+  if (reviewFilter === 'needs_attention') return (
+    normalized.relevance_status === 'needs_review'
+    || !hasUsableVisual(normalized)
+    || !(normalized.creative_tags || []).length
+    || !normalized.cta_type
+    || !normalized.page_type
+  );
   return true;
+};
+
+const researchCaptureLabel = (ad) => {
+  const source = ad.creative_intel?.capture_source;
+  if (source === 'external_research_import') return 'External import';
+  if (source === 'chrome_ad_library') return 'Chrome capture';
+  if (source === 'brand_scrape') return 'Brand scrape';
+  if (source === 'meta_ads_library' || source === 'meta_ad_library') return 'Meta capture';
+  return ad.platform === 'external' ? 'External source' : 'Catalog capture';
+};
+
+const taxonomySourceLabel = (ad) => {
+  if (ad.taxonomy_source === 'rules_v1') return 'Rules v1';
+  if (ad.taxonomy_source === 'capture') return 'Captured';
+  if (ad.taxonomy_source === 'brand_scrape') return 'Brand scrape';
+  if (ad.taxonomy_source === 'external_import') return 'External import';
+  return 'Unknown';
 };
 
 const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, reviewFilter, advertiserFilter, creativeTagFilter, ctaTypeFilter, pageTypeFilter, newOnly, needsTagging, hasVisual, activeOnly, sortBy, adsPerAdvertiser }) => {
@@ -753,6 +777,8 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
             {ad.platforms.join(' · ')}
           </span>
         )}
+        <span className="text-xs font-medium text-slate-500" title={`Capture provenance: ${researchCaptureLabel(ad)}`}>{researchCaptureLabel(ad)}</span>
+        {ad.taxonomy_source && <span className="text-xs font-medium text-violet-700" title={`Taxonomy provenance: ${taxonomySourceLabel(ad)}. Labels are directional research metadata, not performance data.`}>Tags: {taxonomySourceLabel(ad)}</span>}
         {ad.creative_intel?.research_source && <span className="text-xs font-medium text-amber-700" title="Imported external research source; any signal is directional only">{ad.creative_intel.research_source}</span>}
         {ad.relevance_status === 'needs_review' && <span className="text-xs font-medium text-amber-700" title="This older capture passed the broad vertical gate but lacks a direct commercial-insurance offer signal. Review before using it as an input.">REVIEW RELEVANCE</span>}
         {ad.relevance_status === 'source_reviewed' && <span className="text-xs font-medium text-emerald-700" title="Externally reviewed source capture; still directional research, not performance evidence.">SOURCE REVIEWED</span>}
@@ -2352,6 +2378,8 @@ export default function Research() {
     mediaCount: displayedBrowseAds.filter(hasVisualCandidate).length,
     taggedCount: displayedBrowseAds.filter(ad => (ad.creative_tags || []).length > 0).length,
     needsReviewCount: displayedBrowseAds.filter(ad => ad.relevance_status === 'needs_review').length,
+    needsAttentionCount: displayedBrowseAds.filter(ad => matchesReviewFilter(ad, 'needs_attention')).length,
+    unknownCount: displayedBrowseAds.filter(ad => !(ad.creative_tags || []).length || !ad.cta_type || !ad.page_type).length,
   }), [displayedBrowseAds]);
   const reviewedFindingsAll = useMemo(() => [...browseAds]
     .filter(ad => ad.platform === 'external' || ad.creative_intel?.reviewed)
@@ -2571,7 +2599,7 @@ export default function Research() {
 
       <LiveCaptureReceipt receipt={lastCaptureReceipt} onDismiss={() => setLastCaptureReceipt(null)} />
 
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500" aria-label="Research catalog summary"><span className="font-semibold text-slate-800">{browseLoading ? 'Loading captures…' : `${catalogSummary.total} captured examples`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.newCount} new this week`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.videoCount} video`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.taggedCount} theme tagged`}</span>{catalogSummary.needsReviewCount > 0 && <><span className="text-slate-300">·</span><span className="text-amber-700">{catalogSummary.needsReviewCount} need relevance review</span></>}<span className="text-slate-300">·</span><span className="text-slate-400">Current vertical + filters</span></div>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500" aria-label="Research catalog summary"><span className="font-semibold text-slate-800">{browseLoading ? 'Loading captures…' : `${catalogSummary.total} captured examples`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.newCount} new this week`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.videoCount} video`}</span><span className="text-slate-300">·</span><span title="Records with at least one controlled creative theme">{browseLoading ? '—' : `${catalogSummary.taggedCount} theme tagged`}</span><span className="text-slate-300">·</span><span title="Records missing a visual, taxonomy field, or relevance review">{browseLoading ? '—' : `${catalogSummary.needsAttentionCount} need attention`}</span>{catalogSummary.needsReviewCount > 0 && <><span className="text-slate-300">·</span><span className="text-amber-700">{catalogSummary.needsReviewCount} need relevance review</span></>}<span className="text-slate-300">·</span><span className="text-slate-400">Current vertical + filters</span></div>
       {!browseLoading && catalogSummary.total > 0 && catalogSummary.mediaCount === 0 && <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"><span>No retained assets in this filtered view. Source format labels are still shown, but they are not previews.</span><button type="button" onClick={() => setShowImportModal(true)} className="font-semibold text-indigo-700 hover:text-indigo-900">Import retained captures</button></div>}
 
       {/* Two-column layout */}
@@ -2658,6 +2686,7 @@ export default function Research() {
                   ['ready_to_review', 'Ready to review'],
                   ['in_brief', 'In Brief'],
                   ['needs_relevance', 'Check relevance'],
+                  ['needs_attention', 'Needs attention'],
                 ].map(([value, label]) => (
                   <button
                     key={value || 'all'}

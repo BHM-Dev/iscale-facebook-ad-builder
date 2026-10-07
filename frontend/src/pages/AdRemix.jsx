@@ -95,6 +95,7 @@ function SourceAdReferenceCard({ researchInspiration, uploadedInspiration, onDis
                 {source.body && <div className="mt-1 max-h-28 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-gray-600">{source.body}</div>}
             </div>
             {strategy.length > 0 && <div className="border-t border-indigo-100 pt-2 space-y-1"><div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-500">Strategy notes</div>{strategy.map(([label, value]) => <div key={label} className="text-xs leading-snug text-gray-700"><span className="font-semibold text-gray-500">{label}:</span> {value}</div>)}</div>}
+            {researchInspiration && <div className="border-t border-indigo-100 pt-2 text-[10px] leading-4 text-indigo-700"><span className="font-semibold">Evidence:</span> {(researchInspiration.creative_tags || []).length ? researchInspiration.creative_tags.map(tag => tag.replaceAll('_', ' ')).join(', ') : 'No controlled theme'} · CTA {researchInspiration.cta_type?.replaceAll('_', ' ') || 'unknown'} · {researchInspiration.taxonomy_source || 'taxonomy unknown'}<br /><span className="text-indigo-500">Capture: {researchInspiration.creativeIntel?.capture_source?.replaceAll('_', ' ') || 'catalog source'}</span></div>}
             {researchInspiration && <div className="text-[10px] text-indigo-600">Reference only — the source image is never used in the generated ad.</div>}
         </div>
     );
