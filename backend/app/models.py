@@ -217,6 +217,7 @@ class FacebookCampaign(Base):
     brand_id = Column(String, ForeignKey("brands.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    synced_at = Column(DateTime(timezone=True), nullable=True)  # last refresh from Meta (/facebook/sync); NULL = never
 
     adsets = relationship("FacebookAdSet", back_populates="campaign", cascade="all, delete-orphan")
     brand = relationship("Brand", foreign_keys=[brand_id])
@@ -243,6 +244,8 @@ class FacebookAdSet(Base):
     fb_account_id = Column(String, nullable=True, index=True)  # Meta act_ id this adset belongs to
     brand_id = Column(String, ForeignKey("brands.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Last time status/budget were refreshed from Meta (set by /facebook/sync). NULL = never synced.
+    synced_at = Column(DateTime(timezone=True), nullable=True)
 
     campaign = relationship("FacebookCampaign", back_populates="adsets")
     brand = relationship("Brand", foreign_keys=[brand_id])

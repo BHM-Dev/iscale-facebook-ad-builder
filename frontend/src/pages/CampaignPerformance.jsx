@@ -4,6 +4,7 @@ import { useToast } from '../context/ToastContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
 import { budgetErrorMessage, describeBudgetRatio } from '../lib/budgetErrors';
+import { summarizeSyncFreshness } from '../lib/syncFreshness';
 import { useBrands } from '../context/BrandContext';
 import { useCampaign } from '../context/CampaignContext';
 import { safeLocalStorageSet } from '../lib/safeLocalStorage';
@@ -1000,9 +1001,20 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
     }
   };
 
-  const toggleAdStatus = async (ad) => {
-    const currentStatus = adStatuses[ad.ad_id] ?? (ad.status || 'ACTIVE');
-    const newStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
+  const toggleAdStatus = async (ad, targetStatus) => {
+    // Target comes from the confirm the user saw; status is only ever ACTIVE/PAUSED here, and an
+    // unknown/missing status (never defaulted to ACTIVE) can't be toggled.
+    const currentStatus = normalizeStatus(adStatuses[ad.ad_id] ?? ad.status);
+    const newStatus = targetStatus;
+    if (newStatus !== 'ACTIVE' && newStatus !== 'PAUSED') return;
+    if (currentStatus !== 'ACTIVE' && currentStatus !== 'PAUSED') {
+      showError(`This ad's status is ${currentStatus || 'unknown'} — manage it in Ads Manager.`);
+      return;
+    }
+    if (currentStatus === newStatus) {
+      showSuccess(`Ad "${ad.ad_name}" is already ${newStatus === 'PAUSED' ? 'paused' : 'active'}`);
+      return;
+    }
     setPausingAds(prev => new Set(prev).add(ad.ad_id));
     try {
       const res = await authFetch(`${API_BASE}/facebook/ads/${ad.ad_id}/status`, {
@@ -1010,7 +1022,7 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
       });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(budgetErrorMessage(e, 'Failed')); }
       setAdStatuses(prev => ({ ...prev, [ad.ad_id]: newStatus }));
       showSuccess(`Ad "${ad.ad_name}" ${newStatus === 'PAUSED' ? 'paused' : 'resumed'}`);
       onAdStatusChange?.();
@@ -1022,9 +1034,9 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
   };
 
   const confirmAdPause = async () => {
-    const ad = adActionConfirm;
+    const action = adActionConfirm;
     setAdActionConfirm(null);
-    if (ad) await toggleAdStatus(ad);
+    if (action) await toggleAdStatus(action.ad, action.type === 'resume' ? 'ACTIVE' : 'PAUSED');
   };
 
   if (adsLoading) return (
@@ -1075,8 +1087,9 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
         <tbody className="divide-y divide-gray-50">
           {ads.map((ad, i) => {
             const rt = rtAdsBulk?.[ad.ad_id];
-            const currentStatus = adStatuses[ad.ad_id] ?? (ad.status || 'ACTIVE');
+            const currentStatus = normalizeStatus(adStatuses[ad.ad_id] ?? ad.status); // '' = unknown, never assumed ACTIVE
             const isPaused = currentStatus === 'PAUSED';
+            const adToggleable = currentStatus === 'ACTIVE' || currentStatus === 'PAUSED';
             const isPausing = pausingAds.has(ad.ad_id);
             const spendPct = maxSpend > 0 ? (ad.spend / maxSpend) * 100 : 0;
 
@@ -1208,25 +1221,24 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
                     >
                       <Rocket size={11} /> Launch Own Ad
                     </button>
-                    {/* Pause / Resume */}
+                    {/* Pause / Resume — only for a known ACTIVE/PAUSED status; both ask first */}
                     <button
-                      onClick={() => {
-                        if (isPaused) toggleAdStatus(ad);
-                        else setAdActionConfirm(ad);
-                      }}
-                      disabled={isPausing}
+                      onClick={() => { if (adToggleable) setAdActionConfirm({ ad, type: isPaused ? 'resume' : 'pause' }); }}
+                      disabled={isPausing || !adToggleable}
                       className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
                         isPaused
                           ? 'text-green-700 bg-green-50 hover:bg-green-100'
                           : 'text-gray-500 bg-gray-100 hover:bg-red-50 hover:text-red-600'
                       }`}
-                      title={isPaused ? 'Resume this ad' : 'Pause this ad'}
+                      title={adToggleable
+                        ? (isPaused ? 'Resume this ad' : 'Pause this ad')
+                        : 'Status unavailable (the ad set or campaign may be paused, or Meta did not return it) — manage this ad in Ads Manager'}
                     >
                       {isPausing
                         ? <RefreshCw size={11} className="animate-spin" />
-                        : isPaused ? <PlayCircle size={11} /> : <PauseCircle size={11} />
+                        : !adToggleable ? null : isPaused ? <PlayCircle size={11} /> : <PauseCircle size={11} />
                       }
-                      {isPaused ? 'Resume' : 'Pause'}
+                      {adToggleable ? (isPaused ? 'Resume' : 'Pause') : 'Status unknown'}
                     </button>
                   </div>
                 </td>
@@ -1240,14 +1252,16 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
     {adActionConfirm && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" role="presentation">
         <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" role="dialog" aria-modal="true" aria-labelledby="ad-action-confirm-title">
-          <h2 id="ad-action-confirm-title" className="text-lg font-bold text-gray-900">Pause ad in Meta?</h2>
-          <p className="mt-3 break-words text-sm font-semibold text-gray-800">{adActionConfirm.ad_name || adActionConfirm.ad_id}</p>
+          <h2 id="ad-action-confirm-title" className="text-lg font-bold text-gray-900">{adActionConfirm.type === 'resume' ? 'Resume ad in Meta?' : 'Pause ad in Meta?'}</h2>
+          <p className="mt-3 break-words text-sm font-semibold text-gray-800">{adActionConfirm.ad.ad_name || adActionConfirm.ad.ad_id}</p>
           <p className="mt-2 text-sm leading-6 text-gray-600">
-            This stops delivery for this ad immediately. It does not change the campaign or ad set; you can resume the ad here or in Ads Manager later.
+            {adActionConfirm.type === 'resume'
+              ? 'This turns the ad back on in Meta. It can start spending immediately if its ad set and campaign are active.'
+              : 'This stops delivery for this ad immediately. It does not change the campaign or ad set; you can resume the ad here or in Ads Manager later.'}
           </p>
           <div className="mt-6 flex justify-end gap-3">
             <button type="button" onClick={() => setAdActionConfirm(null)} className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Cancel</button>
-            <button type="button" onClick={confirmAdPause} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">Pause in Meta</button>
+            <button type="button" onClick={confirmAdPause} className={`rounded-lg px-4 py-2 text-sm font-semibold text-white ${adActionConfirm.type === 'resume' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>{adActionConfirm.type === 'resume' ? 'Resume in Meta' : 'Pause in Meta'}</button>
           </div>
         </div>
       </div>
@@ -1681,6 +1695,12 @@ export default function CampaignPerformance() {
   const [loadingAdsets, setLoadingAdsets] = useState(false);
   const [adsetsError, setAdsetsError] = useState(null);
   const [syncing, setSyncing] = useState(false);
+  // Re-render once a minute so "Synced N min ago" can't make stale data look fresh.
+  const [freshnessClock, setFreshnessClock] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setFreshnessClock(Date.now()), 60000);
+    return () => clearInterval(id);
+  }, []);
   const [statusFilter, setStatusFilter] = useState(() => {
     const view = searchParams.get('view');
     if (view === 'attention') return 'flagged';
@@ -1872,6 +1892,7 @@ export default function CampaignPerformance() {
     try {
       const params = buildDateParams(preset, dateFrom, dateTo);
       if (accountId) params.set('ad_account_id', accountId);
+      params.set('include_status', 'true'); // insights rows carry no delivery status; without this every ad rendered ACTIVE
       const res = await timedFetch(`${API_BASE}/auto-pause/ads-bulk?${params}`, {}, 20000);
       if (!res.ok) throw new Error(`Creative breakdown unavailable (${res.status})`);
       const data = await res.json();
@@ -2662,6 +2683,19 @@ export default function CampaignPerformance() {
             <RefreshCw size={14} className={(syncing || syncingRT) ? 'animate-spin' : ''} />
             {(syncing || syncingRT) ? 'Syncing...' : 'Sync'}
           </button>
+          {(() => {
+            const fresh = summarizeSyncFreshness(adsets, freshnessClock);
+            if (fresh.state === 'empty') return null;
+            return (
+              <span
+                className={`text-xs font-medium px-2 py-1 rounded-md border ${fresh.state === 'fresh' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-amber-50 text-amber-800 border-amber-300'}`}
+                title="Status and budgets come from the last Sync (spend, CPL and ROAS are live). If this is old, press Sync before changing budgets or status."
+                role="status"
+              >
+                {fresh.label}
+              </span>
+            );
+          })()}
           <div className="flex flex-col items-end gap-1">
             <div className="flex items-center gap-2">
               <select

@@ -35,6 +35,7 @@ from app.services.slack_service import send_check_summary, send_rule_action_aler
 from app.api.v1.facebook import _assert_adset_allowed, _assert_account_allowed, _assert_campaign_allowed, _resolve_scoped_default_account
 
 logger = logging.getLogger(__name__)
+_ad_status_cache = {}  # ad_account_id -> (fetched_at, {fb_ad_id: {status, effective_status}})
 router = APIRouter()
 
 VALID_ACTIONS = {
@@ -801,6 +802,7 @@ def get_ads_bulk(
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     include_all: bool = Query(False),
+    include_status: bool = Query(False),
     current_user=Depends(get_current_user),
 ):
     """Fetch Meta Insights for ALL ads in a single API call.
@@ -845,6 +847,27 @@ def get_ads_bulk(
                 })
             for rows in result.values():
                 rows.sort(key=lambda row: row.get('spend', 0), reverse=True)
+        if include_status:
+            # Insights rows carry no delivery status, so the UI used to render EVERY ad as ACTIVE
+            # (a paused ad showed "Pause"). One account-level read adds real status; ads Meta
+            # doesn't return (parent paused, archived) or a failed read stay status=None = UNKNOWN.
+            try:
+                # 60s cache per account: the call is sequential after insights and, on a big account on a
+                # throttled ad account, repeated page loads would otherwise each pay it again.
+                cached = _ad_status_cache.get(ad_account_id)
+                if cached and (time.time() - cached[0]) < 60:
+                    statuses = cached[1]
+                else:
+                    statuses = svc.get_account_ad_statuses(ad_account_id=ad_account_id)
+                    _ad_status_cache[ad_account_id] = (time.time(), statuses)
+            except Exception as exc:
+                logger.warning("ads-bulk: ad status lookup failed, rows left as unknown: %s", exc)
+                statuses = {}
+            for rows in result.values():
+                for row in rows:
+                    info = statuses.get(str(row.get('ad_id')))
+                    row['status'] = info.get('status') if info else None
+                    row['effective_status'] = info.get('effective_status') if info else None
         return result
     except RuntimeError as e:
         raise HTTPException(400, str(e))

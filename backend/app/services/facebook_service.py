@@ -3316,6 +3316,26 @@ class FacebookService:
         logger.info("get_ad_insights_map: resolved %d/%d ads", len(out), len(ids))
         return out
 
+    def get_account_ad_statuses(self, ad_account_id=None) -> dict:
+        """One paginated account-level read of ad delivery state: {fb_ad_id: {status, effective_status}}.
+
+        Uses the same effective_status filter (ACTIVE/PAUSED) the rest of this file has verified
+        against Meta. Ads whose effective status is something else (e.g. ADSET_PAUSED/CAMPAIGN_PAUSED,
+        archived) are simply absent — callers must treat "absent" as UNKNOWN, never as ACTIVE.
+        """
+        account = self._get_account(ad_account_id)
+        try:
+            ads = account.get_ads(
+                fields=['id', 'status', 'effective_status'],
+                params={'effective_status': ['ACTIVE', 'PAUSED'], 'limit': 500},
+            )
+        except FacebookRequestError as e:
+            raise self._meta_error(e, 'Ad status lookup failed') from e
+        return {
+            str(ad.get('id')): {'status': ad.get('status'), 'effective_status': ad.get('effective_status')}
+            for ad in ads if ad.get('id')
+        }
+
     def get_account_ads_with_creative(self, ad_account_id=None, include_empty=False):
         """Bulk-fetch all ACTIVE/PAUSED ads with their creative text for the copy library.
 

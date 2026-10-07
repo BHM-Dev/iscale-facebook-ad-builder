@@ -426,6 +426,8 @@ def sync_from_meta(
     except Exception as e:
         raise HTTPException(500, f"Failed to fetch campaigns from Meta: {e}")
 
+    from datetime import datetime, timezone
+    _sync_now = datetime.now(timezone.utc)  # stamped on every row this sync refreshes
     created_campaigns = 0
     updated_campaigns = 0
     created_adsets = 0
@@ -450,6 +452,7 @@ def sync_from_meta(
             existing.budget_type = budget_type
             existing.daily_budget = _positive_cents(c.get("daily_budget"))
             existing.lifetime_budget = _positive_cents(c.get("lifetime_budget"))
+            existing.synced_at = _sync_now
             if synced_account:
                 existing.fb_account_id = synced_account
             updated_campaigns += 1
@@ -462,6 +465,7 @@ def sync_from_meta(
                 budget_type=budget_type,
                 budget_schedule_type="DAILY" if _positive_cents(c.get("daily_budget")) else None,
                 daily_budget=_positive_cents(c.get("daily_budget")),
+                synced_at=_sync_now,
                 status=c.get("status", "PAUSED"),
                 fb_campaign_id=fb_id,
                 fb_account_id=synced_account,
@@ -500,6 +504,7 @@ def sync_from_meta(
             # Performance budget editor and its confirm read these columns, so refresh them.
             existing_as.daily_budget = _positive_cents(a.get("daily_budget"))
             existing_as.lifetime_budget = _positive_cents(a.get("lifetime_budget"))
+            existing_as.synced_at = _sync_now
             existing_as.budget_schedule_type = "DAILY" if existing_as.daily_budget else ("LIFETIME" if existing_as.lifetime_budget else existing_as.budget_schedule_type)
             if synced_account:
                 existing_as.fb_account_id = synced_account
@@ -526,6 +531,7 @@ def sync_from_meta(
             fb_account_id=synced_account,
             daily_budget=_positive_cents(a.get("daily_budget")),
             lifetime_budget=_positive_cents(a.get("lifetime_budget")),
+            synced_at=_sync_now,
             budget_schedule_type="DAILY" if _positive_cents(a.get("daily_budget")) else "LIFETIME",
         ))
         created_adsets += 1
@@ -621,6 +627,8 @@ def read_saved_adsets(
             "campaign_lifetime_budget": a.campaign.lifetime_budget if a.campaign else None,
             "daily_budget": a.daily_budget,
             "lifetime_budget": a.lifetime_budget,
+            "synced_at": a.synced_at.isoformat() if a.synced_at else None,
+            "campaign_synced_at": a.campaign.synced_at.isoformat() if a.campaign and a.campaign.synced_at else None,
             "start_time": a.start_time.isoformat() if a.start_time else None,
             "brand_id": a.brand_id,
             "brand_name": a.brand.name if a.brand else None,
