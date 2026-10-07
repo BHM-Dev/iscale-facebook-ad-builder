@@ -104,8 +104,10 @@ function AddRuleModal({ adsets, ads, adsetsError, adsError, onClose, onCreated, 
       if (saving) { event.preventDefault(); return; }
       if (step === 'confirm') { event.preventDefault(); setStep('form'); }
     };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
+    // Capture phase: this effect re-registers on every step change, so a bubble-phase listener would end up
+    // AFTER the page-level Esc handler and lose the race (the whole modal closed instead of stepping back).
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
   }, [saving, step]);
 
   const targets = form.scope === 'ad' ? ads : adsets;
@@ -569,8 +571,10 @@ function EditRuleModal({ rule, onClose, onSaved }) {
       if (saving) { event.preventDefault(); return; }
       if (step === 'confirm') { event.preventDefault(); setStep('edit'); }
     };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
+    // Capture phase: this effect re-registers on every step change, so a bubble-phase listener would end up
+    // AFTER the page-level Esc handler and lose the race (the whole modal closed instead of stepping back).
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
   }, [saving, step]);
 
   const numberError = validateRuleNumbers(form);
