@@ -96,6 +96,18 @@ function AddRuleModal({ adsets, ads, adsetsError, adsError, onClose, onCreated, 
   // pause/notify skip straight to save() since neither does either.
   const [step, setStep] = useState('form');
 
+  // Esc steps back from the confirm step (never discards the form) and is ignored while a save is in flight.
+  // preventDefault tells the page-level Esc handler this modal already handled it.
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape' || event.target?.closest?.('input, select, textarea')) return;
+      if (saving) { event.preventDefault(); return; }
+      if (step === 'confirm') { event.preventDefault(); setStep('form'); }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [saving, step]);
+
   const targets = form.scope === 'ad' ? ads : adsets;
   const filteredTargets = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -285,9 +297,9 @@ function AddRuleModal({ adsets, ads, adsetsError, adsError, onClose, onCreated, 
             })}
           </div>
 
-          {implausibleThreshold && <div role="alert" className="bg-amber-50 border border-amber-300 rounded-lg px-3 py-2 text-xs text-amber-900 mb-3">This threshold is unusually high for {METRIC_LABELS[form.metric]} ({warnAbove}{METRIC_UNITS[form.metric]}). Review it carefully before creating the rule.</div>}
+          {implausibleThreshold && <div role="alert" className="bg-amber-50 border border-amber-300 rounded-lg px-3 py-2 text-xs text-amber-900 mb-3">This threshold is unusually high for {METRIC_LABELS[form.metric]} ({METRIC_UNITS[form.metric] === '$' ? `$${warnAbove}` : `${warnAbove}${METRIC_UNITS[form.metric]}`}). Review it carefully before creating the rule.</div>}
           {decreaseTooLarge && <div role="alert" className="bg-amber-50 border border-amber-300 rounded-lg px-3 py-2 text-xs text-amber-900 mb-3">A decrease above 90% can reduce a budget or bid close to zero. Review the percentage carefully.</div>}
-          {alreadyBreaching.length > 0 && <p className="text-xs text-amber-800 mb-3">{alreadyBreaching.length} selected target{alreadyBreaching.length !== 1 ? 's are' : ' is'} already above this condition based on the loaded data.</p>}
+          {alreadyBreaching.length > 0 && <div role="alert" className="bg-red-50 border border-red-300 rounded-lg px-3 py-2 text-xs font-semibold text-red-800 mb-3">{alreadyBreaching.length} selected target{alreadyBreaching.length !== 1 ? 's' : ''} already meet{alreadyBreaching.length === 1 ? 's' : ''} this condition on the loaded data{isPause ? ' — a pause rule would act on the next check (within 30 minutes)' : ''}. Not seeing this warning does not mean the rule is safe: live metrics are not loaded here.</div>}
           <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800 mb-4">
             This creates {selectedAdsets.length} independent rule{selectedAdsets.length !== 1 ? 's' : ''} — each can be edited or disabled on its own afterward.{' '}
             {isPause
@@ -300,8 +312,8 @@ function AddRuleModal({ adsets, ads, adsetsError, adsError, onClose, onCreated, 
           </div>
 
           <div className="flex gap-3">
-            <button onClick={() => setStep('form')} className="flex-1 btn-secondary">Back</button>
-            <button autoFocus onClick={save} disabled={saving} className="flex-1 btn-primary">
+            <button autoFocus={implausibleThreshold || decreaseTooLarge || alreadyBreaching.length > 0} onClick={() => setStep('form')} className="flex-1 btn-secondary">Back</button>
+            <button autoFocus={!(implausibleThreshold || decreaseTooLarge || alreadyBreaching.length > 0)} onClick={save} disabled={saving} className="flex-1 btn-primary">
               {saving ? 'Creating...' : `Confirm & Create ${selectedTargets.length > 1 ? `${selectedTargets.length} Rules` : 'Rule'}`}
             </button>
           </div>
@@ -548,6 +560,18 @@ function EditRuleModal({ rule, onClose, onSaved }) {
   });
   const [saving, setSaving] = useState(false);
   const [step, setStep] = useState('edit');
+
+  // Esc steps back from the confirm step (never discards the form) and is ignored while a save is in flight.
+  // preventDefault tells the page-level Esc handler this modal already handled it.
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape' || event.target?.closest?.('input, select, textarea')) return;
+      if (saving) { event.preventDefault(); return; }
+      if (step === 'confirm') { event.preventDefault(); setStep('edit'); }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [saving, step]);
 
   const numberError = validateRuleNumbers(form);
   const changedAction = form.action !== rule.action;
@@ -904,7 +928,7 @@ export default function AutoPauseRules() {
   useEffect(() => {
     if (!showAddRule && !editingRule && !rulePendingDeletion && !confirmAction) return undefined;
     const onKeyDown = (event) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || event.defaultPrevented || event.target?.closest?.('input, select, textarea')) return;
       if (confirmAction) setConfirmAction(null);
       else if (rulePendingDeletion) setRulePendingDeletion(null);
       else if (editingRule) setEditingRule(null);
