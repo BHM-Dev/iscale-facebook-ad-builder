@@ -1,4 +1,4 @@
-# Codex follow-up — Launcher UX (state as of `fac96bf`)
+# Codex follow-up — Launcher UX (state as of `248ad38`)
 
 `git pull origin develop` first. Frontend + one small backend endpoint. `BulkAdCreation.jsx` and `AdCreativeStep.jsx` are trigger files — edit locally, don't push; hand back to Claude Code for the 2-agent review + push.
 
@@ -47,3 +47,22 @@ Dev session, test ad account, **never click the final Launch / create any Meta a
 `cd frontend && npm run test:unit && npm run build && npx eslint src/components/AdCreativeStep.jsx src/components/BulkAdCreation.jsx src/components/BulkMatchImport.jsx src/lib/launchPlan.js src/lib/launchDraft.js src/lib/driveCreativeSelection.js`
 Space out live-verification calls against one ad account (Meta rate limit).
 End with: "Edits done — ready for Claude Code 2-agent review + push."
+
+---
+
+## Update — status as of `248ad38` (supersedes any overlapping item above)
+
+Browser-verified in production at `41a6918`: account → existing campaign → existing ad set → Drive picker → Review works; pair selection, preview (selection preserved), Clear selection, PAUSED/PAUSED/PAUSED delivery line, CBO $1/day, Ads Manager link, manual refresh. Shipped since: single-object status endpoints (`GET /facebook/campaigns/{id}`, `/adsets/{id}`), ARCHIVED/DELETED hard block, quiet focus refresh, ticking checked-age label, `lib/liveStatus.js` + 8 unit tests (26 total).
+
+### Still open
+1. **Partial-failure box** (`BulkAdCreation.jsx`, ~launch outcome block): list failed / not-attempted ad names (`attemptedAdIds` minus created minus uncertain, plus not-attempted rows) and add a "Created (not saved locally)" list from `createdButUnmirroredAdIds` — those ads exist in Meta and are counted in `metaTouchedCount` but never named. "Retry N remaining ads": N is total minus metaTouched, which is misleading when uncertain ads exist; the unlocked-branch text "No confirmed ad rows were created" is wrong if `metaTouchedCount > 0`.
+2. **New ad set under an existing campaign** (Drive "separate ad sets" mode): the Delivery line evaluates only the campaign. New ad sets are created ACTIVE (`newAdsetStatus`), ads ACTIVE — confirm the LIVE/PAUSED wording matches that, and browser-check with no final click.
+3. **Archived/deleted verification**: one read-only authenticated `GET /facebook/campaigns/{id}` on a known archived campaign — confirm Meta returns 200 with `status`/`effective_status` ARCHIVED (the hard block relies on it). Then UI-test the hard block with a mocked response (devtools override), never by launching.
+4. **Missing tests (component-level, mocked — do not trigger real failures):**
+   - Blocked Drive card: Tab focuses it, Enter/Space shows the blocked-reason warning toast, selection unchanged, aria-describedby present. Production currently has `Blocked (0)`, so this needs a mocked blocked group.
+   - Partial-failure panel: render with a mocked `launchOutcome` (some created, some uncertain, some failed) and assert the named lists, button label/disabled state, and that the Drive "not safe to replay" text only shows when the lock condition is true.
+   - Hard-block / acknowledge flow: mocked 404+code 100, 429, 504 → hard block vs acknowledge; focus refresh must not clear a hard block.
+5. **Backend nits (low):** `_assert_*_allowed` runs outside the try block (a Meta failure during account resolution → 500 with string detail; a throttle there surfaces as 403). No short TTL cache on the status endpoints (10–15s would make repeat launches on one target free). Token errors (190/102/10) currently fall to a generic 502.
+6. **Product decision pending (Steve):** "create ads paused" toggle when parents are ACTIVE. Do not build without sign-off.
+
+Verify: `cd frontend && npm run test:unit && npm run build`; backend `python3 -m py_compile` on touched files; `python3 scripts/check_alembic_heads.py` if any migration. Never click the final Meta create. End with: "Edits done — ready for Claude Code 2-agent review + push."
