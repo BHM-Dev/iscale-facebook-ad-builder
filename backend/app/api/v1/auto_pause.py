@@ -814,12 +814,19 @@ def get_ads_bulk(
     ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     svc = FacebookService()
     try:
-        result = svc.get_account_ads_insights_bulk(
-            ad_account_id=ad_account_id,
-            date_preset=date_preset,
-            date_from=date_from,
-            date_to=date_to,
-        )
+        # Same short-lived cache the adset bulk endpoint uses: expanding several ad sets or
+        # navigating back reuses the Meta result instead of re-paginating every ad.
+        cache_key = ('ads-bulk', ad_account_id, date_preset, date_from, date_to)
+        started = time.monotonic()
+        result = _read_insights_bulk_cache(cache_key, False)
+        if result is None:
+            result = svc.get_account_ads_insights_bulk(
+                ad_account_id=ad_account_id,
+                date_preset=date_preset,
+                date_from=date_from,
+                date_to=date_to,
+            )
+            _write_insights_bulk_cache(cache_key, result, started)
         if include_all:
             # Insights omits ads with no delivery in the requested period. Add
             # the ACTIVE/PAUSED inventory so a paused or zero-spend ad can still

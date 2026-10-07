@@ -28,6 +28,10 @@ describe('summarizeSyncFreshness', () => {
         const r = summarizeSyncFreshness([{ fb_adset_id: '1', status: 'ACTIVE', synced_at: ago(2) }, { fb_adset_id: '2', status: 'ARCHIVED', synced_at: ago(5000) }], NOW);
         expect(r.state).toBe('fresh');
     });
+    it('ignores ad sets whose campaign is archived/deleted', () => {
+        const r = summarizeSyncFreshness([{ fb_adset_id: '1', status: 'ACTIVE', synced_at: ago(2) }, { fb_adset_id: '2', status: 'PAUSED', campaign_status: 'ARCHIVED', synced_at: null }], NOW);
+        expect(r.state).toBe('fresh');
+    });
     it('never-synced rows are called out, not hidden', () => {
         const partial = summarizeSyncFreshness([{ fb_adset_id: '1', status: 'ACTIVE', synced_at: ago(1) }, { fb_adset_id: '2', status: 'PAUSED', synced_at: null }], NOW);
         expect(partial.state).toBe('stale');

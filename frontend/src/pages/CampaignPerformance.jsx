@@ -1893,7 +1893,7 @@ export default function CampaignPerformance() {
       const params = buildDateParams(preset, dateFrom, dateTo);
       if (accountId) params.set('ad_account_id', accountId);
       params.set('include_status', 'true'); // insights rows carry no delivery status; without this every ad rendered ACTIVE
-      const res = await timedFetch(`${API_BASE}/auto-pause/ads-bulk?${params}`, {}, 20000);
+      const res = await timedFetch(`${API_BASE}/auto-pause/ads-bulk?${params}`, {}, 60000); // account-level ad insights can paginate; 20s cut off RHO
       if (!res.ok) throw new Error(`Creative breakdown unavailable (${res.status})`);
       const data = await res.json();
       if (isCurrent()) setAdsBulk(data);

@@ -444,17 +444,27 @@ def sync_from_meta(
         if not fb_id:
             continue
 
-        existing = db.query(FacebookCampaign).filter(FacebookCampaign.fb_campaign_id == fb_id).first()
+        # Legacy data has duplicate local rows per Meta id (some untagged). Refreshing only .first()
+        # left the other copies stale forever, so every copy is refreshed. An explicit tag for a
+        # DIFFERENT account is never overwritten.
+        existing_rows = db.query(FacebookCampaign).filter(FacebookCampaign.fb_campaign_id == fb_id).order_by(FacebookCampaign.created_at.desc()).all()
+        # Parent for newly created ad sets: row tagged for this account, else an untagged one, else newest.
+        existing = (
+            next((row for row in existing_rows if row.fb_account_id == synced_account), None)
+            or next((row for row in existing_rows if row.fb_account_id is None), None)
+            or (existing_rows[0] if existing_rows else None)
+        )
         budget_type = "CBO" if _positive_cents(c.get("daily_budget")) or _positive_cents(c.get("lifetime_budget")) else "ABO"
         if existing:
-            existing.name = c.get("name", existing.name)
-            existing.status = c.get("status", existing.status)
-            existing.budget_type = budget_type
-            existing.daily_budget = _positive_cents(c.get("daily_budget"))
-            existing.lifetime_budget = _positive_cents(c.get("lifetime_budget"))
-            existing.synced_at = _sync_now
-            if synced_account:
-                existing.fb_account_id = synced_account
+            for row in existing_rows:
+                row.name = c.get("name", row.name)
+                row.status = c.get("status", row.status)
+                row.budget_type = budget_type
+                row.daily_budget = _positive_cents(c.get("daily_budget"))
+                row.lifetime_budget = _positive_cents(c.get("lifetime_budget"))
+                row.synced_at = _sync_now
+                if synced_account and row.fb_account_id in (None, synced_account):
+                    row.fb_account_id = synced_account
             updated_campaigns += 1
             campaign_db = existing
         else:
@@ -495,19 +505,20 @@ def sync_from_meta(
         if not fb_adset_id:
             continue
 
-        existing_as = db.query(FacebookAdSet).filter(FacebookAdSet.fb_adset_id == fb_adset_id).first()
-        if existing_as:
-            existing_as.name = a.get("name", existing_as.name)
-            existing_as.status = a.get("status", existing_as.status)
-            existing_as.fb_adset_id = fb_adset_id
-            # Budgets drift whenever someone edits in Ads Manager or a rule scales; the Campaign
-            # Performance budget editor and its confirm read these columns, so refresh them.
-            existing_as.daily_budget = _positive_cents(a.get("daily_budget"))
-            existing_as.lifetime_budget = _positive_cents(a.get("lifetime_budget"))
-            existing_as.synced_at = _sync_now
-            existing_as.budget_schedule_type = "DAILY" if existing_as.daily_budget else ("LIFETIME" if existing_as.lifetime_budget else existing_as.budget_schedule_type)
-            if synced_account:
-                existing_as.fb_account_id = synced_account
+        existing_as_rows = db.query(FacebookAdSet).filter(FacebookAdSet.fb_adset_id == fb_adset_id).all()
+        if existing_as_rows:
+            for existing_as in existing_as_rows:
+                existing_as.name = a.get("name", existing_as.name)
+                existing_as.status = a.get("status", existing_as.status)
+                existing_as.fb_adset_id = fb_adset_id
+                # Budgets drift whenever someone edits in Ads Manager or a rule scales; the Campaign
+                # Performance budget editor and its confirm read these columns, so refresh them.
+                existing_as.daily_budget = _positive_cents(a.get("daily_budget"))
+                existing_as.lifetime_budget = _positive_cents(a.get("lifetime_budget"))
+                existing_as.synced_at = _sync_now
+                existing_as.budget_schedule_type = "DAILY" if existing_as.daily_budget else ("LIFETIME" if existing_as.lifetime_budget else existing_as.budget_schedule_type)
+                if synced_account and existing_as.fb_account_id in (None, synced_account):
+                    existing_as.fb_account_id = synced_account
             updated_adsets += 1
             continue
 

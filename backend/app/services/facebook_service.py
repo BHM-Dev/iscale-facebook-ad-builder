@@ -2319,26 +2319,43 @@ class FacebookService:
             'purchase_roas',
             'action_values',
         ]
+        # The SDK cursor defaults to 25 rows/page and iterating it walks EVERY page. The old code only
+        # timed the first request, so total time was unbounded (26-51s per load on RHO). Now the whole
+        # pagination runs inside the time budget, with larger pages; if Meta says the request is too
+        # big ("reduce the amount of data", code 1) retry once at smaller page sizes.
+        base = {'level': 'ad'}
         if date_from and date_to:
-            params = {
-                'time_range': {'since': date_from, 'until': date_to},
-                'level': 'ad',
-            }
+            base['time_range'] = {'since': date_from, 'until': date_to}
         else:
-            params = {
-                'date_preset': date_preset,
-                'level': 'ad',
-            }
+            base['date_preset'] = date_preset
 
+        def _fetch_all(page_size):
+            return list(account.get_insights(fields, {**base, 'limit': page_size}))
+
+        results = None
+        last_error = None
         try:
             from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-            with ThreadPoolExecutor(max_workers=1) as ex:
-                future = ex.submit(account.get_insights, fields, params)
-                try:
-                    results = future.result(timeout=20)
-                except FuturesTimeout:
-                    logger.error("Meta ads bulk insights timed out after 20s")
-                    raise RuntimeError("Meta API timeout — try again in a moment")
+            ex = ThreadPoolExecutor(max_workers=1)
+            try:
+                for page_size in (500, 100, 25):
+                    future = ex.submit(_fetch_all, page_size)
+                    try:
+                        results = future.result(timeout=55)
+                        break
+                    except FuturesTimeout:
+                        logger.error("Meta ads bulk insights timed out after 55s (limit=%s)", page_size)
+                        raise RuntimeError("Meta API timeout — try again in a moment")
+                    except FacebookRequestError as e:
+                        too_big = (e.api_error_code() == 1 if hasattr(e, 'api_error_code') and callable(e.api_error_code) else False) \
+                            or 'reduce the amount' in str(e).lower()
+                        if too_big and page_size != 25:
+                            logger.warning("Meta ads bulk insights too large at limit=%s; retrying smaller", page_size)
+                            last_error = e
+                            continue
+                        raise
+            finally:
+                ex.shutdown(wait=False)  # never block the request on a stuck Meta call
         except RuntimeError:
             raise
         except FacebookRequestError as e:
@@ -2347,6 +2364,8 @@ class FacebookService:
             msg = err.get('message') or str(e)
             logger.error("Meta ads bulk insights error: %s", msg)
             raise RuntimeError(f"Facebook API: {msg}") from e
+        if results is None:
+            raise RuntimeError(f"Facebook API: {last_error}" if last_error else "Meta API returned no data")
 
         lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
         purchase_types = {'purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase'}

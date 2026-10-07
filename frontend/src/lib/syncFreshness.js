@@ -18,7 +18,10 @@ const relative = (ms) => {
 export const summarizeSyncFreshness = (adsets, now = Date.now()) => {
     // Only rows a Sync can keep fresh and that are actionable: an ad set deleted/archived in Meta is
     // never re-stamped, and would otherwise pin the badge amber forever.
-    const rows = (adsets || []).filter(a => a && a.fb_adset_id && ['ACTIVE', 'PAUSED'].includes(String(a.status || '').toUpperCase()));
+    const rows = (adsets || []).filter(a => a && a.fb_adset_id
+        && ['ACTIVE', 'PAUSED'].includes(String(a.status || '').toUpperCase())
+        // Leftover test/legacy ad sets under an archived or deleted campaign can never be refreshed.
+        && !['ARCHIVED', 'DELETED'].includes(String(a.campaign_status || '').toUpperCase()));
     if (rows.length === 0) return { state: 'empty', label: '', neverCount: 0 };
     const times = rows.map(a => (a.synced_at ? new Date(a.synced_at).getTime() : NaN));
     const neverCount = times.filter(t => !Number.isFinite(t)).length;
