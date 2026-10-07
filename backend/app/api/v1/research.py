@@ -215,7 +215,7 @@ def _related_pattern_score(source, candidate):
     """Return an explainable metadata match score and reasons, or None."""
     shared_tags = sorted(set(source.creative_tags or []) & set(candidate.creative_tags or []))
     reasons = [f"theme: {tag.replace('_', ' ')}" for tag in shared_tags]
-    same_cta = bool(source.cta_type and source.cta_type == candidate.cta_type)
+    same_cta = bool(source.cta_type and source.cta_type != 'unknown' and source.cta_type == candidate.cta_type)
     same_format = bool(source.media_type and source.media_type == candidate.media_type)
     same_destination = bool(source.destination_domain and source.destination_domain == candidate.destination_domain)
     if same_cta:
@@ -2337,13 +2337,13 @@ def get_vertical_browse_ads(
         if cta_type not in RESEARCH_CTA_TYPES:
             raise HTTPException(status_code=400, detail=f"Unknown cta_type: {cta_type}")
         query = query.filter(
-            ScrapedAd.cta_type.is_(None) if cta_type == "unknown" else ScrapedAd.cta_type == cta_type
+            or_(ScrapedAd.cta_type.is_(None), ScrapedAd.cta_type == "unknown") if cta_type == "unknown" else ScrapedAd.cta_type == cta_type
         )
     if page_type:
         if page_type not in RESEARCH_PAGE_TYPES:
             raise HTTPException(status_code=400, detail=f"Unknown page_type: {page_type}")
         query = query.filter(
-            ScrapedAd.page_type.is_(None) if page_type == "unknown" else ScrapedAd.page_type == page_type
+            or_(ScrapedAd.page_type.is_(None), ScrapedAd.page_type == "unknown") if page_type == "unknown" else ScrapedAd.page_type == page_type
         )
     if new_within_days is not None:
         if not 1 <= new_within_days <= 90:
@@ -2450,7 +2450,7 @@ def _research_evidence_coverage(ads: list[dict]) -> dict:
     fields = {
         "copy": any(bool((ad.get("headline") or "").strip() or (ad.get("ad_copy") or "").strip()) for ad in ads),
         "visual": any(_has_retained_visual(ad) for ad in ads),
-        "cta": any(bool(ad.get("cta_type") or ad.get("cta_text")) for ad in ads),
+        "cta": any(bool((ad.get("cta_type") not in (None, "", "unknown")) or ad.get("cta_text")) for ad in ads),
         "destination": any(bool(ad.get("destination_domain")) for ad in ads),
     }
     labels = {"copy": "copy", "visual": "visual", "cta": "CTA", "destination": "destination"}
