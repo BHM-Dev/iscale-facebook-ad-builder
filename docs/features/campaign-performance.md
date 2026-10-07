@@ -33,18 +33,21 @@ API: `backend/app/api/v1/{facebook,auto_pause}.py`; Meta calls: `backend/app/ser
 - **Verified in production (2026-10-07, browser + API):** sync badge; archived ad set shows disabled label; budget
   confirm shows live "from $60 … +900%" (cancelled, not saved); rule modal defaults/validation/metric reset;
   ad rows load with real status; `ads-bulk` 7d 30.5s→8.4s, 30d 58s→9.8s, repeat 0.1s.
-- **Unit-tested only:** the server-side 409 large-change guard and ceiling (live test needs an explicit OK for one
-  real PATCH on a paused ad set); rule validation; Meta error mapping; ads insights pagination/fallback.
+- **Verified live, server-side large-change guard (2026-10-07):** a 10× budget request ($50 → $500) on a paused ad set
+  (RHO v1 | ABO | Trucking- dont use, paused under a paused campaign) returned **409 `LARGE_BUDGET_CHANGE`**
+  (`current_cents` 5000, `requested_cents` 50000, ratio 10) and the budget stayed $50 — nothing was written.
+- **Unit-tested only:** the $5,000 ceiling; rule validation; Meta error mapping; ads insights pagination/fallback.
 - **Not verified:** clicking Pause/Resume on an ad or ad set end to end (deferred until close to real use).
 
 ## Open items
-- Pause/Resume live click-through; the 409 live test.
+- Pause/Resume live click-through (deferred until close to real use).
 - CBO→ABO campaign switch very likely fails on Meta — needs a throwaway-campaign test before relying on it.
 - Rule thresholds are integers (ROAS 1.5 / CTR 0.5 impossible) — needs a DB migration.
 - Dashboard budget edits show a clear message on a large change but have no second-confirm dialog yet.
 - Status overrides (local optimistic state) are not cleared by Sync.
 
 ## Changelog (newest first)
+- 2026-10-07 live-verified the 409 large-change guard on a paused ad set (see Verified).
 - 2026-10-07 `merge_duplicate_rows.py` run in prod: merged 14 legacy duplicate campaign/ad-set row pairs, removed
   CLAUDE TEST leftovers (local DB only; backup `/home/ubuntu/backups/pre-dedupe-20261007-172535.sql` on the VPS).
 - 2026-10-07 ad status read now **unfiltered** (verified: filter hid 848 of 1,302 ads — parent-paused ones).
