@@ -3,6 +3,7 @@ import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target
 import { useToast } from '../context/ToastContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
+import { budgetErrorMessage, describeBudgetRatio } from '../lib/budgetErrors';
 import { useBrands } from '../context/BrandContext';
 import { useCampaign } from '../context/CampaignContext';
 import { safeLocalStorageSet } from '../lib/safeLocalStorage';
@@ -1707,7 +1708,7 @@ export default function CampaignPerformance() {
   const [adsetStatusOverrides, setAdsetStatusOverrides] = useState({}); // local optimistic overrides
   // Native confirm dialogs are easy to miss in a tab-heavy media-buying workflow.
   // Keep the requested operation explicit until Joel confirms it in the app.
-  const [adsetActionConfirm, setAdsetActionConfirm] = useState(null); // { type: 'pause' | 'remove', adset }
+  const [adsetActionConfirm, setAdsetActionConfirm] = useState(null); // { type: 'pause' | 'resume' | 'remove', adset }
   const [syncingRT, setSyncingRT] = useState(false);
 
   // Brand assignment state — maps adset.id → { brand_id, brand_name }
@@ -1878,9 +1879,22 @@ export default function CampaignPerformance() {
     if (loaded.some(result => result === false)) creativeDetailsKeyRef.current = null;
   }, [loadAdsBulk, loadRtAdsBulk]);
 
-  const toggleAdsetStatus = useCallback(async (adset) => {
+  const toggleAdsetStatus = useCallback(async (adset, targetStatus) => {
     const currentStatus = normalizeStatus(adsetStatusOverrides[adset.fb_adset_id] ?? adset.status);
-    const newStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
+    // Only ACTIVE <-> PAUSED is a valid toggle. Anything else (ARCHIVED, DELETED, empty, WITH_ISSUES...)
+    // must never be turned into an ACTIVE write from a button that may be labelled "Pause".
+    if (currentStatus !== 'ACTIVE' && currentStatus !== 'PAUSED') {
+      showError(`This ad set's status is ${currentStatus || 'unknown'} — manage it in Ads Manager.`);
+      return;
+    }
+    // The target comes from the confirm the user actually saw — never re-derived from current state,
+    // which can have changed (sync, override) between opening the dialog and clicking confirm.
+    const newStatus = targetStatus;
+    if (newStatus !== 'ACTIVE' && newStatus !== 'PAUSED') return;
+    if (currentStatus === newStatus) {
+      showSuccess(`"${adset.name}" is already ${newStatus === 'PAUSED' ? 'paused' : 'active'}`);
+      return;
+    }
     setPausingAdsets(prev => new Set(prev).add(adset.fb_adset_id));
     try {
       const res = await timedFetch(`${API_BASE}/facebook/adsets/${adset.fb_adset_id}/status`, {
@@ -1916,7 +1930,8 @@ export default function CampaignPerformance() {
     const action = adsetActionConfirm;
     if (!action) return;
     setAdsetActionConfirm(null);
-    if (action.type === 'pause') await toggleAdsetStatus(action.adset);
+    if (action.type === 'pause') await toggleAdsetStatus(action.adset, 'PAUSED');
+    else if (action.type === 'resume') await toggleAdsetStatus(action.adset, 'ACTIVE');
     else await removeAdsetFromApp(action.adset);
   };
 
@@ -2137,39 +2152,74 @@ export default function CampaignPerformance() {
     finally { setAssigningBrand(null); }
   };
 
-  const requestAdsetBudgetChange = (fbAdsetId, adsetName, currentBudgetCents) => {
+  // Local DB budgets go stale (sync only refreshed them recently), so the confirm reads the live
+  // value from Meta. Returns cents, or undefined when the live read failed (caller falls back to
+  // the cached value and says so).
+  const fetchLiveBudgetCents = async (type, id) => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4000);
+    try {
+      const res = await authFetch(`${API_BASE}/facebook/${type === 'campaign' ? 'campaigns' : 'adsets'}/${encodeURIComponent(id)}`, { signal: ctrl.signal });
+      if (!res.ok) return undefined;
+      const data = await res.json();
+      const cents = Number(data.daily_budget);
+      return Number.isFinite(cents) && cents > 0 ? cents : null;
+    } catch {
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const [checkingBudget, setCheckingBudget] = useState(false);
+
+  const requestAdsetBudgetChange = async (fbAdsetId, adsetName, currentBudgetCents) => {
+    if (checkingBudget) return;
     const dollars = parseFloat(budgetInput);
     if (!Number.isFinite(dollars) || dollars < 1) {
       showError('Enter a valid budget ($1 minimum)');
       return;
     }
+    setCheckingBudget(true);
+    const liveCents = await fetchLiveBudgetCents('adset', fbAdsetId);
+    setCheckingBudget(false);
+    if (liveCents === null) {
+      showError('This ad set has no daily budget of its own (lifetime budget, or its campaign uses CBO). Edit it in Ads Manager or change the campaign budget instead.');
+      return;
+    }
+    const fromCents = liveCents !== undefined ? liveCents : currentBudgetCents;
     setBudgetChangeConfirm({
       type: 'adset',
       id: fbAdsetId,
       name: adsetName,
       dollars,
-      currentDollars: currentBudgetCents != null ? currentBudgetCents / 100 : null,
+      currentDollars: fromCents != null ? fromCents / 100 : null,
+      currentIsLive: liveCents !== undefined,
     });
   };
 
-  const saveBudget = async (fbAdsetId, dollars) => {
+  const saveBudget = async (fbAdsetId, dollars, confirmLarge = false) => {
     setSavingBudget(fbAdsetId);
     try {
       const dailyBudgetCents = Math.round(dollars * 100);
       const res = await authFetch(`${API_BASE}/facebook/adsets/${fbAdsetId}/budget`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ daily_budget_cents: dailyBudgetCents }),
+        body: JSON.stringify({ daily_budget_cents: dailyBudgetCents, confirm_large_change: confirmLarge }),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed'); }
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        if (res.status === 409 && e.detail?.code === 'LARGE_BUDGET_CHANGE') return { largeChange: e.detail };
+        throw new Error(budgetErrorMessage(e, 'Failed'));
+      }
       setAdsets(prev => prev.map(a => (
         a.fb_adset_id === fbAdsetId
           ? { ...a, daily_budget: dailyBudgetCents, budget_schedule_type: 'DAILY' }
           : a
       )));
-      showSuccess(`Budget updated to $${dollars.toFixed(0)}/day`);
+      showSuccess(`Budget updated to $${Number.isInteger(dollars) ? dollars : dollars.toFixed(2)}/day`);
       setEditingBudget(null);
       setBudgetInput('');
+      return {};
     } catch (e) {
       showError(e.message || 'Budget update failed');
     } finally {
@@ -2177,24 +2227,33 @@ export default function CampaignPerformance() {
     }
   };
 
-  const requestCampaignBudgetChange = (fbCampaignId, campaignName, currentBudgetCents) => {
+  const requestCampaignBudgetChange = async (fbCampaignId, campaignName, currentBudgetCents) => {
+    if (checkingBudget) return;
     const isCBO = campaignBudgetType === 'CBO';
     const dollars = parseFloat(campaignBudgetInput);
     if (isCBO && (!Number.isFinite(dollars) || dollars < 1)) {
       showError('Enter a valid budget ($1 minimum)');
       return;
     }
+    let liveCents;
+    if (isCBO) {
+      setCheckingBudget(true);
+      liveCents = await fetchLiveBudgetCents('campaign', fbCampaignId);
+      setCheckingBudget(false);
+    }
+    const fromCents = liveCents !== undefined ? liveCents : currentBudgetCents;
     setBudgetChangeConfirm({
       type: 'campaign',
       id: fbCampaignId,
       name: campaignName,
       budgetType: campaignBudgetType,
       dollars: isCBO ? dollars : null,
-      currentDollars: currentBudgetCents != null ? currentBudgetCents / 100 : null,
+      currentDollars: fromCents != null ? fromCents / 100 : null,
+      currentIsLive: liveCents !== undefined,
     });
   };
 
-  const saveCampaignBudget = async (fbCampaignId, budgetType, dollars) => {
+  const saveCampaignBudget = async (fbCampaignId, budgetType, dollars, confirmLarge = false) => {
     const isCBO = budgetType === 'CBO';
 
     setSavingCampaignBudget(fbCampaignId);
@@ -2205,15 +2264,21 @@ export default function CampaignPerformance() {
         body: JSON.stringify({
           daily_budget_cents: isCBO ? Math.round(dollars * 100) : null,
           budget_optimization: campaignBudgetType,
+          confirm_large_change: confirmLarge,
         }),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed'); }
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        if (res.status === 409 && e.detail?.code === 'LARGE_BUDGET_CHANGE') return { largeChange: e.detail };
+        throw new Error(budgetErrorMessage(e, 'Failed'));
+      }
       showSuccess(isCBO
-        ? `Campaign budget set to $${dollars.toFixed(0)}/day`
+        ? `Campaign budget set to $${Number.isInteger(dollars) ? dollars : dollars.toFixed(2)}/day`
         : 'Campaign switched to ABO — set budgets on each ad set below'
       );
       setBudgetPopover(null);
       loadAdsets();
+      return {};
     } catch (e) {
       showError(e.message || 'Campaign budget update failed');
     } finally {
@@ -2225,8 +2290,19 @@ export default function CampaignPerformance() {
     const change = budgetChangeConfirm;
     setBudgetChangeConfirm(null);
     if (!change) return;
-    if (change.type === 'adset') await saveBudget(change.id, change.dollars);
-    else await saveCampaignBudget(change.id, change.budgetType, change.dollars);
+    const confirmLarge = Boolean(change.largeChange);
+    const result = change.type === 'adset'
+      ? await saveBudget(change.id, change.dollars, confirmLarge)
+      : await saveCampaignBudget(change.id, change.budgetType, change.dollars, confirmLarge);
+    // The server re-reads the live budget and refuses big swings until they are explicitly confirmed.
+    if (result?.largeChange) {
+      setBudgetChangeConfirm({
+        ...change,
+        largeChange: result.largeChange,
+        currentDollars: result.largeChange.current_cents / 100,
+        currentIsLive: true,
+      });
+    }
   };
 
   // Blended CPL across all adsets with data — mirrors Dashboard.jsx logic.
@@ -2980,10 +3056,10 @@ export default function CampaignPerformance() {
                                 </button>
                                 <button
                                   onClick={() => requestCampaignBudgetChange(group.fbCampaignId, group.campaignName, group.campaignDailyBudget)}
-                                  disabled={savingCampaignBudget === group.fbCampaignId}
+                                  disabled={savingCampaignBudget === group.fbCampaignId || checkingBudget}
                                   className="flex-1 py-1.5 text-xs rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50"
                                 >
-                                  {savingCampaignBudget === group.fbCampaignId ? 'Saving...' : 'Save'}
+                                  {savingCampaignBudget === group.fbCampaignId ? 'Saving...' : checkingBudget ? 'Checking live budget…' : 'Save'}
                                 </button>
                               </div>
                             </div>
@@ -3105,11 +3181,11 @@ export default function CampaignPerformance() {
                                           <span className="text-xs text-gray-400">/day</span>
                                           <button
                                             onClick={() => requestAdsetBudgetChange(adset.fb_adset_id, adset.name, adset.daily_budget)}
-                                            disabled={savingBudget === adset.fb_adset_id}
+                                            disabled={savingBudget === adset.fb_adset_id || checkingBudget}
                                             className="text-green-600 hover:text-green-700 disabled:opacity-40"
                                             title="Save budget"
                                           >
-                                            {savingBudget === adset.fb_adset_id ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
+                                            {(savingBudget === adset.fb_adset_id || checkingBudget) ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
                                           </button>
                                           <button
                                             onClick={() => { setEditingBudget(null); setBudgetInput(''); }}
@@ -3119,18 +3195,22 @@ export default function CampaignPerformance() {
                                             <X size={12} />
                                           </button>
                                         </div>
+                                      ) : (!adset.daily_budget && adset.lifetime_budget) ? (
+                                        <span className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-gray-50 border border-gray-200 text-gray-500" title="This ad set uses a lifetime budget — edit it in Ads Manager">
+                                          <DollarSign size={11} /> Lifetime budget · Ads Manager
+                                        </span>
                                       ) : (
                                         <button
                                           onClick={e => {
                                             e.stopPropagation();
                                             setEditingBudget(adset.fb_adset_id);
-                                            setBudgetInput(adset.daily_budget ? String(Math.round(adset.daily_budget / 100)) : '');
+                                            setBudgetInput(adset.daily_budget ? String(Number((adset.daily_budget / 100).toFixed(2))) : '');
                                           }}
                                           className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-white border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 text-gray-600 hover:text-indigo-700 transition-colors shadow-sm font-medium"
                                           title="Edit daily budget"
                                         >
                                           <DollarSign size={11} />
-                                          {adset.daily_budget ? `$${Math.round(adset.daily_budget / 100)}/day` : 'Set budget'}
+                                          {adset.daily_budget ? `$${Number((adset.daily_budget / 100).toFixed(2))}/day` : (adset.lifetime_budget ? 'Lifetime budget' : 'Set budget')}
                                         </button>
                                       )}
                                     </div>
@@ -3176,31 +3256,33 @@ export default function CampaignPerformance() {
                                       >
                                         <Repeat2 size={11} /> Iterate
                                       </button>
-                                      {adset.fb_adset_id && (
-                                        <button
-                                          onClick={() => {
-                                            const currentStatus = normalizeStatus(adsetStatusOverrides[adset.fb_adset_id] ?? adset.status);
-                                            if (currentStatus === 'ACTIVE') {
-                                              setAdsetActionConfirm({ type: 'pause', adset });
-                                            } else {
-                                              toggleAdsetStatus(adset);
+                                      {adset.fb_adset_id && (() => {
+                                        const toggleable = effectiveStatus === 'ACTIVE' || effectiveStatus === 'PAUSED';
+                                        const isResume = effectiveStatus === 'PAUSED';
+                                        return (
+                                          <button
+                                            onClick={() => {
+                                              if (!toggleable) return;
+                                              setAdsetActionConfirm({ type: isResume ? 'resume' : 'pause', adset });
+                                            }}
+                                            disabled={isPausingAdset || !toggleable}
+                                            className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
+                                              isResume
+                                                ? 'bg-green-50 text-green-700 hover:bg-green-100'
+                                                : 'bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600'
+                                            }`}
+                                            title={toggleable
+                                              ? (isResume ? 'Resume ad set' : 'Pause ad set')
+                                              : `Status is ${effectiveStatus || 'unknown'} — manage this ad set in Ads Manager`}
+                                          >
+                                            {isPausingAdset
+                                              ? <RefreshCw size={11} className="animate-spin" />
+                                              : !toggleable ? null : isResume ? <PlayCircle size={11} /> : <PauseCircle size={11} />
                                             }
-                                          }}
-                                          disabled={isPausingAdset}
-                                          className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
-                                            effectiveStatus === 'PAUSED'
-                                              ? 'bg-green-50 text-green-700 hover:bg-green-100'
-                                              : 'bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600'
-                                          }`}
-                                          title={effectiveStatus === 'PAUSED' ? 'Resume ad set' : 'Pause ad set'}
-                                        >
-                                          {isPausingAdset
-                                            ? <RefreshCw size={11} className="animate-spin" />
-                                            : effectiveStatus === 'PAUSED' ? <PlayCircle size={11} /> : <PauseCircle size={11} />
-                                          }
-                                          {effectiveStatus === 'PAUSED' ? 'Resume' : 'Pause'}
-                                        </button>
-                                      )}
+                                            {toggleable ? (isResume ? 'Resume' : 'Pause') : (effectiveStatus || 'Unknown')}
+                                          </button>
+                                        );
+                                      })()}
                                       <button
                                         onClick={() => setAdsetActionConfirm({ type: 'remove', adset })}
                                         className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-all"
@@ -3297,18 +3379,22 @@ export default function CampaignPerformance() {
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" role="presentation">
         <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" role="dialog" aria-modal="true" aria-labelledby="adset-action-confirm-title">
           <h2 id="adset-action-confirm-title" className="text-lg font-bold text-gray-900">
-            {adsetActionConfirm.type === 'pause' ? 'Pause ad set in Meta?' : 'Remove ad set from this app?'}
+            {adsetActionConfirm.type === 'pause' ? 'Pause ad set in Meta?' : adsetActionConfirm.type === 'resume' ? 'Resume ad set in Meta?' : 'Remove ad set from this app?'}
           </h2>
           <p className="mt-3 text-sm font-semibold text-gray-800">{adsetActionConfirm.adset.name}</p>
           <p className="mt-2 text-sm leading-6 text-gray-600">
             {adsetActionConfirm.type === 'pause'
               ? 'This stops delivery immediately in Meta. You can resume it here or in Ads Manager later.'
+              : adsetActionConfirm.type === 'resume'
+              ? (normalizeStatus(adsetActionConfirm.adset.campaign_status) === 'PAUSED'
+                  ? 'This turns the ad set back on in Meta, but its campaign is PAUSED, so nothing will deliver until the campaign is turned on too.'
+                  : 'This turns the ad set back on in Meta. It can start spending immediately.')
               : 'This only removes the saved ad set and its auto-pause rules from this app. It does not pause or delete anything in Meta.'}
           </p>
           <div className="mt-6 flex justify-end gap-3">
             <button type="button" onClick={() => setAdsetActionConfirm(null)} className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Cancel</button>
-            <button type="button" onClick={confirmAdsetAction} className={`rounded-lg px-4 py-2 text-sm font-semibold text-white ${adsetActionConfirm.type === 'pause' ? 'bg-red-600 hover:bg-red-700' : 'bg-gray-800 hover:bg-gray-900'}`}>
-              {adsetActionConfirm.type === 'pause' ? 'Pause in Meta' : 'Remove from app'}
+            <button type="button" onClick={confirmAdsetAction} className={`rounded-lg px-4 py-2 text-sm font-semibold text-white ${adsetActionConfirm.type === 'pause' ? 'bg-red-600 hover:bg-red-700' : adsetActionConfirm.type === 'resume' ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-800 hover:bg-gray-900'}`}>
+              {adsetActionConfirm.type === 'pause' ? 'Pause in Meta' : adsetActionConfirm.type === 'resume' ? 'Resume in Meta' : 'Remove from app'}
             </button>
           </div>
         </div>
@@ -3328,12 +3414,17 @@ export default function CampaignPerformance() {
             </p>
           ) : (
             <p className="mt-2 text-sm leading-6 text-gray-600">
-              This changes the live daily budget from <strong>{budgetChangeConfirm.currentDollars != null ? `$${budgetChangeConfirm.currentDollars.toLocaleString()}` : 'the current Meta value'}</strong> to <strong>{`$${budgetChangeConfirm.dollars.toLocaleString()}/day`}</strong>. The change takes effect in Meta immediately.
+              This changes the daily budget from <strong>{budgetChangeConfirm.currentDollars != null ? `$${budgetChangeConfirm.currentDollars.toLocaleString()}` : 'the current Meta value'}</strong>{budgetChangeConfirm.currentDollars != null ? (budgetChangeConfirm.currentIsLive ? ' (live in Meta)' : <span className="font-semibold text-amber-700"> (last synced — could not verify live)</span>) : ''} to <strong>{`$${budgetChangeConfirm.dollars.toLocaleString()}/day`}</strong>{budgetChangeConfirm.currentDollars > 0 ? ` (${budgetChangeConfirm.dollars >= budgetChangeConfirm.currentDollars ? '+' : ''}${Math.round(((budgetChangeConfirm.dollars - budgetChangeConfirm.currentDollars) / budgetChangeConfirm.currentDollars) * 100)}%)` : ''}. The change takes effect in Meta immediately.
             </p>
+          )}
+          {budgetChangeConfirm.largeChange && (
+            <div role="alert" className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-semibold text-red-900">
+              Large change: {describeBudgetRatio(budgetChangeConfirm.largeChange.ratio)} vs the live budget. Double-check the amount before confirming.
+            </div>
           )}
           <div className="mt-6 flex justify-end gap-3">
             <button type="button" onClick={() => setBudgetChangeConfirm(null)} className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Cancel</button>
-            <button type="button" onClick={confirmBudgetChange} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Update in Meta</button>
+            <button type="button" onClick={confirmBudgetChange} className={`rounded-lg px-4 py-2 text-sm font-semibold text-white ${budgetChangeConfirm.largeChange ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}>{budgetChangeConfirm.largeChange ? `Yes, apply ${describeBudgetRatio(budgetChangeConfirm.largeChange.ratio)}` : 'Update in Meta'}</button>
           </div>
         </div>
       </div>

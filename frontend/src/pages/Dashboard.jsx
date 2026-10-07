@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { budgetErrorMessage } from '../lib/budgetErrors';
 import { AlertTriangle, TrendingUp, RefreshCw, ArrowRight, Calendar, ChevronDown, PauseCircle, DollarSign, Zap, Info, ChevronRight } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
@@ -922,7 +923,7 @@ export default function Dashboard() {
           budget_optimization: campaignBudgetType,
         }),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed'); }
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e?.detail?.code === 'LARGE_BUDGET_CHANGE' ? `${budgetErrorMessage(e)} Make large changes from Campaign Performance, where they can be confirmed.` : budgetErrorMessage(e)); }
       showSuccess(isCBO ? `Campaign budget set to $${dollars.toFixed(0)}/day` : 'Switched to ABO');
       setBudgetPopover(null);
       load(activeRange, { forceRefresh: true });
@@ -946,7 +947,7 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ daily_budget_cents: Math.round(dollars * 100) }),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed'); }
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e?.detail?.code === 'LARGE_BUDGET_CHANGE' ? `${budgetErrorMessage(e)} Make large changes from Campaign Performance, where they can be confirmed.` : budgetErrorMessage(e)); }
       showSuccess(`Budget set to $${dollars.toFixed(0)}/day`);
       setEditingBudget(null);
       setBudgetInput('');
@@ -980,7 +981,7 @@ export default function Dashboard() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ daily_budget_cents: newCents, budget_optimization: 'CBO' }),
         });
-        if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed'); }
+        if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e?.detail?.code === 'LARGE_BUDGET_CHANGE' ? `${budgetErrorMessage(e)} Make large changes from Campaign Performance, where they can be confirmed.` : budgetErrorMessage(e)); }
         showSuccess(`Campaign budget scaled to $${(newCents / 100).toFixed(0)}/day (+20%)`);
       } else {
         const res = await authFetch(`${API_URL}/facebook/adsets/${a.fb_adset_id}/budget`, {
@@ -988,7 +989,7 @@ export default function Dashboard() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ daily_budget_cents: newCents }),
         });
-        if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed'); }
+        if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e?.detail?.code === 'LARGE_BUDGET_CHANGE' ? `${budgetErrorMessage(e)} Make large changes from Campaign Performance, where they can be confirmed.` : budgetErrorMessage(e)); }
         showSuccess(`Ad set budget scaled to $${(newCents / 100).toFixed(0)}/day (+20%)`);
       }
       load(activeRange, { forceRefresh: true });

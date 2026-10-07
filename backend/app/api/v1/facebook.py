@@ -1,4 +1,5 @@
 import logging
+import os
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from requests.exceptions import Timeout as RequestsTimeout
@@ -160,10 +161,63 @@ def _assert_ad_allowed(current_user: User, fb_ad_id, db, service=None):
 
 class BudgetUpdateRequest(BaseModel):
     daily_budget_cents: int = Field(..., ge=100)
+    # Set by the UI only after the user has seen the live "from" value and the large-change warning.
+    confirm_large_change: bool = False
 
 class CampaignBudgetUpdateRequest(BaseModel):
     daily_budget_cents: Optional[int] = Field(None, ge=100)
     budget_optimization: str = Field(..., pattern="^(CBO|ABO)$")
+    confirm_large_change: bool = False
+
+# Manual budget-edit guardrails. The client sends an absolute value; without these a 100x typo
+# ($50 -> $5,000) goes straight to Meta, which has no cap short of the account spend limit.
+try:
+    MAX_DAILY_BUDGET_CENTS = int(os.getenv("MAX_DAILY_BUDGET_CENTS", "500000"))  # $5,000/day hard ceiling
+except ValueError:  # a malformed env var must not crash app startup
+    MAX_DAILY_BUDGET_CENTS = 500000
+LARGE_BUDGET_INCREASE_RATIO = 3.0
+LARGE_BUDGET_DECREASE_RATIO = 1 / 3  # symmetric with the 3x increase threshold
+
+_THROTTLE_CODES = {4, 17, 32, 613}
+
+
+def _positive_cents(value):
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def _read_live_budget_or_raise(reader, object_id, label):
+    """Read the object's live budget from Meta. Fails CLOSED: a budget write must never go
+    out blind because the pre-read was throttled or timed out."""
+    try:
+        return reader(object_id)
+    except FacebookAPIError as e:
+        if _is_meta_object_missing(e):
+            raise HTTPException(status_code=404, detail=f"{label} was not found in Meta.")
+        if e.code in _THROTTLE_CODES or (e.code is not None and 80000 <= e.code <= 80014):
+            raise HTTPException(status_code=429, detail=f"Meta is rate-limiting requests. The {label.lower()} budget was NOT changed — try again shortly.")
+        raise HTTPException(status_code=502, detail=f"Could not read the live {label.lower()} budget from Meta, so nothing was changed: {e}")
+    except Exception as e:
+        logger.exception("Live budget pre-read failed for %s %s: %s", label, object_id, e)
+        raise HTTPException(status_code=502, detail=f"Could not read the live {label.lower()} budget from Meta, so nothing was changed.")
+
+
+def _enforce_budget_sanity(live_daily_cents, new_cents, confirm_large_change, label):
+    if new_cents > MAX_DAILY_BUDGET_CENTS:
+        raise HTTPException(status_code=400, detail=f"${new_cents / 100:,.2f}/day exceeds the ${MAX_DAILY_BUDGET_CENTS / 100:,.0f}/day safety ceiling. Edit it in Ads Manager if this is intentional.")
+    if live_daily_cents and not confirm_large_change:
+        ratio = new_cents / live_daily_cents
+        if ratio > LARGE_BUDGET_INCREASE_RATIO or ratio < LARGE_BUDGET_DECREASE_RATIO:
+            raise HTTPException(status_code=409, detail={
+                "code": "LARGE_BUDGET_CHANGE",
+                "message": f"{label} budget would change from ${live_daily_cents / 100:,.2f} to ${new_cents / 100:,.2f}/day ({ratio:.1f}x). Confirm to proceed.",
+                "current_cents": live_daily_cents,
+                "requested_cents": new_cents,
+                "ratio": round(ratio, 2),
+            })
 
 def get_facebook_service():
     service = FacebookService()
@@ -372,12 +426,13 @@ def sync_from_meta(
             continue
 
         existing = db.query(FacebookCampaign).filter(FacebookCampaign.fb_campaign_id == fb_id).first()
-        budget_type = "CBO" if c.get("daily_budget") or c.get("lifetime_budget") else "ABO"
+        budget_type = "CBO" if _positive_cents(c.get("daily_budget")) or _positive_cents(c.get("lifetime_budget")) else "ABO"
         if existing:
             existing.name = c.get("name", existing.name)
             existing.status = c.get("status", existing.status)
             existing.budget_type = budget_type
-            existing.daily_budget = int(c["daily_budget"]) if c.get("daily_budget") else None
+            existing.daily_budget = _positive_cents(c.get("daily_budget"))
+            existing.lifetime_budget = _positive_cents(c.get("lifetime_budget"))
             if synced_account:
                 existing.fb_account_id = synced_account
             updated_campaigns += 1
@@ -388,8 +443,8 @@ def sync_from_meta(
                 name=c.get("name", "Imported Campaign"),
                 objective=c.get("objective", "OUTCOME_LEADS"),
                 budget_type=budget_type,
-                budget_schedule_type="DAILY" if c.get("daily_budget") else None,
-                daily_budget=int(c["daily_budget"]) if c.get("daily_budget") else None,
+                budget_schedule_type="DAILY" if _positive_cents(c.get("daily_budget")) else None,
+                daily_budget=_positive_cents(c.get("daily_budget")),
                 status=c.get("status", "PAUSED"),
                 fb_campaign_id=fb_id,
                 fb_account_id=synced_account,
@@ -424,6 +479,11 @@ def sync_from_meta(
             existing_as.name = a.get("name", existing_as.name)
             existing_as.status = a.get("status", existing_as.status)
             existing_as.fb_adset_id = fb_adset_id
+            # Budgets drift whenever someone edits in Ads Manager or a rule scales; the Campaign
+            # Performance budget editor and its confirm read these columns, so refresh them.
+            existing_as.daily_budget = _positive_cents(a.get("daily_budget"))
+            existing_as.lifetime_budget = _positive_cents(a.get("lifetime_budget"))
+            existing_as.budget_schedule_type = "DAILY" if existing_as.daily_budget else ("LIFETIME" if existing_as.lifetime_budget else existing_as.budget_schedule_type)
             if synced_account:
                 existing_as.fb_account_id = synced_account
             updated_adsets += 1
@@ -447,8 +507,9 @@ def sync_from_meta(
             status=a.get("status", "PAUSED"),
             fb_adset_id=fb_adset_id,
             fb_account_id=synced_account,
-            daily_budget=int(a["daily_budget"]) if a.get("daily_budget") else None,
-            budget_schedule_type="DAILY" if a.get("daily_budget") else "LIFETIME",
+            daily_budget=_positive_cents(a.get("daily_budget")),
+            lifetime_budget=_positive_cents(a.get("lifetime_budget")),
+            budget_schedule_type="DAILY" if _positive_cents(a.get("daily_budget")) else "LIFETIME",
         ))
         created_adsets += 1
 
@@ -574,6 +635,14 @@ def update_adset_budget(
 ):
     """Update an ad set's daily budget directly in Meta and mirror it locally when present."""
     _assert_adset_allowed(current_user, fb_adset_id, db, service)
+    live = _read_live_budget_or_raise(service.get_adset_status, fb_adset_id, "Ad set")
+    live_daily = _positive_cents(live.get("daily_budget"))
+    live_lifetime = _positive_cents(live.get("lifetime_budget"))
+    if live_lifetime and not live_daily:
+        raise HTTPException(status_code=400, detail="This ad set uses a lifetime budget. Edit it in Ads Manager — a daily budget can't be set here.")
+    if not live_daily:
+        raise HTTPException(status_code=400, detail="Meta returned no budget for this ad set — usually because its campaign uses CBO. Change the campaign budget (or check Ads Manager) instead.")
+    _enforce_budget_sanity(live_daily, int(body.daily_budget_cents), body.confirm_large_change, "Ad set")
     try:
         adset = AdSet(fbid=fb_adset_id, api=service.api)
         adset.api_update(fields=[], params={"daily_budget": int(body.daily_budget_cents)})
@@ -584,7 +653,9 @@ def update_adset_budget(
             local_adset.budget_schedule_type = "DAILY"
             db.commit()
 
-        return {"success": True, "fb_adset_id": fb_adset_id, "daily_budget_cents": body.daily_budget_cents}
+        return {"success": True, "fb_adset_id": fb_adset_id, "daily_budget_cents": body.daily_budget_cents, "previous_daily_budget_cents": live_daily}
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         logger.exception("Update ad set budget failed: %s", e)
@@ -601,11 +672,17 @@ def update_campaign_budget(
 ):
     """Update a campaign's budget mode directly in Meta and mirror it locally when present."""
     _assert_campaign_allowed(current_user, fb_campaign_id, db, service)
+    if body.budget_optimization == "CBO":
+        if body.daily_budget_cents is None:
+            raise HTTPException(status_code=400, detail="daily_budget_cents is required for CBO")
+        live = _read_live_budget_or_raise(service.get_campaign_status, fb_campaign_id, "Campaign")
+        live_daily = _positive_cents(live.get("daily_budget"))
+        if _positive_cents(live.get("lifetime_budget")) and not live_daily:
+            raise HTTPException(status_code=400, detail="This campaign uses a lifetime budget. Edit it in Ads Manager — a daily budget can't be set here.")
+        _enforce_budget_sanity(live_daily, int(body.daily_budget_cents), body.confirm_large_change, "Campaign")
     try:
         campaign = Campaign(fbid=fb_campaign_id, api=service.api)
         if body.budget_optimization == "CBO":
-            if body.daily_budget_cents is None:
-                raise HTTPException(status_code=400, detail="daily_budget_cents is required for CBO")
             campaign.api_update(fields=[], params={"daily_budget": int(body.daily_budget_cents)})
         else:
             # Switch to ABO: remove campaign-level budget optimization
