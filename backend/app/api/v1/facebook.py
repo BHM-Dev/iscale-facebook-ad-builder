@@ -189,6 +189,23 @@ def _positive_cents(value):
     return n if n > 0 else None
 
 
+def _http_error_from_meta(e):
+    """Map a Meta write failure to an HTTP status the UI can act on:
+    throttle -> 429 (retryable); transient/unknown (1, 2, no code) -> 502; token problems
+    (190/102) -> 502 (server config, NOT 401 — authFetch treats 401 as an expired session);
+    permission (10, 200-299) -> 403; anything else Meta rejected -> 400 with Meta's message."""
+    code = getattr(e, 'code', None)
+    if code in _THROTTLE_CODES or code == 341 or (code is not None and 80000 <= code <= 80014):
+        return HTTPException(status_code=429, detail=f"Meta is rate-limiting requests — nothing was changed. Try again shortly. ({e})")
+    if code is None or code in (1, 2):
+        return HTTPException(status_code=502, detail=f"Meta had a temporary problem — nothing was changed. Try again. ({e})")
+    if code in (190, 102):
+        return HTTPException(status_code=502, detail=f"The Meta connection needs attention (token) — nothing was changed. ({e})")
+    if code == 10 or 200 <= code <= 299:
+        return HTTPException(status_code=403, detail=f"Meta denied permission for this change. ({e})")
+    return HTTPException(status_code=400, detail=str(e))
+
+
 def _read_live_budget_or_raise(reader, object_id, label):
     """Read the object's live budget from Meta. Fails CLOSED: a budget write must never go
     out blind because the pre-read was throttled or timed out."""
@@ -656,6 +673,9 @@ def update_adset_budget(
         return {"success": True, "fb_adset_id": fb_adset_id, "daily_budget_cents": body.daily_budget_cents, "previous_daily_budget_cents": live_daily}
     except HTTPException:
         raise
+    except FacebookAPIError as e:
+        db.rollback()
+        raise _http_error_from_meta(e)
     except Exception as e:
         db.rollback()
         logger.exception("Update ad set budget failed: %s", e)
@@ -707,6 +727,9 @@ def update_campaign_budget(
         }
     except HTTPException:
         raise
+    except FacebookAPIError as e:
+        db.rollback()
+        raise _http_error_from_meta(e)
     except Exception as e:
         db.rollback()
         logger.exception("Update campaign budget failed: %s", e)
@@ -717,27 +740,39 @@ def update_campaign_budget(
 def delete_saved_adset(
     adset_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("campaigns:write")),
 ):
-    """Remove a saved ad set from the local DB (does not affect Meta)."""
+    """Remove a saved ad set from the local DB (does not affect Meta). Cascades to its ads and
+    auto-pause rules, so it is account-scoped like every other write route."""
     adset = db.query(FacebookAdSet).filter(FacebookAdSet.id == adset_id).first()
     if not adset:
         raise HTTPException(status_code=404, detail="Ad set not found")
-    db.delete(adset)
-    db.commit()
+    if current_user.allowed_account_ids() is not None:
+        _assert_account_allowed(current_user, adset.fb_account_id)
+    try:
+        db.delete(adset)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.exception("Delete saved ad set failed: %s", e)
+        raise HTTPException(status_code=500, detail="Could not remove the ad set.")
     return {"success": True, "deleted_id": adset_id}
 
 
 @router.post("/sync/cleanup")
 def cleanup_duplicate_adsets(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_permission("campaigns:write")),
 ):
     """Remove duplicate ad set rows that share the same fb_adset_id.
     Keeps the most recently created row for each fb_adset_id.
     Returns count of rows deleted.
     """
     from sqlalchemy import func
+
+    # Cross-account maintenance: account-scoped users must not run it.
+    if current_user.allowed_account_ids() is not None:
+        raise HTTPException(status_code=403, detail="Not available for account-scoped users.")
 
     # Find fb_adset_ids that appear more than once
     dupes = (
@@ -1228,7 +1263,7 @@ def update_adset_status(
     body: dict,
     db: Session = Depends(get_db),
     service: FacebookService = Depends(get_facebook_service),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_permission("campaigns:write")),
 ):
     """Pause or resume an ad set on Meta and sync status to local DB."""
     status = body.get("status")
@@ -1242,6 +1277,8 @@ def update_adset_status(
             adset.status = status
             db.commit()
         return {"fb_adset_id": fb_adset_id, "status": status}
+    except FacebookAPIError as e:
+        raise _http_error_from_meta(e)
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -1254,7 +1291,7 @@ def update_ad_status(
     body: dict,
     db: Session = Depends(get_db),
     service: FacebookService = Depends(get_facebook_service),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_permission("campaigns:write")),
 ):
     """Pause or resume an individual ad on Meta and sync status to local DB."""
     status = body.get("status")
@@ -1268,6 +1305,8 @@ def update_ad_status(
             ad.status = status
             db.commit()
         return {"fb_ad_id": fb_ad_id, "status": status}
+    except FacebookAPIError as e:
+        raise _http_error_from_meta(e)
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

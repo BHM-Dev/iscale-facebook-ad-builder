@@ -2427,11 +2427,10 @@ class FacebookService:
             adset.api_update(params={'status': status})
             logger.info("AdSet %s status → %s", fb_adset_id, status)
         except FacebookRequestError as e:
-            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
-            err = body.get('error', {}) if isinstance(body, dict) else {}
-            msg = err.get('message') or str(e)
-            logger.error("Failed to update adset %s status: %s", fb_adset_id, msg)
-            raise RuntimeError(f"Facebook API: {msg}") from e
+            # FacebookAPIError subclasses RuntimeError, so existing `except RuntimeError` callers
+            # keep working, but the Meta code/subcode now survives so throttles can map to 429.
+            logger.error("Failed to update adset %s status: %s", fb_adset_id, e)
+            raise self._meta_error(e, "Facebook API") from e
 
     # A cheap sanity floor, NOT Meta's real minimum — Meta's actual minimum budget
     # varies by objective, billing event, optimization goal, and CBO vs ABO (a CBO
@@ -2601,11 +2600,10 @@ class FacebookService:
             ad.api_update(params={'status': status})
             logger.info("Ad %s status → %s", fb_ad_id, status)
         except FacebookRequestError as e:
-            body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
-            err = body.get('error', {}) if isinstance(body, dict) else {}
-            msg = err.get('message') or str(e)
-            logger.error("Failed to update ad %s status: %s", fb_ad_id, msg)
-            raise RuntimeError(f"Facebook API: {msg}") from e
+            # FacebookAPIError subclasses RuntimeError, so existing `except RuntimeError` callers
+            # keep working, but the Meta code/subcode now survives so throttles can map to 429.
+            logger.error("Failed to update ad %s status: %s", fb_ad_id, e)
+            raise self._meta_error(e, "Facebook API") from e
 
     def get_ad_creative(self, fb_ad_id: str) -> dict:
         """Fetch the creative content (headline, body, CTA, image URL) for a single ad.

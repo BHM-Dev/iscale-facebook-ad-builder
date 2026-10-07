@@ -253,6 +253,41 @@ def _validate_metric_operator(metric: str, operator: str) -> None:
         raise HTTPException(400, f"operator must be one of {valid_operators}")
 
 
+def _is_object_missing_error(e) -> bool:
+    return getattr(e, 'code', None) == 100 and getattr(e, 'subcode', None) == 33
+
+
+def _target_confirmed_gone(svc, scope, fb_adset_id) -> bool:
+    """Meta's 100/33 ("does not exist, cannot be loaded due to missing permissions...") is
+    ambiguous: it is also what a lost-access token returns for EVERY object. A rule is only
+    disabled when a direct read proves the ad set is DELETED/ARCHIVED — never on the error alone,
+    or one lost permission would silently disarm every protective rule on the account."""
+    if scope == 'ad' or not fb_adset_id:
+        return False
+    try:
+        live = svc.get_adset_status(fb_adset_id)
+    except Exception:
+        return False
+    return any(live.get(k) in ('DELETED', 'ARCHIVED') for k in ('status', 'effective_status'))
+
+
+# Sanity bounds. A cleared form field or a stale default (e.g. ROAS "<" 50) otherwise creates a rule
+# that pauses every ad set at the next 30-minute check, or one that can never fire.
+_MAX_THRESHOLD = {'cpl': 10000, 'cpa': 10000, 'ctr': 100, 'roas': 20}
+
+
+def _validate_rule_numbers(metric: str, threshold: int, min_spend: int, action: str) -> None:
+    if threshold is None or threshold <= 0:
+        raise HTTPException(400, "threshold must be greater than 0")
+    cap = _MAX_THRESHOLD.get(metric)
+    if cap is not None and threshold > cap:
+        raise HTTPException(400, f"threshold {threshold} is outside the sensible range for {metric} (max {cap})")
+    if min_spend is None or min_spend < 0:
+        raise HTTPException(400, "min_spend cannot be negative")
+    if action in ('pause', 'decrease_budget', 'decrease_bid') and min_spend < 1:
+        raise HTTPException(400, f"min_spend must be at least $1 for a '{action}' rule, or it fires on any spend")
+
+
 @router.post("/rules", status_code=201)
 def create_rule(
     body: RuleCreate,
@@ -261,6 +296,7 @@ def create_rule(
 ):
     _validate_metric_operator(body.metric, body.operator)
     _validate_action(body.action, body.budget_adjust_pct, body.scope)
+    _validate_rule_numbers(body.metric, body.threshold, body.min_spend, body.action)
     if body.scope == 'ad' and not body.fb_ad_id:
         raise HTTPException(400, "fb_ad_id is required for ad-scoped rules")
 
@@ -306,6 +342,7 @@ def create_rules_bulk(
     rather than silently creating rules for a partial list."""
     _validate_metric_operator(body.metric, body.operator)
     _validate_action(body.action, body.budget_adjust_pct, body.scope)
+    _validate_rule_numbers(body.metric, body.threshold, body.min_spend, body.action)
 
     if not body.adset_ids:
         raise HTTPException(400, "adset_ids must contain at least one ad set")
@@ -414,6 +451,12 @@ def update_rule(
         rule.threshold = body.threshold
     if body.min_spend is not None:
         rule.min_spend = body.min_spend
+    # Only re-validate numbers when one of the fields they depend on was touched, so toggling
+    # is_active on a legacy rule (e.g. min_spend 0) is never blocked by the new bounds.
+    # Re-arming (is_active -> True) is validated too, so one toggle can't re-enable a legacy rule that
+    # the bounds exist to prevent (e.g. ROAS < 50).
+    if body.is_active is True or any(f is not None for f in (body.threshold, body.min_spend, body.metric, body.action)):
+        _validate_rule_numbers(rule.metric, rule.threshold, rule.min_spend, body.action if body.action is not None else rule.action)
     # action/budget_adjust_pct are validated together — if either is being changed,
     # re-validate against the resulting combination, not just the new field alone
     # (e.g. patching budget_adjust_pct to null on a rule whose action is still
@@ -1078,9 +1121,21 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
                     # actually paused one ad, not the whole set (pre-push review, HIGH).
                     send_rule_action_alert(action='pause', adset_name=adset.name, fb_adset_id=adset.fb_adset_id, reason=reason, detail=detail)
                 except Exception as e:
-                    _log('error', str(e))
+                    # A rule whose target no longer exists (deleted/archived) can never succeed;
+                    # retrying every 30 minutes forever while the UI shows it as "armed" is worse
+                    # than disabling it loudly. Throttles/transient errors keep the rule active.
+                    if _is_object_missing_error(e) and _target_confirmed_gone(svc, rule_scope, adset.fb_adset_id):
+                        rule.is_active = False
+                        _log('error', f"Rule disabled — ad set is DELETED/ARCHIVED in Meta: {e}")
+                        errors.append({"adset": adset.name, "error": f"Rule disabled (ad set deleted/archived in Meta): {e}"})
+                        try:
+                            send_rule_action_alert(action='pause', adset_name=adset.name, fb_adset_id=adset.fb_adset_id, reason=reason, detail=f"RULE DISABLED — this ad set is deleted or archived in Meta, so the rule can no longer act: {e}")
+                        except Exception:
+                            logger.exception("Could not send rule-disabled alert")
+                    else:
+                        _log('error', str(e))
+                        errors.append({"adset": adset.name, "error": str(e)})
                     db.commit()
-                    errors.append({"adset": adset.name, "error": str(e)})
 
             elif rule.action == 'notify':
                 # Notify-only: no state change on the ad set or the rule itself, so

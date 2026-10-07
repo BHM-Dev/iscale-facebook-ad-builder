@@ -1257,16 +1257,40 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
 }
 
 // ── Add-rule modal ────────────────────────────────────────────────────────────
+// Per-metric defaults. Changing metric must reset threshold/operator/min spend — a stale default
+// (e.g. ROAS "<" 50) otherwise creates a rule that pauses every ad set at the next check.
+const RULE_DEFAULTS = {
+  cpl: { operator: 'greater_than', threshold: '50', min_spend: '20' },
+  cpa: { operator: 'greater_than', threshold: '50', min_spend: '20' },
+  ctr: { operator: 'less_than', threshold: '1', min_spend: '20' },
+  roas: { operator: 'less_than', threshold: '1', min_spend: '20' },
+};
+// Values above these are almost certainly a typo or a leftover default; the server enforces hard caps.
+const RULE_WARN_ABOVE = { cpl: 500, cpa: 500, ctr: 20, roas: 10 };
+
 function AddRuleModal({ adsets, onClose, onCreated }) {
   const { showSuccess, showError } = useToast();
   const [form, setForm] = useState({
-    adset_id: adsets[0]?.id || '',
+    adset_id: '',
     metric: 'cpl',
-    operator: 'greater_than',
-    threshold: 50,
-    min_spend: 20,
+    ...RULE_DEFAULTS.cpl,
   });
+  const [step, setStep] = useState('edit'); // 'edit' | 'confirm'
   const [saving, setSaving] = useState(false);
+
+  const selectedAdset = adsets.find(a => a.id === form.adset_id);
+  const threshold = Number(form.threshold);
+  const minSpend = Number(form.min_spend);
+  const validationError = (() => {
+    if (!form.adset_id) return 'Choose the ad set this rule applies to.';
+    if (form.threshold === '' || !Number.isFinite(threshold) || threshold <= 0) return 'Threshold must be greater than 0.';
+    if (!Number.isInteger(threshold)) return 'Threshold must be a whole number.';
+    if (form.min_spend === '' || !Number.isFinite(minSpend) || minSpend < 1) return 'Minimum spend must be at least $1, or the rule fires on any spend.';
+    if (threshold > RULE_WARN_ABOVE[form.metric]) return `${METRIC_LABELS[form.metric]} ${form.operator === 'greater_than' ? '>' : '<'} ${threshold} is far outside the normal range — check the number.`;
+    return null;
+  })();
+
+  const changeMetric = (metric) => setForm({ ...form, metric, ...RULE_DEFAULTS[metric] });
 
   const save = async () => {
     setSaving(true);
@@ -1274,72 +1298,85 @@ function AddRuleModal({ adsets, onClose, onCreated }) {
       const res = await authFetch(`${API_BASE}/auto-pause/rules`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, threshold, min_spend: minSpend }),
       });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
-      showSuccess('Auto-pause rule created');
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(budgetErrorMessage(e, 'Failed')); }
+      showSuccess(`Auto-pause rule created for "${selectedAdset?.name || 'ad set'}"`);
       onCreated();
       onClose();
-    } catch (e) { showError(e.message); }
+    } catch (e) { showError(e.message); setStep('edit'); }
     finally { setSaving(false); }
   };
 
+  const unit = METRIC_UNITS[form.metric];
+  const condition = `${METRIC_LABELS[form.metric]} ${form.operator === 'greater_than' ? '>' : '<'} ${form.metric === 'roas' ? '' : unit}${form.threshold}${form.metric === 'roas' ? 'x' : ''}`;
+
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md">
+      <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md" role="dialog" aria-modal="true">
         <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
           <PauseCircle size={20} className="text-red-500" /> New Auto-Pause Rule
         </h2>
 
-        <div className="space-y-4">
-          <Field label="Ad Set">
-            <select className="input-base" value={form.adset_id} onChange={e => setForm({...form, adset_id: e.target.value})}>
-              {adsets.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-          </Field>
+        {step === 'edit' ? (
+          <div className="space-y-4">
+            <Field label="Ad Set">
+              <select className="input-base" value={form.adset_id} onChange={e => setForm({...form, adset_id: e.target.value})}>
+                <option value="">Select an ad set…</option>
+                {adsets.map(a => <option key={a.id} value={a.id}>{a.campaign_name ? `${a.campaign_name} › ` : ''}{a.name}</option>)}
+              </select>
+            </Field>
 
-          <Field label="Metric">
-            <select className="input-base" value={form.metric} onChange={e => setForm({...form, metric: e.target.value})}>
-              <option value="cpl">Cost Per Lead (CPL)</option>
-              <option value="cpa">Cost Per Action (CPA)</option>
-              <option value="ctr">Click-Through Rate (CTR)</option>
-              <option value="roas">ROAS</option>
-            </select>
-          </Field>
+            <Field label="Metric">
+              <select className="input-base" value={form.metric} onChange={e => changeMetric(e.target.value)}>
+                <option value="cpl">Cost Per Lead (CPL)</option>
+                <option value="cpa">Cost Per Action (CPA)</option>
+                <option value="ctr">Click-Through Rate (CTR)</option>
+                <option value="roas">ROAS</option>
+              </select>
+            </Field>
 
-          <Field label="Condition">
-            <select className="input-base" value={form.operator} onChange={e => setForm({...form, operator: e.target.value})}>
-              <option value="greater_than">Greater than (&gt;)</option>
-              <option value="less_than">Less than (&lt;)</option>
-            </select>
-          </Field>
+            <Field label="Condition">
+              <select className="input-base" value={form.operator} onChange={e => setForm({...form, operator: e.target.value})}>
+                <option value="greater_than">Greater than (&gt;)</option>
+                <option value="less_than">Less than (&lt;)</option>
+              </select>
+            </Field>
 
-          <Field label={`Threshold (${METRIC_UNITS[form.metric]})`}>
-            <input
-              type="number" min="0" step={form.metric === 'roas' ? '0.1' : '1'} className="input-base"
-              value={form.threshold}
-              onChange={e => setForm({...form, threshold: Number(e.target.value)})}
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Pause when {METRIC_LABELS[form.metric]} {form.operator === 'greater_than' ? '>' : '<'} {form.metric === 'roas' ? '' : METRIC_UNITS[form.metric]}{form.threshold}{form.metric === 'roas' ? 'x' : ''}
-            </p>
-          </Field>
+            <Field label={`Threshold (${unit})`}>
+              <input
+                type="number" min="1" step="1" className="input-base"
+                value={form.threshold}
+                onChange={e => setForm({...form, threshold: e.target.value})}
+              />
+              <p className="text-xs text-gray-500 mt-1">Pause when {condition}</p>
+            </Field>
 
-          <Field label="Minimum Spend Before Rule Fires ($)">
-            <input
-              type="number" min="0" className="input-base"
-              value={form.min_spend}
-              onChange={e => setForm({...form, min_spend: Number(e.target.value)})}
-            />
-            <p className="text-xs text-gray-500 mt-1">Avoid false positives — wait until this much is spent first</p>
-          </Field>
-        </div>
+            <Field label="Minimum Spend Before Rule Fires ($)">
+              <input
+                type="number" min="1" className="input-base"
+                value={form.min_spend}
+                onChange={e => setForm({...form, min_spend: e.target.value})}
+              />
+              <p className="text-xs text-gray-500 mt-1">Avoid false positives — wait until this much is spent first</p>
+            </Field>
+
+            {validationError && <p role="alert" className="text-sm font-medium text-red-600">{validationError}</p>}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+            <p><strong>This will pause "{selectedAdset?.name}" in Meta</strong> whenever {condition}, once at least ${minSpend} has been spent.</p>
+            <p className="mt-2 text-xs">It is checked about every 30 minutes using the last 7 days of data. The rule turns itself off after it fires once.</p>
+          </div>
+        )}
 
         <div className="flex gap-3 mt-6">
-          <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
-          <button onClick={save} disabled={saving} className="flex-1 btn-primary">
-            {saving ? 'Saving...' : 'Create Rule'}
-          </button>
+          <button onClick={step === 'edit' ? onClose : () => setStep('edit')} className="flex-1 btn-secondary">{step === 'edit' ? 'Cancel' : 'Back'}</button>
+          {step === 'edit' ? (
+            <button onClick={() => setStep('confirm')} disabled={Boolean(validationError)} className="flex-1 btn-primary disabled:opacity-40">Review Rule</button>
+          ) : (
+            <button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? 'Saving...' : 'Create Rule'}</button>
+          )}
         </div>
       </div>
     </div>
