@@ -2328,17 +2328,23 @@ def get_vertical_browse_ads(
         cutoff = datetime.now(timezone.utc) - timedelta(days=30)
         query = query.filter(ScrapedAd.last_seen >= cutoff)
     selected_tags = [tag for tag in (creative_tags or "").split(",") if tag]
+    unknown_tags_selected = "unknown" in selected_tags
+    selected_tags = [tag for tag in selected_tags if tag != "unknown"]
     unknown_tags = set(selected_tags) - RESEARCH_CREATIVE_TAGS
     if unknown_tags:
         raise HTTPException(status_code=400, detail=f"Unknown creative tag(s): {', '.join(sorted(unknown_tags))}")
     if cta_type:
         if cta_type not in RESEARCH_CTA_TYPES:
             raise HTTPException(status_code=400, detail=f"Unknown cta_type: {cta_type}")
-        query = query.filter(ScrapedAd.cta_type == cta_type)
+        query = query.filter(
+            ScrapedAd.cta_type.is_(None) if cta_type == "unknown" else ScrapedAd.cta_type == cta_type
+        )
     if page_type:
         if page_type not in RESEARCH_PAGE_TYPES:
             raise HTTPException(status_code=400, detail=f"Unknown page_type: {page_type}")
-        query = query.filter(ScrapedAd.page_type == page_type)
+        query = query.filter(
+            ScrapedAd.page_type.is_(None) if page_type == "unknown" else ScrapedAd.page_type == page_type
+        )
     if new_within_days is not None:
         if not 1 <= new_within_days <= 90:
             raise HTTPException(status_code=400, detail="new_within_days must be between 1 and 90")
@@ -2356,7 +2362,11 @@ def get_vertical_browse_ads(
     current_ads = [
         ad for ad in query.all()
         if (not ad.brand_name or ad.brand_name.lower() not in blacklisted_names)
-        and (not selected_tags or any(tag in (ad.creative_tags or []) for tag in selected_tags))
+        and (
+            not selected_tags and not unknown_tags_selected
+            or (unknown_tags_selected and not (ad.creative_tags or []))
+            or any(tag in (ad.creative_tags or []) for tag in selected_tags)
+        )
         and _matches_research_vertical(ad, config_id)
         and (not has_visual or _has_retained_visual(ad))
     ]
