@@ -3338,22 +3338,25 @@ class FacebookService:
     def get_account_ad_statuses(self, ad_account_id=None) -> dict:
         """One paginated account-level read of ad delivery state: {fb_ad_id: {status, effective_status}}.
 
-        Uses the same effective_status filter (ACTIVE/PAUSED) the rest of this file has verified
-        against Meta. Ads whose effective status is something else (e.g. ADSET_PAUSED/CAMPAIGN_PAUSED,
-        archived) are simply absent — callers must treat "absent" as UNKNOWN, never as ACTIVE.
+        Deliberately UNFILTERED (no effective_status param). Verified live on RHO 2026-10-07: the
+        ACTIVE/PAUSED filter returned 454 of 1,302 ads — it drops every ad whose effective status is
+        derived from its parent (ADSET_PAUSED 423, CAMPAIGN_PAUSED 402, plus WITH_ISSUES 33), which is
+        exactly why half the ad rows showed "Status unknown". Unfiltered returns them all in ~2s;
+        archived ads come back with effective_status ARCHIVED, deleted ads are omitted. An ad absent
+        from the result must still be treated as UNKNOWN by callers, never as ACTIVE.
         """
         account = self._get_account(ad_account_id)
         try:
             ads = account.get_ads(
                 fields=['id', 'status', 'effective_status'],
-                params={'effective_status': ['ACTIVE', 'PAUSED'], 'limit': 500},
+                params={'limit': 500},
             )
+            return {
+                str(ad.get('id')): {'status': ad.get('status'), 'effective_status': ad.get('effective_status')}
+                for ad in ads if ad.get('id')
+            }
         except FacebookRequestError as e:
             raise self._meta_error(e, 'Ad status lookup failed') from e
-        return {
-            str(ad.get('id')): {'status': ad.get('status'), 'effective_status': ad.get('effective_status')}
-            for ad in ads if ad.get('id')
-        }
 
     def get_account_ads_with_creative(self, ad_account_id=None, include_empty=False):
         """Bulk-fetch all ACTIVE/PAUSED ads with their creative text for the copy library.

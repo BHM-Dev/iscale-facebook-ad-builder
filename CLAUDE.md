@@ -17,6 +17,8 @@ This repo is worked on by both **Claude Code** and **OpenAI Codex**. Use the rig
 | Simple file edits, new fields, wiring endpoints, UI tweaks | Either |
 | Boilerplate, adding a column, fixing a typo | Codex preferred |
 
+**Feature log (2026-10-07):** `docs/features/` has one file per app section (what it does, money safeguards, endpoints, verified-vs-not, open items, changelog) — start at `docs/features/README.md`. Update the section's file in the same change as the code, and mark claims *verified in production* / *unit-tested only* / *not verified*.
+
 **Sync rule:** Always `git pull origin develop` before starting a session in either tool. Always push when done. The CLAUDE.md and the repo are the source of truth — session history is not.
 
 **Codex limitations:** No MCP servers (can't DM Golden, can't read Slack/Loom, can't control browser). For anything requiring those, switch to Claude Code.

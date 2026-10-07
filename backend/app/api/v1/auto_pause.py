@@ -865,7 +865,14 @@ def get_ads_bulk(
                 if cached and (time.time() - cached[0]) < 60:
                     statuses = cached[1]
                 else:
-                    statuses = svc.get_account_ad_statuses(ad_account_id=ad_account_id)
+                    # Unfiltered pagination has no natural bound on huge accounts and ads-bulk runs on a
+                    # single worker, so cap it: a timeout degrades to "status unknown", never a hung page.
+                    from concurrent.futures import ThreadPoolExecutor
+                    _ex = ThreadPoolExecutor(max_workers=1)
+                    try:
+                        statuses = _ex.submit(svc.get_account_ad_statuses, ad_account_id=ad_account_id).result(timeout=25)
+                    finally:
+                        _ex.shutdown(wait=False)
                     _ad_status_cache[ad_account_id] = (time.time(), statuses)
             except Exception as exc:
                 logger.warning("ads-bulk: ad status lookup failed, rows left as unknown: %s", exc)

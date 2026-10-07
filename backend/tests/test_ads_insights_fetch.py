@@ -39,3 +39,19 @@ def test_retries_smaller_pages_when_meta_says_too_much_data():
     out = make_service(acct).get_account_ads_insights_bulk(ad_account_id='act_1', date_preset='last_7d')
     assert acct.calls == [500, 100]
     assert '1' in out
+
+
+def test_ad_statuses_are_read_unfiltered_so_derived_states_are_included():
+    class StatusAccount:
+        def __init__(self):
+            self.params = None
+        def get_ads(self, fields, params):
+            self.params = params
+            return [
+                {'id': '1', 'status': 'ACTIVE', 'effective_status': 'ADSET_PAUSED'},
+                {'id': '2', 'status': 'PAUSED', 'effective_status': 'PAUSED'},
+            ]
+    acct = StatusAccount()
+    out = make_service(acct).get_account_ad_statuses(ad_account_id='act_1')
+    assert 'effective_status' not in acct.params  # a filter silently drops ADSET_PAUSED/CAMPAIGN_PAUSED ads
+    assert out['1'] == {'status': 'ACTIVE', 'effective_status': 'ADSET_PAUSED'}

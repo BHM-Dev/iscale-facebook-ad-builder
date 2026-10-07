@@ -1319,6 +1319,12 @@ def update_ad_status(
     _assert_ad_allowed(current_user, fb_ad_id, db, service)
     try:
         service.update_ad_status(fb_ad_id, status)
+        # The ads-bulk status cache (60s) would otherwise show the pre-toggle status on a quick re-expand.
+        try:
+            from app.api.v1.auto_pause import _ad_status_cache
+            _ad_status_cache.clear()
+        except Exception:
+            logger.warning("could not clear ad status cache", exc_info=True)
         ad = db.query(FacebookAd).filter(FacebookAd.fb_ad_id == fb_ad_id).first()
         if ad:
             ad.status = status

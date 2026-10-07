@@ -1089,7 +1089,13 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
             const rt = rtAdsBulk?.[ad.ad_id];
             const currentStatus = normalizeStatus(adStatuses[ad.ad_id] ?? ad.status); // '' = unknown, never assumed ACTIVE
             const isPaused = currentStatus === 'PAUSED';
-            const adToggleable = currentStatus === 'ACTIVE' || currentStatus === 'PAUSED';
+            const adEffective = normalizeStatus(ad.effective_status);
+            // Configured status (ACTIVE/PAUSED) is what Pause/Resume writes. An ad that is configured ON but
+            // not delivering because its ad set / campaign is paused can still be paused or left alone;
+            // an ARCHIVED/DELETED ad can't be toggled at all.
+            const adGone = adEffective === 'ARCHIVED' || adEffective === 'DELETED';
+            const adToggleable = !adGone && (currentStatus === 'ACTIVE' || currentStatus === 'PAUSED');
+            const adParentPaused = currentStatus === 'ACTIVE' && (adEffective === 'ADSET_PAUSED' || adEffective === 'CAMPAIGN_PAUSED');
             const isPausing = pausingAds.has(ad.ad_id);
             const spendPct = maxSpend > 0 ? (ad.spend / maxSpend) * 100 : 0;
 
@@ -1107,7 +1113,7 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
               <tr
                 key={ad.ad_id}
                 className={`transition-colors ${
-                  isPaused ? 'opacity-50' :
+                  (isPaused || adParentPaused) ? 'opacity-50' :
                   isPoorPerformer ? 'bg-red-50/30 hover:bg-red-50/50' :
                   isTop ? 'bg-green-50/40 hover:bg-green-50/60' :
                   'hover:bg-gray-50/60'
@@ -1231,14 +1237,20 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
                           : 'text-gray-500 bg-gray-100 hover:bg-red-50 hover:text-red-600'
                       }`}
                       title={adToggleable
-                        ? (isPaused ? 'Resume this ad' : 'Pause this ad')
-                        : 'Status unavailable (the ad set or campaign may be paused, or Meta did not return it) — manage this ad in Ads Manager'}
+                        ? (isPaused
+                          ? 'Resume this ad'
+                          : adParentPaused
+                            ? `This ad is on, but its ${adEffective === 'ADSET_PAUSED' ? 'ad set' : 'campaign'} is paused so it is not delivering. Pause turns the ad itself off.`
+                            : 'Pause this ad')
+                        : adGone
+                          ? 'This ad is archived or deleted in Meta — manage it in Ads Manager'
+                          : 'Status unavailable (Meta did not return it) — manage this ad in Ads Manager'}
                     >
                       {isPausing
                         ? <RefreshCw size={11} className="animate-spin" />
                         : !adToggleable ? null : isPaused ? <PlayCircle size={11} /> : <PauseCircle size={11} />
                       }
-                      {adToggleable ? (isPaused ? 'Resume' : 'Pause') : 'Status unknown'}
+                      {adToggleable ? (isPaused ? 'Resume' : 'Pause') : (adGone ? 'Archived' : 'Status unknown')}
                     </button>
                   </div>
                 </td>
