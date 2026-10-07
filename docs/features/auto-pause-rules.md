@@ -16,7 +16,8 @@ Code: `frontend/src/pages/AutoPauseRules.jsx`, `backend/app/api/v1/auto_pause.py
 
 ## Verified vs not
 - **Unit-tested:** rule-number validation (incl. increase/duplicate/bid with min_spend 0).
-- **Not verified live:** claim/re-arm behavior, live-status skip, ceiling refusal, zero-lead breach — no throwaway rule was fired against Meta.
+- **Verified in production 2026-10-07** (script in the backend container, paused ad set, no Meta write): live status read returns `PAUSED`/`PAUSED` (so the increase skip would trigger); a +10000% adjust on the $50 ad set was refused at the $5,000 ceiling and the budget stayed $50; `_claim_rule` run from two sessions returned True then False, and the claimed row showed the "Claimed for firing — write not yet confirmed" reason. Temp rule deleted.
+- **Not verified live:** full `_run_check` path (re-arm on transient failure, zero-lead breach, failure alerts) — a check evaluates every active rule, so it wasn't run.
 - **Frontend audit findings not yet fixed** (handed to Codex): see `CODEX_BRIEF_auto-pause-ui.md` — first-ad-set default, no confirm on pause/bulk-create/enable/edit/"Run Check Now", `[object Object]` errors, empty field → 0, decimal steps, modal a11y.
 
 ## Open items
