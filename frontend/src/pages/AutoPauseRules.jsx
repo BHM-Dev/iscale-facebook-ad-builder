@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { PauseCircle, PlayCircle, Trash2, Plus, RefreshCw, AlertTriangle, CheckCircle, Zap, Target, Bell, TrendingUp, TrendingDown, Search, Pencil, Copy } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { authFetch } from '../lib/facebookApi';
+import { parseApiError, validateRuleNumbers, RULE_WARN_ABOVE } from '../lib/autoPauseRules';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -71,7 +72,7 @@ const currentBudgetCents = (adset) => {
 // ── Add-rule modal ─────────────────────────────────────────────────────────────
 function AddRuleModal({ adsets, ads, onClose, onCreated }) {
   const { showSuccess, showError } = useToast();
-  const [selectedIds, setSelectedIds] = useState(() => new Set(adsets[0] ? [adsets[0].id] : []));
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [search, setSearch] = useState('');
   const [form, setForm] = useState({
     scope: 'adset',
@@ -127,10 +128,8 @@ function AddRuleModal({ adsets, ads, onClose, onCreated }) {
   const validateBeforeContinue = () => {
     if (selectedIds.size === 0) { showError(`Select at least one ${form.scope === 'ad' ? 'ad' : 'ad set'}`); return false; }
     if (form.scope === 'ad' && selectedIds.size > 1) { showError('Select one ad for an ad-scoped rule'); return false; }
-    if (PERCENT_ACTIONS.has(form.action) && (!form.budget_adjust_pct || form.budget_adjust_pct <= 0)) {
-      showError('Enter an adjustment percentage greater than 0');
-      return false;
-    }
+    const numberError = validateRuleNumbers(form);
+    if (numberError) { showError(numberError); return false; }
     if (form.action === DUPLICATE_ACTION && !form.duplicate_name_suffix?.trim()) {
       showError('Enter a name suffix for the duplicated ad set');
       return false;
@@ -144,7 +143,7 @@ function AddRuleModal({ adsets, ads, onClose, onCreated }) {
   // not just a live count).
   const handlePrimaryAction = () => {
     if (!validateBeforeContinue()) return;
-    if (PERCENT_ACTIONS.has(form.action) || form.action === DUPLICATE_ACTION) {
+    if (PERCENT_ACTIONS.has(form.action) || form.action === DUPLICATE_ACTION || (form.action === 'pause' && selectedIds.size > 1)) {
       setStep('confirm');
     } else {
       save();
@@ -199,13 +198,7 @@ function AddRuleModal({ adsets, ads, onClose, onCreated }) {
         } catch {
           throw new Error('Couldn’t create the rule. The server returned an unreadable error; check your connection and retry.');
         }
-        const detail = Array.isArray(e.detail)
-          ? e.detail.map(item => {
-              const location = Array.isArray(item?.loc) ? ` (${item.loc.slice(1).join('.')})` : '';
-              return `${item?.msg || item?.detail || JSON.stringify(item)}${location}`;
-            }).join('; ')
-          : e.detail;
-        throw new Error(detail || 'Failed to create rule');
+        throw new Error(parseApiError(e, 'Failed to create rule'));
       }
       const data = await res.json();
       const createdCount = data.created ?? 1;
@@ -217,29 +210,36 @@ function AddRuleModal({ adsets, ads, onClose, onCreated }) {
   };
 
   const allFilteredSelected = filteredTargets.length > 0 && filteredTargets.every(a => selectedIds.has(a.id));
-  const selectedAdsets = adsets.filter(a => selectedIds.has(a.id));
+  const selectedTargets = targets.filter(a => selectedIds.has(a.id));
+  const selectedAdsets = selectedTargets;
 
   // ── Confirm step (budget/bid actions, and duplicate) — every matched ad set
   // previewed before anything is written. Replaces "a live count is the only
   // guardrail" with an actual line-by-line preview.
   if (step === 'confirm') {
     const isDuplicate = form.action === DUPLICATE_ACTION;
+    const isPause = form.action === 'pause';
     const isBid = form.action === 'increase_bid' || form.action === 'decrease_bid';
     const pct = (form.action === 'increase_budget' || form.action === 'increase_bid') ? form.budget_adjust_pct : -form.budget_adjust_pct;
     return (
       <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
         <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
           <h2 className="text-lg font-bold text-gray-900 mb-1 flex items-center gap-2">
-            <AlertTriangle size={20} className="text-amber-500" /> Confirm {isDuplicate ? 'duplicate' : isBid ? 'bid' : 'budget'} rule
+            <AlertTriangle size={20} className="text-amber-500" /> Confirm {isPause ? 'pause' : isDuplicate ? 'duplicate' : isBid ? 'bid' : 'budget'} rule
           </h2>
           <p className="text-sm text-gray-600 mb-4">
-            {isDuplicate
+            {isPause
+              ? `Review the ${selectedTargets.length} targets before creating these pause rules. They can stop live delivery when the rule fires.`
+              : isDuplicate
               ? 'Review every ad set this rule will apply to before creating it. Each row fires independently and creates a real new ad set (and, unless set to empty, new ads) on Meta — not a preview.'
               : 'Review every ad set this rule will apply to before creating it. Each row fires independently — this is real live Meta spend, not a preview.'}
           </p>
 
           <div className="border border-gray-200 rounded-lg divide-y divide-gray-50 max-h-64 overflow-y-auto mb-4">
             {(form.scope === 'ad' ? ads.filter(a => selectedIds.has(a.id)) : selectedAdsets).map(a => {
+              if (isPause) {
+                return <div key={a.id} className="px-3 py-2 text-sm"><div className="font-medium text-gray-900 truncate">{a.name}</div><div className="text-xs text-red-600">Will be paused when the threshold is breached.</div></div>;
+              }
               if (isDuplicate) {
                 return (
                   <div key={a.id} className="px-3 py-2 text-sm">
@@ -281,7 +281,9 @@ function AddRuleModal({ adsets, ads, onClose, onCreated }) {
           <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800 mb-4">
             This creates {selectedAdsets.length} independent rule{selectedAdsets.length !== 1 ? 's' : ''} — each can be
             edited or disabled on its own afterward.{' '}
-            {form.duplicate_repeat
+            {isPause
+              ? `This creates ${selectedTargets.length} independent pause rule${selectedTargets.length !== 1 ? 's' : ''}.`
+              : form.duplicate_repeat
               ? 'This rule repeats — it will keep firing on this ad set until you disable it or turn off repeat.'
               : "None of them run more than once; every rule disables itself the moment it fires, so it won't keep compounding this change every 30 minutes unattended."}
           </div>
@@ -289,7 +291,7 @@ function AddRuleModal({ adsets, ads, onClose, onCreated }) {
           <div className="flex gap-3">
             <button onClick={() => setStep('form')} className="flex-1 btn-secondary">Back</button>
             <button onClick={save} disabled={saving} className="flex-1 btn-primary">
-              {saving ? 'Creating...' : `Confirm & Create ${selectedAdsets.length > 1 ? `${selectedAdsets.length} Rules` : 'Rule'}`}
+              {saving ? 'Creating...' : `Confirm & Create ${selectedTargets.length > 1 ? `${selectedTargets.length} Rules` : 'Rule'}`}
             </button>
           </div>
         </div>
@@ -350,7 +352,7 @@ function AddRuleModal({ adsets, ads, onClose, onCreated }) {
                 Automated Rules builder ("Estimated match: N ad sets"): see it before you
                 commit, not after. */}
             <p className="text-xs mt-1.5 font-medium text-gray-600">
-              Applies to <span className="text-gray-900">{selectedIds.size}</span> {form.scope === 'ad' ? 'ad' : `ad set${selectedIds.size !== 1 ? 's' : ''}`}
+              Applies to <span className="text-gray-900">{selectedTargets.length}</span> {form.scope === 'ad' ? 'ad' : `ad set${selectedTargets.length !== 1 ? 's' : ''}`}
             </p>
           </Field>
 
@@ -383,13 +385,14 @@ function AddRuleModal({ adsets, ads, onClose, onCreated }) {
                 <input
                   type="number" min="1" max="100" className="input-base"
                   value={form.budget_adjust_pct}
-                  onChange={e => setForm({...form, budget_adjust_pct: Number(e.target.value)})}
+                  onChange={e => setForm({...form, budget_adjust_pct: e.target.value})}
                 />
                 <p className="text-xs text-gray-500 mt-1">
                   {form.action.startsWith('increase') ? 'Increases' : 'Decreases'} the ad set's
                   {form.action.includes('bid') ? ' bid amount' : " (or its CBO campaign's) current budget"} by this
                   percentage. Reads the live Meta value at fire time, not a cached one.
                 </p>
+                {Number(form.budget_adjust_pct) > 50 && <p className="mt-1 text-xs font-semibold text-amber-700">Large change — review this percentage carefully.</p>}
               </Field>
             </>
           )}
@@ -468,9 +471,9 @@ function AddRuleModal({ adsets, ads, onClose, onCreated }) {
 
           <Field label={`Threshold (${METRIC_UNITS[form.metric]})`}>
             <input
-              type="number" min="0" step={form.metric === 'roas' ? '0.1' : '1'} className="input-base"
+              type="number" min="0" step="1" className="input-base"
               value={form.threshold}
-              onChange={e => setForm({...form, threshold: Number(e.target.value)})}
+              onChange={e => setForm({...form, threshold: e.target.value})}
             />
             <p className="text-xs text-gray-500 mt-1">
               {ACTION_LABELS[form.action]} when {METRIC_LABELS[form.metric]} {form.operator === 'greater_than' ? '>' : '<'} {form.metric === 'roas' ? '' : METRIC_UNITS[form.metric]}{form.threshold}{form.metric === 'roas' ? 'x' : ''}
@@ -481,7 +484,7 @@ function AddRuleModal({ adsets, ads, onClose, onCreated }) {
             <input
               type="number" min="0" className="input-base"
               value={form.min_spend}
-              onChange={e => setForm({...form, min_spend: Number(e.target.value)})}
+              onChange={e => setForm({...form, min_spend: e.target.value})}
             />
             <p className="text-xs text-gray-500 mt-1">Avoid false positives — wait until this much is spent first</p>
           </Field>
@@ -499,10 +502,10 @@ function AddRuleModal({ adsets, ads, onClose, onCreated }) {
 
         <div className="flex gap-3 mt-6">
           <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
-          <button onClick={handlePrimaryAction} disabled={saving || adsets.length === 0} className="flex-1 btn-primary">
-            {saving ? 'Saving...' : (PERCENT_ACTIONS.has(form.action) || form.action === DUPLICATE_ACTION)
+          <button onClick={handlePrimaryAction} disabled={saving || targets.length === 0} className="flex-1 btn-primary">
+            {saving ? 'Saving...' : (PERCENT_ACTIONS.has(form.action) || form.action === DUPLICATE_ACTION || (form.action === 'pause' && selectedTargets.length > 1))
               ? 'Review & Continue'
-              : `Create Rule${selectedIds.size > 1 ? ` (${selectedIds.size})` : ''}`}
+            : `Create Rule${selectedTargets.length > 1 ? ` (${selectedTargets.length})` : ''}`}
           </button>
         </div>
       </div>
@@ -531,12 +534,15 @@ function EditRuleModal({ rule, onClose, onSaved }) {
     duplicate_repeat: rule.duplicate_repeat || false,
   });
   const [saving, setSaving] = useState(false);
+  const [step, setStep] = useState('edit');
+
+  const numberError = validateRuleNumbers(form);
+  const changedAction = form.action !== rule.action;
+  const changedPercent = Number(form.budget_adjust_pct) !== Number(rule.budget_adjust_pct || 0);
+  const requiresConfirm = changedAction || changedPercent || PERCENT_ACTIONS.has(form.action) || form.action === DUPLICATE_ACTION;
 
   const save = async () => {
-    if (PERCENT_ACTIONS.has(form.action) && (!form.budget_adjust_pct || form.budget_adjust_pct <= 0)) {
-      showError('Enter an adjustment percentage greater than 0');
-      return;
-    }
+    if (numberError) { showError(numberError); return; }
     if (form.action === DUPLICATE_ACTION && !form.duplicate_name_suffix?.trim()) {
       showError('Enter a name suffix for the duplicated ad set');
       return;
@@ -561,13 +567,31 @@ function EditRuleModal({ rule, onClose, onSaved }) {
           duplicate_repeat: isDuplicate ? form.duplicate_repeat : null,
         }),
       });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed to update rule'); }
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(parseApiError(e, 'Failed to update rule')); }
       showSuccess('Rule updated');
       onSaved();
       onClose();
     } catch (e) { showError(e.message); }
     finally { setSaving(false); }
   };
+
+  const handleSave = () => {
+    if (numberError) { showError(numberError); return; }
+    if (requiresConfirm && step === 'edit') { setStep('confirm'); return; }
+    save();
+  };
+
+  if (step === 'confirm') {
+    return <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50" role="presentation">
+      <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-lg" role="dialog" aria-modal="true" aria-labelledby="edit-rule-confirm-title">
+        <h2 id="edit-rule-confirm-title" className="text-lg font-bold text-gray-900 flex items-center gap-2"><AlertTriangle size={20} className="text-amber-500" /> Confirm rule changes</h2>
+        <p className="mt-3 text-sm text-gray-600">This changes an automated rule that may affect live Meta delivery or spend on the next check.</p>
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900"><strong>{rule.adset_name || rule.ad_name || rule.adset_id}</strong><br />{ACTION_LABELS[form.action] || form.action}{PERCENT_ACTIONS.has(form.action) ? ` by ${form.budget_adjust_pct}%` : ''} when {METRIC_LABELS[form.metric]} {form.operator === 'greater_than' ? '>' : '<'} {METRIC_UNITS[form.metric]}{form.threshold}.{Number(form.budget_adjust_pct) > 50 && ' Large change: review the percentage carefully.'}</div>
+        {rule.triggered_at && <p className="mt-3 text-xs font-semibold text-amber-700">This rule already fired and is disabled. Saving changes does not re-arm it.</p>}
+        <div className="mt-6 flex gap-3"><button type="button" onClick={() => setStep('edit')} className="flex-1 btn-secondary">Back</button><button type="button" autoFocus onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? 'Saving…' : 'Confirm & Save'}</button></div>
+      </div>
+    </div>;
+  }
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
@@ -602,7 +626,7 @@ function EditRuleModal({ rule, onClose, onSaved }) {
                 <input
                   type="number" min="1" max="100" className="input-base"
                   value={form.budget_adjust_pct}
-                  onChange={e => setForm({...form, budget_adjust_pct: Number(e.target.value)})}
+                  onChange={e => setForm({...form, budget_adjust_pct: e.target.value})}
                 />
               </Field>
             </>
@@ -679,9 +703,9 @@ function EditRuleModal({ rule, onClose, onSaved }) {
 
           <Field label={`Threshold (${METRIC_UNITS[form.metric]})`}>
             <input
-              type="number" min="0" step={form.metric === 'roas' ? '0.1' : '1'} className="input-base"
+              type="number" min="0" step="1" className="input-base"
               value={form.threshold}
-              onChange={e => setForm({...form, threshold: Number(e.target.value)})}
+              onChange={e => setForm({...form, threshold: e.target.value})}
             />
           </Field>
 
@@ -689,14 +713,14 @@ function EditRuleModal({ rule, onClose, onSaved }) {
             <input
               type="number" min="0" className="input-base"
               value={form.min_spend}
-              onChange={e => setForm({...form, min_spend: Number(e.target.value)})}
+              onChange={e => setForm({...form, min_spend: e.target.value})}
             />
           </Field>
         </div>
 
         <div className="flex gap-3 mt-6">
           <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
-          <button onClick={save} disabled={saving} className="flex-1 btn-primary">
+          <button onClick={handleSave} disabled={saving} className="flex-1 btn-primary">
             {saving ? 'Saving...' : 'Save Changes'}
           </button>
         </div>
@@ -794,6 +818,7 @@ export default function AutoPauseRules() {
   const [showAddRule, setShowAddRule] = useState(false);
   const [editingRule, setEditingRule] = useState(null);
   const [rulePendingDeletion, setRulePendingDeletion] = useState(null);
+  const [confirmAction, setConfirmAction] = useState(null);
   const [lastCheckResult, setLastCheckResult] = useState(null);
 
   const loadRules = useCallback(async () => {
@@ -856,15 +881,30 @@ export default function AutoPauseRules() {
   };
 
   const toggleRule = async (rule) => {
+    if (!rule.is_active) {
+      setConfirmAction({ type: 'enable', rule });
+      return;
+    }
     try {
       const res = await authFetch(`${API_BASE}/auto-pause/rules/${rule.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_active: !rule.is_active }),
       });
-      if (!res.ok) throw new Error('Failed to update rule');
+      if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(parseApiError(body, 'Failed to update rule')); }
       showSuccess(rule.is_active ? 'Rule disabled' : 'Rule enabled');
       loadRules();
+    } catch (e) { showError(e.message); }
+  };
+
+  const confirmEnable = async () => {
+    const rule = confirmAction?.rule;
+    setConfirmAction(null);
+    if (!rule) return;
+    try {
+      const res = await authFetch(`${API_BASE}/auto-pause/rules/${rule.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_active: true }) });
+      if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(parseApiError(body, 'Failed to enable rule')); }
+      showSuccess('Rule enabled'); loadRules();
     } catch (e) { showError(e.message); }
   };
 
@@ -875,7 +915,7 @@ export default function AutoPauseRules() {
       const adAccountId = localStorage.getItem('fb_ad_account_id') || '';
       const params = adAccountId ? `?ad_account_id=${adAccountId}` : '';
       const res = await authFetch(`${API_BASE}/auto-pause/check${params}`, { method: 'POST' });
-      if (!res.ok) throw new Error('Check failed');
+      if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(parseApiError(body, 'Check failed')); }
       const result = await res.json();
       setLastCheckResult(result);
       const firedCount = (result.paused?.length || 0) + (result.notified?.length || 0) + (result.budget_adjusted?.length || 0)
@@ -905,16 +945,17 @@ export default function AutoPauseRules() {
           <p className="text-gray-500 text-sm mt-1">
             Pause an ad set, notify Slack, adjust its budget/bid, or duplicate it when a metric breaches a threshold — checked automatically every 30 minutes.
           </p>
+          <p className="mt-2 text-xs font-medium text-slate-500">Meta account scope: <span className="text-slate-800">{localStorage.getItem('fb_ad_account_id') || 'server default account'}</span></p>
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={runCheck}
+            onClick={() => setConfirmAction({ type: 'check' })}
             disabled={checking}
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-50"
             style={{ backgroundColor: checking ? '#9CA3AF' : '#2D2463' }}
           >
             <RefreshCw size={14} className={checking ? 'animate-spin' : ''} />
-            {checking ? 'Checking...' : 'Run Check Now'}
+            {checking ? 'Checking...' : 'Run all rules now'}
           </button>
           <button
             onClick={() => setShowAddRule(true)}
@@ -1210,6 +1251,16 @@ export default function AutoPauseRules() {
               <button type="button" onClick={() => setRulePendingDeletion(null)} className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Cancel</button>
               <button type="button" onClick={() => { const ruleId = rulePendingDeletion.id; setRulePendingDeletion(null); deleteRule(ruleId); }} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">Delete rule</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {confirmAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" role="presentation">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" role="dialog" aria-modal="true" aria-labelledby="auto-pause-confirm-title">
+            <h2 id="auto-pause-confirm-title" className="text-lg font-bold text-gray-900 flex items-center gap-2"><AlertTriangle size={20} className="text-amber-500" />{confirmAction.type === 'check' ? 'Run all rules now?' : 'Enable this rule?'}</h2>
+            {confirmAction.type === 'check' ? <><p className="mt-3 text-sm text-gray-600">This evaluates every active rule and may perform real Meta changes.</p><p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">Scope: {localStorage.getItem('fb_ad_account_id') || 'server default account'}. Active rules: {rules.filter(r => r.is_active).length} ({Object.entries(rules.filter(r => r.is_active).reduce((acc, r) => ({ ...acc, [r.action]: (acc[r.action] || 0) + 1 }), {})).map(([action, count]) => `${count} ${ACTION_LABELS[action] || action}`).join(', ') || 'none'}).</p></> : <><p className="mt-3 text-sm text-gray-600">{ACTION_LABELS[confirmAction.rule.action] || confirmAction.rule.action} for <strong>{confirmAction.rule.adset_name || confirmAction.rule.ad_name || confirmAction.rule.adset_id}</strong> may fire on the next check, every 30 minutes.</p><p className="mt-2 text-xs text-gray-500">Scope: {localStorage.getItem('fb_ad_account_id') || 'server default account'}. Threshold: {METRIC_LABELS[confirmAction.rule.metric]} {confirmAction.rule.operator === 'greater_than' ? '>' : '<'} {METRIC_UNITS[confirmAction.rule.metric]}{confirmAction.rule.threshold}{PERCENT_ACTIONS.has(confirmAction.rule.action) ? ` · ${confirmAction.rule.budget_adjust_pct}% adjustment` : ''}</p></>}
+            <div className="mt-6 flex justify-end gap-3"><button type="button" autoFocus onClick={() => setConfirmAction(null)} className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700">Cancel</button><button type="button" onClick={confirmAction.type === 'check' ? () => { setConfirmAction(null); runCheck(); } : confirmEnable} className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white">{confirmAction.type === 'check' ? 'Run rules' : 'Enable rule'}</button></div>
           </div>
         </div>
       )}
