@@ -2588,6 +2588,18 @@ class FacebookService:
                 f"floor (current ${current_cents / 100:.2f}, {percent_change:+.0f}%) — refusing to send this to Meta."
             )
 
+        import os
+        try:
+            max_daily_cents = int(os.getenv("MAX_DAILY_BUDGET_CENTS", "500000"))
+        except ValueError:
+            max_daily_cents = 500000
+        if percent_change > 0 and field in (AdSet.Field.daily_budget, Campaign.Field.daily_budget):
+            if new_cents > max_daily_cents:
+                raise RuntimeError(
+                    f"Computed new daily budget ${new_cents / 100:,.2f} exceeds the ${max_daily_cents / 100:,.0f}/day "
+                    "safety ceiling — refusing to send this to Meta."
+                )
+
         try:
             target.api_update(params={field: new_cents})
             logger.info(

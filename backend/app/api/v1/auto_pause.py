@@ -196,6 +196,22 @@ def _get_metric_value(insights: dict, metric: str) -> Optional[float]:
     return None
 
 
+def _claim_rule(db, rule) -> bool:
+    """Atomically disable a one-shot rule BEFORE its Meta write.
+
+    Two overlapping runs (scheduler + manual /check) both read the rule as active; without a claim
+    each would apply the change, compounding a +20% into +44%. Only the run whose UPDATE flips
+    is_active wins. Callers re-arm on a transient failure.
+    """
+    n = db.query(AutoPauseRule).filter(
+        AutoPauseRule.id == rule.id, AutoPauseRule.is_active == True  # noqa: E712
+    ).update({AutoPauseRule.is_active: False,
+             AutoPauseRule.trigger_reason: 'Claimed for firing — write not yet confirmed (if this stays, check Meta and re-arm)'},
+            synchronize_session=False)
+    db.commit()
+    return bool(n)
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/rules")
@@ -285,7 +301,7 @@ def _validate_rule_numbers(metric: str, threshold: int, min_spend: int, action: 
         raise HTTPException(400, f"threshold {threshold} is outside the sensible range for {metric} (max {cap})")
     if min_spend is None or min_spend < 0:
         raise HTTPException(400, "min_spend cannot be negative")
-    if action in ('pause', 'decrease_budget', 'decrease_bid') and min_spend < 1:
+    if action != 'notify' and min_spend < 1:
         raise HTTPException(400, f"min_spend must be at least $1 for a '{action}' rule, or it fires on any spend")
 
 
@@ -1039,6 +1055,9 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
                 logger.error("Bulk ad insights fetch failed for account %s: %s", account or "(default)", e)
                 failed_ads_accounts.add(account)
 
+    for acct in sorted(failed_accounts | failed_ads_accounts, key=lambda a: a or ''):
+        errors.append({"error": f"Meta insights fetch failed for account {acct or '(default)'} — falling back to per-ad-set reads where possible; ad-scoped rules on it were skipped this cycle"})
+
     for rule in rules:
         adset = rule.adset
         if not adset or not adset.fb_adset_id:
@@ -1090,7 +1109,9 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
         spend = insights.get('spend', 0)
 
         # Don't fire until minimum spend threshold is met
-        if spend < rule.min_spend:
+        # Non-notify rules never act below $1 of spend, even legacy rows saved with min_spend 0.
+        effective_min = rule.min_spend if rule.action == 'notify' else max(rule.min_spend or 0, 1)
+        if spend < effective_min:
             skipped.append({
                 "rule_id": rule.id,
                 "adset": adset.name,
@@ -1100,6 +1121,15 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
             continue
 
         metric_value = _get_metric_value(insights, rule.metric)
+        if (
+            metric_value is None and rule.metric == 'cpl' and rule.operator == 'greater_than'
+            and insights.get('leads') == 0 and not insights.get('roas')
+            and spend >= 2 * rule.threshold
+        ):
+            # Spend at 2x the CPL threshold with zero leads (and no purchase/ROAS signal, so a
+            # converting purchase ad set isn't caught, and a margin over attribution lag) is the worst
+            # CPL case, not "no data". Treat the spend as the cost-per-lead floor so the rule can fire.
+            metric_value = float(spend)
         if metric_value is None:
             skipped.append({
                 "rule_id": rule.id,
@@ -1195,7 +1225,10 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
                     db.commit()
                     notified.append({"adset": adset.name, "ad": rule.ad_name or rule.fb_ad_id if rule_scope == 'ad' else None, "fb_adset_id": adset.fb_adset_id, "fb_ad_id": rule.fb_ad_id if rule_scope == 'ad' else None, "scope": rule_scope, "reason": reason})
                     logger.info("NOTIFY rule fired for adset %s — %s", adset.name, reason)
-                    send_rule_action_alert(action='notify', adset_name=adset.name, fb_adset_id=adset.fb_adset_id, reason=reason, detail=notify_detail)
+                    try:
+                        send_rule_action_alert(action='notify', adset_name=adset.name, fb_adset_id=adset.fb_adset_id, reason=reason, detail=notify_detail)
+                    except Exception:
+                        logger.exception("Notify alert failed for rule %s", rule.id)
                 else:
                     skipped.append({
                         "rule_id": rule.id, "adset": adset.name,
@@ -1210,11 +1243,29 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
                 # (Phase 2, AdBuilder-BulkRules-Feature-Brief.md §8.1).
                 is_bid = rule.action in ('increase_bid', 'decrease_bid')
                 percent_change = rule.budget_adjust_pct if rule.action in ('increase_budget', 'increase_bid') else -rule.budget_adjust_pct
+                if rule.action.startswith('increase_'):
+                    # Never raise spend on something that isn't delivering: the local status can be stale.
+                    try:
+                        live = svc.get_adset_status(adset.fb_adset_id)
+                        live_state = live.get('effective_status') or live.get('status')
+                    except Exception as e:
+                        skipped.append({"rule_id": rule.id, "adset": adset.name, "reason": f"live status unavailable, increase not applied: {e}"})
+                        db.commit()
+                        continue
+                    if live_state != 'ACTIVE':
+                        skipped.append({"rule_id": rule.id, "adset": adset.name, "reason": f"live status is {live_state}, increase not applied"})
+                        db.commit()
+                        continue
+                if not _claim_rule(db, rule):
+                    skipped.append({"rule_id": rule.id, "adset": adset.name, "reason": "already handled by another run"})
+                    continue
+                write_done = False
                 try:
                     if is_bid:
                         adjust_result = svc.adjust_adset_bid_by_percent(adset.fb_adset_id, percent_change)
                     else:
                         adjust_result = svc.adjust_adset_budget_by_percent(adset.fb_adset_id, percent_change)
+                    write_done = True
                     # Explicit about WHERE the money moved — never let a campaign-level
                     # (CBO) adjustment read identically to an ad-set-level one. This
                     # only fires when the ad set is the sole active one in its CBO
@@ -1252,10 +1303,17 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
                     # the specific refusal message and disable the rule instead of
                     # leaving it spinning; anything else (a real transient Meta error,
                     # rate limit, etc.) still retries as before.
-                    permanent = 'no bid_amount set' in str(e) or 'no budget field' in str(e)
+                    permanent = 'no bid_amount set' in str(e) or 'no budget field' in str(e) or 'safety ceiling' in str(e)
                     if permanent:
-                        rule.is_active = False
                         rule.trigger_reason = f"Disabled — not actionable: {e}"
+                        try:
+                            send_rule_action_alert(action=rule.action, adset_name=adset.name, fb_adset_id=adset.fb_adset_id, reason=reason, detail=f"RULE DISABLED — {e}")
+                        except Exception:
+                            logger.exception("Could not send rule-disabled alert")
+                    elif not write_done:
+                        rule.is_active = True   # claimed above; nothing was written, so re-arm for the next check
+                        rule.trigger_reason = None
+                    # write_done: the Meta change landed — stay disabled so it can't compound
                     _log('error', str(e))
                     db.commit()
                     errors.append({"adset": adset.name, "error": str(e)})
@@ -1281,6 +1339,9 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
                     })
                     db.commit()
                 else:
+                    if not rule.duplicate_repeat and not _claim_rule(db, rule):
+                        skipped.append({"rule_id": rule.id, "adset": adset.name, "reason": "already handled by another run"})
+                        continue
                     try:
                         dup_result = svc.duplicate_adset(
                             adset.fb_adset_id,
@@ -1324,9 +1385,20 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
                         logger.info("DUPLICATE adset %s — %s (%s)", adset.name, reason, detail)
                         send_rule_action_alert(action='duplicate', adset_name=adset.name, fb_adset_id=adset.fb_adset_id, reason=reason, detail=detail)
                     except Exception as e:
+                        # A failed duplicate may have left a partial copy on Meta; retrying every
+                        # 30 min would create another each time. One-shot rules stay disabled (claimed
+                        # above); repeat rules start their cooldown.
+                        if not rule.duplicate_repeat:
+                            rule.trigger_reason = f"Disabled — duplicate attempt failed, check Meta for a partial copy: {e}"
+                        else:
+                            rule.triggered_at = now
                         _log('error', str(e))
                         db.commit()
                         errors.append({"adset": adset.name, "error": str(e)})
+                        try:
+                            send_rule_action_alert(action='duplicate', adset_name=adset.name, fb_adset_id=adset.fb_adset_id, reason=reason, detail=f"DUPLICATE FAILED — {e}")
+                        except Exception:
+                            logger.exception("Could not send duplicate-failed alert")
 
             else:
                 # Defense in depth — VALID_ACTIONS/_validate_action should make this

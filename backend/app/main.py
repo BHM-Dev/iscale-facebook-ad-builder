@@ -128,6 +128,13 @@ async def startup_event():
                     print(f"🔀 Duplicate rule(s) fired: {result['duplicated']}")
             except Exception as exc:
                 print(f"⚠️  Auto-pause scheduler error: {exc}")
+                try:
+                    from app.services.slack_service import send_check_summary
+                    send_check_summary(rules_evaluated=0, paused_count=0,
+                                       errors=[{"error": f"Auto-pause check CRASHED, no rules were enforced this cycle: {exc}"}])
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception("Could not send scheduler-crash alert")
             finally:
                 db.close()
 

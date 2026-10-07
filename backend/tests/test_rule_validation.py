@@ -18,6 +18,9 @@ def test_sane_rules_pass():
     ('cpl', 50, 0, 'pause'),        # pause with no spend floor
     ('cpl', 50, -1, 'notify'),
     ('cpl', 20000, 20, 'pause'),
+    ('cpl', 10, 0, 'increase_budget'),   # scale up on a single lead
+    ('cpl', 10, 0, 'duplicate'),
+    ('cpl', 10, 0, 'increase_bid'),
 ])
 def test_dangerous_rules_rejected(metric, threshold, min_spend, action):
     with pytest.raises(HTTPException) as exc:
