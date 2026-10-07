@@ -30,3 +30,23 @@ Reuse: `components/BudgetConfirmModal.jsx` (Enter confirms / Esc cancels / autof
 ## Verify
 `cd frontend && npm run test:unit && npm run build && npx eslint src/pages/AutoPauseRules.jsx`. Add unit tests for any new pure helper (parse/validate). Browser-check on a dev session only: open the modals, keyboard through them, cancel everything.
 End with: "Edits done — ready for Claude Code 2-agent review + push."
+
+---
+
+## Round 2 — state as of `00109f4` + Claude's follow-up fixes (supersedes the list above)
+
+Done and reviewed: items 1 (no preselected ad set), 2 (bulk pause confirm), 3, 4, 5, 6, 7, 8 (create/edit/toggle/run-check), 9, 11. Claude then fixed: decimals now rejected client-side (server columns are integers), payload sends numbers via `ruleNumbersForPayload` (empty notify min_spend → 0), edit confirm also fires when metric/operator/threshold/min_spend change, pause/notify edits no longer always confirm. Tests added in `lib/autoPauseRules.test.js`.
+
+Still to do (frontend only, same constraints — commit locally, hand back):
+1. **Single pause rule confirm** (Joel P1): a pause rule on ONE ad set still creates with no confirm. Confirm always for pause; wire `RULE_WARN_ABOVE` (imported, unused) as an amber "implausible threshold" warning; if live data is already on the page, say how many selected targets already breach the rule.
+2. **Run-check confirm**: show the account NAME (not the raw `act_…` id / "server default account"); say it only runs rules early (the scheduler already runs every 30 min); list which ad sets/ads would act if cheap to derive.
+3. **Keyboard/a11y (item 12)**: Esc closes, Enter confirms, on Add/Edit/Delete/Enable/Run dialogs (pattern: `components/BudgetConfirmModal.jsx`); `role="dialog"`/`aria-modal`/`aria-labelledby` on the Add and Edit form modals; `aria-label` on icon-only buttons; `aria-pressed` on scope toggles; `htmlFor`/ids on labels; focus returns on close; Delete defaults focus to Cancel.
+4. **Item 13**: reset `ads` when the Add modal opens + a refresh; show a load-failed state with Retry instead of "No tracked ad sets… Sync them first" when `loadAdsets`/`loadAds` fail.
+5. **Item 14 copy**: "None of them run more than once" (~line 288) is wrong for Notify and repeat-Duplicate — condition on action; update "How it works" (omits bid, duplicate, ad scope). Remove the duplicated "creates N independent rules" line in the pause confirm.
+6. **Enable confirm**: if the rule already fired (`triggered_at`), say enabling does not re-arm it / how to re-arm; say whether it is currently breaching if known.
+7. **Delete/logs/loadRules errors** still generic — use `parseApiError`.
+8. Decrease budget/bid at 100% can zero a budget: hard-warn above ~90%.
+9. Low: format summary by metric (CTR %, ROAS x), fire-history `$` only for CPL/CPA, "Active Rules" count excludes disabled/fired, ROAS spinner `step` 0.1 is pointless while thresholds are integers — leave at 1 and say whole numbers only in the helper text.
+
+Verify: `cd frontend && npm run test:unit && npm run build && npx eslint src/pages/AutoPauseRules.jsx src/lib/autoPauseRules.js`.
+End with: "Edits done — ready for Claude Code 2-agent review + push."

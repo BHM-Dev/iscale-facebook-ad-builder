@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { PauseCircle, PlayCircle, Trash2, Plus, RefreshCw, AlertTriangle, CheckCircle, Zap, Target, Bell, TrendingUp, TrendingDown, Search, Pencil, Copy } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { authFetch } from '../lib/facebookApi';
-import { parseApiError, validateRuleNumbers, RULE_WARN_ABOVE } from '../lib/autoPauseRules';
+import { parseApiError, validateRuleNumbers, ruleNumbersForPayload, RULE_WARN_ABOVE } from '../lib/autoPauseRules';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -173,10 +173,8 @@ function AddRuleModal({ adsets, ads, onClose, onCreated }) {
           ...payload,
           metric: form.metric,
           operator: form.operator,
-          threshold: form.threshold,
-          min_spend: form.min_spend,
+          ...ruleNumbersForPayload(form, PERCENT_ACTIONS.has(form.action)),
           action: form.action,
-          budget_adjust_pct: PERCENT_ACTIONS.has(form.action) ? form.budget_adjust_pct : null,
           // These fields are non-nullable in RuleCreate because they have
           // defaults for Duplicate rules. Omitting them for every other action
           // lets Pydantic apply those defaults; sending null causes five
@@ -538,8 +536,11 @@ function EditRuleModal({ rule, onClose, onSaved }) {
 
   const numberError = validateRuleNumbers(form);
   const changedAction = form.action !== rule.action;
-  const changedPercent = Number(form.budget_adjust_pct) !== Number(rule.budget_adjust_pct || 0);
-  const requiresConfirm = changedAction || changedPercent || PERCENT_ACTIONS.has(form.action) || form.action === DUPLICATE_ACTION;
+  const changedPercent = PERCENT_ACTIONS.has(form.action) && Number(form.budget_adjust_pct) !== Number(rule.budget_adjust_pct || 0);
+  // Any change to the trigger condition on a live rule can mass-fire on the next check (e.g. CPL > 50 -> > 5).
+  const changedCondition = form.metric !== rule.metric || form.operator !== rule.operator
+    || Number(form.threshold) !== Number(rule.threshold) || Number(form.min_spend) !== Number(rule.min_spend);
+  const requiresConfirm = changedAction || changedPercent || changedCondition || PERCENT_ACTIONS.has(form.action) || form.action === DUPLICATE_ACTION;
 
   const save = async () => {
     if (numberError) { showError(numberError); return; }
@@ -556,10 +557,8 @@ function EditRuleModal({ rule, onClose, onSaved }) {
         body: JSON.stringify({
           metric: form.metric,
           operator: form.operator,
-          threshold: form.threshold,
-          min_spend: form.min_spend,
+          ...ruleNumbersForPayload(form, PERCENT_ACTIONS.has(form.action)),
           action: form.action,
-          budget_adjust_pct: PERCENT_ACTIONS.has(form.action) ? form.budget_adjust_pct : null,
           duplicate_all_ads: isDuplicate ? form.duplicate_all_ads : null,
           duplicate_name_suffix: isDuplicate ? form.duplicate_name_suffix : null,
           duplicate_append_number: isDuplicate ? form.duplicate_append_number : null,

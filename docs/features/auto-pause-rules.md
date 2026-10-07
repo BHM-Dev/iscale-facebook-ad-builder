@@ -18,7 +18,8 @@ Code: `frontend/src/pages/AutoPauseRules.jsx`, `backend/app/api/v1/auto_pause.py
 - **Unit-tested:** rule-number validation (incl. increase/duplicate/bid with min_spend 0).
 - **Verified in production 2026-10-07** (script in the backend container, paused ad set, no Meta write): live status read returns `PAUSED`/`PAUSED` (so the increase skip would trigger); a +10000% adjust on the $50 ad set was refused at the $5,000 ceiling and the budget stayed $50; `_claim_rule` run from two sessions returned True then False, and the claimed row showed the "Claimed for firing — write not yet confirmed" reason. Temp rule deleted.
 - **Not verified live:** full `_run_check` path (re-arm on transient failure, zero-lead breach, failure alerts) — a check evaluates every active rule, so it wasn't run.
-- **Frontend audit findings not yet fixed** (handed to Codex): see `CODEX_BRIEF_auto-pause-ui.md` — first-ad-set default, no confirm on pause/bulk-create/enable/edit/"Run Check Now", `[object Object]` errors, empty field → 0, decimal steps, modal a11y.
+- **UI (shipped 2026-10-07, unit-tested only, not browser-verified):** no preselected ad set; confirms on bulk pause, percent/duplicate rules, enable, edit (action/percent/condition changes) and "Run all rules now"; readable API errors; numbers validated as whole numbers and sent as integers.
+- **UI still open** (Codex round 2 in `CODEX_BRIEF_auto-pause-ui.md`): single pause rule has no confirm, run-check shows raw account id, Esc/Enter + dialog a11y, stale ads list / swallowed load errors, copy that says rules run once (wrong for notify/repeat duplicate).
 
 ## Open items
 - `last_7d` window: a same-day blowup is invisible until tomorrow, and a brand-new rule sees pre-existing spend. Needs an explicit window field (migration).
@@ -31,4 +32,5 @@ Code: `frontend/src/pages/AutoPauseRules.jsx`, `backend/app/api/v1/auto_pause.py
 - Unscoped users can create increase/duplicate rules; consider a permission.
 
 ## Changelog
+- 2026-10-07 UI hardening round 1 (Codex `00109f4` + Claude integer/payload and edit-confirm fixes).
 - 2026-10-07 enforcement hardening (claim-before-write, live-ACTIVE check, ceiling, zero-lead CPL, min_spend floor, failure alerts); frontend brief for Codex.
