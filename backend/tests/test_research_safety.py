@@ -139,7 +139,7 @@ def test_learnings_aggregation_skips_unknowns_and_derates_single_tests():
     src_a = {"hook_type": "question", "promise": "save", "angle_tag": "rate_shock"}
     src_b = {"hook_type": "question"}
     pairs = [
-        (src_a, {"spend": 100.0, "leads": 10, "profit": 50.0}),
+        (src_a, {"spend": 100.0, "leads": 10, "revenue": 150.0, "profit": 50.0}),
         (src_b, {"spend": 50.0, "leads": 5, "profit": None}),   # unknown profit stays unknown, not $0
         (src_a, {"spend": None, "leads": None, "profit": 999.0}),  # no readable spend -> not counted
         ({"hook_type": "story"}, {"spend": 10.0, "leads": 1, "profit": 9999.0}),  # single test must not top the table
@@ -147,9 +147,23 @@ def test_learnings_aggregation_skips_unknowns_and_derates_single_tests():
     rows = r._aggregate_learnings(pairs)
     question = next(x for x in rows if x["attribute"] == "hook type" and x["value"] == "question")
     assert question["tests"] == 2 and question["spend"] == 150.0 and question["leads"] == 15
-    assert question["cpl"] == 10.0 and question["profit"] == 50.0 and question["too_early"] is False
+    assert question["cpl"] == 10.0 and question["rpl"] is None and question["contribution"] is None
+    assert question["profit"] == 50.0 and question["too_early"] is False
     story = next(x for x in rows if x["value"] == "story")
     assert story["too_early"] is True
     assert rows[0]["value"] == "question"  # 2-test row ranks above the 1-test row despite lower profit
     only_unknown = r._aggregate_learnings([(src_b, {"spend": 5.0, "leads": 0, "profit": None})])
     assert only_unknown[0]["profit"] is None and only_unknown[0]["cpl"] is None
+
+
+def test_source_image_allowlist_blocks_private_and_unapproved_hosts(monkeypatch):
+    from app.services import ad_remix_service as service
+
+    monkeypatch.setattr(service.socket, "getaddrinfo", lambda *args, **kwargs: [(None, None, None, None, ("93.184.216.34", 443))])
+    assert service.validate_source_image_url("https://scontent-lga3-1.xx.fbcdn.net/image.jpg")
+    with pytest.raises(ValueError, match="approved"):
+        service.validate_source_image_url("https://example.com/image.jpg")
+
+    monkeypatch.setattr(service.socket, "getaddrinfo", lambda *args, **kwargs: [(None, None, None, None, ("127.0.0.1", 443))])
+    with pytest.raises(ValueError, match="private or reserved"):
+        service.validate_source_image_url("https://scontent-lga3-1.xx.fbcdn.net/image.jpg")

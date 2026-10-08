@@ -2946,6 +2946,8 @@ def get_research_test_backlog(db: Session = Depends(get_db), current_user: User 
         "hypothesis": item.hypothesis,
         "status": item.status,
         "notes": item.notes,
+        "verdict": item.verdict,
+        "verdict_reason": item.verdict_reason,
         "created_at": _serialize_research_datetime(item.created_at),
         # Surfaced so the list can show "Launch in progress" and disable the
         # build action — without this the UI only knew a launch had
@@ -3033,6 +3035,12 @@ def _compute_test_outcomes(items) -> dict:
             "roas": round(revenue / spend, 2) if revenue is not None and spend else None,
             "revenue": revenue,
             "profit": float(ad.profit) if ad.profit is not None else None,
+            # Revenue is RedTrack-attributed and can have a different window
+            # from Meta lifetime spend. Keep the comparison explicit and
+            # directional; never turn missing revenue into zero.
+            "rpl": round(revenue / leads, 2) if revenue is not None and leads else None,
+            "contribution": round(revenue - spend, 2) if revenue is not None and spend is not None else None,
+            "contribution_per_lead": round((revenue - spend) / leads, 2) if revenue is not None and spend is not None and leads else None,
             "last_synced_at": _serialize_research_datetime(ad.last_synced_at),
             "account_avg_cpl": None,  # needs an account-level read; deliberately not shown rather than guessed
             "age_days": age_days,
@@ -3040,6 +3048,16 @@ def _compute_test_outcomes(items) -> dict:
             # Age alone is not a result: require real spend before calling it ready.
             "result_ready": bool(spend and spend > 0 and (spend >= RESULT_READY_SPEND or (age_days is not None and age_days >= RESULT_READY_DAYS))),
         }
+        if result[item.id]["result_ready"] and result[item.id]["contribution"] is not None:
+            result[item.id]["economics_status"] = "win" if result[item.id]["contribution"] > 0 else "lose"
+            result[item.id]["economics_reason"] = "Revenue exceeds Meta spend" if result[item.id]["contribution"] > 0 else "Meta spend exceeds revenue"
+        else:
+            result[item.id]["economics_status"] = "inconclusive"
+            result[item.id]["economics_reason"] = "Waiting for readable spend and revenue"
+        result[item.id]["verdict"] = item.verdict
+        result[item.id]["verdict_reason"] = item.verdict_reason
+        result[item.id]["decision_status"] = item.verdict or result[item.id]["economics_status"]
+        result[item.id]["decision_source"] = "manual" if item.verdict else "economics"
     return result
 
 
@@ -3079,17 +3097,25 @@ def _aggregate_learnings(pairs) -> list[dict]:
                 continue
             bucket = grouped.setdefault((attribute, str(value)), {
                 "attribute": attribute, "value": str(value), "tests": 0, "spend": 0.0,
-                "leads": None, "profit": None,
+                "leads": None, "revenue": None, "revenue_known_tests": 0, "profit": None,
             })
             bucket["tests"] += 1
             bucket["spend"] += float(outcome["spend"])
             if outcome.get("leads") is not None:
                 bucket["leads"] = (bucket["leads"] or 0) + int(outcome["leads"])
+            if outcome.get("revenue") is not None:
+                bucket["revenue"] = (bucket["revenue"] or 0.0) + float(outcome["revenue"])
+                bucket["revenue_known_tests"] += 1
             if outcome.get("profit") is not None:
                 bucket["profit"] = (bucket["profit"] or 0.0) + float(outcome["profit"])
     rows = []
     for bucket in grouped.values():
         bucket["cpl"] = round(bucket["spend"] / bucket["leads"], 2) if bucket["leads"] else None
+        revenue_complete = bucket["revenue_known_tests"] == bucket["tests"]
+        bucket["revenue"] = round(bucket["revenue"], 2) if revenue_complete and bucket["revenue"] is not None else None
+        bucket["rpl"] = round(bucket["revenue"] / bucket["leads"], 2) if bucket["revenue"] is not None and bucket["leads"] else None
+        bucket["contribution"] = round(bucket["revenue"] - bucket["spend"], 2) if bucket["revenue"] is not None else None
+        bucket.pop("revenue_known_tests", None)
         bucket["too_early"] = bucket["tests"] < 2
         bucket["spend"] = round(bucket["spend"], 2)
         bucket["profit"] = round(bucket["profit"], 2) if bucket["profit"] is not None else None
@@ -3157,8 +3183,14 @@ def update_research_test_backlog_item(item_id: str, request: ResearchTestBacklog
         if request.status not in {"draft", "building", "launched", "learned", "archived"}: raise HTTPException(status_code=400, detail="Invalid research test status")
         item.status = request.status
     if request.notes is not None: item.notes = request.notes.strip() or None
+    if request.verdict is not None:
+        if request.verdict not in {"", "win", "lose", "inconclusive"}:
+            raise HTTPException(status_code=400, detail="Invalid research test verdict")
+        item.verdict = request.verdict or None
+    if request.verdict_reason is not None:
+        item.verdict_reason = request.verdict_reason.strip() or None
     db.commit(); db.refresh(item)
-    return {"id": item.id, "status": item.status, "notes": item.notes}
+    return {"id": item.id, "status": item.status, "notes": item.notes, "verdict": item.verdict, "verdict_reason": item.verdict_reason}
 
 
 @router.delete("/config-verticals/{config_id}/ads")

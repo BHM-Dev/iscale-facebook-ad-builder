@@ -893,6 +893,9 @@ export default function AdRemix() {
 
             setAdConcepts(successful);
             setAdConcept(successful[0]);
+            if (successful.some(concept => concept.blueprint_fallback)) {
+                showInfo('The source image could not be read, so this remix used a generic structure. The image is never placed in the generated ad.');
+            }
             setCurrentStep(7);
         } catch (error) {
             console.error('Reconstruction error:', error);

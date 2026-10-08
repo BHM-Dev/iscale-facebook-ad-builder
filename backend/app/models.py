@@ -719,6 +719,11 @@ class ResearchTestBacklogItem(Base):
     hypothesis = Column(Text, nullable=False)
     status = Column(String, nullable=False, default='draft', index=True)
     notes = Column(Text, nullable=True)
+    # Buyer judgment is deliberately separate from the automated economics
+    # read. Revenue can lag, and lead quality can make a mechanically positive
+    # ratio worth overruling.
+    verdict = Column(String, nullable=True)  # win, lose, inconclusive
+    verdict_reason = Column(Text, nullable=True)
     generated_ad_id = Column(String, ForeignKey('generated_ads.id', ondelete='SET NULL'), nullable=True)
     # Durable claim held while a direct Meta launch is preparing. This prevents
     # two browser sessions from turning one research decision into two ads.

@@ -78,6 +78,8 @@ class ResearchTestBacklogCreate(BaseModel):
 class ResearchTestBacklogUpdate(BaseModel):
     status: Optional[str] = Field(default=None, max_length=30)
     notes: Optional[str] = Field(default=None, max_length=4000)
+    verdict: Optional[str] = Field(default=None, max_length=20)
+    verdict_reason: Optional[str] = Field(default=None, max_length=2000)
 
 
 class ResearchBoardResponse(BaseModel):

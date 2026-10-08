@@ -5,7 +5,11 @@ import json
 import base64
 import requests
 import anthropic
+import ipaddress
+import socket
+from urllib.parse import urlparse
 from typing import Any
+from app.core.config import settings
 from app.schemas.ad_blueprint import AdBlueprint, AdConcept, BrandData
 from app.prompts.ad_remix_prompts import build_deconstruction_prompt, build_reconstruction_prompt
 from app.utils.json_utils import extract_json_from_response
@@ -22,6 +26,44 @@ _anthropic_client = anthropic.AsyncAnthropic(api_key=_ANTHROPIC_API_KEY) if _ANT
 _ALLOWED_MEDIA_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 
 _MODEL = "claude-sonnet-4-5-20250929"
+
+_SOURCE_IMAGE_HOST_SUFFIXES = ("fbcdn.net", "facebook.com", "fbsbx.com")
+
+
+def validate_source_image_url(raw_url: str) -> str:
+    """Allow only HTTPS media hosts we intentionally fetch for remix analysis.
+
+    The URL is client-supplied on the direct remix route, so host suffix checks
+    alone are not enough: resolve every address and reject private, loopback,
+    link-local, multicast, reserved, and unspecified targets before fetching.
+    """
+    parsed = urlparse((raw_url or "").strip())
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme.lower() != "https" or not host or parsed.username or parsed.password:
+        raise ValueError("Source image must be an HTTPS URL on an approved media host")
+    if parsed.port not in (None, 443):
+        raise ValueError("Source image host must use HTTPS on port 443")
+
+    approved_hosts = set()
+    for base_url in (settings.R2_PUBLIC_URL, settings.PUBLIC_API_URL):
+        configured_host = urlparse(base_url or "").hostname
+        if configured_host:
+            approved_hosts.add(configured_host.lower().rstrip("."))
+    allowed = host in approved_hosts or any(host == suffix or host.endswith("." + suffix) for suffix in _SOURCE_IMAGE_HOST_SUFFIXES)
+    if not allowed:
+        raise ValueError("Source image host is not approved")
+
+    try:
+        addresses = {entry[4][0] for entry in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)}
+    except socket.gaierror as exc:
+        raise ValueError("Source image host could not be resolved") from exc
+    if not addresses:
+        raise ValueError("Source image host could not be resolved")
+    for address in addresses:
+        ip = ipaddress.ip_address(address)
+        if any((ip.is_private, ip.is_loopback, ip.is_link_local, ip.is_multicast, ip.is_reserved, ip.is_unspecified)):
+            raise ValueError("Source image host resolves to a private or reserved address")
+    return parsed.geturl()
 
 
 async def deconstruct_template(template_image_url: str) -> AdBlueprint:
@@ -42,9 +84,20 @@ async def deconstruct_template(template_image_url: str) -> AdBlueprint:
         prompt = build_deconstruction_prompt(template_image_url)
 
         # Fetch the image and base64-encode it for the vision API
-        image_response = requests.get(template_image_url, timeout=30)
+        validate_source_image_url(template_image_url)
+        image_response = requests.get(template_image_url, timeout=(5, 10), stream=True)
         image_response.raise_for_status()
-        image_bytes = base64.b64encode(image_response.content).decode('utf-8')
+        content_length = image_response.headers.get("Content-Length")
+        if content_length and int(content_length) > 10 * 1024 * 1024:
+            raise ValueError("Source image is larger than 10 MB")
+        chunks = []
+        total = 0
+        for chunk in image_response.iter_content(chunk_size=1024 * 1024):
+            total += len(chunk)
+            if total > 10 * 1024 * 1024:
+                raise ValueError("Source image is larger than 10 MB")
+            chunks.append(chunk)
+        image_bytes = base64.b64encode(b"".join(chunks)).decode('utf-8')
         content_type = image_response.headers.get('Content-Type', 'image/jpeg').split(';')[0].strip()
 
         # Normalize common non-standard media type aliases

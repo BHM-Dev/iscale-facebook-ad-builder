@@ -47,6 +47,8 @@ class AdConcept(BaseModel):
     cta_button: str = Field(..., description="Call to action matching blueprint's style")
     image_generation_prompt: str = Field(..., description="Detailed prompt for Fal.ai/Midjourney to generate the visual")
     similarity_warning: Optional[str] = Field(default=None, description="Non-blocking warning when generated copy remains close to reference material")
+    blueprint_fallback: Optional[bool] = Field(default=None, description="Whether a generic blueprint was used instead of reading the source image")
+    blueprint_fallback_reason: Optional[str] = Field(default=None, description="Why the source image blueprint was not used")
 
 
 class DeconstructRequest(BaseModel):

@@ -124,6 +124,15 @@ export const getResearchLearnings = async () => {
     return unwrap(response, 'Error fetching research learnings');
 };
 
+export const updateResearchTestDecision = async (itemId, decision) => {
+    const response = await authFetch(`${API_URL}/test-backlog/${encodeURIComponent(itemId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(decision),
+    });
+    return unwrap(response, 'Error saving research test decision');
+};
+
 export const createResearchTestBacklogItem = async (item) => {
     const response = await authFetch(`${API_URL}/test-backlog`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item),

@@ -21,7 +21,7 @@ from app.schemas.ad_blueprint import (
     ReconstructRequest,
     ReconstructFromUrlRequest,
 )
-from app.services.ad_remix_service import deconstruct_template, reconstruct_ad
+from app.services.ad_remix_service import deconstruct_template, reconstruct_ad, validate_source_image_url
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -459,17 +459,24 @@ async def reconstruct_from_url(
         visual_style_guide="Clean, professional, trust-building — confident direct response style",
     )
 
+    blueprint_fallback = False
+    blueprint_fallback_reason = None
     try:
         if request.source_image_url:
             try:
+                validate_source_image_url(request.source_image_url)
                 # Deconstruct the live image to extract its structural blueprint.
                 # Meta CDN URLs expire — if the fetch fails, fall back gracefully.
                 blueprint = await deconstruct_template(request.source_image_url)
-            except Exception:
+            except Exception as exc:
                 blueprint = _generic_blueprint
+                blueprint_fallback = True
+                blueprint_fallback_reason = str(exc)[:240]
         else:
             # No image available (video ad or no creative URL stored).
             blueprint = _generic_blueprint
+            blueprint_fallback = True
+            blueprint_fallback_reason = "No source image was available"
 
         similarity_sources = _build_similarity_sources(request.research_inspiration, request.reference_copy_context)
         ad_concept = await _reconstruct_with_similarity_guard(
@@ -477,6 +484,8 @@ async def reconstruct_from_url(
             brand_data,
             similarity_sources,
         )
+        ad_concept.blueprint_fallback = blueprint_fallback
+        ad_concept.blueprint_fallback_reason = blueprint_fallback_reason
         return ad_concept
 
     except Exception as e:
