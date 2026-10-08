@@ -68,6 +68,9 @@ def requested_brand_matches_page(brand_name: str, page_name: str | None) -> bool
     return search_query_matches_page(brand_name, page_name)
 
 
+from app.core.redact import redact_secrets as _redact
+
+
 class BrandScraperService:
     """Service for scraping brand ads and downloading media to R2."""
 
@@ -156,7 +159,7 @@ class BrandScraperService:
 
         except Exception as e:
             brand_scrape.status = "failed"
-            brand_scrape.error_message = str(e)[:500]
+            brand_scrape.error_message = _redact(e)[:500]
             self.db.commit()
             raise
 
@@ -212,15 +215,20 @@ class BrandScraperService:
 
                 except httpx.HTTPStatusError as e:
                     body = e.response.text if e.response else ""
-                    print(f"Facebook API error {e.response.status_code}: {e}, response: {body[:500]}, falling back to Playwright")
+                    print(f"Facebook API error {e.response.status_code}: {_redact(e)}, response: {_redact(body[:500])}, falling back to Playwright")
                     return await self._playwright_scrape_ads(page_id, limit, is_search=False)
                 except Exception as e:
-                    print(f"API error: {e}, falling back to Playwright")
+                    print(f"API error: {_redact(e)}, falling back to Playwright")
                     return await self._playwright_scrape_ads(page_id, limit, is_search=False)
 
         return ads
 
     async def _playwright_scrape_ads(self, query: str, limit: int = 500, is_search: bool = True) -> List[dict]:
+        from app.services.scraper import CHROMIUM_SEMAPHORE
+        async with CHROMIUM_SEMAPHORE:
+            return await self._playwright_scrape_ads_unbounded(query, limit, is_search)
+
+    async def _playwright_scrape_ads_unbounded(self, query: str, limit: int = 500, is_search: bool = True) -> List[dict]:
         """Scrape ads using Playwright browser automation with response interception for media."""
         try:
             from playwright.async_api import async_playwright

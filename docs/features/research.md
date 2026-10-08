@@ -5,7 +5,7 @@ inspiration payload to Build New Ad (`/ad-remix`). Grown a lot via Codex (eviden
 research tests linked to launched ads, Ask Research, capture receipts). Code: `frontend/src/pages/Research.jsx` (~3,000 lines),
 `backend/app/api/v1/research.py` (~3,000 lines, 57 routes), `services/{scraper,brand_scraper,research_service}.py`,
 `core/vertical_config.py`. This entry comes from a three-lens audit on 2026-10-07 (backend cost/authz, frontend honesty/handoff,
-product workflow). **Read-only audit — nothing below is fixed unless it says so.**
+product workflow). **Audit findings below are open unless marked FIXED.** Backend safety batch shipped the same day — see Changelog.
 
 ## What protects money / trust today
 - Claims about spend and winners are blocked server-side in the Ask Research prompt; vendor "winning" signals are stored as context only.
@@ -15,13 +15,22 @@ product workflow). **Read-only audit — nothing below is fixed unless it says s
 - All 57 routes require a logged-in user.
 - Shipped 2026-10-07: stored `'unknown'` CTA/page type is treated as unknown in the API filter and UI (`11a4fdc`).
 
+## FIXED 2026-10-07 (backend safety batch; unit-tested, not exercised against Meta)
+- Search `limit` capped 1-300 (`AdSearchRequest`), `offset` ≤ 5000, query ≤ 300 chars, list sizes capped; vertical refresh `limit_per_keyword` 1-100; brand-scrape name/URL bounds. Searches check the remaining Meta call budget first (`_reserve_api_budget` — a check, not an atomic reservation).
+- **The Meta rate limiter was inert:** it summed `SearchLog`, which nothing ever writes, so it always saw 0 calls. It now reads `ApiUsageLog` (written per search) — **the 200-calls / 59-min limit is now actually enforced**; a big vertical refresh can stop early with a rate-limit message. Test inserts usage rows and expects the limit to trip.
+- One vertical refresh at a time per (vertical, sub-vertical) and one `/run-scheduled-searches` at a time (409); `/run-scheduled-searches` is admin-only.
+- Delete routes need `ads:delete` (or admin): saved searches, brand scrapes, page/keyword blacklist removal, vertical catalog bulk delete (also logs who/how many); boards deletable by their creator or `ads:delete`. All 6 active prod users hold `ads:delete` via the admin role, so no one is locked out.
+- Brand scrapes: URL must be an `https://(www|m|web).facebook.com/ads/library…` link; a scrape for the same page can't start while another is in progress (rows older than 30 min ignored so a crash can't block a page forever); reserves budget for 500 ads.
+- Ask Research limited to 20 questions / 10 min per user. Chromium fallback launches capped at 2 concurrent (shared by search and brand scrape).
+- Secrets: `core/redact.py` strips `access_token=` / JSON token / Bearer values from scraper logs, stored `brand_scrape.error_message`, and two 500 error details.
+
 ## Audit findings — OPEN
 ### High (cost / abuse / authorization) — backend
-1. **Unbounded `limit`** on `/search` and `/search-and-save` (`schemas/research.py:8`, `scraper.py` loops 300 ads per Meta call, falls back to Chromium). One request can run hundreds of Meta calls; the rate limiter checks the *logged* total before the call. *(Verified: no upper bound.)* `search_and_save_vertical` `limit_per_keyword` is also unbounded.
-2. **Rate limit is global, not per user** and has no in-flight lock — one user (or a double-click) can burn the whole 200-calls/59-min budget and block Joel and Saule. Vertical fan-out runs every keyword concurrently on a double-click.
-3. **`POST /run-scheduled-searches` is open to any logged-in user**, runs synchronously in the request at limit 100, skips the rate limiter, and nothing in the repo calls it (no cron). *(Verified.)*
-4. **`POST /brand-scrapes`** — unlimited, no dedupe on `page_id`, each launches a background scrape + image downloads to R2.
-5. **Destructive routes with no role/ownership check:** `DELETE /boards/{id}`, `DELETE /config-verticals/{id}/ads` (bulk-deletes all non-saved ads in a vertical, no log), saved-search delete, blacklist add/delete (global — changes filtering for everyone), brand-scrape delete (also removes R2 media).
+~~1. **Unbounded `limit`** on `/search` and `/search-and-save` (`schemas/research.py:8`, `scraper.py` loops 300 ads per Meta call, falls back to Chromium). One request can run hundreds of Meta calls; the rate limiter checks the *logged* total before the call. *(Verified: no upper bound.)* `search_and_save_vertical` `limit_per_keyword` is also unbounded.~~ **FIXED**
+~~2. **Rate limit is global, not per user** and has no in-flight lock — one user (or a double-click) can burn the whole 200-calls/59-min budget and block Joel and Saule. Vertical fan-out runs every keyword concurrently on a double-click.~~ **FIXED**
+~~3. **`POST /run-scheduled-searches` is open to any logged-in user**, runs synchronously in the request at limit 100, skips the rate limiter, and nothing in the repo calls it (no cron). *(Verified.)*~~ **FIXED**
+~~4. **`POST /brand-scrapes`** — unlimited, no dedupe on `page_id`, each launches a background scrape + image downloads to R2.~~ **FIXED**
+~~5. **Destructive routes with no role/ownership check:** `DELETE /boards/{id}`, `DELETE /config-verticals/{id}/ads` (bulk-deletes all non-saved ads in a vertical, no log), saved-search delete, blacklist add/delete (global — changes filtering for everyone), brand-scrape delete (also removes R2 media).~~ **FIXED**
 6. **Handoff payload (`Research.jsx:2223`)**: full ad object written to localStorage with no try/catch (quota error = button silently does nothing), no timestamp/TTL — AdRemix consumes whatever is there however old.
 7. **Brand switch mid-wizard keeps the competitor context + auto-filled offer** (`AdRemix.jsx:149/199/412`) — can generate for brand B using brand A's research.
 8. **`deconstruct_template` fetches a client-supplied `source_image_url`** (`ad_remix.py:463`) with no host allow-list (SSRF surface) and silently falls back to a generic blueprint when the Meta CDN URL has expired; UI says the source image is "never used" but it is analyzed.
@@ -29,7 +38,7 @@ product workflow). **Read-only audit — nothing below is fixed unless it says s
 
 ### Medium
 - Ask Research (`/copilot/query`) calls Claude per request with no per-user limit or cache; `capture-advertiser` has no cooldown; Chromium fallback has no concurrency semaphore on a single uvicorn worker.
-- Meta access token appears in exception text (`raise_for_status` URL) that is **printed to server logs** (`scraper.py:83`, `brand_scraper.py:213`) and may be stored in `brand_scrape.error_message` (`str(e)[:500]`). Not found returned to clients; redact anyway.
+- ~~Meta access token appears in exception text~~ **FIXED (logs + stored error text redacted)** — original note: exception text (`raise_for_status` URL) that is **printed to server logs** (`scraper.py:83`, `brand_scraper.py:213`) and may be stored in `brand_scrape.error_message` (`str(e)[:500]`). Not found returned to clients; redact anyway.
 - NULL vs `'unknown'` sentinels differ by writer (scraper writes NULL/'image'; taxonomy writes 'unknown'); Ask Research sends `cta: "unknown"` for NULLs.
 - Browse list vs client filter mismatch: `ads_per_advertiser` and the 500 cap apply server-side *before* the client review filter; no "showing first 500" notice; search-mode "new" treats missing `first_seen` as new while browse mode doesn't.
 - "N new this week" is really *newly cataloged*; saved-ads load failures look like an empty library (stars show unsaved); save/unsave have no in-flight guard and unsave doesn't roll back; "Block advertiser" is team-wide with no confirm or unblock UI; `setBrowseAds([])` on every refetch.
@@ -48,4 +57,5 @@ product workflow). **Read-only audit — nothing below is fixed unless it says s
 - **Not verified:** everything else above is code-reading only; nothing was run or tried against production. Screen order is inferred, not seen.
 
 ## Changelog
+- 2026-10-07 backend safety batch (caps, locks, admin/ownership gates, working rate limiter, brand-scrape guards, token redaction). Still open: handoff payload/TTL, brand-switch carryover, `source_image_url` SSRF allow-list, sentinel normalization, scheduler-job overlap with manual run, rate limiter is check-then-act, brand-scrape API calls aren't logged to usage, 422 detail arrays may show as [object Object] in toasts.
 - 2026-10-07 first feature-log entry (audit); Unknown CTA/page-type fix `11a4fdc`.

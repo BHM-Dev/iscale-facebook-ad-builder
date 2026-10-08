@@ -12,10 +12,18 @@ Note: The API has limitations:
 
 import httpx
 import os
+import re
 from typing import List, Optional
 from app.schemas.research import ScrapedAdCreate
 from datetime import datetime
 from sqlalchemy.orm import Session
+
+
+from app.core.redact import redact_secrets as _redact
+
+import asyncio
+
+CHROMIUM_SEMAPHORE = asyncio.Semaphore(2)  # shared with brand_scraper
 
 
 class FacebookAdsLibraryAPI:
@@ -80,7 +88,7 @@ class FacebookAdsLibraryAPI:
 
                 return ads
             except Exception as e:
-                print(f"[scraper] API search failed: {type(e).__name__}: {e}, falling back to scraper")
+                print(f"[scraper] API search failed: {type(e).__name__}: {_redact(e)}, falling back to scraper")
 
         # Fallback to scraper
         return await self._fallback_search(query, limit, country, offset, exclude_ids or [], negative_keywords or [])
@@ -294,6 +302,11 @@ class FacebookAdsLibraryAPI:
         )
 
     async def _fallback_search(self, query: str, limit: int, country: str = "US", offset: int = 0, exclude_ids: List[str] = None, negative_keywords: List[str] = None) -> List[ScrapedAdCreate]:
+        # Chromium is heavy and the app runs a single uvicorn worker: cap concurrent launches globally.
+        async with CHROMIUM_SEMAPHORE:
+            return await self._fallback_search_unbounded(query, limit, country, offset, exclude_ids, negative_keywords)
+
+    async def _fallback_search_unbounded(self, query: str, limit: int, country: str = "US", offset: int = 0, exclude_ids: List[str] = None, negative_keywords: List[str] = None) -> List[ScrapedAdCreate]:
         """
         Scrape Facebook Ads Library using Playwright.
         Extracts ad text data plus the first likely creative image URL from DOM.

@@ -3,13 +3,14 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 class AdSearchRequest(BaseModel):
-    query: str
+    query: str = Field(..., max_length=300)
     platform: str = "facebook"
-    limit: int = 10
-    country: str = "US"
-    offset: int = 0  # Pagination: controls scroll depth
-    exclude_ids: List[str] = []  # IDs to skip (already fetched)
-    negative_keywords: List[str] = []  # Keywords to exclude from results
+    # Each 300 ads is one Meta API call; an unbounded limit let a single request fan out into hundreds.
+    limit: int = Field(10, ge=1, le=300)
+    country: str = Field("US", max_length=8)
+    offset: int = Field(0, ge=0, le=5000)  # Pagination: controls scroll depth
+    exclude_ids: List[str] = Field(default_factory=list, max_length=2000)  # IDs to skip (already fetched)
+    negative_keywords: List[str] = Field(default_factory=list, max_length=100)  # Keywords to exclude from results
     vertical_id: Optional[str] = None  # Vertical category ID
     search_type: str = "one_time"  # one_time, scheduled_daily, scheduled_weekly
     schedule_config: Optional[Dict[str, Any]] = None  # Cron schedule configuration
@@ -129,8 +130,8 @@ class SavedSearchResponse(SavedSearchBase):
 
 # Brand Scrapes schemas
 class BrandScrapeCreate(BaseModel):
-    brand_name: str  # User-defined name, also R2 folder name
-    page_url: str  # Facebook Ads Library URL with view_all_page_id
+    brand_name: str = Field(..., min_length=1, max_length=120)  # User-defined name, also R2 folder name
+    page_url: str = Field(..., max_length=2000)  # Facebook Ads Library URL with view_all_page_id
 
 
 class BrandScrapedAdResponse(BaseModel):

@@ -75,6 +75,67 @@ COPILOT_UNSUPPORTED_PERFORMANCE_RE = re.compile(
 )
 
 
+# ── Safety helpers (2026-10-07 audit) ─────────────────────────────────────────
+import math
+import threading
+import time
+from collections import defaultdict, deque
+
+from app.core.redact import redact_secrets  # noqa: E402
+
+
+def _require_delete_access(user: User) -> None:
+    """Destructive Research routes: admins / users with ads:delete only (rows have no owner column)."""
+    if not (getattr(user, "is_superuser", False) or user.has_permission("ads:delete")):
+        raise HTTPException(status_code=403, detail="You need delete permission (ads:delete) to do this.")
+
+
+def _reserve_api_budget(db: Session, limit: int) -> None:
+    """Refuse up front when the remaining Meta call budget can't cover this request (1 call per 300 ads).
+
+    A check, not a reservation: usage is recorded when the scrape finishes, so concurrent requests can all pass.
+    """
+    allowed, remaining, reset_seconds = rate_limiter.check_limit(db)
+    needed = max(1, math.ceil(limit / 300))
+    if not allowed or remaining < needed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit: {remaining} Meta call(s) left this window, this request needs {needed}. Try again in {reset_seconds} seconds.",
+        )
+
+
+_IN_FLIGHT: set[str] = set()
+_IN_FLIGHT_LOCK = threading.Lock()
+
+
+def _claim_in_flight(key: str) -> bool:
+    with _IN_FLIGHT_LOCK:
+        if key in _IN_FLIGHT:
+            return False
+        _IN_FLIGHT.add(key)
+        return True
+
+
+def _release_in_flight(key: str) -> None:
+    with _IN_FLIGHT_LOCK:
+        _IN_FLIGHT.discard(key)
+
+
+_COPILOT_CALLS: dict[str, deque] = defaultdict(deque)
+COPILOT_MAX_CALLS = 20
+COPILOT_WINDOW_SECONDS = 600
+
+
+def _copilot_rate_limit(user_id: str) -> None:
+    now = time.monotonic()
+    calls = _COPILOT_CALLS[user_id]
+    while calls and now - calls[0] > COPILOT_WINDOW_SECONDS:
+        calls.popleft()
+    if len(calls) >= COPILOT_MAX_CALLS:
+        raise HTTPException(status_code=429, detail="Too many Ask Research questions — try again in a few minutes.")
+    calls.append(now)
+
+
 def _normalize_external_url(value: str | None) -> str:
     """Return a browser-safe HTTP(S) URL, preserving invalid values as empty."""
     candidate = (value or "").strip()
@@ -691,13 +752,8 @@ def _directional_volume_score(rank_position: int | None, is_multiple_versions: b
 @router.post("/search", response_model=List[ScrapedAdSearchResult])
 async def search_ads(request: AdSearchRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Search ads without saving"""
-    # Check rate limit (now uses database)
-    allowed, remaining, reset_seconds = rate_limiter.check_limit(db)
-    if not allowed:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Rate limit exceeded. Try again in {reset_seconds} seconds."
-        )
+    # Reserve the Meta call budget this request can consume (limit is capped at 300 per call by the schema)
+    _reserve_api_budget(db, request.limit)
 
     service = ResearchService(db)
     return await service.search_ads_async(request)
@@ -705,13 +761,8 @@ async def search_ads(request: AdSearchRequest, db: Session = Depends(get_db), cu
 @router.post("/search-and-save")
 async def search_and_save(request: AdSearchRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Execute search and save as SavedSearch with all ads"""
-    # Check rate limit (now uses database)
-    allowed, remaining, reset_seconds = rate_limiter.check_limit(db)
-    if not allowed:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Rate limit exceeded. Try again in {reset_seconds} seconds."
-        )
+    # Reserve the Meta call budget this request can consume (limit is capped at 300 per call by the schema)
+    _reserve_api_budget(db, request.limit)
 
     service = ResearchService(db)
     saved_search, ads = await service.search_and_save(request)
@@ -743,6 +794,7 @@ def get_saved_search(search_id: str, db: Session = Depends(get_db), current_user
 @router.delete("/saved-searches/{search_id}")
 def delete_saved_search(search_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Delete saved search and its ads"""
+    _require_delete_access(current_user)
     service = ResearchService(db)
     if service.delete_saved_search(search_id):
         return {"message": "Search deleted"}
@@ -794,6 +846,10 @@ def add_to_blacklist(page_name: str, reason: str = None, db: Session = Depends(g
     """Add page to blacklist"""
     from app.models import PageBlacklist
 
+    page_name = (page_name or "").strip()
+    if not page_name or len(page_name) > 200 or (reason and len(reason) > 500):
+        raise HTTPException(status_code=400, detail="page_name must be 1-200 characters and reason at most 500.")
+
     # Check if already blacklisted
     existing = db.query(PageBlacklist).filter(PageBlacklist.page_name == page_name).first()
     if existing:
@@ -815,6 +871,8 @@ def add_to_blacklist(page_name: str, reason: str = None, db: Session = Depends(g
 def remove_from_blacklist(blacklist_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Remove page from blacklist"""
     from app.models import PageBlacklist
+
+    _require_delete_access(current_user)  # the blacklist is workspace-wide
 
     entry = db.query(PageBlacklist).filter(PageBlacklist.id == blacklist_id).first()
     if not entry:
@@ -844,6 +902,10 @@ def add_to_keyword_blacklist(keyword: str, reason: str = None, db: Session = Dep
     """Add keyword to blacklist"""
     from app.models import KeywordBlacklist
 
+    keyword = (keyword or "").strip()
+    if not keyword or len(keyword) > 120 or (reason and len(reason) > 500):
+        raise HTTPException(status_code=400, detail="keyword must be 1-120 characters and reason at most 500.")
+
     # Check if already blacklisted
     existing = db.query(KeywordBlacklist).filter(KeywordBlacklist.keyword == keyword.lower()).first()
     if existing:
@@ -865,6 +927,8 @@ def add_to_keyword_blacklist(keyword: str, reason: str = None, db: Session = Dep
 def remove_from_keyword_blacklist(blacklist_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Remove keyword from blacklist"""
     from app.models import KeywordBlacklist
+
+    _require_delete_access(current_user)  # the blacklist is workspace-wide
 
     entry = db.query(KeywordBlacklist).filter(KeywordBlacklist.id == blacklist_id).first()
     if not entry:
@@ -948,11 +1012,18 @@ def get_verticals(db: Session = Depends(get_db), current_user: User = Depends(ge
 
 @router.post("/run-scheduled-searches")
 async def run_scheduled_searches(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
-    """Manually trigger scheduled searches (called by cron job)"""
+    """Manually trigger scheduled searches (admin only: it runs every due saved search, uncapped by the UI)."""
+    if not getattr(current_user, "is_superuser", False):
+        raise HTTPException(status_code=403, detail="Only admins can run scheduled searches.")
+    if not _claim_in_flight("run-scheduled-searches"):
+        raise HTTPException(status_code=409, detail="Scheduled searches are already running.")
     from app.services.scheduler_service import SchedulerService
 
-    scheduler = SchedulerService(db)
-    await scheduler.run_scheduled_searches()
+    try:
+        scheduler = SchedulerService(db)
+        await scheduler.run_scheduled_searches()
+    finally:
+        _release_in_flight("run-scheduled-searches")
 
     return {"message": "Scheduled searches completed"}
 
@@ -1035,7 +1106,7 @@ def get_vertical_aggregated_ads(vertical_id: str, db: Session = Depends(get_db),
         import traceback
         print(f"Error in get_vertical_aggregated_ads: {str(e)}")
         print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error fetching aggregated ads: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching aggregated ads: {redact_secrets(e)}")
 
 @router.get("/verticals/{vertical_id}/pages/{page_id}/ads")
 def get_vertical_page_ads(vertical_id: str, page_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
@@ -1093,7 +1164,7 @@ def get_vertical_page_ads(vertical_id: str, page_id: str, db: Session = Depends(
         import traceback
         print(f"Error in get_vertical_page_ads: {str(e)}")
         print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error fetching page ads: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching page ads: {redact_secrets(e)}")
 
 
 # ============= Brand Scrape Endpoints =============
@@ -1118,6 +1189,22 @@ async def create_brand_scrape(
             status_code=400,
             detail="Invalid URL. Must be a Facebook Ads Library URL with view_all_page_id or q= parameter."
         )
+    _u = urlparse(request.page_url)
+    if (
+        _u.scheme not in {"http", "https"}
+        or (_u.hostname or "").lower() not in {"facebook.com", "www.facebook.com", "m.facebook.com", "web.facebook.com"}
+        or not _u.path.lower().startswith("/ads/library")
+    ):
+        raise HTTPException(status_code=400, detail="URL must be a facebook.com/ads/library link.")
+    # Ignore rows older than 30 min: a crash/deploy can orphan a row in pending/scraping forever, which would
+    # otherwise block that page from ever being scraped again.
+    _in_progress = db.query(BrandScrape).filter(
+        BrandScrape.page_id == (page_id or search_query), BrandScrape.status.in_(["pending", "scraping"]),
+        BrandScrape.created_at > datetime.utcnow() - timedelta(minutes=30),
+    ).first()
+    if _in_progress:
+        raise HTTPException(status_code=409, detail="A scrape for this page is already in progress.")
+    _reserve_api_budget(db, 500)  # brand scrapes fetch up to 500 ads (2 Meta calls)
 
     # Create brand scrape record
     brand_scrape = BrandScrape(
@@ -1140,11 +1227,11 @@ async def create_brand_scrape(
             if scrape_record:
                 await scraper.scrape_brand(scrape_record)
         except Exception as e:
-            print(f"Background scrape error: {e}")
+            print(f"Background scrape error: {redact_secrets(e)}")
             scrape_record = scrape_db.query(BrandScrape).filter(BrandScrape.id == brand_scrape.id).first()
             if scrape_record:
                 scrape_record.status = "failed"
-                scrape_record.error_message = str(e)[:500]
+                scrape_record.error_message = redact_secrets(e)[:500]
                 scrape_db.commit()
         finally:
             scrape_db.close()
@@ -1281,6 +1368,7 @@ async def delete_brand_scrape(scrape_id: str, db: Session = Depends(get_db), cur
     from app.models import BrandScrape
     from app.services.brand_scraper import BrandScraperService
 
+    _require_delete_access(current_user)
     scrape = db.query(BrandScrape).filter(BrandScrape.id == scrape_id).first()
     if not scrape:
         raise HTTPException(status_code=404, detail="Brand scrape not found")
@@ -1376,6 +1464,8 @@ def delete_research_board(board_id: str, db: Session = Depends(get_db), current_
     board = db.query(ResearchBoard).filter(ResearchBoard.id == board_id).first()
     if not board:
         raise HTTPException(status_code=404, detail="Research board not found")
+    if board.created_by != current_user.id:
+        _require_delete_access(current_user)  # others' boards: admins only
     db.delete(board)
     db.commit()
     return {"message": "Research board deleted"}
@@ -2121,6 +2211,7 @@ async def query_research_copilot(
     vertical_label = _configured_vertical_label(payload.vertical_id)
     if not vertical_label:
         raise HTTPException(status_code=400, detail="Choose a supported Research vertical")
+    _copilot_rate_limit(str(current_user.id))
     plan = _plan_research_copilot_question(payload.question, payload.vertical_id)
     now = datetime.utcnow()
     # The Copilot must search exactly the same eligible corpus that its
@@ -2913,6 +3004,8 @@ def clear_vertical_ads(
     from app.models import ScrapedAd, SavedSearch, Vertical
     from app.core.vertical_config import VERTICAL_KEYWORD_SETS
 
+    _require_delete_access(current_user)  # bulk delete of a whole vertical's catalog
+
     if config_id not in VERTICAL_KEYWORD_SETS:
         raise HTTPException(status_code=404, detail=f"Unknown vertical config: {config_id}")
 
@@ -2948,11 +3041,31 @@ def clear_vertical_ads(
         .delete(synchronize_session="fetch")
     )
     db.commit()
+    print(f"[research] AUDIT clear_vertical_ads user={current_user.id} config={config_id} sub_vertical={sub_vertical} deleted={deleted}")
     return {"deleted": deleted}
 
 
 @router.post("/search-and-save-vertical")
 async def search_and_save_vertical(
+    vertical_id: str,
+    sub_vertical: str | None = None,
+    limit_per_keyword: int = 20,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Refresh a configured vertical. One run per (vertical, sub-vertical) at a time; per-keyword limit is capped."""
+    if not 1 <= limit_per_keyword <= 100:
+        raise HTTPException(status_code=400, detail="limit_per_keyword must be between 1 and 100.")
+    key = f"vertical-refresh:{vertical_id}:{sub_vertical or '*'}"
+    if not _claim_in_flight(key):
+        raise HTTPException(status_code=409, detail="A refresh for this vertical is already running — wait for it to finish.")
+    try:
+        return await _search_and_save_vertical_impl(vertical_id, sub_vertical, limit_per_keyword, db, current_user)
+    finally:
+        _release_in_flight(key)
+
+
+async def _search_and_save_vertical_impl(
     vertical_id: str,
     sub_vertical: str | None = None,
     limit_per_keyword: int = 20,
