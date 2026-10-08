@@ -6,8 +6,8 @@ import { authFetch } from '../lib/facebookApi';
 const DRIVE_LAUNCH_TOOL = {
     path: '/facebook-campaigns',
     icon: HardDrive,
-    title: 'Launch from Drive',
-    description: 'Skip generation — mass-upload and launch ads straight from your synced Google Drive folder. Pick an ad account, campaign, and ad set, then choose "Drive Creative Library" on the Creative step.',
+    title: 'Launch approved creative from Drive',
+    description: 'Start with approved image or video creative from your synced Google Drive folder. Pick an ad account, campaign, and ad set, then review the Drive assets before launch.',
 };
 
 const TOOLS = [
@@ -102,8 +102,8 @@ export default function CreateAds() {
     return (
         <div className="max-w-5xl mx-auto">
             <div className="mb-8">
-                <h1 className="text-3xl font-bold text-gray-900">Build Creatives</h1>
-                <p className="text-gray-600 mt-2">Choose your workflow</p>
+                <h1 className="text-3xl font-bold text-gray-900">Launch Creatives</h1>
+                <p className="text-gray-600 mt-2">Start with approved creative, then launch it safely into Meta.</p>
             </div>
 
             <button
@@ -116,7 +116,7 @@ export default function CreateAds() {
                 <div className="flex-1">
                     <div className="flex items-center gap-2">
                         <h3 className="text-lg font-bold text-gray-900">{DRIVE_LAUNCH_TOOL.title}</h3>
-                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Already have creatives?</span>
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Recommended</span>
                     </div>
                     <p className="text-gray-600 text-sm mt-1">{DRIVE_LAUNCH_TOOL.description}</p>
                 </div>
@@ -128,8 +128,8 @@ export default function CreateAds() {
             {launchPacks.length > 0 && (
                 <section className="mb-8" aria-label="Saved launch packs">
                     <div className="flex items-baseline justify-between mb-3">
-                        <h2 className="text-sm font-semibold text-gray-700">Saved launch packs</h2>
-                        <span className="text-xs text-gray-500">Exact account, campaign, and ad set</span>
+                        <h2 className="text-sm font-semibold text-gray-700">Approved launch targets</h2>
+                        <span className="text-xs text-gray-500">Resume the exact account, campaign, and ad set</span>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {launchPacks.slice(0, 6).map(pack => (
@@ -153,7 +153,7 @@ export default function CreateAds() {
                 </section>
             )}
 
-            <p className="text-sm font-semibold text-gray-500 mb-4">Or generate new creatives</p>
+            <p className="text-sm font-semibold text-gray-500 mb-4">Create new creative instead</p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {TOOLS.map(tool => {

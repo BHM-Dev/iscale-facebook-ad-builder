@@ -8,6 +8,9 @@ Joel picks an account → campaign (new or existing) → ad set (new or existing
 Drive library → reviews → launches. New campaigns are created **paused**; new ad sets/ads are created ACTIVE;
 ads added to an existing ad set take that ad set's status.
 
+The `/build-creatives` landing page presents this approved-creative Drive workflow as the recommended path. Generation
+tools remain available as secondary options for teams that need to create new assets.
+
 ## Safeguards
 - **Live Meta status gate (existing campaign):** Review re-reads the campaign (and ad set) from Meta via
   `GET /facebook/campaigns/{id}` / `/adsets/{id}`. **Launch is disabled until it succeeds**, with a reason line under
@@ -39,6 +42,8 @@ ads added to an existing ad set take that ad set's status.
 - Codex working brief: [`CODEX_BRIEF_launcher-ux.md`](../../CODEX_BRIEF_launcher-ux.md).
 
 ## Changelog (newest first)
+- 2026-10-08 Launch Creatives landing page now names approved Drive creative as the recommended workflow; route and
+  generation tools are unchanged.
 - 2026-10-06 `248ad38` ticking checked-age, `liveStatus.js` + tests · `41a6918` single-object status endpoints,
   ARCHIVED/DELETED hard block, quiet focus refresh · `fac96bf` launch gate on live status · `ea081f0`/`9631664`
   keyboard/accessible Drive cards, Feed+Stories counts, status-accurate paused/live copy.
