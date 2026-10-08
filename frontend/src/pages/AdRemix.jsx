@@ -401,10 +401,16 @@ export default function AdRemix() {
             return;
         }
         if (String(researchInspiration.brand_id) !== String(brandId)) {
+            // Only undo what the research reference put there: the offer line is auto-filled from the competitor
+            // angle when empty (see the step-5 effect). Anything the buyer typed himself stays.
+            const autoFilledOffer = researchInspiration.angle ? formatResearchAngle(researchInspiration.angle) : null;
             setResearchInspiration(null);
             setWizardData(prev => ({
                 ...prev,
-                campaignDetails: { ...prev.campaignDetails, offer: '', urgency: '', messaging: '' },
+                campaignDetails: {
+                    ...prev.campaignDetails,
+                    offer: autoFilledOffer && prev.campaignDetails.offer === autoFilledOffer ? '' : prev.campaignDetails.offer,
+                },
                 template: prev.template?.fromResearch ? null : prev.template,
             }));
             showInfo('Research reference cleared — you changed brand.');

@@ -17,6 +17,7 @@ import {
   getResearchBoardItems,
   getResearchBoards,
   getResearchTestBacklog,
+  getResearchTestOutcomes,
   markAdvertiserWatchlistReviewed,
   searchAndSave,
   updateResearchTestBacklogItem,
@@ -1371,14 +1372,14 @@ function WatchlistPanel({ watchlist, loading, error, onExplore, onBuild, onAddTe
   </section>;
 }
 
-function ResearchTestBacklog({ items, loading, verticalId, verticalLabel, onCreate, onStatusChange, onNotesChange, onBuild, onReviewGenerated, onInspectSource }) {
+function ResearchTestBacklog({ items, outcomes = {}, loading, verticalId, verticalLabel, onCreate, onStatusChange, onNotesChange, onBuild, onReviewGenerated, onInspectSource }) {
   const [hypothesis, setHypothesis] = useState('');
   const [advertiser, setAdvertiser] = useState('');
   const [editingNotesId, setEditingNotesId] = useState(null);
   const [notesDraft, setNotesDraft] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
   const statuses = ['draft', 'building', 'launched', 'learned', 'archived'];
-  const visible = (items || []).filter(item => item.vertical_id === verticalId);
+  const visible = (items || []).filter(item => item.vertical_id === verticalId).sort((a, b) => Number(Boolean(outcomes[b.id]?.result_ready)) - Number(Boolean(outcomes[a.id]?.result_ready)));
   const statusCounts = statuses.reduce((counts, status) => ({ ...counts, [status]: visible.filter(item => item.status === status).length }), {});
   const submit = event => { event.preventDefault(); if (!hypothesis.trim()) return; onCreate({ vertical_id: verticalId, hypothesis: hypothesis.trim(), advertiser: advertiser.trim() || null }); setHypothesis(''); setAdvertiser(''); };
   const startNotes = item => { setEditingNotesId(item.id); setNotesDraft(item.notes || ''); };
@@ -1387,6 +1388,7 @@ function ResearchTestBacklog({ items, loading, verticalId, verticalLabel, onCrea
     try { if (await onNotesChange(item.id, notesDraft)) setEditingNotesId(null); }
     finally { setSavingNotes(false); }
   };
+  const outcomeSummary = visible.filter(item => outcomes[item.id]).map(item => { const o = outcomes[item.id]; return `${item.advertiser || 'Test'} — spend ${o.spend == null ? 'not synced' : formatResearchMoney(o.spend)}, leads ${o.leads == null ? '—' : o.leads}, CPL ${o.cpl == null ? '—' : formatResearchMoney(o.cpl)}, ROAS ${o.roas == null ? '—' : `${o.roas}x`}${o.result_ready ? ' · Result ready' : ''}`; });
   return <section className="rounded-xl border border-slate-200 bg-white" aria-label="Research test backlog">
     <div className="border-b border-slate-100 px-5 py-4"><p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-700">Research test backlog</p><h3 className="mt-1 text-base font-semibold text-slate-900">Turn evidence into an original test decision</h3><p className="mt-1 text-sm text-slate-500">This records a BHM hypothesis—not competitor performance. Add the observed BHM outcome after a test is reviewed, so the next decision starts with the learning.</p>{visible.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{statuses.filter(status => statusCounts[status]).map(status => <span key={status} className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">{statusCounts[status]} {status}</span>)}</div>}</div>
     <form onSubmit={submit} className="grid gap-2 border-b border-slate-100 bg-slate-50/70 p-4 md:grid-cols-[180px_1fr_auto]"><input value={advertiser} onChange={event => setAdvertiser(event.target.value)} maxLength={200} placeholder="Source advertiser (optional)" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" /><input value={hypothesis} onChange={event => setHypothesis(event.target.value)} maxLength={2000} placeholder={`e.g. Test a contractor-specific comparison hook for ${verticalLabel}`} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" /><button type="submit" disabled={!hypothesis.trim()} className="rounded-lg bg-violet-700 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-800 disabled:opacity-50">Add test</button></form>
@@ -1464,6 +1466,7 @@ export default function Research() {
   const [watchlistLoading, setWatchlistLoading] = useState(false);
   const [watchlistError, setWatchlistError] = useState('');
   const [testBacklog, setTestBacklog] = useState([]);
+  const [testOutcomes, setTestOutcomes] = useState({});
   const [testBacklogLoading, setTestBacklogLoading] = useState(false);
   const [capturingAdvertiser, setCapturingAdvertiser] = useState(false);
   const [refreshingWatchlistAdvertiserId, setRefreshingWatchlistAdvertiserId] = useState('');
@@ -1700,7 +1703,11 @@ export default function Research() {
 
   const loadTestBacklog = async () => {
     setTestBacklogLoading(true);
-    try { setTestBacklog(await getResearchTestBacklog()); }
+    try {
+      const [backlog, outcomeResponse] = await Promise.all([getResearchTestBacklog(), getResearchTestOutcomes()]);
+      setTestBacklog(backlog);
+      setTestOutcomes(outcomeResponse?.outcomes || {});
+    }
     catch (error) { showError(error.message || 'Could not load research test backlog'); }
     finally { setTestBacklogLoading(false); }
   };
@@ -2631,12 +2638,12 @@ export default function Research() {
       ) : researchView === 'watchlist' && watchlistEnabled ? (
         <><WatchlistTargetedRefresh watchlist={watchlist} onRefreshAdvertiser={handleTargetedWatchlistRefresh} refreshingAdvertiserId={refreshingWatchlistAdvertiserId} refreshingVertical={refreshing} /><WatchlistPanel watchlist={watchlist} loading={watchlistLoading} error={watchlistError} onExplore={exploreAdvertiser} onBuild={handleUseAsInspiration} onAddTest={handleCreateTestBacklog} onMarkReviewed={handleMarkWatchlistReviewed} onRemove={handleRemoveFromWatchlist} onRefresh={handleWatchlistRefresh} refreshing={refreshing} verticalLabel={currentVerticalLabel} /></>
       ) : researchView === 'tests' && watchlistEnabled ? (
-        <ResearchTestBacklog items={testBacklog} loading={testBacklogLoading} verticalId={activeVertical} verticalLabel={currentVerticalLabel} onCreate={handleCreateTestBacklog} onStatusChange={handleTestBacklogStatus} onNotesChange={handleTestBacklogNotes} onBuild={handleBuildTestBacklogItem} onReviewGenerated={handleReviewGeneratedTestAd} onInspectSource={inspectCreative} />
+        <ResearchTestBacklog items={testBacklog} outcomes={testOutcomes} loading={testBacklogLoading} verticalId={activeVertical} verticalLabel={currentVerticalLabel} onCreate={handleCreateTestBacklog} onStatusChange={handleTestBacklogStatus} onNotesChange={handleTestBacklogNotes} onBuild={handleBuildTestBacklogItem} onReviewGenerated={handleReviewGeneratedTestAd} onInspectSource={inspectCreative} />
       ) : <>
 
       <LiveCaptureReceipt receipt={lastCaptureReceipt} onDismiss={() => setLastCaptureReceipt(null)} />
 
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500" aria-label="Research catalog summary"><span className="font-semibold text-slate-800">{browseLoading ? 'Loading captures…' : `${catalogSummary.total} captured examples`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.newCount} new this week`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.videoCount} video`}</span><span className="text-slate-300">·</span><span title="Records with at least one controlled creative theme">{browseLoading ? '—' : `${catalogSummary.taggedCount} theme tagged`}</span><span className="text-slate-300">·</span><span title="Records missing a visual, taxonomy field, or relevance review">{browseLoading ? '—' : `${catalogSummary.needsAttentionCount} need attention`}</span>{catalogSummary.needsReviewCount > 0 && <><span className="text-slate-300">·</span><span className="text-amber-700">{catalogSummary.needsReviewCount} need relevance review</span></>}<span className="text-slate-300">·</span><span className="text-slate-400">Current vertical + filters</span></div>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500" aria-label="Research catalog summary"><span className="font-semibold text-slate-800">{browseLoading ? 'Loading captures…' : `${catalogSummary.total} captured examples`}</span>{!browseLoading && browseAds.length >= 500 && <span className="text-amber-700" title="The catalog view loads at most 500 ads. Narrow the filters to see the rest.">(first 500 — narrow the filters to see more)</span>}<span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.newCount} newly cataloged (7d)`}</span><span className="text-slate-300">·</span><span>{browseLoading ? '—' : `${catalogSummary.videoCount} video`}</span><span className="text-slate-300">·</span><span title="Records with at least one controlled creative theme">{browseLoading ? '—' : `${catalogSummary.taggedCount} theme tagged`}</span><span className="text-slate-300">·</span><span title="Records missing a visual, taxonomy field, or relevance review">{browseLoading ? '—' : `${catalogSummary.needsAttentionCount} need attention`}</span>{catalogSummary.needsReviewCount > 0 && <><span className="text-slate-300">·</span><span className="text-amber-700">{catalogSummary.needsReviewCount} need relevance review</span></>}<span className="text-slate-300">·</span><span className="text-slate-400">Current vertical + filters</span></div>
       {!browseLoading && catalogSummary.total > 0 && catalogSummary.mediaCount === 0 && <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"><span>No retained assets in this filtered view. Source format labels are still shown, but they are not previews.</span><button type="button" onClick={() => setShowImportModal(true)} className="font-semibold text-indigo-700 hover:text-indigo-900">Import retained captures</button></div>}
 
       {/* Two-column layout */}
@@ -2909,7 +2916,7 @@ export default function Research() {
             </div>
           </div>
 
-          {savedError && !activeBoardId && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">Couldn’t load saved ads: {savedError} <button type="button" onClick={loadSavedAds} className="font-semibold underline">Retry</button></div>}
+          {savedError && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">Couldn’t load saved ads: {savedError} <button type="button" onClick={loadSavedAds} className="font-semibold underline">Retry</button></div>}
           {visibleSavedAds.length === 0 ? (
             <div className="bg-white rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center">
               <Star size={20} className="mx-auto text-gray-300 mb-2" />

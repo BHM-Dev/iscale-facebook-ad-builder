@@ -114,6 +114,11 @@ export const getResearchTestBacklog = async () => {
     return unwrap(response, 'Error fetching research test backlog');
 };
 
+export const getResearchTestOutcomes = async () => {
+    const response = await authFetch(`${API_URL}/test-backlog/outcomes`, { cache: 'no-store' });
+    return unwrap(response, 'Error fetching research test outcomes');
+};
+
 export const createResearchTestBacklogItem = async (item) => {
     const response = await authFetch(`${API_URL}/test-backlog`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item),
