@@ -99,3 +99,37 @@ def test_rate_limiter_counts_real_usage_rows():
     allowed, remaining, reset = rl.check_limit(db)
     assert allowed is False and remaining == 0 and 0 < reset <= 59 * 60
     assert rl.get_usage_stats(db)["used"] == 10
+
+
+class _FakeSvc:
+    def __init__(self, data=None, boom=False):
+        self.calls = 0
+        self.data = data
+        self.boom = boom
+
+    def get_ad_lifetime_insights(self, ad_id):
+        self.calls += 1
+        if self.boom:
+            raise RuntimeError("Meta says no: access_token=SECRET123")
+        return self.data
+
+
+def test_outcome_insights_cached_and_errors_isolated():
+    r._OUTCOME_CACHE.clear()
+    ok = _FakeSvc({"spend": 60.0, "leads": 3, "cpl": 20.0, "date_start": "2026-10-01"})
+    assert r._ad_lifetime_insights_cached(ok, "111") == (ok.data, None)
+    assert r._ad_lifetime_insights_cached(ok, "111") == (ok.data, None)
+    assert ok.calls == 1  # second read served from cache
+
+    none = _FakeSvc(None)
+    assert r._ad_lifetime_insights_cached(none, "222") == (None, None)  # no delivery yet is cached, not an error
+    assert r._ad_lifetime_insights_cached(none, "222") == (None, None) and none.calls == 1
+
+    bad = _FakeSvc(boom=True)
+    assert r._ad_lifetime_insights_cached(bad, "333") == (None, "unavailable")
+    assert r._ad_lifetime_insights_cached(bad, "333") == (None, "unavailable")
+    assert bad.calls == 1  # failure backs off for 60 s instead of re-hitting Meta every page load
+    r._OUTCOME_CACHE["333"] = (r._OUTCOME_CACHE["333"][0] - r._OUTCOME_FAILURE_TTL - 1, "__error__")
+    ok2 = _FakeSvc({"spend": 1.0, "leads": 0, "cpl": None, "date_start": "2026-10-01"})
+    assert r._ad_lifetime_insights_cached(ok2, "333")[1] is None and ok2.calls == 1  # retried after the backoff
+    r._OUTCOME_CACHE.clear()

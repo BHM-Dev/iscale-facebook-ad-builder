@@ -79,6 +79,9 @@ COPILOT_UNSUPPORTED_PERFORMANCE_RE = re.compile(
 import math
 import threading
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 from collections import defaultdict, deque
 
 from app.core.redact import redact_secrets  # noqa: E402
@@ -2960,50 +2963,92 @@ def get_research_test_backlog(db: Session = Depends(get_db), current_user: User 
     } for item in items]
 
 
+_OUTCOME_CACHE: dict[str, tuple[float, object]] = {}
+_OUTCOME_CACHE_TTL = 600  # seconds — lifetime insights barely move in 10 minutes and Meta rate-limits per account
+_OUTCOME_MAX_ADS = 25
+RESULT_READY_SPEND = 50.0  # USD of lifetime spend
+RESULT_READY_DAYS = 5      # days since first delivery
+
+
+_OUTCOME_FAILURE_TTL = 60  # back off briefly after a Meta error (e.g. code 17 throttle) instead of re-hitting it
+_OUTCOME_CACHE_MAX = 500
+
+
+def _ad_lifetime_insights_cached(svc, fb_ad_id: str):
+    """(insights | None, error | None) for one ad. Successes (incl. 'no delivery yet') cache 10 min, failures 60 s."""
+    now = time.monotonic()
+    hit = _OUTCOME_CACHE.get(fb_ad_id)
+    if hit:
+        age = now - hit[0]
+        if hit[1] == "__error__" and age < _OUTCOME_FAILURE_TTL:
+            return None, "unavailable"
+        if hit[1] != "__error__" and age < _OUTCOME_CACHE_TTL:
+            return hit[1], None
+    try:
+        data = svc.get_ad_lifetime_insights(fb_ad_id)
+    except Exception as exc:  # one bad ad must not blank the others
+        logger.warning("research outcome insights failed for ad %s: %s", fb_ad_id, redact_secrets(exc))
+        _OUTCOME_CACHE[fb_ad_id] = (now, "__error__")
+        return None, "unavailable"
+    if len(_OUTCOME_CACHE) >= _OUTCOME_CACHE_MAX:
+        for key in sorted(_OUTCOME_CACHE, key=lambda k: _OUTCOME_CACHE[k][0])[: _OUTCOME_CACHE_MAX // 5]:
+            _OUTCOME_CACHE.pop(key, None)
+    _OUTCOME_CACHE[fb_ad_id] = (now, data)
+    return data, None
+
+
 @router.get("/test-backlog/outcomes")
 def get_research_test_outcomes(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
-    """Return one account-level performance snapshot for linked research tests.
+    """Lifetime Meta performance for the user's linked research tests.
 
-    The Meta read is delegated to the existing cached ads-bulk path, then joined
-    locally by fb_ad_id. This deliberately avoids one Meta request per test row.
+    Reads at most 25 linked ads individually (lifetime window, cached 10 min, 5 in parallel) — never the whole
+    account — and joins revenue/profit from the RedTrack sync already stored on the generated ad. A value that
+    could not be read is null (never 0) and `insights_status` says why.
     """
     from app.models import ResearchTestBacklogItem
-    from app.api.v1.auto_pause import get_ads_bulk
+    from app.services.facebook_service import FacebookService
+    from concurrent.futures import ThreadPoolExecutor
 
     items = db.query(ResearchTestBacklogItem).filter(
         ResearchTestBacklogItem.created_by == current_user.id,
         ResearchTestBacklogItem.generated_ad_id.isnot(None),
-    ).all()
-    try:
-        bulk = get_ads_bulk(include_all=False, include_status=False, current_user=current_user)
-    except Exception as exc:
-        logger.warning("research test outcome sync unavailable: %s", exc)
-        bulk = {}
-    by_ad_id = {str(row.get("ad_id")): row for rows in (bulk or {}).values() for row in rows}
-    delivered = [row for row in by_ad_id.values() if row.get("spend") is not None]
-    total_spend = sum(float(row.get("spend") or 0) for row in delivered)
-    total_leads = sum(int(row.get("leads") or 0) for row in delivered)
-    account_avg_cpl = round(total_spend / total_leads, 2) if total_leads else None
+    ).order_by(ResearchTestBacklogItem.updated_at.desc()).all()
+    linked = [i for i in items if i.generated_ad and i.generated_ad.fb_ad_id][:_OUTCOME_MAX_ADS]
+    ad_ids = sorted({str(i.generated_ad.fb_ad_id) for i in linked})
+
+    insights: dict[str, tuple] = {}
+    if ad_ids:
+        svc = FacebookService()
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            for ad_id, result in zip(ad_ids, pool.map(lambda a: _ad_lifetime_insights_cached(svc, a), ad_ids)):
+                insights[ad_id] = result
+
     result = {}
-    for item in items:
+    for item in linked:
         ad = item.generated_ad
-        row = by_ad_id.get(str(ad.fb_ad_id)) if ad and ad.fb_ad_id else None
-        spend = float(row.get("spend")) if row and row.get("spend") is not None else None
-        leads = int(row.get("leads")) if row and row.get("leads") is not None else None
-        cpl = round(spend / leads, 2) if spend is not None and leads else None
-        launched_at = ad.created_at if ad else None
-        age_days = (datetime.utcnow() - launched_at.replace(tzinfo=None)).days if launched_at else None
+        data, error = insights.get(str(ad.fb_ad_id), (None, "unavailable"))
+        spend = data["spend"] if data else None
+        leads = data["leads"] if data else None
+        cpl = data["cpl"] if data else None
+        age_days = None
+        if data and data.get("date_start"):
+            try:
+                age_days = (datetime.utcnow().date() - datetime.strptime(data["date_start"], "%Y-%m-%d").date()).days
+            except ValueError:
+                age_days = None
+        revenue = float(ad.revenue) if ad.revenue is not None else None
         result[item.id] = {
             "spend": spend, "leads": leads, "cpl": cpl,
-            "roas": round(float(ad.revenue) / spend, 2) if ad and ad.revenue is not None and spend else None,
-            "revenue": float(ad.revenue) if ad and ad.revenue is not None else None,
-            "profit": float(ad.profit) if ad and ad.profit is not None else None,
-            "last_synced_at": _serialize_research_datetime(ad.last_synced_at) if ad else None,
-            "account_avg_cpl": account_avg_cpl,
+            "roas": round(revenue / spend, 2) if revenue is not None and spend else None,
+            "revenue": revenue,
+            "profit": float(ad.profit) if ad.profit is not None else None,
+            "last_synced_at": _serialize_research_datetime(ad.last_synced_at),
+            "account_avg_cpl": None,  # needs an account-level read; deliberately not shown rather than guessed
             "age_days": age_days,
-            "result_ready": bool((spend is not None and spend >= 50) or (age_days is not None and age_days >= 5)),
+            "insights_status": "ok" if data else ("no_delivery_yet" if error is None else error),
+            "result_ready": bool((spend is not None and spend >= RESULT_READY_SPEND) or (age_days is not None and age_days >= RESULT_READY_DAYS)),
         }
-    return {"outcomes": result, "account_avg_cpl": account_avg_cpl, "synced_at": datetime.utcnow().isoformat()}
+    return {"outcomes": result, "account_avg_cpl": None, "synced_at": datetime.utcnow().isoformat()}
 
 
 @router.get("/learnings")
@@ -3018,6 +3063,8 @@ def get_research_learnings(db: Session = Depends(get_db), current_user: User = D
     grouped = {}
     for item in items:
         outcome = outcomes.get(item.id, {})
+        if outcome.get("spend") is None:
+            continue  # no readable results for this test yet — don't count it toward any rate
         source = _serialize_scraped_ad(item.scraped_ad) if item.scraped_ad else (item.source_snapshot or {})
         values = {
             "hook type": source.get("hook_type"), "promise": source.get("promise"),

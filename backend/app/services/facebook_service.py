@@ -708,6 +708,43 @@ class FacebookService:
 
         return adsets
 
+    def get_ad_lifetime_insights(self, ad_id):
+        """Lifetime (Meta 'maximum' window) spend / leads / CPL for ONE ad, plus first delivery date.
+
+        Used by Research test outcomes: a handful of linked ads, read individually and cached by the caller,
+        instead of paging the whole account. Returns None when the ad has no delivery yet.
+        """
+        lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
+        try:
+            rows = list(Ad(str(ad_id), api=self.api).get_insights(
+                fields=['spend', 'impressions', 'clicks', 'actions', 'cost_per_action_type', 'date_start'],
+                params={'date_preset': 'maximum'},
+            ))
+        except FacebookRequestError as e:
+            raise self._meta_error(e, 'Ad lifetime insights lookup failed') from e
+        if not rows:
+            return None
+        row = rows[0]
+        spend = float(row.get('spend', 0) or 0)
+        leads = 0
+        for action in (row.get('actions') or []):
+            if action.get('action_type') in lead_types:
+                leads += int(float(action.get('value', 0)))
+        cpl = None
+        for cpa in (row.get('cost_per_action_type') or []):
+            if cpa.get('action_type') in lead_types:
+                cpl = round(float(cpa.get('value', 0)), 2)
+                break
+        if cpl is None and leads > 0 and spend > 0:
+            cpl = round(spend / leads, 2)
+        return {
+            'spend': round(spend, 2),
+            'leads': leads,
+            'cpl': cpl,
+            'impressions': int(row.get('impressions', 0) or 0),
+            'date_start': row.get('date_start'),
+        }
+
     def get_adset_status(self, adset_id):
         """Read one ad set's delivery state without listing a campaign."""
         try:
