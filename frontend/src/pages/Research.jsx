@@ -1715,14 +1715,16 @@ export default function Research() {
 
   const loadTestBacklog = async () => {
     setTestBacklogLoading(true);
-    try {
-      const [backlog, outcomeResponse, learningResponse] = await Promise.all([getResearchTestBacklog(), getResearchTestOutcomes(), getResearchLearnings()]);
-      setTestBacklog(backlog);
-      setTestOutcomes(outcomeResponse?.outcomes || {});
-      setResearchLearnings(learningResponse?.learnings || []);
-    }
-    catch (error) { showError(error.message || 'Could not load research test backlog'); }
-    finally { setTestBacklogLoading(false); }
+    // Settle independently: a slow/failed outcomes or learnings read (Meta) must never blank the backlog itself.
+    // Learnings run AFTER outcomes so they reuse the server's 10-minute insights cache instead of doubling Meta calls.
+    const [backlogResult, outcomeResult] = await Promise.allSettled([getResearchTestBacklog(), getResearchTestOutcomes()]);
+    if (backlogResult.status === 'fulfilled') setTestBacklog(backlogResult.value);
+    else showError(backlogResult.reason?.message || 'Could not load research test backlog');
+    if (outcomeResult.status === 'fulfilled') setTestOutcomes(outcomeResult.value?.outcomes || {});
+    else { setTestOutcomes({}); showWarning('Test results are unavailable right now — Meta may be rate limiting. Showing the backlog without them.'); }
+    setTestBacklogLoading(false);
+    try { setResearchLearnings((await getResearchLearnings())?.learnings || []); }
+    catch { setResearchLearnings([]); }
   };
 
   const handleCreateTestBacklog = async (item) => {
@@ -2309,13 +2311,12 @@ export default function Research() {
     navigate('/ad-remix');
   };
 
+  const buildTestBusyRef = useRef(new Set());
   const handleBuildFromCreative = async (ad, watchlistBrief = null) => {
-    // One open test per source creative: reuse it instead of adding a duplicate row on every click.
-    const existing = testBacklog.find(item => item.scraped_ad_id === ad.id && !['learned', 'archived'].includes(item.status));
-    if (existing) {
-      handleUseAsInspiration(ad, watchlistBrief || existing.hypothesis, existing.id);
-      return;
-    }
+    // One open test per source creative. The server returns the existing open row when there is one (the backlog
+    // may not be loaded in this view), and this guard stops a double-click from racing two creates.
+    if (buildTestBusyRef.current.has(ad.id)) return;
+    buildTestBusyRef.current.add(ad.id);
     try {
       const created = await createResearchTestBacklogItem({
         vertical_id: activeVertical,
@@ -2323,9 +2324,12 @@ export default function Research() {
         scraped_ad_id: ad.id,
         hypothesis: watchlistBrief || `Test an original ${ad.media_type || 'ad'} using the observed ${ad.hook_type || 'creative'} pattern for the selected BHM offer.`,
       });
-      setTestBacklog(previous => [{ ...created, advertiser: ad.brand_name || null, source: ad, vertical_id: activeVertical, created_at: new Date().toISOString() }, ...previous]);
-      handleUseAsInspiration(ad, watchlistBrief, created.id);
+      if (!created.existing) {
+        setTestBacklog(previous => [{ ...created, advertiser: ad.brand_name || null, source: ad, vertical_id: activeVertical, created_at: new Date().toISOString() }, ...previous]);
+      }
+      handleUseAsInspiration(ad, watchlistBrief || created.hypothesis, created.id);
     } catch (error) { showError(error.message || 'Could not create research test'); }
+    finally { buildTestBusyRef.current.delete(ad.id); }
   };
 
   const handleBlockPage = async (ad) => {

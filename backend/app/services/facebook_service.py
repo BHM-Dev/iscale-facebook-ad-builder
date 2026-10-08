@@ -726,16 +726,11 @@ class FacebookService:
             return None
         row = rows[0]
         spend = float(row.get('spend', 0) or 0)
-        leads = 0
-        for action in (row.get('actions') or []):
-            if action.get('action_type') in lead_types:
-                leads += int(float(action.get('value', 0)))
+        # Meta reports 'lead' as the aggregate of the pixel/on-Facebook variants, so summing all three double-counts.
+        by_type = {a.get('action_type'): int(float(a.get('value', 0))) for a in (row.get('actions') or []) if a.get('action_type') in lead_types}
+        leads = by_type.get('lead', max(by_type.values()) if by_type else 0)
         cpl = None
-        for cpa in (row.get('cost_per_action_type') or []):
-            if cpa.get('action_type') in lead_types:
-                cpl = round(float(cpa.get('value', 0)), 2)
-                break
-        if cpl is None and leads > 0 and spend > 0:
+        if leads > 0 and spend > 0:
             cpl = round(spend / leads, 2)
         return {
             'spend': round(spend, 2),

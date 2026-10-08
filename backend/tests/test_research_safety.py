@@ -133,3 +133,23 @@ def test_outcome_insights_cached_and_errors_isolated():
     ok2 = _FakeSvc({"spend": 1.0, "leads": 0, "cpl": None, "date_start": "2026-10-01"})
     assert r._ad_lifetime_insights_cached(ok2, "333")[1] is None and ok2.calls == 1  # retried after the backoff
     r._OUTCOME_CACHE.clear()
+
+
+def test_learnings_aggregation_skips_unknowns_and_derates_single_tests():
+    src_a = {"hook_type": "question", "promise": "save", "angle_tag": "rate_shock"}
+    src_b = {"hook_type": "question"}
+    pairs = [
+        (src_a, {"spend": 100.0, "leads": 10, "profit": 50.0}),
+        (src_b, {"spend": 50.0, "leads": 5, "profit": None}),   # unknown profit stays unknown, not $0
+        (src_a, {"spend": None, "leads": None, "profit": 999.0}),  # no readable spend -> not counted
+        ({"hook_type": "story"}, {"spend": 10.0, "leads": 1, "profit": 9999.0}),  # single test must not top the table
+    ]
+    rows = r._aggregate_learnings(pairs)
+    question = next(x for x in rows if x["attribute"] == "hook type" and x["value"] == "question")
+    assert question["tests"] == 2 and question["spend"] == 150.0 and question["leads"] == 15
+    assert question["cpl"] == 10.0 and question["profit"] == 50.0 and question["too_early"] is False
+    story = next(x for x in rows if x["value"] == "story")
+    assert story["too_early"] is True
+    assert rows[0]["value"] == "question"  # 2-test row ranks above the 1-test row despite lower profit
+    only_unknown = r._aggregate_learnings([(src_b, {"spend": 5.0, "leads": 0, "profit": None})])
+    assert only_unknown[0]["profit"] is None and only_unknown[0]["cpl"] is None

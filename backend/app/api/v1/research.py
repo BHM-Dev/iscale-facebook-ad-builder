@@ -2997,22 +2997,11 @@ def _ad_lifetime_insights_cached(svc, fb_ad_id: str):
     return data, None
 
 
-@router.get("/test-backlog/outcomes")
-def get_research_test_outcomes(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
-    """Lifetime Meta performance for the user's linked research tests.
-
-    Reads at most 25 linked ads individually (lifetime window, cached 10 min, 5 in parallel) — never the whole
-    account — and joins revenue/profit from the RedTrack sync already stored on the generated ad. A value that
-    could not be read is null (never 0) and `insights_status` says why.
-    """
-    from app.models import ResearchTestBacklogItem
+def _compute_test_outcomes(items) -> dict:
+    """Outcome dict keyed by backlog item id for items whose generated ad has a Meta ad id (max 25, newest first)."""
     from app.services.facebook_service import FacebookService
     from concurrent.futures import ThreadPoolExecutor
 
-    items = db.query(ResearchTestBacklogItem).filter(
-        ResearchTestBacklogItem.created_by == current_user.id,
-        ResearchTestBacklogItem.generated_ad_id.isnot(None),
-    ).order_by(ResearchTestBacklogItem.updated_at.desc()).all()
     linked = [i for i in items if i.generated_ad and i.generated_ad.fb_ad_id][:_OUTCOME_MAX_ADS]
     ad_ids = sorted({str(i.generated_ad.fb_ad_id) for i in linked})
 
@@ -3039,6 +3028,8 @@ def get_research_test_outcomes(db: Session = Depends(get_db), current_user: User
         revenue = float(ad.revenue) if ad.revenue is not None else None
         result[item.id] = {
             "spend": spend, "leads": leads, "cpl": cpl,
+            # BHM revenue comes from the RedTrack sync stored on the ad (see last_synced_at); its window may differ
+            # from Meta's lifetime spend, so treat ROAS as indicative.
             "roas": round(revenue / spend, 2) if revenue is not None and spend else None,
             "revenue": revenue,
             "profit": float(ad.profit) if ad.profit is not None else None,
@@ -3046,46 +3037,86 @@ def get_research_test_outcomes(db: Session = Depends(get_db), current_user: User
             "account_avg_cpl": None,  # needs an account-level read; deliberately not shown rather than guessed
             "age_days": age_days,
             "insights_status": "ok" if data else ("no_delivery_yet" if error is None else error),
-            "result_ready": bool((spend is not None and spend >= RESULT_READY_SPEND) or (age_days is not None and age_days >= RESULT_READY_DAYS)),
+            # Age alone is not a result: require real spend before calling it ready.
+            "result_ready": bool(spend and spend > 0 and (spend >= RESULT_READY_SPEND or (age_days is not None and age_days >= RESULT_READY_DAYS))),
         }
-    return {"outcomes": result, "account_avg_cpl": None, "synced_at": datetime.utcnow().isoformat()}
+    return result
 
 
-@router.get("/learnings")
-def get_research_learnings(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
-    """Aggregate completed BHM tests by the source creative attributes."""
+@router.get("/test-backlog/outcomes")
+def get_research_test_outcomes(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    """Lifetime Meta performance for the user's linked research tests.
+
+    Reads at most 25 linked ads individually (lifetime window, cached 10 min, 5 in parallel) — never the whole
+    account — and joins revenue/profit from the RedTrack sync already stored on the generated ad. A value that
+    could not be read is null (never 0) and `insights_status` says why.
+    """
     from app.models import ResearchTestBacklogItem
-    outcomes = get_research_test_outcomes(db=db, current_user=current_user).get("outcomes", {})
+
     items = db.query(ResearchTestBacklogItem).filter(
         ResearchTestBacklogItem.created_by == current_user.id,
-        ResearchTestBacklogItem.status.in_(["learned", "archived"]),
-    ).all()
-    grouped = {}
-    for item in items:
-        outcome = outcomes.get(item.id, {})
-        if outcome.get("spend") is None:
-            continue  # no readable results for this test yet — don't count it toward any rate
-        source = _serialize_scraped_ad(item.scraped_ad) if item.scraped_ad else (item.source_snapshot or {})
+        ResearchTestBacklogItem.generated_ad_id.isnot(None),
+    ).order_by(ResearchTestBacklogItem.updated_at.desc()).all()
+    return {"outcomes": _compute_test_outcomes(items), "account_avg_cpl": None, "synced_at": datetime.utcnow().isoformat()}
+
+
+def _aggregate_learnings(pairs) -> list[dict]:
+    """pairs: [(source_ad_dict, outcome_dict)] for completed tests. Pure so it can be unit-tested.
+
+    Only tests with a readable Meta spend count. Unknown profit/leads stay unknown (never summed as 0); a single
+    test ("too_early") sorts below rows with 2+ tests so one result can't top the table.
+    """
+    grouped: dict = {}
+    for source, outcome in pairs:
+        if not outcome or outcome.get("spend") is None:
+            continue
         values = {
             "hook type": source.get("hook_type"), "promise": source.get("promise"),
             "angle": source.get("angle_tag") or source.get("angle"), "persona": source.get("persona"),
         }
         for attribute, value in values.items():
-            if not value: continue
-            key = (attribute, str(value))
-            bucket = grouped.setdefault(key, {"attribute": attribute, "value": str(value), "tests": 0, "spend": 0.0, "leads": 0, "profit": 0.0})
+            if not value:
+                continue
+            bucket = grouped.setdefault((attribute, str(value)), {
+                "attribute": attribute, "value": str(value), "tests": 0, "spend": 0.0,
+                "leads": None, "profit": None,
+            })
             bucket["tests"] += 1
-            bucket["spend"] += float(outcome.get("spend") or 0)
-            bucket["leads"] += int(outcome.get("leads") or 0)
-            bucket["profit"] += float(outcome.get("profit") or 0)
+            bucket["spend"] += float(outcome["spend"])
+            if outcome.get("leads") is not None:
+                bucket["leads"] = (bucket["leads"] or 0) + int(outcome["leads"])
+            if outcome.get("profit") is not None:
+                bucket["profit"] = (bucket["profit"] or 0.0) + float(outcome["profit"])
     rows = []
     for bucket in grouped.values():
         bucket["cpl"] = round(bucket["spend"] / bucket["leads"], 2) if bucket["leads"] else None
         bucket["too_early"] = bucket["tests"] < 2
         bucket["spend"] = round(bucket["spend"], 2)
-        bucket["profit"] = round(bucket["profit"], 2)
+        bucket["profit"] = round(bucket["profit"], 2) if bucket["profit"] is not None else None
         rows.append(bucket)
-    return {"learnings": sorted(rows, key=lambda row: row["profit"], reverse=True)}
+    return sorted(rows, key=lambda row: (row["too_early"], -row["profit"] if row["profit"] is not None else float("inf")))
+
+
+@router.get("/learnings")
+def get_research_learnings(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    """Aggregate the user's completed ('learned') BHM tests by the source creative's attributes.
+
+    Archived tests are excluded (usually abandoned). Uses its own 25-test window, and the shared 10-minute insights
+    cache, so it adds no Meta calls for ads the outcomes endpoint just read.
+    """
+    from app.models import ResearchTestBacklogItem
+
+    items = db.query(ResearchTestBacklogItem).filter(
+        ResearchTestBacklogItem.created_by == current_user.id,
+        ResearchTestBacklogItem.status == "learned",
+        ResearchTestBacklogItem.generated_ad_id.isnot(None),
+    ).order_by(ResearchTestBacklogItem.updated_at.desc()).all()
+    outcomes = _compute_test_outcomes(items)
+    pairs = [
+        (_serialize_scraped_ad(item.scraped_ad) if item.scraped_ad else (item.source_snapshot or {}), outcomes.get(item.id))
+        for item in items
+    ]
+    return {"learnings": _aggregate_learnings(pairs)}
 
 
 @router.post("/test-backlog", status_code=201)
@@ -3103,6 +3134,15 @@ def create_research_test_backlog_item(request: ResearchTestBacklogCreate, db: Se
         if source_vertical != _configured_vertical_label(request.vertical_id):
             raise HTTPException(status_code=400, detail="Research source ad is not retained in the selected vertical")
         source_snapshot = _serialize_scraped_ad(source_ad)
+        # One open test per source creative per user: clicking "Build test" twice (or from a view that hasn't
+        # loaded the backlog) must reuse the open row, not add a duplicate.
+        existing = db.query(ResearchTestBacklogItem).filter(
+            ResearchTestBacklogItem.created_by == current_user.id,
+            ResearchTestBacklogItem.scraped_ad_id == request.scraped_ad_id,
+            ResearchTestBacklogItem.status.notin_(["learned", "archived"]),
+        ).order_by(ResearchTestBacklogItem.created_at.desc()).first()
+        if existing:
+            return {"id": existing.id, "status": existing.status, "hypothesis": existing.hypothesis, "existing": True}
     item = ResearchTestBacklogItem(vertical_id=request.vertical_id, advertiser=(request.advertiser or "").strip() or None, scraped_ad_id=request.scraped_ad_id, source_snapshot=source_snapshot, hypothesis=request.hypothesis.strip(), notes=(request.notes or "").strip() or None, created_by=current_user.id)
     db.add(item); db.commit(); db.refresh(item)
     return {"id": item.id, "status": item.status, "hypothesis": item.hypothesis}
