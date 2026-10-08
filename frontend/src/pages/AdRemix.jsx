@@ -96,7 +96,7 @@ function SourceAdReferenceCard({ researchInspiration, uploadedInspiration, onDis
             </div>
             {strategy.length > 0 && <div className="border-t border-indigo-100 pt-2 space-y-1"><div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-500">Strategy notes</div>{strategy.map(([label, value]) => <div key={label} className="text-xs leading-snug text-gray-700"><span className="font-semibold text-gray-500">{label}:</span> {value}</div>)}</div>}
             {researchInspiration && <div className="border-t border-indigo-100 pt-2 text-[10px] leading-4 text-indigo-700"><span className="font-semibold">Evidence:</span> {(researchInspiration.creative_tags || []).length ? researchInspiration.creative_tags.map(tag => tag.replaceAll('_', ' ')).join(', ') : 'No controlled theme'} · CTA {researchInspiration.cta_type?.replaceAll('_', ' ') || 'unknown'} · {researchInspiration.taxonomy_source || 'taxonomy unknown'}<br /><span className="text-indigo-500">Capture: {researchInspiration.creativeIntel?.capture_source?.replaceAll('_', ' ') || 'catalog source'}</span></div>}
-            {researchInspiration && <div className="text-[10px] text-indigo-600">Reference only — the source image is never used in the generated ad.</div>}
+            {researchInspiration && <div className="text-[10px] text-indigo-600">Reference only — the source image is analyzed for structure; it is never placed in the generated ad.</div>}
         </div>
     );
 }
@@ -130,7 +130,7 @@ const buildReferenceCopyContext = (template) => {
 export default function AdRemix() {
     const [restoredDraft] = useState(restoreAdRemixDraft);
     const { brands, customerProfiles } = useBrands();
-    const { showError, showSuccess } = useToast();
+    const { showError, showSuccess, showInfo } = useToast();
     const { authFetch } = useAuth();
     const navigate = useNavigate();
     // True only when this mount resumed an earlier session's work with no fresh handoff.
@@ -314,6 +314,11 @@ export default function AdRemix() {
         if (!raw) return;
         try {
             const inspiration = JSON.parse(raw);
+            if (!inspiration.savedAt || Date.now() - Number(inspiration.savedAt) > 30 * 60 * 1000) {
+                localStorage.removeItem('pendingResearchInspiration');
+                showInfo('That Research handoff expired. Start again from Research.');
+                return;
+            }
             localStorage.removeItem('pendingResearchInspiration');
             localStorage.removeItem('pendingUploadedInspiration');
             setResearchInspiration(inspiration);
@@ -334,7 +339,7 @@ export default function AdRemix() {
         } catch (e) {
             // malformed localStorage — ignore
         }
-    }, []);
+    }, [showInfo]);
 
     // On mount: check for an ad screenshot/image uploaded directly by Joel.
     useEffect(() => {
@@ -389,6 +394,22 @@ export default function AdRemix() {
     // Uses brandId (primitive) as dep to avoid re-running on every wizardData change.
     // Guarded by skipAutoAdvance so pressing Back from Campaign doesn't loop back.
     const brandId = wizardData.brand?.id;
+    useEffect(() => {
+        if (!researchInspiration || !brandId) return;
+        if (!researchInspiration.brand_id) {
+            setResearchInspiration(prev => prev ? { ...prev, brand_id: brandId } : prev);
+            return;
+        }
+        if (String(researchInspiration.brand_id) !== String(brandId)) {
+            setResearchInspiration(null);
+            setWizardData(prev => ({
+                ...prev,
+                campaignDetails: { ...prev.campaignDetails, offer: '', urgency: '', messaging: '' },
+                template: prev.template?.fromResearch ? null : prev.template,
+            }));
+            showInfo('Research reference cleared — you changed brand.');
+        }
+    }, [brandId, researchInspiration, showInfo]);
     useEffect(() => {
         if (currentStep !== 4 || !brandId || !customerProfiles.length) return;
         if (skipAutoAdvance.current) {

@@ -195,7 +195,12 @@ def _infer_creative_taxonomy(headline, ad_copy, cta_text, supplied_tags=None):
             tags.append(tag)
     cta = (cta_text or "").strip().lower().replace(" ", "_")
     cta_map = {"learn_more": "learn_more", "get_quote": "get_quote", "sign_up": "sign_up", "apply_now": "apply_now", "contact_us": "contact_us", "shop_now": "shop_now"}
-    return tags or None, cta_map.get(cta, "unknown" if cta else None)
+    return tags or None, cta_map.get(cta)
+
+
+def _normalize_unknown_taxonomy(value):
+    """Keep unclassified taxonomy NULL at write time; reads remain tolerant."""
+    return None if value in (None, "", "unknown") else value
 
 
 def _matches_research_vertical(ad, config_id):
@@ -1351,7 +1356,7 @@ def import_brand_scrape_into_research(
         ad.search_id = saved_search.id
         ad.facebook_page_id = page.id
         ad.creative_tags = creative_tags
-        ad.cta_type = inferred_cta_type
+        ad.cta_type = _normalize_unknown_taxonomy(inferred_cta_type)
         ad.taxonomy_source = "brand_scrape" if creative_tags else None
         ad.creative_intel = _bounded_json({**dict(ad.creative_intel or {}), "capture_source": "brand_scrape", "brand_scrape_id": scrape.id, "media_provenance": "BHM R2 Meta capture"})
         if primary_media:
@@ -1722,8 +1727,8 @@ def import_ad_library_capture(
         ad.creative_intel = creative_intel
         ad.volume_score = volume_score
         ad.creative_tags = creative_tags
-        ad.cta_type = incoming.cta_type or inferred_cta_type
-        ad.page_type = incoming.page_type
+        ad.cta_type = _normalize_unknown_taxonomy(incoming.cta_type or inferred_cta_type)
+        ad.page_type = _normalize_unknown_taxonomy(incoming.page_type)
         ad.video_length_seconds = incoming.video_length_seconds
         ad.media_preview_url = incoming.media_preview_url or (video_urls[0] if video_urls else None)
         ad.media_width = incoming.media_width

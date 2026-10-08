@@ -21,8 +21,8 @@ def test_taxonomy_does_not_guess_without_visible_evidence():
     assert _infer_creative_taxonomy(None, None, None) == (None, None)
 
 
-def test_taxonomy_keeps_unknown_cta_honest():
-    assert _infer_creative_taxonomy("A", "B", "Call now") == (None, "unknown")
+def test_taxonomy_keeps_unknown_cta_unclassified():
+    assert _infer_creative_taxonomy("A", "B", "Call now") == (None, None)
 
 
 def test_commercial_catalog_does_not_show_obvious_broad_query_noise():

@@ -3,6 +3,7 @@ import { Ban, FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, 
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { parseApiError } from '../lib/apiErrors';
 import {
   addResearchBoardItem,
   addAdvertiserWatchlist,
@@ -270,7 +271,7 @@ const filterResearchAds = (ads, { angleFilter, mediaTypeFilter, reviewFilter, ad
     (!creativeTagFilter || (creativeTagFilter === 'unknown' ? !(ad.creative_tags || []).length : (ad.creative_tags || []).includes(creativeTagFilter))) &&
     (!ctaTypeFilter || matchesTaxonomy(ad.cta_type, ctaTypeFilter)) &&
     (!pageTypeFilter || matchesTaxonomy(ad.page_type, pageTypeFilter)) &&
-    (!newOnly || !ad.first_seen || Date.now() - new Date(ad.first_seen).getTime() <= 7 * 24 * 60 * 60 * 1000) &&
+    (!newOnly || (ad.first_seen && Date.now() - new Date(ad.first_seen).getTime() <= 7 * 24 * 60 * 60 * 1000)) &&
     (!needsTagging || !ad.taxonomy_source) &&
     (!hasVisual || hasVisualCandidate(ad)) &&
     (!activeOnly || normalized.is_active)
@@ -407,7 +408,7 @@ function BodyText({ text }) {
 }
 
 // ── Save button with angle picker ───────────────────────────────
-function SaveButton({ ad, isSaved, onSave, onUnsave, angleTags }) {
+function SaveButton({ ad, isSaved, pending, onSave, onUnsave, angleTags }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -422,7 +423,7 @@ function SaveButton({ ad, isSaved, onSave, onUnsave, angleTags }) {
   return (
       <button
         type="button"
-        onClick={() => onUnsave(ad)}
+        onClick={() => onUnsave(ad)} disabled={pending}
         className="inline-flex items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-emerald-700 hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-colors"
         title="Saved — remove from library"
         aria-label="Saved — remove from library"
@@ -436,7 +437,7 @@ function SaveButton({ ad, isSaved, onSave, onUnsave, angleTags }) {
     <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => setOpen(v => !v)}
+        onClick={() => setOpen(v => !v)} disabled={pending}
         className="inline-flex items-center justify-center rounded-lg border border-emerald-200 bg-white p-2 text-emerald-700 hover:bg-emerald-50 transition-colors"
         title="Save to library"
         aria-label="Save to library"
@@ -448,7 +449,7 @@ function SaveButton({ ad, isSaved, onSave, onUnsave, angleTags }) {
           <p className="text-xs text-gray-400 px-2 py-1 mb-1">Pick an angle (optional)</p>
           <button
             type="button"
-            onClick={() => { onSave(ad, null); setOpen(false); }}
+            onClick={() => { onSave(ad, null); setOpen(false); }} disabled={pending}
             className="w-full text-left px-2 py-1.5 text-xs text-gray-600 hover:bg-gray-50 rounded-lg"
           >
             No tag — just save
@@ -457,7 +458,7 @@ function SaveButton({ ad, isSaved, onSave, onUnsave, angleTags }) {
             <button
               key={tag.value}
               type="button"
-              onClick={() => { onSave(ad, tag.value); setOpen(false); }}
+              onClick={() => { onSave(ad, tag.value); setOpen(false); }} disabled={pending}
               className="w-full text-left px-2 py-1.5 text-xs hover:bg-gray-50 rounded-lg"
             >
               <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-semibold mr-1 ${ANGLE_COLORS[tag.value] || ''}`}>
@@ -733,7 +734,7 @@ function ResearchDetailDrawer({ ad, activeVertical, advertiserSnapshot, retained
   </div>;
 }
 
-function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, onBlockPage, onSetReviewed, angleTags, boards, onAddToBoard, onCreateBoard, onRemoveFromBoard, onVisualLoadError, isCompared, onToggleCompare }) {
+function AdCard({ ad, isSaved, pending, onSave, onUnsave, onUseAsInspiration, onInspect, onBlockPage, onSetReviewed, angleTags, boards, onAddToBoard, onCreateBoard, onRemoveFromBoard, onVisualLoadError, isCompared, onToggleCompare }) {
   const [videoPreviewFailed, setVideoPreviewFailed] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
   const media = imageFailed || hasMisassignedVideoUiCapture(ad) ? null : (ad.thumbnail_url || ad.media_url);
@@ -760,7 +761,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
       <div className="flex items-center gap-2">
         <span className={`flex items-center gap-1 text-xs font-medium ${ad.is_active ? 'text-green-600' : 'text-gray-400'}`}>
           <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${ad.is_active ? 'bg-green-500' : 'bg-gray-300'}`} />
-          {ad.is_active ? 'RECENT CAPTURE' : 'NOT RECENTLY CAPTURED'}
+          {ad.is_active ? 'CAPTURED IN LAST 30 DAYS' : 'OLDER CAPTURE'}
         </span>
         {ad.media_type === 'video' && (
           <span className="inline-flex items-center gap-1 text-xs font-medium text-purple-600">
@@ -784,7 +785,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
         {ad.taxonomy_source && <span className="text-xs font-medium text-violet-700" title={`Taxonomy provenance: ${taxonomySourceLabel(ad)}. Labels are directional research metadata, not performance data.`}>Tags: {taxonomySourceLabel(ad)}</span>}
         {ad.creative_intel?.research_source && <span className="text-xs font-medium text-amber-700" title="Imported external research source; any signal is directional only">{ad.creative_intel.research_source}</span>}
         {ad.relevance_status === 'needs_review' && <span className="text-xs font-medium text-amber-700" title="This older capture passed the broad vertical gate but lacks a direct commercial-insurance offer signal. Review before using it as an input.">REVIEW RELEVANCE</span>}
-        {ad.relevance_status === 'source_reviewed' && <span className="text-xs font-medium text-emerald-700" title="Externally reviewed source capture; still directional research, not performance evidence.">SOURCE REVIEWED</span>}
+        {ad.relevance_status === 'source_reviewed' && <span className="text-xs font-medium text-emerald-700" title="Imported source capture; still directional research, not performance evidence.">IMPORTED</span>}
         <a
           href={advertiserUrl}
           target="_blank"
@@ -807,7 +808,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
       {ad.match_reasons?.length > 0 && <p className="rounded-lg bg-violet-50 px-2.5 py-2 text-[11px] font-medium leading-4 text-violet-800"><span className="font-bold">Why it matched: </span>{ad.match_reasons.join(' · ')}</p>}
 
       {(ad.creative_tags?.length || ad.cta_type || ad.page_type) && <div className="flex flex-wrap gap-1.5">
-        {(ad.creative_tags || []).slice(0, 3).map(tag => <span key={tag} className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700">{tag.replaceAll('_', ' ')}</span>)}
+        {(ad.creative_tags || []).slice(0, 3).map(tag => <span key={tag} title={ad.taxonomy_source === 'rules_v1' ? 'Guessed from keywords in the ad copy' : undefined} className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700 ${ad.taxonomy_source === 'rules_v1' ? 'border border-dashed border-violet-300 bg-violet-50' : 'bg-violet-50'}`}>{tag.replaceAll('_', ' ')}{ad.taxonomy_source === 'rules_v1' ? ' (auto)' : ''}</span>)}
         {!isUnknownTaxonomy(ad.cta_type) && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600">{ad.cta_type.replaceAll('_', ' ')}</span>}
         {!isUnknownTaxonomy(ad.page_type) && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600">{ad.page_type}</span>}
       </div>}
@@ -818,6 +819,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
         {ad.is_multiple_versions && (
           <span className="text-xs text-gray-400">Multiple versions</span>
         )}
+        {(ad.last_seen || ad.first_seen) && <span className="text-xs text-gray-400">Captured {new Date(ad.last_seen || ad.first_seen).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>}
         {ad.running_days != null && (
           <span className="text-xs text-gray-400" title="Calculated from the source-provided start date; not confirmation of current delivery">Observed {ad.running_days}d</span>
         )}
@@ -843,6 +845,7 @@ function AdCard({ ad, isSaved, onSave, onUnsave, onUseAsInspiration, onInspect, 
           <SaveButton
             ad={ad}
             isSaved={isSaved}
+            pending={pending}
             onSave={onSave}
             onUnsave={onUnsave}
             angleTags={angleTags}
@@ -1409,7 +1412,7 @@ function ResearchCopilot({ verticalId, verticalLabel, onRunResults }) {
         body: JSON.stringify({ question: nextQuestion, vertical_id: verticalId }),
       });
       const payload = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(payload.detail || 'Research Copilot could not run that query');
+      if (!res.ok) throw new Error(parseApiError(payload, 'Research Copilot could not run that query'));
       setResponse(payload);
     } catch (error) { showError(error.message || 'Research Copilot could not run that query'); }
     finally { setLoading(false); }
@@ -1468,6 +1471,8 @@ export default function Research() {
   const [visibleCardCount, setVisibleCardCount] = useState(RESEARCH_INITIAL_CARD_COUNT);
   const [savedAds, setSavedAds] = useState([]);
   const [savedAdIds, setSavedAdIds] = useState(new Set());
+  const [savedPendingIds, setSavedPendingIds] = useState(new Set());
+  const [savedError, setSavedError] = useState('');
   const [query, setQuery] = useState('');
   const [queryLoading, setQueryLoading] = useState(false);
   const [boards, setBoards] = useState([]);
@@ -1489,6 +1494,7 @@ export default function Research() {
   const [compareOpen, setCompareOpen] = useState(false);
   const [importingIntel, setImportingIntel] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [blockPending, setBlockPending] = useState(null);
 
   // Filters
   const [angleFilter, setAngleFilter] = useState('');
@@ -1639,7 +1645,7 @@ export default function Research() {
       const res = await authFetch(`${API_URL}/research/config-verticals/${activeVertical}/browse-ads?${params}`, { cache: 'no-store' });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || `Failed to load ads (${res.status})`);
+        throw new Error(parseApiError(err, `Failed to load ads (${res.status})`));
       }
       const ads = await res.json();
       if (requestId === browseRequestRef.current) setBrowseAds(ads.map(withDerivedResearchStatus));
@@ -1667,7 +1673,7 @@ export default function Research() {
       const response = await authFetch(`${API_URL}/research/config-verticals/${activeVertical}/advertisers?${params}`, { cache: 'no-store' });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.detail || 'Failed to load advertiser directory');
+        throw new Error(parseApiError(payload, 'Failed to load advertiser directory'));
       }
       const directory = await response.json();
       if (requestId === advertiserDirectoryRequestRef.current) setAdvertiserDirectory(directory);
@@ -1822,11 +1828,15 @@ export default function Research() {
   const loadSavedAds = async () => {
     try {
       const res = await authFetch(`${API_URL}/research/scraped-ads/saved`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(parseApiError(body, 'Could not load saved ads'));
+      }
       const all = await res.json();
+      setSavedError('');
       setSavedAds(all);
       setSavedAdIds(new Set(all.map(a => a.id)));
-    } catch (e) { /* non-blocking */ }
+    } catch (e) { setSavedError(e.message || 'Could not load saved ads'); }
   };
 
   // Updates the SAME underlying ad's strategy-note fields wherever it
@@ -2047,7 +2057,7 @@ export default function Research() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || 'Refresh failed');
+        throw new Error(parseApiError(err, 'Refresh failed'));
       }
       const result = await res.json();
       if (requestId !== refreshRequestRef.current || refreshVertical !== activeVerticalRef.current || refreshSubVertical !== activeSubVerticalRef.current || refreshContextGeneration !== contextGenerationRef.current) return;
@@ -2120,6 +2130,10 @@ export default function Research() {
   };
 
   const handleSave = async (ad, angleTag) => {
+    if (savedPendingIds.has(ad.id)) return;
+    const wasSaved = savedAdIds.has(ad.id);
+    const previousSaved = savedAds;
+    setSavedPendingIds(prev => new Set(prev).add(ad.id));
     // Optimistic update
     setSavedAdIds(prev => new Set([...prev, ad.id]));
     setSavedAds(prev => [{ ...ad, is_saved: true, angle_tag: angleTag }, ...prev.filter(a => a.id !== ad.id)]);
@@ -2134,14 +2148,17 @@ export default function Research() {
       if (!res.ok) throw new Error('Save failed');
       showSuccess('Ad saved to research library');
     } catch (e) {
-      // Roll back
-      setSavedAdIds(prev => { const s = new Set(prev); s.delete(ad.id); return s; });
-      setSavedAds(prev => prev.filter(a => a.id !== ad.id));
-      showError('Failed to save ad');
-    }
+      setSavedAdIds(prev => { const s = new Set(prev); if (!wasSaved) s.delete(ad.id); return s; });
+      setSavedAds(previousSaved);
+      showError(e.message || 'Failed to save ad');
+    } finally { setSavedPendingIds(prev => { const next = new Set(prev); next.delete(ad.id); return next; }); }
   };
 
   const handleUnsave = async (ad) => {
+    if (savedPendingIds.has(ad.id)) return;
+    const previousSaved = savedAds;
+    const wasSaved = savedAdIds.has(ad.id);
+    setSavedPendingIds(prev => new Set(prev).add(ad.id));
     setSavedAdIds(prev => { const s = new Set(prev); s.delete(ad.id); return s; });
     setSavedAds(prev => prev.filter(a => a.id !== ad.id));
 
@@ -2152,9 +2169,10 @@ export default function Research() {
       const res = await authFetch(`${API_URL}/research/scraped-ads/${ad.id}/save`, { method: 'DELETE' });
       if (!res.ok) throw new Error(`Failed to unsave ad (${res.status})`);
     } catch (e) {
-      // Reload to correct state
-      loadSavedAds();
-    }
+      setSavedAds(previousSaved);
+      setSavedAdIds(prev => { const next = new Set(prev); if (wasSaved) next.add(ad.id); return next; });
+      showError(e.message || 'Failed to unsave ad');
+    } finally { setSavedPendingIds(prev => { const next = new Set(prev); next.delete(ad.id); return next; }); }
   };
 
   const handleImportIntel = async (payloadText) => {
@@ -2174,7 +2192,7 @@ export default function Research() {
         body: JSON.stringify(payload),
       });
       const result = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(result.detail || 'Import failed');
+      if (!res.ok) throw new Error(parseApiError(result, 'Import failed'));
       const quality = result.quality || {};
       const qualityBits = [
         `${quality.with_media ?? 0} with media`,
@@ -2208,7 +2226,7 @@ export default function Research() {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
       });
       const result = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(result.detail || 'External research import failed');
+      if (!res.ok) throw new Error(parseApiError(result, 'External research import failed'));
       showSuccess(result.message || `Imported ${payload.ads.length} external research rows`);
       setShowExternalImportModal(false);
       loadBrowseAds();
@@ -2221,22 +2239,21 @@ export default function Research() {
   };
 
   const handleUseAsInspiration = (ad, watchlistBrief = null, testBacklogId = null) => {
-    localStorage.setItem('pendingResearchInspiration', JSON.stringify({
+    const handoff = {
       headline: ad.headline,
       body: ad.ad_copy,
       advertiser: ad.brand_name,
       cta: ad.cta_text,
       mediaUrl: ad.media_url,
       mediaType: ad.media_type,
-      videoUrls: ad.video_urls || [],
       thumbnailUrl: ad.thumbnail_url,
       destinationDomain: ad.destination_domain,
       volumeScore: ad.volume_score,
       rankPosition: ad.rank_position,
       isMultipleVersions: ad.is_multiple_versions,
       creativeIntel: ad.creative_intel,
-      analystTakeaway: ad.creative_intel?.bhm_takeaway || null,
-      watchlistBrief,
+      analystTakeaway: (ad.creative_intel?.bhm_takeaway || '').slice(0, 2000) || null,
+      watchlistBrief: (watchlistBrief || '').slice(0, 2000) || null,
       // A backlog ID is only created from the buyer-owned Test Backlog. It lets
       // later Meta-create flow link this original BHM ad back to the
       // hypothesis without attributing competitor delivery or performance.
@@ -2259,8 +2276,16 @@ export default function Research() {
       video_length_seconds: ad.video_length_seconds,
       taxonomy_source: ad.taxonomy_source,
       taxonomy_confidence: ad.taxonomy_confidence,
+      brand_id: null,
+      savedAt: Date.now(),
       source: 'research',
-    }));
+    };
+    try {
+      localStorage.setItem('pendingResearchInspiration', JSON.stringify(handoff));
+    } catch (error) {
+      showError('Could not hand this ad to Build New Ad (browser storage full). Clear site data and retry.');
+      return;
+    }
     navigate('/ad-remix');
   };
 
@@ -2270,6 +2295,15 @@ export default function Research() {
       showInfo('Page already blocked');
       return;
     }
+
+    setBlockPending({ ad, pageName });
+  };
+
+  const confirmBlockPage = async () => {
+    const pending = blockPending;
+    setBlockPending(null);
+    if (!pending) return;
+    const { pageName } = pending;
 
     try {
       const res = await authFetch(
@@ -2283,7 +2317,7 @@ export default function Research() {
       const normalizedPageName = pageName.toLowerCase();
       setBrowseAds(prev => prev.filter(a => (a.brand_name || '').toLowerCase() !== normalizedPageName));
       setSearchResultAds(prev => prev.filter(a => (a.brand_name || '').toLowerCase() !== normalizedPageName));
-      showSuccess(`${pageName} blocked — won't appear again`);
+      showSuccess(`${pageName} hidden for everyone on the team`);
     } catch (e) {
       showError('Could not block advertiser — try again.');
     }
@@ -2791,6 +2825,7 @@ export default function Research() {
                     key={ad.id}
                     ad={ad}
                     isSaved={savedAdIds.has(ad.id)}
+                    pending={savedPendingIds.has(ad.id)}
                     onSave={handleSave}
                     onUnsave={handleUnsave}
                     onUseAsInspiration={handleUseAsInspiration}
@@ -2874,6 +2909,7 @@ export default function Research() {
             </div>
           </div>
 
+          {savedError && !activeBoardId && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">Couldn’t load saved ads: {savedError} <button type="button" onClick={loadSavedAds} className="font-semibold underline">Retry</button></div>}
           {visibleSavedAds.length === 0 ? (
             <div className="bg-white rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center">
               <Star size={20} className="mx-auto text-gray-300 mb-2" />
@@ -2887,7 +2923,8 @@ export default function Research() {
                 <AdCard
                   key={ad.id}
                   ad={ad}
-                  isSaved={savedAdIds.has(ad.id)}
+                    isSaved={savedAdIds.has(ad.id)}
+                    pending={savedPendingIds.has(ad.id)}
                   onSave={handleSave}
                   onUnsave={handleUnsave}
                   onUseAsInspiration={handleUseAsInspiration}
@@ -2976,6 +3013,7 @@ export default function Research() {
         importing={importingIntel}
         defaultVertical={currentVerticalLabel}
       />
+      {blockPending && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="presentation"><div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl" role="dialog" aria-modal="true" aria-labelledby="block-advertiser-title"><h2 id="block-advertiser-title" className="text-lg font-semibold text-slate-900">Hide advertiser for everyone?</h2><p className="mt-2 text-sm text-slate-600">Hide <strong>{blockPending.pageName}</strong> for everyone on the team? This applies to the shared Research catalog.</p><div className="mt-5 flex justify-end gap-2"><button type="button" autoFocus onClick={() => setBlockPending(null)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">Cancel</button><button type="button" onClick={confirmBlockPage} className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white">Hide advertiser</button></div></div></div>}
       <ResearchDetailDrawer ad={detailAd} activeVertical={activeVertical} advertiserSnapshot={advertiserSnapshot} retainedVisuals={browseAds} onClose={closeDetail} onInspect={inspectCreative} onExploreAdvertiser={exploreAdvertiser} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onPreviousResult={() => inspectAdjacentResult(-1)} onNextResult={() => inspectAdjacentResult(1)} canGoPrevious={detailResultIndex > 0} canGoNext={detailResultIndex >= 0 && detailResultIndex < detailResults.length - 1} resultPosition={detailResultIndex >= 0 ? { current: detailResultIndex + 1, total: detailResults.length } : null} onNotesSaved={handleStrategyNotesSaved} onMediaSaved={handleResearchMediaSaved} onReviewSaved={handleResearchReviewSaved} onBriefSaved={handleResearchReviewSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onAddTest={handleCreateTestBacklog} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
     </div>
   );

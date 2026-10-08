@@ -1,16 +1,7 @@
 export const RULE_WARN_ABOVE = { cpl: 500, cpa: 500, ctr: 20, roas: 10 };
 export const RULE_CAPS = { cpl: 10000, cpa: 10000, ctr: 100, roas: 20 };
 
-export const parseApiError = (body, fallback = 'Request failed') => {
-  const detail = body?.detail;
-  if (typeof detail === 'string') return detail;
-  if (detail && typeof detail === 'object' && !Array.isArray(detail)) return detail.message || detail.detail || fallback;
-  if (Array.isArray(detail)) return detail.map(item => {
-    const location = Array.isArray(item?.loc) ? ` (${item.loc.slice(1).join('.')})` : '';
-    return `${item?.msg || item?.detail || JSON.stringify(item)}${location}`;
-  }).join('; ') || fallback;
-  return fallback;
-};
+export { parseApiError } from './apiErrors';
 
 export const validateRuleNumbers = ({ metric, threshold, min_spend, action, budget_adjust_pct }) => {
   const value = Number(threshold);
