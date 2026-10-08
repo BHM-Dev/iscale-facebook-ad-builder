@@ -46,6 +46,9 @@ RETRY_MAX_ATTEMPTS = 12
 RETRY_ALERT_AT_ATTEMPTS = RETRY_FAST_ATTEMPTS
 RETRY_SLOW_INTERVAL_SECONDS = 6 * 3600
 RETRY_PRUNE_AFTER_SECONDS = 30 * 86400
+# A whole-sync failure repeats on every 15-minute cycle until fixed; page once per window.
+SYNC_FAILURE_ALERT_KEY = "drive_sync_failure_alert_at"
+SYNC_FAILURE_ALERT_WINDOW_SECONDS = 6 * 3600
 # Most files one sync run may archive purely because their folder is outside the library root.
 OUTSIDE_LIBRARY_ARCHIVE_CAP = 25
 SUPPORTED_PREFIXES = ("image/", "video/")
@@ -446,8 +449,51 @@ class DriveSyncService:
             if isinstance(exc, HTTPException) and exc.status_code == 409:
                 raise
             logger.exception("Drive creative sync failed")
-            slack_service.send_drive_sync_alert(type(exc).__name__, str(exc))
+            self._alert_sync_failure(exc)
             raise
+
+    @staticmethod
+    def _failure_alert_due(last_alert_iso: Optional[str], now: datetime) -> bool:
+        if not last_alert_iso:
+            return True
+        try:
+            last = datetime.fromisoformat(last_alert_iso)
+        except (TypeError, ValueError):
+            return True
+        return (now - last).total_seconds() >= SYNC_FAILURE_ALERT_WINDOW_SECONDS
+
+    def _alert_sync_failure(self, exc: Exception) -> None:
+        """Page for a failed sync at most once per window, so a persistent
+        outage (revoked Drive auth, etc.) is one DM, not one per cycle."""
+        try:
+            now = datetime.now(timezone.utc)
+            row = self.db.execute(
+                text("SELECT value FROM drive_sync_state WHERE key = :key"),
+                {"key": SYNC_FAILURE_ALERT_KEY},
+            ).first()
+            if not self._failure_alert_due(row[0] if row else None, now):
+                logger.info("Drive sync failure alert suppressed (already alerted within window): %s", exc)
+                return
+            if not slack_service.send_drive_sync_alert(type(exc).__name__, str(exc)):
+                return
+            self.db.execute(
+                text(
+                    """
+                    INSERT INTO drive_sync_state (key, value, updated_at)
+                    VALUES (:key, :value, NOW())
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+                    """
+                ),
+                {"key": SYNC_FAILURE_ALERT_KEY, "value": now.isoformat()},
+            )
+            self.db.commit()
+        except Exception as alert_exc:
+            # Alerting must never mask the sync's own exception.
+            logger.warning("Could not record Drive sync failure alert: %s", alert_exc)
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
 
     @logged_method("reconcile")
     def reconcile_missing_media(self, max_import: int = 100) -> Dict[str, Any]:

@@ -295,3 +295,57 @@ def test_a_new_deploy_re_arms_the_alert_for_an_exhausted_failure():
     finally:
         os.environ.pop("GIT_COMMIT", None)
     assert "alerted" not in service._ledger()["x"]
+
+
+def test_sync_failure_alert_is_throttled_to_once_per_window():
+    from app.services.drive_sync_service import SYNC_FAILURE_ALERT_WINDOW_SECONDS
+
+    now = datetime.now(timezone.utc)
+    due = DriveSyncService._failure_alert_due
+    assert due(None, now)
+    assert due("not-a-date", now)
+    assert not due((now - timedelta(minutes=15)).isoformat(), now)
+    assert due((now - timedelta(seconds=SYNC_FAILURE_ALERT_WINDOW_SECONDS + 1)).isoformat(), now)
+
+
+def test_alert_sync_failure_sends_once_then_suppresses_and_never_raises():
+    from app.services import drive_sync_service as mod
+
+    sent = []
+    stored = {}
+
+    class _Res:
+        def __init__(self, value):
+            self.value = value
+
+        def first(self):
+            return [self.value] if self.value else None
+
+    class _DB:
+        def execute(self, statement, params=None):
+            if "SELECT" in str(statement):
+                return _Res(stored.get("v"))
+            stored["v"] = params["value"]
+            return _Res(None)
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+    service = DriveSyncService.__new__(DriveSyncService)
+    service.db = _DB()
+    original = mod.slack_service.send_drive_sync_alert
+    mod.slack_service.send_drive_sync_alert = lambda summary, detail="", **k: sent.append(summary) or True
+    try:
+        service._alert_sync_failure(RuntimeError("auth revoked"))
+        service._alert_sync_failure(RuntimeError("auth revoked"))
+        service._alert_sync_failure(RuntimeError("auth revoked"))
+    finally:
+        mod.slack_service.send_drive_sync_alert = original
+    assert sent == ["RuntimeError"]
+
+    broken = DriveSyncService.__new__(DriveSyncService)
+    broken.db = None
+    broken._alert_sync_failure(RuntimeError("x"))

@@ -583,17 +583,12 @@ async def startup_event():
 
         scheduler.add_job(scheduled_check, 'interval', minutes=30, id='auto_pause_check')
         scheduler.add_job(scheduled_redtrack_sync, 'interval', minutes=30, id='redtrack_sync')
-        # One off-peak daily changes-feed sync. The bounded auto-repair pass
-        # above runs immediately after it, while Package Health continues to
-        # inspect Drive hourly without re-importing the full library.
-        scheduler.add_job(
-            scheduled_drive_sync,
-            'cron',
-            hour=7,
-            minute=17,
-            timezone='UTC',
-            id='drive_creative_sync',
-        )
+        # Changes-feed sync every 15 minutes (restored 2026-10-08 at Steve's
+        # request): a daily run left Joel's fresh uploads invisible to Abel for
+        # up to ~19h. The feed is cheap when nothing changed, and the shared
+        # advisory lock plus APScheduler's single-instance default prevent
+        # overlap. The expensive full-tree work (health snapshot, reconcile) stays daily.
+        scheduler.add_job(scheduled_drive_sync, 'interval', minutes=15, id='drive_creative_sync')
         # Two bounded same-day recovery windows. They only replay the change
         # feed after a failed/partial run; otherwise they re-check existing
         # unverified rows without doing a full Drive crawl.
