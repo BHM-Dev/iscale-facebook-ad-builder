@@ -11,6 +11,12 @@ import { safeLocalStorageSet } from '../lib/safeLocalStorage';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
+const drivePackageDisplayName = (path) => String(path || '')
+  .split(/[\\/]/)
+  .map(part => part.trim())
+  .filter(Boolean)
+  .at(-1) || null;
+
 const METRIC_LABELS = { cpl: 'Cost Per Lead', cpa: 'Cost Per Action', ctr: 'CTR', roas: 'ROAS' };
 const METRIC_UNITS  = { cpl: '$', cpa: '$', ctr: '%', roas: 'x' };
 const DATE_PRESETS  = [
@@ -1136,7 +1142,7 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
                           className="mt-0.5 truncate max-w-[200px] text-[10px] font-medium text-violet-600"
                           title={`Approved Drive creative${ad.launch_context.source_category ? ` · ${ad.launch_context.source_category}` : ''}${ad.launch_context.source_file_name ? ` · ${ad.launch_context.source_file_name}` : ''}`}
                         >
-                          Drive{ad.launch_context.source_category ? ` · ${ad.launch_context.source_category}` : ''}
+                          Drive{drivePackageDisplayName(ad.launch_context.source_category) ? ` · ${drivePackageDisplayName(ad.launch_context.source_category)}` : ''}
                         </div>
                       )}
                       {/* Spend bar */}
