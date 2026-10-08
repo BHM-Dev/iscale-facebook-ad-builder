@@ -180,12 +180,17 @@ const driveGroupMatchesQuery = (group, query) => (
 // placement folder and keeping the first two segments yields 144 sections --
 // exactly the 144 packages the health report counts. Keeping the full path
 // instead splits "Final Creatives" from "Source Images" into 162.
-const drivePackageSection = (group) => {
+// Keep the source label tied to the Drive package, not the copy block label
+// (for example, "AD 2"). Copy block labels repeat across packages and do not
+// let a buyer relate performance back to the originating creative concept.
+export const drivePackageLabel = (group) => {
     const raw = group?.displayAsset?.folder_path || group?.assets?.[0]?.folder_path || '';
     const parts = String(raw).split(/[\\/]/).map(part => part.trim()).filter(Boolean);
     if (parts.length && /^(?:1x1|9x16|4x5|16x9)(?:\s+(?:images?|assets?|videos?|creatives?))?$/i.test(parts[parts.length - 1])) parts.pop();
-    return parts.slice(0, 2).join(' / ') || 'Uncategorized';
+    return parts.slice(0, 2).join(' / ') || null;
 };
+
+const drivePackageSection = (group) => drivePackageLabel(group) || 'Uncategorized';
 
 const filterGroupsByFormat = (groups, format) => (
     format ? groups.filter(group => group.assets.some(asset => asset.format === format)) : groups
@@ -1569,6 +1574,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                     driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || group.copyPairingAmbiguous || false,
                     driveCopyRefusedForOtherFile: group.copyRefusedForOtherFile || false,
                     driveCopyIntegrityReason: group.copyIntegrityReason || null,
+                    sourcePackage: drivePackageLabel(group),
                     category: group.category || group.feedAsset?.brand_name || 'Uncategorized',
                     headline: matchedCopy.headline || '',
                     body: matchedCopy.primary_text || '',
@@ -1599,6 +1605,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                     driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || group.copyPairingAmbiguous || false,
                     driveCopyRefusedForOtherFile: group.copyRefusedForOtherFile || false,
                     driveCopyIntegrityReason: group.copyIntegrityReason || null,
+                    sourcePackage: drivePackageLabel(group),
                     category: group.category || group.feedAsset?.brand_name || 'Uncategorized',
                     headline: matchedCopy.headline || '',
                     body: matchedCopy.primary_text || '',
@@ -1631,6 +1638,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                     driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || group.copyPairingAmbiguous || false,
                     driveCopyRefusedForOtherFile: group.copyRefusedForOtherFile || false,
                     driveCopyIntegrityReason: group.copyIntegrityReason || null,
+                    sourcePackage: drivePackageLabel(group),
                     category: group.category || asset.brand_name || 'Uncategorized',
                     headline: matchedCopy.headline || '',
                     body: matchedCopy.primary_text || '',
@@ -1662,6 +1670,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                 driveCopyIntegrityIssue: group.copyIntegrityIssue || group.copyRefreshUnverified || group.copyPairingAmbiguous || false,
                 driveCopyRefusedForOtherFile: group.copyRefusedForOtherFile || false,
                 driveCopyIntegrityReason: group.copyIntegrityReason || null,
+                sourcePackage: drivePackageLabel(group),
                 category: group.category || asset.brand_name || 'Uncategorized',
                 headline: matchedCopy.headline || '',
                 body: matchedCopy.primary_text || '',

@@ -1,7 +1,7 @@
 """add Facebook ad launch provenance
 
 Revision ID: aa2b3c4d5e6f
-Revises: z1a2b3c4d5e6
+Revises: b4c6e8f0a2d4
 Create Date: 2026-10-08
 
 Stores the minimal local context needed to identify an approved Drive creative

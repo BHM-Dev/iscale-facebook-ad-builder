@@ -288,7 +288,8 @@ class FacebookAd(Base):
     # which approved Drive creative produced that row without creating a
     # second reporting surface.
     source_type = Column(String, nullable=True)       # e.g. "drive"
-    source_category = Column(String, nullable=True)   # Drive package/category
+    # Display label for the originating Drive package, not a copy-block tag.
+    source_category = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     adset = relationship("FacebookAdSet", back_populates="ads")
