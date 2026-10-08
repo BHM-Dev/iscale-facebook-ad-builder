@@ -9,6 +9,7 @@ Claude) can see what exists and why before changing it. Update the file in the s
 | Campaign Performance (`/campaign-performance`) | [campaign-performance.md](campaign-performance.md) | Money-safety hardening shipped 2026-10-06/07; Pause/Resume live-click verification pending |
 | Dashboard (`/`) — budget/scale/pause actions | [dashboard.md](dashboard.md) | Live-budget confirm shipped 2026-10-07; click-through verification pending |
 | Auto-Pause Rules (`/auto-pause-rules`) | [auto-pause-rules.md](auto-pause-rules.md) | Backend enforcement hardened 2026-10-07 (unit-tested only); UI round 1 shipped, round 2 with Codex |
+| Research (`/research`) | [research.md](research.md) | Audited 2026-10-07 (read-only); fixes not started |
 | Ad Launcher (Campaign → Ad Set → Drive picker → Review → Launch) | [ad-launcher.md](ad-launcher.md) | Live status gate shipped; browser-verified 2026-10-06 |
 
 ## How to add / update an entry
