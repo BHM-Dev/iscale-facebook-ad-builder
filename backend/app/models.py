@@ -283,6 +283,12 @@ class FacebookAd(Base):
     secondary_video_url = Column(String, nullable=True)
     secondary_video_id = Column(String, nullable=True)
     ad_number = Column(String, nullable=True)
+    # Launch provenance is deliberately lightweight: Campaign Performance
+    # already owns the live Meta metrics, while these fields let a buyer see
+    # which approved Drive creative produced that row without creating a
+    # second reporting surface.
+    source_type = Column(String, nullable=True)       # e.g. "drive"
+    source_category = Column(String, nullable=True)   # Drive package/category
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     adset = relationship("FacebookAdSet", back_populates="ads")

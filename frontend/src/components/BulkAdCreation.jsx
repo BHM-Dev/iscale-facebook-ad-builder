@@ -1909,6 +1909,10 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             description: adSpecificCreativeData.description,
                             cta: adSpecificCreativeData.cta,
                             websiteUrl: adSpecificCreativeData.websiteUrl,
+                            sourceType: specificCreative?.source === 'drive' ? 'drive' : null,
+                            sourceCategory: specificCreative?.source === 'drive'
+                                ? (specificCreative.category || null)
+                                : null,
                             status: launchAdStatus,
                             fbAdId: result.adId,
                             fbCreativeId: result.creativeId

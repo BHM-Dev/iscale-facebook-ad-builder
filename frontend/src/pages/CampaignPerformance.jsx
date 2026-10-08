@@ -1131,6 +1131,14 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
                       <div className="font-medium text-gray-800 leading-tight truncate max-w-[200px]" title={ad.ad_name}>
                         {ad.ad_name || ad.ad_id}
                       </div>
+                      {ad.launch_context?.source_type === 'drive' && (
+                        <div
+                          className="mt-0.5 truncate max-w-[200px] text-[10px] font-medium text-violet-600"
+                          title={`Approved Drive creative${ad.launch_context.source_category ? ` · ${ad.launch_context.source_category}` : ''}${ad.launch_context.source_file_name ? ` · ${ad.launch_context.source_file_name}` : ''}`}
+                        >
+                          Drive{ad.launch_context.source_category ? ` · ${ad.launch_context.source_category}` : ''}
+                        </div>
+                      )}
                       {/* Spend bar */}
                       <div className="mt-1 h-1 bg-gray-100 rounded-full w-24">
                         <div

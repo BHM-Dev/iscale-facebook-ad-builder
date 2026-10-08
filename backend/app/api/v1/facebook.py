@@ -1145,6 +1145,12 @@ def save_ad_locally(
         local_ad.secondary_video_url = ad_data.get('secondaryVideoUrl')
         local_ad.secondary_video_id = ad_data.get('secondaryVideoId')
         local_ad.ad_number = ad_data.get('adNumber')
+        # Older launcher clients do not send provenance. Keep any existing
+        # source record on an idempotent local-save replay from those clients.
+        if 'sourceType' in ad_data:
+            local_ad.source_type = ad_data.get('sourceType')
+        if 'sourceCategory' in ad_data:
+            local_ad.source_category = ad_data.get('sourceCategory')
         db.commit()
         db.refresh(local_ad)
         return {"message": "Ad saved locally", "id": local_ad.id}

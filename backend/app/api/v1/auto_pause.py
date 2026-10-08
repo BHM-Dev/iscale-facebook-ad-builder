@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_db, get_current_user
-from app.models import AutoPauseRule, AutoPauseRuleLog, FacebookAdSet, normalize_account_id
+from app.models import AutoPauseRule, AutoPauseRuleLog, FacebookAd, FacebookAdSet, normalize_account_id
 from app.services.facebook_service import FacebookService
 from app.services.slack_service import send_check_summary, send_rule_action_alert
 from app.api.v1.facebook import _assert_adset_allowed, _assert_account_allowed, _assert_campaign_allowed, _resolve_scoped_default_account
@@ -819,6 +819,7 @@ def get_ads_bulk(
     date_to: Optional[str] = Query(None),
     include_all: bool = Query(False),
     include_status: bool = Query(False),
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """Fetch Meta Insights for ALL ads in a single API call.
@@ -898,6 +899,45 @@ def get_ads_bulk(
                     info = statuses.get(str(row.get('ad_id')))
                     row['status'] = info.get('status') if info else None
                     row['effective_status'] = info.get('effective_status') if info else None
+
+        # Meta supplies delivery results, while the launcher owns the durable
+        # source context. Merge only records from this account and only for ads
+        # already present in Meta's insight response; no additional Meta call or
+        # fallback matching by name is allowed.
+        visible_ad_ids = {
+            str(row.get('ad_id'))
+            for rows in result.values()
+            for row in rows
+            if row.get('ad_id')
+        }
+        if visible_ad_ids:
+            local_rows = (
+                db.query(
+                    FacebookAd.fb_ad_id,
+                    FacebookAd.creative_name,
+                    FacebookAd.source_type,
+                    FacebookAd.source_category,
+                    FacebookAdSet.fb_account_id,
+                )
+                .join(FacebookAdSet, FacebookAd.adset_id == FacebookAdSet.id)
+                .filter(FacebookAd.fb_ad_id.in_(visible_ad_ids))
+                .all()
+            )
+            account_id = normalize_account_id(ad_account_id)
+            launch_context = {
+                str(row.fb_ad_id): {
+                    'source_type': row.source_type,
+                    'source_category': row.source_category,
+                    'source_file_name': row.creative_name,
+                }
+                for row in local_rows
+                if normalize_account_id(row.fb_account_id) == account_id
+            }
+            for rows in result.values():
+                for row in rows:
+                    context = launch_context.get(str(row.get('ad_id')))
+                    if context:
+                        row['launch_context'] = context
         return result
     except RuntimeError as e:
         raise HTTPException(400, str(e))
