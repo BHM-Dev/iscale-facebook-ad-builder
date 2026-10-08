@@ -2960,6 +2960,87 @@ def get_research_test_backlog(db: Session = Depends(get_db), current_user: User 
     } for item in items]
 
 
+@router.get("/test-backlog/outcomes")
+def get_research_test_outcomes(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    """Return one account-level performance snapshot for linked research tests.
+
+    The Meta read is delegated to the existing cached ads-bulk path, then joined
+    locally by fb_ad_id. This deliberately avoids one Meta request per test row.
+    """
+    from app.models import ResearchTestBacklogItem
+    from app.api.v1.auto_pause import get_ads_bulk
+
+    items = db.query(ResearchTestBacklogItem).filter(
+        ResearchTestBacklogItem.created_by == current_user.id,
+        ResearchTestBacklogItem.generated_ad_id.isnot(None),
+    ).all()
+    try:
+        bulk = get_ads_bulk(include_all=False, include_status=False, current_user=current_user)
+    except Exception as exc:
+        logger.warning("research test outcome sync unavailable: %s", exc)
+        bulk = {}
+    by_ad_id = {str(row.get("ad_id")): row for rows in (bulk or {}).values() for row in rows}
+    delivered = [row for row in by_ad_id.values() if row.get("spend") is not None]
+    total_spend = sum(float(row.get("spend") or 0) for row in delivered)
+    total_leads = sum(int(row.get("leads") or 0) for row in delivered)
+    account_avg_cpl = round(total_spend / total_leads, 2) if total_leads else None
+    result = {}
+    for item in items:
+        ad = item.generated_ad
+        row = by_ad_id.get(str(ad.fb_ad_id)) if ad and ad.fb_ad_id else None
+        spend = float(row.get("spend")) if row and row.get("spend") is not None else None
+        leads = int(row.get("leads")) if row and row.get("leads") is not None else None
+        cpl = round(spend / leads, 2) if spend is not None and leads else None
+        launched_at = ad.created_at if ad else None
+        age_days = (datetime.utcnow() - launched_at.replace(tzinfo=None)).days if launched_at else None
+        result[item.id] = {
+            "spend": spend, "leads": leads, "cpl": cpl,
+            "roas": round(float(ad.revenue) / spend, 2) if ad and ad.revenue is not None and spend else None,
+            "revenue": float(ad.revenue) if ad and ad.revenue is not None else None,
+            "profit": float(ad.profit) if ad and ad.profit is not None else None,
+            "last_synced_at": _serialize_research_datetime(ad.last_synced_at) if ad else None,
+            "account_avg_cpl": account_avg_cpl,
+            "age_days": age_days,
+            "result_ready": bool((spend is not None and spend >= 50) or (age_days is not None and age_days >= 5)),
+        }
+    return {"outcomes": result, "account_avg_cpl": account_avg_cpl, "synced_at": datetime.utcnow().isoformat()}
+
+
+@router.get("/learnings")
+def get_research_learnings(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    """Aggregate completed BHM tests by the source creative attributes."""
+    from app.models import ResearchTestBacklogItem
+    outcomes = get_research_test_outcomes(db=db, current_user=current_user).get("outcomes", {})
+    items = db.query(ResearchTestBacklogItem).filter(
+        ResearchTestBacklogItem.created_by == current_user.id,
+        ResearchTestBacklogItem.status.in_(["learned", "archived"]),
+    ).all()
+    grouped = {}
+    for item in items:
+        outcome = outcomes.get(item.id, {})
+        source = _serialize_scraped_ad(item.scraped_ad) if item.scraped_ad else (item.source_snapshot or {})
+        values = {
+            "hook type": source.get("hook_type"), "promise": source.get("promise"),
+            "angle": source.get("angle_tag") or source.get("angle"), "persona": source.get("persona"),
+        }
+        for attribute, value in values.items():
+            if not value: continue
+            key = (attribute, str(value))
+            bucket = grouped.setdefault(key, {"attribute": attribute, "value": str(value), "tests": 0, "spend": 0.0, "leads": 0, "profit": 0.0})
+            bucket["tests"] += 1
+            bucket["spend"] += float(outcome.get("spend") or 0)
+            bucket["leads"] += int(outcome.get("leads") or 0)
+            bucket["profit"] += float(outcome.get("profit") or 0)
+    rows = []
+    for bucket in grouped.values():
+        bucket["cpl"] = round(bucket["spend"] / bucket["leads"], 2) if bucket["leads"] else None
+        bucket["too_early"] = bucket["tests"] < 2
+        bucket["spend"] = round(bucket["spend"], 2)
+        bucket["profit"] = round(bucket["profit"], 2)
+        rows.append(bucket)
+    return {"learnings": sorted(rows, key=lambda row: row["profit"], reverse=True)}
+
+
 @router.post("/test-backlog", status_code=201)
 def create_research_test_backlog_item(request: ResearchTestBacklogCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     from app.models import ResearchTestBacklogItem, ScrapedAd, SavedSearch, Vertical

@@ -18,6 +18,7 @@ import {
   getResearchBoards,
   getResearchTestBacklog,
   getResearchTestOutcomes,
+  getResearchLearnings,
   markAdvertiserWatchlistReviewed,
   searchAndSave,
   updateResearchTestBacklogItem,
@@ -841,7 +842,7 @@ function AdCard({ ad, isSaved, pending, onSave, onUnsave, onUseAsInspiration, on
             className="inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 transition-colors"
           >
             <Zap size={12} />
-            Build ad
+            Build test
           </button>
           <SaveButton
             ad={ad}
@@ -1396,6 +1397,17 @@ function ResearchTestBacklog({ items, outcomes = {}, loading, verticalId, vertic
   </section>;
 }
 
+function ResearchOutcomeBanner({ items, outcomes, verticalId }) {
+  const rows = (items || []).filter(item => item.vertical_id === verticalId && outcomes[item.id]);
+  if (!rows.length) return null;
+  return <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-slate-700"><strong>Test outcomes:</strong> {rows.map(item => { const o = outcomes[item.id]; return <span key={item.id} className="ml-2 inline-flex flex-wrap gap-1.5"><span>{item.advertiser || 'Test'}</span><span>Spend {o.spend == null ? 'not synced' : formatResearchMoney(o.spend)}</span><span>Leads {o.leads == null ? '—' : o.leads}</span><span>CPL {o.cpl == null ? '—' : formatResearchMoney(o.cpl)}</span><span>ROAS {o.roas == null ? '—' : `${o.roas}x`}</span>{o.result_ready && <strong className="text-amber-800">Result ready</strong>}</span>; })}</div>;
+}
+
+function ResearchLearnings({ rows }) {
+  const [open, setOpen] = useState(false);
+  return <details open={open} onToggle={event => setOpen(event.currentTarget.open)} className="mb-3 rounded-xl border border-slate-200 bg-white"><summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-slate-800">What’s working for us <span className="ml-1 text-xs font-normal text-slate-400">({rows.length} attributes)</span></summary>{open && <div className="overflow-x-auto border-t border-slate-100"><table className="w-full text-left text-xs"><thead className="bg-slate-50 text-slate-500"><tr><th className="px-4 py-2">Attribute</th><th className="px-4 py-2">Tests</th><th className="px-4 py-2">Spend</th><th className="px-4 py-2">Leads</th><th className="px-4 py-2">Blended CPL</th><th className="px-4 py-2">Profit</th></tr></thead><tbody>{rows.map(row => <tr key={`${row.attribute}-${row.value}`} className="border-t border-slate-100"><td className="px-4 py-2"><strong>{row.value}</strong><span className="ml-1 text-slate-400">{row.attribute}</span></td><td className="px-4 py-2">{row.too_early ? 'n=1 — too early' : row.tests}</td><td className="px-4 py-2">{formatResearchMoney(row.spend)}</td><td className="px-4 py-2">{row.leads}</td><td className="px-4 py-2">{row.too_early ? '—' : formatResearchMoney(row.cpl)}</td><td className="px-4 py-2">{formatResearchMoney(row.profit)}</td></tr>)}</tbody></table></div>}</details>;
+}
+
 function ResearchCopilot({ verticalId, verticalLabel, onRunResults }) {
   const { authFetch } = useAuth();
   const { showError } = useToast();
@@ -1467,6 +1479,7 @@ export default function Research() {
   const [watchlistError, setWatchlistError] = useState('');
   const [testBacklog, setTestBacklog] = useState([]);
   const [testOutcomes, setTestOutcomes] = useState({});
+  const [researchLearnings, setResearchLearnings] = useState([]);
   const [testBacklogLoading, setTestBacklogLoading] = useState(false);
   const [capturingAdvertiser, setCapturingAdvertiser] = useState(false);
   const [refreshingWatchlistAdvertiserId, setRefreshingWatchlistAdvertiserId] = useState('');
@@ -1704,9 +1717,10 @@ export default function Research() {
   const loadTestBacklog = async () => {
     setTestBacklogLoading(true);
     try {
-      const [backlog, outcomeResponse] = await Promise.all([getResearchTestBacklog(), getResearchTestOutcomes()]);
+      const [backlog, outcomeResponse, learningResponse] = await Promise.all([getResearchTestBacklog(), getResearchTestOutcomes(), getResearchLearnings()]);
       setTestBacklog(backlog);
       setTestOutcomes(outcomeResponse?.outcomes || {});
+      setResearchLearnings(learningResponse?.learnings || []);
     }
     catch (error) { showError(error.message || 'Could not load research test backlog'); }
     finally { setTestBacklogLoading(false); }
@@ -2296,6 +2310,19 @@ export default function Research() {
     navigate('/ad-remix');
   };
 
+  const handleBuildFromCreative = async (ad, watchlistBrief = null) => {
+    try {
+      const created = await createResearchTestBacklogItem({
+        vertical_id: activeVertical,
+        advertiser: ad.brand_name || null,
+        scraped_ad_id: ad.id,
+        hypothesis: watchlistBrief || `Test an original ${ad.media_type || 'ad'} using the observed ${ad.hook_type || 'creative'} pattern for the selected BHM offer.`,
+      });
+      setTestBacklog(previous => [{ ...created, advertiser: ad.brand_name || null, source: ad, vertical_id: activeVertical, created_at: new Date().toISOString() }, ...previous]);
+      handleUseAsInspiration(ad, watchlistBrief, created.id);
+    } catch (error) { showError(error.message || 'Could not create research test'); }
+  };
+
   const handleBlockPage = async (ad) => {
     const pageName = ad.brand_name || '';
     if (!pageName) {
@@ -2624,7 +2651,7 @@ export default function Research() {
           verticalLabel={currentVerticalLabel}
           onOpenLibrary={() => setResearchView('library')}
           onInspect={inspectCreative}
-          onBuild={handleUseAsInspiration}
+          onBuild={handleBuildFromCreative}
           boards={boards}
           onAddToBoard={handleAddToBoard}
           onCreateBoard={handleCreateBoard}
@@ -2636,9 +2663,9 @@ export default function Research() {
       ) : researchView === 'next' && watchlistEnabled ? (
         <ResearchNextActions watchlist={watchlist} tests={testBacklog} loading={watchlistLoading || testBacklogLoading} verticalId={activeVertical} verticalLabel={currentVerticalLabel} onBuild={handleBuildTestBacklogItem} onExplore={exploreAdvertiser} onRefresh={handleTargetedWatchlistRefresh} onReviewGenerated={handleReviewGeneratedTestAd} onOpenTests={() => setResearchView('tests')} />
       ) : researchView === 'watchlist' && watchlistEnabled ? (
-        <><WatchlistTargetedRefresh watchlist={watchlist} onRefreshAdvertiser={handleTargetedWatchlistRefresh} refreshingAdvertiserId={refreshingWatchlistAdvertiserId} refreshingVertical={refreshing} /><WatchlistPanel watchlist={watchlist} loading={watchlistLoading} error={watchlistError} onExplore={exploreAdvertiser} onBuild={handleUseAsInspiration} onAddTest={handleCreateTestBacklog} onMarkReviewed={handleMarkWatchlistReviewed} onRemove={handleRemoveFromWatchlist} onRefresh={handleWatchlistRefresh} refreshing={refreshing} verticalLabel={currentVerticalLabel} /></>
+        <><WatchlistTargetedRefresh watchlist={watchlist} onRefreshAdvertiser={handleTargetedWatchlistRefresh} refreshingAdvertiserId={refreshingWatchlistAdvertiserId} refreshingVertical={refreshing} /><WatchlistPanel watchlist={watchlist} loading={watchlistLoading} error={watchlistError} onExplore={exploreAdvertiser} onBuild={handleBuildFromCreative} onAddTest={handleCreateTestBacklog} onMarkReviewed={handleMarkWatchlistReviewed} onRemove={handleRemoveFromWatchlist} onRefresh={handleWatchlistRefresh} refreshing={refreshing} verticalLabel={currentVerticalLabel} /></>
       ) : researchView === 'tests' && watchlistEnabled ? (
-        <ResearchTestBacklog items={testBacklog} outcomes={testOutcomes} loading={testBacklogLoading} verticalId={activeVertical} verticalLabel={currentVerticalLabel} onCreate={handleCreateTestBacklog} onStatusChange={handleTestBacklogStatus} onNotesChange={handleTestBacklogNotes} onBuild={handleBuildTestBacklogItem} onReviewGenerated={handleReviewGeneratedTestAd} onInspectSource={inspectCreative} />
+        <><ResearchOutcomeBanner items={testBacklog} outcomes={testOutcomes} verticalId={activeVertical} /><ResearchLearnings rows={researchLearnings} /><ResearchTestBacklog items={testBacklog} outcomes={testOutcomes} loading={testBacklogLoading} verticalId={activeVertical} verticalLabel={currentVerticalLabel} onCreate={handleCreateTestBacklog} onStatusChange={handleTestBacklogStatus} onNotesChange={handleTestBacklogNotes} onBuild={handleBuildTestBacklogItem} onReviewGenerated={handleReviewGeneratedTestAd} onInspectSource={inspectCreative} /></>
       ) : <>
 
       <LiveCaptureReceipt receipt={lastCaptureReceipt} onDismiss={() => setLastCaptureReceipt(null)} />
@@ -3021,7 +3048,7 @@ export default function Research() {
         defaultVertical={currentVerticalLabel}
       />
       {blockPending && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="presentation"><div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl" role="dialog" aria-modal="true" aria-labelledby="block-advertiser-title"><h2 id="block-advertiser-title" className="text-lg font-semibold text-slate-900">Hide advertiser for everyone?</h2><p className="mt-2 text-sm text-slate-600">Hide <strong>{blockPending.pageName}</strong> for everyone on the team? This applies to the shared Research catalog.</p><div className="mt-5 flex justify-end gap-2"><button type="button" autoFocus onClick={() => setBlockPending(null)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">Cancel</button><button type="button" onClick={confirmBlockPage} className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white">Hide advertiser</button></div></div></div>}
-      <ResearchDetailDrawer ad={detailAd} activeVertical={activeVertical} advertiserSnapshot={advertiserSnapshot} retainedVisuals={browseAds} onClose={closeDetail} onInspect={inspectCreative} onExploreAdvertiser={exploreAdvertiser} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onPreviousResult={() => inspectAdjacentResult(-1)} onNextResult={() => inspectAdjacentResult(1)} canGoPrevious={detailResultIndex > 0} canGoNext={detailResultIndex >= 0 && detailResultIndex < detailResults.length - 1} resultPosition={detailResultIndex >= 0 ? { current: detailResultIndex + 1, total: detailResults.length } : null} onNotesSaved={handleStrategyNotesSaved} onMediaSaved={handleResearchMediaSaved} onReviewSaved={handleResearchReviewSaved} onBriefSaved={handleResearchReviewSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onAddTest={handleCreateTestBacklog} onBuild={(ad) => { closeDetail(); handleUseAsInspiration(ad); }} />
+      <ResearchDetailDrawer ad={detailAd} activeVertical={activeVertical} advertiserSnapshot={advertiserSnapshot} retainedVisuals={browseAds} onClose={closeDetail} onInspect={inspectCreative} onExploreAdvertiser={exploreAdvertiser} onBack={goBackInDetail} canGoBack={detailHistory.length > 1} onPreviousResult={() => inspectAdjacentResult(-1)} onNextResult={() => inspectAdjacentResult(1)} canGoPrevious={detailResultIndex > 0} canGoNext={detailResultIndex >= 0 && detailResultIndex < detailResults.length - 1} resultPosition={detailResultIndex >= 0 ? { current: detailResultIndex + 1, total: detailResults.length } : null} onNotesSaved={handleStrategyNotesSaved} onMediaSaved={handleResearchMediaSaved} onReviewSaved={handleResearchReviewSaved} onBriefSaved={handleResearchReviewSaved} boards={boards} onAddToBoard={handleAddToBoard} onCreateBoard={handleCreateBoard} onAddTest={handleCreateTestBacklog} onBuild={(ad) => { closeDetail(); handleBuildFromCreative(ad); }} />
     </div>
   );
 }
