@@ -904,40 +904,46 @@ def get_ads_bulk(
         # source context. Merge only records from this account and only for ads
         # already present in Meta's insight response; no additional Meta call or
         # fallback matching by name is allowed.
-        visible_ad_ids = {
-            str(row.get('ad_id'))
-            for rows in result.values()
-            for row in rows
-            if row.get('ad_id')
-        }
-        if visible_ad_ids:
-            local_rows = (
-                db.query(
-                    FacebookAd.fb_ad_id,
-                    FacebookAd.creative_name,
-                    FacebookAd.source_type,
-                    FacebookAd.source_category,
-                    FacebookAdSet.fb_account_id,
-                )
-                .join(FacebookAdSet, FacebookAd.adset_id == FacebookAdSet.id)
-                .filter(FacebookAd.fb_ad_id.in_(visible_ad_ids))
-                .all()
-            )
-            account_id = normalize_account_id(ad_account_id)
-            launch_context = {
-                str(row.fb_ad_id): {
-                    'source_type': row.source_type,
-                    'source_category': row.source_category,
-                    'source_file_name': row.creative_name,
-                }
-                for row in local_rows
-                if normalize_account_id(row.fb_account_id) == account_id
+        # Provenance is decoration on top of Meta's numbers: if this lookup fails
+        # (DB hiccup, migration not applied yet) the ads table must still load.
+        try:
+            visible_ad_ids = {
+                str(row.get('ad_id'))
+                for rows in result.values()
+                for row in rows
+                if row.get('ad_id')
             }
-            for rows in result.values():
-                for row in rows:
-                    context = launch_context.get(str(row.get('ad_id')))
-                    if context:
-                        row['launch_context'] = context
+            if visible_ad_ids:
+                local_rows = (
+                    db.query(
+                        FacebookAd.fb_ad_id,
+                        FacebookAd.creative_name,
+                        FacebookAd.source_type,
+                        FacebookAd.source_category,
+                        FacebookAdSet.fb_account_id,
+                    )
+                    .join(FacebookAdSet, FacebookAd.adset_id == FacebookAdSet.id)
+                    .filter(FacebookAd.fb_ad_id.in_(visible_ad_ids))
+                    .all()
+                )
+                account_id = normalize_account_id(ad_account_id)
+                launch_context = {
+                    str(row.fb_ad_id): {
+                        'source_type': row.source_type,
+                        'source_category': row.source_category,
+                        'source_file_name': row.creative_name,
+                    }
+                    for row in local_rows
+                    if normalize_account_id(row.fb_account_id) == account_id
+                }
+                for rows in result.values():
+                    for row in rows:
+                        context = launch_context.get(str(row.get('ad_id')))
+                        if context:
+                            row['launch_context'] = context
+        except Exception as exc:
+            logger.warning("ads-bulk: Drive launch context lookup failed, returning rows without it: %s", exc)
+            db.rollback()
         return result
     except RuntimeError as e:
         raise HTTPException(400, str(e))

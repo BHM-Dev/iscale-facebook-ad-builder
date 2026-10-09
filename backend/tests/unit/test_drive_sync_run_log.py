@@ -93,3 +93,34 @@ def test_active_run_is_written_before_work_and_finalized(monkeypatch):
         ("work",),
         ("finish", 42, "ok", {"processed": 2}, None),
     ]
+
+
+def test_prune_old_runs_deletes_only_rows_past_retention():
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine("sqlite://")
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE drive_sync_runs (id INTEGER PRIMARY KEY, started_at TIMESTAMP, status TEXT)"))
+        now = datetime.now(timezone.utc)
+        for i, age_days in enumerate([1, 29, 31, 90]):
+            conn.execute(
+                text("INSERT INTO drive_sync_runs (id, started_at, status) VALUES (:i, :t, 'ok')"),
+                {"i": i, "t": now - timedelta(days=age_days)},
+            )
+
+    class _DB:
+        def get_bind(self):
+            return engine
+
+    assert run_log.prune_old_runs(_DB()) == 2
+    with engine.connect() as conn:
+        assert [r[0] for r in conn.execute(text("SELECT id FROM drive_sync_runs ORDER BY id"))] == [0, 1]
+
+
+def test_prune_never_raises():
+    class _Broken:
+        def get_bind(self):
+            raise RuntimeError("db down")
+
+    assert run_log.prune_old_runs(_Broken()) == 0

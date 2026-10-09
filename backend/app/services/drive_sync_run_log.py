@@ -10,7 +10,7 @@ back), and every failure here is swallowed.
 """
 import functools
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from fastapi import HTTPException
@@ -20,6 +20,10 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger(__name__)
 
 _COUNT_KEYS = ("processed", "created", "updated", "archived", "errors")
+
+# The 15-minute sync writes ~100 rows/day, idle ones included. 30 days is far
+# longer than any incident investigation has needed (CA-PROVEN, Landlords: days).
+RUN_RETENTION_DAYS = 30
 
 
 def _summary(result: Optional[dict], error: Optional[str]) -> Optional[str]:
@@ -190,3 +194,22 @@ def logged_method(kind):
             return logged_run(getattr(self, "db", None), resolved, lambda: method(self, *args, **kwargs))
         return wrapper
     return decorator
+
+
+def prune_old_runs(db, days: int = RUN_RETENTION_DAYS) -> int:
+    """Delete run rows older than `days`. Best-effort like every write here."""
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        run_db = Session(bind=db.get_bind())
+        try:
+            result = run_db.execute(
+                text("DELETE FROM drive_sync_runs WHERE started_at < :cutoff"),
+                {"cutoff": cutoff},
+            )
+            run_db.commit()
+            return int(result.rowcount or 0)
+        finally:
+            run_db.close()
+    except Exception:  # noqa: BLE001 - see module docstring
+        logger.warning("Could not prune Drive sync runs", exc_info=True)
+        return 0

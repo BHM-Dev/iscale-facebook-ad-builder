@@ -547,6 +547,13 @@ async def startup_event():
             except Exception as exc:
                 print(f"⚠️  Drive reconcile error: {exc}")
             finally:
+                try:
+                    from app.services.drive_sync_run_log import prune_old_runs
+                    pruned = prune_old_runs(db)
+                    if pruned:
+                        print(f"🧹 Drive sync run log: pruned {pruned} row(s) past retention")
+                except Exception as exc:
+                    print(f"⚠️  Drive sync run log prune error: {exc}")
                 db.close()
 
         def scheduled_offer_performance_check():

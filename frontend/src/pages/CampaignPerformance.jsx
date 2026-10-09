@@ -1139,7 +1139,7 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
                       </div>
                       {ad.launch_context?.source_type === 'drive' && (
                         <div
-                          className="mt-0.5 truncate max-w-[200px] text-[10px] font-medium text-violet-600"
+                          className="mt-0.5 line-clamp-2 break-words max-w-[200px] text-[10px] leading-tight font-medium text-violet-600"
                           title={`Approved Drive creative${ad.launch_context.source_category ? ` · ${ad.launch_context.source_category}` : ''}${ad.launch_context.source_file_name ? ` · ${ad.launch_context.source_file_name}` : ''}`}
                         >
                           Drive{drivePackageDisplayName(ad.launch_context.source_category) ? ` · ${drivePackageDisplayName(ad.launch_context.source_category)}` : ''}
