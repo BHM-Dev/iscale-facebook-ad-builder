@@ -134,15 +134,18 @@ def send_token_expiry_alert(days_left, expires_on: str, is_valid: bool) -> None:
         text = (
             ":rotating_light: *Ad Builder Meta token is INVALID / expired.*\n"
             ">Pushes, insights, and competitor research are all down until it's rotated.\n"
-            ">Fix: regenerate `FACEBOOK_ACCESS_TOKEN` (Graph API Explorer → 60-day exchange), "
-            "update the VPS `.env`, then force-recreate the backend."
+            ">Fix: regenerate `FACEBOOK_ACCESS_TOKEN` (Graph API Explorer → extend in the Access Token Debugger), "
+            "keep ALL the live token's permissions (ads_read, ads_management, business_management, pages_show_list, "
+            "pages_read_engagement, instagram_basic), update the VPS `.env`, then force-recreate the backend."
         )
     else:
-        n = int(days_left) if days_left is not None else "?"
+        n = max(int(days_left), 0) if days_left is not None else "?"
         text = (
             f":warning: *Ad Builder Meta token expires in {n} day(s)* (on {expires_on}).\n"
             ">Rotate it before then or pushes, insights, and research go down together.\n"
-            ">Graph API Explorer → 60-day exchange → update VPS `.env` → force-recreate backend."
+            ">Graph API Explorer → extend in the Access Token Debugger → update VPS `.env` → force-recreate backend. "
+            "Keep all permissions: ads_read, ads_management, business_management, pages_show_list, "
+            "pages_read_engagement, instagram_basic."
         )
 
     channel = os.getenv("SLACK_TOKEN_ALERT_CHANNEL", STEVE_DM)
@@ -352,7 +355,9 @@ def send_drive_sync_alert(summary: str, detail: str = "", headline: str = "Googl
         logger.warning("Drive sync alert skipped because SLACK_BOT_TOKEN is not set: %s", summary)
         return False
 
-    text = f":warning: *{headline}:* {summary}"
+    # The bot is shared with other BHM automations in the same DM; the prefix makes
+    # these scannable.
+    text = f":warning: *[Ad Builder] {headline}:* {summary}"
     if detail:
         text += f"\n> {detail[:1200]}"
 

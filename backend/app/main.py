@@ -319,7 +319,9 @@ async def startup_event():
                 if not r["checked"]:
                     print(f"⚠️  Token expiry check skipped: {r.get('error')}")
                     return
-                if r["never_expires"]:
+                # An invalid token can still report no expiry (revoked), so validity
+                # is checked before the never-expires early return.
+                if r["never_expires"] and r["is_valid"]:
                     print("✅ Token check: never-expires token, nothing to warn")
                     return
                 days = r["days_left"]

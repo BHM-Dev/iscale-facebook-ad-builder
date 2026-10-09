@@ -27,10 +27,17 @@ def check_token_expiry() -> dict:
     Returns a dict:
       checked       — False if we couldn't run the check (missing env / API error)
       is_valid      — bool | None
-      never_expires — True when expires_at == 0 (e.g. a system-user token)
-      expires_at    — unix timestamp (0 = never)
+      never_expires — True only when neither the token nor its data access ever expires
+                      (e.g. a system-user token)
+      expires_at    — unix timestamp of the EARLIER of token expiry and data-access
+                      expiry (0 = neither)
       days_left     — float | None (None when never_expires or not checked)
       error         — str | None
+
+    Meta user tokens can report expires_at == 0 ("never") while still carrying
+    data_access_expires_at ~90 days out; once that passes the token stops
+    returning ad-account data until the user re-authorizes. That date is the real
+    cliff, so it counts as expiry here.
     """
     result = {
         "checked": False, "is_valid": None, "never_expires": False,
@@ -51,7 +58,10 @@ def check_token_expiry() -> dict:
             timeout=10,
         )
         data = (resp.json() or {}).get("data", {})
-        expires_at = int(data.get("expires_at", 0) or 0)
+        token_expires = int(data.get("expires_at", 0) or 0)
+        data_access_expires = int(data.get("data_access_expires_at", 0) or 0)
+        candidates = [t for t in (token_expires, data_access_expires) if t > 0]
+        expires_at = min(candidates) if candidates else 0
         never = expires_at == 0
         result.update({
             "checked": True,
