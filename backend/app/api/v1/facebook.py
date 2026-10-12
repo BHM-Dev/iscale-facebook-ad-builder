@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from requests.exceptions import Timeout as RequestsTimeout
@@ -414,6 +415,26 @@ def sync_from_meta(
     """
     # A scoped user may only sync (and thus persist) their own accounts.
     ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
+    return run_meta_sync(service, db, ad_account_id)
+
+
+# FacebookAdSet.fb_adset_id has no unique constraint, so two overlapping syncs
+# (scheduler + Sync button) could both insert the same new ad set. One uvicorn
+# worker means a process-level lock is sufficient.
+_meta_sync_lock = threading.Lock()
+
+
+def run_meta_sync(service: FacebookService, db: Session, ad_account_id: Optional[str] = None) -> Dict[str, Any]:
+    """Upsert one ad account's campaigns and ad sets from Meta into the local DB.
+
+    Shared by the Sync button (POST /sync) and the scheduler in main.py so the
+    two can never drift apart. Raises HTTPException on a Meta fetch failure.
+    """
+    with _meta_sync_lock:
+        return _run_meta_sync_locked(service, db, ad_account_id)
+
+
+def _run_meta_sync_locked(service: FacebookService, db: Session, ad_account_id: Optional[str]) -> Dict[str, Any]:
     synced_account = normalize_account_id(ad_account_id or getattr(service, "ad_account_id", None))
 
     try:
@@ -422,9 +443,24 @@ def sync_from_meta(
         # against — an ad set under an archived campaign is still real billable
         # revenue, and excluding it here made that revenue invisible (see
         # FacebookService.get_campaigns docstring).
-        campaigns_raw = service.get_campaigns(ad_account_id=ad_account_id, effective_status=['ACTIVE', 'PAUSED', 'ARCHIVED'])
+        # list(): the SDK cursor is lazy, so a page-2 error must surface inside this try.
+        campaigns_raw = list(service.get_campaigns(ad_account_id=ad_account_id, effective_status=['ACTIVE', 'PAUSED', 'ARCHIVED']))
     except Exception as e:
         raise HTTPException(500, f"Failed to fetch campaigns from Meta: {e}")
+
+    # Both Meta fetches happen BEFORE any DB write so no transaction (and no row
+    # locks on campaigns) stays open across network calls or rate-limit backoff sleeps.
+    # Ad sets come from ONE account-level fetch (~2 paginated calls), not one
+    # call per campaign. The old per-campaign loop burst straight through Meta's
+    # per-ad-account rate limit on a large account — RHO's 92 campaigns lost
+    # 57 of 92 calls even running at 2am — which truncated the sync and left
+    # real ad sets, and the Everflow revenue P&L attributes to them, missing
+    # from the table. See FacebookService.get_all_adsets_for_account for why the
+    # fetch needs two passes to be complete.
+    try:
+        adsets_raw, adset_failures = service.get_all_adsets_for_account(ad_account_id=ad_account_id)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to fetch ad sets from Meta: {e}")
 
     from datetime import datetime, timezone
     _sync_now = datetime.now(timezone.utc)  # stamped on every row this sync refreshes
@@ -486,18 +522,6 @@ def sync_from_meta(
 
         db.flush()  # ensure campaign_db.id is available
         campaign_by_fb_id[fb_id] = campaign_db
-
-    # Ad sets come from ONE account-level fetch (~2 paginated calls), not one
-    # call per campaign. The old per-campaign loop burst straight through Meta's
-    # per-ad-account rate limit on a large account — RHO's 92 campaigns lost
-    # 57 of 92 calls even running at 2am — which truncated the sync and left
-    # real ad sets, and the Everflow revenue P&L attributes to them, missing
-    # from the table. See FacebookService.get_all_adsets_for_account for why the
-    # fetch needs two passes to be complete.
-    try:
-        adsets_raw, adset_failures = service.get_all_adsets_for_account(ad_account_id=ad_account_id)
-    except Exception as e:
-        raise HTTPException(500, f"Failed to fetch ad sets from Meta: {e}")
 
     orphan_adsets = 0
     for a in adsets_raw:
