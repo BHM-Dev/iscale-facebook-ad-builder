@@ -1253,7 +1253,6 @@ export default function GeneratedAds() {
                     initialHeadline={pushModal.ad.headline || ''}
                     initialBody={pushModal.ad.body || ''}
                     initialCta={pushModal.ad.cta || 'LEARN_MORE'}
-                    initialWebsiteUrl={localStorage.getItem('lastUsedWebsiteUrl') || ''}
                     initialCampaignId={sessionStorage.getItem('lastUsedCampaignId') || ''}
                     niche={pushModal.ad.niche || pushModal.ad.overlay_niche_line || ''}
                     generatedAdId={pushModal.ad.id || null}
@@ -1269,7 +1268,6 @@ export default function GeneratedAds() {
                         items={bulkItems}
                         onClose={() => setBulkPushOpen(false)}
                         preselectedCampaignId={sessionStorage.getItem('lastUsedCampaignId') || ''}
-                        preselectedWebsiteUrl={localStorage.getItem('lastUsedWebsiteUrl') || ''}
                         niche={getBulkNiche(bulkItems)}
                     />
                 );

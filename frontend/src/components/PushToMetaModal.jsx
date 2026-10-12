@@ -18,6 +18,14 @@ function isValidManualPageId(value) {
     return /^\d{5,}$/.test((value || '').trim());
 }
 
+// Destination URL scoped per ad account — same pattern BatchPushModal.jsx already uses for
+// pageId. Without this, a URL saved while pushing on one account/niche silently pre-fills
+// a later push on a different account (reported: Joel, 2026-10-12 — a launch sent traffic
+// to the Commercial Insurance link instead of the normal insurance link).
+function websiteUrlStorageKey(adAccountId) {
+    return adAccountId ? `lastUsedWebsiteUrl_${adAccountId}` : null;
+}
+
 /**
  * Shared Push to Meta modal.
  * Works from both GeneratedAds library and ImageAds results page.
@@ -83,15 +91,19 @@ export default function PushToMetaModal({
     const [adminFieldsExpanded, setAdminFieldsExpanded] = useState(true);
     const [adminAutoCollapsed, setAdminAutoCollapsed] = useState(false);
 
-    const [pushForm, setPushForm] = useState({
-        adAccountId: safeLocalStorageGet('fb_ad_account_id') || '',
-        campaignId: '',
-        adsetId: '',
-        pageId: safeLocalStorageGet('lastUsedPageId') || '',
-        websiteUrl: initialWebsiteUrl || safeLocalStorageGet('lastUsedWebsiteUrl') || '',
-        headline: initialHeadline,
-        body: initialBody,
-        cta: initialCta || 'LEARN_MORE',
+    const [pushForm, setPushForm] = useState(() => {
+        const initialAdAccountId = safeLocalStorageGet('fb_ad_account_id') || '';
+        const scopedKey = websiteUrlStorageKey(initialAdAccountId);
+        return {
+            adAccountId: initialAdAccountId,
+            campaignId: '',
+            adsetId: '',
+            pageId: safeLocalStorageGet('lastUsedPageId') || '',
+            websiteUrl: initialWebsiteUrl || (scopedKey && safeLocalStorageGet(scopedKey)) || '',
+            headline: initialHeadline,
+            body: initialBody,
+            cta: initialCta || 'LEARN_MORE',
+        };
     });
 
     // When accounts.length <= 1, the Ad Account field below falls back to a
@@ -117,9 +129,13 @@ export default function PushToMetaModal({
     const hydrateAccount = (adAccountId) => {
         if (!adAccountId) return;
         resetEnhancementsIfAccountChanged(adAccountId);
-        // pageId must reset too — it's scoped to the ad account, and a stale value from
-        // a previous account would otherwise silently pass the "all filled" collapse check.
-        setPushForm(p => ({ ...p, adAccountId, campaignId: '', adsetId: '', pageId: '' }));
+        // pageId and websiteUrl both reset on account switch — they're scoped to the ad
+        // account, and a stale value from a previous account would otherwise silently pass
+        // the "all filled" collapse check (websiteUrl) or launch against the wrong Page.
+        // An explicit initialWebsiteUrl (a specific ad's own URL) always wins.
+        const scopedKey = websiteUrlStorageKey(adAccountId);
+        const savedWebsiteUrl = (!initialWebsiteUrl && scopedKey && safeLocalStorageGet(scopedKey)) || '';
+        setPushForm(p => ({ ...p, adAccountId, campaignId: '', adsetId: '', pageId: '', websiteUrl: initialWebsiteUrl || savedWebsiteUrl }));
         setPushCampaigns([]);
         setPushAdSets([]);
         setPushPages([]);
@@ -354,9 +370,10 @@ export default function PushToMetaModal({
             }
 
             // Persist selections for next use
+            const websiteUrlKey = websiteUrlStorageKey(pushForm.adAccountId);
             if (pushForm.pageId) safeLocalStorageSet('lastUsedPageId', pushForm.pageId);
             if (pushForm.adAccountId) safeLocalStorageSet('fb_ad_account_id', pushForm.adAccountId);
-            if (pushForm.websiteUrl) safeLocalStorageSet('lastUsedWebsiteUrl', pushForm.websiteUrl);
+            if (pushForm.websiteUrl && websiteUrlKey) safeLocalStorageSet(websiteUrlKey, pushForm.websiteUrl);
             if (pushForm.campaignId) safeLocalStorageSet('lastUsedCampaignId', pushForm.campaignId);
 
             setSuccessResult({
@@ -547,9 +564,18 @@ export default function PushToMetaModal({
                                     setPushAdSets([]);
                                 }}
                                 onBlur={() => {
-                                    resetEnhancementsIfAccountChanged(pushForm.adAccountId);
-                                    loadPushCampaigns(pushForm.adAccountId);
-                                    loadPushPages(pushForm.adAccountId);
+                                    // Route through the same hydrateAccount() the dropdown path uses —
+                                    // it's the only place pageId/websiteUrl get rescoped to the new
+                                    // account. This field renders instead of the dropdown whenever
+                                    // accounts.length <= 1, including every accountFetchFailed case, so
+                                    // skipping hydrateAccount here left that path able to silently carry
+                                    // a stale Page/destination URL across accounts (code-auditor,
+                                    // pre-push review — BLOCKING). Gated on an actual change (same ref
+                                    // hydrateAccount itself checks) so merely tabbing through the field
+                                    // without editing it doesn't wipe the campaign/page/URL already set.
+                                    if (committedAdAccountRef.current !== pushForm.adAccountId) {
+                                        hydrateAccount(pushForm.adAccountId);
+                                    }
                                 }}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
                             />

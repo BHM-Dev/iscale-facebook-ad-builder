@@ -29,6 +29,11 @@ const CTA_OPTIONS = [
 const CTA_LABEL_TO_ENUM = Object.fromEntries(CTA_OPTIONS.map(([value, label]) => [label.toLowerCase(), value]));
 const KNOWN_CTA_VALUES = new Set(CTA_OPTIONS.map(([value]) => value));
 const pageStorageKey = (adAccountId) => adAccountId ? `lastUsedPageId_${adAccountId}` : null;
+// Destination URL must be scoped the same way as the Page ID above — a stale URL from
+// one ad account/niche silently carrying into a push on a different one is a real,
+// reported incident (Joel, 2026-10-12: a launch sent traffic to the Commercial
+// Insurance link instead of the normal insurance link).
+const websiteUrlStorageKey = (adAccountId) => adAccountId ? `lastUsedWebsiteUrl_${adAccountId}` : null;
 const PENDING_LINKS_KEY = 'pendingGeneratedAdMetaLinks';
 const readPendingLinks = () => {
     try {
@@ -80,7 +85,11 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
         const key = pageStorageKey(adAccountId);
         return key ? safeLocalStorageGet(key) || '' : '';
     });
-    const [websiteUrl, setWebsiteUrl] = useState(preselectedWebsiteUrl || safeLocalStorageGet('lastUsedWebsiteUrl') || '');
+    const [websiteUrl, setWebsiteUrl] = useState(() => {
+        if (preselectedWebsiteUrl) return preselectedWebsiteUrl;
+        const key = websiteUrlStorageKey(adAccountId);
+        return key ? safeLocalStorageGet(key) || '' : '';
+    });
     const [fieldErrors, setFieldErrors] = useState({});
     const [sharedCta, setSharedCta] = useState(() => {
         // Default to the most common CTA across items so the dropdown reflects what Joel already chose
@@ -290,6 +299,12 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                 const candidate = wasSameAccount ? previousPageId : savedPageId;
                 return list.some(page => page.id === candidate) ? candidate : '';
             });
+            // Same account-switch detection as pageId above — an explicit preselectedWebsiteUrl
+            // (e.g. Iterate on a specific ad) always wins and must never be clobbered here.
+            if (!preselectedWebsiteUrl) {
+                const savedWebsiteUrl = safeLocalStorageGet(websiteUrlStorageKey(acctId)) || '';
+                setWebsiteUrl(previousUrl => (wasSameAccount ? previousUrl : savedWebsiteUrl));
+            }
             pagesAccountRef.current = acctId;
         } catch {
             if (requestId !== pagesRequestRef.current) return;
@@ -511,9 +526,10 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
 
         // Persist for next time
         const pageKey = pageStorageKey(adAccountId);
+        const websiteUrlKey = websiteUrlStorageKey(adAccountId);
         if (pageId && pageKey) safeLocalStorageSet(pageKey, pageId);
         if (adAccountId) safeLocalStorageSet('fb_ad_account_id', adAccountId);
-        if (websiteUrl) safeLocalStorageSet('lastUsedWebsiteUrl', websiteUrl);
+        if (websiteUrl && websiteUrlKey) safeLocalStorageSet(websiteUrlKey, websiteUrl);
         if (selectedCampaignId) sessionStorage.setItem('lastUsedCampaignId', selectedCampaignId);
 
         setPushing(false);
