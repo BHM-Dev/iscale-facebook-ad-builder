@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import BrandSelectionStep from '../components/steps/BrandSelectionStep';
 import ProductSelectionStep from '../components/steps/ProductSelectionStep';
 import ProfileSelectionStep from '../components/steps/ProfileSelectionStep';
-import { safeSessionStorageGet, safeSessionStorageRemove, safeSessionStorageSet } from '../lib/safeLocalStorage';
+import { safeSessionStorageGet, safeSessionStorageRemove, safeSessionStorageSet, safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 import { AD_REMIX_DRAFT_SESSION_KEY } from '../lib/launchDraft';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -15,6 +15,15 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 // Meta CDN image URLs held in blueprint/prefillSource expire within minutes to
 // hours (see CLAUDE.md), so an old draft would hand the generate step a dead URL.
 const AD_REMIX_DRAFT_MAX_AGE_MS = 30 * 60 * 1000;
+
+// Facebook Page was cached under one bare global key here (`lastUsedPageId`), shared across
+// every ad set. AdRemix has no ad-account switcher, but different ad sets can still point at
+// different Pages (e.g. DailyInsurance.News vs. ResourceHelponline — see CLAUDE.md) — same
+// stale-cache risk already fixed for ad account in PushToMetaModal.jsx/BatchPushModal.jsx,
+// scoped here to the ad set instead since that's the granularity Pages are actually fetched at.
+function pageStorageKey(adsetId) {
+    return adsetId ? `lastUsedPageId_${adsetId}` : null;
+}
 
 const restoreAdRemixDraft = () => {
     // A fresh handoff (Remix drawer, template, research, upload) builds its own
@@ -451,15 +460,23 @@ export default function AdRemix() {
     ];
 
     // Persist push modal form selections (except image_url which expires) across modal opens.
-    // page_id also goes to localStorage so it survives across sessions (saves Joel from picking it every time).
+    // page_id also goes to localStorage, scoped to the ad set, so it survives across sessions
+    // (saves Joel from picking it every time) without bleeding into a different ad set's Page.
     useEffect(() => {
         if (!pushModal) return; // only persist while modal is open
         const { image_url: _ignored, ...toSave } = pushForm;
         try { sessionStorage.setItem('pushModalForm', JSON.stringify(toSave)); } catch (_) {}
-        if (pushForm.page_id) {
-            try { localStorage.setItem('lastUsedPageId', pushForm.page_id); } catch (_) {}
+        const pageKey = pageStorageKey(pushForm.adset_id);
+        // Gate on the CURRENT pages list actually containing page_id — adset_id updates
+        // synchronously on dropdown switch, before that adset's own page list has loaded
+        // (pages is cleared to [] in the same tick), so without this check this effect would
+        // write the OLD adset's page_id under the NEW adset's key the instant the switch
+        // happens: the exact cross-scope contamination this fix exists to prevent, just
+        // reintroduced one layer down (code-auditor pre-push review, BLOCKING).
+        if (pushForm.page_id && pageKey && pages.some(p => p.id === pushForm.page_id)) {
+            safeLocalStorageSet(pageKey, pushForm.page_id);
         }
-    }, [pushForm, pushModal]);
+    }, [pushForm, pushModal, pages]);
 
     const updateData = (field, value) => {
         setWizardData(prev => ({ ...prev, [field]: value }));
@@ -624,12 +641,13 @@ export default function AdRemix() {
             const saved = sessionStorage.getItem('pushModalForm');
             if (saved) savedForm = JSON.parse(saved);
         } catch (_) {}
-        const lastPageId = localStorage.getItem('lastUsedPageId') || '';
         const isReferenceTemplate = Boolean(wizardData.template?.fromResearch || wizardData.template?.fromUploaded);
         setPushForm({
             adset_id: savedForm.adset_id || '',
-            // sessionStorage has same-session preference; fall back to localStorage for cross-session persistence
-            page_id: savedForm.page_id || lastPageId,
+            // No cross-adset fallback here — scoped to this ad set, and the ad set itself
+            // isn't resolved yet at this point (see activeAdsetId below). The per-adset saved
+            // Page is restored once that resolves and this adset's own page list is in.
+            page_id: savedForm.page_id || '',
             // Pre-fill URL from source ad (so Joel doesn't need to type it),
             // falling back to any previously entered URL from this session.
             website_url: savedForm.website_url || remixLinkUrl || '',
@@ -668,12 +686,25 @@ export default function AdRemix() {
             }
 
             if (activeAdsetId) {
+                // Shares pageRequestRef with the manual ad-set dropdown below — a stale
+                // response from either path (e.g. the modal closed/reopened on a different
+                // concept before this resolved) must not overwrite whatever's current.
+                const requestId = ++pageRequestRef.current;
                 const pagesRes = await authFetch(`${API_URL}/facebook/adsets/${encodeURIComponent(activeAdsetId)}/pages`);
                 if (!pagesRes.ok) throw new Error('Pages failed for the selected ad set');
                 const pagesData = await pagesRes.json();
+                if (requestId !== pageRequestRef.current) return;
                 const scopedPages = Array.isArray(pagesData) ? pagesData : [];
                 setPages(scopedPages);
-                setPushForm(f => ({ ...f, page_id: scopedPages.some(p => p.id === f.page_id) ? f.page_id : '', lead_form_id: '' }));
+                // Keep an already-valid page_id (e.g. restored from this session); otherwise
+                // restore this ad set's own last-used Page; otherwise leave it blank rather
+                // than falling back to any other ad set's.
+                const savedPageId = safeLocalStorageGet(pageStorageKey(activeAdsetId)) || '';
+                setPushForm(f => {
+                    if (f.page_id && scopedPages.some(p => p.id === f.page_id)) return f;
+                    const candidate = scopedPages.some(p => p.id === savedPageId) ? savedPageId : '';
+                    return { ...f, page_id: candidate, lead_form_id: '' };
+                });
             }
 
             // If the restored adset is a lead gen campaign and we have a page, fetch lead forms
@@ -1508,7 +1539,14 @@ export default function AdRemix() {
                                                         if (requestId !== pageRequestRef.current) return;
                                                         const list = Array.isArray(scopedPages) ? scopedPages : [];
                                                         setPages(list);
-                                                        setPushForm(f => ({ ...f, page_id: list.some(p => p.id === f.page_id) ? f.page_id : '', lead_form_id: '' }));
+                                                        // Keep the current page_id if still valid for this ad set; otherwise
+                                                        // restore this ad set's own last-used Page rather than leaving blank.
+                                                        const savedPageId = safeLocalStorageGet(pageStorageKey(newId)) || '';
+                                                        setPushForm(f => {
+                                                            if (f.page_id && list.some(p => p.id === f.page_id)) return f;
+                                                            const candidate = list.some(p => p.id === savedPageId) ? savedPageId : '';
+                                                            return { ...f, page_id: candidate, lead_form_id: '' };
+                                                        });
                                                     })
                                                     .catch(error => {
                                                         if (requestId === pageRequestRef.current) setAdSetsError(error.message);
@@ -1746,6 +1784,11 @@ export default function AdRemix() {
                                         return (
                                             !pushForm.adset_id ||
                                             !pushForm.page_id ||
+                                            // adset_id updates synchronously on an ad-set switch, before that
+                                            // ad set's own Page list finishes loading — this closes the window
+                                            // where Push stays clickable with a still-previous-ad-set's page_id
+                                            // (code-auditor pre-push review, HIGH).
+                                            !pages.some(p => p.id === pushForm.page_id) ||
                                             !pushForm.image_url ||
                                             (isLeadGen ? !pushForm.lead_form_id : !pushForm.website_url) ||
                                             pushLoading
