@@ -519,6 +519,24 @@ const FacebookCampaignWizardInner = () => {
         setCurrentStep(4);
     };
 
+    // Full reset for a brand-new campaign/ad set build: unlike "Start a new batch"
+    // (which keeps the campaign + ad set and returns to Creative), this clears the
+    // receipt and the in-progress wizard state and lands on the first step. The
+    // last-used ad account (and last-used campaign/ad set suggestions) are
+    // intentionally kept as convenience defaults.
+    const startNewCampaign = () => {
+        if (quickAdTarget) stopQuickAd(null);
+        if (driveLaunchActive) stopDriveLaunch(null);
+        setQuickAdResolved(null);
+        setDriveLaunchResolved(null);
+        setLaunchReceipt(null);
+        discardLaunchDraft();
+        setFormData({ adAccountId: null, campaignId: null, adSetId: null, creativeId: null });
+        setBatchMode('combinations');
+        setFurthestStepReached(1);
+        setCurrentStep(1);
+    };
+
     // A receipt is immutable evidence of the batch just created, so its account
     // must win over any mutable wizard selection that may resolve after refresh.
     const selectedAdsManagerAccountId = launchReceipt?.accountId || selectedAdAccount?.accountId || selectedAdAccount?.id;
@@ -995,6 +1013,9 @@ const FacebookCampaignWizardInner = () => {
                                 </Link>
                                 <button type="button" onClick={prepareNextBatch} className="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:border-amber-200 hover:text-amber-800">
                                     Start a new batch
+                                </button>
+                                <button type="button" onClick={startNewCampaign} className="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:border-amber-200 hover:text-amber-800">
+                                    Start a new campaign
                                 </button>
                             </div>
                         </div>

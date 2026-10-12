@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronRight, Check, Loader, Plus } from 'lucide-react';
+import { ChevronRight, Check, Loader, Plus, Search } from 'lucide-react';
 import { useCampaign, createDefaultCampaignData } from '../context/CampaignContext';
 import { useToast } from '../context/ToastContext';
 import { getCampaigns } from '../lib/facebookApi';
@@ -54,6 +54,15 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false }) => {
     const [autoSelectMode, setAutoSelectMode] = useState(null);
     const [loading, setLoading] = useState(false);
     const [loadingCampaigns, setLoadingCampaigns] = useState(false);
+    const [campaignSearch, setCampaignSearch] = useState('');
+    // Every typed word must appear in the campaign name or status (any order).
+    const searchTerms = campaignSearch.toLowerCase().split(/\s+/).filter(Boolean);
+    const visibleCampaigns = searchTerms.length === 0
+        ? existingCampaigns
+        : existingCampaigns.filter(c => {
+            const haystack = `${c.name || ''} ${c.status || ''}`.toLowerCase();
+            return searchTerms.every(term => haystack.includes(term));
+        });
 
     useEffect(() => {
         // Fetch campaigns when switching to existing mode
@@ -273,7 +282,25 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false }) => {
                         ) : existingCampaigns.length === 0 ? (
                             <p className="text-gray-500 text-center py-8">No campaigns found in this ad account.</p>
                         ) : (
-                            existingCampaigns.map(campaign => (
+                            <>
+                            <div className="relative mb-3">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                                <input
+                                    type="text"
+                                    value={campaignSearch}
+                                    onChange={(e) => setCampaignSearch(e.target.value)}
+                                    placeholder="Search campaigns by name or status..."
+                                    aria-label="Search campaigns"
+                                    className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                />
+                                {searchTerms.length > 0 && (
+                                    <div className="mt-1 text-xs text-gray-500">{visibleCampaigns.length} of {existingCampaigns.length} campaigns</div>
+                                )}
+                            </div>
+                            {visibleCampaigns.length === 0 && (
+                                <p className="text-gray-500 text-center py-8">No campaigns match "{campaignSearch.trim()}".</p>
+                            )}
+                            {visibleCampaigns.map(campaign => (
                                 <div
                                     key={campaign.id}
                                     onClick={() => handleSelectExisting(campaign)}
@@ -312,7 +339,8 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false }) => {
                                         )}
                                     </div>
                                 </div>
-                            ))
+                            ))}
+                            </>
                         )}
                     </div>
                 </div>
