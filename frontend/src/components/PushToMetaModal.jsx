@@ -26,6 +26,13 @@ function websiteUrlStorageKey(adAccountId) {
     return adAccountId ? `lastUsedWebsiteUrl_${adAccountId}` : null;
 }
 
+// Facebook Page ID was still cached under one global key here (unlike BatchPushModal.jsx,
+// which already scopes it) — same bug class as the destination URL above, just applied to
+// which Page an ad launches under. Follow-up from the 2026-10-12 pre-push review.
+function pageStorageKey(adAccountId) {
+    return adAccountId ? `lastUsedPageId_${adAccountId}` : null;
+}
+
 /**
  * Shared Push to Meta modal.
  * Works from both GeneratedAds library and ImageAds results page.
@@ -94,11 +101,12 @@ export default function PushToMetaModal({
     const [pushForm, setPushForm] = useState(() => {
         const initialAdAccountId = safeLocalStorageGet('fb_ad_account_id') || '';
         const scopedKey = websiteUrlStorageKey(initialAdAccountId);
+        const pageKey = pageStorageKey(initialAdAccountId);
         return {
             adAccountId: initialAdAccountId,
             campaignId: '',
             adsetId: '',
-            pageId: safeLocalStorageGet('lastUsedPageId') || '',
+            pageId: (pageKey && safeLocalStorageGet(pageKey)) || '',
             websiteUrl: initialWebsiteUrl || (scopedKey && safeLocalStorageGet(scopedKey)) || '',
             headline: initialHeadline,
             body: initialBody,
@@ -116,6 +124,11 @@ export default function PushToMetaModal({
     // the other — code-auditor pre-push review, HIGH). campaignId is set via
     // a discrete list/select, so a plain effect on it alone is safe.
     const committedAdAccountRef = useRef(pushForm.adAccountId);
+    // Guards loadPushPages below against out-of-order responses — without it, a quick
+    // double account-switch can let an earlier account's response land after a later one's
+    // and silently re-apply that earlier account's saved Page (joel-perspective pre-push
+    // review, P1). BatchPushModal.jsx already has this same guard for its own page fetch.
+    const pushPagesRequestRef = useRef(0);
     const resetEnhancementsIfAccountChanged = (nextAdAccountId) => {
         if (committedAdAccountRef.current !== nextAdAccountId) {
             committedAdAccountRef.current = nextAdAccountId;
@@ -243,10 +256,28 @@ export default function PushToMetaModal({
 
     const loadPushPages = async (adAccountId) => {
         if (!adAccountId) return;
+        const requestId = ++pushPagesRequestRef.current;
         try {
             const pages = await getPages(adAccountId);
-            setPushPages(Array.isArray(pages) ? pages : []);
-        } catch { /* non-blocking */ }
+            // A later call (e.g. the user switched accounts again before this one
+            // resolved) has already landed — applying this stale response would
+            // silently re-apply a DIFFERENT account's saved Page/list.
+            if (requestId !== pushPagesRequestRef.current) return;
+            const list = Array.isArray(pages) ? pages : [];
+            setPushPages(list);
+            // Restore this account's own saved Page once the list is in, same scoping as
+            // websiteUrl. Keeps an already-valid selection (e.g. the user just picked one)
+            // rather than overwriting it, and never leaves an invalid/deleted Page selected.
+            const savedPageId = safeLocalStorageGet(pageStorageKey(adAccountId)) || '';
+            setPushForm(p => {
+                if (p.pageId && list.some(pg => pg.id === p.pageId)) return p;
+                const candidate = list.some(pg => pg.id === savedPageId) ? savedPageId : '';
+                return candidate === p.pageId ? p : { ...p, pageId: candidate };
+            });
+        } catch {
+            if (requestId !== pushPagesRequestRef.current) return;
+            /* non-blocking */
+        }
     };
 
     const handlePushToFacebook = async () => {
@@ -371,7 +402,8 @@ export default function PushToMetaModal({
 
             // Persist selections for next use
             const websiteUrlKey = websiteUrlStorageKey(pushForm.adAccountId);
-            if (pushForm.pageId) safeLocalStorageSet('lastUsedPageId', pushForm.pageId);
+            const pageKey = pageStorageKey(pushForm.adAccountId);
+            if (pushForm.pageId && pageKey) safeLocalStorageSet(pageKey, pushForm.pageId);
             if (pushForm.adAccountId) safeLocalStorageSet('fb_ad_account_id', pushForm.adAccountId);
             if (pushForm.websiteUrl && websiteUrlKey) safeLocalStorageSet(websiteUrlKey, pushForm.websiteUrl);
             if (pushForm.campaignId) safeLocalStorageSet('lastUsedCampaignId', pushForm.campaignId);

@@ -308,8 +308,15 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
             pagesAccountRef.current = acctId;
         } catch {
             if (requestId !== pagesRequestRef.current) return;
+            // Mirror the success path: a failed fetch on a genuine account switch must not
+            // leave the previous account's destination URL silently in place just because
+            // pageId already got cleared (code-auditor pre-push review, MEDIUM follow-up).
+            const wasSameAccount = pagesAccountRef.current === acctId;
             setPages([]);
             setPageId('');
+            if (!preselectedWebsiteUrl && !wasSameAccount) {
+                setWebsiteUrl('');
+            }
             pagesAccountRef.current = acctId;
         }
     };
