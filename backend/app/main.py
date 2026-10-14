@@ -104,6 +104,14 @@ async def startup_event():
         print(f"   DATABASE_URL: {sanitized_url}")
         raise RuntimeError(f"Database connection failed: {e}")
 
+    # Count every Meta Graph call by caller (hourly buckets in meta_call_stats) so a
+    # Meta app-level throttle can be attributed. Never blocks startup.
+    try:
+        from app.services.meta_call_telemetry import install as _install_meta_telemetry
+        _install_meta_telemetry()
+    except Exception as exc:
+        print(f"⚠️  Meta call telemetry not started: {exc}")
+
     # Start APScheduler — runs auto-pause check every 30 minutes
     try:
         from apscheduler.schedulers.background import BackgroundScheduler

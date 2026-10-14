@@ -1100,3 +1100,33 @@ class CapiQualitySnapshot(Base):
     diagnostics = Column(JSON, nullable=True)  # Meta's raw row, unmodified, for later per-event UI/debugging
     fetch_error = Column(Text, nullable=True)  # set instead of the metrics above when the API call failed
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class MetaCallStat(Base):
+    """Hourly count of Meta Graph API calls by caller and endpoint.
+
+    Written by app/services/meta_call_telemetry.py (a wrapper around the SDK's
+    FacebookAdsApi.call, so it sees every SDK Meta call; raw-`requests` calls
+    such as video fetches and Ad Library scrapers are not counted). Exists so
+    a Meta app-level throttle (code 4 / subcode 1504022) can be attributed to a
+    caller after the fact — container logs do not survive a deploy. One row per
+    (hour_start, caller, method, endpoint); counters are added to on each flush.
+    The *_max columns are the highest usage percentage Meta reported in any
+    response header during that hour.
+    """
+    __tablename__ = "meta_call_stats"
+    __table_args__ = (
+        UniqueConstraint('hour_start', 'caller', 'method', 'endpoint', name='uq_meta_call_stats_bucket'),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    hour_start = Column(DateTime(timezone=True), nullable=False, index=True)
+    caller = Column(String, nullable=False)
+    method = Column(String, nullable=False)
+    endpoint = Column(String, nullable=False)
+    calls = Column(Integer, nullable=False, default=0, server_default='0')
+    errors = Column(Integer, nullable=False, default=0, server_default='0')
+    throttles = Column(Integer, nullable=False, default=0, server_default='0')
+    total_ms = Column(Integer, nullable=False, default=0, server_default='0')
+    app_usage_max = Column(Integer, nullable=True)
+    account_usage_max = Column(Integer, nullable=True)

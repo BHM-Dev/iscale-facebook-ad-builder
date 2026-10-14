@@ -17,7 +17,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, User, Brand, GeneratedAd, MetaLaunchRequest, ResearchTestBacklogItem, normalize_account_id
 from app.database import get_db
-from app.core.deps import get_current_active_user, require_permission
+from app.core.deps import get_current_active_user, get_current_superuser, require_permission
 from sqlalchemy.orm import Session
 
 router = APIRouter()
@@ -327,6 +327,45 @@ def get_ad_accounts(
         if normalize_account_id(a.get("id") or a.get("account_id")) not in HIDDEN_ACCOUNT_IDS
     ]
     return _filter_accounts_for_user(accounts, current_user)
+
+@router.get("/meta-call-stats")
+def meta_call_stats(
+    hours: int = Query(24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_superuser),
+):
+    """Who is spending Meta's API budget: Graph calls by caller/endpoint over the last N hours.
+
+    Superuser only. Rows are hourly buckets written by meta_call_telemetry; the current
+    minute's calls are not flushed yet, so recent numbers lag by up to ~60s.
+    """
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import text
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    by_caller = db.execute(text("""
+        SELECT caller, SUM(calls) AS calls, SUM(errors) AS errors, SUM(throttles) AS throttles,
+               SUM(total_ms) AS total_ms, MAX(app_usage_max) AS app_usage_max,
+               MAX(account_usage_max) AS account_usage_max
+        FROM meta_call_stats WHERE hour_start >= :since
+        GROUP BY caller ORDER BY calls DESC LIMIT 50
+    """), {"since": since}).mappings().all()
+    by_endpoint = db.execute(text("""
+        SELECT method, endpoint, SUM(calls) AS calls, SUM(errors) AS errors, SUM(throttles) AS throttles
+        FROM meta_call_stats WHERE hour_start >= :since
+        GROUP BY method, endpoint ORDER BY calls DESC LIMIT 50
+    """), {"since": since}).mappings().all()
+    by_hour = db.execute(text("""
+        SELECT hour_start, SUM(calls) AS calls, SUM(throttles) AS throttles,
+               MAX(app_usage_max) AS app_usage_max
+        FROM meta_call_stats WHERE hour_start >= :since
+        GROUP BY hour_start ORDER BY hour_start
+    """), {"since": since}).mappings().all()
+
+    def _rows(rows):
+        return [{k: (v.isoformat() if hasattr(v, "isoformat") else (int(v) if k not in ("caller", "method", "endpoint") and v is not None else v)) for k, v in dict(r).items()} for r in rows]
+
+    return {"hours": hours, "by_caller": _rows(by_caller), "by_endpoint": _rows(by_endpoint), "by_hour": _rows(by_hour)}
+
 
 @router.get("/campaigns")
 def read_campaigns(
