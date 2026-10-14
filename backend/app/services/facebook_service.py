@@ -1067,10 +1067,16 @@ class FacebookService:
             start_time = adset_data.get('start_time') or adset_data.get('startTime')
             params[AdSet.Field.start_time] = start_time
 
-        # Handle end time (required for lifetime budget and day parting)
-        if adset_data.get('end_time') or adset_data.get('endTime'):
+        # Handle end time — only meaningful for LIFETIME budgets. The wizard
+        # always carries a default endTime in state (even for DAILY, where the
+        # UI shows no end-date control), so sending it unconditionally here
+        # was pushing every DAILY-budget ad set to Meta with a fixed end date
+        # instead of "Ongoing". Gate it the same way create_campaign() gates
+        # stop_time.
+        if budget_schedule == 'LIFETIME':
             end_time = adset_data.get('end_time') or adset_data.get('endTime')
-            params[AdSet.Field.end_time] = end_time
+            if end_time:
+                params[AdSet.Field.end_time] = end_time
 
         # Handle day parting / ad schedule
         # Meta's API field is 'adset_schedule' (NOT 'ad_schedule') — confirmed in SDK source.
@@ -3088,7 +3094,11 @@ class FacebookService:
             params[AdSet.Field.bid_strategy] = source[AdSet.Field.bid_strategy]
         if source.get(AdSet.Field.start_time):
             params[AdSet.Field.start_time] = source[AdSet.Field.start_time]
-        if source.get(AdSet.Field.end_time):
+        # Only carry end_time over for LIFETIME sources — mirrors the create_adset()
+        # gate above. A DAILY source that was stamped with a bad end_time by the old
+        # bug (fixed pre-push-review 2026-10-13) must not have that propagated into
+        # every future duplicate.
+        if source.get(AdSet.Field.lifetime_budget) is not None and source.get(AdSet.Field.end_time):
             params[AdSet.Field.end_time] = source[AdSet.Field.end_time]
         if source.get(AdSet.Field.promoted_object):
             params[AdSet.Field.promoted_object] = source[AdSet.Field.promoted_object]
