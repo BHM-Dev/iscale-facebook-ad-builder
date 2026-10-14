@@ -246,19 +246,87 @@ def get_facebook_service():
         raise HTTPException(status_code=500, detail=str(e))
     return service
 
+# The ad-account list changes rarely but is the FIRST call every launcher/page makes.
+# Meta's app-level throttle (code 4 / subcode 1504022) used to turn a busy hour into
+# "can't load accounts" for everyone, even though the answer hasn't changed. Cache the
+# last good list: reuse it briefly to cut calls, and serve it stale (max 30 min) if Meta
+# throttles. A single refresh runs at a time, and a throttle sets a short backoff so the
+# page's parallel mount calls don't all re-hit Meta while it is already limiting us.
+_ACCOUNTS_CACHE_TTL_SECONDS = 120
+_ACCOUNTS_THROTTLE_BACKOFF_SECONDS = 60
+_ACCOUNTS_MAX_STALE_SECONDS = 30 * 60
+_accounts_cache = {"data": None, "ts": 0.0, "backoff_until": 0.0}
+_accounts_cache_lock = threading.Lock()
+_accounts_refresh_lock = threading.Lock()
+
+
+def _is_meta_throttle(e) -> bool:
+    code = getattr(e, "code", None)
+    subcode = getattr(e, "subcode", None)
+    status = None
+    if code is None and callable(getattr(e, "api_error_code", None)):
+        try:
+            code = e.api_error_code()
+            subcode = e.api_error_subcode() if callable(getattr(e, "api_error_subcode", None)) else None
+            status = e.http_status() if callable(getattr(e, "http_status", None)) else None
+        except Exception:
+            pass
+    return (
+        code in _THROTTLE_CODES
+        or code == 341
+        or (code is not None and 80000 <= code <= 80014)
+        or subcode == 1504022
+        or status == 429
+        or "1504022" in str(e)
+    )
+
+
 @router.get("/accounts")
 def get_ad_accounts(
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(get_current_active_user)
 ):
-    try:
-        accounts = [
-            a for a in service.get_ad_accounts()
-            if normalize_account_id(a.get("id") or a.get("account_id")) not in HIDDEN_ACCOUNT_IDS
-        ]
-        return _filter_accounts_for_user(accounts, current_user)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    import time
+
+    def _snapshot():
+        with _accounts_cache_lock:
+            return _accounts_cache["data"], _accounts_cache["ts"], _accounts_cache["backoff_until"]
+
+    def _fresh(data, ts, backoff_until):
+        now = time.monotonic()
+        return data is not None and (now - ts < _ACCOUNTS_CACHE_TTL_SECONDS or now < backoff_until)
+
+    def _stale_ok(data, ts):
+        return data is not None and time.monotonic() - ts < _ACCOUNTS_MAX_STALE_SECONDS
+
+    data, ts, backoff_until = _snapshot()
+    raw = data if _fresh(data, ts, backoff_until) else None
+    if raw is None:
+        with _accounts_refresh_lock:  # single-flight: concurrent mounts wait, then reuse
+            data, ts, backoff_until = _snapshot()
+            if _fresh(data, ts, backoff_until):
+                raw = data
+            else:
+                try:
+                    raw = service.get_ad_accounts()
+                    with _accounts_cache_lock:
+                        _accounts_cache.update(data=raw, ts=time.monotonic(), backoff_until=0.0)
+                except Exception as e:
+                    if _is_meta_throttle(e):
+                        with _accounts_cache_lock:
+                            _accounts_cache["backoff_until"] = time.monotonic() + _ACCOUNTS_THROTTLE_BACKOFF_SECONDS
+                        if _stale_ok(data, ts):
+                            logger.warning("Meta throttled /accounts; serving cached list from %ds ago", int(time.monotonic() - ts))
+                            raw = data
+                        else:
+                            raise HTTPException(status_code=429, detail="Meta is rate-limiting requests right now. Try again in a few minutes.")
+                    else:
+                        raise HTTPException(status_code=500, detail=str(e))
+    accounts = [
+        a for a in raw
+        if normalize_account_id(a.get("id") or a.get("account_id")) not in HIDDEN_ACCOUNT_IDS
+    ]
+    return _filter_accounts_for_user(accounts, current_user)
 
 @router.get("/campaigns")
 def read_campaigns(
