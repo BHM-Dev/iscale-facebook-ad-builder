@@ -21,7 +21,7 @@ from app.services.slack_service import send_launch_alert
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_OUTCOMES = {"success", "partial", "failed", "rate_limited", "ambiguous"}
+_OUTCOMES = {"success", "partial", "failed", "rate_limited", "ambiguous", "watcher"}
 
 
 class LaunchOutcomeIn(BaseModel):
@@ -143,3 +143,28 @@ def mark_investigated(
     )
     db.commit()
     return {"marked": n}
+
+
+class WatcherIncidentIn(BaseModel):
+    summary: str = Field(..., max_length=500)
+    errors: Optional[List[str]] = Field(None, max_length=20)
+    meta: Optional[Dict[str, Any]] = None
+
+
+@router.post("/incident")
+def report_watcher_incident(
+    body: WatcherIncidentIn,
+    db: Session = Depends(get_db),
+    x_incident_token: Optional[str] = Header(None),
+):
+    """Health-watcher findings (409s, 5xx, throttling) enter the same queue the investigator polls."""
+    _require_incident_token(x_incident_token)
+    row = LaunchOutcome(
+        outcome="watcher",
+        campaign_name=body.summary,
+        errors=[str(e)[:500] for e in (body.errors or [])] or None,
+        meta=body.meta if body.meta and len(str(body.meta)) <= 2000 else None,
+    )
+    db.add(row)
+    db.commit()
+    return {"id": row.id}
