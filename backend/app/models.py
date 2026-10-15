@@ -1130,3 +1130,29 @@ class MetaCallStat(Base):
     total_ms = Column(Integer, nullable=False, default=0, server_default='0')
     app_usage_max = Column(Integer, nullable=True)
     account_usage_max = Column(Integer, nullable=True)
+
+
+class LaunchOutcome(Base):
+    """One row per bulk-launch run, reported by the launcher when it finishes.
+
+    Lets partial/failed launches alert immediately and gives the incident
+    investigator structured context instead of log archaeology. `meta` is
+    reserved for future fields. `alerted_at` / `investigated_at` make alerting
+    and the auto-investigator idempotent: one incident, one DM, one run.
+    """
+    __tablename__ = "launch_outcomes"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    user_email = Column(String, nullable=True)
+    ad_account_id = Column(String, nullable=True, index=True)
+    campaign_name = Column(String, nullable=True)
+    adset_name = Column(String, nullable=True)
+    outcome = Column(String, nullable=False, index=True)  # success|partial|failed|rate_limited|ambiguous
+    attempted = Column(Integer, nullable=False, default=0, server_default='0')
+    created = Column(Integer, nullable=False, default=0, server_default='0')
+    failed = Column(Integer, nullable=False, default=0, server_default='0')
+    errors = Column(JSON, nullable=True)
+    meta = Column(JSON, nullable=True)
+    alerted_at = Column(DateTime(timezone=True), nullable=True)
+    investigated_at = Column(DateTime(timezone=True), nullable=True)

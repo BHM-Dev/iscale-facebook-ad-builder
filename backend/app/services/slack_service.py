@@ -381,3 +381,9 @@ def send_drive_sync_alert(summary: str, detail: str = "", headline: str = "Googl
     except Exception as e:
         logger.warning("Drive sync Slack alert error: %s", e)
         return False
+
+
+def send_launch_alert(summary: str, detail: str = "") -> bool:
+    """DM Steve about a partial/failed bulk launch. Same DM-only routing as the
+    Drive sync alert; never posts to a shared channel."""
+    return send_drive_sync_alert(summary, detail, headline="Launch needs attention")

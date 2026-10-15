@@ -617,7 +617,7 @@ async def shutdown_event():
 
 
 # Include Routers
-from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence, creative_angles, pnl, drive_assets, drive_health, drive_sync_runs, capi_quality, launch_packs
+from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence, creative_angles, pnl, drive_assets, drive_health, drive_sync_runs, capi_quality, launch_packs, launch_outcomes
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
@@ -646,6 +646,7 @@ app.include_router(drive_assets.router, prefix="/api/v1/drive-assets", tags=["dr
 app.include_router(drive_health.router, prefix="/api/v1/drive", tags=["drive-health"])
 app.include_router(drive_sync_runs.router, prefix="/api/v1/drive-assets", tags=["drive-assets"])
 app.include_router(capi_quality.router, prefix="/api/v1/capi-quality", tags=["capi-quality"])
+app.include_router(launch_outcomes.router, prefix="/api/v1/launch-outcomes", tags=["launch-outcomes"])
 
 # Mount static files for uploads (same path as generated_ads save location)
 uploads_dir = str(settings.upload_dir)

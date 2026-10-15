@@ -1211,6 +1211,25 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         showSuccess(`Renamed ${adsData.length} ad${adsData.length !== 1 ? 's' : ''} using the new pattern.`);
     };
 
+    // Fire-and-forget: alerting must never block or break a launch.
+    const launchReportedRef = React.useRef(false);
+    const postLaunchOutcome = (payload) => {
+        if (launchReportedRef.current) return;
+        launchReportedRef.current = true;
+        try {
+            authFetch(`${API_URL}/launch-outcomes`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ad_account_id: selectedAdAccount?.accountId || selectedAdAccount?.id || null,
+                    campaign_name: campaignData?.name || null,
+                    adset_name: adsetData?.name || null,
+                    ...payload,
+                }),
+            }).catch(() => {});
+        } catch { /* ignore */ }
+    };
+
     const handleSubmit = async () => {
         if (loading || launchInFlightRef.current) return;
         if (liveLaunchHeld) {
@@ -1254,6 +1273,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         }
         setErrors([]);
         setLaunchOutcome(null);
+        launchReportedRef.current = false;
         const launchAds = adsData.filter(ad => !manifestExcludedAdIds.has(ad.id) && !protectedReconciliationIdSet.has(ad.id));
         if (launchAds.length === 0) {
             showWarning('Select at least one ad pair to launch');
@@ -1765,6 +1785,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             let rateLimited = false;
             let ambiguousStop = false;
             let attempted = 0;
+            const outcomeErrors = [];
+            const reportOutcome = (outcome) => postLaunchOutcome({
+                outcome,
+                attempted,
+                created: createdIndexes.length,
+                failed: failedCount,
+                errors: outcomeErrors,
+            });
             const createdIndexes = [];
             const createdAdIds = [];
             const createdMetaAdIds = [];
@@ -1940,6 +1968,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 } catch (error) {
                     console.error(`Error creating ad ${ad.name}:`, error);
                     setErrors(prev => [...prev, `Failed to create ${ad.name}: ${error.message}`]);
+                    outcomeErrors.push(`${ad.name}: ${error.message}`);
                     failedCount++;
 
                     // A Meta ad exists but the local mirror failed. Stop the
@@ -1999,6 +2028,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             }
 
             if (rateLimited || ambiguousStop) {
+                reportOutcome(rateLimited ? 'rate_limited' : 'ambiguous');
                 if (createdAdIds.length > 0 || auxiliaryMetaMutationStarted || !campaignData.isExisting || !adsetData.isExisting) {
                     persistReconciliationBlock('This batch stopped after one or more Meta objects were created. Reconcile the created rows and ad sets before starting another batch.', createdAdIds, auxiliaryMetaMutationStarted, createdMetaAdIds);
                 }
@@ -2009,6 +2039,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 launchInFlightRef.current = false;
             } else if (failedCount === 0) {
                 // All ads created — auto-advance after brief success display
+                reportOutcome('success');
                 clearSuccessfulLaunchIntent();
                 const adSetTargets = perMediaMode
                     ? [...perMediaAdsetMap.entries()].map(([creativeId, value], index) => {
@@ -2054,6 +2085,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 launchInFlightRef.current = false;
                 setTimeout(() => { onNext(); }, 1500);
             } else {
+                reportOutcome(createdIndexes.length > 0 ? 'partial' : 'failed');
                 if (createdAdIds.length > 0 || auxiliaryMetaMutationStarted || !campaignData.isExisting || !adsetData.isExisting) {
                     persistReconciliationBlock('This batch partially completed. Reconcile the created rows and ad sets before starting another batch.', createdAdIds, auxiliaryMetaMutationStarted, createdMetaAdIds);
                 }
@@ -2074,6 +2106,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             // the same persistent red panel every other partial-failure path here
             // already uses, not just a toast. Caught in pre-push review.
             showError(`Error: ${error.message}`);
+            postLaunchOutcome({ outcome: 'failed', attempted: 0, created: 0, failed: 0, errors: [String(error.message || error)] });
             if (error.metaMutationStarted || auxiliaryMetaMutationStarted || !campaignData.isExisting || !adsetData.isExisting) {
                 const untrackedAuxiliaryMutation = Boolean(error.metaMutationStarted && adsetData.isExisting && isMixed);
                 persistReconciliationBlock(error.message, [], auxiliaryMetaMutationStarted || untrackedAuxiliaryMutation);
