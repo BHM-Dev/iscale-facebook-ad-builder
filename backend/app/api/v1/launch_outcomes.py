@@ -4,10 +4,12 @@ The launcher POSTs one record when a run ends. Anything other than a clean
 success DMs Steve once (alerted_at makes a replay idempotent-safe).
 """
 import logging
+import os
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -76,3 +78,68 @@ def report_launch_outcome(
             row.alerted_at = datetime.now(timezone.utc)
             db.commit()
     return {"id": row.id}
+
+
+def _require_incident_token(token: Optional[str]) -> None:
+    expected = os.getenv("INCIDENT_POLL_TOKEN")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Incident polling is not configured")
+    if not token or not secrets.compare_digest(token.encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail="Invalid incident token")
+
+
+@router.get("/pending")
+def pending_incidents(
+    db: Session = Depends(get_db),
+    x_incident_token: Optional[str] = Header(None),
+):
+    """Non-success launches from the last 24h not yet picked up by the investigator."""
+    _require_incident_token(x_incident_token)
+    rows = (
+        db.query(LaunchOutcome)
+        .filter(
+            LaunchOutcome.outcome != "success",
+            LaunchOutcome.investigated_at.is_(None),
+            LaunchOutcome.created_at > datetime.now(timezone.utc) - timedelta(hours=24),
+        )
+        .order_by(LaunchOutcome.created_at)
+        .limit(10)
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "user_email": r.user_email,
+            "ad_account_id": r.ad_account_id,
+            "campaign_name": r.campaign_name,
+            "adset_name": r.adset_name,
+            "outcome": r.outcome,
+            "attempted": r.attempted,
+            "created": r.created,
+            "failed": r.failed,
+            "errors": r.errors,
+        }
+        for r in rows
+    ]
+
+
+class MarkInvestigatedIn(BaseModel):
+    ids: List[str] = Field(..., max_length=50)
+
+
+@router.post("/mark-investigated")
+def mark_investigated(
+    body: MarkInvestigatedIn,
+    db: Session = Depends(get_db),
+    x_incident_token: Optional[str] = Header(None),
+):
+    _require_incident_token(x_incident_token)
+    now = datetime.now(timezone.utc)
+    n = (
+        db.query(LaunchOutcome)
+        .filter(LaunchOutcome.id.in_(body.ids), LaunchOutcome.investigated_at.is_(None))
+        .update({LaunchOutcome.investigated_at: now}, synchronize_session=False)
+    )
+    db.commit()
+    return {"marked": n}
