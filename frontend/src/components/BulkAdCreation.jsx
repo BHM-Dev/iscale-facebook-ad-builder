@@ -481,7 +481,11 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             setReconciliationResolvedRecord(null);
             setReconciliationHasUntrackedMetaMutation(false);
             setErrors([]);
-            showSuccess('Reconciliation cleared. Start a fresh batch from the previous step.');
+            // Review restores adsData (and its row IDs) on remount when inputs are
+            // unchanged. Reusing IDs already saved with a Meta ad makes the first
+            // relaunched row 409 on /ads/save and duplicates every created ad.
+            setAdsData([]);
+            showSuccess('Batch reset: renames, exclusions and edits were cleared. Ads already created in Meta were NOT removed, so exclude or delete them before relaunching the same creatives.');
             onBack();
         } catch (storageError) {
             console.warn('Could not clear fresh-batch reconciliation lock:', storageError);
