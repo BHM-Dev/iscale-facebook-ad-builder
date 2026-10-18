@@ -342,7 +342,7 @@ def send_offer_performance_monitor_down_alert(error: str) -> None:
         logger.warning("Offer performance monitor-down alert error: %s", e)
 
 
-def send_drive_sync_alert(summary: str, detail: str = "", headline: str = "Google Drive creative sync failed") -> bool:
+def send_drive_sync_alert(summary: str, detail: str = "", headline: str = "Google Drive creative sync failed", channel: Optional[str] = None) -> bool:
     """Post a loud alert for Drive creative sync failures.
 
     Deliberately independent of SLACK_ALERT_CHANNEL and the #media-buys pause: it
@@ -366,7 +366,7 @@ def send_drive_sync_alert(summary: str, detail: str = "", headline: str = "Googl
             SLACK_API_URL,
             headers={"Authorization": f"Bearer {token}"},
             json={
-                "channel": os.getenv("DRIVE_SYNC_ALERT_CHANNEL") or STEVE_DM,
+                "channel": channel or os.getenv("DRIVE_SYNC_ALERT_CHANNEL") or STEVE_DM,
                 "text": text,
                 "unfurl_links": False,
                 "unfurl_media": False,
@@ -387,3 +387,9 @@ def send_launch_alert(summary: str, detail: str = "") -> bool:
     """DM Steve about a partial/failed bulk launch. Same DM-only routing as the
     Drive sync alert; never posts to a shared channel."""
     return send_drive_sync_alert(summary, detail, headline="Launch needs attention")
+
+
+def send_meta_limit_alert(summary: str, detail: str = "") -> bool:
+    """DM Steve when Meta is throttling the app or usage is climbing toward the limit.
+    Same DM-only routing as the Drive sync alert; never posts to a shared channel."""
+    return send_drive_sync_alert(summary, detail, headline="Meta API limit", channel=STEVE_DM)

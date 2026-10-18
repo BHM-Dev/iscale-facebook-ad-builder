@@ -27,6 +27,12 @@ logger = logging.getLogger(__name__)
 
 FLUSH_INTERVAL_SECONDS = 60
 THROTTLE_CODES = {4, 17, 32, 613}
+# Only these gate the WHOLE app. 80000-80014 (business-use-case limits), 32 (page) and
+# 613 (can be per object) are scoped to one account/object, so they are counted as
+# throttles but must not pause every other account's background work. Code 17 is a
+# user-level limit; the backend uses a single token, so it is effectively app-wide.
+APP_WIDE_CODES = {4, 17}
+APP_WIDE_SUBCODES = {1504022}
 _BUCKET_LIMIT = 5000  # hard cap on distinct keys held between flushes
 
 _lock = threading.Lock()
@@ -34,6 +40,16 @@ _buckets: dict[tuple, dict] = {}
 _installed = False
 _warned = False
 _dropped = 0
+
+# Throttle backoff + alerting. When Meta throttles the app, scheduled jobs should stop
+# adding load until the window passes, and Steve should hear about it before a buyer
+# does. State is per-process (the backend runs a single uvicorn worker).
+THROTTLE_BACKOFF_SECONDS = 600
+USAGE_ALERT_PCT = 70
+THROTTLE_ALERT_COOLDOWN_SECONDS = 30 * 60
+USAGE_ALERT_COOLDOWN_SECONDS = 60 * 60
+_throttled_until = 0.0
+_last_alert = {'throttle': 0.0, 'usage': 0.0}
 
 _ID_RE = re.compile(r'^(act_)?\d{5,}$')
 _VERSION_RE = re.compile(r'^v\d+\.\d+$')
@@ -132,7 +148,34 @@ def _pct_max(headers) -> tuple:
     return app_pct, acct_pct
 
 
-def _record(method, path, caller, elapsed_ms, headers, error_code, failed):
+def backoff_remaining() -> int:
+    """Seconds until scheduled Meta jobs may run again (0 = not throttled)."""
+    return max(0, int(_throttled_until - time.monotonic()))
+
+
+def _alert_async(kind, cooldown, summary, detail):
+    """DM Steve at most once per cooldown per kind; never blocks or breaks the Meta call."""
+    now = time.monotonic()
+    with _lock:
+        if _last_alert[kind] and now - _last_alert[kind] < cooldown:
+            return
+        _last_alert[kind] = now
+
+    def _send():
+        try:
+            from app.services.slack_service import send_meta_limit_alert
+            if not send_meta_limit_alert(summary, detail):
+                with _lock:
+                    _last_alert[kind] = 0.0  # delivery failed: don't suppress the next attempt
+        except Exception:
+            with _lock:
+                _last_alert[kind] = 0.0
+            logger.exception("meta_call_telemetry alert failed")
+
+    threading.Thread(target=_send, name='meta-limit-alert', daemon=True).start()
+
+
+def _record(method, path, caller, elapsed_ms, headers, error_code, failed, error_subcode=None):
     global _warned
     try:
         hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
@@ -160,8 +203,28 @@ def _record(method, path, caller, elapsed_ms, headers, error_code, failed):
             if acct_pct is not None:
                 b['acct'] = acct_pct if b['acct'] is None else max(b['acct'], acct_pct)
         if throttled:
+            if error_code in APP_WIDE_CODES or error_subcode in APP_WIDE_SUBCODES:
+                global _throttled_until
+                now_m = time.monotonic()
+                # Fixed window from the FIRST throttle: retries into a throttle must not
+                # keep extending it, or a polling UI would hold background jobs off forever.
+                if now_m >= _throttled_until:
+                    _throttled_until = now_m + THROTTLE_BACKOFF_SECONDS
             logger.warning("Meta throttle (code %s) on %s %s from %s; app_usage=%s%% account_usage=%s%%",
                            error_code, method, key[3], caller, app_pct, acct_pct)
+            _alert_async(
+                'throttle', THROTTLE_ALERT_COOLDOWN_SECONDS,
+                f"Meta is throttling the app (code {error_code}). The scheduled Meta sync pauses for ~{THROTTLE_BACKOFF_SECONDS // 60} min; launches may fail until it clears.",
+                f"First seen on {method} {key[3]} from {caller}. App usage {app_pct}%, account usage {acct_pct}%. Details: GET /api/v1/facebook/meta-call-stats",
+            )
+        else:
+            peak = max([p for p in (app_pct, acct_pct) if p is not None], default=None)
+            if peak is not None and peak >= USAGE_ALERT_PCT:
+                _alert_async(
+                    'usage', USAGE_ALERT_COOLDOWN_SECONDS,
+                    f"Meta API usage is at {peak}% of the limit (app {app_pct}%, account {acct_pct}%). Throttling starts at 100%.",
+                    f"Latest call: {method} {key[3]} from {caller}. Details: GET /api/v1/facebook/meta-call-stats",
+                )
     except Exception:
         if not _warned:
             _warned = True
@@ -175,13 +238,14 @@ def _wrap(original):
         try:
             response = original(self, method, path, *args, **kwargs)
         except Exception as exc:
-            headers = code = None
+            headers = code = subcode = None
             try:
                 headers = exc.http_headers() if callable(getattr(exc, 'http_headers', None)) else None
                 code = exc.api_error_code() if callable(getattr(exc, 'api_error_code', None)) else None
+                subcode = exc.api_error_subcode() if callable(getattr(exc, 'api_error_subcode', None)) else None
             except Exception:
                 pass
-            _record(method, path, caller, (time.monotonic() - started) * 1000, headers, code, True)
+            _record(method, path, caller, (time.monotonic() - started) * 1000, headers, code, True, subcode)
             raise
         headers = None
         try:

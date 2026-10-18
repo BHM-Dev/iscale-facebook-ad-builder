@@ -120,6 +120,18 @@ async def startup_event():
 
         scheduler = BackgroundScheduler()
 
+        def _meta_backoff_skip(job_name):
+            """True (and logs) while Meta is throttling the app, so background jobs add no load."""
+            try:
+                from app.services.meta_call_telemetry import backoff_remaining
+                remaining = backoff_remaining()
+            except Exception:
+                return False
+            if remaining > 0:
+                print(f"⏸  {job_name} skipped: Meta is throttling the app (~{remaining}s of backoff left); next run in ~30 min")
+                return True
+            return False
+
         def scheduled_check():
             db = SessionLocal()
             try:
@@ -218,6 +230,8 @@ async def startup_event():
             the old sweep burst through Meta's per-account rate limits. One account
             failing never blocks the others.
             """
+            if _meta_backoff_skip("Meta sync"):
+                return
             import os as _os
             import time as _time
             from app.api.v1.facebook import run_meta_sync
@@ -235,6 +249,8 @@ async def startup_event():
             for i, account_id in enumerate(account_ids):
                 if i:
                     _time.sleep(5)  # space accounts out; Meta rate-limits per ad account
+                    if _meta_backoff_skip("Meta sync (remaining accounts)"):
+                        return
                 db = SessionLocal()
                 try:
                     res = run_meta_sync(svc, db, account_id)
