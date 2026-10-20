@@ -633,10 +633,36 @@ class FacebookService:
                 except Exception:
                     derived.append({'id': pid, 'name': f'Page {pid}', 'category': None})
             # Pages in an ad account's existing creatives are the strongest
-            # account-specific signal. Use the user-managed Page list only
-            # when the account has no usable creative history.
-            if derived:
-                return derived
+            # account-specific signal, so they're listed first. BHM's other
+            # company Pages (shared across the same Business Manager) are
+            # appended next even when this specific ad account has no
+            # creative history with them yet — otherwise a Page stays
+            # permanently unselectable here until someone first launches an
+            # ad with a raw, hand-typed Page ID, which Meta rejects outright
+            # (error 1443121) if it's not actually linked to the account.
+            #
+            # Deliberately NOT a full union of every Page this token happens
+            # to manage via /me/accounts: token-managed is not the same
+            # signal as "shared to this ad account's Business Manager", and
+            # an unscoped union could surface an unrelated Page that looks
+            # selectable here but still gets rejected by Meta at push time.
+            # Narrowing to known BHM company Pages by name keeps that risk
+            # bounded to Pages already documented as usable account-wide.
+            # TODO(claude): Meta's own `act_<id>/promote_pages` edge is the
+            # authoritative answer to this and was last checked against a
+            # system-user token ("not consistently populated"); the token is
+            # now a personal user token, so it's worth re-testing live and
+            # replacing this heuristic if it now resolves correctly.
+            derived_ids = {str(p.get('id')) for p in derived if p.get('id')}
+            _COMPANY_PAGE_NAME_FRAGMENTS = ('daily insurance', 'resource help')
+            fallback_pages = [
+                p for p in user_pages
+                if p.get('id') and str(p['id']) not in derived_ids
+                and any(frag in (p.get('name') or '').lower() for frag in _COMPANY_PAGE_NAME_FRAGMENTS)
+            ]
+            combined = derived + fallback_pages
+            if combined:
+                return combined
         except Exception as e:
             print(f"⚠️  get_pages fallback (derive from creatives) failed: {e}")
         return user_pages
