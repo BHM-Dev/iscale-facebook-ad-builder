@@ -97,13 +97,19 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false }) => {
         }
     }, [existingCampaigns, mode, campaignData.isExisting, campaignData.fbCampaignId, selectedAdAccount]);
 
-    // ACTIVE first, then everything else in whatever order Meta returned it —
-    // most ad accounts here carry far more paused/test campaigns than live ones
-    // (RHO 4 alone has a dozen+ PAUSED "RHO v2 | CBO | LEADS | ..." campaigns),
-    // so without this the one or two campaigns actually running today can be
-    // buried below a wall of paused ones.
-    const sortActiveFirst = (campaigns) => {
-        const rank = (c) => (c.status === 'ACTIVE' ? 0 : 1);
+    // Last-used campaign on this ad account first (it's the one that's about to
+    // get auto-selected below — Abel, 2026-10-21: he has to search/scroll to
+    // visually confirm it before hitting Next Step otherwise), then ACTIVE, then
+    // everything else in whatever order Meta returned it — most ad accounts here
+    // carry far more paused/test campaigns than live ones (RHO 4 alone has a
+    // dozen+ PAUSED "RHO v2 | CBO | LEADS | ..." campaigns), so without this the
+    // one or two campaigns actually running today can be buried below a wall of
+    // paused ones.
+    const sortActiveFirst = (campaigns, lastUsedId) => {
+        const rank = (c) => {
+            if (lastUsedId && c.id === lastUsedId) return 0;
+            return c.status === 'ACTIVE' ? 1 : 2;
+        };
         return [...campaigns].sort((a, b) => rank(a) - rank(b));
     };
 
@@ -113,7 +119,8 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false }) => {
         setLoadingCampaigns(true);
         try {
             const campaigns = await getCampaigns(selectedAdAccount.id);
-            setExistingCampaigns(sortActiveFirst(campaigns));
+            const lastUsedId = safeLocalStorageGet('lastSelectedCampaignId_' + selectedAdAccount.id);
+            setExistingCampaigns(sortActiveFirst(campaigns, lastUsedId));
         } catch (error) {
             console.error('Error fetching campaigns:', error);
             showError(`Error fetching campaigns: ${error.message}`);
