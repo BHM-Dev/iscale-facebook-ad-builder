@@ -125,7 +125,7 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
         ...form,
         ad_account_id: isAllAccounts ? null : form.ad_account_id,
         amount: Number(form.amount || 0),
-        effective_to: form.effective_to || null,
+        effective_to: form.cost_type === 'one_off' ? form.effective_from : (form.effective_to || null),
         profit_threshold: isProfitShare && form.profit_threshold !== '' ? Number(form.profit_threshold) : null,
       };
       const url = entry ? `${API_URL}/pnl/costs/${entry.id}` : `${API_URL}/pnl/costs`;
@@ -198,13 +198,13 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
             </label>
           )}
           <label>
-            <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Effective from</span>
+            <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{form.cost_type === 'one_off' ? 'Date' : 'Effective from'}</span>
             <input type="date" value={form.effective_from} onChange={e => setForm({ ...form, effective_from: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
           </label>
-          <label>
+          {form.cost_type !== 'one_off' && <label>
             <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Effective to</span>
             <input type="date" value={form.effective_to} onChange={e => setForm({ ...form, effective_to: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
-          </label>
+          </label>}
           {isProfitShare && (
             <label className="sm:col-span-2">
               <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Net profit threshold (commission applies above this)</span>

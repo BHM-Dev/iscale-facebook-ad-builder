@@ -1552,7 +1552,8 @@ def create_cost(
         amount=body.amount,
         allocation_method=body.allocation_method,
         effective_from=body.effective_from,
-        effective_to=body.effective_to,
+        # A one-off lands on a single date; pin the window so it can't repeat monthly.
+        effective_to=body.effective_from if body.cost_type == "one_off" else body.effective_to,
         notes=body.notes,
         profit_threshold=body.profit_threshold if body.cost_type == "pct_of_profit" else None,
         vendor=body.vendor,
@@ -1586,6 +1587,8 @@ def update_cost(
         setattr(entry, key, value)
     if entry.cost_type != "pct_of_profit":
         entry.profit_threshold = None
+    if entry.cost_type == "one_off":
+        entry.effective_to = entry.effective_from
     if entry.effective_to and entry.effective_from and entry.effective_to < entry.effective_from:
         raise HTTPException(status_code=400, detail="effective_to must be after effective_from")
     if entry.cost_type.startswith("pct_of_") and entry.amount > 100:
