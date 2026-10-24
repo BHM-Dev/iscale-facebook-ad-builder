@@ -528,6 +528,16 @@ export default function Pnl() {
         </div>
       )}
 
+      {isAllScope && (summary?.network_revenue > 0 || summary?.foreign_revenue > 0) && (
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600" data-testid="pnl-excluded-revenue">
+          <span className="font-medium">Not included in revenue or profit:</span>{' '}
+          {summary.network_revenue > 0 && <>{money(summary.network_revenue, 2)} of network revenue (sub3 not tied to a Meta campaign — third-party traffic sent through BHM's network)</>}
+          {summary.network_revenue > 0 && summary.foreign_revenue > 0 && ' and '}
+          {summary.foreign_revenue > 0 && <>{money(summary.foreign_revenue, 2)} tied to Meta ad sets or campaigns outside these accounts</>}
+          . The Switchboard portal total will be higher than Billable Revenue by about this much.
+        </div>
+      )}
+
       {summary?.unmapped_adsets > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           {summary.unmapped_adsets} ad set{summary.unmapped_adsets !== 1 ? 's' : ''} have no revenue rows for this period. Revenue may be incomplete.

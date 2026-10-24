@@ -837,13 +837,15 @@ def _all_summary_from_account_rows(
     unknown_revenue: Decimal | None = None,
     unknown_ok: bool = True,
     foreign_revenue: Decimal | None = None,
+    network_revenue: Decimal | None = None,
 ) -> dict:
     spend = sum((_money(row.get("spend")) for row in account_rows if row.get("spend") is not None), Decimal("0"))
     attributed_revenue = sum((_money(row.get("revenue")) for row in account_rows if row.get("revenue") is not None), Decimal("0"))
-    # Revenue that belongs to the period but to no single account — included in
-    # the total so profit reflects what Switchboard actually bills, and reported
-    # separately so it is always visible as unknown rather than quietly folded
-    # into an account's number. Aug 2026 was short by $3,253.99 without this.
+    # Revenue billed on a Meta CAMPAIGN id of a scoped account but not on any known ad set (broken tracking
+    # macro, stale ad-set sync) — it ties to our Meta campaigns, so it is included in the total and reported
+    # separately. Revenue with NO Meta id in sub3 is third-party network traffic and is deliberately left out
+    # (Steve, 2026-10-24); see network_revenue below. Aug 2026 was short by $3,253.99 before the campaign-id
+    # part was added.
     unknown_revenue = _money(unknown_revenue or 0)
     revenue = attributed_revenue + unknown_revenue
     gross_profit = revenue - spend
@@ -890,6 +892,9 @@ def _all_summary_from_account_rows(
         # this aggregate's scope. Reported so the difference from the portal
         # total is explainable, deliberately NOT added to revenue.
         "foreign_revenue": _float(_money(foreign_revenue or 0)),
+        # sub3 with no Meta id — third-party traffic through BHM's network. Reported so the gap to the
+        # Switchboard portal total is explainable; deliberately NOT part of revenue, profit or commissions.
+        "network_revenue": _float(_money(network_revenue or 0)),
         "unattributed_revenue": _float(sum((_money(row.get("unattributed_revenue")) for row in account_rows), Decimal("0"))),
         "from_snapshot": bool(account_rows) and all(row.get("from_snapshot") for row in account_rows),
         "synced_at": None,
@@ -907,17 +912,23 @@ def _everflow_unknown_revenue(
     account_ids: list[str],
     start: date,
     end: date,
-) -> tuple[Decimal, bool, Decimal]:
+) -> tuple[Decimal, bool, Decimal, Decimal]:
     """Billable Everflow revenue for the period that no scoped ad set can claim.
 
-    Returns (unknown_revenue, ok, foreign_revenue).
+    Returns (unknown_revenue, ok, foreign_revenue, network_revenue).
 
-    Counted as UNKNOWN — real money billed to us that belongs in the aggregate:
-      * `sub3` missing or not a Meta id at all. Unattributable by construction,
-        and the offers queried are the scoped accounts' own, so it is theirs.
+    Counted as UNKNOWN — real money billed to us that ties to a scoped Meta campaign:
       * `sub3` holding a Meta CAMPAIGN id belonging to a scoped account. This is
         the broken-tracking-macro case — Aug 2026 had $1,306.67 of it across
         five RHO campaigns, unambiguously that account's revenue.
+
+    Reported as NETWORK revenue and NOT added to the total (Steve, 2026-10-24: ignore
+    anything that does not tie to the Meta campaigns — some of it is third-party
+    traffic sent through BHM's network, separate from the internal media buying):
+      * `sub3` missing, blank, a literal unexpanded macro such as `{{adset.id}}`,
+        or otherwise not a Meta id. Previously this was counted as "unknown" and
+        added to revenue, which inflated profit (and Abel's % of net profit base)
+        with money the internal campaigns did not generate.
 
     Deliberately EXCLUDED, because crediting it would overstate:
       * revenue already attributable to a known ad set — the per-account rows
@@ -942,16 +953,16 @@ def _everflow_unknown_revenue(
         if normalize_account_id(account_id) in scope:
             offer_names |= _everflow_offer_names_for_account(account_id)
     if not offer_names:
-        return Decimal("0"), True, Decimal("0")
+        return Decimal("0"), True, Decimal("0"), Decimal("0")
 
     try:
         svc = EverflowService()
         if not svc.is_configured():
-            return Decimal("0"), False, Decimal("0")
+            return Decimal("0"), False, Decimal("0"), Decimal("0")
         rows = svc.get_raw_conversions(start, end)
     except Exception as exc:  # noqa: BLE001 — never fail the P&L over telemetry
         logger.warning("Everflow unknown-revenue lookup failed for %s..%s: %s", start, end, exc)
-        return Decimal("0"), False, Decimal("0")
+        return Decimal("0"), False, Decimal("0"), Decimal("0")
 
     allowed_offers = {name.casefold() for name in offer_names if name}
     known_adsets = {
@@ -966,6 +977,7 @@ def _everflow_unknown_revenue(
 
     unknown = Decimal("0")
     foreign = Decimal("0")
+    network = Decimal("0")
     for row in rows:
         if allowed_offers and EverflowService._offer_name(row).casefold() not in allowed_offers:
             continue
@@ -976,7 +988,7 @@ def _everflow_unknown_revenue(
         sub3 = str(row.get("sub3") or "").strip()
 
         if not META_ID_RE.fullmatch(sub3):
-            unknown += revenue          # no usable id — unattributable, but ours
+            network += revenue          # no Meta id: third-party / network traffic — reported, never added
             continue
         if sub3 in known_adsets:
             continue                    # already in a per-account row
@@ -990,6 +1002,7 @@ def _everflow_unknown_revenue(
         unknown.quantize(CENT, rounding=ROUND_HALF_UP),
         True,
         foreign.quantize(CENT, rounding=ROUND_HALF_UP),
+        network.quantize(CENT, rounding=ROUND_HALF_UP),
     )
 
 
@@ -1012,11 +1025,12 @@ def _summary_all(
         _summary(db, account_id, start, end, label, include_costs=False)
         for account_id in account_ids
     ]
-    unknown_revenue, unknown_ok, foreign_revenue = _everflow_unknown_revenue(db, account_ids, start, end)
+    unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _everflow_unknown_revenue(db, account_ids, start, end)
     return _all_summary_from_account_rows(
         db, account_ids, start, end, label, account_rows,
         unknown_revenue=unknown_revenue, unknown_ok=unknown_ok,
         foreign_revenue=foreign_revenue,
+        network_revenue=network_revenue,
     )
 
 
@@ -1297,11 +1311,12 @@ def _get_months_all(
         # per month shown; the per-account figures may be frozen snapshots, and
         # that is safe here because the unknown segment is derived from raw
         # conversions rather than by subtracting the attributed total.
-        unknown_revenue, unknown_ok, foreign_revenue = _everflow_unknown_revenue(db, account_ids, start, end)
+        unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _everflow_unknown_revenue(db, account_ids, start, end)
         rows.append(_all_summary_from_account_rows(
             db, account_ids, start, end, label, account_rows,
             unknown_revenue=unknown_revenue, unknown_ok=unknown_ok,
             foreign_revenue=foreign_revenue,
+            network_revenue=network_revenue,
         ))
     return rows
 
@@ -1492,11 +1507,12 @@ def resync_month(
         # Resync returns the same shape as /summary, so it needs the unknown
         # segment too — otherwise a resync would "correct" a month back down to
         # the attributed-only figure it was just fixed from.
-        unknown_revenue, unknown_ok, foreign_revenue = _everflow_unknown_revenue(db, account_ids, start, end)
+        unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _everflow_unknown_revenue(db, account_ids, start, end)
         return _all_summary_from_account_rows(
             db, account_ids, start, end, label, account_rows,
             unknown_revenue=unknown_revenue, unknown_ok=unknown_ok,
             foreign_revenue=foreign_revenue,
+            network_revenue=network_revenue,
         )
 
     row = _summary(db, account_id, start, end, label)
