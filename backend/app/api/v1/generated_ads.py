@@ -4,25 +4,32 @@ from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from app.database import get_db
 from app.models import GeneratedAd, User
-from app.core.deps import get_current_active_user, require_permission
+from app.core.deps import get_current_active_user, get_current_superuser, require_permission
 from fastapi.responses import StreamingResponse
 import io
 import csv
 import re
 import anthropic as _anthropic_sdk
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Dict, Any
+
+MAX_VARIATIONS_PER_REQUEST = 10
+MAX_SIZES_PER_REQUEST = 6
+MAX_IMAGES_PER_REQUEST = 30
+
 
 class ImageGenerationRequest(BaseModel):
     template: Optional[Dict[str, Any]] = None
     brand: Optional[Dict[str, Any]] = None
     product: Optional[Dict[str, Any]] = None
     ad_copy: Optional[Dict[str, Any]] = Field(None, alias="copy")
-    count: int = 1
-    imageSizes: List[Dict[str, Any]] = []
+    # Each (variation x size) is one paid kie.ai image plus a Claude prompt call, so these are bounded. The caps are the
+    # UI's own maxima (variation slider 1-10, three size options) — a wizard run is never cut short, only abuse is.
+    count: int = Field(1, ge=1, le=MAX_VARIATIONS_PER_REQUEST)
+    imageSizes: List[Dict[str, Any]] = Field(default_factory=list, max_length=MAX_SIZES_PER_REQUEST)
     resolution: str = "1K"
-    productShots: List[str] = []
+    productShots: List[str] = Field(default_factory=list, max_length=50)
     model: str = "nano-banana-pro"
     customPrompt: Optional[str] = None
     # Prompt approved via the Quick Generate "Review before generating" modal (prepare-image-prompt
@@ -43,6 +50,14 @@ class ImageGenerationRequest(BaseModel):
     overlay_offer_line: Optional[str] = None   # e.g. "From $24.95/Month"
     overlay_cta: Optional[str] = None          # Button text — uses ad_copy.cta if not set
     overlay_logo_url: Optional[str] = None     # Brand logo URL for top-right badge
+
+    @model_validator(mode="after")
+    def _bound_total_images(self):
+        total = self.count * max(len(self.imageSizes), 1)
+        if total > MAX_IMAGES_PER_REQUEST:
+            raise ValueError(f"A single request can generate at most {MAX_IMAGES_PER_REQUEST} images (variations x sizes); this one asks for {total}.")
+        return self
+
 
 def build_comprehensive_prompt(request: ImageGenerationRequest) -> str:
     """
@@ -588,13 +603,13 @@ KIE_AI_BASE_URL = "https://api.kie.ai/api/v1/flux/kontext"
 
 
 @router.get("/test-kie")
-async def test_kie_connection(current_user: User = Depends(get_current_active_user)):
+async def test_kie_connection(current_user: User = Depends(get_current_superuser)):
     """Diagnostic: verifies kie.ai Flux Kontext API is reachable and accepts payloads.
     Hits POST /generate only (no polling) so it returns fast.
 
-    Auth added 2026-09-04: this burns real kie.ai credits per call (~4-8/image
-    per CLAUDE.md) with no rate limit — the original "no auth required" design
-    left it callable by anyone who found the URL, an open cost-exposure hole.
+    Auth added 2026-09-04, tightened to superuser-only 2026-10-25: this burns real kie.ai
+    credits per call (~4-8/image per CLAUDE.md) with no rate limit, so it is a diagnostic
+    for admins, not something every logged-in user should be able to trigger.
 
     Test 1: text-to-image (no inputImage) — should return code 200 + taskId
     Test 2: image-to-image (R2 URL inputImage) — should return code 200 + taskId
@@ -995,10 +1010,15 @@ async def generate_image(
 
     if raw_input_image and use_kie:
         try:
-            async with httpx.AsyncClient(timeout=20.0) as _ref_client:
-                _ref_resp = await _ref_client.get(raw_input_image)
-                _ref_resp.raise_for_status()
-                _ref_bytes = _ref_resp.content
+            # raw_input_image comes from the browser: public hosts only (no internal/private targets), redirects
+            # re-validated, 10 MB cap. A rejected URL falls through to the existing "proceed text-to-image" path.
+            from starlette.concurrency import run_in_threadpool
+            from app.services.safe_fetch import fetch_bytes
+            _ref_bytes, _ = await run_in_threadpool(
+                lambda: fetch_bytes(raw_input_image, max_bytes=10 * 1024 * 1024, strict_hosts=False, allow_http=True, timeout=(5, 20), deadline_seconds=40)
+            )
+            from app.services.safe_fetch import assert_image_dimensions_safe
+            assert_image_dimensions_safe(_ref_bytes)   # refuse a decompression bomb before PIL decodes it below
 
             from PIL import Image as _PIL_Image
             import io as _io

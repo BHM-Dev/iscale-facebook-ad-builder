@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
+import logging
 import os
 import uuid
 from typing import Dict, Optional
@@ -10,6 +11,7 @@ from app.models import User
 from app.services.image_crop_service import crop_to_aspect
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Security: Define allowed file types and size limits
 ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
@@ -164,24 +166,36 @@ async def crop_image_to_aspect(
                 detail=f"File too large. Maximum size: {MAX_IMAGE_SIZE / (1024 * 1024)}MB"
             )
     elif source_url:
-        import requests
+        from app.services.safe_fetch import UnsafeFetchError, fetch_bytes
 
         def _fetch():
-            resp = requests.get(source_url, timeout=30, stream=True)
-            resp.raise_for_status()
-            content = resp.raw.read(MAX_IMAGE_SIZE + 1, decode_content=True)
-            if len(content) > MAX_IMAGE_SIZE:
-                raise ValueError(f"source_url image exceeds {MAX_IMAGE_SIZE / (1024 * 1024)}MB limit")
+            # Approved media hosts only (R2 / our API / Meta CDN), https, redirects re-validated hop by hop, size-capped.
+            # This route is open to any logged-in user, so it must never be a way to reach the internal network.
+            content, _content_type = fetch_bytes(
+                source_url, max_bytes=MAX_IMAGE_SIZE, strict_hosts=True, timeout=(5, 20), deadline_seconds=45,
+            )
             return content
 
         try:
             # Blocking network call — run_in_threadpool keeps it off the single
             # event loop (see upload_to_r2 above for why that matters here).
             file_content = await run_in_threadpool(_fetch)
-        except Exception as e:
+        except UnsafeFetchError as e:
             raise HTTPException(status_code=400, detail=f"Could not fetch source_url: {e}")
+        except Exception:
+            # Don't echo network/library error text back to the caller (it can reveal internal hosts and ports).
+            logger.warning("crop-to-aspect: source_url fetch failed", exc_info=True)
+            raise HTTPException(status_code=400, detail="Could not fetch source_url")
     else:
         raise HTTPException(status_code=400, detail="Provide either 'file' or 'source_url'")
+
+    # Applies to uploaded files as well as fetched URLs: refuse a decompression bomb before Pillow decodes it
+    # (a ~10 MB PNG can declare 100M+ pixels and need hundreds of MB of RAM on the single worker).
+    from app.services.safe_fetch import UnsafeFetchError as _UnsafeImage, assert_image_dimensions_safe
+    try:
+        assert_image_dimensions_safe(file_content)
+    except _UnsafeImage as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     target_w, target_h = _CROP_TARGET_DIMENSIONS[target_ratio]
     try:

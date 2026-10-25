@@ -11,16 +11,20 @@ Meta Marketing API. No MCP dependency.
 """
 
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Dict, Optional
+from collections import defaultdict, deque
 import anthropic
 import os
 import json
 import logging
+import time
 from sqlalchemy.orm import Session
 from app.core.deps import get_current_active_user, get_db
 from app.models import User, FacebookAdSet, Brand, AdCopyLibrary
 from app.services.facebook_service import FacebookService
+from app.core.redact import redact_secrets
+from app.api.v1.facebook import _resolve_scoped_default_account
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +59,26 @@ The data snapshot includes:
 If the user asks about a different time window than what's provided, let them know and answer from the available data."""
 
 
+# Each question is a paid Claude call carrying a large JSON snapshot, so questions are length-capped and rate-limited
+# per user. 30 per 10 minutes is far above a person asking questions and far below a script.
+AI_QUERY_MAX_CHARS = 1500
+AI_QUERY_MAX_PER_WINDOW = 30
+AI_QUERY_WINDOW_SECONDS = 600
+_AI_CALLS: Dict[str, deque] = defaultdict(deque)
+
+
+def _ai_rate_limit(user_id: str) -> None:
+    now = time.monotonic()
+    calls = _AI_CALLS[user_id]
+    while calls and now - calls[0] > AI_QUERY_WINDOW_SECONDS:
+        calls.popleft()
+    if len(calls) >= AI_QUERY_MAX_PER_WINDOW:
+        raise HTTPException(429, "Too many AI questions in a short time — try again in a few minutes.")
+    calls.append(now)
+
+
 class InsightQueryRequest(BaseModel):
-    query: str
+    query: str = Field(..., min_length=1, max_length=AI_QUERY_MAX_CHARS)
     ad_account_id: Optional[str] = None
     date_preset: Optional[str] = "last_7d"
 
@@ -220,13 +242,18 @@ def query_insights(
     if not _anthropic_client:
         raise HTTPException(503, "AI service not configured — ANTHROPIC_API_KEY missing")
 
+    # A scoped user may only ask about their own ad accounts (this used to pass any account id straight through, so a
+    # user limited to one account could read another's spend/leads). A blank account resolves to their default account.
+    ad_account_id = _resolve_scoped_default_account(current_user, body.ad_account_id)
+    _ai_rate_limit(str(current_user.id))
+
     date_preset = body.date_preset if body.date_preset in VALID_PRESETS else "last_7d"
 
     try:
-        snapshot = _build_data_snapshot(db, body.ad_account_id, date_preset)
+        snapshot = _build_data_snapshot(db, ad_account_id, date_preset)
     except Exception as e:
-        logger.error("Failed to build data snapshot: %s", e)
-        raise HTTPException(500, f"Failed to load account data: {str(e)}")
+        logger.error("Failed to build data snapshot: %s", redact_secrets(e))
+        raise HTTPException(500, f"Failed to load account data: {redact_secrets(e)}")
 
     context_json = json.dumps(snapshot, indent=None, separators=(",", ":"))
 
@@ -252,4 +279,4 @@ Question: {body.query}"""
 
     except anthropic.APIError as e:
         logger.error("Anthropic API error in ai_insights: %s", e)
-        raise HTTPException(502, f"AI service error: {str(e)}")
+        raise HTTPException(502, f"AI service error: {redact_secrets(e)}")

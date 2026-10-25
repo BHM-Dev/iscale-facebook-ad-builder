@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_current_active_user
+from app.core.deps import get_current_active_user, require_permission
 from app.database import get_db
 from app.models import User
 from app.schemas.drive_assets import DriveAsset, DriveCopyHealth, DriveCopyRefreshRequest, DriveSyncResult
@@ -171,7 +171,7 @@ def upload_drive_asset(
     brand_id: str = Form(...),
     placement: Optional[str] = Form(default=None),
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_active_user),
+    _current_user: User = Depends(require_permission("ads:write")),
 ):
     """Add a new file to the shared Drive-backed Creative Library.
 
@@ -252,7 +252,7 @@ def sync_drive_assets_now(
     folder_id: str | None = None,
     brand_name: str | None = None,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_active_user),
+    _current_user: User = Depends(require_permission("ads:write")),
 ):
     try:
         sync_kwargs = {"backfill": backfill}
@@ -284,7 +284,7 @@ def get_drive_copy_health(
 def refresh_drive_copy_metadata(
     payload: DriveCopyRefreshRequest = Body(default_factory=DriveCopyRefreshRequest),
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_active_user),
+    _current_user: User = Depends(require_permission("ads:write")),
 ):
     """Re-match imported media to the current Drive copy sources.
 

@@ -77,7 +77,7 @@ class BulkDeleteRequest(BaseModel):
 def bulk_delete_templates(
     request: BulkDeleteRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("templates:delete"))
 ):
     if not request.ids:
         return {"message": "No templates to delete", "deleted": 0}

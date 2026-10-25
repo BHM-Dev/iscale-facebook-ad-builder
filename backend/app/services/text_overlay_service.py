@@ -296,9 +296,12 @@ def apply_text_overlay(
     # ── Logo badge (top-right) ─────────────────────────────────────────────────
     if logo_url:
         try:
-            resp = requests.get(logo_url, timeout=10)
-            resp.raise_for_status()
-            logo_img = Image.open(io.BytesIO(resp.content)).convert("RGBA")
+            # logo_url arrives from the browser: any PUBLIC host (internal/private targets blocked), redirects re-validated, 5 MB cap.
+            from app.services.safe_fetch import fetch_bytes
+            logo_bytes, _logo_type = fetch_bytes(logo_url, max_bytes=5 * 1024 * 1024, strict_hosts=False, allow_http=True, timeout=(5, 10), deadline_seconds=20)
+            from app.services.safe_fetch import assert_image_dimensions_safe
+            assert_image_dimensions_safe(logo_bytes, max_pixels=16_000_000)   # a logo never needs more; blocks decompression bombs
+            logo_img = Image.open(io.BytesIO(logo_bytes)).convert("RGBA")
 
             max_logo_w = int(W * 0.30)
             max_logo_h = int(H * 0.12)

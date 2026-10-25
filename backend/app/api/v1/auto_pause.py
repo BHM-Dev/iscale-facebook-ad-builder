@@ -28,7 +28,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_db, get_current_user
+# Rules pause and re-budget live ad sets, so creating/editing/deleting them needs campaigns:write (like the status and
+# budget routes). Every route uses the ACTIVE-user check: get_current_user kept a deactivated user in until their token expired.
+from app.core.deps import get_db, get_current_active_user, require_permission
 from app.models import AutoPauseRule, AutoPauseRuleLog, FacebookAd, FacebookAdSet, normalize_account_id
 from app.services.facebook_service import FacebookService
 from app.services.slack_service import send_check_summary, send_rule_action_alert
@@ -218,7 +220,7 @@ def _claim_rule(db, rule) -> bool:
 def list_rules(
     adset_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_active_user),
 ):
     q = db.query(AutoPauseRule)
     if adset_id:
@@ -309,7 +311,7 @@ def _validate_rule_numbers(metric: str, threshold: int, min_spend: int, action: 
 def create_rule(
     body: RuleCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_permission("campaigns:write")),
 ):
     _validate_metric_operator(body.metric, body.operator)
     _validate_action(body.action, body.budget_adjust_pct, body.scope)
@@ -352,7 +354,7 @@ def create_rule(
 def create_rules_bulk(
     body: BulkRuleCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_permission("campaigns:write")),
 ):
     """Create the same rule for every ad set in adset_ids. All-or-nothing: any
     unknown/disallowed ad set id fails the whole batch before any row is written,
@@ -405,7 +407,7 @@ def get_rule_logs(
     rule_id: str,
     limit: int = Query(50, le=200),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_active_user),
 ):
     rule = db.query(AutoPauseRule).filter(AutoPauseRule.id == rule_id).first()
     if not rule:
@@ -443,7 +445,7 @@ def update_rule(
     rule_id: str,
     body: RulePatch,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_permission("campaigns:write")),
 ):
     rule = db.query(AutoPauseRule).filter(AutoPauseRule.id == rule_id).first()
     if not rule:
@@ -535,7 +537,7 @@ def update_rule(
 def delete_rule(
     rule_id: str,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_permission("campaigns:write")),
 ):
     rule = db.query(AutoPauseRule).filter(AutoPauseRule.id == rule_id).first()
     if not rule:
@@ -552,7 +554,7 @@ def get_insights(
     date_preset: str = Query("last_7d"),
     ad_account_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_active_user),
 ):
     """Fetch live Meta Insights + cached RedTrack data for one ad set."""
     svc = FacebookService()
@@ -602,7 +604,7 @@ def get_insights_bulk(
     date_to: Optional[str] = Query(None),
     refresh: bool = Query(False),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_active_user),
 ):
     """Fetch Meta Insights for ALL ad sets in a single API call, merged with
     cached RedTrack data. Returns a dict keyed by fb_adset_id.
@@ -758,7 +760,7 @@ def get_state_performance(
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_active_user),
 ):
     """Read-only Meta state breakdown for one campaign and date window.
 
@@ -820,7 +822,7 @@ def get_ads_bulk(
     include_all: bool = Query(False),
     include_status: bool = Query(False),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_active_user),
 ):
     """Fetch Meta Insights for ALL ads in a single API call.
 
@@ -954,7 +956,7 @@ def get_insights_raw(
     fb_adset_id: str,
     date_preset: str = Query("last_7d"),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_active_user),
 ):
     """Return the unprocessed Meta Insights API response for debugging.
     Shows every action type, action_value, and field exactly as Meta returns it.
@@ -1000,7 +1002,7 @@ def get_insights_raw(
 def check_and_enforce(
     ad_account_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_active_user),
 ):
     """Evaluate all active rules. Pause ad sets that breach their threshold.
     Returns a summary of actions taken.

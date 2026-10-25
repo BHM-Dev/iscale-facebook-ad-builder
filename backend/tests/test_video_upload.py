@@ -20,16 +20,21 @@ class TestFacebookServiceVideo:
             service.account = MagicMock()
             service.account.get_id_assured.return_value = "act_123456"
 
-            # Mock requests.get for URL download
+            # The URL download now goes through app.services.safe_fetch (public-host check, redirect re-validation, size cap),
+            # so mock that seam: a public DNS answer for the host and a plain 200 streaming response.
             mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.headers = {}
+            mock_response.raw = None
             mock_response.iter_content.return_value = [b"fake video content"]
             mock_response.raise_for_status = MagicMock()
+            public_dns = [(2, 1, 6, "", ("93.184.216.34", 0))]
 
             # Mock AdVideo
             mock_video = MagicMock()
             mock_video.__getitem__ = MagicMock(return_value="video_123")
 
-            with patch('requests.get', return_value=mock_response):
+            with patch('app.services.safe_fetch._http_get', return_value=mock_response), patch('app.services.safe_fetch.socket.getaddrinfo', return_value=public_dns):
                 with patch('app.services.facebook_service.AdVideo', return_value=mock_video):
                     with patch.object(service, 'wait_for_video_ready', return_value={'status': 'ready'}):
                         with patch.object(service, 'get_video_thumbnails', return_value=['thumb1.jpg']):

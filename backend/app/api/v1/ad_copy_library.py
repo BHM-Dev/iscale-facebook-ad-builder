@@ -13,7 +13,7 @@ from app.database import get_db
 from app.models import AdCopyLibrary, User
 from app.services.facebook_service import FacebookService
 from app.services.niche_extraction import _extract_niche
-from app.core.deps import get_current_active_user
+from app.core.deps import get_current_active_user, require_permission
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ router = APIRouter()
 def sync_copy_library(
     ad_account_id: str | None = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_permission("ads:write")),
 ):
     """Pull all ACTIVE/PAUSED ads from Meta and upsert into the library.
 
@@ -203,7 +203,7 @@ def list_copy_library(
 def toggle_pin(
     entry_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_permission("ads:write")),
 ):
     """Toggle is_pinned on a library entry."""
     entry = db.query(AdCopyLibrary).filter(AdCopyLibrary.id == entry_id).first()
@@ -218,7 +218,7 @@ def toggle_pin(
 def delete_entry(
     entry_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_permission("ads:delete")),
 ):
     """Remove an entry from the library."""
     entry = db.query(AdCopyLibrary).filter(AdCopyLibrary.id == entry_id).first()

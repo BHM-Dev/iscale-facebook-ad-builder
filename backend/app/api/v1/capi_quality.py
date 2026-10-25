@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, literal
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_current_active_user
+from app.core.deps import get_current_active_user, require_permission
 from app.database import get_db
 from app.models import CapiQualitySnapshot, User, normalize_account_id
 from app.services.capi_quality_service import get_pixel_performance, sync_capi_quality
@@ -223,7 +223,7 @@ def get_performance(
 
 
 @router.post("/sync")
-def sync_now(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+def sync_now(db: Session = Depends(get_db), current_user: User = Depends(require_permission("campaigns:write"))):
     """Manual trigger — same code path as the daily scheduled job.
 
     Any authenticated user can run this (read-only against Meta, idempotent

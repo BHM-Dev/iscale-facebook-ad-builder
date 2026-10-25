@@ -1199,9 +1199,13 @@ class FacebookService:
 
         # Check if it's a URL or local file path
         if image_path_or_url.startswith('http://') or image_path_or_url.startswith('https://'):
-            # Download the image to a temp file
-            response = requests.get(image_path_or_url, timeout=30)
-            response.raise_for_status()
+            # Download the image to a temp file. Public hosts only (never the internal network / metadata endpoint),
+            # redirects re-validated hop by hop, 30 MB cap (Meta's own image limit).
+            from app.services.safe_fetch import fetch_bytes
+            image_bytes, _image_type = fetch_bytes(
+                image_path_or_url, max_bytes=30 * 1024 * 1024, strict_hosts=False, allow_http=True,
+                timeout=(5, 30), deadline_seconds=90,
+            )
 
             # Get file extension from URL or default to .jpg
             ext = '.jpg'
@@ -1209,7 +1213,7 @@ class FacebookService:
                 ext = '.' + image_path_or_url.split('.')[-1].split('?')[0]
 
             with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-                tmp.write(response.content)
+                tmp.write(image_bytes)
                 local_path = tmp.name
 
             image = AdImage(parent_id=account.get_id_assured())
@@ -1261,8 +1265,9 @@ class FacebookService:
         if video_path_or_url.startswith('http://') or video_path_or_url.startswith('https://'):
             # Download the video to a temp file
             print(f"Downloading video from URL: {video_path_or_url[:100]}...")
-            response = requests.get(video_path_or_url, timeout=120, stream=True)
-            response.raise_for_status()
+            # Same protections as images: public hosts only, redirects re-validated, 500 MB cap, 15 min overall budget.
+            from app.services.safe_fetch import open_stream, iter_limited
+            response = open_stream(video_path_or_url, strict_hosts=False, allow_http=True, timeout=(5, 120))
 
             # Get file extension from URL or default to .mp4
             ext = '.mp4'
@@ -1271,10 +1276,22 @@ class FacebookService:
                 if url_ext in ['mp4', 'mov', 'avi', 'webm', 'm4v', 'mpeg', 'mpg', '3gp']:
                     ext = '.' + url_ext
 
-            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-                for chunk in response.iter_content(chunk_size=8192):
-                    tmp.write(chunk)
-                local_path = tmp.name
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                    tmp_path = tmp.name   # remembered immediately so a failed/oversized download can't leave a partial file behind
+                    for chunk in iter_limited(response, 500 * 1024 * 1024, deadline_seconds=900):
+                        tmp.write(chunk)
+                local_path = tmp_path
+            except BaseException:
+                if tmp_path:
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+                raise
+            finally:
+                response.close()
 
             print(f"Video downloaded to temp file: {local_path}")
         else:

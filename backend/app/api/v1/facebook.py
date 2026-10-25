@@ -1670,7 +1670,9 @@ def _release_research_test_claim(db: Session, research_test, request_id: str) ->
 def push_to_meta(
     body: Dict[str, Any],
     service: FacebookService = Depends(get_facebook_service),
-    current_user: User = Depends(get_current_active_user),
+    # Creating an ad on Meta (it can be ACTIVE and spend) needs the same write permission as every other create route;
+    # this one used to accept any logged-in user, including read-only roles.
+    current_user: User = Depends(require_permission("campaigns:write")),
     db: Session = Depends(get_db),
 ):
     """
@@ -1707,6 +1709,12 @@ def push_to_meta(
     status        = body.get("status", "PAUSED")
     request_id    = (body.get("request_id") or "").strip()
     research_test_backlog_id = (body.get("research_test_backlog_id") or "").strip() or None
+
+    # Only the two statuses a launch may create, normalised (a client sending null/lower-case/DELETED/ARCHIVED used to
+    # reach Meta unchecked, and the response echoed it back as if it had been applied).
+    status = (str(status).strip().upper() if status is not None else "") or "PAUSED"   # null/blank -> the safe default
+    if status not in {"ACTIVE", "PAUSED"}:
+        raise HTTPException(status_code=400, detail="status must be ACTIVE or PAUSED")
 
     if not adset_id:
         raise HTTPException(status_code=400, detail="adset_id is required")

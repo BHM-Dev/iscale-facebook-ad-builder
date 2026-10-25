@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from app.core.deps import get_current_active_user
+from app.core.deps import get_current_active_user, require_permission
 from app.database import get_db
 from app.models import AdStyle, User
 from pydantic import BaseModel
@@ -96,7 +96,7 @@ def get_ad_style(style_id: str, db: Session = Depends(get_db), current_user: Use
     return style
 
 @router.post("/", response_model=AdStyleResponse)
-def create_ad_style(style: AdStyleCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+def create_ad_style(style: AdStyleCreate, db: Session = Depends(get_db), current_user: User = Depends(require_permission("templates:write"))):
     """Create a new ad style"""
     # Check if style with this ID already exists
     existing = db.query(AdStyle).filter(AdStyle.id == style.id).first()
@@ -110,7 +110,7 @@ def create_ad_style(style: AdStyleCreate, db: Session = Depends(get_db), current
     return db_style
 
 @router.put("/{style_id}", response_model=AdStyleResponse)
-def update_ad_style(style_id: str, style: AdStyleUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+def update_ad_style(style_id: str, style: AdStyleUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_permission("templates:write"))):
     """Update an existing ad style"""
     db_style = db.query(AdStyle).filter(AdStyle.id == style_id).first()
     if not db_style:
@@ -126,7 +126,7 @@ def update_ad_style(style_id: str, style: AdStyleUpdate, db: Session = Depends(g
     return db_style
 
 @router.delete("/{style_id}")
-def delete_ad_style(style_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+def delete_ad_style(style_id: str, db: Session = Depends(get_db), current_user: User = Depends(require_permission("templates:delete"))):
     """Delete an ad style"""
     db_style = db.query(AdStyle).filter(AdStyle.id == style_id).first()
     if not db_style:

@@ -84,21 +84,14 @@ async def deconstruct_template(template_image_url: str) -> AdBlueprint:
         prompt = build_deconstruction_prompt(template_image_url)
 
         # Fetch the image and base64-encode it for the vision API
-        validate_source_image_url(template_image_url)
-        image_response = requests.get(template_image_url, timeout=(5, 10), stream=True)
-        image_response.raise_for_status()
-        content_length = image_response.headers.get("Content-Length")
-        if content_length and int(content_length) > 10 * 1024 * 1024:
-            raise ValueError("Source image is larger than 10 MB")
-        chunks = []
-        total = 0
-        for chunk in image_response.iter_content(chunk_size=1024 * 1024):
-            total += len(chunk)
-            if total > 10 * 1024 * 1024:
-                raise ValueError("Source image is larger than 10 MB")
-            chunks.append(chunk)
-        image_bytes = base64.b64encode(b"".join(chunks)).decode('utf-8')
-        content_type = image_response.headers.get('Content-Type', 'image/jpeg').split(';')[0].strip()
+        # Approved hosts only, https, redirects re-validated hop by hop (an approved host with an open redirect used to be
+        # a way past the host check), 10 MB cap. Same checks the old inline code did, plus the redirect protection.
+        from app.services.safe_fetch import fetch_bytes
+        raw_image_bytes, fetched_content_type = fetch_bytes(
+            template_image_url, max_bytes=10 * 1024 * 1024, strict_hosts=True, timeout=(5, 10), deadline_seconds=30,
+        )
+        image_bytes = base64.b64encode(raw_image_bytes).decode('utf-8')
+        content_type = fetched_content_type or 'image/jpeg'
 
         # Normalize common non-standard media type aliases
         if content_type == 'image/jpg':
