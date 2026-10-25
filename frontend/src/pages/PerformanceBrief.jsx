@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ArrowLeft, ArrowRight, BarChart3, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
+import { parseApiError } from '../lib/apiErrors';
 import { useCampaign } from '../context/CampaignContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -30,12 +31,15 @@ function Metric({ label, value, comparison, goodWhen }) {
 
 export default function PerformanceBrief() {
   const location = useLocation();
-  const { activeAccountId } = useCampaign();
+  const { activeAccountId, adAccounts } = useCampaign();
   const query = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const [range, setRange] = useState(() => ({
     from: query.get('date_from') || isoDaysBefore(7),
     to: query.get('date_to') || isoDaysBefore(1),
   }));
+  // The date inputs edit a DRAFT; the range only applies on "Review". Applying on every keystroke fired a pair of Meta calls
+  // plus Everflow pulls per edit (including half-typed, invalid ranges).
+  const [draft, setDraft] = useState(range);
   const [brief, setBrief] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -45,12 +49,16 @@ export default function PerformanceBrief() {
     const requestId = ++requestRef.current;
     setLoading(true); setError(null); setBrief(null);
     const params = new URLSearchParams({ date_from: range.from, date_to: range.to });
-    const accountId = query.get('ad_account_id') || activeAccountId;
+    // The account selected in the header wins over a stale link parameter; the page also names the account it shows.
+    const accountId = activeAccountId || query.get('ad_account_id');
     if (accountId) params.set('ad_account_id', accountId);
     if (refresh) params.set('refresh', 'true');
     try {
       const response = await authFetch(`${API_URL}/dashboard/performance-brief?${params}`);
-      if (!response.ok) throw new Error('The performance brief is temporarily unavailable.');
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(parseApiError(body, 'The performance brief is temporarily unavailable.'));
+      }
       const payload = await response.json();
       if (requestId === requestRef.current) setBrief(payload);
     } catch (requestError) {
@@ -67,7 +75,16 @@ export default function PerformanceBrief() {
   const headline = !brief ? 'Loading completed-day review…'
     : !revenueAvailable ? 'Delivery review only — exact billable revenue is unavailable for this account.'
     : `Conversion-date billable revenue / delivery-date spend was ${accountRoas?.toFixed(2) || '—'}× in this completed window.`;
-  const applyRange = (event) => { event.preventDefault(); if (range.from <= range.to) load(true); };
+  const draftValid = Boolean(draft.from) && Boolean(draft.to) && draft.from <= draft.to;
+  // A changed range loads normally (cached when possible). Pressing Review on an unchanged range is a deliberate refresh;
+  // the server throttles that to one recompute a minute per account and range.
+  const applyRange = (event) => {
+    event.preventDefault();
+    if (!draftValid) return;
+    if (draft.from === range.from && draft.to === range.to) load(true);
+    else setRange(draft);
+  };
+  const accountName = (adAccounts || []).find(account => (account.id || account.accountId) === brief?.ad_account_id)?.name;
   const campaignLink = (adsetId, from = range.from, to = range.to) => `/campaign-performance?${new URLSearchParams({ view: 'all', adsetId, date_from: from, date_to: to, ...(brief?.ad_account_id ? { accountId: brief.ad_account_id } : {}) })}`;
 
   return <div className="mx-auto max-w-7xl space-y-6">
@@ -75,12 +92,13 @@ export default function PerformanceBrief() {
       <div>
         <Link to="/" className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-indigo-700"><ArrowLeft size={13} /> Dashboard</Link>
         <h1 className="mt-2 text-2xl font-bold text-gray-900">Performance Brief</h1>
+        {brief?.ad_account_id && <p className="mt-1 text-xs font-medium text-indigo-700" data-testid="brief-account">Account: {accountName || brief.ad_account_id}{accountName ? ` (${brief.ad_account_id})` : ''}</p>}
         <p className="mt-1 max-w-3xl text-sm text-gray-500">A quiet completed-day review for decisions, not another alert stream. It identifies material delivery exceptions and directs Joel to the existing campaign workflow.</p>
       </div>
       <form onSubmit={applyRange} className="flex flex-wrap items-end gap-2 rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
-        <label className="text-[11px] font-medium text-gray-500">From<input type="date" value={range.from} onChange={event => setRange(value => ({ ...value, from: event.target.value }))} className="mt-1 block rounded border border-gray-200 px-2 py-1.5 text-sm text-gray-700" /></label>
-        <label className="text-[11px] font-medium text-gray-500">To<input type="date" value={range.to} max={isoDaysBefore(1)} onChange={event => setRange(value => ({ ...value, to: event.target.value }))} className="mt-1 block rounded border border-gray-200 px-2 py-1.5 text-sm text-gray-700" /></label>
-        <button type="submit" className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700">Review</button>
+        <label className="text-[11px] font-medium text-gray-500">From<input type="date" value={draft.from} onChange={event => setDraft(value => ({ ...value, from: event.target.value }))} className="mt-1 block rounded border border-gray-200 px-2 py-1.5 text-sm text-gray-700" /></label>
+        <label className="text-[11px] font-medium text-gray-500">To<input type="date" value={draft.to} max={isoDaysBefore(1)} onChange={event => setDraft(value => ({ ...value, to: event.target.value }))} className="mt-1 block rounded border border-gray-200 px-2 py-1.5 text-sm text-gray-700" /></label>
+        <button type="submit" disabled={!draftValid || loading} className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-40">Review</button>
         <button type="button" onClick={() => load(true)} disabled={loading} className="rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 disabled:opacity-40" title="Refresh sources"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></button>
       </form>
     </div>

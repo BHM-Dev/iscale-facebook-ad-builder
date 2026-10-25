@@ -50,11 +50,16 @@ def _dashboard_cache_ttl(date_preset: str, date_to: str | None) -> int:
     return DASHBOARD_HISTORICAL_CACHE_TTL_SECONDS
 
 
-def _read_dashboard_cache(cache: dict, key: tuple, ttl_seconds: int, refresh: bool):
-    if refresh:
-        return None
+def _read_dashboard_cache(cache: dict, key: tuple, ttl_seconds: int, refresh: bool, min_refresh_seconds: int = 0):
     now = time.monotonic()
     entry = cache.get(key)
+    if refresh:
+        # A forced refresh normally bypasses the cache. For expensive endpoints (several Meta calls + Everflow pulls per
+        # request) callers can set a floor: a refresh inside that window just gets the answer computed moments ago, so
+        # repeated clicks or a script can't hammer the ad account (Meta code 17 has happened on RHO).
+        if min_refresh_seconds and entry and now - entry[0] < min_refresh_seconds:
+            return deepcopy(entry[2])
+        return None
     if entry and now - entry[0] < ttl_seconds:
         return deepcopy(entry[2])
     if entry:
@@ -224,7 +229,9 @@ def _brief_daily_rows(by_date, revenue_daily, revenue_available, start, end):
     rows, cursor = [], start
     while cursor <= end:
         key = str(cursor); meta = by_date.get(key, {'date': key, 'spend': None, 'leads': None, 'cpl': None})
-        revenue = revenue_daily.get(key, 0.0) if revenue_available else None
+        # revenue_daily values are Decimal (exact Switchboard sums) while spend is a float: dividing one by the other raised
+        # TypeError on every real day with both. Convert once, here, so all the arithmetic below is float.
+        revenue = float(revenue_daily.get(key, 0.0)) if revenue_available else None
         rows.append({**meta, 'revenue': revenue,
                      'revenue_per_lead': round(revenue / meta['leads'], 2) if revenue is not None and meta.get('leads') else None,
                      'roas': round(revenue / meta['spend'], 2) if revenue is not None and meta.get('spend') else None})
@@ -487,7 +494,7 @@ def get_performance_brief(ad_account_id: str | None = Query(None), date_from: st
         raise HTTPException(400, 'Choose a completed date range ending before today.')
     days = (end - start).days + 1; previous_start, previous_end = start - timedelta(days=days), start - timedelta(days=1)
     cache_key = (ad_account_id, str(start), str(end), current_user.has_permission('pnl:read'))
-    cached = _read_dashboard_cache(_performance_brief_cache, cache_key, _dashboard_cache_ttl('custom', str(end)), refresh)
+    cached = _read_dashboard_cache(_performance_brief_cache, cache_key, _dashboard_cache_ttl('custom', str(end)), refresh, min_refresh_seconds=60)
     if cached is not None: return cached
     began = time.monotonic()
     try:
