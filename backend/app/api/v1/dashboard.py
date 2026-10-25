@@ -219,10 +219,16 @@ def _period_totals(rows: list[dict]) -> dict:
     leads = sum(int(row.get('leads') or 0) for row in rows)
     has_revenue = any(row.get('revenue') is not None for row in rows)
     revenue = sum((Decimal(str(row.get('revenue') or 0)) for row in rows), Decimal('0')) if has_revenue else None
-    return {'spend': round(spend, 2), 'leads': leads, 'cpl': round(spend / leads, 2) if leads else None,
-            'revenue': round(revenue, 2) if revenue is not None else None,
-            'revenue_per_lead': round(revenue / leads, 2) if revenue is not None and leads else None,
-            'roas': round(revenue / spend, 2) if revenue is not None and spend else None}
+
+    def f(value):
+        # Computed in Decimal for exact cents, returned as plain floats: everything downstream (day flags, JSON) is float,
+        # and a Decimal leaking out meets a float in `rpl * .75` and raises TypeError.
+        return float(value) if value is not None else None
+
+    return {'spend': f(round(spend, 2)), 'leads': leads, 'cpl': f(round(spend / leads, 2)) if leads else None,
+            'revenue': f(round(revenue, 2)) if revenue is not None else None,
+            'revenue_per_lead': f(round(revenue / leads, 2)) if revenue is not None and leads else None,
+            'roas': f(round(revenue / spend, 2)) if revenue is not None and spend else None}
 
 
 def _brief_daily_rows(by_date, revenue_daily, revenue_available, start, end):

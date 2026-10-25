@@ -78,3 +78,86 @@ def test_refresh_inside_the_floor_returns_the_cached_answer_instead_of_recomputi
     clock["now"] = 1075.0                                    # 75 s later: allowed to recompute
     assert dash._read_dashboard_cache(cache, ("acct",), 600, True, min_refresh_seconds=60) is None
     assert dash._read_dashboard_cache(cache, ("none",), 600, True, min_refresh_seconds=60) is None            # nothing cached yet
+
+
+# ---- end-to-end: the REAL route function with realistic types (the helper-level tests above missed a second Decimal*float) ----
+import json
+from datetime import timedelta
+from unittest.mock import MagicMock
+
+import pytest
+from fastapi.encoders import jsonable_encoder
+
+from app.services.redtrack_service import today_in_rt_tz
+
+
+class _User:
+    def __init__(self, pnl=True):
+        self._pnl = pnl
+
+    def has_permission(self, name):
+        return self._pnl if name == "pnl:read" else False
+
+    def allowed_account_ids(self):
+        return None
+
+
+def _wire_route(monkeypatch, *, low_revenue_day=None, status="exact_adset_attributed"):
+    end = today_in_rt_tz() - timedelta(days=2)
+    start = end - timedelta(days=5)                     # 6-day window
+    prev_start = start - timedelta(days=6)
+
+    class FakeFacebookService:
+        def get_account_daily_insights(self, account, date_from, date_to):
+            rows, cursor = [], date.fromisoformat(date_from)
+            while cursor <= date.fromisoformat(date_to):
+                rows.append({"date": str(cursor), "spend": 100.0, "leads": 8, "cpl": 12.5})   # floats/ints, like the real service
+                cursor += timedelta(days=1)
+            return rows
+
+        def get_account_insights_bulk(self, ad_account_id=None, date_from=None, date_to=None, **kw):
+            return {"120000000000000001": {"adset_name": "Ad Set A", "spend": 300.0, "leads": 20, "cpl": 15.0},
+                    "120000000000000002": {"adset_name": "Ad Set B", "spend": 50.0, "leads": 0, "cpl": None}}
+
+    def fake_revenue(db, account, s, e, refresh, began):
+        if status != "exact_adset_attributed":
+            return {"status": status, "daily": {}}
+        daily, cursor = {}, s
+        while cursor <= e:
+            # Decimal sums, exactly what the real Switchboard path returns
+            daily[str(cursor)] = Decimal("24.00") if str(cursor) == low_revenue_day else Decimal("240.00")
+            cursor += timedelta(days=1)
+        return {"status": "exact_adset_attributed", "daily": daily}
+
+    monkeypatch.setattr(dash, "FacebookService", FakeFacebookService)
+    monkeypatch.setattr(dash, "_daily_billable_revenue", fake_revenue)
+    dash._performance_brief_cache.clear()
+    return start, end
+
+
+def _call(start, end, user):
+    return dash.get_performance_brief(
+        ad_account_id="act_521142087204815", date_from=str(start), date_to=str(end), refresh=False,
+        db=MagicMock(), current_user=user,
+    )
+
+
+def test_performance_brief_endpoint_works_with_decimal_revenue_and_flags_the_weak_day(monkeypatch):
+    start, end = _wire_route(monkeypatch, low_revenue_day=None)
+    low_day = str(start + timedelta(days=3))
+    start, end = _wire_route(monkeypatch, low_revenue_day=low_day)
+    result = _call(start, end, _User(pnl=True))        # used to raise HTTPException 502 (TypeError swallowed by the route)
+    payload = json.loads(json.dumps(jsonable_encoder(result)))
+    assert payload["data_quality"]["revenue_status"] == "exact_adset_attributed"
+    assert payload["totals"]["revenue"] == pytest.approx(5 * 240.0 + 24.0)
+    assert all(isinstance(payload["totals"][k], float) for k in ("spend", "cpl", "revenue", "revenue_per_lead", "roas"))
+    flags = payload["day_flags"]
+    assert (low_day, "rpl_below_period") in {(f["date"], f["kind"]) for f in flags}   # the weak day is flagged — the line that raised Decimal*float
+    assert not any(f["date"] != low_day and f["kind"] == "rpl_below_period" for f in flags)   # and only that day
+
+
+def test_performance_brief_endpoint_without_pnl_permission_shows_unknown_revenue_not_zero(monkeypatch):
+    start, end = _wire_route(monkeypatch, status="access_denied")
+    payload = jsonable_encoder(_call(start, end, _User(pnl=False)))
+    assert payload["totals"]["revenue"] is None and payload["totals"]["roas"] is None
+    assert payload["totals"]["spend"] == pytest.approx(600.0)
