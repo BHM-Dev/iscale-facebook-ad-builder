@@ -2429,30 +2429,30 @@ function QuickGeneratePanel({
     );
 }
 
-function ImageGenerationStep({ generatedImages, wizardData, selectedCopy, allCopies = [], onBack, onRestart }) {
+export function ImageGenerationStep({ generatedImages, wizardData, selectedCopy, allCopies = [], onBack, onRestart }) {
+    // Every hook must run on every render. The empty-state return used to sit ABOVE the viewedImage state and its effect,
+    // so if this step stayed mounted while generatedImages went from [] to populated, React threw "Rendered more hooks
+    // than during the previous render" and the page went blank. Hooks first, early return last.
     const [selectedImageIndex, setSelectedImageIndex] = useState(null);
     const [imgError, setImgError] = useState(false);
     const [pushModal, setPushModal] = useState({ show: false, image: null, copy: null });
+    // Current image being viewed in the modal (defaults to the selected square image)
+    const [viewedImage, setViewedImage] = useState(null);
 
-    if (!generatedImages || generatedImages.length === 0) {
-        return <div className="text-center p-8 text-red-600">Error: No image data available.</div>;
-    }
+    const images = generatedImages || [];
 
     // Filter to show only square images in the main grid
-    const squareImages = generatedImages.filter(img => img.size.includes('Square'));
+    const squareImages = images.filter(img => img.size.includes('Square'));
 
     // If no square images found (fallback), use all images
-    const displayImages = squareImages.length > 0 ? squareImages : generatedImages;
+    const displayImages = squareImages.length > 0 ? squareImages : images;
 
     const selectedImage = selectedImageIndex !== null ? displayImages[selectedImageIndex] : null;
 
     // Get all images in the same bundle as the selected image
     const bundleImages = selectedImage
-        ? generatedImages.filter(img => img.adBundleId === selectedImage.adBundleId)
+        ? images.filter(img => img.adBundleId === selectedImage.adBundleId)
         : [];
-
-    // Current image being viewed in the modal (defaults to the selected square image)
-    const [viewedImage, setViewedImage] = useState(null);
 
     // Update viewed image when selection changes, and reset any image error state
     React.useEffect(() => {
@@ -2466,6 +2466,10 @@ function ImageGenerationStep({ generatedImages, wizardData, selectedCopy, allCop
     const displayCopy = (selectedImage && (selectedImage.copyHeadline || selectedImage.copyBody))
         ? { headline: selectedImage.copyHeadline || '', body: selectedImage.copyBody || '', cta: selectedImage.copyCta || '' }
         : (selectedCopy || { headline: '', body: '', cta: '' });
+
+    if (images.length === 0) {
+        return <div className="text-center p-8 text-red-600">Error: No image data available.</div>;
+    }
 
     return (
         <div>
