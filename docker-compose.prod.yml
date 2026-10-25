@@ -6,6 +6,12 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: ad-builder-db
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -26,6 +32,12 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     container_name: ad-builder-api
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     env_file:
       - .env
     environment:
@@ -57,6 +69,12 @@ services:
         # every deploy. See frontend/Dockerfile for why.
         CACHE_BUST: ${GIT_COMMIT:-unknown}
     container_name: ad-builder-web
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     depends_on:
       - backend
     labels:

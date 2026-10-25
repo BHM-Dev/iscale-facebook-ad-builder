@@ -15,5 +15,12 @@ What watches the Ad Builder, where it lives, and how to tell if it has stopped. 
 - **2026-10-25:** first backup ran by hand (1.8 MB, uploaded to R2 and size-checked); **restore drill passed** — loaded into a throwaway Postgres container: 0 errors, identical row counts across 10 tables (users, ad sets, campaigns, ads, generated ads, cost entries, month snapshots, rules, scraped ads, drive assets) and the same Alembic version. The weekly report job was kickstarted via launchd and posted to Steve's DM.
 - **Not yet verified:** the cron firing at 09:15 UTC unattended (check `backup.log` on 2026-10-26); the failure-alert path (never triggered); the Monday 08:30 schedule itself.
 
+## Maintenance window 2026-10-25 (Steve: "run it whenever, it won't impact Meta")
+- **Restart policy:** all four containers now `restart: unless-stopped` — set live with `docker update` (no downtime) and persisted in `docker-compose.prod.yml` (so a redeploy keeps it) and `/home/ubuntu/traefik/docker-compose.yml` (on the VPS, outside the repo).
+- **Postgres password rotated** off the default (`ALTER USER` in the live DB, then `POSTGRES_PASSWORD` in the VPS `.env`, API recreated with `--no-deps`; verified the API connects with the new password, 0 auth failures; auto-rollback was armed but not needed). The password lives only in the VPS `.env`.
+- **Log rotation:** json-file, 10 MB x 5 per container (API logs run ~0.4 MB/day, so ~months of history).
+- **Traefik dashboard** (port 8080, insecure API mode) now bound to `127.0.0.1` only. It was already unreachable from the internet (provider firewall), but Docker publishes past ufw, so this removes the reliance on a single layer. Use an SSH tunnel to reach it.
+- **Not changed (deliberately):** DB still shares the `traefik-proxy` network with the API/web/traefik containers (only our four containers are on it; isolating it means a compose network redesign with outage risk and little gain).
+
 ## Known open items (from the 2026-10-24 review)
-No container restart policy (all four `restart=no`; host up 25 weeks); Postgres uses the default `postgres` password (not reachable from the internet — ufw allows only 22/80/443/25); a leftover `.env.bak-*` file with plaintext secrets; 45 GB reclaimable Docker build cache; deploy-failure notifier disabled (`if: ${{ false }}`); CI doesn't gate deploy. Restart policy + password rotation need a short maintenance window.
+a leftover `.env.bak-*` file with plaintext secrets and 45 GB reclaimable Docker build cache (cleanup below); deploy-failure notifier disabled (`if: ${{ false }}`); CI doesn't gate deploy. Restart policy + password rotation need a short maintenance window.
