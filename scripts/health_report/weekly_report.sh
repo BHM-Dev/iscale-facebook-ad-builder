@@ -43,8 +43,10 @@ else
   if [ "${AGE_D:-99}" -le 8 ]; then ok "Newest backup is ${AGE_D}d old ($(basename "$NEWEST"))"
   else bad "Newest backup is ${AGE_D}d old ($(basename "$NEWEST")) — backups are not running"; fi
 fi
-CRON=$($SSH "crontab -l 2>/dev/null | grep -c pg_dump" 2>/dev/null)
-[ "${CRON:-0}" -ge 1 ] && ok "Backup cron present" || warn "No pg_dump cron on the VPS"
+CRON=$($SSH "crontab -l 2>/dev/null | grep -c backup_db.sh" 2>/dev/null)
+[ "${CRON:-0}" -ge 1 ] && ok "Backup cron present" || bad "Backup cron missing from the VPS crontab"
+R2N=$($SSH "docker exec ad-builder-api python -c \"import os,boto3;from botocore.config import Config;s=boto3.client('s3',endpoint_url='https://%s.r2.cloudflarestorage.com'%os.environ['R2_ACCOUNT_ID'],aws_access_key_id=os.environ['R2_ACCESS_KEY_ID'],aws_secret_access_key=os.environ['R2_SECRET_ACCESS_KEY'],region_name='auto',config=Config(request_checksum_calculation='when_required',response_checksum_validation='when_required'));r=s.list_objects_v2(Bucket=os.environ['R2_BUCKET_NAME'],Prefix='db-backups/');o=sorted(r.get('Contents',[]),key=lambda x:x['LastModified']);print(len(o), (o[-1]['LastModified'].isoformat()[:10] if o else 'none'))\"" 2>/dev/null)
+[ -n "$R2N" ] && ok "Off-box copies in R2: ${R2N% *} (newest ${R2N#* })" || warn "Could not list R2 backups"
 
 # ---- 3. VPS health -----------------------------------------------------------------------------------------
 hdr "Server"
