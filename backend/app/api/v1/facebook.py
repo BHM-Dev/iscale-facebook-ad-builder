@@ -974,7 +974,7 @@ def read_adset_status(
     _assert_adset_allowed(current_user, fb_adset_id, db, service)
     try:
         data = service.get_adset_status(fb_adset_id)
-        return {key: data.get(key) for key in ('id', 'name', 'status', 'effective_status', 'daily_budget', 'lifetime_budget')}
+        return {key: data.get(key) for key in ('id', 'name', 'status', 'effective_status', 'daily_budget', 'lifetime_budget', 'start_time')}
     except FacebookAPIError as e:
         if _is_meta_object_missing(e):
             raise HTTPException(status_code=404, detail={"message": "Ad set was not found in Meta (deleted, or not visible to this connection).", "code": e.code, "subcode": e.subcode})

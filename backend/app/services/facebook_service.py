@@ -776,6 +776,7 @@ class FacebookService:
                 AdSet.Field.effective_status,
                 AdSet.Field.daily_budget,
                 AdSet.Field.lifetime_budget,
+                AdSet.Field.start_time,
             ]))
         except FacebookRequestError as e:
             raise self._meta_error(e, 'Ad set status lookup failed') from e

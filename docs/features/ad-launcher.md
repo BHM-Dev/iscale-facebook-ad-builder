@@ -36,12 +36,13 @@ tools remain available as secondary options for teams that need to create new as
 
 ## Open items
 - Re-check status at click time (check runs on open + quiet focus refresh only).
-- "Create ads paused" toggle when parents are ACTIVE — **product decision pending (Steve)**.
+- "Create ads paused" toggle when parents are ACTIVE — **not building it for now (2026-10-25).** Slack history shows Abel never asks for paused-by-default; he schedules launches to go live at midnight PT (start time on the ad set, "so they get a full day of testing"). The launcher now shows that schedule on Review instead (see Changelog). Steve approved that direction; Abel was asked in a DM and has not replied. Revisit only if someone asks for create-paused.
 - Partial-failure box should also list created-but-unsaved ads and failed ad names.
 - Component tests for blocked-card keyboard, partial-failure panel, hard-block vs acknowledge flow.
 - Codex working brief: [`CODEX_BRIEF_launcher-ux.md`](../../CODEX_BRIEF_launcher-ux.md).
 
 ## Changelog (newest first)
+- 2026-10-25 **Review step understands scheduled starts.** A new ad set with a future start time (or an existing ad set whose Meta `start_time` is in the future, read by the live check) now shows a blue **SCHEDULED** state: "Ads are ACTIVE but scheduled: nothing spends before Mon, Oct 26, 12:00 AM PT, then they start delivering" — instead of the red "may start spending immediately" LIVE banner. Shown in Pacific time (the team's frame); if the browser isn't in PT the local equivalent is appended, because the date field is read in the browser's timezone (typing "12:00 AM" in ET is 9:00 PM PT). Safety rules: SCHEDULED only upgrades a LIVE state (never softens PAUSED/unknown/unverified); a past start time stays LIVE with an explicit "already passed" note; the screen re-checks every 15 s and **Launch re-checks at click time** and refuses if the start passed since the last render; Meta's `-0700` offset form is normalized so Safari/Firefox parse it. Backend: `GET /facebook/adsets/{id}` also returns `start_time`. Unit-tested only (`lib/liveStatus.test.js`, 13 tests); **not browser-verified, not exercised on a real scheduled launch** — first real check is Abel's next midnight-PT launch (never click Launch just to test).
 - 2026-10-08 Launch Creatives landing page now names approved Drive creative as the recommended workflow; route and
   generation tools are unchanged.
 - 2026-10-06 `248ad38` ticking checked-age, `liveStatus.js` + tests · `41a6918` single-object status endpoints,

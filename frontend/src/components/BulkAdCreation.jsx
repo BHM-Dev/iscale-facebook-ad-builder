@@ -1,7 +1,7 @@
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import React, { useEffect, useState } from 'react';
-import { isMetaObjectGone, isHardBlockError, deliveryState, formatCheckedAge } from '../lib/liveStatus';
+import { isMetaObjectGone, isHardBlockError, deliveryState, formatCheckedAge, scheduledStartDate, formatScheduledStart } from '../lib/liveStatus';
 import { Check, ChevronLeft, ChevronRight, Loader, Film, Image, X, Pencil } from 'lucide-react';
 import { useCampaign } from '../context/CampaignContext';
 import { createCompleteAd, createFacebookCampaign, createFacebookAdSet, getAdsetStatus, getCampaignStatus, getRateLimitUsage } from '../lib/facebookApi';
@@ -225,18 +225,31 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const liveStatusUnverified = liveCheckApplicable && Boolean(liveStatusRefresh.error);
     // Only claim LIVE/PAUSED when every status involved is a plain ACTIVE or PAUSED (and nothing is
     // effectively blocked). Anything else (WITH_ISSUES, IN_PROCESS, empty...) must say "check Ads Manager".
+    // A start time in the future means nothing spends until then (Abel schedules launches for midnight PT). For a new
+    // ad set it is the start time set in the ad-set step; for an existing ad set it is what Meta reports.
+    // A start time that has already passed is NOT scheduled — Meta starts those immediately.
+    // For an existing ad set only trust Meta's start time once the live check has completed — a value left over
+    // from a previously selected ad set must never be shown as "scheduled".
+    const liveCheckVerified = Boolean(liveStatusRefresh.completedAt) && !liveStatusRefresh.error;
+    const configuredStart = adsetData.isExisting ? (liveCheckVerified ? adsetData.liveStartTime : null) : adsetData.startTime;
+    // Re-render every 15s while a start is pending (and every 15s while a status check is shown) so a screen left open
+    // past the start time flips back to LIVE instead of claiming "nothing spends" for a start that has already passed.
+    const [liveClock, setLiveClock] = useState(() => Date.now());
+    const scheduledStartAt = scheduledStartDate(configuredStart, liveClock);
+    const startTimeAlreadyPassed = Boolean(configuredStart) && !scheduledStartAt;
     const liveDeliveryState = deliveryState({
         unverified: liveStatusUnverified,
         campaign: { status: campaignData.status, effectiveStatus: campaignData.effectiveStatus },
         adset: adsetData.isExisting ? { status: adsetData.status, effectiveStatus: adsetData.effectiveStatus } : null,
+        scheduledStart: scheduledStartAt,
     });
     // Re-render every 30s so the "checked N min ago" label can't make stale data look fresh.
-    const [liveClock, setLiveClock] = useState(() => Date.now());
+    // (declared above, next to the scheduled-start logic) — ticks while a status check or a pending start needs it
     useEffect(() => {
-        if (!liveCheckApplicable) return undefined;
-        const id = setInterval(() => setLiveClock(Date.now()), 30000);
+        if (!liveCheckApplicable && !scheduledStartAt) return undefined;
+        const id = setInterval(() => setLiveClock(Date.now()), 15000);
         return () => clearInterval(id);
-    }, [liveCheckApplicable]);
+    }, [liveCheckApplicable, scheduledStartAt]);
     const liveRefreshQuietRef = React.useRef(false);
     const liveLastCheckRef = React.useRef(0);
     const reconciliationProtectedIdsRef = React.useRef([]);
@@ -299,6 +312,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         dailyBudget: liveAdset.daily_budget ? Number(liveAdset.daily_budget) / 100 : 0,
                         lifetimeBudget: liveAdset.lifetime_budget ? Number(liveAdset.lifetime_budget) / 100 : 0,
                         budgetScheduleType: liveAdset.lifetime_budget > 0 && !liveAdset.daily_budget ? 'LIFETIME' : 'DAILY',
+                        liveStartTime: liveAdset.start_time || null,
                     }));
                 }
                 setLiveStatusRefresh({ loading: false, error: null, hardBlock: false, completedAt: new Date().toISOString() });
@@ -1238,6 +1252,13 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 : liveStatusRefresh.hardBlock
                     ? 'The selected campaign or ad set is unavailable in Meta. Go back and select an available one.'
                     : 'The live Meta status check failed. Retry the check, or confirm you verified status in Ads Manager.');
+            return;
+        }
+        // The Review screen may still be saying "scheduled" for a start time that passed since it last rendered.
+        // Never launch on that stale claim: Meta would start these ads immediately.
+        if (scheduledStartAt && scheduledStartAt.getTime() <= Date.now()) {
+            setLiveClock(Date.now());
+            showWarning('The scheduled start time has just passed, so Meta would start these ads right away. Check the updated delivery notice, then click Launch again.');
             return;
         }
         try {
@@ -2185,8 +2206,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                     ? ' across 2 new ad sets (Feed and Stories/Reels).'
                                     : ' in 1 new ad set.'}
                         {campaignData.isExisting
-                            ? <span className="ml-1 text-blue-800">Existing campaign — {adsetData.isExisting ? `ads take the ad set's status (${adsetData.status || 'PAUSED'}) and deliver only if the campaign is also active.` : 'new ad sets and ads are created ACTIVE and will deliver as soon as the campaign is active. Check the campaign status in Ads Manager.'}</span>
-                            : <span className="ml-1 text-blue-800">The new campaign is created paused, so delivery will not begin until you activate it.</span>}
+                            ? <span className="ml-1 text-blue-800">Existing campaign — {adsetData.isExisting ? `ads take the ad set's status (${adsetData.status || 'PAUSED'}) and deliver only if the campaign is also active.` : (scheduledStartAt ? `new ad sets and ads are created ACTIVE but scheduled to start ${formatScheduledStart(scheduledStartAt)}, so they will not deliver before then.` : 'new ad sets and ads are created ACTIVE and will deliver as soon as the campaign is active. Check the campaign status in Ads Manager.')}</span>
+                            : <span className="ml-1 text-blue-800">The new campaign is created paused, so delivery will not begin until you activate it.{scheduledStartAt ? ` The ad sets are scheduled to start ${formatScheduledStart(scheduledStartAt)}, so after you activate the campaign they still will not spend before then.` : ''}</span>}
                     </div>
                     <div><strong>Campaign:</strong> {campaignData.name}</div>
                     {campaignData.budgetType === 'CBO' && (
@@ -2204,9 +2225,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 : (campaignData.budgetType === 'CBO' ? 'Using campaign budget (CBO) — set in Ads Manager' : 'Unavailable — verify in Ads Manager')}</div>
                     )}
                     {campaignData.isExisting && (
-                        <div className={`mt-2 rounded border px-3 py-2 text-xs font-medium ${liveStatusUnverified ? 'border-amber-300 bg-amber-50 text-amber-900' : liveDeliveryState === 'LIVE' ? 'border-red-300 bg-red-50 text-red-900' : 'border-gray-300 bg-gray-50 text-gray-700'}`}>
+                        <div className={`mt-2 rounded border px-3 py-2 text-xs font-medium ${liveStatusUnverified ? 'border-amber-300 bg-amber-50 text-amber-900' : liveDeliveryState === 'SCHEDULED' ? 'border-blue-300 bg-blue-50 text-blue-900' : liveDeliveryState === 'LIVE' ? 'border-red-300 bg-red-50 text-red-900' : 'border-gray-300 bg-gray-50 text-gray-700'}`}>
                             <strong>Delivery:</strong> campaign {liveStatusUnverified ? 'unverified' : (campaignData.status || 'unknown')}{campaignData.effectiveStatus && campaignData.effectiveStatus !== campaignData.status ? ` (effective ${campaignData.effectiveStatus})` : ''}{adsetData.isExisting ? ` · ad set ${liveStatusUnverified ? 'unverified' : (adsetData.status || 'unknown')}${adsetData.effectiveStatus && adsetData.effectiveStatus !== adsetData.status ? ` (effective ${adsetData.effectiveStatus})` : ''}` : ''} · ads will be {liveDeliveryState === 'unverified' ? 'status unverified' : liveDeliveryState === 'unknown' ? 'status unclear — check Ads Manager' : liveDeliveryState}.
-                            {liveDeliveryState === 'unverified' || liveDeliveryState === 'unknown' ? ' Verify in Ads Manager before launching.' : liveDeliveryState === 'LIVE' ? ' These ads may start spending immediately.' : ` These ads will not spend until ${campaignData.status === 'PAUSED' && adsetData.isExisting && adsetData.status === 'PAUSED' ? 'the campaign and ad set are' : campaignData.status === 'PAUSED' ? 'the campaign is' : 'the ad set is'} turned on.`}
+                            {liveDeliveryState === 'unverified' || liveDeliveryState === 'unknown' ? ' Verify in Ads Manager before launching.' : liveDeliveryState === 'SCHEDULED' ? ` Ads are ACTIVE but scheduled: nothing spends before ${formatScheduledStart(scheduledStartAt)}, then they start delivering.` : liveDeliveryState === 'LIVE' ? `${startTimeAlreadyPassed ? ' The start time that was set has already passed, so Meta will start these right away.' : ''} These ads may start spending immediately.` : ` These ads will not spend until ${campaignData.status === 'PAUSED' && adsetData.isExisting && adsetData.status === 'PAUSED' ? 'the campaign and ad set are' : campaignData.status === 'PAUSED' ? 'the campaign is' : 'the ad set is'} turned on.`}
                         </div>
                     )}
                     {campaignData.budgetType === 'ABO' && !adsetData.isExisting && (
