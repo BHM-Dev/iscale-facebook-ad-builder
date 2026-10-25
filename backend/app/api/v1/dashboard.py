@@ -38,6 +38,7 @@ DASHBOARD_HISTORICAL_CACHE_TTL_SECONDS = 300
 DASHBOARD_CACHE_MAX_ENTRIES = 48
 _niche_summary_cache: dict[tuple, tuple[float, float, list[dict]]] = {}
 _trend_cache: dict[tuple, tuple[float, float, dict]] = {}
+_performance_brief_cache: dict[tuple, tuple[float, float, dict]] = {}
 
 
 def _dashboard_cache_ttl(date_preset: str, date_to: str | None) -> int:
@@ -206,6 +207,54 @@ def extract_niche(adset_name: str) -> str:
     if parts and not DATE_LIKE.match(parts[0]):
         return parts[0]
     return "General"
+
+
+def _period_totals(rows: list[dict]) -> dict:
+    spend = sum(Decimal(str(row.get('spend') or 0)) for row in rows)
+    leads = sum(int(row.get('leads') or 0) for row in rows)
+    has_revenue = any(row.get('revenue') is not None for row in rows)
+    revenue = sum((Decimal(str(row.get('revenue') or 0)) for row in rows), Decimal('0')) if has_revenue else None
+    return {'spend': round(spend, 2), 'leads': leads, 'cpl': round(spend / leads, 2) if leads else None,
+            'revenue': round(revenue, 2) if revenue is not None else None,
+            'revenue_per_lead': round(revenue / leads, 2) if revenue is not None and leads else None,
+            'roas': round(revenue / spend, 2) if revenue is not None and spend else None}
+
+
+def _brief_daily_rows(by_date, revenue_daily, revenue_available, start, end):
+    rows, cursor = [], start
+    while cursor <= end:
+        key = str(cursor); meta = by_date.get(key, {'date': key, 'spend': None, 'leads': None, 'cpl': None})
+        revenue = revenue_daily.get(key, 0.0) if revenue_available else None
+        rows.append({**meta, 'revenue': revenue,
+                     'revenue_per_lead': round(revenue / meta['leads'], 2) if revenue is not None and meta.get('leads') else None,
+                     'roas': round(revenue / meta['spend'], 2) if revenue is not None and meta.get('spend') else None})
+        cursor += timedelta(days=1)
+    return rows
+
+
+def _brief_day_flags(rows, totals):
+    flags, total_spend, period_rpl = [], Decimal(str(totals.get('spend') or 0)), totals.get('revenue_per_lead')
+    for row in rows:
+        spend = Decimal(str(row.get('spend') or 0)); rpl = row.get('revenue_per_lead')
+        if not spend or (total_spend and spend / total_spend < Decimal('.10')): continue
+        if period_rpl is not None and rpl is not None and (row.get('leads') or 0) >= 5 and rpl < period_rpl * .75:
+            flags.append({'date': row['date'], 'kind': 'rpl_below_period', 'detail': 'Revenue per lead was at least 25% below this period’s observed average.', **{key: row.get(key) for key in ('spend', 'leads', 'cpl', 'revenue_per_lead', 'roas')}})
+        elif row.get('leads') == 0:
+            flags.append({'date': row['date'], 'kind': 'spend_without_leads', 'detail': 'Meaningful Meta spend produced no readable leads that day.', **{key: row.get(key) for key in ('spend', 'leads', 'cpl', 'revenue_per_lead', 'roas')}})
+    return sorted(flags, key=lambda item: item['spend'] or 0, reverse=True)[:5]
+
+
+def _brief_adset_rows(current, previous, names):
+    rows = []
+    for adset_id in set(current) | set(previous):
+        now, before = current.get(adset_id, {}), previous.get(adset_id, {}); spend, prior = float(now.get('spend') or 0), float(before.get('spend') or 0)
+        if not spend and not prior: continue
+        local = names.get(adset_id, {})
+        rows.append({'fb_adset_id': adset_id, 'adset_name': now.get('adset_name') or before.get('adset_name') or local.get('adset_name') or 'Unnamed ad set',
+                     'campaign_name': local.get('campaign_name'), 'status': local.get('status') or 'UNKNOWN', 'daily_budget': local.get('daily_budget'), 'budget_type': local.get('budget_type'),
+                     'spend': round(spend, 2), 'leads': int(now.get('leads') or 0), 'cpl': now.get('cpl'), 'previous_spend': round(prior, 2), 'previous_leads': int(before.get('leads') or 0), 'previous_cpl': before.get('cpl'),
+                     'spend_change_pct': round((spend - prior) / prior * 100, 1) if prior else None})
+    return sorted(rows, key=lambda item: item['spend'], reverse=True)
 
 @router.get("/stats")
 def get_dashboard_stats(
@@ -423,3 +472,41 @@ def get_dashboard_trend(
     except Exception as exc:
         logger.exception('Dashboard daily trend failed')
         raise HTTPException(status_code=502, detail='Daily trend unavailable') from exc
+
+
+@router.get('/performance-brief')
+def get_performance_brief(ad_account_id: str | None = Query(None), date_from: str = Query(...), date_to: str = Query(...), refresh: bool = Query(False), db: Session = Depends(get_db), current_user=Depends(get_current_active_user)):
+    """Read-only, completed-day decision review; account economics are never assigned to ad sets."""
+    ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
+    try:
+        start, end = date.fromisoformat(date_from), date.fromisoformat(date_to)
+        from app.services.redtrack_service import today_in_rt_tz
+        if end == today_in_rt_tz(): end -= timedelta(days=1)
+        if start > end or (end - start).days > 30 or end >= today_in_rt_tz(): raise ValueError
+    except (TypeError, ValueError):
+        raise HTTPException(400, 'Choose a completed date range ending before today.')
+    days = (end - start).days + 1; previous_start, previous_end = start - timedelta(days=days), start - timedelta(days=1)
+    cache_key = (ad_account_id, str(start), str(end), current_user.has_permission('pnl:read'))
+    cached = _read_dashboard_cache(_performance_brief_cache, cache_key, _dashboard_cache_ttl('custom', str(end)), refresh)
+    if cached is not None: return cached
+    began = time.monotonic()
+    try:
+        svc = FacebookService(); daily_meta = svc.get_account_daily_insights(ad_account_id, str(previous_start), str(end)); by_date = {row['date']: row for row in daily_meta}
+        current, previous = svc.get_account_insights_bulk(ad_account_id=ad_account_id, date_from=str(start), date_to=str(end)), svc.get_account_insights_bulk(ad_account_id=ad_account_id, date_from=str(previous_start), date_to=str(previous_end))
+        if current_user.has_permission('pnl:read'):
+            revenue, prior_revenue = _daily_billable_revenue(db, ad_account_id, start, end, refresh, began), _daily_billable_revenue(db, ad_account_id, previous_start, previous_end, refresh, began)
+        else: revenue = prior_revenue = {'status': 'access_denied', 'daily': {}}
+        daily = _brief_daily_rows(by_date, revenue['daily'], revenue['status'] == 'exact_adset_attributed', start, end)
+        prior_daily = _brief_daily_rows(by_date, prior_revenue['daily'], prior_revenue['status'] == 'exact_adset_attributed', previous_start, previous_end)
+        totals, previous_totals = _period_totals(daily), _period_totals(prior_daily)
+        local_rows = db.query(FacebookAdSet.fb_adset_id, FacebookAdSet.name, FacebookAdSet.status, FacebookAdSet.daily_budget, FacebookCampaign.name, FacebookCampaign.budget_type, FacebookCampaign.daily_budget).outerjoin(FacebookCampaign, FacebookAdSet.campaign_id == FacebookCampaign.id).filter(FacebookAdSet.fb_account_id == ad_account_id, FacebookAdSet.fb_adset_id.isnot(None)).all()
+        names = {str(i): {'adset_name': n, 'status': s, 'daily_budget': (cb if bt == 'CBO' else ab), 'budget_type': bt, 'campaign_name': cn} for i, n, s, ab, cn, bt, cb in local_rows if i}
+        adsets = [row for row in _brief_adset_rows(current, previous, names) if row['spend'] > 0]
+        watch = [row for row in adsets if row['leads'] == 0 or (row['spend_change_pct'] is not None and row['spend_change_pct'] >= 25 and row['cpl'] is not None and row['previous_cpl'] is not None and row['cpl'] > row['previous_cpl'] * 1.25)][:5]
+        matched = revenue['status'] == 'exact_adset_attributed'
+        response = {'ad_account_id': ad_account_id, 'date_from': str(start), 'date_to': str(end), 'previous_date_from': str(previous_start), 'previous_date_to': str(previous_end), 'daily': daily, 'totals': totals, 'previous_totals': previous_totals, 'day_flags': _brief_day_flags(daily, totals), 'adsets': adsets[:20], 'watch_adsets': watch,
+                    'data_quality': {'revenue_status': revenue['status'], 'previous_revenue_status': prior_revenue['status'], 'account_economics_source': 'Revenue matched to Meta ad sets' if matched else 'Revenue unavailable — delivery metrics only', 'adset_diagnostic_source': 'Meta delivery only', 'timezone': 'America/Los_Angeles', 'revenue_rule': 'Conversion-date revenue can lag delivery-date spend; use this as a review signal, not settled profit.'}}
+        _write_dashboard_cache(_performance_brief_cache, cache_key, response, began); return response
+    except Exception as exc:
+        logger.exception('Performance brief failed')
+        raise HTTPException(502, 'Performance brief unavailable') from exc

@@ -1177,6 +1177,23 @@ export default function Dashboard() {
     }
     return `/campaign-performance?${params.toString()}`;
   };
+  const performanceBriefLink = (() => {
+    const params = new URLSearchParams();
+    if (activeAccountId) params.set('ad_account_id', activeAccountId);
+    if (activeRange.dateFrom && activeRange.dateTo) {
+      params.set('date_from', activeRange.dateFrom);
+      params.set('date_to', activeRange.dateTo);
+    }
+    return `/performance-brief${params.toString() ? `?${params}` : ''}`;
+  })();
+  const exactRevenueAvailable = trend?.revenue_attribution?.status === 'exact_adset_attributed';
+  const trendTotals = trend?.totals || {};
+  const trendRoas = trendTotals.revenue != null && trendTotals.spend > 0 ? trendTotals.revenue / trendTotals.spend : null;
+  const briefSignal = !exactRevenueAvailable
+    ? 'Billable revenue is unavailable, so this review will stay delivery-focused.'
+    : trendRoas != null && trendRoas < 1
+      ? `Billable revenue is ${trendRoas.toFixed(2)}× Meta spend in this window — inspect the completed-day review.`
+      : `Completed-day review combines Meta delivery with exact Switchboard billable revenue.`;
 
   // ── Top Performers (by RT ROAS, min spend $50) ──────────────────────────────
   const topPerformers = adsets
@@ -1440,6 +1457,17 @@ export default function Dashboard() {
           highlight={rtRoas != null && rtRoas < 1}
           warn={rtRoas != null && rtRoas >= 1 && rtRoas < 1.5}
         />
+      </div>
+
+      <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 px-5 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold text-indigo-950"><Zap size={15} className="text-indigo-600" />Performance Brief</div>
+          <p className="mt-1 text-xs text-indigo-900/75">{trendLoading ? 'Preparing completed-day economics…' : briefSignal}</p>
+          <p className="mt-1 text-[11px] text-indigo-800/60">Problem days and delivery contributors are shown only when they are material. No Slack alerts or ad changes.</p>
+        </div>
+        <Link to={performanceBriefLink} className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700">
+          Open review <ArrowRight size={13} />
+        </Link>
       </div>
 
       <div className="flex flex-col gap-4">

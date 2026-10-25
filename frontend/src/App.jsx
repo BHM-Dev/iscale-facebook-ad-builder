@@ -16,6 +16,7 @@ import { ToastProvider } from './context/ToastContext';
 import PrivateRoute from './components/PrivateRoute';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
+import PerformanceBrief from './pages/PerformanceBrief';
 import CreateAds from './pages/CreateAds';
 import BrandsHub from './pages/BrandsHub';
 import LibrariesHub from './pages/LibrariesHub';
@@ -71,6 +72,7 @@ function App() {
                   }
                 >
                   <Route index element={<DefaultLanding />} />
+                  <Route path="performance-brief" element={<PerformanceBrief />} />
                   <Route path="research" element={<Research />} />
                   <Route path="pnl" element={<Pnl />} />
                   <Route path="research/brand-scrapes" element={<BrandScrapes />} />
