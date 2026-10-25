@@ -24,7 +24,10 @@ jobs:
               exit 1
             fi
 
+            # Keep ONE rollback copy, owner-only: older copies hold plaintext secrets and used to pile up forever.
             cp .env ".env.bak.$(date +%s)"
+            chmod 600 .env.bak.*
+            ls -1t .env.bak.* | tail -n +2 | xargs -r rm -f
 
             NEW_TOKEN="$NEW_TOKEN" python3 -c '
             import os

@@ -56,8 +56,8 @@ CACHE=$($SSH "docker system df --format '{{.Type}} {{.Reclaimable}}' 2>/dev/null
 [ -n "$CACHE" ] && OUT+=":information_source: Docker build cache reclaimable: $CACHE"$'\n'
 NORESTART=$($SSH 'for c in $(docker ps --format "{{.Names}}"); do [ "$(docker inspect -f "{{.HostConfig.RestartPolicy.Name}}" $c)" = "no" ] && echo $c; done | tr "\n" " "' 2>/dev/null)
 [ -z "${NORESTART// }" ] && ok "All containers restart automatically" || warn "No restart policy: ${NORESTART}"
-ENVBAK=$($SSH "ls /home/ubuntu/iscale-facebook-ad-builder/.env.bak* 2>/dev/null | wc -l" 2>/dev/null)
-[ "${ENVBAK:-0}" -eq 0 ] && ok "No leftover .env backups" || warn "${ENVBAK} leftover .env.bak file(s) hold plaintext secrets"
+ENVBAK=$($SSH "find /home/ubuntu/iscale-facebook-ad-builder -maxdepth 1 -name '.env.bak*' -mtime +7 2>/dev/null | wc -l" 2>/dev/null)
+[ "${ENVBAK:-0}" -eq 0 ] && ok "No stale .env backups (older than 7 days)" || warn "${ENVBAK} stale .env.bak file(s) hold plaintext secrets — delete them"
 N5XX=$($SSH "docker logs ad-builder-api --since 168h 2>&1 | grep -cE 'HTTP/1.1\" 5[0-9][0-9] '; true" 2>/dev/null)
 [ "${N5XX:-0}" -lt 25 ] && ok "HTTP 5xx in 7d: ${N5XX:-?}" || warn "HTTP 5xx in 7d: ${N5XX}"
 

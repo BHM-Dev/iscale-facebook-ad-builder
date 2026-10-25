@@ -1,5 +1,7 @@
 import os
 import json
+import calendar
+import hashlib
 import logging
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -1006,6 +1008,110 @@ def _everflow_unknown_revenue(
     )
 
 
+# ---- Frozen all-accounts extras for closed months ------------------------------------------------------------
+# The per-account figures of a closed month are already frozen in pnl_month_snapshots. The all-accounts segment
+# (revenue tied to a scoped Meta campaign id, plus the reported-but-excluded network / foreign buckets) used to be
+# re-pulled from Everflow on every load, so a paid month could keep moving. Steve, 2026-10-25: paid months are frozen.
+# Stored as one more row in the same table under a reserved pseudo-account id — no schema change.
+ALL_EXTRAS_SNAPSHOT_PREFIX = "__all_scope_extras__"
+ALL_EXTRAS_RULE = "network-excluded-2026-10-24"
+# Late conversions / clawbacks keep arriving for a few days after a month ends; the per-account figures freeze
+# immediately, so the extras segment waits this long before freezing.
+ALL_EXTRAS_FREEZE_GRACE_DAYS = 3
+
+
+def _all_extras_snapshot_id(scope: list[str]) -> str:
+    """One pseudo-account row per account SCOPE, so an admin's frozen month and a restricted user's never overwrite each other."""
+    return f"{ALL_EXTRAS_SNAPSHOT_PREFIX}:{hashlib.sha1(','.join(scope).encode()).hexdigest()[:10]}"
+
+
+def _closed_full_month(start: date, end: date, grace_days: int = 0) -> bool:
+    """True for exactly one whole calendar month that ended at least `grace_days` ago (reporting timezone)."""
+    last_day = calendar.monthrange(start.year, start.month)[1]
+    return (
+        start.day == 1
+        and end == date(start.year, start.month, last_day)
+        and end < today_in_rt_tz().replace(day=1)
+        and today_in_rt_tz() >= end + timedelta(days=grace_days)
+    )
+
+
+def _account_snapshots_complete(db: Session, scope: list[str], start: date) -> bool:
+    """True when every account in scope already has its own frozen snapshot for the month.
+
+    The extras segment is classified against the local ad-set / campaign tables, so freezing it while an
+    account's own figures are still live (e.g. an unsynced ad-set table) could lock in a misclassification.
+    """
+    have = {
+        row[0] for row in db.query(PnlMonthSnapshot.ad_account_id)
+        .filter(PnlMonthSnapshot.month == start, PnlMonthSnapshot.ad_account_id.in_(scope)).all()
+    }
+    return bool(scope) and set(scope) <= have
+
+
+def _write_all_extras_snapshot(
+    db: Session, scope: list[str], start: date, end: date,
+    unknown: Decimal, foreign: Decimal, network: Decimal, current_user: User | None,
+) -> None:
+    snapshot_id = _all_extras_snapshot_id(scope)
+    existing = (
+        db.query(PnlMonthSnapshot)
+        .filter(PnlMonthSnapshot.ad_account_id == snapshot_id, PnlMonthSnapshot.month == start)
+        .first()
+    )
+    target = existing or PnlMonthSnapshot(ad_account_id=snapshot_id, month=start)
+    target.date_from = start
+    target.date_to = end
+    target.spend = None
+    target.revenue = unknown                  # campaign-id-tied revenue that still counts
+    target.unattributed_revenue = network     # excluded network / third-party revenue (reported only)
+    target.conversions = None
+    target.revenue_source = "all_extras"
+    target.unmapped_adsets = None
+    target.event_breakdown = {"scope": scope, "rule": ALL_EXTRAS_RULE, "foreign_revenue": float(foreign)}
+    target.synced_by = current_user.id if current_user is not None else None
+    target.synced_at = datetime.now(timezone.utc)
+    if existing is None:
+        db.add(target)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()  # a snapshot is an optimisation, never a reason to fail the request
+        logger.exception("pnl all-extras snapshot write failed month=%s", start.isoformat())
+
+
+def _all_extras_for_period(
+    db: Session, account_ids: list[str], start: date, end: date,
+    current_user: User | None = None, *, refresh: bool = False,
+) -> tuple[Decimal, bool, Decimal, Decimal]:
+    """(unknown, ok, foreign, network) for the all-accounts view; frozen for closed full months.
+
+    A closed month is read from its snapshot when one exists for the SAME account scope and revenue rule, and is
+    never re-pulled from Everflow. It is WRITTEN only when the pull succeeded, the month ended 3+ days ago, and every
+    account's own figures for that month are already frozen. `refresh=True` (the Re-fetch button) pulls again and
+    overwrites. The current month is always live.
+    """
+    scope = sorted(normalize_account_id(a) for a in account_ids)
+    closed = _closed_full_month(start, end)
+    if closed and not refresh:
+        snap = (
+            db.query(PnlMonthSnapshot)
+            .filter(PnlMonthSnapshot.ad_account_id == _all_extras_snapshot_id(scope), PnlMonthSnapshot.month == start)
+            .first()
+        )
+        meta = snap.event_breakdown if snap is not None and isinstance(snap.event_breakdown, dict) else None
+        if meta and meta.get("scope") == scope and meta.get("rule") == ALL_EXTRAS_RULE:
+            return _money(snap.revenue), True, _money(meta.get("foreign_revenue")), _money(snap.unattributed_revenue)
+    unknown, ok, foreign, network = _everflow_unknown_revenue(db, account_ids, start, end)
+    if (
+        ok
+        and _closed_full_month(start, end, ALL_EXTRAS_FREEZE_GRACE_DAYS)
+        and _account_snapshots_complete(db, scope, start)
+    ):
+        _write_all_extras_snapshot(db, scope, start, end, unknown, foreign, network, current_user)
+    return unknown, ok, foreign, network
+
+
 def _summary_all(
     db: Session,
     current_user: User,
@@ -1025,7 +1131,7 @@ def _summary_all(
         _summary(db, account_id, start, end, label, include_costs=False)
         for account_id in account_ids
     ]
-    unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _everflow_unknown_revenue(db, account_ids, start, end)
+    unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _all_extras_for_period(db, account_ids, start, end, current_user)
     return _all_summary_from_account_rows(
         db, account_ids, start, end, label, account_rows,
         unknown_revenue=unknown_revenue, unknown_ok=unknown_ok,
@@ -1311,7 +1417,7 @@ def _get_months_all(
         # per month shown; the per-account figures may be frozen snapshots, and
         # that is safe here because the unknown segment is derived from raw
         # conversions rather than by subtracting the attributed total.
-        unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _everflow_unknown_revenue(db, account_ids, start, end)
+        unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _all_extras_for_period(db, account_ids, start, end, current_user)
         rows.append(_all_summary_from_account_rows(
             db, account_ids, start, end, label, account_rows,
             unknown_revenue=unknown_revenue, unknown_ok=unknown_ok,
@@ -1507,7 +1613,13 @@ def resync_month(
         # Resync returns the same shape as /summary, so it needs the unknown
         # segment too — otherwise a resync would "correct" a month back down to
         # the attributed-only figure it was just fixed from.
-        unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _everflow_unknown_revenue(db, account_ids, start, end)
+        unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _all_extras_for_period(db, account_ids, start, end, current_user, refresh=True)
+        if not unknown_ok:
+            raise HTTPException(
+                status_code=502,
+                detail="The per-account figures were re-fetched, but the all-accounts extras (Everflow) came back incomplete, "
+                       "so those were left as they were. Try the re-fetch again shortly.",
+            )
         return _all_summary_from_account_rows(
             db, account_ids, start, end, label, account_rows,
             unknown_revenue=unknown_revenue, unknown_ok=unknown_ok,
