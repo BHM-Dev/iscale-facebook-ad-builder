@@ -31,6 +31,13 @@ Checked live against Meta and Everflow for today, yesterday and MTD (*verified i
 - **Gap 1 — ad sets missing from the local table.** The 30-min `meta_sync` only covered RHO Commercial + RHO 4, so two DIN Auto Insurance ad sets created Oct 22 were unknown: their \$89.58 of revenue was dropped while the account's spend was counted. Fixed: the scheduled sync now defaults to every account with an Everflow mapping (`META_SYNC_ACCOUNT_IDS` still overrides).
 - **Gap 2 — literal-macro revenue is our Meta traffic (fixed 2026-10-26, Steve's call; RedTrack click-id lookup matched 147 of 149 to our own campaigns, 0 to anyone else's).** MTD \$2,769.89 of the \$3,125.68 `network_revenue` has sub3 `{{adset.id}}`. All 147 rows carry a RedTrack click id; 133 have a Meta fbclid; referrers are facebook.com / instagram.com. 72 rows (\$1,221.15) have sub4 = the exact name of one of our own ads on RHO Commercial. That contradicts the "third-party traffic" premise of the 2026-10-24 rule for at least that slice.
 
+## Why `{{adset.id}}` arrives unexpanded (investigated 2026-10-26, Oct 1–26, 149 conversions of ~7,000; *verified from Everflow + RedTrack rows*)
+- **Not our links, not RedTrack.** RedTrack's own copy of the click already holds the literal `{{adset.id}}`, so Meta delivered it that way. Our templates expand correctly 98% of the time on the very same ads, and no ad with 30+ conversions is more than 5.6% affected.
+- **Group B — 85 conversions: ad-level macros expanded, ad-set/campaign-level did not.** `{{ad.id}}`, `{{ad.name}}` and `{{placement}}` are populated; `{{adset.id}}`, `{{campaign.id}}`, `{{adset.name}}`, `{{campaign.name}}` stay literal. 93% are Facebook Mobile Feed (58% of normal traffic), none Instagram/Reels/desktop; spread thinly over 26 ads (~2% of each). Looks like a Meta-side quirk on a slice of Facebook mobile-feed clicks. Cause on Meta's side is not provable from our data.
+- **Group A — 64 conversions: nothing expanded** (even `{{placement}}` literal), 14 with no Meta click id. Someone arrived on the raw template link (copied/shared/preview link).
+- **Recoverable:** group B's RedTrack click holds the real ad id (`sub1`), so it can be mapped click id → ad → ad set → account exactly. Not built.
+- Nothing to fix in link formatting (standing rule: don't touch it).
+
 ## Changelog
 - 2026-10-26 unexpanded `{{adset.id}}` revenue now counted in the All-accounts total.
 - 2026-10-26 scheduled Meta sync defaults to all Everflow-mapped accounts.
