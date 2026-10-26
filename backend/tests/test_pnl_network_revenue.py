@@ -13,6 +13,7 @@ from app.api.v1 import pnl
 from app.models import FacebookAdSet, FacebookCampaign
 
 OFFER = "Get Business Coverage"
+OUTSIDE_OFFER = "Fast Auto Quote.org"
 ACCOUNT = "act_111"
 
 
@@ -50,19 +51,21 @@ def _db():
 def test_non_meta_sub3_is_network_not_unknown(monkeypatch):
     monkeypatch.setattr(pnl, "EverflowService", _FakeEverflow)
     monkeypatch.setattr(pnl, "_everflow_account_ids", lambda: {ACCOUNT})
-    monkeypatch.setattr(pnl, "_everflow_offer_names_for_account", lambda a: {OFFER})
+    monkeypatch.setattr(pnl, "_everflow_offer_names_for_account", lambda a: {OFFER, OUTSIDE_OFFER, "Fast Business Quote"})
     _FakeEverflow.rows = [
         {"offer": OFFER, "revenue": "100.00", "sub3": "120000000000000001"},   # known ad set -> per-account row, not here
         {"offer": OFFER, "revenue": "40.25", "sub3": "120000000000000777"},    # scoped campaign id -> ties to our Meta campaign -> counted
         {"offer": OFFER, "revenue": "33.10", "sub3": "{{adset.id}}"},          # literal macro -> our own Meta click, macro unexpanded -> counted
-        {"offer": OFFER, "revenue": "21.90", "sub3": ""},                      # blank -> network
+        {"offer": OUTSIDE_OFFER, "revenue": "21.90", "sub3": ""},              # blank on an outside-traffic offer -> network
+        {"offer": OFFER, "revenue": "12.00", "sub3": ""},                      # blank on an all-internal offer -> counted
+        {"offer": "Fast Business Quote", "revenue": "8.00", "sub3": "ThankYouPage"},  # ditto
         {"offer": OFFER, "revenue": "5.00", "sub3": "120000000000000888"},     # campaign of an out-of-scope account -> foreign
         {"offer": "Some Other Offer", "revenue": "999.00", "sub3": ""},        # not one of our offers -> ignored entirely
     ]
     unknown, ok, foreign, network = pnl._everflow_unknown_revenue(_db(), [ACCOUNT], date(2026, 10, 1), date(2026, 10, 31))
     assert ok is True
-    assert unknown == Decimal("73.35")   # 40.25 scoped campaign + 33.10 unexpanded {{adset.id}} macro
-    assert network == Decimal("21.90")   # blank sub3 only, excluded from profit
+    assert unknown == Decimal("93.35")   # 40.25 scoped campaign + 33.10 macro + 12.00 + 8.00 on all-internal offers
+    assert network == Decimal("21.90")   # no-Meta-id revenue on Fast Auto Quote only, excluded from profit
     assert foreign == Decimal("5.00")
 
 
@@ -233,7 +236,7 @@ def test_macro_row_recovers_its_adset_from_the_redtrack_ad_id(monkeypatch):
 def test_recovered_revenue_is_not_double_counted_in_the_all_accounts_extras(monkeypatch):
     monkeypatch.setattr(pnl, "EverflowService", _FakeEverflow)
     monkeypatch.setattr(pnl, "_everflow_account_ids", lambda: {ACCOUNT})
-    monkeypatch.setattr(pnl, "_everflow_offer_names_for_account", lambda a: {OFFER})
+    monkeypatch.setattr(pnl, "_everflow_offer_names_for_account", lambda a: {OFFER, OUTSIDE_OFFER, "Fast Business Quote"})
     monkeypatch.setattr(pnl, "_redtrack_ad_ids_by_click", lambda s, e: {"click-ok": "120000000000009001"})
     _FakeEverflow.rows = [_macro_row("click-ok", "30.00"), _macro_row("click-lost", "7.00")]
     unknown, ok, foreign, network = pnl._everflow_unknown_revenue(_db_with_ad(), [ACCOUNT], date(2026, 10, 1), date(2026, 10, 31))
@@ -246,3 +249,11 @@ def test_redtrack_failure_leaves_rows_counted_as_before(monkeypatch):
     monkeypatch.setattr(pnl, "_redtrack_ad_ids_by_click", boom)
     rows = [_macro_row("click-ok")]
     assert pnl._recover_macro_adsets(_db_with_ad(), rows) == rows
+
+
+def test_meta_fallback_resolves_ads_missing_locally_and_only_for_known_adsets(monkeypatch):
+    monkeypatch.setattr(pnl, "_redtrack_ad_ids_by_click", lambda s, e: {"c1": "120000000000008001", "c2": "120000000000008002"})
+    monkeypatch.setattr(pnl, "_meta_adsets_for_ads", lambda ids: {"120000000000008001": "120000000000000001", "120000000000008002": "120000000000000555"})
+    out = pnl._recover_macro_adsets(_db_with_ad(), [_macro_row("c1"), _macro_row("c2")])
+    # the first ad set exists locally -> recovered; the second is unknown locally -> left as-is (still counted, all-accounts only)
+    assert [r["sub3"] for r in out] == ["120000000000000001", "{{adset.id}}"]

@@ -40,6 +40,12 @@ CENT = Decimal("0.01")
 EVERFLOW_ACCOUNT_IDS_ENV = "SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS"
 EVERFLOW_ACCOUNT_OFFERS_ENV = "SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS"
 PNL_ALL_ACCOUNTS_SCOPE_ENV = "PNL_ALL_ACCOUNTS_SCOPE_IDS"
+# Offers whose traffic is entirely ours (Steve, 2026-10-26: "if the revenue is tied to FBQ or GBC those are all our
+# internal traffic so all revenue should be kept"): Get Business Coverage and Fast Business Quote. Every conversion on
+# them counts, even with no usable sub3. Any other offer (Fast Auto Quote.org carries outside traffic) keeps the stricter
+# rule: only revenue that ties to a Meta ad set / campaign counts. Override with PNL_ALL_INTERNAL_OFFERS (comma list).
+PNL_INTERNAL_OFFERS_ENV = "PNL_ALL_INTERNAL_OFFERS"
+DEFAULT_INTERNAL_OFFERS = ("get business coverage", "fast business quote")
 # A Meta URL-parameter macro that reached Everflow unexpanded, e.g. {{adset.id}}.
 UNEXPANDED_META_MACRO_RE = re.compile(r"\{\{\s*adset\.id\s*\}\}", re.IGNORECASE)
 AUDIT_SUB_FIELDS = tuple(f"sub{number}" for number in range(1, 9))
@@ -410,6 +416,61 @@ RT_FAILURE_BACKOFF_SECONDS = 60
 _rt_last_failure = 0.0
 
 
+def _internal_offer_names() -> set[str]:
+    raw = os.getenv(PNL_INTERNAL_OFFERS_ENV)
+    names = [n.strip().casefold() for n in raw.split(",")] if raw is not None else list(DEFAULT_INTERNAL_OFFERS)
+    return {n for n in names if n}
+
+
+_AD_ADSET_CACHE: dict[str, str] = {}   # ad id -> ad set id; an ad never moves between ad sets, so successes are kept for good
+META_AD_LOOKUPS_PER_CALL = 30
+
+
+_AD_LOOKUP_FAILED_AT: dict[str, float] = {}   # ad id -> when a lookup last failed (deleted/inaccessible ad); retried after 10 min
+AD_LOOKUP_RETRY_SECONDS = 600
+META_RATE_LIMIT_BACKOFF_SECONDS = 300
+_meta_lookup_blocked_until = 0.0
+
+
+def _meta_adsets_for_ads(ad_ids: set[str]) -> dict[str, str]:
+    """Ask Meta which ad set owns each ad (for ads we never synced locally). Best effort, never raises.
+
+    A failing ad (deleted / no access) is skipped and not retried for 10 minutes so it can't block the others; a Meta
+    rate-limit response stops all lookups for 5 minutes. At most META_AD_LOOKUPS_PER_CALL Meta calls per invocation."""
+    global _meta_lookup_blocked_until
+    out = {a: _AD_ADSET_CACHE[a] for a in ad_ids if a in _AD_ADSET_CACHE}
+    now = time.time()
+    todo = [
+        a for a in sorted(ad_ids)
+        if a not in _AD_ADSET_CACHE and now - _AD_LOOKUP_FAILED_AT.get(a, 0.0) > AD_LOOKUP_RETRY_SECONDS
+    ][:META_AD_LOOKUPS_PER_CALL]
+    if not todo or now < _meta_lookup_blocked_until:
+        return out
+    try:
+        svc = FacebookService()
+        svc.initialize()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("P&L: Meta client unavailable for ad->ad set lookup: %s", exc)
+        _meta_lookup_blocked_until = now + META_RATE_LIMIT_BACKOFF_SECONDS
+        return out
+    for ad_id in todo:
+        try:
+            adset_id = str(svc.api.call("GET", (ad_id,), params={"fields": "adset_id"}).json().get("adset_id") or "")
+        except Exception as exc:  # noqa: BLE001
+            message = str(exc).lower()
+            if "request limit" in message or "rate limit" in message or "too many calls" in message or "code\": 17" in message or "code\": 4" in message:
+                _meta_lookup_blocked_until = time.time() + META_RATE_LIMIT_BACKOFF_SECONDS
+                logger.warning("P&L: Meta rate-limited the ad->ad set lookup; pausing it for %ds", META_RATE_LIMIT_BACKOFF_SECONDS)
+                break
+            _AD_LOOKUP_FAILED_AT[ad_id] = time.time()
+            continue
+        if META_ID_RE.fullmatch(adset_id):
+            _AD_ADSET_CACHE[ad_id] = out[ad_id] = adset_id
+        else:
+            _AD_LOOKUP_FAILED_AT[ad_id] = time.time()
+    return out
+
+
 def _redtrack_ad_ids_by_click(start: date, end: date) -> dict[str, str]:
     """RedTrack click id -> Meta ad id for conversions in [start, end] (cached 10 min). Raises on failure."""
     key = (start.isoformat(), end.isoformat())
@@ -462,6 +523,17 @@ def _recover_macro_adsets(db: Session, rows: list[dict]) -> list[dict]:
             .filter(FacebookAd.fb_ad_id.in_(wanted), FacebookAdSet.fb_adset_id.isnot(None))
             .all()
         }
+        missing = wanted - set(adset_by_ad)
+        if missing:
+            try:
+                from_meta = _meta_adsets_for_ads(missing)
+                # Only trust an ad set we also have locally, otherwise it could not be matched to an account anyway.
+                known = {
+                    str(r[0]) for r in db.query(FacebookAdSet.fb_adset_id).filter(FacebookAdSet.fb_adset_id.in_(set(from_meta.values()))).all()
+                } if from_meta else set()
+                adset_by_ad.update({a: ad_set for a, ad_set in from_meta.items() if ad_set in known})
+            except Exception as exc:  # noqa: BLE001 — keep the locally recovered rows
+                logger.warning("P&L: Meta fallback for missing ads failed: %s", exc)
     except Exception as exc:  # noqa: BLE001 — recovery is best-effort, never fail the P&L over it
         logger.warning("P&L: could not recover ad sets for unexpanded-macro conversions: %s", exc)
         return rows
@@ -1010,7 +1082,9 @@ def _everflow_unknown_revenue(
     Reported as NETWORK revenue and NOT added to the total (Steve, 2026-10-24: ignore
     anything that does not tie to the Meta campaigns — some of it is third-party
     traffic sent through BHM's network, separate from the internal media buying):
-      * `sub3` missing, blank, or otherwise not a Meta id (e.g. `ThankYouPage`, `Email`). Previously this was counted as "unknown" and
+      * `sub3` missing, blank, or otherwise not a Meta id (e.g. `ThankYouPage`, `Email`) — BUT ONLY on an
+        offer that carries outside traffic (Fast Auto Quote.org). On Get Business Coverage and Fast Business
+        Quote (see PNL_INTERNAL_OFFERS_ENV) every conversion is ours and is counted as UNKNOWN. Previously this was counted as "unknown" and
         added to revenue, which inflated profit (and Abel's % of net profit base)
         with money the internal campaigns did not generate.
 
@@ -1069,6 +1143,7 @@ def _everflow_unknown_revenue(
     foreign = Decimal("0")
     network = Decimal("0")
     macro_rows = 0
+    internal_offers = _internal_offer_names()
     for row in rows:
         if allowed_offers and EverflowService._offer_name(row).casefold() not in allowed_offers:
             continue
@@ -1083,7 +1158,10 @@ def _everflow_unknown_revenue(
             macro_rows += 1
             continue
         if not META_ID_RE.fullmatch(sub3):
-            network += revenue          # no Meta id: third-party / network traffic — reported, never added
+            if EverflowService._offer_name(row).casefold() in internal_offers:
+                unknown += revenue      # an all-internal offer: every conversion is ours, tag or no tag
+            else:
+                network += revenue      # no Meta id on an offer that carries outside traffic — reported, never added
             continue
         if sub3 in known_adsets:
             continue                    # already in a per-account row
