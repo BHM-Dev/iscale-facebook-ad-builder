@@ -20,7 +20,7 @@ from app.database import get_db
 from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, PnlCostEntry, PnlMonthSnapshot, User, normalize_account_id
 from app.services.everflow_service import EVERFLOW_TZ_BY_ID, META_ID_RE, EverflowService
 from app.services.facebook_service import FacebookService
-from app.services.redtrack_service import today_in_rt_tz
+from app.services.redtrack_service import RedTrackService, today_in_rt_tz
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -400,6 +400,86 @@ def _meta_identity_map_for_audit(db: Session, account_id: str) -> tuple[set[str]
     return adsets, ads, campaigns, all_ids - adsets - set(ads) - campaigns
 
 
+# ---- Recovering ad sets for clicks whose {{adset.id}} macro arrived unexpanded ---------------------------------
+# Meta expands {{ad.id}}/{{ad.name}}/{{placement}} but, on a small slice of Facebook mobile-feed clicks (~1% of
+# conversions), leaves {{adset.id}}/{{campaign.id}} literal. RedTrack's copy of the same click (Everflow sub5 is the
+# RedTrack click id) still holds the real ad id in its sub1, which maps to an ad set through our own ads table.
+_RT_AD_ID_CACHE: dict[tuple[str, str], tuple[float, dict[str, str]]] = {}
+RT_AD_ID_CACHE_TTL_SECONDS = 600
+RT_FAILURE_BACKOFF_SECONDS = 60
+_rt_last_failure = 0.0
+
+
+def _redtrack_ad_ids_by_click(start: date, end: date) -> dict[str, str]:
+    """RedTrack click id -> Meta ad id for conversions in [start, end] (cached 10 min). Raises on failure."""
+    key = (start.isoformat(), end.isoformat())
+    now = time.time()
+    hit = _RT_AD_ID_CACHE.get(key)
+    if hit and now - hit[0] < RT_AD_ID_CACHE_TTL_SECONDS:
+        return hit[1]
+    global _rt_last_failure
+    if now - _rt_last_failure < RT_FAILURE_BACKOFF_SECONDS:
+        raise RuntimeError("RedTrack failed moments ago; not retrying yet")   # a down RedTrack must not add 30s to every page load
+    svc = RedTrackService()
+    if not svc.is_configured():
+        raise RuntimeError("RedTrack is not configured")
+    out: dict[str, str] = {}
+    try:
+        conversions = svc.get_raw_conversions(key[0], key[1])
+    except Exception:
+        _rt_last_failure = now
+        raise
+    for row in conversions:
+        click_id = str(row.get("clickid") or "").strip()
+        ad_id = str(row.get("sub1") or "").strip()
+        if click_id and META_ID_RE.fullmatch(ad_id):
+            out[click_id] = ad_id
+    if len(_RT_AD_ID_CACHE) >= 8:
+        _RT_AD_ID_CACHE.pop(min(_RT_AD_ID_CACHE, key=lambda k: _RT_AD_ID_CACHE[k][0]), None)
+    _RT_AD_ID_CACHE[key] = (now, out)
+    return out
+
+
+def _recover_macro_adsets(db: Session, rows: list[dict]) -> list[dict]:
+    """Return rows with sub3 replaced by the real ad set id wherever it can be recovered, else unchanged.
+
+    Never raises: if RedTrack is down or the ad is unknown locally the row keeps its literal macro and is counted
+    in the all-accounts bucket exactly as before.
+    """
+    pending = [r for r in rows if UNEXPANDED_META_MACRO_RE.fullmatch(str(r.get("sub3") or "").strip()) and str(r.get("sub5") or "").strip()]
+    if not pending:
+        return rows
+    try:
+        days = [EverflowService._conversion_date(r) for r in pending]
+        ad_by_click = _redtrack_ad_ids_by_click(min(days) - timedelta(days=1), max(days) + timedelta(days=1))
+        wanted = {ad_by_click[c] for c in (str(r.get("sub5")).strip() for r in pending) if c in ad_by_click}
+        if not wanted:
+            return rows
+        adset_by_ad = {
+            str(ad_id): str(adset_id)
+            for ad_id, adset_id in db.query(FacebookAd.fb_ad_id, FacebookAdSet.fb_adset_id)
+            .join(FacebookAdSet, FacebookAd.adset_id == FacebookAdSet.id)
+            .filter(FacebookAd.fb_ad_id.in_(wanted), FacebookAdSet.fb_adset_id.isnot(None))
+            .all()
+        }
+    except Exception as exc:  # noqa: BLE001 — recovery is best-effort, never fail the P&L over it
+        logger.warning("P&L: could not recover ad sets for unexpanded-macro conversions: %s", exc)
+        return rows
+    pending_ids = {id(r) for r in pending}
+    recovered = 0
+    out = []
+    for r in rows:
+        if id(r) in pending_ids:
+            adset = adset_by_ad.get(ad_by_click.get(str(r.get("sub5")).strip(), ""))
+            if adset and META_ID_RE.fullmatch(adset):
+                r = {**r, "sub3": adset}
+                recovered += 1
+        out.append(r)
+    if recovered:
+        logger.info("P&L: recovered the ad set for %d of %d unexpanded-macro conversions via RedTrack ad id", recovered, len(pending))
+    return out
+
+
 def _spend_for_account(account_id: str, start: date, end: date) -> Decimal:
     insights = FacebookService().get_account_insights_bulk(
         ad_account_id=account_id,
@@ -477,7 +557,7 @@ def _everflow_revenue(db: Session, account_id: str, start: date, end: date) -> t
     offer_names = _everflow_offer_names_for_account(account_id)
     if not offer_names:
         raise RuntimeError(f"{EVERFLOW_ACCOUNT_OFFERS_ENV} missing offer mapping for {account_id}")
-    report = EverflowService().get_revenue_by_adset(start, end, offer_names=offer_names)
+    report = EverflowService().get_revenue_by_adset(start, end, offer_names=offer_names, row_transform=lambda rows: _recover_macro_adsets(db, rows))
     return _everflow_revenue_from_report(db, account_id, report)
 
 
@@ -507,7 +587,7 @@ def _everflow_monthly_revenue_cache(
     offer_names = _everflow_offer_names_for_account(account_id)
     if not offer_names:
         raise RuntimeError(f"{EVERFLOW_ACCOUNT_OFFERS_ENV} missing offer mapping for {account_id}")
-    reports = EverflowService().get_revenue_by_adset_by_month(start, end, offer_names=offer_names)
+    reports = EverflowService().get_revenue_by_adset_by_month(start, end, offer_names=offer_names, row_transform=lambda rows: _recover_macro_adsets(db, rows))
     return {
         month_start: _everflow_revenue_from_report(db, account_id, report)
         for month_start, report in reports.items()
@@ -969,7 +1049,7 @@ def _everflow_unknown_revenue(
         svc = EverflowService()
         if not svc.is_configured():
             return Decimal("0"), False, Decimal("0"), Decimal("0")
-        rows = svc.get_raw_conversions(start, end)
+        rows = _recover_macro_adsets(db, svc.get_raw_conversions(start, end))
     except Exception as exc:  # noqa: BLE001 — never fail the P&L over telemetry
         logger.warning("Everflow unknown-revenue lookup failed for %s..%s: %s", start, end, exc)
         return Decimal("0"), False, Decimal("0"), Decimal("0")

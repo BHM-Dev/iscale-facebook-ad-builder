@@ -108,8 +108,12 @@ class EverflowService:
         date_to: str | date,
         timezone_id: int = DEFAULT_TIMEZONE_ID,
         offer_names: set[str] | None = None,
+        row_transform=None,
     ) -> dict:
         """Return billable revenue grouped by Meta ad set id from sub3.
+
+        `row_transform(rows) -> rows` (optional) runs on the fetched rows before aggregation, e.g. to
+        recover a sub3 that arrived as an unexpanded macro.
 
         Raises on missing config or HTTP failures so callers can mark P&L data
         incomplete instead of treating source downtime as true $0 revenue.
@@ -120,6 +124,8 @@ class EverflowService:
         start = date_from.isoformat() if isinstance(date_from, date) else str(date_from)
         end = date_to.isoformat() if isinstance(date_to, date) else str(date_to)
         rows = self._fetch_conversion_rows(start, end, timezone_id)
+        if row_transform is not None:
+            rows = row_transform(rows)
         report = self._aggregate_rows(rows, offer_names=offer_names)
         report["timezone_id"] = timezone_id
         return report
@@ -130,6 +136,7 @@ class EverflowService:
         date_to: str | date,
         timezone_id: int = DEFAULT_TIMEZONE_ID,
         offer_names: set[str] | None = None,
+        row_transform=None,
     ) -> dict[str, dict]:
         """Fetch once, then bucket billable revenue by conversion month."""
         if not self.is_configured():
@@ -138,6 +145,8 @@ class EverflowService:
         start = date_from.isoformat() if isinstance(date_from, date) else str(date_from)
         end = date_to.isoformat() if isinstance(date_to, date) else str(date_to)
         rows = self._fetch_conversion_rows(start, end, timezone_id)
+        if row_transform is not None:
+            rows = row_transform(rows)
         rows_by_month: dict[str, list[dict]] = {}
         for row in rows:
             month = self._conversion_month(row, timezone_id)

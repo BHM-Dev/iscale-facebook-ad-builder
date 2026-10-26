@@ -29,6 +29,11 @@ class _FakeEverflow:
     def _offer_name(row):
         return row.get("offer", "")
 
+    @staticmethod
+    def _conversion_date(row):
+        from app.services.everflow_service import EverflowService as _Real
+        return _Real._conversion_date(row)
+
 
 def _db():
     engine = create_engine("sqlite://")
@@ -195,3 +200,49 @@ def test_extras_row_never_matches_a_real_account_snapshot(monkeypatch):
     pnl._all_extras_for_period(db, [ACCOUNT], *SEP)
     stored = db.query(PnlMonthSnapshot).filter(PnlMonthSnapshot.ad_account_id == ACCOUNT, PnlMonthSnapshot.month == SEP[0]).one()
     assert stored.revenue_source is None   # the real account row is untouched by the extras write
+
+
+# ---- ad-set recovery for unexpanded {{adset.id}} (via the RedTrack click's ad id) -------------------------------
+from app.models import FacebookAd
+from app.services.everflow_service import EverflowService
+
+
+def _db_with_ad():
+    db = _db()
+    FacebookAd.__table__.create(db.get_bind())
+    db.add(FacebookAd(id="ad1", adset_id="a1", name="Our ad", fb_ad_id="120000000000009001"))
+    db.commit()
+    return db
+
+
+def _macro_row(click, revenue="30.00"):
+    return {"offer": OFFER, "revenue": revenue, "sub3": "{{adset.id}}", "sub5": click, "conversion_unix_timestamp": 1792000000}
+
+
+def test_macro_row_recovers_its_adset_from_the_redtrack_ad_id(monkeypatch):
+    monkeypatch.setattr(pnl, "_redtrack_ad_ids_by_click", lambda s, e: {"click-ok": "120000000000009001", "click-unknown-ad": "120000000000009999"})
+    rows = [_macro_row("click-ok"), _macro_row("click-unknown-ad", "7.00"), _macro_row("click-not-in-rt", "3.00"), {"offer": OFFER, "revenue": "5", "sub3": "", "sub5": "x"}]
+    out = pnl._recover_macro_adsets(_db_with_ad(), rows)
+    assert [r["sub3"] for r in out] == ["120000000000000001", "{{adset.id}}", "{{adset.id}}", ""]
+    assert rows[0]["sub3"] == "{{adset.id}}"   # input rows are not mutated
+    # the recovered conversion now lands in that ad set's per-account revenue ...
+    report = EverflowService()._aggregate_rows(out, offer_names={OFFER})
+    assert report["adsets"]["120000000000000001"]["revenue"] == Decimal("30.00")
+
+
+def test_recovered_revenue_is_not_double_counted_in_the_all_accounts_extras(monkeypatch):
+    monkeypatch.setattr(pnl, "EverflowService", _FakeEverflow)
+    monkeypatch.setattr(pnl, "_everflow_account_ids", lambda: {ACCOUNT})
+    monkeypatch.setattr(pnl, "_everflow_offer_names_for_account", lambda a: {OFFER})
+    monkeypatch.setattr(pnl, "_redtrack_ad_ids_by_click", lambda s, e: {"click-ok": "120000000000009001"})
+    _FakeEverflow.rows = [_macro_row("click-ok", "30.00"), _macro_row("click-lost", "7.00")]
+    unknown, ok, foreign, network = pnl._everflow_unknown_revenue(_db_with_ad(), [ACCOUNT], date(2026, 10, 1), date(2026, 10, 31))
+    assert unknown == Decimal("7.00")   # only the one that could not be placed; the other is in the per-account row
+
+
+def test_redtrack_failure_leaves_rows_counted_as_before(monkeypatch):
+    def boom(s, e):
+        raise RuntimeError("RedTrack down")
+    monkeypatch.setattr(pnl, "_redtrack_ad_ids_by_click", boom)
+    rows = [_macro_row("click-ok")]
+    assert pnl._recover_macro_adsets(_db_with_ad(), rows) == rows

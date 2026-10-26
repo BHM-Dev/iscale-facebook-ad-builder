@@ -35,10 +35,11 @@ Checked live against Meta and Everflow for today, yesterday and MTD (*verified i
 - **Not our links, not RedTrack.** RedTrack's own copy of the click already holds the literal `{{adset.id}}`, so Meta delivered it that way. Our templates expand correctly 98% of the time on the very same ads, and no ad with 30+ conversions is more than 5.6% affected.
 - **Group B — 85 conversions: ad-level macros expanded, ad-set/campaign-level did not.** `{{ad.id}}`, `{{ad.name}}` and `{{placement}}` are populated; `{{adset.id}}`, `{{campaign.id}}`, `{{adset.name}}`, `{{campaign.name}}` stay literal. 93% are Facebook Mobile Feed (58% of normal traffic), none Instagram/Reels/desktop; spread thinly over 26 ads (~2% of each). Looks like a Meta-side quirk on a slice of Facebook mobile-feed clicks. Cause on Meta's side is not provable from our data.
 - **Group A — 64 conversions: nothing expanded** (even `{{placement}}` literal), 14 with no Meta click id. Someone arrived on the raw template link (copied/shared/preview link).
-- **Recoverable:** group B's RedTrack click holds the real ad id (`sub1`), so it can be mapped click id → ad → ad set → account exactly. Not built.
+- **Recovered (built 2026-10-26):** group B's RedTrack click holds the real ad id (`sub1`). `_recover_macro_adsets` maps Everflow `sub5` (RedTrack click id) → ad id → local ad → ad set and rewrites sub3 before aggregation, so those conversions land in the right per-account row. Best-effort: if RedTrack is down (60 s backoff, 10-min cache) or the ad isn't in the local table, the row keeps the macro and is counted in the All-accounts total only. A month snapshotted during a RedTrack outage would keep that slice in the All-accounts extras rather than the per-account row (the All-accounts total is unaffected).
 - Nothing to fix in link formatting (standing rule: don't touch it).
 
 ## Changelog
+- 2026-10-26 ad-set recovery for unexpanded-macro conversions via RedTrack ad id.
 - 2026-10-26 unexpanded `{{adset.id}}` revenue now counted in the All-accounts total.
 - 2026-10-26 scheduled Meta sync defaults to all Everflow-mapped accounts.
 - 2026-10-25 closed months frozen (extras segment), per-scope rows, 3-day grace, resync surfaces incomplete extras.
