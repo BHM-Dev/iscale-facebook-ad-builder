@@ -226,7 +226,8 @@ async def startup_event():
             3+ days stale). Uses the same run_meta_sync as the Sync button.
 
             Scoped to META_SYNC_ACCOUNT_IDS (comma-separated act_... ids; defaults
-            to RHO Commercial + RHO 4) instead of sweeping every visible account:
+            to every account with an Everflow revenue mapping, i.e. every account whose
+            P&L revenue is attributed by ad set id) instead of sweeping every visible account:
             the old sweep burst through Meta's per-account rate limits. One account
             failing never blocks the others.
             """
@@ -236,8 +237,12 @@ async def startup_event():
             import time as _time
             from app.api.v1.facebook import run_meta_sync
             from app.services.facebook_service import FacebookService
-            raw = _os.getenv("META_SYNC_ACCOUNT_IDS", "act_521142087204815,act_737291135429748")
+            from app.api.v1.pnl import _everflow_account_ids
+            raw = _os.getenv("META_SYNC_ACCOUNT_IDS")  # set-but-empty stays a kill switch (no accounts)
+            if raw is None:
+                raw = ",".join(sorted(_everflow_account_ids())) or "act_521142087204815,act_737291135429748"
             account_ids = [a.strip() for a in raw.split(",") if a.strip()]
+            print(f"Meta sync scope: {len(account_ids)} account(s)")
             if not account_ids:
                 return
             try:

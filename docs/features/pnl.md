@@ -23,6 +23,14 @@ Per-account (gross) and all-accounts (net) profit from Meta spend, Switchboard/E
 - An ad set id that Meta knows but the local table does not (stale sync — the scheduled sync only covers RHO Commercial + RHO 4) falls into `foreign` and is excluded; nothing flags it.
 - Closed months can freeze low when ad sets are missing locally; legacy one-off costs aren't migrated to single dates (1 row); restricted users see all-account costs; failures can render as `$0`. See `Ad-Builder-Full-Review-2026-10-24.md` (kept local).
 
+## Reconciliation check (2026-10-26, Joel: "P&L is not fully accurate again")
+Checked live against Meta and Everflow for today, yesterday and MTD (*verified in production*, read-only):
+- **Spend ties to Meta.** Sum of ad-set rows = Meta account-level spend to the cent for all five scoped accounts today (\$1,364.31 both); MTD differs by \$1.95 (calls seconds apart).
+- **Revenue ties to Everflow row by row.** Every conversion in the period lands in exactly one bucket (ad set / campaign / network / unknown id).
+- **Gap 1 — ad sets missing from the local table.** The 30-min `meta_sync` only covered RHO Commercial + RHO 4, so two DIN Auto Insurance ad sets created Oct 22 were unknown: their \$89.58 of revenue was dropped while the account's spend was counted. Fixed: the scheduled sync now defaults to every account with an Everflow mapping (`META_SYNC_ACCOUNT_IDS` still overrides).
+- **Gap 2 — literal-macro revenue is mostly our Meta traffic (open, needs Steve's call).** MTD \$2,769.89 of the \$3,125.68 `network_revenue` has sub3 `{{adset.id}}`. All 147 rows carry a RedTrack click id; 133 have a Meta fbclid; referrers are facebook.com / instagram.com. 72 rows (\$1,221.15) have sub4 = the exact name of one of our own ads on RHO Commercial. That contradicts the "third-party traffic" premise of the 2026-10-24 rule for at least that slice.
+
 ## Changelog
+- 2026-10-26 scheduled Meta sync defaults to all Everflow-mapped accounts.
 - 2026-10-25 closed months frozen (extras segment), per-scope rows, 3-day grace, resync surfaces incomplete extras.
 - 2026-10-24 non-Meta-id revenue moved from "unknown" (added) to `network_revenue` (excluded, reported); UI line added.
