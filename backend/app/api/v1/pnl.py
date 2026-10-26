@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import calendar
 import hashlib
@@ -39,6 +40,8 @@ CENT = Decimal("0.01")
 EVERFLOW_ACCOUNT_IDS_ENV = "SWITCHBOARD_EVERFLOW_AD_ACCOUNT_IDS"
 EVERFLOW_ACCOUNT_OFFERS_ENV = "SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS"
 PNL_ALL_ACCOUNTS_SCOPE_ENV = "PNL_ALL_ACCOUNTS_SCOPE_IDS"
+# A Meta URL-parameter macro that reached Everflow unexpanded, e.g. {{adset.id}}.
+UNEXPANDED_META_MACRO_RE = re.compile(r"\{\{\s*adset\.id\s*\}\}", re.IGNORECASE)
 AUDIT_SUB_FIELDS = tuple(f"sub{number}" for number in range(1, 9))
 AUDIT_CACHE_TTL_SECONDS = 300
 AUDIT_CACHE_MAX_ENTRIES = 24
@@ -927,10 +930,15 @@ def _everflow_unknown_revenue(
     Reported as NETWORK revenue and NOT added to the total (Steve, 2026-10-24: ignore
     anything that does not tie to the Meta campaigns — some of it is third-party
     traffic sent through BHM's network, separate from the internal media buying):
-      * `sub3` missing, blank, a literal unexpanded macro such as `{{adset.id}}`,
-        or otherwise not a Meta id. Previously this was counted as "unknown" and
+      * `sub3` missing, blank, or otherwise not a Meta id (e.g. `ThankYouPage`, `Email`). Previously this was counted as "unknown" and
         added to revenue, which inflated profit (and Abel's % of net profit base)
         with money the internal campaigns did not generate.
+
+    Counted as UNKNOWN too (Steve, 2026-10-26): `sub3` still holding the literal Meta macro
+    `{{adset.id}}`. Checked against RedTrack 2026-10-26: all 147 such October conversions carried a
+    RedTrack click id belonging to our own "Commercial Insurance - RHO v1 / RHO 4 | ABO ..." campaigns
+    (133 also had a Meta fbclid, referrers facebook.com / instagram.com) — our Meta traffic whose macro did
+    not expand, not third-party traffic. It cannot be placed on an ad set, so it is all-accounts only.
 
     Deliberately EXCLUDED, because crediting it would overstate:
       * revenue already attributable to a known ad set — the per-account rows
@@ -980,6 +988,7 @@ def _everflow_unknown_revenue(
     unknown = Decimal("0")
     foreign = Decimal("0")
     network = Decimal("0")
+    macro_rows = 0
     for row in rows:
         if allowed_offers and EverflowService._offer_name(row).casefold() not in allowed_offers:
             continue
@@ -989,6 +998,10 @@ def _everflow_unknown_revenue(
         revenue = Decimal(str(row.get("revenue") or 0))
         sub3 = str(row.get("sub3") or "").strip()
 
+        if UNEXPANDED_META_MACRO_RE.fullmatch(sub3):
+            unknown += revenue          # our own Meta click whose {{adset.id}} macro never expanded (see below)
+            macro_rows += 1
+            continue
         if not META_ID_RE.fullmatch(sub3):
             network += revenue          # no Meta id: third-party / network traffic — reported, never added
             continue
@@ -1000,6 +1013,8 @@ def _everflow_unknown_revenue(
         else:
             foreign += revenue          # someone else's, or unrecognised
 
+    if macro_rows:
+        logger.info("P&L %s..%s: %d conversions with an unexpanded {{adset.id}} macro counted in the all-accounts total", start, end, macro_rows)
     return (
         unknown.quantize(CENT, rounding=ROUND_HALF_UP),
         True,

@@ -49,15 +49,15 @@ def test_non_meta_sub3_is_network_not_unknown(monkeypatch):
     _FakeEverflow.rows = [
         {"offer": OFFER, "revenue": "100.00", "sub3": "120000000000000001"},   # known ad set -> per-account row, not here
         {"offer": OFFER, "revenue": "40.25", "sub3": "120000000000000777"},    # scoped campaign id -> ties to our Meta campaign -> counted
-        {"offer": OFFER, "revenue": "33.10", "sub3": "{{adset.id}}"},          # literal macro -> third-party network traffic
+        {"offer": OFFER, "revenue": "33.10", "sub3": "{{adset.id}}"},          # literal macro -> our own Meta click, macro unexpanded -> counted
         {"offer": OFFER, "revenue": "21.90", "sub3": ""},                      # blank -> network
         {"offer": OFFER, "revenue": "5.00", "sub3": "120000000000000888"},     # campaign of an out-of-scope account -> foreign
         {"offer": "Some Other Offer", "revenue": "999.00", "sub3": ""},        # not one of our offers -> ignored entirely
     ]
     unknown, ok, foreign, network = pnl._everflow_unknown_revenue(_db(), [ACCOUNT], date(2026, 10, 1), date(2026, 10, 31))
     assert ok is True
-    assert unknown == Decimal("40.25")   # only revenue that ties to a scoped Meta campaign
-    assert network == Decimal("55.00")   # 33.10 + 21.90, excluded from profit
+    assert unknown == Decimal("73.35")   # 40.25 scoped campaign + 33.10 unexpanded {{adset.id}} macro
+    assert network == Decimal("21.90")   # blank sub3 only, excluded from profit
     assert foreign == Decimal("5.00")
 
 
