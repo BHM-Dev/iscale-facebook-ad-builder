@@ -2061,6 +2061,7 @@ class FacebookService:
                 roas = round(revenue / spend, 2)
 
             out[fb_adset_id] = {
+                'adset_id':      fb_adset_id,
                 'adset_name':  adset_name,
                 'spend':       round(spend, 2),
                 'leads':       leads,

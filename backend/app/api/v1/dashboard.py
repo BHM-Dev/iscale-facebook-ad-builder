@@ -6,9 +6,10 @@ from decimal import Decimal, InvalidOperation
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Brand, Product, GeneratedAd, WinningAd, FacebookCampaign, FacebookAdSet
+from app.models import Brand, Product, GeneratedAd, WinningAd, FacebookCampaign, FacebookAdSet, normalize_account_id
 from app.services.facebook_service import FacebookService
 from app.services.everflow_service import EverflowService
+from app.services.niche_extraction import _extract_niche
 from datetime import date, timedelta
 from app.core.deps import get_current_active_user
 from app.api.v1.facebook import _resolve_scoped_default_account
@@ -194,24 +195,8 @@ def _daily_billable_revenue(
     return payload
 
 
-def extract_niche(adset_name: str) -> str:
-    import re
-    if not adset_name:
-        return "Unknown"
-    NON_NICHE = re.compile(
-        r'^(batch\s*\d+|v\d+|scale|retarget|broad|phase\s*\d+|test|duplicate|copy)$',
-        re.IGNORECASE
-    )
-    DATE_LIKE = re.compile(r'^(?:\d{1,2}/\d{1,2}(?:/\d{2,4})?|\d{4}-\d{1,2}-\d{1,2}|\d{1,2}-\d{1,2}-\d{4})')
-    parts = [p.strip() for p in adset_name.split(" - ")]
-    # Try parts[1:] first (standard [Date] - [Niche] - [Batch] format)
-    for part in parts[1:]:
-        if part and not NON_NICHE.match(part) and not DATE_LIKE.match(part):
-            return part
-    # Fallback: if parts[0] looks like a niche (not a date), use it
-    if parts and not DATE_LIKE.match(parts[0]):
-        return parts[0]
-    return "General"
+def extract_niche(adset_name: str, campaign_name: str = "") -> str:
+    return _extract_niche(adset_name, campaign_name, require_separator=True) or "General"
 
 
 def _period_totals(rows: list[dict]) -> dict:
@@ -299,6 +284,7 @@ def get_niche_summary(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     refresh: bool = Query(False),
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
     """
@@ -307,7 +293,8 @@ def get_niche_summary(
     an unavailable summary from a valid period with no data.
     """
     ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
-    cache_key = (ad_account_id, date_preset, date_from, date_to)
+    normalized_account_id = normalize_account_id(ad_account_id) if ad_account_id else ad_account_id
+    cache_key = (ad_account_id, date_preset, date_from, date_to, current_user.has_permission("pnl:read"))
     cached = _read_dashboard_cache(
         _niche_summary_cache,
         cache_key,
@@ -326,10 +313,68 @@ def get_niche_summary(
             date_to=date_to,
         )
 
+        account_adsets = (
+            db.query(FacebookAdSet.fb_adset_id, FacebookAdSet.name, FacebookCampaign.name)
+            .join(FacebookCampaign, FacebookAdSet.campaign_id == FacebookCampaign.id)
+            .filter(FacebookAdSet.fb_account_id == normalized_account_id)
+            .all()
+        )
+        context_by_adset = {
+            str(fb_adset_id): {"adset_name": adset_name or "", "campaign_name": campaign_name or ""}
+            for fb_adset_id, adset_name, campaign_name in account_adsets
+            if fb_adset_id
+        }
+
+        # Dashboard revenue must use the same exact ad-set attribution contract
+        # as P&L. Meta action_values are conversion value, not billable revenue.
+        billable_by_adset: dict[str, float] = {}
+        revenue_status = "not_tracked"
+        if current_user.has_permission("pnl:read"):
+            from app.api.v1.pnl import _everflow_offer_names_for_account, _recover_macro_adsets, _revenue_provider_for_account
+
+            offer_names = _everflow_offer_names_for_account(normalized_account_id)
+            if _revenue_provider_for_account(normalized_account_id) == "everflow" and offer_names:
+                revenue_service = EverflowService()
+                if revenue_service.is_configured():
+                    if date_from and date_to:
+                        start_s, end_s = date_from, date_to
+                    else:
+                        from app.services.redtrack_service import RedTrackService
+                        start_s, end_s = RedTrackService.preset_to_dates(date_preset)
+                    try:
+                        report = revenue_service.get_revenue_by_adset(
+                            start_s,
+                            end_s,
+                            timezone_id=TREND_TIMEZONE_ID,
+                            offer_names=offer_names,
+                            row_transform=lambda rows: _recover_macro_adsets(db, rows),
+                        )
+                        known_adset_ids = set(context_by_adset)
+                        report_adset_ids = {str(adset_id) for adset_id in (report.get("adsets") or {})}
+                        billable_by_adset = {
+                            str(adset_id): float(metrics.get("revenue") or 0)
+                            for adset_id, metrics in (report.get("adsets") or {}).items()
+                            if str(adset_id) in known_adset_ids
+                        }
+                        revenue_status = (
+                            "partial"
+                            if report.get("unattributed_events") or (report_adset_ids - known_adset_ids)
+                            else "exact_adset_attributed"
+                        )
+                    except Exception as exc:
+                        logger.warning("Dashboard niche billable revenue unavailable for %s: %s", normalized_account_id, exc)
+                        revenue_status = "unavailable"
+                else:
+                    revenue_status = "unavailable"
+            elif _revenue_provider_for_account(normalized_account_id) == "everflow":
+                revenue_status = "unavailable"
+
         by_niche = {}
         for row in insights.values():
-            adset_name = row.get("adset_name") or ""
-            niche = extract_niche(adset_name)
+            adset_id = str(row.get("adset_id") or "")
+            context = context_by_adset.get(adset_id, {})
+            adset_name = row.get("adset_name") or context.get("adset_name") or ""
+            niche = extract_niche(adset_name, context.get("campaign_name") or "")
             bucket = by_niche.setdefault(
                 niche,
                 {
@@ -337,28 +382,30 @@ def get_niche_summary(
                     "adset_count": 0,
                     "total_spend": 0.0,
                     "total_leads": 0,
-                    "total_revenue": 0.0,
+                    "total_revenue": 0.0 if revenue_status in {"exact_adset_attributed", "partial"} else None,
                 },
             )
 
             bucket["adset_count"] += 1
             bucket["total_spend"] += float(row.get("spend") or 0)
             bucket["total_leads"] += int(row.get("leads") or 0)
-            bucket["total_revenue"] += float(row.get("revenue") or 0)
+            if revenue_status in {"exact_adset_attributed", "partial"}:
+                bucket["total_revenue"] += billable_by_adset.get(adset_id, 0.0)
 
         summary = []
         for bucket in by_niche.values():
             total_spend = bucket["total_spend"]
             total_revenue = bucket["total_revenue"]
-            avg_roas = round(total_revenue / total_spend, 2) if total_spend > 0 and total_revenue > 0 else None
+            avg_roas = round(total_revenue / total_spend, 2) if total_revenue is not None and total_spend > 0 else None
             summary.append({
                 "niche": bucket["niche"],
                 "adset_count": bucket["adset_count"],
                 "total_spend": round(total_spend, 2),
                 "total_leads": bucket["total_leads"],
-                "total_revenue": round(total_revenue, 2),
+                "total_revenue": round(total_revenue, 2) if total_revenue is not None else None,
                 "avg_roas": avg_roas,
                 "avg_cpl": round(total_spend / bucket["total_leads"], 2) if bucket["total_leads"] > 0 else None,
+                "revenue_status": revenue_status,
             })
 
         response = sorted(summary, key=lambda item: item["total_spend"], reverse=True)

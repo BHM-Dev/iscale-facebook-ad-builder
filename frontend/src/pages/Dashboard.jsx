@@ -12,28 +12,20 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 const normalizeStatus = (status) => (status || '').toString().toUpperCase();
 
-// Keep the Dashboard's operational niche table on the same single bulk-insight
-// response as its KPI cards. A second request for the same account/range made
-// every page open feel slower without adding any information.
-const NON_NICHE_PART = /^(batch\s*\d+|v\d+|scale|retarget|broad|phase\s*\d+|test|duplicate|copy)$/i;
-const DATE_LIKE_PART = /^(?:\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|\d{4}-\d{1,2}-\d{1,2}|\d{1,2}-\d{1,2}-\d{4})/;
-
-function nicheFromAdsetName(adsetName = '') {
-  const parts = adsetName.split(' - ').map(part => part.trim());
-  for (const part of parts.slice(1)) {
-    if (part && !NON_NICHE_PART.test(part) && !DATE_LIKE_PART.test(part)) return part;
-  }
-  return parts[0] && !DATE_LIKE_PART.test(parts[0]) ? parts[0] : 'General';
-}
-
 function summarizeNiches(insights) {
-  const byNiche = Object.values(insights).filter(row => row.adset_name).reduce((summary, row) => {
-    const niche = nicheFromAdsetName(row.adset_name || '');
-    const bucket = summary.get(niche) || { niche, adset_count: 0, total_spend: 0, total_leads: 0, total_revenue: 0 };
+  const byNiche = Object.values(insights).filter(row => row.adset_name || row.niche).reduce((summary, row) => {
+    const niche = row.niche || 'General';
+    const revenueAvailable = row.niche_revenue_status === 'exact_adset_attributed' || row.niche_revenue_status === 'partial';
+    const bucket = summary.get(niche) || {
+      niche, adset_count: 0, total_spend: 0, total_leads: 0,
+      total_revenue: revenueAvailable ? 0 : null,
+      revenue_status: row.niche_revenue_status || 'unavailable',
+    };
     bucket.adset_count += 1;
     bucket.total_spend += Number(row.spend || 0);
     bucket.total_leads += Number(row.leads || 0);
-    bucket.total_revenue += Number(row.revenue || 0);
+    if (revenueAvailable) bucket.total_revenue += Number(row.billable_revenue || 0);
+    if (row.niche_revenue_status === 'partial') bucket.revenue_status = 'partial';
     summary.set(niche, bucket);
     return summary;
   }, new Map());
@@ -41,8 +33,8 @@ function summarizeNiches(insights) {
     .map(row => ({
       ...row,
       total_spend: Number(row.total_spend.toFixed(2)),
-      total_revenue: Number(row.total_revenue.toFixed(2)),
-      avg_roas: row.total_spend > 0 && row.total_revenue > 0 ? Number((row.total_revenue / row.total_spend).toFixed(2)) : null,
+      total_revenue: row.total_revenue == null ? null : Number(row.total_revenue.toFixed(2)),
+      avg_roas: row.total_revenue != null && row.total_spend > 0 ? Number((row.total_revenue / row.total_spend).toFixed(2)) : null,
       avg_cpl: row.total_leads > 0 ? Number((row.total_spend / row.total_leads).toFixed(2)) : null,
     }))
     .sort((a, b) => b.total_spend - a.total_spend);
@@ -707,6 +699,7 @@ export default function Dashboard() {
         insightsParams.set('date_preset', p || 'today');
       }
       if (forceRefresh) insightsParams.set('refresh', 'true');
+      insightsParams.set('include_niche_summary', 'true');
 
       const timedFetch = (url, ms = 25000) => {
         const ctrl = new AbortController();
@@ -755,7 +748,6 @@ export default function Dashboard() {
       }
       setLoading(false);
 
-      // The niche table above is derived from the already-loaded bulk payload.
       // Keep the slower revenue trend secondary so it never blocks operations.
       const [trendRes] = await Promise.all([
         // Revenue trends can make several bounded Switchboard requests on a
@@ -1356,6 +1348,7 @@ export default function Dashboard() {
   const visibleTopPerformers = expandedSections.topPerformers ? topPerformers : topPerformers.slice(0, 10);
   const visibleAttentionList = expandedSections.needsAttention ? attentionList : attentionList.slice(0, 3);
   const visibleNicheSummary = expandedSections.nicheSummary ? nicheSummary : nicheSummary.slice(0, 10);
+  const nicheRevenueStatus = nicheSummary[0]?.revenue_status;
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -1660,7 +1653,9 @@ export default function Dashboard() {
             <TrendingUp size={15} className="text-gray-400" />
             <span>Performance by Niche</span>
           </button>
-          <span className="text-[11px] text-gray-400 flex-shrink-0">{rangeLabel} · sorted by spend</span>
+          <span className="text-[11px] text-gray-400 flex-shrink-0">
+            {rangeLabel} · sorted by spend · {nicheRevenueStatus === 'exact_adset_attributed' ? 'billable revenue' : nicheRevenueStatus === 'partial' ? 'partial billable revenue' : nicheRevenueStatus === 'not_tracked' ? 'revenue not tracked' : 'billable revenue unavailable'}
+          </span>
         </div>
         {!collapsedSections.nicheSummary && (loading ? (
           <div className="p-5 space-y-3">
@@ -1695,9 +1690,9 @@ export default function Dashboard() {
                   <th className="px-5 py-3">Niche</th>
                   <th className="px-5 py-3 text-right">Ad Sets</th>
                   <th className="px-5 py-3 text-right">Spend</th>
-                  <th className="px-5 py-3 text-right" title="Meta's reported conversion value, not billable Switchboard revenue">Meta Conversion Value</th>
-                  <th className="px-5 py-3 text-right" title="Meta conversion value minus Meta spend; directional only, not final P&L">Directional Profit</th>
-                  <th className="px-5 py-3 text-right" title="Meta conversion value divided by Meta spend; directional only">Directional ROAS</th>
+                  <th className="px-5 py-3 text-right" title="Exact Switchboard/Everflow revenue attributed to these Meta ad sets">Billable Revenue</th>
+                  <th className="px-5 py-3 text-right" title="Billable revenue minus Meta spend">Net Profit</th>
+                  <th className="px-5 py-3 text-right" title="Billable revenue divided by Meta spend">ROAS</th>
                   <th className="px-5 py-3 text-right">CPL</th>
                   <th className="px-5 py-3 text-right">Leads</th>
                 </tr>
@@ -1728,14 +1723,14 @@ export default function Dashboard() {
                     <td className="px-5 py-3 text-right text-gray-500">{row.adset_count}</td>
                     <td className="px-5 py-3 text-right text-gray-700">{formatMoney(row.total_spend)}</td>
                     <td className="px-5 py-3 text-right text-gray-700">
-                      {row.total_revenue > 0 ? formatMoney(row.total_revenue) : '—'}
+                      {row.total_revenue != null ? formatMoney(row.total_revenue) : '—'}
                     </td>
                     <td className={`px-5 py-3 text-right font-semibold ${
-                      row.total_revenue === 0 ? 'text-gray-400'
+                      row.total_revenue == null ? 'text-gray-400'
                       : (row.total_revenue - row.total_spend) >= 0 ? 'text-green-600'
                       : 'text-red-600'
                     }`}>
-                      {row.total_revenue > 0
+                      {row.total_revenue != null
                         ? formatMoney(row.total_revenue - row.total_spend)
                         : '—'}
                     </td>
@@ -1745,7 +1740,7 @@ export default function Dashboard() {
                       : row.avg_roas >= 1 ? 'text-gray-700'
                       : 'text-red-600'
                     }`}>
-                      {row.avg_roas != null ? `${row.avg_roas.toFixed(1)}x` : '—'}
+                      {row.avg_roas != null ? `${row.avg_roas.toFixed(1)}x` : row.total_revenue === 0 ? '0.0x' : '—'}
                     </td>
                     <td className={`px-5 py-3 text-right font-semibold ${cplClass(row.avg_cpl)}`}>
                       {formatMoney(row.avg_cpl)}

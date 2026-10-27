@@ -31,8 +31,10 @@ from sqlalchemy.orm import Session
 # Rules pause and re-budget live ad sets, so creating/editing/deleting them needs campaigns:write (like the status and
 # budget routes). Every route uses the ACTIVE-user check: get_current_user kept a deactivated user in until their token expired.
 from app.core.deps import get_db, get_current_active_user, require_permission
-from app.models import AutoPauseRule, AutoPauseRuleLog, FacebookAd, FacebookAdSet, normalize_account_id
+from app.models import AutoPauseRule, AutoPauseRuleLog, FacebookAd, FacebookAdSet, FacebookCampaign, normalize_account_id
 from app.services.facebook_service import FacebookService
+from app.services.everflow_service import EverflowService
+from app.services.niche_extraction import _extract_niche
 from app.services.slack_service import send_check_summary, send_rule_action_alert
 from app.api.v1.facebook import _assert_adset_allowed, _assert_account_allowed, _assert_campaign_allowed, _resolve_scoped_default_account
 
@@ -603,6 +605,7 @@ def get_insights_bulk(
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     refresh: bool = Query(False),
+    include_niche_summary: bool = Query(False),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
@@ -623,7 +626,13 @@ def get_insights_bulk(
     else:
         date_from_str, date_to_str = RedTrackService.preset_to_dates(date_preset)
 
-    cache_key = (ad_account_id, date_from_str, date_to_str)
+    cache_key = (
+        ad_account_id,
+        date_from_str,
+        date_to_str,
+        include_niche_summary,
+        current_user.has_permission("pnl:read") if include_niche_summary else None,
+    )
     cached = _read_insights_bulk_cache(cache_key, refresh)
     if cached is not None:
         return cached
@@ -633,9 +642,12 @@ def get_insights_bulk(
     try:
         bulk = svc.get_account_insights_bulk(
             ad_account_id=ad_account_id,
-            date_preset=date_preset,
-            date_from=date_from,
-            date_to=date_to,
+            # The niche table joins Meta and Everflow by the same explicit
+            # Pacific calendar dates. Avoid letting Meta's account timezone
+            # choose a different window for today/yesterday presets.
+            date_preset=date_preset if not include_niche_summary else "custom",
+            date_from=date_from if not include_niche_summary else date_from_str,
+            date_to=date_to if not include_niche_summary else date_to_str,
         )
     except RuntimeError as e:
         raise HTTPException(400, str(e))
@@ -747,6 +759,64 @@ def get_insights_bulk(
                 "date_preset": date_preset,
                 "redtrack": rt,
             }
+
+    if include_niche_summary:
+        account_id = normalize_account_id(ad_account_id) if ad_account_id else ad_account_id
+        context_by_adset = {
+            str(fb_adset_id): {"adset_name": adset_name or "", "campaign_name": campaign_name or ""}
+            for fb_adset_id, adset_name, campaign_name in (
+                db.query(FacebookAdSet.fb_adset_id, FacebookAdSet.name, FacebookCampaign.name)
+                .join(FacebookCampaign, FacebookAdSet.campaign_id == FacebookCampaign.id)
+                .filter(FacebookAdSet.fb_account_id == account_id)
+                .all()
+            )
+            if fb_adset_id
+        }
+
+        revenue_status = "not_tracked"
+        billable_by_adset: dict[str, float] = {}
+        if current_user.has_permission("pnl:read"):
+            from app.api.v1.pnl import _everflow_offer_names_for_account, _recover_macro_adsets, _revenue_provider_for_account
+            offer_names = _everflow_offer_names_for_account(account_id)
+            if _revenue_provider_for_account(account_id) == "everflow" and offer_names:
+                revenue_status = "unavailable"
+                revenue_service = EverflowService()
+                if revenue_service.is_configured():
+                    try:
+                        report = revenue_service.get_revenue_by_adset(
+                            date_from_str,
+                            date_to_str,
+                            timezone_id=90,
+                            offer_names=offer_names,
+                            row_transform=lambda rows: _recover_macro_adsets(db, rows),
+                        )
+                        known_adset_ids = set(context_by_adset)
+                        report_adset_ids = {str(adset_id) for adset_id in (report.get("adsets") or {})}
+                        billable_by_adset = {
+                            str(adset_id): float(metrics.get("revenue") or 0)
+                            for adset_id, metrics in (report.get("adsets") or {}).items()
+                            if str(adset_id) in known_adset_ids
+                        }
+                        revenue_status = (
+                            "partial"
+                            if report.get("unattributed_events") or (report_adset_ids - known_adset_ids)
+                            else "exact_adset_attributed"
+                        )
+                    except Exception as exc:
+                        logger.warning("Bulk niche billable revenue unavailable for %s: %s", account_id, exc)
+
+        for fb_adset_id, row in result.items():
+            if not isinstance(row, dict):
+                continue
+            context = context_by_adset.get(str(fb_adset_id), {})
+            adset_name = row.get("adset_name") or context.get("adset_name") or ""
+            row["niche"] = _extract_niche(
+                adset_name,
+                context.get("campaign_name") or "",
+                require_separator=True,
+            ) or "General"
+            row["billable_revenue"] = billable_by_adset.get(str(fb_adset_id)) if revenue_status in {"exact_adset_attributed", "partial"} else None
+            row["niche_revenue_status"] = revenue_status
 
     _write_insights_bulk_cache(cache_key, result, request_started_at)
     return result

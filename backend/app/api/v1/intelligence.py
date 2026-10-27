@@ -29,6 +29,7 @@ from app.api.v1.facebook import _resolve_scoped_default_account
 from app.models import User, FacebookAdSet, normalize_account_id
 from app.services.redtrack_service import RedTrackService, today_in_rt_tz
 from app.services.everflow_service import CONVERSION_DATE_FIELDS, DEFAULT_TIMEZONE_ID, EVERFLOW_TZ_BY_ID, EverflowService
+from app.services.niche_extraction import _extract_niche as _shared_extract_niche
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -85,25 +86,7 @@ def _is_date_label(value: str) -> bool:
 
 
 def _extract_niche(adset_name: str, campaign_name: str = "") -> str:
-    """Extract a niche from the ad set, falling back to its campaign name.
-
-    Some CAPI and Painting ad sets are named only ``BATCH 2`` (or a CAPI
-    variant), while the campaign still carries the real niche. Keep the
-    fallback here so every caller that uses the intelligence extractor gets
-    the same attribution behavior.
-    """
-    def candidate(name: str) -> Optional[str]:
-        if not name:
-            return None
-        parts = [p.strip() for p in name.split(" - ")]
-        for part in parts[1:]:
-            if part and not _NON_NICHE_RE.match(part) and not _is_date_label(part):
-                return part
-        if parts and not _is_date_label(parts[0]) and not _NON_NICHE_RE.match(parts[0]):
-            return parts[0]
-        return None
-
-    return candidate(adset_name) or candidate(campaign_name) or "General"
+    return _shared_extract_niche(adset_name, campaign_name) or "General"
 
 
 def _resolve_preset(
