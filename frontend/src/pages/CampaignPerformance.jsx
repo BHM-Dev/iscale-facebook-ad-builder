@@ -81,15 +81,18 @@ function adsetAgeDays(startTime) {
   return Math.max(0, Math.floor((Date.now() - startedAt) / (24 * 60 * 60 * 1000)));
 }
 
-function isRefreshSoonAdset(adset, insight, isActive) {
+function isRefreshTimingEligible(adset, insight, isActive) {
   const ageDays = adsetAgeDays(adset?.start_time);
   return Boolean(
     isActive
     && ageDays != null
     && ageDays >= REFRESH_SOON_MIN_AGE_DAYS
     && Number(insight?.spend || 0) >= REFRESH_SOON_MIN_SPEND
-    && Number(insight?.redtrack?.roas || 0) >= 1
   );
+}
+
+function isRefreshSoonAdset(adset, insight, isActive) {
+  return isRefreshTimingEligible(adset, insight, isActive) && Number(insight?.redtrack?.roas || 0) >= 1;
 }
 
 function formatMoney(value) {
@@ -222,28 +225,13 @@ function BestTimesGrid({ data }) {
   );
 }
 
-function CreativeCompass({ buckets, onOpenAdset, onViewRefreshSoon, refreshSoonCount, dateRangeLabel }) {
+function CreativeCompass({ buckets, onOpenAdset, dateRangeLabel }) {
   return (
     <section className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-hidden">
-      <div className="px-5 py-4 border-b border-indigo-100 bg-indigo-50/35 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="font-semibold text-gray-900 flex items-center gap-2"><Target size={16} className="text-indigo-600" /> Creative Compass</h2>
-          <p className="text-xs text-gray-500 mt-1">Rule-based starting points from the ad-set metrics already loaded below · {dateRangeLabel} · grain: ad sets. Nothing here is an opaque score.</p>
-        </div>
-        {refreshSoonCount > 0 && (
-          <button
-            type="button"
-            onClick={onViewRefreshSoon}
-            className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 transition-colors"
-            title="Show active profitable ad sets that have been live for 12 or more days"
-          >
-            <Repeat2 size={12} /> Refresh soon · {refreshSoonCount}
-          </button>
-        )}
+      <div className="px-5 py-4 border-b border-indigo-100 bg-indigo-50/35">
+        <h2 className="font-semibold text-gray-900 flex items-center gap-2"><Target size={16} className="text-indigo-600" /> Creative Compass</h2>
+        <p className="text-xs text-gray-500 mt-1">Rule-based starting points from the ad-set metrics already loaded below · {dateRangeLabel} · grain: ad sets. Nothing here is an opaque score.</p>
       </div>
-      {refreshSoonCount > 0 && (
-        <p className="border-b border-amber-100 bg-amber-50/60 px-5 py-2 text-[11px] text-amber-800">Refresh cue: active ad sets with $50+ spend, RT ROAS of at least 1.00x, and a Meta start date 12+ days ago. This is ad-set timing, not creative age.</p>
-      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 divide-y sm:divide-y-0 sm:divide-x divide-gray-100">
         {buckets.map(bucket => (
           <div key={bucket.key} className="p-4 min-w-0">
@@ -2503,6 +2491,13 @@ export default function CampaignPerformance() {
     isRefreshSoonAdset(adset, bulkInsights?.[adset.fb_adset_id], isActiveDelivery(adset))
   )), [adsets, bulkInsights, isActiveDelivery]);
 
+  const refreshCoverage = useMemo(() => {
+    const timingEligible = adsets.filter(adset => isRefreshTimingEligible(adset, bulkInsights?.[adset.fb_adset_id], isActiveDelivery(adset)));
+    return {
+      missingRoasCount: timingEligible.filter(adset => bulkInsights?.[adset.fb_adset_id]?.redtrack?.roas == null).length,
+    };
+  }, [adsets, bulkInsights, isActiveDelivery]);
+
   const visibleAdsets = useMemo(() => {
     let list = adsets.filter(a => a.fb_adset_id);
 
@@ -2726,12 +2721,14 @@ export default function CampaignPerformance() {
   const showRefreshSoon = useCallback(() => {
     setStatusFilter('refresh_soon');
     setNameSearch('');
+    setNicheFilter('');
     setMetricFilter({ metric: 'cpl', operator: 'lt', value: '' });
     setSortBy('spend');
     setHighlightedAdsetId(null);
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
       next.delete('adsetId');
+      next.delete('niche');
       next.set('view', 'refresh-soon');
       return next;
     });
@@ -2845,6 +2842,8 @@ export default function CampaignPerformance() {
                 ? <><Target size={15} /> Showing all ad sets in niche <span className="font-semibold">{nicheFilter}</span></>
                 : dashboardView === 'top-performers'
                   ? <><TrendingUp size={15} /> Showing top performers — at least $50 spend and positive RT ROAS</>
+                  : dashboardView === 'refresh-soon'
+                    ? <><Repeat2 size={15} /> Showing refresh candidates — active, $50+ spend, RT ROAS ≥1.00x, and Meta start date 12+ days ago</>
                   : <><TrendingUp size={15} /> Showing all ad sets</>
             }
           </div>
@@ -2861,8 +2860,6 @@ export default function CampaignPerformance() {
       <CreativeCompass
         buckets={compassBuckets}
         onOpenAdset={openCompassAdset}
-        onViewRefreshSoon={showRefreshSoon}
-        refreshSoonCount={refreshSoonAdsets.length}
         dateRangeLabel={dateRangeLabel}
       />
 
@@ -2888,6 +2885,18 @@ export default function CampaignPerformance() {
               className="text-xs text-gray-500 hover:text-indigo-600 px-2 py-1 rounded-lg border border-gray-200 hover:border-indigo-200 transition-colors"
             >
               {collapsedCampaigns.size === groupedCampaigns.length ? 'Expand all' : 'Collapse all'}
+            </button>
+            <button
+              type="button"
+              onClick={showRefreshSoon}
+              className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors ${
+                statusFilter === 'refresh_soon'
+                  ? 'border-amber-300 bg-amber-100 text-amber-900'
+                  : 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100'
+              }`}
+              title="Show active ad sets with $50+ spend, RT ROAS of at least 1.00x, and a Meta start date 12 or more days ago"
+            >
+              <Repeat2 size={12} /> Refresh candidates {bulkInsightsLoading ? '· …' : bulkInsightsError ? '· unavailable' : `· ${refreshSoonAdsets.length}`}
             </button>
           </div>
           <div className="flex items-center gap-2">
@@ -2964,7 +2973,7 @@ export default function CampaignPerformance() {
               <option value="PAUSED">Paused only</option>
               <option value="has_spend">Has spend</option>
               <option value="top_performers">Top performers</option>
-              <option value="refresh_soon">↻ Refresh soon</option>
+              <option value="refresh_soon">↻ Refresh candidates</option>
               <option value="flagged">⚠ Needs attention</option>
             </select>
             {/* Sort */}
@@ -3014,6 +3023,12 @@ export default function CampaignPerformance() {
         {bulkInsightsError && statusFilter === 'refresh_soon' && (
           <div role="alert" className="mx-5 mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
             Refresh cues are unavailable: {bulkInsightsError}. This view requires current spend and RedTrack ROAS; retry metrics before acting on it. <button type="button" className="font-semibold underline" onClick={() => { const from = datePreset === 'custom' ? dateFrom : null; const to = datePreset === 'custom' ? dateTo : null; loadBulkInsights(adAccountId, datePreset, from, to); }}>Retry metrics</button>
+          </div>
+        )}
+        {statusFilter === 'refresh_soon' && !bulkInsightsError && !bulkInsightsLoading && (
+          <div role="status" className="mx-5 mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <span className="font-semibold">Refresh candidates:</span> active ad sets with $50+ selected-period spend, RT ROAS ≥1.00x, and a Meta start date 12+ days ago. This is ad-set timing, not creative age.
+            {refreshCoverage.missingRoasCount > 0 && <span className="ml-1">{refreshCoverage.missingRoasCount} otherwise eligible ad set{refreshCoverage.missingRoasCount === 1 ? '' : 's'} lack RT ROAS and are excluded.</span>}
           </div>
         )}
         {statusFilter === 'top_performers' && bulkInsights && Object.keys(bulkInsights).length > 0 && Object.values(bulkInsights).some(insight => insight?.redtrack == null) && (
@@ -3324,7 +3339,7 @@ export default function CampaignPerformance() {
                                           className="flex-shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
                                           title="Ad-set refresh cue: active, RT ROAS at least 1.00x, $50+ spend, and Meta start date at least 12 days ago"
                                         >
-                                          Refresh soon
+                                          Refresh candidate
                                         </span>
                                       )}
                                       {triggeredRule && (
