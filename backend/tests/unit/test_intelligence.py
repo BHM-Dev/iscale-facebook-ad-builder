@@ -4,6 +4,7 @@ from datetime import date, datetime
 
 import app.api.v1.intelligence as intelligence
 from app.api.v1.intelligence import BEST_TIMES_DAYPARTS, _build_best_times, _build_geography_watchlist, _clamp_geography_day_filter_window, _extract_niche, _platform_geography_watchlist, _redtrack_adset_id, _redtrack_offer_matches, _resolve_preset
+from app.services.niche_extraction import _extract_niche as shared_extract_niche
 
 
 def test_best_times_dayparts_is_reusable_not_a_single_use_generator():
@@ -55,6 +56,28 @@ def test_extract_niche_preserves_numeric_niche_names():
     assert _extract_niche('24/7 Emergency Plumbing - Batch 1') == '24/7 Emergency Plumbing'
     assert _extract_niche('3/4 Ton Trucking - Batch 1') == '3/4 Ton Trucking'
     assert _extract_niche('1.2 Acre Homes - CAPI') == '1.2 Acre Homes'
+
+
+def test_extract_niche_uses_campaign_for_breakout_adsets_with_budget_metadata():
+    assert _extract_niche(
+        'BREAKOUT | CR-WIN-05 RentalCosts | $150/day | Oct 10',
+        'RHO v1 | ABO | LEADS | CAR RENTAL WINNERS | CAPI | 10.06.2026',
+    ) == 'CAR RENTAL WINNERS'
+    assert _extract_niche(
+        'BREAKOUT | WW4-DLR-PLATE-01 BrickWall | $100/day | Oct 26',
+        'RHO v1 | ABO | AUTO DEALERSHIPS REBUILD | CAPI | 10.06.2026',
+    ) == 'AUTO DEALERSHIPS REBUILD'
+    assert _extract_niche(
+        '2026-10-01 - BREAKOUT | CR-WIN-05 | $150/day',
+        'Commercial Insurance',
+    ) == 'Commercial Insurance'
+
+
+def test_extract_niche_never_emits_daily_budget_as_a_niche():
+    assert shared_extract_niche(
+        'BREAKOUT | Creative A | $125/day | Oct 10',
+        require_separator=True,
+    ) is None
 
 
 def test_resolve_preset_defaults_to_last_seven_days():

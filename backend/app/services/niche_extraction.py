@@ -5,8 +5,13 @@ import re
 # If the niche extraction produces one of these, fall back to None (displayed as "General").
 _NON_NICHE_RE = re.compile(
     r'^(batch[\s\d]|set[\s\d]|v\d+[\s_.-]?$|v\d+[\s_.-]|scale|open$|image$|'
-    r'calls$|test|broad|retarget|phase[\s\d]|round[\s\d]|capi$|creative(?:\s+\d+)?$|abo$|cbo$|'
+    r'calls$|test|broad|retarget|phase[\s\d]|round[\s\d]|breakout$|capi$|creative(?:\s+\d+)?$|abo$|cbo$|'
     r'rho\s*v\d+$|'
+    # Delivery metadata appears in some breakout ad-set names between the
+    # creative label and the campaign convention. It must never become a
+    # reporting dimension (for example "$150/day").
+    r'\$?\s*\d+(?:\.\d+)?\s*(?:/\s*)?(?:day|daily|d)$|'
+    r'(?:daily\s*)?\$?\s*\d+(?:\.\d+)?$|'
     r'\d{4}-\d{2}-\d{2}|gbc\s*\||unknown$)',
     re.IGNORECASE,
 )
@@ -40,6 +45,11 @@ def _is_date_label(value: str) -> bool:
 def _candidate(name: str, require_separator: bool) -> str | None:
     if not name:
         return None
+    # Strict dashboard reporting only trusts the explicit ``date - niche -``
+    # naming convention on an ad set. Pipe-delimited ad-set names are commonly
+    # creative/budget wrappers; campaigns still accept their pipe convention.
+    if require_separator and " - " not in name:
+        return None
     parts = []
     for part in name.split(" - "):
         parts.extend(piece.strip() for piece in part.split("|") if piece.strip())
@@ -60,6 +70,23 @@ def _candidate(name: str, require_separator: bool) -> str | None:
     return None
 
 
+def _has_date_prefixed_hyphen_convention(name: str) -> bool:
+    """Whether an ad-set name uses the explicit ``date - niche - ...`` format.
+
+    This is the one ad-set convention that carries a reliably positioned niche.
+    Other pipe-delimited ad-set names often contain creative labels, budgets, and
+    test metadata; their campaign name is the authoritative niche source.
+    """
+    segments = (name or "").split(" - ", 1)
+    first_segment = segments[0].strip()
+    if not _is_date_label(first_segment) or len(segments) < 2:
+        return False
+    # A dated BREAKOUT wrapper still carries its niche in the campaign; do not
+    # let its following creative/budget payload masquerade as the convention.
+    next_label = segments[1].split("|", 1)[0].strip()
+    return not _NON_NICHE_RE.match(next_label)
+
+
 def _extract_niche(adset_name: str, campaign_name: str = "", require_separator: bool = False) -> str | None:
     """Extract niche from ad set name pattern '[Date] - [Niche] - [Batch info]'.
 
@@ -71,7 +98,21 @@ def _extract_niche(adset_name: str, campaign_name: str = "", require_separator: 
     when callers need unstructured names grouped as General instead of using
     the whole ad set name as a best-effort niche.
     """
-    # An ad set must have a structured separator when strict mode is enabled;
-    # a campaign name is allowed to be a plain niche label such as
-    # "Commercial Insurance".
-    return _candidate(adset_name, require_separator) or _candidate(campaign_name, False)
+    # Date-prefixed ad sets have a stable ``date - niche - ...`` contract, so
+    # retain that explicit value even where the campaign is a generic wrapper.
+    if _has_date_prefixed_hyphen_convention(adset_name):
+        adset_niche = _candidate(adset_name, require_separator)
+        if adset_niche:
+            return adset_niche
+
+    # Breakout ad sets contain creative and budget fragments (for example
+    # ``BREAKOUT | CR-WIN-05 | $150/day | Oct 10``). The campaign convention
+    # carries the actual niche, so prefer it before using an ad-set fallback.
+    campaign_niche = _candidate(campaign_name, False)
+    if campaign_niche:
+        return campaign_niche
+
+    # Preserve best-effort extraction for callers that explicitly allow it,
+    # while Dashboard callers use strict mode and render ambiguous names as
+    # General rather than inventing a misleading niche label.
+    return _candidate(adset_name, require_separator)
