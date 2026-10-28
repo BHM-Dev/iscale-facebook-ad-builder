@@ -188,6 +188,9 @@ export default function BatchGenerate() {
   const iterateAdsetName  = searchParams.get('adsetName')  || '';
   const iterateCampaignId = searchParams.get('campaignId') || ''; // Meta campaign ID — pre-selects campaign in BatchPushModal
   const iterateAdsetId    = searchParams.get('adsetId')    || ''; // Meta adset ID — pre-selects "clone from" in BatchPushModal
+  // Campaign Performance sends this only from its conservative ad-set refresh
+  // cue. It is context for Joel, not an automatic launch instruction.
+  const refreshWorkflow   = searchParams.get('refresh') === '1';
 
   // Parse the meaningful niche segment from a verbose ad set name.
   // Handles two naming patterns:
@@ -744,6 +747,12 @@ export default function BatchGenerate() {
             <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-100 text-xs text-indigo-700 font-medium w-fit">
               <Repeat2 size={13} />
               Iterating from: <span className="font-semibold truncate max-w-[300px]" title={iterateAdName}>{iterateAdName}</span>
+            </div>
+          )}
+          {refreshWorkflow && (
+            <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 max-w-2xl">
+              <Repeat2 size={13} className="mt-0.5 flex-shrink-0" />
+              <span><span className="font-semibold">Creative refresh:</span> this source creative is prefilled for replacement work. Choose the variants and placements you want, then review and launch deliberately—nothing is launched automatically.</span>
             </div>
           )}
         </div>

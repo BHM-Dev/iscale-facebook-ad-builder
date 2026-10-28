@@ -67,6 +67,31 @@ function resolveIntelligencePreset(pageDatePreset, explicitPreset) {
 
 const normalizeStatus = (status) => (status || '').toString().toUpperCase();
 
+// A deliberately conservative, ad-set-level cue. Meta returns an ad set's
+// start_time on the existing list request, but not a trustworthy first-live
+// timestamp for each creative on this screen. Keep the wording and filter
+// honest: this flags a profitable ad set that has been live long enough to
+// prepare replacements; it does not claim that every creative is 12 days old.
+const REFRESH_SOON_MIN_AGE_DAYS = 12;
+const REFRESH_SOON_MIN_SPEND = 50;
+
+function adsetAgeDays(startTime) {
+  const startedAt = Date.parse(startTime || '');
+  if (Number.isNaN(startedAt)) return null;
+  return Math.max(0, Math.floor((Date.now() - startedAt) / (24 * 60 * 60 * 1000)));
+}
+
+function isRefreshSoonAdset(adset, insight, isActive) {
+  const ageDays = adsetAgeDays(adset?.start_time);
+  return Boolean(
+    isActive
+    && ageDays != null
+    && ageDays >= REFRESH_SOON_MIN_AGE_DAYS
+    && Number(insight?.spend || 0) >= REFRESH_SOON_MIN_SPEND
+    && Number(insight?.redtrack?.roas || 0) >= 1
+  );
+}
+
 function formatMoney(value) {
   return value != null
     ? `$${Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -197,13 +222,28 @@ function BestTimesGrid({ data }) {
   );
 }
 
-function CreativeCompass({ buckets, onOpenAdset, dateRangeLabel }) {
+function CreativeCompass({ buckets, onOpenAdset, onViewRefreshSoon, refreshSoonCount, dateRangeLabel }) {
   return (
     <section className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-hidden">
-      <div className="px-5 py-4 border-b border-indigo-100 bg-indigo-50/35">
-        <h2 className="font-semibold text-gray-900 flex items-center gap-2"><Target size={16} className="text-indigo-600" /> Creative Compass</h2>
-        <p className="text-xs text-gray-500 mt-1">Rule-based starting points from the ad-set metrics already loaded below · {dateRangeLabel} · grain: ad sets. Nothing here is an opaque score.</p>
+      <div className="px-5 py-4 border-b border-indigo-100 bg-indigo-50/35 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-semibold text-gray-900 flex items-center gap-2"><Target size={16} className="text-indigo-600" /> Creative Compass</h2>
+          <p className="text-xs text-gray-500 mt-1">Rule-based starting points from the ad-set metrics already loaded below · {dateRangeLabel} · grain: ad sets. Nothing here is an opaque score.</p>
+        </div>
+        {refreshSoonCount > 0 && (
+          <button
+            type="button"
+            onClick={onViewRefreshSoon}
+            className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 transition-colors"
+            title="Show active profitable ad sets that have been live for 12 or more days"
+          >
+            <Repeat2 size={12} /> Refresh soon · {refreshSoonCount}
+          </button>
+        )}
       </div>
+      {refreshSoonCount > 0 && (
+        <p className="border-b border-amber-100 bg-amber-50/60 px-5 py-2 text-[11px] text-amber-800">Refresh cue: active ad sets with $50+ spend, RT ROAS of at least 1.00x, and a Meta start date 12+ days ago. This is ad-set timing, not creative age.</p>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 divide-y sm:divide-y-0 sm:divide-x divide-gray-100">
         {buckets.map(bucket => (
           <div key={bucket.key} className="p-4 min-w-0">
@@ -923,7 +963,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
 
 // ── Creative breakdown table (ad-level) ──────────────────────────────────────
 // onRemix: ({ ad_id, ad_name, headline, body, cta_label, image_url, adsetName, campaign_id }) => void
-function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccountId, adsBulk, adsLoading, adsError, rtAdsBulk, onAdStatusChange, onRemix }) {
+function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccountId, adsBulk, adsLoading, adsError, rtAdsBulk, refreshCandidate = false, onAdStatusChange, onRemix }) {
   const { showSuccess, showError } = useToast();
   const navigate = useNavigate();
   const [pausingAds, setPausingAds] = useState(new Set());
@@ -1056,7 +1096,8 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
     <div className="mt-3 pl-10 text-xs text-gray-400 italic">No ad-level data for this period.</div>
   );
 
-  const maxSpend = Math.max(...ads.map(a => a.spend), 0.01);
+  const sortedAds = [...ads].sort((a, b) => Number(b.spend || 0) - Number(a.spend || 0));
+  const maxSpend = Math.max(...sortedAds.map(a => a.spend), 0.01);
   // Blended avg CPL for this ad set (for relative poor-performer detection)
   const adsWithLeads = ads.filter(a => a.leads > 0);
   const avgCpl = adsWithLeads.length > 0
@@ -1091,7 +1132,7 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-50">
-          {ads.map((ad, i) => {
+          {sortedAds.map((ad, i) => {
             const rt = rtAdsBulk?.[ad.ad_id];
             const currentStatus = normalizeStatus(adStatuses[ad.ad_id] ?? ad.status); // '' = unknown, never assumed ACTIVE
             const isPaused = currentStatus === 'PAUSED';
@@ -1112,8 +1153,11 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
             const isNoLeads = ad.spend >= 20 && ad.leads === 0;
             const isPoorPerformer = isPoorRoas || isHighCpl || isNoLeads;
 
-            // Winner: most spend, >1 ad in set, has leads
+            // Winner: most spend, >1 ad in set, has leads. The refresh flow can
+            // also use the only delivering ad as its source, so keep that source
+            // distinction separate from the stronger "winner" presentation.
             const isTop = i === 0 && ads.length > 1 && ad.spend > 0 && ad.leads > 0;
+            const isLeadingCreative = i === 0 && ad.spend > 0;
 
             return (
               <tr
@@ -1220,11 +1264,11 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
                     )}
                     {/* Quick Generate → Batch Generate pre-filled with this ad */}
                     <button
-                      onClick={() => navigate(`/batch-generate?adId=${encodeURIComponent(ad.ad_id)}&adName=${encodeURIComponent(ad.ad_name || ad.ad_id)}&adsetName=${encodeURIComponent(adsetName || '')}&campaignId=${encodeURIComponent(fbCampaignId || '')}&adsetId=${encodeURIComponent(fbAdsetId || '')}`)}
+                      onClick={() => navigate(`/batch-generate?adId=${encodeURIComponent(ad.ad_id)}&adName=${encodeURIComponent(ad.ad_name || ad.ad_id)}&adsetName=${encodeURIComponent(adsetName || '')}&campaignId=${encodeURIComponent(fbCampaignId || '')}&adsetId=${encodeURIComponent(fbAdsetId || '')}${refreshCandidate && isLeadingCreative ? '&refresh=1' : ''}`)}
                       className="flex items-center gap-1 px-2 py-1 rounded text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors text-xs font-medium whitespace-nowrap"
-                      title="Generate more creative variants from this ad"
+                      title={refreshCandidate && isLeadingCreative ? 'Create replacement variants from this leading creative' : 'Generate more creative variants from this ad'}
                     >
-                      <Zap size={11} /> Quick Generate
+                      <Zap size={11} /> {refreshCandidate && isLeadingCreative ? 'Refresh creative' : 'Quick Generate'}
                     </button>
                     {/* Quick Ad → skips /ad-remix's template step entirely. For when
                         Joel already has his own creative + copy ready to launch, not
@@ -1731,6 +1775,7 @@ export default function CampaignPerformance() {
     const view = searchParams.get('view');
     if (view === 'attention') return 'flagged';
     if (view === 'top-performers') return 'top_performers';
+    if (view === 'refresh-soon') return 'refresh_soon';
     if (searchParams.get('niche')) return 'all';
     return 'all';
   });
@@ -2112,6 +2157,7 @@ export default function CampaignPerformance() {
     setNicheFilter(searchParams.get('niche') || '');
     if (view === 'attention') { setStatusFilter('flagged'); setSortBy('spend'); }
     else if (view === 'top-performers') { setStatusFilter('top_performers'); setSortBy('roas'); }
+    else if (view === 'refresh-soon') { setStatusFilter('refresh_soon'); setSortBy('spend'); }
   }, [searchParams]);
 
   // Sync Dashboard-provided date params when this component stays mounted across navigations.
@@ -2453,6 +2499,10 @@ export default function CampaignPerformance() {
     return adsetStatus === 'PAUSED' || campaignStatus === 'PAUSED';
   }, [getAdsetStatus, getCampaignStatus]);
 
+  const refreshSoonAdsets = useMemo(() => adsets.filter(adset => (
+    isRefreshSoonAdset(adset, bulkInsights?.[adset.fb_adset_id], isActiveDelivery(adset))
+  )), [adsets, bulkInsights, isActiveDelivery]);
+
   const visibleAdsets = useMemo(() => {
     let list = adsets.filter(a => a.fb_adset_id);
 
@@ -2473,6 +2523,8 @@ export default function CampaignPerformance() {
       list = list.filter(a => (bulkInsights?.[a.fb_adset_id]?.spend ?? 0) > 0);
     } else if (statusFilter === 'flagged') {
       list = list.filter(a => isActiveDelivery(a) && isFlagged(a));
+    } else if (statusFilter === 'refresh_soon') {
+      list = list.filter(a => isRefreshSoonAdset(a, bulkInsights?.[a.fb_adset_id], isActiveDelivery(a)));
     }
 
     // Name search
@@ -2671,6 +2723,20 @@ export default function CampaignPerformance() {
     });
   }, [setSearchParams]);
 
+  const showRefreshSoon = useCallback(() => {
+    setStatusFilter('refresh_soon');
+    setNameSearch('');
+    setMetricFilter({ metric: 'cpl', operator: 'lt', value: '' });
+    setSortBy('spend');
+    setHighlightedAdsetId(null);
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.delete('adsetId');
+      next.set('view', 'refresh-soon');
+      return next;
+    });
+  }, [setSearchParams]);
+
   return (
     <>
     <div className="-m-5 mx-auto max-w-[1800px] space-y-0">
@@ -2792,7 +2858,13 @@ export default function CampaignPerformance() {
       )}
 
       <div className="px-5 pb-5 space-y-4 mt-1">
-      <CreativeCompass buckets={compassBuckets} onOpenAdset={openCompassAdset} dateRangeLabel={dateRangeLabel} />
+      <CreativeCompass
+        buckets={compassBuckets}
+        onOpenAdset={openCompassAdset}
+        onViewRefreshSoon={showRefreshSoon}
+        refreshSoonCount={refreshSoonAdsets.length}
+        dateRangeLabel={dateRangeLabel}
+      />
 
       {/* Ad Set Performance Table */}
       <div className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-clip">
@@ -2892,6 +2964,7 @@ export default function CampaignPerformance() {
               <option value="PAUSED">Paused only</option>
               <option value="has_spend">Has spend</option>
               <option value="top_performers">Top performers</option>
+              <option value="refresh_soon">↻ Refresh soon</option>
               <option value="flagged">⚠ Needs attention</option>
             </select>
             {/* Sort */}
@@ -2933,9 +3006,14 @@ export default function CampaignPerformance() {
             Top-performer metrics are unavailable: {bulkInsightsError}. <button type="button" className="font-semibold underline" onClick={() => { const from = datePreset === 'custom' ? dateFrom : null; const to = datePreset === 'custom' ? dateTo : null; loadBulkInsights(adAccountId, datePreset, from, to); }}>Retry metrics</button>
           </div>
         )}
-        {bulkInsightsError && statusFilter !== 'top_performers' && (
+        {bulkInsightsError && statusFilter !== 'top_performers' && statusFilter !== 'refresh_soon' && (
           <div role="alert" className="mx-5 mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
             Performance metrics are unavailable: {bulkInsightsError}. Showing campaigns without spend filtering so Meta/API failures do not look like zero activity.
+          </div>
+        )}
+        {bulkInsightsError && statusFilter === 'refresh_soon' && (
+          <div role="alert" className="mx-5 mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            Refresh cues are unavailable: {bulkInsightsError}. This view requires current spend and RedTrack ROAS; retry metrics before acting on it. <button type="button" className="font-semibold underline" onClick={() => { const from = datePreset === 'custom' ? dateFrom : null; const to = datePreset === 'custom' ? dateTo : null; loadBulkInsights(adAccountId, datePreset, from, to); }}>Retry metrics</button>
           </div>
         )}
         {statusFilter === 'top_performers' && bulkInsights && Object.keys(bulkInsights).length > 0 && Object.values(bulkInsights).some(insight => insight?.redtrack == null) && (
@@ -2943,16 +3021,17 @@ export default function CampaignPerformance() {
         )}
         {rtAdsError && <div role="status" className="mx-5 mb-4 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">RedTrack creative-level data is unavailable: {rtAdsError}. Meta creative metrics remain available.</div>}
         {adsetsError && <div role="alert" className="mx-5 mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{adsetsError}. <button type="button" className="font-semibold underline" onClick={loadAdsets}>Retry ad sets</button></div>}
-        {(loadingAdsets || (bulkInsightsLoading && (['flagged', 'has_spend', 'top_performers', 'roas'].includes(statusFilter) || sortBy === 'cpl' || sortBy === 'roas' || metricFilter.value !== ''))) ? (
+        {(loadingAdsets || (bulkInsightsLoading && (['flagged', 'has_spend', 'top_performers', 'refresh_soon', 'roas'].includes(statusFilter) || sortBy === 'cpl' || sortBy === 'roas' || metricFilter.value !== ''))) ? (
           <div className="p-8 text-center text-gray-400 text-sm flex items-center justify-center gap-2">
             <RefreshCw size={14} className="animate-spin" /> Loading…
           </div>
-        ) : adsetsError ? null : visibleAdsets.length === 0 ? (
+        ) : adsetsError || (bulkInsightsError && statusFilter === 'refresh_soon') ? null : visibleAdsets.length === 0 ? (
           <div className="p-8 text-center text-gray-400 text-sm">
             {nameSearch ? `No ad sets matching "${nameSearch}".` :
              metricFilter.value !== '' ? `No ad sets with ${metricFilter.metric.toUpperCase()} ${metricFilter.operator === 'lt' ? '<' : '>'} ${metricFilter.value}.` :
              statusFilter === 'has_spend' ? 'No ad sets with spend in this date range.' :
              statusFilter === 'top_performers' ? 'No ad sets with at least $50 spend and positive ROAS in this date range.' :
+             statusFilter === 'refresh_soon' ? 'No active profitable ad sets with a Meta start date 12 or more days ago.' :
              statusFilter === 'flagged' ? 'No flagged ad sets — everything looks healthy.' :
              statusFilter !== 'all' ? `No ${statusFilter.toLowerCase()} ad sets found.` :
              'No launched ad sets found. Create and launch a campaign first.'}
@@ -3206,6 +3285,8 @@ export default function CampaignPerformance() {
                             const cb = campaignBrands[adset.id];
                             const isAssigning = assigningBrand === adset.id;
                             const isHighlighted = highlightedAdsetId === adset.fb_adset_id;
+                            const isRefreshCandidate = isRefreshSoonAdset(adset, d, isActiveDelivery(adset));
+                            const refreshAgeDays = isRefreshCandidate ? adsetAgeDays(adset.start_time) : null;
 
                             const toggleExpand = () => {
                               if (!isExpanded) {
@@ -3238,6 +3319,14 @@ export default function CampaignPerformance() {
                                         {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                       </span>
                                       <span className="font-medium text-gray-900 truncate" title={adset.name}>{adset.name}</span>
+                                      {isRefreshCandidate && (
+                                        <span
+                                          className="flex-shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+                                          title="Ad-set refresh cue: active, RT ROAS at least 1.00x, $50+ spend, and Meta start date at least 12 days ago"
+                                        >
+                                          Refresh soon
+                                        </span>
+                                      )}
                                       {triggeredRule && (
                                         <span className="flex-shrink-0 text-xs px-1.5 py-0.5 rounded font-medium bg-red-100 text-red-700 flex items-center gap-1">
                                           <PauseCircle size={10} /> Rule triggered
@@ -3349,7 +3438,7 @@ export default function CampaignPerformance() {
                                       <button
                                         onClick={() => navigate(`/batch-generate?adsetName=${encodeURIComponent(adset.name)}&adsetId=${encodeURIComponent(adset.fb_adset_id || '')}&campaignId=${encodeURIComponent(adset.fb_campaign_id || '')}`)}
                                         className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors"
-                                        title="Try new creative variants"
+                                        title={isRefreshCandidate ? 'Open the generator for this ad set; expand first to refresh a specific source creative' : 'Try new creative variants'}
                                       >
                                         <Repeat2 size={11} /> Iterate
                                       </button>
@@ -3393,6 +3482,12 @@ export default function CampaignPerformance() {
                                 {isExpanded && (
                                   <tr className="bg-gray-50/40">
                                     <td colSpan={10} className="px-6 pb-4 pt-2 border-t border-gray-100">
+                                      {isRefreshCandidate && (
+                                        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                                          <p><span className="font-semibold">Refresh cue:</span> this ad set started about {refreshAgeDays} days ago, has {formatMoney(d?.spend)} in the selected period, and RT ROAS of {rowRoas != null ? `${Number(rowRoas).toFixed(2)}x` : '—'}. Inspect its leading creative below, then use <span className="font-semibold">Refresh creative</span> to carry that source into generation.</p>
+                                          <span className="text-[10px] text-amber-700">Ad-set timing, not creative age</span>
+                                        </div>
+                                      )}
                                       {/* Adset-level diagnostic strip */}
                                       {d && (
                                         <div className="mb-3 flex flex-wrap gap-x-5 gap-y-1.5 pb-3 border-b border-gray-100">
@@ -3437,6 +3532,7 @@ export default function CampaignPerformance() {
                                         adsLoading={adsLoading}
                                         adsError={adsError}
                                         rtAdsBulk={rtAdsBulk}
+                                        refreshCandidate={isRefreshCandidate}
                                         onAdStatusChange={() => loadCreativeDetails(adAccountId, datePreset, datePreset === 'custom' ? dateFrom : null, datePreset === 'custom' ? dateTo : null, true)}
                                         onRemix={(creative) => {
                                           const brandContext = campaignBrands[adset.id];
