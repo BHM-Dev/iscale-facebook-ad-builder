@@ -6,7 +6,13 @@ import re
 _NON_NICHE_RE = re.compile(
     r'^(batch[\s\d]|set[\s\d]|v\d+[\s_.-]?$|v\d+[\s_.-]|scale|open$|image$|'
     r'calls$|test|broad|retarget|phase[\s\d]|round[\s\d]|breakout$|capi$|creative(?:\s+\d+)?$|abo$|cbo$|'
-    r'rho\s*v\d+$|'
+    # Account/brand and workflow labels are not verticals. In particular, RHO
+    # campaign names contain ``RESOURCE HELP ONLINE`` beside the actual
+    # campaign structure; treating it as a niche groups unrelated ads under a
+    # misleading reporting label.
+    r'rho\s*v?\d+(?:\s+account)?$|'
+    r'resource\s+help\s+online(?:\s*[-/|]?\s*\(?rho\s*\d*\)?)?(?:\s+account)?$|'
+    r'winners?\s+test(?:\s+v?\d+)?$|'
     # Delivery metadata appears in some breakout ad-set names between the
     # creative label and the campaign convention. It must never become a
     # reporting dimension (for example "$150/day").

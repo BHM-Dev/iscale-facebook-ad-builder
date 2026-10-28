@@ -86,7 +86,15 @@ def _is_date_label(value: str) -> bool:
 
 
 def _extract_niche(adset_name: str, campaign_name: str = "") -> str:
-    return _shared_extract_niche(adset_name, campaign_name) or "General"
+    # Campaign Intelligence is a decision surface, so it must not turn a
+    # creative label into a reporting dimension. If a supplied campaign name
+    # has no reliable vertical, its ad-set names are ambiguous (for example,
+    # "Tow Label | RHO4") even when a date prefix is present. Mark the group
+    # as Unclassified and ask for naming review rather than inventing a niche.
+    campaign_niche = _shared_extract_niche("", campaign_name)
+    if campaign_name and not campaign_niche:
+        return "Unclassified"
+    return _shared_extract_niche(adset_name, campaign_name, require_separator=True) or ("Unclassified" if campaign_name else "General")
 
 
 def _resolve_preset(
@@ -306,8 +314,10 @@ def _build_action_queue(rows: list) -> dict:
     # Severity order for cut/review actions
     cut_rank = {"pause": 0, "review_pause": 1, "potential_cut": 2, "investigate": 3}
 
-    track_rows = [r for r in rows if r['join_status'] in ("partial_redtrack", "missing_redtrack")
-                                      or r['verdict'] == "tracking_check"]
+    track_rows = [r for r in rows if not r.get('is_unclassified') and (
+        r['join_status'] in ("partial_redtrack", "missing_redtrack")
+        or r['verdict'] == "tracking_check"
+    )]
     # A niche with unreliable RedTrack data shouldn't also show a confident
     # scale/pause/watch recommendation in a separate lane — that reads as the
     # tool contradicting itself. Tracking check takes priority.
@@ -315,6 +325,7 @@ def _build_action_queue(rows: list) -> dict:
     scale_rows = [r for r in rows if r['suggested_action'] in scale_actions and r['niche'] not in tracked_niches]
     cut_rows   = [r for r in rows if r['suggested_action'] in cut_actions and r['niche'] not in tracked_niches]
     watch_rows = [r for r in rows if r['suggested_action'] in watch_actions and r['niche'] not in tracked_niches]
+    naming_rows = [r for r in rows if r['suggested_action'] == 'review_naming']
 
     # scale: highest profit first, then ROI, then confidence
     scale_rows.sort(key=lambda r: (
@@ -354,6 +365,8 @@ def _build_action_queue(rows: list) -> dict:
         action = row.get('suggested_action', '')
         if action in scale_actions:
             reason = f"{roi} ROI on {spend} spend · {confidence} confidence"
+        elif action == 'review_naming':
+            reason = f"{row.get('adset_count', 0)} ad sets have no reliable niche name"
         elif action in cut_actions or action in watch_actions:
             reason = f"{roi} ROI, {profit} profit · {confidence} confidence"
         else:
@@ -372,6 +385,7 @@ def _build_action_queue(rows: list) -> dict:
         "cut_or_pause":   [action_item(r) for r in cut_rows[:5]],
         "watch":          [action_item(r) for r in watch_rows[:5]],
         "tracking_check": [action_item(r) for r in track_rows[:5]],
+        "naming_review":  [action_item(r) for r in naming_rows[:5]],
         # True counts before the display cap above — the summary headline
         # must not report "5 niches queued to scale" as if that were the
         # total when there are actually more past the display limit.
@@ -380,6 +394,7 @@ def _build_action_queue(rows: list) -> dict:
             "cut_or_pause":   len(cut_rows),
             "watch":          len(watch_rows),
             "tracking_check": len(track_rows),
+            "naming_review":  len(naming_rows),
         },
     }
 
@@ -466,9 +481,19 @@ def _aggregate_by_niche(meta_data: dict, rt_data: dict, day_filter: str, budget_
         else:
             join_status = "matched_rt_approximate" if day_filter != "all" else "matched"
 
-        verdict    = _assign_verdict(spend, revenue, join_status, day_filter)
-        confidence, confidence_reason = _assign_confidence(spend, b['leads'])
-        suggested_action, suggested_action_label = _assign_suggested_action(verdict, confidence, roi)
+        is_unclassified = niche == "Unclassified"
+        if is_unclassified:
+            # Do not pool unrelated creative/ad-set labels into an economic
+            # recommendation. The aggregate stays visible for data-quality
+            # review, but it is not eligible for Scale, Pause, or Hold.
+            verdict = "naming_review"
+            confidence = "low"
+            confidence_reason = "Campaign naming does not identify a reliable niche"
+            suggested_action, suggested_action_label = "review_naming", "Review naming"
+        else:
+            verdict = _assign_verdict(spend, revenue, join_status, day_filter)
+            confidence, confidence_reason = _assign_confidence(spend, b['leads'])
+            suggested_action, suggested_action_label = _assign_suggested_action(verdict, confidence, roi)
 
         # Top / worst ad set by ROI (only among adsets with spend > 0 and rt match)
         scored = [a for a in b['adsets'] if a['roi'] is not None and a['spend'] > 0]
@@ -510,6 +535,8 @@ def _aggregate_by_niche(meta_data: dict, rt_data: dict, day_filter: str, budget_
             'suggested_action_label': suggested_action_label,
             'current_daily_budget':   current_daily_budget,
             'active_adset_count':     b['adset_count'],
+            'is_unclassified':         is_unclassified,
+            'unclassified_adset_names': sorted(a['name'] for a in b['adsets']) if is_unclassified else [],
             'avg_spend_per_adset':    avg_spend_per_adset,
             'top_adset':              top_adset,
             'worst_adset':            worst_adset,

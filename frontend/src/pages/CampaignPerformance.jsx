@@ -387,7 +387,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
   const geographyRequestRef = useRef(0);
 
   const actionCounts = data?.action_queue?.counts || {};
-  const findingCount = (actionCounts.scale || 0) + (actionCounts.cut_or_pause || 0) + (actionCounts.tracking_check || 0);
+  const findingCount = (actionCounts.scale || 0) + (actionCounts.cut_or_pause || 0) + (actionCounts.tracking_check || 0) + (actionCounts.naming_review || 0);
   const hasFindings = findingCount > 0 || data?.tracking_warning?.has_warning;
   const findingBadge = findingCount > 9 ? '9+' : findingCount;
 
@@ -754,6 +754,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                           { key: 'cut_or_pause', label: 'Cut / Pause', dot: 'bg-red-500', pill: 'bg-red-100 text-red-800' },
                           { key: 'watch', label: 'Watch', dot: 'bg-amber-500', pill: 'bg-amber-100 text-amber-800' },
                           { key: 'tracking_check', label: 'Tracking', dot: 'bg-yellow-500', pill: 'bg-yellow-100 text-yellow-800' },
+                          { key: 'naming_review', label: 'Naming', dot: 'bg-slate-500', pill: 'bg-slate-100 text-slate-800' },
                         ];
                         const counts = panelData.action_queue.counts || {};
                         const topLane = LANES.find(lane => panelData.action_queue[lane.key]?.length);
@@ -832,6 +833,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                       { key: 'cut_or_pause', label: 'Cut / Pause', hdrBg: 'bg-red-50', border: 'border-red-200', text: 'text-red-800' },
                       { key: 'watch', label: 'Watch', hdrBg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-800' },
                       { key: 'tracking_check', label: 'Tracking', hdrBg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-800' },
+                      { key: 'naming_review', label: 'Naming review', hdrBg: 'bg-slate-50', border: 'border-slate-200', text: 'text-slate-800' },
                     ].map(lane => {
                       const items = panelData.action_queue[lane.key];
                       if (!items?.length) return null;
@@ -910,6 +912,11 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                                 <div className="text-xs text-gray-400 mt-0.5">
                                   {row.active_adset_count != null && `${row.active_adset_count} active ad set${row.active_adset_count !== 1 ? 's' : ''}`}
                                   {row.current_daily_budget != null ? ` · $${Math.round(row.current_daily_budget)}/day` : ''}
+                                </div>
+                              )}
+                              {row.is_unclassified && row.unclassified_adset_names?.length > 0 && (
+                                <div className="mt-1 max-w-xs text-[11px] leading-snug text-slate-500" title={row.unclassified_adset_names.join(' · ')}>
+                                  Review: {row.unclassified_adset_names.join(' · ')}
                                 </div>
                               )}
                             </td>

@@ -3,7 +3,7 @@
 from datetime import date, datetime
 
 import app.api.v1.intelligence as intelligence
-from app.api.v1.intelligence import BEST_TIMES_DAYPARTS, _build_best_times, _build_geography_watchlist, _clamp_geography_day_filter_window, _extract_niche, _platform_geography_watchlist, _redtrack_adset_id, _redtrack_offer_matches, _resolve_preset
+from app.api.v1.intelligence import BEST_TIMES_DAYPARTS, _aggregate_by_niche, _build_action_queue, _build_best_times, _build_geography_watchlist, _clamp_geography_day_filter_window, _extract_niche, _platform_geography_watchlist, _redtrack_adset_id, _redtrack_offer_matches, _resolve_preset
 from app.services.niche_extraction import _extract_niche as shared_extract_niche
 
 
@@ -71,6 +71,35 @@ def test_extract_niche_uses_campaign_for_breakout_adsets_with_budget_metadata():
         '2026-10-01 - BREAKOUT | CR-WIN-05 | $150/day',
         'Commercial Insurance',
     ) == 'Commercial Insurance'
+
+
+def test_extract_niche_never_groups_rho_brand_or_creative_labels_as_a_niche():
+    campaign = 'RHO 4 | ABO | WINNERS TEST V2 | RESOURCE HELP ONLINE (RHO) | CAPI | 10.15.2026'
+    assert _extract_niche('Dealers Plate Close Up | RHO4', campaign) == 'Unclassified'
+    # A date prefix alone does not establish that the next segment is a niche.
+    assert _extract_niche('10/15/2026 - Dealers Plate Close Up | RHO4', campaign) == 'Unclassified'
+
+
+def test_unclassified_niches_are_visible_but_never_eligible_for_an_economic_action():
+    rows = _aggregate_by_niche(
+        {
+            '1': {
+                'adset_name': 'Dealers Plate Close Up | RHO4',
+                'campaign_name': 'RHO4 | ABO | RESOURCE HELP ONLINE / RHO4 | CAPI | 10.15.2026',
+                'spend': 400.0,
+                'leads': 20,
+            },
+        },
+        {'1': {'revenue': 800.0, 'conversions': 10}},
+        'all',
+        {},
+    )
+    assert rows[0]['niche'] == 'Unclassified'
+    assert rows[0]['suggested_action'] == 'review_naming'
+    assert rows[0]['unclassified_adset_names'] == ['Dealers Plate Close Up | RHO4']
+    queue = _build_action_queue(rows)
+    assert queue['naming_review'][0]['niche'] == 'Unclassified'
+    assert not queue['scale']
 
 
 def test_extract_niche_never_emits_daily_budget_as_a_niche():
