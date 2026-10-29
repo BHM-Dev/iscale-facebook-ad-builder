@@ -3,7 +3,7 @@
 from datetime import date, datetime
 
 import app.api.v1.intelligence as intelligence
-from app.api.v1.intelligence import BEST_TIMES_DAYPARTS, _aggregate_by_niche, _build_action_queue, _build_best_times, _build_geography_watchlist, _clamp_geography_day_filter_window, _extract_niche, _platform_geography_watchlist, _redtrack_adset_id, _redtrack_offer_matches, _resolve_preset
+from app.api.v1.intelligence import BEST_TIMES_DAYPARTS, _aggregate_by_niche, _build_action_queue, _build_best_times, _build_geography_watchlist, _clamp_geography_day_filter_window, _extract_niche, _platform_geography_watchlist, _redtrack_adset_id, _redtrack_offer_matches, _resolve_performance_group, _resolve_preset
 from app.services.niche_extraction import _extract_niche as shared_extract_niche
 
 
@@ -80,7 +80,7 @@ def test_extract_niche_never_groups_rho_brand_or_creative_labels_as_a_niche():
     assert _extract_niche('10/15/2026 - Dealers Plate Close Up | RHO4', campaign) == 'Unclassified'
 
 
-def test_unclassified_niches_are_visible_but_never_eligible_for_an_economic_action():
+def test_ambiguous_campaign_naming_uses_the_exact_adset_as_the_performance_group():
     rows = _aggregate_by_niche(
         {
             '1': {
@@ -94,12 +94,32 @@ def test_unclassified_niches_are_visible_but_never_eligible_for_an_economic_acti
         'all',
         {},
     )
-    assert rows[0]['niche'] == 'Unclassified'
-    assert rows[0]['suggested_action'] == 'review_naming'
-    assert rows[0]['unclassified_adset_names'] == ['Dealers Plate Close Up | RHO4']
+    assert rows[0]['niche'] == 'Dealers Plate Close Up | RHO4'
+    assert rows[0]['group_type'] == 'adset'
+    assert rows[0]['suggested_action'] == 'scale_20'
     queue = _build_action_queue(rows)
-    assert queue['naming_review'][0]['niche'] == 'Unclassified'
-    assert not queue['scale']
+    assert queue['scale'][0]['niche'] == 'Dealers Plate Close Up | RHO4'
+
+
+def test_resolve_performance_group_keeps_explicit_campaign_niches_grouped():
+    assert _resolve_performance_group(
+        'BREAKOUT | CR-WIN-05 RentalCosts | $150/day | Oct 10',
+        'RHO v1 | ABO | LEADS | CAR RENTAL WINNERS | CAPI | 10.06.2026',
+    ) == ('CAR RENTAL WINNERS', 'niche')
+
+
+def test_same_named_adsets_stay_separate_when_campaign_naming_has_no_niche():
+    rows = _aggregate_by_niche(
+        {
+            '1': {'adset_name': 'Control | RHO4', 'campaign_name': 'RHO4 | ABO | RESOURCE HELP ONLINE | CAPI', 'spend': 100.0, 'leads': 5},
+            '2': {'adset_name': 'Control | RHO4', 'campaign_name': 'RHO4 | ABO | RESOURCE HELP ONLINE | CAPI', 'spend': 100.0, 'leads': 5},
+        },
+        {'1': {'revenue': 150.0, 'conversions': 1}, '2': {'revenue': 50.0, 'conversions': 1}},
+        'all',
+        {},
+    )
+    assert len(rows) == 2
+    assert {row['group_id'] for row in rows} == {'adset:1', 'adset:2'}
 
 
 def test_extract_niche_never_emits_daily_budget_as_a_niche():

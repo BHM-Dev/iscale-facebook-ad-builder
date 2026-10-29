@@ -226,35 +226,41 @@ function BestTimesGrid({ data }) {
 }
 
 function CreativeCompass({ buckets, onOpenAdset, dateRangeLabel }) {
+  const primaryBuckets = buckets.slice(0, 2);
+  const secondaryBuckets = buckets.slice(2);
+  const renderBucket = (bucket, primary = false) => (
+    <div key={bucket.key} className={`${primary ? 'p-5' : 'p-4'} min-w-0`}>
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <h3 className={`${primary ? 'text-base' : 'text-sm'} font-semibold ${bucket.color}`}>{bucket.label}</h3>
+        <span className={`${primary ? 'text-xl' : 'text-lg'} font-bold text-gray-900`}>{bucket.items.length}</span>
+      </div>
+      <p className={`text-[11px] leading-snug text-gray-500 ${primary ? 'min-h-[30px]' : 'min-h-[32px]'}`}>{bucket.rule}</p>
+      {bucket.items.length === 0 ? (
+        <p className="text-xs text-gray-400 mt-3">{bucket.empty || 'Nothing here right now'}</p>
+      ) : (
+        <div className="mt-3 space-y-2">
+          {bucket.items.slice(0, primary ? 4 : 2).map(item => (
+            <button key={item.id} type="button" onClick={() => onOpenAdset(item.adset)} className="block w-full text-left rounded-lg border border-gray-100 px-2.5 py-2 hover:border-indigo-200 hover:bg-indigo-50/40 transition-colors">
+              <span className="block text-xs font-medium text-gray-800 truncate">{item.adset.name}</span>
+              <span className="block text-[11px] text-gray-500 truncate">{item.detail}</span>
+            </button>
+          ))}
+          {bucket.items.length > (primary ? 4 : 2) && <p className="text-[11px] text-gray-400">+{bucket.items.length - (primary ? 4 : 2)} more below</p>}
+        </div>
+      )}
+    </div>
+  );
   return (
     <section className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-hidden">
       <div className="px-5 py-4 border-b border-indigo-100 bg-indigo-50/35">
         <h2 className="font-semibold text-gray-900 flex items-center gap-2"><Target size={16} className="text-indigo-600" /> Creative Compass</h2>
         <p className="text-xs text-gray-500 mt-1">Rule-based starting points from the ad-set metrics already loaded below · {dateRangeLabel} · grain: ad sets. Nothing here is an opaque score.</p>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 divide-y sm:divide-y-0 sm:divide-x divide-gray-100">
-        {buckets.map(bucket => (
-          <div key={bucket.key} className="p-4 min-w-0">
-            <div className="flex items-center justify-between gap-2 mb-1">
-              <h3 className={`text-sm font-semibold ${bucket.color}`}>{bucket.label}</h3>
-              <span className="text-lg font-bold text-gray-900">{bucket.items.length}</span>
-            </div>
-            <p className="text-[11px] leading-snug text-gray-500 min-h-[32px]">{bucket.rule}</p>
-            {bucket.items.length === 0 ? (
-              <p className="text-xs text-gray-400 mt-3">{bucket.empty || 'Nothing here right now'}</p>
-            ) : (
-              <div className="mt-3 space-y-2">
-                {bucket.items.slice(0, 3).map(item => (
-                  <button key={item.id} type="button" onClick={() => onOpenAdset(item.adset)} className="block w-full text-left rounded-lg border border-gray-100 px-2.5 py-2 hover:border-indigo-200 hover:bg-indigo-50/40 transition-colors">
-                    <span className="block text-xs font-medium text-gray-800 truncate">{item.adset.name}</span>
-                    <span className="block text-[11px] text-gray-500 truncate">{item.detail}</span>
-                  </button>
-                ))}
-                {bucket.items.length > 3 && <p className="text-[11px] text-gray-400">+{bucket.items.length - 3} more below</p>}
-              </div>
-            )}
-          </div>
-        ))}
+      <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-gray-100">
+        {primaryBuckets.map(bucket => renderBucket(bucket, true))}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 border-t border-gray-100 divide-y sm:divide-y-0 sm:divide-x divide-gray-100">
+        {secondaryBuckets.map(bucket => renderBucket(bucket))}
       </div>
     </section>
   );
@@ -387,7 +393,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
   const geographyRequestRef = useRef(0);
 
   const actionCounts = data?.action_queue?.counts || {};
-  const findingCount = (actionCounts.scale || 0) + (actionCounts.cut_or_pause || 0) + (actionCounts.tracking_check || 0) + (actionCounts.naming_review || 0);
+  const findingCount = (actionCounts.scale || 0) + (actionCounts.cut_or_pause || 0) + (actionCounts.tracking_check || 0);
   const hasFindings = findingCount > 0 || data?.tracking_warning?.has_warning;
   const findingBadge = findingCount > 9 ? '9+' : findingCount;
 
@@ -625,7 +631,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
               <h2 className="font-semibold text-gray-900 flex items-center gap-2">
                 <Sparkles size={16} className="text-violet-500" />
                 Campaign Intelligence
-                <span className="text-xs font-normal text-gray-400">{intelligenceView === 'best-times' ? 'hourly timing by niche' : intelligenceView === 'geography' ? 'state delivery diagnostics by campaign' : 'Action queue · tracking checks · niche decisions'}</span>
+                <span className="text-xs font-normal text-gray-400">{intelligenceView === 'best-times' ? 'hourly timing by group' : intelligenceView === 'geography' ? 'state delivery diagnostics by campaign' : 'Action queue · tracking checks · performance groups'}</span>
               </h2>
               <div className="flex items-center gap-2">
                 <button
@@ -741,7 +747,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                 <div className="min-w-0">
                   <p className="text-xs font-semibold text-violet-800 mb-1">
                     {panelData.preset_label}
-                    <span className="ml-2 font-normal text-violet-500">· {formatDateShort(panelData.date_from)}–{formatDateShort(panelData.date_to)}{intelligenceView === 'best-times' ? ` · ${panelData.timezone || 'PT'}` : intelligenceView === 'geography' ? ' · grain: campaign × state' : ' · grain: niches'}</span>
+                    <span className="ml-2 font-normal text-violet-500">· {formatDateShort(panelData.date_from)}–{formatDateShort(panelData.date_to)}{intelligenceView === 'best-times' ? ` · ${panelData.timezone || 'PT'}` : intelligenceView === 'geography' ? ' · grain: campaign × state' : ' · grain: performance groups'}</span>
                     {panelData.day_filter !== 'all' && (
                       <span className="ml-2 font-normal text-violet-500">· {panelData.day_filter} days only</span>
                     )}
@@ -754,7 +760,6 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                           { key: 'cut_or_pause', label: 'Cut / Pause', dot: 'bg-red-500', pill: 'bg-red-100 text-red-800' },
                           { key: 'watch', label: 'Watch', dot: 'bg-amber-500', pill: 'bg-amber-100 text-amber-800' },
                           { key: 'tracking_check', label: 'Tracking', dot: 'bg-yellow-500', pill: 'bg-yellow-100 text-yellow-800' },
-                          { key: 'naming_review', label: 'Naming', dot: 'bg-slate-500', pill: 'bg-slate-100 text-slate-800' },
                         ];
                         const counts = panelData.action_queue.counts || {};
                         const topLane = LANES.find(lane => panelData.action_queue[lane.key]?.length);
@@ -791,7 +796,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
               </div>
 
               <div className="flex gap-1 p-1 mb-4 rounded-lg bg-gray-100 w-fit">
-                <button type="button" onClick={() => setIntelligenceView('niche')} className={`px-3 py-1.5 rounded-md text-xs font-semibold ${intelligenceView === 'niche' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500'}`}>Niche profitability</button>
+                <button type="button" onClick={() => setIntelligenceView('niche')} className={`px-3 py-1.5 rounded-md text-xs font-semibold ${intelligenceView === 'niche' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500'}`}>Performance groups</button>
                 <button type="button" onClick={() => {
                   setIntelligenceView('best-times');
                   // Best Times follows the date range the buyer selected in
@@ -833,7 +838,6 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                       { key: 'cut_or_pause', label: 'Cut / Pause', hdrBg: 'bg-red-50', border: 'border-red-200', text: 'text-red-800' },
                       { key: 'watch', label: 'Watch', hdrBg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-800' },
                       { key: 'tracking_check', label: 'Tracking', hdrBg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-800' },
-                      { key: 'naming_review', label: 'Naming review', hdrBg: 'bg-slate-50', border: 'border-slate-200', text: 'text-slate-800' },
                     ].map(lane => {
                       const items = panelData.action_queue[lane.key];
                       if (!items?.length) return null;
@@ -876,7 +880,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 border-b border-gray-100">
                       <tr className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
-                        <th className="px-4 py-3">Niche</th>
+                        <th className="px-4 py-3">Performance group</th>
                         <th className="px-4 py-3 text-right">Spend</th>
                         <th className="px-4 py-3 text-right">Revenue</th>
                         <th className="px-4 py-3 text-right">Profit</th>
@@ -905,18 +909,14 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                         };
                         const joinInfo = joinLabels[row.join_status] || { label: row.join_status, cls: 'text-gray-400' };
                         return (
-                          <tr key={row.niche} className="hover:bg-gray-50 transition-colors">
+                          <tr key={row.group_id || row.niche} className="hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-3">
                               <div className="font-medium text-gray-900">{row.niche}</div>
+                              {row.group_type === 'adset' && <div className="mt-0.5 text-[11px] font-medium text-slate-500">Exact ad-set label</div>}
                               {(row.active_adset_count != null || row.current_daily_budget != null) && (
                                 <div className="text-xs text-gray-400 mt-0.5">
                                   {row.active_adset_count != null && `${row.active_adset_count} active ad set${row.active_adset_count !== 1 ? 's' : ''}`}
                                   {row.current_daily_budget != null ? ` · $${Math.round(row.current_daily_budget)}/day` : ''}
-                                </div>
-                              )}
-                              {row.is_unclassified && row.unclassified_adset_names?.length > 0 && (
-                                <div className="mt-1 max-w-xs text-[11px] leading-snug text-slate-500" title={row.unclassified_adset_names.join(' · ')}>
-                                  Review: {row.unclassified_adset_names.join(' · ')}
                                 </div>
                               )}
                             </td>
@@ -2446,14 +2446,14 @@ export default function CampaignPerformance() {
     const ins = bulkInsights?.[a.fb_adset_id];
     if (!ins) return [];
     const reasons = [];
-    if (ins.frequency >= 5) reasons.push(`Frequency ${ins.frequency.toFixed(1)} — fatigue risk`);
-    else if (ins.frequency >= 3) reasons.push(`Frequency ${ins.frequency.toFixed(1)} — monitor`);
-    if (ins.spend > 50 && ins.leads === 0) reasons.push(`${formatMoney(ins.spend)} spent, 0 leads`);
     if (ins.redtrack?.roas != null && ins.redtrack.roas < 1 && ins.spend > 30) reasons.push(`RT ROAS ${ins.redtrack.roas.toFixed(2)}x — losing money`);
+    if (ins.spend > 50 && ins.leads === 0) reasons.push(`${formatMoney(ins.spend)} spent, 0 leads`);
     if (blendedCpl != null && ins.cpl != null && ins.cpl > blendedCpl * 1.5 && ins.spend > 30 && (ins.redtrack?.roas == null || ins.redtrack.roas < 1)) {
       reasons.push(`CPL ${formatMoney(ins.cpl)} — above 1.5x blended average`);
     }
     if (rules.some(r => r.triggered_at && r.adset_id === a.id)) reasons.push('Auto-pause rule triggered');
+    if (ins.frequency >= 5) reasons.push(`Frequency ${ins.frequency.toFixed(1)} — fatigue risk`);
+    else if (ins.frequency >= 3) reasons.push(`Frequency ${ins.frequency.toFixed(1)} — monitor`);
     return reasons;
   }, [bulkInsights, rules, blendedCpl]);
 
@@ -2462,16 +2462,15 @@ export default function CampaignPerformance() {
   const compassBuckets = useMemo(() => {
     const active = adsets.filter(a => a.fb_adset_id && normalizeStatus(adsetStatusOverrides[a.fb_adset_id] ?? a.status) === 'ACTIVE' && (!a.campaign_status || normalizeStatus(a.campaign_status) === 'ACTIVE'));
     const attention = active.map(adset => ({ adset, reasons: getAttentionReasons(adset) })).filter(item => item.reasons.length).map(item => ({ ...item, id: `attention-${item.adset.id}`, detail: item.reasons[0] }));
-    const winners = active.filter(a => bulkInsights?.[a.fb_adset_id]).map(adset => ({ adset, ins: bulkInsights[adset.fb_adset_id] })).filter(({ ins }) => (ins.spend ?? 0) >= 50 && ins.redtrack?.roas > 0).sort((a, b) => b.ins.redtrack.roas - a.ins.redtrack.roas).map(({ adset, ins }) => ({ id: `winner-${adset.id}`, adset, detail: `RT ROAS ${ins.redtrack.roas.toFixed(2)}x · ${formatMoney(ins.spend)} spend` }));
+    const winners = active.filter(a => bulkInsights?.[a.fb_adset_id]).map(adset => ({ adset, ins: bulkInsights[adset.fb_adset_id] })).filter(({ ins }) => (ins.spend ?? 0) >= 50 && ins.redtrack?.roas >= 1).sort((a, b) => b.ins.redtrack.roas - a.ins.redtrack.roas).map(({ adset, ins }) => ({ id: `winner-${adset.id}`, adset, detail: `RT ROAS ${ins.redtrack.roas.toFixed(2)}x · ${formatMoney(ins.spend)} spend` }));
     const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
     const recent = active.filter(adset => adset.start_time && !Number.isNaN(Date.parse(adset.start_time)) && Date.parse(adset.start_time) >= cutoff).map(adset => ({ id: `recent-${adset.id}`, adset, detail: `Started ${new Date(adset.start_time).toLocaleDateString()}` }));
     const potential = active.map(adset => ({ adset, ins: bulkInsights?.[adset.fb_adset_id] })).filter(({ ins }) => ins?.ctr != null && ins.ctr > 2 && (ins.spend ?? 0) < 75).map(({ adset, ins }) => ({ id: `potential-${adset.id}`, adset, detail: `CTR ${Number(ins.ctr).toFixed(2)}% · ${formatMoney(ins.spend)} spend` }));
     return [
       { key: 'attention', label: 'Ad sets that need attention', color: 'text-orange-700', rule: 'Frequency ≥3, zero leads after $50, RT ROAS <1, CPL >1.5x blended average, or an auto-pause rule triggered.', items: attention },
-      { key: 'winners', label: 'Winners', color: 'text-green-700', rule: 'Active ad sets with RT ROAS >0 and at least $50 spend, sorted highest first.', items: winners },
+      { key: 'winners', label: 'Winners', color: 'text-green-700', rule: 'Active ad sets with RT ROAS ≥1.00x and at least $50 spend, sorted highest first.', items: winners },
       { key: 'recent', label: 'Launched recently', color: 'text-blue-700', rule: 'Active ad sets with Meta start_time inside the last 14 days.', items: recent },
       { key: 'potential', label: 'High potential', color: 'text-violet-700', rule: 'Active ad sets with CTR >2.0% and less than $75 spend — early signal, not a winner yet.', items: potential },
-      { key: 'scaling', label: 'Scaling', color: 'text-emerald-700', rule: 'Needs a clean prior-period spend comparison; no misleading day-over-day proxy is used.', items: [], empty: 'Needs prior-period data before this bucket can make a claim.' },
     ];
   }, [adsets, bulkInsights, getAttentionReasons, adsetStatusOverrides]);
   const getAdsetStatus = useCallback((adset) => (
