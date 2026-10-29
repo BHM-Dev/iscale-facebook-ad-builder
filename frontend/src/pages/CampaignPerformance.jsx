@@ -67,11 +67,12 @@ function resolveIntelligencePreset(pageDatePreset, explicitPreset) {
 
 const normalizeStatus = (status) => (status || '').toString().toUpperCase();
 
-// A deliberately conservative, ad-set-level cue. Meta returns an ad set's
+// A deliberately conservative rotation cue. Meta returns an ad set's
 // start_time on the existing list request, but not a trustworthy first-live
-// timestamp for each creative on this screen. Keep the wording and filter
-// honest: this flags a profitable ad set that has been live long enough to
-// prepare replacements; it does not claim that every creative is 12 days old.
+// timestamp for each creative on this screen. This flags a profitable ad set
+// that has been live long enough to prepare one replacement; the expanded
+// creative table then names one currently delivering source ad. It never
+// claims every ad in the set is 12 days old or should be paused.
 const REFRESH_SOON_MIN_AGE_DAYS = 12;
 const REFRESH_SOON_MIN_SPEND = 50;
 
@@ -958,7 +959,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
 
 // ── Creative breakdown table (ad-level) ──────────────────────────────────────
 // onRemix: ({ ad_id, ad_name, headline, body, cta_label, image_url, adsetName, campaign_id }) => void
-function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccountId, adsBulk, adsLoading, adsError, rtAdsBulk, refreshCandidate = false, onAdStatusChange, onRemix }) {
+function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccountId, adsBulk, adsLoading, adsError, rtAdsBulk, refreshCandidate = false, onRefreshCreatives, onAdStatusChange, onRemix }) {
   const { showSuccess, showError } = useToast();
   const navigate = useNavigate();
   const [pausingAds, setPausingAds] = useState(new Set());
@@ -1093,6 +1094,27 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
 
   const sortedAds = [...ads].sort((a, b) => Number(b.spend || 0) - Number(a.spend || 0));
   const maxSpend = Math.max(...sortedAds.map(a => a.spend), 0.01);
+  const totalCreativeSpend = sortedAds.reduce((sum, ad) => sum + Number(ad.spend || 0), 0);
+  const sourceStatusUnavailable = refreshCandidate && sortedAds.length > 0 && sortedAds.every(ad => (
+    !normalizeStatus(ad.status) && !normalizeStatus(ad.effective_status)
+  ));
+  // The queue must name one proven source rather than turning every ad in a
+  // mature ad set amber. An active Meta status is not enough: only select an
+  // individually viable RedTrack creative with leads in the selected
+  // period. If attribution or live status is unavailable, ask for review.
+  const rotationSource = refreshCandidate
+    ? sortedAds.find(ad => {
+      const rt = rtAdsBulk?.[ad.ad_id];
+      return normalizeStatus(ad.status) === 'ACTIVE'
+        && normalizeStatus(ad.effective_status) === 'ACTIVE'
+        && Number(ad.spend || 0) > 0
+        && Number(ad.leads || 0) > 0
+        && Number(rt?.roas) >= 1;
+    })
+    : null;
+  const rotationSourceShare = rotationSource && totalCreativeSpend > 0
+    ? Math.round((Number(rotationSource.spend || 0) / totalCreativeSpend) * 100)
+    : null;
   // Blended avg CPL for this ad set (for relative poor-performer detection)
   const adsWithLeads = ads.filter(a => a.leads > 0);
   const avgCpl = adsWithLeads.length > 0
@@ -1103,6 +1125,16 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
   return (
     <>
     <div className="mt-3 rounded-lg border border-gray-100 overflow-hidden">
+      {refreshCandidate && sourceStatusUnavailable && (
+        <div role="status" className="border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <span className="font-semibold">Source ad not verified:</span> Meta delivery status is unavailable. <button type="button" onClick={onRefreshCreatives} className="font-semibold underline">Refresh creative data</button> before choosing a rotation source.
+        </div>
+      )}
+      {refreshCandidate && !sourceStatusUnavailable && !rotationSource && (
+        <div role="status" className="border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <span className="font-semibold">No proven source ad in this period:</span> review the creative breakdown manually before creating a replacement.
+        </div>
+      )}
       <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead>
@@ -1146,13 +1178,17 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
             const isPoorRoas = rtRoas != null && rtRoas < 1;
             const isHighCpl = avgCpl != null && ad.cpl != null && ad.cpl > avgCpl * 1.4 && ad.spend > 20;
             const isNoLeads = ad.spend >= 20 && ad.leads === 0;
-            const isPoorPerformer = isPoorRoas || isHighCpl || isNoLeads;
+            const isRotationSource = rotationSource?.ad_id === ad.ad_id;
+            // The verified source may have a high Meta CPL while still clearing
+            // its own RedTrack ROAS threshold. Do not paint it as both a source
+            // and a loser; its attribution outcome is the stronger signal here.
+            const isPoorPerformer = !isRotationSource && (isPoorRoas || isHighCpl || isNoLeads);
 
             // Winner: most spend, >1 ad in set, has leads. The refresh flow can
             // also use the only delivering ad as its source, so keep that source
             // distinction separate from the stronger "winner" presentation.
             const isTop = i === 0 && ads.length > 1 && ad.spend > 0 && ad.leads > 0;
-            const isLeadingCreative = i === 0 && ad.spend > 0;
+            const rotationReviewRequired = refreshCandidate && !rotationSource;
 
             return (
               <tr
@@ -1176,6 +1212,14 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
                       <div className="font-medium text-gray-800 leading-tight truncate max-w-[200px]" title={ad.ad_name}>
                         {ad.ad_name || ad.ad_id}
                       </div>
+                      {isRotationSource && (
+                        <div
+                          className="mt-1 inline-flex rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+                          title="Active in Meta, has leads, and meets the RT ROAS threshold for the selected period. Use it as the source for replacement variants; this does not mean pause it."
+                        >
+                          Source ad{rotationSourceShare != null ? ` · ${rotationSourceShare}% of spend` : ''}
+                        </div>
+                      )}
                       {ad.launch_context?.source_type === 'drive' && (
                         <div
                           className="mt-0.5 line-clamp-2 break-words max-w-[200px] text-[10px] leading-tight font-medium text-violet-600"
@@ -1259,11 +1303,12 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
                     )}
                     {/* Quick Generate → Batch Generate pre-filled with this ad */}
                     <button
-                      onClick={() => navigate(`/batch-generate?adId=${encodeURIComponent(ad.ad_id)}&adName=${encodeURIComponent(ad.ad_name || ad.ad_id)}&adsetName=${encodeURIComponent(adsetName || '')}&campaignId=${encodeURIComponent(fbCampaignId || '')}&adsetId=${encodeURIComponent(fbAdsetId || '')}${refreshCandidate && isLeadingCreative ? '&refresh=1' : ''}`)}
-                      className="flex items-center gap-1 px-2 py-1 rounded text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors text-xs font-medium whitespace-nowrap"
-                      title={refreshCandidate && isLeadingCreative ? 'Create replacement variants from this leading creative' : 'Generate more creative variants from this ad'}
+                      onClick={() => navigate(`/batch-generate?adId=${encodeURIComponent(ad.ad_id)}&adName=${encodeURIComponent(ad.ad_name || ad.ad_id)}&adsetName=${encodeURIComponent(adsetName || '')}&campaignId=${encodeURIComponent(fbCampaignId || '')}&adsetId=${encodeURIComponent(fbAdsetId || '')}${isRotationSource ? '&refresh=1' : ''}`)}
+                      disabled={rotationReviewRequired}
+                      className="flex items-center gap-1 px-2 py-1 rounded text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors text-xs font-medium whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-40"
+                      title={isRotationSource ? 'Create replacement variants from this verified source ad' : rotationReviewRequired ? 'Verify a source ad or review the creative breakdown before generating rotation variants' : 'Generate more creative variants from this ad'}
                     >
-                      <Zap size={11} /> {refreshCandidate && isLeadingCreative ? 'Refresh creative' : 'Quick Generate'}
+                      <Zap size={11} /> {isRotationSource ? 'Create variants' : 'Quick Generate'}
                     </button>
                     {/* Quick Ad → skips /ad-remix's template step entirely. For when
                         Joel already has his own creative + copy ready to launch, not
@@ -1282,7 +1327,7 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
                     </button>
                     {/* Pause / Resume — only for a known ACTIVE/PAUSED status; both ask first */}
                     <button
-                      onClick={() => { if (adToggleable) setAdActionConfirm({ ad, type: isPaused ? 'resume' : 'pause' }); }}
+                      onClick={() => { if (adToggleable) setAdActionConfirm({ ad, type: isPaused ? 'resume' : 'pause', isRotationSource }); }}
                       disabled={isPausing || !adToggleable}
                       className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
                         isPaused
@@ -1322,7 +1367,9 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
           <p className="mt-2 text-sm leading-6 text-gray-600">
             {adActionConfirm.type === 'resume'
               ? 'This turns the ad back on in Meta. It can start spending immediately if its ad set and campaign are active.'
-              : 'This stops delivery for this ad immediately. It does not change the campaign or ad set; you can resume the ad here or in Ads Manager later.'}
+              : adActionConfirm.isRotationSource
+                ? 'This stops delivery for the selected rotation source immediately. It does not change the campaign or ad set, but removes the proven baseline you would use to create a replacement.'
+                : 'This stops delivery for this ad immediately. It does not change the campaign or ad set; you can resume the ad here or in Ads Manager later.'}
           </p>
           <div className="mt-6 flex justify-end gap-3">
             <button type="button" onClick={() => setAdActionConfirm(null)} className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Cancel</button>
@@ -2849,7 +2896,7 @@ export default function CampaignPerformance() {
                 : dashboardView === 'top-performers'
                   ? <><TrendingUp size={15} /> Showing top performers — at least $50 spend and positive RT ROAS</>
                   : dashboardView === 'refresh-soon'
-                    ? <><Repeat2 size={15} /> Showing refresh candidates — active, $50+ spend, RT ROAS ≥1.00x, and Meta start date 12+ days ago</>
+                    ? <><Repeat2 size={15} /> Showing the rotation queue — eligible active ad sets ready for a creative-rotation review</>
                   : <><TrendingUp size={15} /> Showing all ad sets</>
             }
           </div>
@@ -2900,9 +2947,9 @@ export default function CampaignPerformance() {
                   ? 'border-amber-300 bg-amber-100 text-amber-900'
                   : 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100'
               }`}
-              title="Show active ad sets with $50+ spend, RT ROAS of at least 1.00x, and a Meta start date 12 or more days ago"
+              title="Show eligible active ad sets ready for creative-rotation review: $50+ spend, RT ROAS of at least 1.00x, and a Meta start date 12 or more days ago"
             >
-              <Repeat2 size={12} /> Refresh candidates {bulkInsightsLoading ? '· …' : bulkInsightsError ? '· unavailable' : `· ${refreshSoonAdsets.length}`}
+              <Repeat2 size={12} /> Rotation queue {bulkInsightsLoading ? '· …' : bulkInsightsError ? '· unavailable' : `· ${refreshSoonAdsets.length}`}
             </button>
           </div>
           <div className="flex items-center gap-2">
@@ -2979,7 +3026,7 @@ export default function CampaignPerformance() {
               <option value="PAUSED">Paused only</option>
               <option value="has_spend">Has spend</option>
               <option value="top_performers">Top performers</option>
-              <option value="refresh_soon">↻ Refresh candidates</option>
+              <option value="refresh_soon">↻ Rotation queue</option>
               <option value="flagged">⚠ Needs attention</option>
             </select>
             {/* Sort */}
@@ -3028,12 +3075,12 @@ export default function CampaignPerformance() {
         )}
         {bulkInsightsError && statusFilter === 'refresh_soon' && (
           <div role="alert" className="mx-5 mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            Refresh cues are unavailable: {bulkInsightsError}. This view requires current spend and RedTrack ROAS; retry metrics before acting on it. <button type="button" className="font-semibold underline" onClick={() => { const from = datePreset === 'custom' ? dateFrom : null; const to = datePreset === 'custom' ? dateTo : null; loadBulkInsights(adAccountId, datePreset, from, to); }}>Retry metrics</button>
+            Rotation cues are unavailable: {bulkInsightsError}. This view requires current spend and RedTrack ROAS; retry metrics before acting on it. <button type="button" className="font-semibold underline" onClick={() => { const from = datePreset === 'custom' ? dateFrom : null; const to = datePreset === 'custom' ? dateTo : null; loadBulkInsights(adAccountId, datePreset, from, to); }}>Retry metrics</button>
           </div>
         )}
         {statusFilter === 'refresh_soon' && !bulkInsightsError && !bulkInsightsLoading && (
           <div role="status" className="mx-5 mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-            <span className="font-semibold">Refresh candidates:</span> active ad sets with $50+ selected-period spend, RT ROAS ≥1.00x, and a Meta start date 12+ days ago. This is ad-set timing, not creative age.
+            <span className="font-semibold">Rotation queue:</span> active ad sets with $50+ selected-period spend, RT ROAS ≥1.00x, and a Meta start date 12+ days ago. Expand a row to find a proven <span className="font-semibold">Source ad</span>, or a clear manual-review state when none is verified. This is a cue to prepare a replacement, not a pause instruction or a claim about each creative's age.
             {refreshCoverage.missingRoasCount > 0 && <span className="ml-1">{refreshCoverage.missingRoasCount} otherwise eligible ad set{refreshCoverage.missingRoasCount === 1 ? '' : 's'} lack RT ROAS and are excluded.</span>}
           </div>
         )}
@@ -3052,7 +3099,7 @@ export default function CampaignPerformance() {
              metricFilter.value !== '' ? `No ad sets with ${metricFilter.metric.toUpperCase()} ${metricFilter.operator === 'lt' ? '<' : '>'} ${metricFilter.value}.` :
              statusFilter === 'has_spend' ? 'No ad sets with spend in this date range.' :
              statusFilter === 'top_performers' ? 'No ad sets with at least $50 spend and positive ROAS in this date range.' :
-             statusFilter === 'refresh_soon' ? 'No active profitable ad sets with a Meta start date 12 or more days ago.' :
+             statusFilter === 'refresh_soon' ? 'No active profitable ad sets are ready to rotate yet.' :
              statusFilter === 'flagged' ? 'No flagged ad sets — everything looks healthy.' :
              statusFilter !== 'all' ? `No ${statusFilter.toLowerCase()} ad sets found.` :
              'No launched ad sets found. Create and launch a campaign first.'}
@@ -3343,9 +3390,9 @@ export default function CampaignPerformance() {
                                       {isRefreshCandidate && (
                                         <span
                                           className="flex-shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
-                                          title="Ad-set refresh cue: active, RT ROAS at least 1.00x, $50+ spend, and Meta start date at least 12 days ago"
+                                          title="Rotation cue: active, RT ROAS at least 1.00x, $50+ spend, and Meta start date at least 12 days ago. Expand to verify a proven source ad."
                                         >
-                                          Refresh candidate
+                                          Rotation ready
                                         </span>
                                       )}
                                       {triggeredRule && (
@@ -3505,8 +3552,8 @@ export default function CampaignPerformance() {
                                     <td colSpan={10} className="px-6 pb-4 pt-2 border-t border-gray-100">
                                       {isRefreshCandidate && (
                                         <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                                          <p><span className="font-semibold">Refresh cue:</span> this ad set started about {refreshAgeDays} days ago, has {formatMoney(d?.spend)} in the selected period, and RT ROAS of {rowRoas != null ? `${Number(rowRoas).toFixed(2)}x` : '—'}. Inspect its leading creative below, then use <span className="font-semibold">Refresh creative</span> to carry that source into generation.</p>
-                                          <span className="text-[10px] text-amber-700">Ad-set timing, not creative age</span>
+                                          <p><span className="font-semibold">Rotation ready:</span> this ad set started about {refreshAgeDays} days ago, has {formatMoney(d?.spend)} in the selected period, and RT ROAS of {rowRoas != null ? `${Number(rowRoas).toFixed(2)}x` : '—'}. A <span className="font-semibold">Source ad</span> must be active in Meta, have leads, and meet RT ROAS ≥1.00x in this period; otherwise the table asks for manual review.</p>
+                                          <span className="text-[10px] text-amber-700">Prepare a replacement · do not pause the source</span>
                                         </div>
                                       )}
                                       {/* Adset-level diagnostic strip */}
@@ -3554,6 +3601,7 @@ export default function CampaignPerformance() {
                                         adsError={adsError}
                                         rtAdsBulk={rtAdsBulk}
                                         refreshCandidate={isRefreshCandidate}
+                                        onRefreshCreatives={() => loadCreativeDetails(adAccountId, datePreset, datePreset === 'custom' ? dateFrom : null, datePreset === 'custom' ? dateTo : null, true)}
                                         onAdStatusChange={() => loadCreativeDetails(adAccountId, datePreset, datePreset === 'custom' ? dateFrom : null, datePreset === 'custom' ? dateTo : null, true)}
                                         onRemix={(creative) => {
                                           const brandContext = campaignBrands[adset.id];

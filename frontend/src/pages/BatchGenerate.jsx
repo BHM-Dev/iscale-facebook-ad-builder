@@ -229,6 +229,9 @@ export default function BatchGenerate() {
   const [niche, setNiche] = useState('');
   const [styleSettings, setStyleSettings] = useState({});
   const [iterateLinkUrl, setIterateLinkUrl] = useState(''); // destination URL from source ad creative
+  const [iterateCreativeError, setIterateCreativeError] = useState('');
+  const [iterateCreativeState, setIterateCreativeState] = useState(iterateAdId ? 'loading' : 'idle');
+  const iterateCreativeRequestRef = useRef(0);
 
   // Text overlay
   const [overlayEnabled, setOverlayEnabled] = useState(true);
@@ -324,11 +327,34 @@ export default function BatchGenerate() {
 
   // Fetch ad creative data if arriving via the "Iterate" path (adId URL param)
   useEffect(() => {
-    if (!iterateAdId) return;
-    authFetch(`${API_URL}/facebook/ads/${iterateAdId}/creative`)
-      .then(res => res.ok ? res.json() : null)
+    if (!iterateAdId) {
+      setIterateCreativeState('idle');
+      setIterateCreativeError('');
+      return;
+    }
+    const requestId = ++iterateCreativeRequestRef.current;
+    const controller = new AbortController();
+    setIterateCreativeError('');
+    setIterateCreativeState('loading');
+    // A new source must never inherit copy, image, results, or auto-generation
+    // state from the previous URL while its own creative is still resolving.
+    autoTriggeredVariants.current = false;
+    setVariants([newVariant(0), newVariant(1)]);
+    setRefImageUrl('');
+    setRefImagePreview('');
+    setIterateLinkUrl('');
+    setResults({});
+    setAllDone(false);
+    authFetch(`${API_URL}/facebook/ads/${iterateAdId}/creative`, { signal: controller.signal })
+      .then(async res => {
+        if (!res.ok) throw new Error(`Source creative could not be loaded (${res.status})`);
+        return res.json();
+      })
       .then(creative => {
-        if (!creative) return;
+        if (requestId !== iterateCreativeRequestRef.current) return;
+        if (!creative || (!creative.headline && !creative.body)) {
+          throw new Error('Source creative has no usable copy to prefill.');
+        }
         setVariants(prev => prev.map((v, i) =>
           i === 0
             ? {
@@ -356,8 +382,14 @@ export default function BatchGenerate() {
           setOverlayLogoPreview(creative.overlay_logo_url);
           try { localStorage.setItem('overlayLogoUrl', creative.overlay_logo_url); } catch(_) {}
         }
+        setIterateCreativeState('ready');
       })
-      .catch(() => {});
+      .catch(error => {
+        if (controller.signal.aborted || requestId !== iterateCreativeRequestRef.current) return;
+        setIterateCreativeError(error.message || 'Source creative could not be loaded.');
+        setIterateCreativeState('error');
+      });
+    return () => controller.abort();
   }, [iterateAdId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-trigger AI variant generation once when arriving via Iterate with a pre-filled headline.
@@ -616,6 +648,10 @@ export default function BatchGenerate() {
   }, [generateOne, showSuccess, showError]);
 
   const handleGenerateClick = useCallback(async () => {
+    if (refreshWorkflow && iterateCreativeState !== 'ready') {
+      showError(iterateCreativeState === 'loading' ? 'Wait for the verified source ad to finish loading.' : 'A verified source ad is required before generating rotation variants.');
+      return;
+    }
     const valid = getValidVariants();
     if (valid.length === 0) {
       showError(overlayEnabled
@@ -647,7 +683,7 @@ export default function BatchGenerate() {
       setPromptReview(null);
       runGeneration(valid, sizes);
     }
-  }, [getValidVariants, overlayEnabled, selectedSizes, buildGenerationPayload, runGeneration, showError]);
+  }, [getValidVariants, overlayEnabled, selectedSizes, buildGenerationPayload, runGeneration, showError, refreshWorkflow, iterateCreativeState]);
 
   const approvePromptReview = useCallback(() => {
     if (!promptReview?.valid) return;
@@ -729,6 +765,7 @@ export default function BatchGenerate() {
   const filledVariants = variants.filter(v => v.headline.trim() || v.body.trim() || overlayHasContent);
   const totalToGenerate = filledVariants.length * selectedSizes.length;
   const hasResults = Object.keys(results).length > 0;
+  const rotationSourceVerified = !refreshWorkflow || iterateCreativeState === 'ready';
 
   return (
     <div className="max-w-[1800px] mx-auto space-y-8">
@@ -752,14 +789,15 @@ export default function BatchGenerate() {
           {refreshWorkflow && (
             <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 max-w-2xl">
               <Repeat2 size={13} className="mt-0.5 flex-shrink-0" />
-              <span><span className="font-semibold">Creative refresh:</span> this source creative is prefilled for replacement work. Choose the variants and placements you want, then review and launch deliberately—nothing is launched automatically.</span>
+              <span><span className="font-semibold">Creative rotation:</span> {iterateCreativeState === 'loading' ? 'verifying the source ad before replacement work can begin.' : iterateCreativeError ? `${iterateCreativeError} Add or correct the source before generating.` : 'the verified source ad is prefilled for replacement work. Choose the variants and placements you want, then review and launch deliberately—nothing is launched automatically.'}</span>
             </div>
           )}
         </div>
         {filledVariants.length > 0 && !running && (
           <button
             onClick={handleGenerateClick}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity"
+            disabled={!rotationSourceVerified}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
             style={{ backgroundColor: '#2D2463' }}
           >
             <Zap size={14} />
@@ -1201,7 +1239,7 @@ export default function BatchGenerate() {
           {/* Generate button */}
           <button
             onClick={handleGenerateClick}
-            disabled={running || filledVariants.length === 0}
+            disabled={running || filledVariants.length === 0 || !rotationSourceVerified}
             className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity disabled:opacity-40"
             style={{ backgroundColor: '#2D2463' }}
           >
@@ -1293,7 +1331,8 @@ export default function BatchGenerate() {
                 {pushItems.length > 0 && (
                   <button
                     onClick={() => setBatchPushOpen(true)}
-                    className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition-colors shadow-sm"
+                    disabled={!rotationSourceVerified}
+                    className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition-colors shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Rocket size={15} />
                     Push {pushItems.length} Ad{pushItems.length !== 1 ? 's' : ''} to Meta
