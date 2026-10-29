@@ -18,6 +18,7 @@ from app.api.v1.facebook import _resolve_scoped_default_account
 from app.core.deps import require_permission
 from app.database import get_db
 from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, PnlCostEntry, PnlMonthSnapshot, User, normalize_account_id
+from app.services.bhm_everflow_service import BhmEverflowService
 from app.services.everflow_service import EVERFLOW_TZ_BY_ID, META_ID_RE, EverflowService
 from app.services.facebook_service import FacebookService
 from app.services.redtrack_service import RedTrackService, today_in_rt_tz
@@ -172,7 +173,54 @@ def _revenue_provider_for_account(account_id: str) -> str:
     An account with no Everflow offer mapping now has no billable-revenue
     source at all, rather than falling back to a lower-trust number.
     """
-    return "everflow" if normalize_account_id(account_id) in _everflow_account_ids() else "none"
+    account_id = normalize_account_id(account_id)
+    if account_id in _everflow_account_ids():
+        return "everflow"
+    if account_id in _bhm_everflow_offer_map():
+        return "bhm_everflow"
+    return "none"
+
+
+# BHM's own Everflow (network realm): which offers belong to which Meta account, and which affiliates are our internal
+# Meta traffic. Steve, 2026-10-29: LoanDepot 4566, Splitero 4626, internal affiliates 232 and 125. Env overrides:
+# BHM_EVERFLOW_ACCOUNT_OFFERS ({"act_...": ["4626"]}) and BHM_EVERFLOW_INTERNAL_AFFILIATE_IDS ("232,125").
+BHM_EVERFLOW_ACCOUNT_OFFERS_ENV = "BHM_EVERFLOW_ACCOUNT_OFFERS"
+BHM_EVERFLOW_AFFILIATES_ENV = "BHM_EVERFLOW_INTERNAL_AFFILIATE_IDS"
+DEFAULT_BHM_EVERFLOW_ACCOUNT_OFFERS = {
+    "act_994325837966073": ["4626"],   # Splitero - HEI
+    "act_375215180951288": ["4566"],   # Loan Depot - HELOC
+}
+DEFAULT_BHM_EVERFLOW_AFFILIATES = "232,125"
+
+
+def _bhm_everflow_offer_map() -> dict[str, set[str]]:
+    raw = os.getenv(BHM_EVERFLOW_ACCOUNT_OFFERS_ENV)
+    try:
+        mapping = json.loads(raw) if raw else DEFAULT_BHM_EVERFLOW_ACCOUNT_OFFERS
+        return {
+            normalize_account_id(account): {str(o).strip() for o in offers if str(o).strip()}
+            for account, offers in mapping.items()
+            if isinstance(offers, list) and offers
+        }
+    except Exception:  # noqa: BLE001 — a bad env value must never 500 every P&L request
+        logger.error("%s is not a JSON object of account -> [offer ids]; BHM Everflow revenue is disabled", BHM_EVERFLOW_ACCOUNT_OFFERS_ENV)
+        return {}
+
+
+def _bhm_everflow_affiliates() -> set[str]:
+    raw = os.getenv(BHM_EVERFLOW_AFFILIATES_ENV) or DEFAULT_BHM_EVERFLOW_AFFILIATES
+    return {a.strip() for a in raw.split(",") if a.strip()}
+
+
+def _bhm_everflow_rows(db: Session, offer_ids: set[str], start: date, end: date) -> list[dict]:
+    """Internal-affiliate conversions on these offers, with unexpanded {{adset.id}} recovered where possible."""
+    rows = BhmEverflowService().get_internal_conversions(start, end, offer_ids, _bhm_everflow_affiliates())
+    return _recover_macro_adsets(db, rows)
+
+
+def _with_source(result: tuple, source: str) -> tuple:
+    revenue, events, unmapped, _, incomplete, unattributed, breakdown = result
+    return revenue, events, unmapped, source, incomplete, unattributed, breakdown
 
 
 def _everflow_offer_names_for_account(account_id: str) -> set[str]:
@@ -639,15 +687,41 @@ def _revenue_for_account(
     start: date,
     end: date,
 ) -> tuple[Decimal, int, int, str, bool, Decimal, dict]:
-    if _revenue_provider_for_account(account_id) == "everflow":
+    provider = _revenue_provider_for_account(account_id)
+    if provider == "everflow":
         try:
             return _everflow_revenue(db, account_id, start, end)
         except Exception:
             return Decimal("0"), 0, 0, "everflow_unavailable", True, Decimal("0"), {}
+    if provider == "bhm_everflow":
+        try:
+            rows = _bhm_everflow_rows(db, _bhm_everflow_offer_map()[normalize_account_id(account_id)], start, end)
+            report = EverflowService()._aggregate_rows(rows)
+            return _with_source(_everflow_revenue_from_report(db, account_id, report), "bhm_everflow_live")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("BHM Everflow revenue failed for %s: %s", account_id, exc)
+            return Decimal("0"), 0, 0, "bhm_everflow_unavailable", True, Decimal("0"), {}
 
     # No Everflow offer mapping for this account — billable revenue is
     # Everflow-only, so there's nothing to report, not a lower-trust estimate.
     return Decimal("0"), 0, 0, "not_tracked", False, Decimal("0"), {}
+
+
+def _bhm_everflow_monthly_revenue_cache(
+    db: Session,
+    account_id: str,
+    start: date,
+    end: date,
+) -> dict[str, tuple[Decimal, int, int, str, bool, Decimal, dict]]:
+    rows = _bhm_everflow_rows(db, _bhm_everflow_offer_map()[normalize_account_id(account_id)], start, end)
+    by_month: dict[str, list[dict]] = {}
+    for row in rows:
+        by_month.setdefault(EverflowService._conversion_month(row), []).append(row)
+    out = {}
+    for month_start, month_rows in by_month.items():
+        report = EverflowService()._aggregate_rows(month_rows)
+        out[month_start] = _with_source(_everflow_revenue_from_report(db, account_id, report), "bhm_everflow_live")
+    return out
 
 
 def _everflow_monthly_revenue_cache(
@@ -894,9 +968,10 @@ def _summary(
         unattributed_revenue = _money(snapshot.unattributed_revenue)
         event_breakdown = snapshot.event_breakdown or []
     elif revenue_cache is not None:
+        no_rows_source = "bhm_everflow_live" if _revenue_provider_for_account(account_id) == "bhm_everflow" else "everflow_live"
         revenue, conversions, unmapped, revenue_source, revenue_incomplete, unattributed_revenue, event_breakdown = revenue_cache.get(
             start.isoformat(),
-            (Decimal("0"), 0, 0, "everflow_live", False, Decimal("0"), {}),
+            (Decimal("0"), 0, 0, no_rows_source, False, Decimal("0"), {}),
         )
     else:
         revenue, conversions, unmapped, revenue_source, revenue_incomplete, unattributed_revenue, event_breakdown = _revenue_for_account(
@@ -906,7 +981,7 @@ def _summary(
         timings["revenue_ms"] = (time.perf_counter() - revenue_start) * 1000
     if revenue_incomplete:
         data_incomplete = True
-        errors.append("everflow_live_unavailable")
+        errors.append("bhm_everflow_unavailable" if revenue_source == "bhm_everflow_unavailable" else "everflow_live_unavailable")
 
     cost_start = time.perf_counter()
     costs = []
@@ -1181,6 +1256,40 @@ def _everflow_unknown_revenue(
     )
 
 
+def _bhm_everflow_unplaced_revenue(db: Session, account_ids: list[str], start: date, end: date) -> tuple[Decimal, bool]:
+    """BHM Everflow revenue from our internal affiliates that no ad set can claim (blank sub3, unrecovered macro, a
+    scoped campaign id). The affiliate filter already makes it ours, so it counts in the all-accounts total, the same
+    way every conversion on Get Business Coverage / Fast Business Quote does. A Meta id we cannot place in scope is
+    left out, since the internal affiliates may also carry other internal buyers' accounts. Returns (revenue, ok)."""
+    scope = {normalize_account_id(a) for a in account_ids}
+    offers: set[str] = set()
+    for account, account_offers in _bhm_everflow_offer_map().items():
+        if account in scope:
+            offers |= account_offers
+    if not offers:
+        return Decimal("0"), True
+    try:
+        rows = _bhm_everflow_rows(db, offers, start, end)
+        known_adsets = {r[0] for r in db.query(FacebookAdSet.fb_adset_id).filter(FacebookAdSet.fb_adset_id.isnot(None)).all() if r[0]}
+        scoped_campaigns = {
+            str(r[0]) for r in db.query(FacebookCampaign.fb_campaign_id, FacebookCampaign.fb_account_id)
+            .filter(FacebookCampaign.fb_campaign_id.isnot(None)).all()
+            if r[1] and normalize_account_id(r[1]) in scope
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("BHM Everflow unplaced-revenue lookup failed for %s..%s: %s", start, end, exc)
+        return Decimal("0"), False
+    total = Decimal("0")
+    for r in rows:
+        sub3 = str(r.get("sub3") or "").strip()
+        if sub3 in known_adsets:
+            continue                 # already in that account's own row (or an out-of-scope account's)
+        if META_ID_RE.fullmatch(sub3) and sub3 not in scoped_campaigns:
+            continue                 # a Meta id we can't place in scope (e.g. another team's account) — never added
+        total += Decimal(str(r.get("revenue") or 0))
+    return total.quantize(CENT, rounding=ROUND_HALF_UP), True
+
+
 # ---- Frozen all-accounts extras for closed months ------------------------------------------------------------
 # The per-account figures of a closed month are already frozen in pnl_month_snapshots. The all-accounts segment
 # (revenue tied to a scoped Meta campaign id, plus the reported-but-excluded network / foreign buckets) used to be
@@ -1276,6 +1385,9 @@ def _all_extras_for_period(
         if meta and meta.get("scope") == scope and meta.get("rule") == ALL_EXTRAS_RULE:
             return _money(snap.revenue), True, _money(meta.get("foreign_revenue")), _money(snap.unattributed_revenue)
     unknown, ok, foreign, network = _everflow_unknown_revenue(db, account_ids, start, end)
+    bhm_unplaced, bhm_ok = _bhm_everflow_unplaced_revenue(db, account_ids, start, end)
+    unknown += bhm_unplaced
+    ok = ok and bhm_ok
     if (
         ok
         and _closed_full_month(start, end, ALL_EXTRAS_FREEZE_GRACE_DAYS)
@@ -1485,6 +1597,8 @@ def _snapshot_provider(revenue_source: str | None) -> str | None:
         return None
     if revenue_source.startswith("everflow"):
         return "everflow"
+    if revenue_source.startswith("bhm_everflow"):
+        return "bhm_everflow"
     if revenue_source == "not_tracked":
         return "none"
     if revenue_source.startswith("redtrack"):
@@ -1666,6 +1780,17 @@ def get_months(
 
     revenue_cache = None
     revenue_provider = active_provider
+    if revenue_provider == "bhm_everflow" and periods_to_fetch:
+        try:
+            revenue_cache = _bhm_everflow_monthly_revenue_cache(
+                db, account_id, min(s for s, _, _ in periods_to_fetch), max(e for _, e, _ in periods_to_fetch)
+            )
+        except Exception:
+            logger.exception("pnl.months bhm_everflow_cache account=%s status=error", account_id)
+            revenue_cache = {
+                s.isoformat(): (Decimal("0"), 0, 0, "bhm_everflow_unavailable", True, Decimal("0"), {})
+                for s, _, _ in periods_to_fetch
+            }
     if revenue_provider == "everflow" and periods_to_fetch:
         cache_start = time.perf_counter()
         try:

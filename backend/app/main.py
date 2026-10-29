@@ -237,10 +237,10 @@ async def startup_event():
             import time as _time
             from app.api.v1.facebook import run_meta_sync
             from app.services.facebook_service import FacebookService
-            from app.api.v1.pnl import _everflow_account_ids
+            from app.api.v1.pnl import _bhm_everflow_offer_map, _everflow_account_ids
             raw = _os.getenv("META_SYNC_ACCOUNT_IDS")  # set-but-empty stays a kill switch (no accounts)
             if raw is None:
-                raw = ",".join(sorted(_everflow_account_ids())) or "act_521142087204815,act_737291135429748"
+                raw = ",".join(sorted(_everflow_account_ids() | set(_bhm_everflow_offer_map()))) or "act_521142087204815,act_737291135429748"
             account_ids = [a.strip() for a in raw.split(",") if a.strip()]
             print(f"Meta sync scope: {len(account_ids)} account(s)")
             if not account_ids:

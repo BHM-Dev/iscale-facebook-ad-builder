@@ -28,6 +28,10 @@ function revenueSourceLabel(source) {
   if (!source || source === 'none') return 'None';
   if (source === 'not_tracked') return 'Not tracked (Everflow only)';
   if (source === 'everflow_unavailable') return 'Switchboard unavailable';
+  if (source === 'bhm_everflow_live') return 'BHM Everflow';
+  if (source === 'bhm_everflow_unavailable') return 'BHM Everflow unavailable';
+  if (source.startsWith('bhm_everflow')) return 'BHM Everflow';
+  if (source === 'mixed') return 'Multiple sources';
   if (source.startsWith('everflow')) return source === 'everflow_live' ? 'Switchboard' : `Switchboard · ${source.replace('everflow_', '').replaceAll('_', ' ')}`;
   return source.replaceAll('_', ' ');
 }
@@ -37,6 +41,8 @@ function revenueSourceLabel(source) {
 function revenueSourceName(source) {
   if (!source || source === 'none' || source === 'not_tracked') return 'Switchboard';
   if (source.startsWith('everflow')) return 'Switchboard';
+  if (source.startsWith('bhm_everflow')) return 'BHM Everflow';
+  if (source === 'mixed') return 'Multiple sources';
   return source.replaceAll('_', ' ');
 }
 
@@ -44,7 +50,7 @@ function revenueSourceName(source) {
 // an account with no offer mapping (billable revenue is Everflow-only, no
 // RedTrack fallback). Only flag an actual live-pull failure as "Fallback".
 function isRevenueFallback(source) {
-  return source === 'everflow_unavailable';
+  return source === 'everflow_unavailable' || source === 'bhm_everflow_unavailable';
 }
 
 function monthValue(date = new Date()) {
@@ -510,7 +516,7 @@ export default function Pnl() {
           sidebar took its 16rem. */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <KpiTile label="Ad Spend" value={loading ? '--' : money(summary?.spend)} caption="Meta" badge={summary?.spend == null && !loading ? 'Unavailable' : null} />
-        <KpiTile label="Billable Revenue" value={loading ? '--' : money(summary?.revenue)} caption={revenueSourceLabel(summary?.revenue_source)} badge={isRevenueFallback(summary?.revenue_source) ? 'Fallback' : null} />
+        <KpiTile label="Billable Revenue" value={loading ? '--' : money(summary?.revenue)} caption={summary?.revenue_source === 'bhm_everflow_live' && !summary?.conversions ? 'BHM Everflow · no conversions yet' : revenueSourceLabel(summary?.revenue_source)} badge={isRevenueFallback(summary?.revenue_source) ? 'Fallback' : null} />
         <KpiTile label="Gross Profit" value={loading ? '--' : money(summary?.gross_profit)} caption="revenue - spend" tone={grossTone} badge={isIncomplete ? 'Incomplete' : null} />
         {isAllScope ? (
           <>
