@@ -39,7 +39,22 @@ Checked live against Meta and Everflow for today, yesterday and MTD (*verified i
 - **Recovered (built 2026-10-26):** group B's RedTrack click holds the real ad id (`sub1`). `_recover_macro_adsets` maps Everflow `sub5` (RedTrack click id) → ad id → local ad → ad set and rewrites sub3 before aggregation, so those conversions land in the right per-account row. Best-effort: if RedTrack is down (60 s backoff, 10-min cache) or the ad isn't in the local table, the row keeps the macro and is counted in the All-accounts total only. A month snapshotted during a RedTrack outage would keep that slice in the All-accounts extras rather than the per-account row (the All-accounts total is unaffected).
 - Nothing to fix in link formatting (standing rule: don't touch it).
 
+## BHM Everflow revenue source (Splitero, LoanDepot) — 2026-10-29
+- **Source:** BHM's own Everflow, **network** API (`BHM_EVERFLOW_API_KEY` on the VPS). Code: `backend/app/services/bhm_everflow_service.py`; provider `bhm_everflow` in `pnl.py`.
+- **Accounts → offers:** Splitero `act_994325837966073` → 4626; Loan Depot `act_375215180951288` → 4566. Defaults are in code; `BHM_EVERFLOW_ACCOUNT_OFFERS` overrides.
+- **Internal traffic only:** affiliates 232 and 125 (`BHM_EVERFLOW_INTERNAL_AFFILIATE_IDS`). LoanDepot already had 119 outside-affiliate conversions, so revenue is never offer-wide.
+- **Per account:** sub3 = ad set id, the same attribution and `{{adset.id}}` recovery as Switchboard.
+- **All-accounts total:** internal revenue not on an ad set counts (blank sub3, unrecovered macro, scoped campaign id). A Meta id outside scope is never added.
+- **API facts (verified live 2026-10-29):**
+  - paging works via query string (`page_size=500` honoured);
+  - the endpoint returns **429 after a few back-to-back calls**, so rows are cached 5 min per offer and range, and a 429 is retried with backoff;
+  - a response whose rows carry no affiliate id raises instead of reading $0;
+  - events on/off gave identical totals on LoanDepot (no separate event rows yet).
+- **Verified in production 2026-10-29:** both accounts resolve to `bhm_everflow_live` at $0 ("no conversions yet"); RHO is unchanged on Switchboard; both accounts are added to `PNL_ALL_ACCOUNTS_SCOPE_IDS`; the widened Meta sync is confirmed (DIN and RHO 3 ad sets synced 21:22 UTC, DIN's Oct-22 ad sets now local).
+- **Not verified yet:** a real internal conversion. When the first Splitero/LoanDepot conversions land, confirm sub3 carries the ad set id and the figure reconciles to the Everflow portal (affiliates 232+125, offer).
+
 ## Changelog
+- 2026-10-29 BHM Everflow revenue source for Splitero / LoanDepot.
 - 2026-10-26 all-internal offers (GBC, FBQ) count every conversion; Meta ad→ad set lookup (cached, ≤30/call) fills ads missing from the local table for macro recovery.
 - 2026-10-26 ad-set recovery for unexpanded-macro conversions via RedTrack ad id.
 - 2026-10-26 unexpanded `{{adset.id}}` revenue now counted in the All-accounts total.
