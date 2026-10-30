@@ -12,6 +12,7 @@ import re
 from datetime import datetime, timezone
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -69,6 +70,10 @@ app.add_middleware(
     expose_headers=["X-Total-Count"],
     max_age=600,
 )
+
+# Compress JSON responses. Several list endpoints are large (drive-assets ~4 MB,
+# adsets/saved ~0.5 MB, measured 2026-10-30) and went out uncompressed.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 @app.get("/")
 async def root():
@@ -559,9 +564,18 @@ async def startup_event():
         app.state.drive_sync_fn = scheduled_drive_sync
         app.state.drive_recovery_fn = scheduled_drive_recovery
 
-        scheduler.add_job(scheduled_check, 'interval', minutes=30, id='auto_pause_check')
-        scheduler.add_job(scheduled_redtrack_sync, 'interval', minutes=30, id='redtrack_sync')
-        scheduler.add_job(scheduled_meta_sync, 'interval', minutes=30, id='meta_sync', max_instances=1, coalesce=True)
+        # Staggered first runs (2026-10-30): with no start_date all three 30-min jobs first fired
+        # together at boot+30 (plus the 15-min Drive sync on alternate ticks), stacking Meta calls
+        # on one account. Minutes after boot: auto-pause +2 (then every 30, so a deploy no longer
+        # leaves spend unchecked for 30 min), Drive +7 (every 15), RedTrack +10, Meta sync +20.
+        from datetime import timedelta
+        _boot = datetime.now(timezone.utc)
+        scheduler.add_job(scheduled_check, 'interval', minutes=30, id='auto_pause_check',
+                          start_date=_boot + timedelta(minutes=2), max_instances=1, coalesce=True)
+        scheduler.add_job(scheduled_redtrack_sync, 'interval', minutes=30, id='redtrack_sync',
+                          start_date=_boot + timedelta(minutes=10), max_instances=1, coalesce=True)
+        scheduler.add_job(scheduled_meta_sync, 'interval', minutes=30, id='meta_sync',
+                          start_date=_boot + timedelta(minutes=20), max_instances=1, coalesce=True)
 
         def scheduled_pnl_cache_warm():
             """Every 4 min: keep the current month's P&L revenue rows warm (cache TTL is 5 min)."""
@@ -577,7 +591,8 @@ async def startup_event():
         # up to ~19h. The feed is cheap when nothing changed, and the shared
         # advisory lock plus APScheduler's single-instance default prevent
         # overlap. The expensive full-tree work (health snapshot, reconcile) stays daily.
-        scheduler.add_job(scheduled_drive_sync, 'interval', minutes=15, id='drive_creative_sync')
+        scheduler.add_job(scheduled_drive_sync, 'interval', minutes=15, id='drive_creative_sync',
+                          start_date=_boot + timedelta(minutes=7), max_instances=1, coalesce=True)
         # Two bounded same-day recovery windows. They only replay the change
         # feed after a failed/partial run; otherwise they re-check existing
         # unverified rows without doing a full Drive crawl.

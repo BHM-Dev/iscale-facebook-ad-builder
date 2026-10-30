@@ -1990,13 +1990,18 @@ class FacebookService:
 
         try:
             from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-            with ThreadPoolExecutor(max_workers=1) as ex:
-                future = ex.submit(account.get_insights, fields, params)
-                try:
-                    results = future.result(timeout=20)  # 20s hard cap on Meta API
-                except FuturesTimeout:
-                    logger.error("Meta bulk insights timed out after 20s")
-                    raise RuntimeError("Meta API timeout — try again in a moment")
+            # No ``with`` block: its shutdown(wait=True) waits for a hung SDK call, so the
+            # cap never fired. The cap covers the first page only, as before; the cursor
+            # pages on below, so a large-but-healthy account isn't cut off at 20s.
+            ex = ThreadPoolExecutor(max_workers=1)
+            future = ex.submit(account.get_insights, fields, params)
+            try:
+                results = future.result(timeout=20)  # 20s hard cap on Meta API
+            except FuturesTimeout:
+                logger.error("Meta bulk insights timed out after 20s")
+                raise RuntimeError("Meta API timeout — try again in a moment")
+            finally:
+                ex.shutdown(wait=False, cancel_futures=True)
         except RuntimeError:
             raise
         except FacebookRequestError as e:
@@ -3387,21 +3392,19 @@ class FacebookService:
                 'limit': 500,
             }
             try:
-                with ThreadPoolExecutor(max_workers=1) as ex:
-                    future = ex.submit(account.get_insights, fields, params)
-                    try:
-                        # date_preset='maximum' is the widest lookback and can be
-                        # slow on the synchronous insights edge — allow more headroom.
-                        cursor = future.result(timeout=60)  # hard cap on Meta API
-                    except FuturesTimeout:
-                        logger.warning("get_ad_insights_map: chunk timed out after 60s — skipping")
-                        continue
-                rows = []
-                while True:
-                    for row in cursor:
-                        rows.append(row)
-                    if not cursor.load_next_page():
-                        break
+                # No ``with`` block: its exit waits for a hung call, so the cap never fired.
+                ex = ThreadPoolExecutor(max_workers=1)
+                future = ex.submit(account.get_insights, fields, params)
+                try:
+                    # date_preset='maximum' is the widest lookback and can be
+                    # slow on the synchronous insights edge — allow more headroom.
+                    cursor = future.result(timeout=60)  # hard cap on Meta API (first page)
+                except FuturesTimeout:
+                    logger.warning("get_ad_insights_map: chunk timed out after 60s — skipping")
+                    continue
+                finally:
+                    ex.shutdown(wait=False, cancel_futures=True)
+                rows = list(cursor)  # the SDK cursor fetches the remaining pages as it iterates
             except FacebookRequestError as e:
                 body = e.body() if hasattr(e, 'body') and callable(e.body) else {}
                 err = body.get('error', {}) if isinstance(body, dict) else {}

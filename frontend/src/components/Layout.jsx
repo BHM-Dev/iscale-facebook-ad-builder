@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Wand2, Settings, LogOut, ShoppingBag, Target, ChevronLeft, ChevronRight, UserCog, Search, Library, DollarSign, BriefcaseBusiness } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import PageErrorBoundary from './PageErrorBoundary';
 import { useToast } from '../context/ToastContext';
 import { useBrands } from '../context/BrandContext';
 import { useCampaign } from '../context/CampaignContext';
@@ -281,7 +282,12 @@ export default function Layout() {
                             </div>
                         </div>
                     )}
-                    <Outlet />
+                    {/* Pages are lazy-loaded chunks (lib/lazyPage.js); keep the sidebar up while one loads. */}
+                    <PageErrorBoundary key={location.pathname}>
+                        <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
+                            <Outlet />
+                        </Suspense>
+                    </PageErrorBoundary>
                 </div>
             </main>
             <AskAiWidget />

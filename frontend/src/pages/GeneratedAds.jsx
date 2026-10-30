@@ -722,6 +722,8 @@ export default function GeneratedAds() {
                                         ) : (
                                             <img
                                                 src={mediaUrl}
+                                                loading="lazy"
+                                                decoding="async"
                                                 alt={mainAd.headline}
                                                 className="w-full h-full object-cover"
                                                 onError={() => markBroken(bundleId)}
@@ -884,6 +886,8 @@ export default function GeneratedAds() {
                                                         ) : (
                                                             <img
                                                                 src={mainAd.image_url}
+                                                                loading="lazy"
+                                                                decoding="async"
                                                                 alt="Thumbnail"
                                                                 className="h-full w-full object-cover"
                                                             />
@@ -1067,6 +1071,8 @@ export default function GeneratedAds() {
                                                                 ) : (
                                                                     <img
                                                                         src={ad.image_url}
+                                                                        loading="lazy"
+                                                                        decoding="async"
                                                                         alt={ad.size_name}
                                                                         className="w-full h-full object-cover"
                                                                     />

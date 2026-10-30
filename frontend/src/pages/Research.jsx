@@ -1610,7 +1610,9 @@ export default function Research() {
     if (!verticalConfig) return;
     setRefreshSummary(null);
     setResultMode('browse');
-    setSearchResultAds([]);
+    // Keep the same array when already empty: a fresh [] changes searchResultAds and
+    // re-fires the filter effect below, which fetched browse-ads a second time on every visit.
+    setSearchResultAds((prev) => (prev.length ? [] : prev));
     loadBrowseAds();
     loadSavedAds();
   }, [activeVertical, activeSubVertical, verticalConfig]); // eslint-disable-line react-hooks/exhaustive-deps

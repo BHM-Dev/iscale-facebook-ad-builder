@@ -24,3 +24,27 @@ What watches the Ad Builder, where it lives, and how to tell if it has stopped. 
 
 ## Known open items (from the 2026-10-24 review)
 a leftover `.env.bak-*` file with plaintext secrets and 45 GB reclaimable Docker build cache (cleanup below); deploy-failure notifier disabled (`if: ${{ false }}`); CI doesn't gate deploy. Restart policy + password rotation need a short maintenance window.
+
+## Speed pass, batch 1 (2026-10-30)
+Measured first in Steve's Chrome: every page's data finished in under 4s warm. The lag was elsewhere. Full review: `docs/briefs/AdBuilder-Speed-Review-2026-10-30.md` (local).
+
+**Changes:**
+- **Frontend:**
+  - Each page is now its own lazy chunk (`lib/lazyPage.js`). The main bundle went from 1.55 MB to 283 KB, or 90 KB gzipped.
+  - If a tab is still open from before a deploy and requests an old chunk, the page reloads once. `PageErrorBoundary` keeps the sidebar visible if a page still fails to load.
+  - nginx now has `gzip on`. It was off, so the bundle was sent raw.
+- **API:**
+  - Added `GZipMiddleware`. `drive-assets` was 4 MB raw and `adsets/saved` was 0.5 MB.
+  - Auth dependencies are now plain `def`, so their DB lookups no longer run on the single event loop.
+  - Pool settings: 10 + 20, with `pre_ping` and `recycle` (Postgres `max_connections` is 100).
+- **Meta insights cap:** the 20s and 60s caps on Meta insights now actually return. A `with ThreadPoolExecutor` block used to wait for the hung call.
+  - Verified with a stubbed 26s Meta call: the old code took 26s and the new code raises at 20s.
+  - The cap still covers the first page only. Later pages load outside it.
+- **Ad Remix:** the source-image download runs in the threadpool, not on the event loop.
+- **Scheduler:** jobs are staggered by start time after boot: auto-pause +2 min (it used to wait 30 min after every deploy), Drive +7, RedTrack +10, Meta sync +20. All four have `max_instances=1` and `coalesce`.
+- **Research:** browse-ads is fetched once per visit instead of twice.
+- **Library grids:** images use `loading="lazy"`.
+
+**Status:**
+- Unit-tested: auth via `/auth/me`, the Meta cap, and frontend vitest.
+- Not verified in production until after the deploy.

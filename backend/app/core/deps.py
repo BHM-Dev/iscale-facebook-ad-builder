@@ -8,8 +8,12 @@ from app.core.security import decode_access_token
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
+# These are plain ``def`` on purpose. FastAPI runs sync dependencies in its threadpool;
+# as ``async def`` their blocking ``db.query`` (and lazy role/permission loads) ran on
+# the single event loop, so one slow DB checkout stalled every request in the process.
 
-async def get_current_user(
+
+def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
 ) -> User:
@@ -35,7 +39,7 @@ async def get_current_user(
     return user
 
 
-async def get_current_active_user(
+def get_current_active_user(
     current_user: User = Depends(get_current_user)
 ) -> User:
     """Get the current user and verify they are active"""
@@ -49,7 +53,7 @@ async def get_current_active_user(
 
 def require_role(role_name: str) -> Callable:
     """Dependency that requires the user to have a specific role"""
-    async def role_checker(
+    def role_checker(
         current_user: User = Depends(get_current_active_user)
     ) -> User:
         if not current_user.has_role(role_name):
@@ -63,7 +67,7 @@ def require_role(role_name: str) -> Callable:
 
 def require_any_role(role_names: List[str]) -> Callable:
     """Dependency that requires the user to have at least one of the specified roles"""
-    async def role_checker(
+    def role_checker(
         current_user: User = Depends(get_current_active_user)
     ) -> User:
         if not any(current_user.has_role(role) for role in role_names):
@@ -77,7 +81,7 @@ def require_any_role(role_names: List[str]) -> Callable:
 
 def require_permission(permission_name: str) -> Callable:
     """Dependency that requires the user to have a specific permission"""
-    async def permission_checker(
+    def permission_checker(
         current_user: User = Depends(get_current_active_user)
     ) -> User:
         if not current_user.has_permission(permission_name):
@@ -89,7 +93,7 @@ def require_permission(permission_name: str) -> Callable:
     return permission_checker
 
 
-async def get_current_superuser(
+def get_current_superuser(
     current_user: User = Depends(get_current_active_user)
 ) -> User:
     """Require the current user to be a superuser"""
@@ -102,7 +106,7 @@ async def get_current_superuser(
 
 
 # Optional auth - returns None if not authenticated
-async def get_optional_user(
+def get_optional_user(
     token: Optional[str] = Depends(OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)),
     db: Session = Depends(get_db)
 ) -> Optional[User]:

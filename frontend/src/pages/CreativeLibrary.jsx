@@ -283,7 +283,7 @@ export default function CreativeLibrary() {
                         {asset.format === 'video' ? (
                           <video src={asset.r2_key} className="h-full w-full object-cover" muted playsInline preload="metadata" />
                         ) : (
-                          <img src={asset.r2_key} alt={asset.file_name} className="h-full w-full object-cover" />
+                          <img src={asset.r2_key} alt={asset.file_name} loading="lazy" decoding="async" className="h-full w-full object-cover" />
                         )}
                         <div className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-1 text-[11px] font-semibold text-gray-700 shadow-sm">
                           {asset.format === 'video' ? <Film size={12} /> : <Image size={12} />}

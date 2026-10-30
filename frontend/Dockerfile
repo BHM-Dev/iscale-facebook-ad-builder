@@ -31,6 +31,9 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 
 # SPA fallback: serve index.html for client-side routes.
 #
+# gzip: nginx:alpine ships with it off, so the 1.5 MB JS bundle went out raw
+# (measured 2026-10-30). text/html is always compressed once gzip is on.
+#
 # index.html gets explicit no-cache headers — without this, browsers can keep
 # serving an old cached copy of the page shell after a deploy, which still
 # references JS/CSS asset filenames from that old build. Since Vite hashes
@@ -55,6 +58,11 @@ RUN echo 'server { \
     listen 80; \
     root /usr/share/nginx/html; \
     index index.html; \
+    gzip on; \
+    gzip_vary on; \
+    gzip_comp_level 6; \
+    gzip_min_length 1024; \
+    gzip_types text/css application/javascript application/json image/svg+xml text/plain; \
     location = /index.html { \
         add_header Cache-Control "no-cache, no-store, must-revalidate"; \
         add_header Pragma "no-cache"; \

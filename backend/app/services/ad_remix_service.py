@@ -86,8 +86,11 @@ async def deconstruct_template(template_image_url: str) -> AdBlueprint:
         # Fetch the image and base64-encode it for the vision API
         # Approved hosts only, https, redirects re-validated hop by hop (an approved host with an open redirect used to be
         # a way past the host check), 10 MB cap. Same checks the old inline code did, plus the redirect protection.
+        # fetch_bytes is blocking; run it off the event loop so a slow image host doesn't stall every other request.
         from app.services.safe_fetch import fetch_bytes
-        raw_image_bytes, fetched_content_type = fetch_bytes(
+        from starlette.concurrency import run_in_threadpool
+        raw_image_bytes, fetched_content_type = await run_in_threadpool(
+            fetch_bytes,
             template_image_url, max_bytes=10 * 1024 * 1024, strict_hosts=True, timeout=(5, 10), deadline_seconds=30,
         )
         image_bytes = base64.b64encode(raw_image_bytes).decode('utf-8')
