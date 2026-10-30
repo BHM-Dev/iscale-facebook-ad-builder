@@ -84,7 +84,23 @@ Measured first in Steve's Chrome: every page's data finished in under 4s warm. T
 - **Paging the Drive list.** It takes about 170ms on the server and sends 449 KB gzipped. Paging would mean reworking the launcher's picker.
 - **Caching live ad sets (5.4s) and campaigns.** A launch modal must show an ad set the moment it's created, and many write paths would need to clear the cache.
 
+- **Meta insights page size is now 500 rows** (`1f7bb9b`). Meta's default page is 25 rows, so the account ad-set pulls made up to 10 round trips one after another.
+  - Measured live on RHO. The rows and spend are identical to the cent:
+
+    | Range | Before | After |
+    |---|---|---|
+    | 14 days | 11.4s | 1.6s |
+    | 30 days | 23.0s | 3.6s |
+    | 90 days | 28.8s | 3.4s |
+
 **Status:**
 - **Unit-tested:**
   - The new tests fail on the old code: the fetches ran serially, and 3 concurrent requests made 3 Meta pulls.
   - Cache tests cover hits, refresh, expiry, deep copies, and single-flight.
+- **Verified in production 2026-10-30** (Steve's Chrome):
+  - Cold 30-day niche-profitability: 14.7s → 3.5s.
+  - Cold 30-day insights-bulk: 3.8s. A repeat call returns in 0.09s from cache.
+  - Pages: 1.2s cold, 0.07s cached. The response contains no tokens.
+  - Dashboard's niche summary reused the shared cache.
+  - Campaign Performance starts its insights call before `/facebook/accounts` returns. A full reload has all data in 2.5s.
+- **Not verified:** the switch when the saved account is no longer in the list, and a manual switch made while the list is loading. Neither was exercised in a browser.
