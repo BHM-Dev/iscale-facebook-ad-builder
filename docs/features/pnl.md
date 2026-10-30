@@ -53,7 +53,24 @@ Checked live against Meta and Everflow for today, yesterday and MTD (*verified i
 - **Verified in production 2026-10-29:** both accounts resolve to `bhm_everflow_live` at $0 ("no conversions yet"); RHO is unchanged on Switchboard; both accounts are added to `PNL_ALL_ACCOUNTS_SCOPE_IDS`; the widened Meta sync is confirmed (DIN and RHO 3 ad sets synced 21:22 UTC, DIN's Oct-22 ad sets now local).
 - **Not verified yet:** a real internal conversion. When the first Splitero/LoanDepot conversions land, confirm sub3 carries the ad set id and the figure reconciles to the Everflow portal (affiliates 232+125, offer).
 
+## Speed (2026-10-30, Steve: "90 seconds is way too long")
+- **Where the time went (measured on the server):** every page load pulled live from outside services. That was Switchboard Everflow (~15–18s for a month, sequential 7-day windows), Meta spend (~14–22s for RHO, ~23 pages of ad-set rows), and RedTrack and Meta lookups for macro recovery. All accounts repeated the Switchboard pull once per account, which took 88–130s.
+- **Closed months are frozen everywhere,** including the single-month view (before, only the months table was). A month freezes 3+ days after it ends and changes only through Re-fetch (`POST /months/{month}/resync`), i.e. when Steve asks. Costs he enters still apply, read from the database.
+- **Meta spend** now comes from one account-level row (matched the ad-set sum to the cent for September: $33,644.24).
+- **Switchboard** windows are fetched 4 at a time with a 429 retry. Rows are cached for 5 min with one pull per key.
+- **A background job (`pnl_cache_warm`, every 4 min)** refreshes the current month's rows, so a page read hits warm data.
+- **Measured from a separate process (2026-10-30):**
+
+  | View | Before | After |
+  |---|---|---|
+  | Closed month, single account or All | ~6–15s | 0.0s |
+  | All accounts, current month, warm | 88–116s | ~1.4–2.2s |
+  | Months table, All | 130s | ~16s cold |
+
+- **Not measured:** an actual browser page load (no signed-in session).
+
 ## Changelog
+- 2026-10-30 speed: frozen closed months in /summary, account-level spend, parallel Switchboard windows, row cache + 4-min warm job.
 - 2026-10-29 BHM Everflow revenue source for Splitero / LoanDepot.
 - 2026-10-26 all-internal offers (GBC, FBQ) count every conversion; Meta ad→ad set lookup (cached, ≤30/call) fills ads missing from the local table for macro recovery.
 - 2026-10-26 ad-set recovery for unexpanded-macro conversions via RedTrack ad id.
