@@ -601,12 +601,27 @@ def _recover_macro_adsets(db: Session, rows: list[dict]) -> list[dict]:
 
 
 def _spend_for_account(account_id: str, start: date, end: date) -> Decimal:
-    insights = FacebookService().get_account_insights_bulk(
-        ad_account_id=account_id,
-        date_from=start.isoformat(),
-        date_to=end.isoformat(),
-    )
-    return sum((_money(row.get("spend")) for row in insights.values()), Decimal("0"))
+    """Total Meta spend for the account over [start, end], in the account's own timezone.
+
+    One ACCOUNT-level Insights row instead of every ad set's: RHO has ~570 ad sets, so the ad-set-level pull paged
+    ~23 times and took ~14s per load (measured 2026-10-30). The account-level total matched the ad-set sum to the
+    cent on 2026-10-26 (both $1,364.31 for the day). Raises on failure, so the P&L marks spend unavailable."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def pull():
+        account = FacebookService()._get_account(account_id)
+        rows = account.get_insights(
+            fields=["spend"],
+            params={"time_range": {"since": start.isoformat(), "until": end.isoformat()}, "level": "account"},
+        )
+        return [dict(row) for row in rows]
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        rows = pool.submit(pull).result(timeout=20)
+    finally:
+        pool.shutdown(wait=False)   # a timed-out pull is abandoned (read-only), never waited on
+    return sum((_money(row.get("spend")) for row in rows), Decimal("0"))
 
 
 def _spend_map(db: Session, start: date, end: date, known: dict[str, Decimal] | None = None) -> tuple[dict[str, Decimal], bool]:
@@ -1413,7 +1428,7 @@ def _summary_all(
     # with no external call at all, so there's no shared batch pull to make
     # here any more.
     account_rows = [
-        _summary(db, account_id, start, end, label, include_costs=False)
+        _account_summary_frozen_if_closed(db, account_id, start, end, label, current_user)
         for account_id in account_ids
     ]
     unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _all_extras_for_period(db, account_ids, start, end, current_user)
@@ -1497,7 +1512,24 @@ def get_summary(
     start, end, label = _resolve_period(period, month, date_from, date_to)
     if account_id == "all":
         return _summary_all(db, current_user, start, end, label)
-    return _summary(db, account_id, start, end, label)
+    return _account_summary_frozen_if_closed(db, account_id, start, end, label, current_user)
+
+
+def _account_summary_frozen_if_closed(db: Session, account_id: str, start: date, end: date, label: str, current_user: User) -> dict:
+    """Steve, 2026-10-30: a closed month's numbers are fixed unless he asks for a re-fetch. The months table already
+    read frozen snapshots, but picking a single closed month (period=month) re-pulled Meta and Everflow every time
+    (~15s). Same rule here: a whole closed month is served from its snapshot; if none exists yet, it is pulled once and
+    frozen (when solid enough and 3+ days after month end). Re-fetch (POST /months/{month}/resync) is the only way to
+    change a frozen month."""
+    if not _closed_full_month(start, end):
+        return _summary(db, account_id, start, end, label)
+    snapshot = _snapshot_for_account_month(db, account_id, start)
+    row = _summary(db, account_id, start, end, label, snapshot=snapshot)
+    # Late conversions / clawbacks keep landing for a few days after month end, so a month is only frozen from here
+    # once it ended ALL_EXTRAS_FREEZE_GRACE_DAYS ago (same grace as the all-accounts extras).
+    if snapshot is None and _snapshot_eligible(row) and _closed_full_month(start, end, ALL_EXTRAS_FREEZE_GRACE_DAYS):
+        _write_month_snapshot(db, account_id, start, end, row, current_user)
+    return row
 
 
 @router.get("/attribution-audit")
