@@ -187,6 +187,7 @@ def _fetch_meta_insights(ad_account_id: Optional[str], date_from: str, date_to: 
         params: dict = {
             'time_range': {'since': date_from, 'until': date_to},
             'level': 'adset',
+            'limit': 500,  # default page is 25 rows: 11.4s -> 1.6s for 136 ad sets (2026-10-30)
         }
         if day_filter != "all":
             params['time_increment'] = 1  # daily breakdown for DOW filtering

@@ -2016,15 +2016,19 @@ class FacebookService:
             'cost_per_action_type',
             'purchase_roas',
         ]
+        # limit=500: Meta's default insights page is 25 rows, so ~130 ad sets meant 5-6 serial
+        # round trips (11.4s vs 1.6s for the same 136 rows, measured on RHO 2026-10-30).
         if date_from and date_to:
             params = {
                 'time_range': {'since': date_from, 'until': date_to},
                 'level': 'adset',
+                'limit': 500,
             }
         else:
             params = {
                 'date_preset': date_preset,
                 'level': 'adset',
+                'limit': 500,
             }
 
         try:
