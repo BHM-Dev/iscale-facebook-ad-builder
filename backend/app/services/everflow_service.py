@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
+import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
@@ -301,7 +303,36 @@ class EverflowService:
     MAX_ROWS_PER_RESPONSE = 2000
     INITIAL_WINDOW_DAYS = 7
 
+    # One P&L "All accounts" load asks for the same month's rows once per account plus once for the all-accounts
+    # extras; each pull is ~18s for a month (8k rows, 7-day windows), measured 2026-10-30. Rows are cached briefly per
+    # (range, timezone) so the page pulls once. Short TTL: the P&L is a live view and a few minutes is the tolerance.
+    ROWS_CACHE_TTL_SECONDS = 300
+    _rows_cache: dict[tuple, tuple[float, list[dict]]] = {}
+    _rows_cache_lock = threading.Lock()
+    _rows_key_locks: dict[tuple, threading.Lock] = {}
+
     def _fetch_conversion_rows(self, date_from: str, date_to: str, timezone_id: int) -> list[dict]:
+        key = (date_from, date_to, timezone_id)
+        with self._rows_cache_lock:
+            key_lock = self._rows_key_locks.setdefault(key, threading.Lock())
+        # One pull per key at a time: concurrent callers (the P&L's account rows, the intelligence thread pool, the
+        # offer monitor) wait for the first pull instead of each spending ~18s and risking a 429.
+        with key_lock:
+            with self._rows_cache_lock:
+                hit = self._rows_cache.get(key)
+                if hit and time.monotonic() - hit[0] < self.ROWS_CACHE_TTL_SECONDS:
+                    return list(hit[1])
+            rows = self._fetch_conversion_rows_uncached(date_from, date_to, timezone_id)   # exceptions are never cached
+            with self._rows_cache_lock:
+                now = time.monotonic()
+                for stale in [k for k, (at, _) in self._rows_cache.items() if now - at >= self.ROWS_CACHE_TTL_SECONDS]:
+                    self._rows_cache.pop(stale, None)
+                if len(self._rows_cache) >= 32:
+                    self._rows_cache.pop(min(self._rows_cache, key=lambda k: self._rows_cache[k][0]), None)
+                self._rows_cache[key] = (now, rows)
+            return list(rows)
+
+    def _fetch_conversion_rows_uncached(self, date_from: str, date_to: str, timezone_id: int) -> list[dict]:
         start = datetime.strptime(date_from, "%Y-%m-%d").date()
         end = datetime.strptime(date_to, "%Y-%m-%d").date()
         if end < start:

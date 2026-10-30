@@ -159,3 +159,16 @@ def mock_facebook_service(client):
     # Clean up the override
     if get_facebook_service in app.dependency_overrides:
         del app.dependency_overrides[get_facebook_service]
+
+
+@pytest.fixture(autouse=True)
+def _clear_everflow_row_caches():
+    """Everflow row caches are process-wide; never let one test's fake rows leak into another."""
+    from app.services.everflow_service import EverflowService
+    from app.services import bhm_everflow_service
+    EverflowService._rows_cache.clear()
+    EverflowService._rows_key_locks.clear()
+    bhm_everflow_service._cache.clear()
+    yield
+    EverflowService._rows_cache.clear()
+    bhm_everflow_service._cache.clear()
