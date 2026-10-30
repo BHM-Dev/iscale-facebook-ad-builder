@@ -124,4 +124,7 @@ Measured first in Steve's Chrome: every page's data finished in under 4s warm. T
 
 **Behaviour change:** a Research refresh started from a tab that is then closed now runs to completion. The old async route was cancelled when the tab closed. The Meta budget was already charged up front, so the accounting stays correct.
 
-**Status:** unit-tested (route shape, async service run from a worker thread, cross-loop cap). Production check below.
+**Status:**
+- **Unit-tested:** route shape, the async service running from a worker thread, and the cross-loop cap.
+- **Verified in production 2026-10-30:** a live `POST /research/search` returned 200 with 10 ads in 0.7s. The logs show no event-loop errors.
+- **Not verified:** a Playwright-fallback search, a brand scrape, and a vertical refresh. None of these was run, to avoid spending Meta budget and creating research rows.
