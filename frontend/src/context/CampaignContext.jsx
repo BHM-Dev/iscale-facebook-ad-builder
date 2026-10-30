@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useEffect, useContext, useRef, useState } from 'react';
+import React, { createContext, useCallback, useEffect, useContext, useMemo, useRef, useState } from 'react';
 import { authFetch } from '../lib/facebookApi';
 import { useToast } from './ToastContext';
 import { LAUNCH_DRAFT_SESSION_KEY, LAUNCH_RECEIPT_SESSION_KEY, clearLaunchDraftSession, draftHasContent } from '../lib/launchDraft';
@@ -369,7 +369,9 @@ export const CampaignProvider = ({ children }) => {
         return () => { cancelled = true; };
     }, [normalizeAccountId, setActiveAccountId]);
 
-    const value = {
+    // Memoised so a parent re-render (e.g. BrandProvider reloading brands) doesn't hand every
+    // consumer a new object and re-render the whole mounted page. Setters are stable.
+    const value = useMemo(() => ({
         campaignData,
         setCampaignData,
         adsetData,
@@ -391,7 +393,7 @@ export const CampaignProvider = ({ children }) => {
         setActiveAccountId,
         adAccounts,
         activeAccountLoading
-    };
+    }), [campaignData, setCampaignData, adsetData, setAdsetData, creativeData, setCreativeData, adsData, setAdsData, launchSummary, setLaunchSummary, launchReceipt, setLaunchReceipt, selectedAdAccount, setSelectedAdAccount, restoredDraftNotice, dismissRestoredDraft, discardLaunchDraft, activeAccountId, setActiveAccountId, adAccounts, activeAccountLoading]);
 
     return (
         <CampaignContext.Provider value={value}>

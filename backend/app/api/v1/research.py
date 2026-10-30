@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import List, Tuple
+import asyncio
 import re
 import os
 from datetime import datetime, timezone
@@ -757,23 +758,27 @@ def _directional_volume_score(rank_position: int | None, is_multiple_versions: b
             pass
     return min(score, 100)
 
+# The search/capture/refresh routes below are plain ``def`` that run the async scraper with
+# asyncio.run (2026-10-30). As ``async def`` their sync DB writes (a commit per ad, N+1 lookups)
+# and serial keyword loops ran on the server's only event loop, stalling every other request
+# for the length of a vertical refresh. In the threadpool each gets a private loop instead.
 @router.post("/search", response_model=List[ScrapedAdSearchResult])
-async def search_ads(request: AdSearchRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+def search_ads(request: AdSearchRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Search ads without saving"""
     # Reserve the Meta call budget this request can consume (limit is capped at 300 per call by the schema)
     _reserve_api_budget(db, request.limit)
 
     service = ResearchService(db)
-    return await service.search_ads_async(request)
+    return asyncio.run(service.search_ads_async(request))
 
 @router.post("/search-and-save")
-async def search_and_save(request: AdSearchRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+def search_and_save(request: AdSearchRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Execute search and save as SavedSearch with all ads"""
     # Reserve the Meta call budget this request can consume (limit is capped at 300 per call by the schema)
     _reserve_api_budget(db, request.limit)
 
     service = ResearchService(db)
-    saved_search, ads = await service.search_and_save(request)
+    saved_search, ads = asyncio.run(service.search_and_save(request))
     return {
         "search_id": saved_search.id,
         "query": saved_search.query,
@@ -1019,7 +1024,7 @@ def get_verticals(db: Session = Depends(get_db), current_user: User = Depends(ge
     ]
 
 @router.post("/run-scheduled-searches")
-async def run_scheduled_searches(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+def run_scheduled_searches(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Manually trigger scheduled searches (admin only: it runs every due saved search, uncapped by the UI)."""
     if not getattr(current_user, "is_superuser", False):
         raise HTTPException(status_code=403, detail="Only admins can run scheduled searches.")
@@ -1029,7 +1034,7 @@ async def run_scheduled_searches(db: Session = Depends(get_db), current_user: Us
 
     try:
         scheduler = SchedulerService(db)
-        await scheduler.run_scheduled_searches()
+        asyncio.run(scheduler.run_scheduled_searches())
     finally:
         _release_in_flight("run-scheduled-searches")
 
@@ -1225,15 +1230,18 @@ async def create_brand_scrape(
     db.commit()
     db.refresh(brand_scrape)
 
-    # Start scraping in background
-    async def run_scrape():
+    # Start scraping in background. Plain ``def`` + its own event loop on purpose: as an
+    # ``async def`` task it ran on the server's only event loop, and the scraper's blocking
+    # DB commits and boto3 R2 uploads (up to 500 ads) stalled every other request for the
+    # whole scrape. A sync task runs in the threadpool, so only this worker thread waits.
+    def run_scrape():
         from app.database import SessionLocal
         scrape_db = SessionLocal()
         try:
             scraper = BrandScraperService(scrape_db)
             scrape_record = scrape_db.query(BrandScrape).filter(BrandScrape.id == brand_scrape.id).first()
             if scrape_record:
-                await scraper.scrape_brand(scrape_record)
+                asyncio.run(scraper.scrape_brand(scrape_record))
         except Exception as e:
             print(f"Background scrape error: {redact_secrets(e)}")
             scrape_record = scrape_db.query(BrandScrape).filter(BrandScrape.id == brand_scrape.id).first()
@@ -2785,7 +2793,7 @@ def get_advertiser_watchlist(
 
 
 @router.post("/config-verticals/{config_id}/capture-advertiser")
-async def capture_advertiser_for_research(
+def capture_advertiser_for_research(
     config_id: str,
     request: ResearchAdvertiserWatchlistCreate,
     limit: int = 30,
@@ -2811,7 +2819,7 @@ async def capture_advertiser_for_research(
     if not vertical:
         vertical = Vertical(name=config["label"], description=f"Auto-created for {config['label']} research vertical")
         db.add(vertical); db.commit(); db.refresh(vertical)
-    saved_search, ads = await ResearchService(db).search_and_save(AdSearchRequest(query=advertiser, platform="facebook", limit=limit, country="US", negative_keywords=config.get("negative_keywords", []), vertical_id=vertical.id, search_type="one_time"))
+    saved_search, ads = asyncio.run(ResearchService(db).search_and_save(AdSearchRequest(query=advertiser, platform="facebook", limit=limit, country="US", negative_keywords=config.get("negative_keywords", []), vertical_id=vertical.id, search_type="one_time")))
     retained_advertisers = sorted({ad.brand_name for ad in ads if ad.brand_name}, key=str.casefold)
     # The page name shown by Meta can differ slightly from the operator's
     # shorthand (spacing, punctuation, LLC suffix). When the capture found one
@@ -3251,7 +3259,7 @@ def clear_vertical_ads(
 
 
 @router.post("/search-and-save-vertical")
-async def search_and_save_vertical(
+def search_and_save_vertical(
     vertical_id: str,
     sub_vertical: str | None = None,
     limit_per_keyword: int = 20,
@@ -3265,7 +3273,7 @@ async def search_and_save_vertical(
     if not _claim_in_flight(key):
         raise HTTPException(status_code=409, detail="A refresh for this vertical is already running — wait for it to finish.")
     try:
-        return await _search_and_save_vertical_impl(vertical_id, sub_vertical, limit_per_keyword, db, current_user)
+        return asyncio.run(_search_and_save_vertical_impl(vertical_id, sub_vertical, limit_per_keyword, db, current_user))
     finally:
         _release_in_flight(key)
 

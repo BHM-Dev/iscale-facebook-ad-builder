@@ -104,3 +104,24 @@ Measured first in Steve's Chrome: every page's data finished in under 4s warm. T
   - Dashboard's niche summary reused the shared cache.
   - Campaign Performance starts its insights call before `/facebook/accounts` returns. A full reload has all data in 2.5s.
 - **Not verified:** the switch when the saved account is no longer in the list, and a manual switch made while the list is loading. Neither was exercised in a browser.
+
+## Speed pass, batch 3 (2026-10-30)
+
+**Changes:**
+- **Research scraping no longer runs on the server's only event loop.**
+  - The search, search-and-save, capture-advertiser, vertical-refresh and run-scheduled-searches routes are now plain `def`. They run the async scraper with `asyncio.run` in the threadpool.
+  - The brand-scrape background task works the same way.
+  - Before, their sync DB writes (a commit per ad) and the blocking boto3 R2 uploads stalled every request for the length of a refresh or scrape.
+- **Chromium cap:** the `asyncio.Semaphore(2)` became `_ChromiumSlots`, a threading semaphore polled without blocking.
+  - An asyncio semaphore binds to one loop. A test showed it raising "bound to a different event loop" six times once two loops contended, which they now do.
+  - The cap of 2 holds across loops (test).
+- **`CampaignContext` value is memoised.**
+
+**Deliberately not done:**
+- **#13 budget-typing re-render:** testing it in production means typing into a live budget field. Revisit if Joel reports lag.
+- **#14 releasing DB connections in background jobs:** batch 1 raised the pool from 15 to 30, and there have been zero pool waits in the logs.
+- **Memoising `BrandContext`:** its functions aren't stable, so memoising would do nothing without a riskier refactor.
+
+**Behaviour change:** a Research refresh started from a tab that is then closed now runs to completion. The old async route was cancelled when the tab closed. The Meta budget was already charged up front, so the accounting stays correct.
+
+**Status:** unit-tested (route shape, async service run from a worker thread, cross-loop cap). Production check below.

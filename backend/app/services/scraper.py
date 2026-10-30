@@ -22,8 +22,30 @@ from sqlalchemy.orm import Session
 from app.core.redact import redact_secrets as _redact
 
 import asyncio
+import threading
 
-CHROMIUM_SEMAPHORE = asyncio.Semaphore(2)  # shared with brand_scraper
+class _ChromiumSlots:
+    """Process-wide cap on concurrent Chromium launches, usable from any event loop.
+
+    An asyncio.Semaphore binds to the first loop that waits on it, and brand scrapes now run
+    on their own loop in a worker thread (research.py), so a shared asyncio.Semaphore would
+    raise "bound to a different event loop" under contention. A threading semaphore polled
+    without blocking works across loops and never stalls the loop it's awaited on."""
+
+    def __init__(self, slots: int):
+        self._sem = threading.BoundedSemaphore(slots)
+
+    async def __aenter__(self):
+        while not self._sem.acquire(blocking=False):
+            await asyncio.sleep(0.25)
+        return self
+
+    async def __aexit__(self, *exc):
+        self._sem.release()
+        return False
+
+
+CHROMIUM_SEMAPHORE = _ChromiumSlots(2)  # shared with brand_scraper
 
 
 class FacebookAdsLibraryAPI:
