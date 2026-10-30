@@ -311,16 +311,19 @@ class EverflowService:
     _rows_cache_lock = threading.Lock()
     _rows_key_locks: dict[tuple, threading.Lock] = {}
 
-    def _fetch_conversion_rows(self, date_from: str, date_to: str, timezone_id: int) -> list[dict]:
+    def _fetch_conversion_rows(self, date_from: str, date_to: str, timezone_id: int, refresh: bool = False) -> list[dict]:
         key = (date_from, date_to, timezone_id)
         with self._rows_cache_lock:
+            hit = self._rows_cache.get(key)
+            if hit and not refresh and time.monotonic() - hit[0] < self.ROWS_CACHE_TTL_SECONDS:
+                return list(hit[1])   # a fresh entry never waits behind a background refresh of the same key
             key_lock = self._rows_key_locks.setdefault(key, threading.Lock())
         # One pull per key at a time: concurrent callers (the P&L's account rows, the intelligence thread pool, the
         # offer monitor) wait for the first pull instead of each spending ~18s and risking a 429.
         with key_lock:
             with self._rows_cache_lock:
                 hit = self._rows_cache.get(key)
-                if hit and time.monotonic() - hit[0] < self.ROWS_CACHE_TTL_SECONDS:
+                if hit and not refresh and time.monotonic() - hit[0] < self.ROWS_CACHE_TTL_SECONDS:
                     return list(hit[1])
             rows = self._fetch_conversion_rows_uncached(date_from, date_to, timezone_id)   # exceptions are never cached
             with self._rows_cache_lock:

@@ -80,11 +80,11 @@ class BhmEverflowService:
                     len(rows), ",".join(sorted(offer_ids)), date_from, date_to)
         return list(rows.values())
 
-    def _offer_rows(self, date_from: date, date_to: date, offer_id: str, timezone_id: int) -> list[dict]:
+    def _offer_rows(self, date_from: date, date_to: date, offer_id: str, timezone_id: int, refresh: bool = False) -> list[dict]:
         key = (str(offer_id), date_from.isoformat(), date_to.isoformat(), timezone_id)
         with _cache_lock:
             hit = _cache.get(key)
-            if hit and time.time() - hit[0] < CACHE_TTL_SECONDS:
+            if hit and not refresh and time.time() - hit[0] < CACHE_TTL_SECONDS:
                 return hit[1]
         rows = self._fetch_offer_rows(date_from, date_to, offer_id, timezone_id)
         with _cache_lock:

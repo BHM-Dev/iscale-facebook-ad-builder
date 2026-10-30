@@ -70,3 +70,33 @@ def test_parallel_and_sequential_give_identical_rows(monkeypatch):
     sequential = EverflowService()._fetch_conversion_rows_uncached("2026-09-01", "2026-10-31", 80)
     assert sorted(r["conversion_id"] for r in parallel) == sorted(r["conversion_id"] for r in sequential)
     assert len(parallel) == 61
+
+
+def test_refresh_bypasses_the_cache_and_restores_it(monkeypatch):
+    calls = []
+    monkeypatch.setattr(EverflowService, "_fetch_conversion_rows_uncached", lambda self, a, b, tz: calls.append(1) or [{"n": len(calls)}])
+    EverflowService()._fetch_conversion_rows("2026-10-01", "2026-10-30", 80)
+    assert EverflowService()._fetch_conversion_rows("2026-10-01", "2026-10-30", 80, refresh=True) == [{"n": 2}]
+    assert EverflowService()._fetch_conversion_rows("2026-10-01", "2026-10-30", 80) == [{"n": 2}]   # reader gets the fresh rows
+    assert len(calls) == 2
+
+
+def test_fresh_reads_do_not_wait_for_a_background_refresh(monkeypatch):
+    import threading
+    started, release = threading.Event(), threading.Event()
+
+    def slow(self, a, b, tz):
+        started.set()
+        release.wait(5)
+        return [{"n": "new"}]
+
+    monkeypatch.setattr(EverflowService, "_fetch_conversion_rows_uncached", lambda self, a, b, tz: [{"n": "old"}])
+    EverflowService()._fetch_conversion_rows("2026-10-01", "2026-10-30", 80)
+    monkeypatch.setattr(EverflowService, "_fetch_conversion_rows_uncached", slow)
+    worker = threading.Thread(target=lambda: EverflowService()._fetch_conversion_rows("2026-10-01", "2026-10-30", 80, refresh=True))
+    worker.start()
+    started.wait(5)
+    assert EverflowService()._fetch_conversion_rows("2026-10-01", "2026-10-30", 80) == [{"n": "old"}]   # served at once
+    release.set()
+    worker.join(5)
+    assert EverflowService()._fetch_conversion_rows("2026-10-01", "2026-10-30", 80) == [{"n": "new"}]

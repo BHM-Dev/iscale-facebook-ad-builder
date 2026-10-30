@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.facebook import _resolve_scoped_default_account
 from app.core.deps import require_permission
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, PnlCostEntry, PnlMonthSnapshot, User, normalize_account_id
 from app.services.bhm_everflow_service import BhmEverflowService
 from app.services.everflow_service import EVERFLOW_TZ_BY_ID, META_ID_RE, EverflowService
@@ -1320,6 +1320,29 @@ ALL_EXTRAS_FREEZE_GRACE_DAYS = 3
 def _all_extras_snapshot_id(scope: list[str]) -> str:
     """One pseudo-account row per account SCOPE, so an admin's frozen month and a restricted user's never overwrite each other."""
     return f"{ALL_EXTRAS_SNAPSHOT_PREFIX}:{hashlib.sha1(','.join(scope).encode()).hexdigest()[:10]}"
+
+
+def warm_current_month_cache() -> None:
+    """Re-pull the current month's revenue rows in the background so a person opening the P&L reads them from the
+    5-minute cache instead of waiting ~10s for Everflow (Steve, 2026-10-30: "90 seconds is way too long"). Runs every
+    4 minutes from the scheduler. Only the current month: closed months are frozen and never re-pulled."""
+    start, end, _ = _resolve_period("mtd")
+    switchboard = EverflowService()
+    if switchboard.is_configured():
+        try:
+            rows = switchboard._fetch_conversion_rows(start.isoformat(), end.isoformat(), 80, refresh=True)
+            db = SessionLocal()
+            try:
+                _recover_macro_adsets(db, rows)   # warms the RedTrack click -> ad id map for these rows
+            finally:
+                db.close()
+        except Exception as exc:  # noqa: BLE001 — the BHM refresh below must still run
+            logger.warning("P&L cache warm (Switchboard) failed: %s", exc)
+    service = BhmEverflowService()
+    if service.is_configured():
+        for offers in _bhm_everflow_offer_map().values():
+            for offer_id in offers:
+                service._offer_rows(start, end, offer_id, 80, refresh=True)
 
 
 def _closed_full_month(start: date, end: date, grace_days: int = 0) -> bool:

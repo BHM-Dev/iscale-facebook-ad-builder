@@ -562,6 +562,16 @@ async def startup_event():
         scheduler.add_job(scheduled_check, 'interval', minutes=30, id='auto_pause_check')
         scheduler.add_job(scheduled_redtrack_sync, 'interval', minutes=30, id='redtrack_sync')
         scheduler.add_job(scheduled_meta_sync, 'interval', minutes=30, id='meta_sync', max_instances=1, coalesce=True)
+
+        def scheduled_pnl_cache_warm():
+            """Every 4 min: keep the current month's P&L revenue rows warm (cache TTL is 5 min)."""
+            try:
+                from app.api.v1.pnl import warm_current_month_cache
+                warm_current_month_cache()
+            except Exception as exc:
+                print(f"⚠️  P&L cache warm failed: {exc}")   # the page still works, it just pulls live
+
+        scheduler.add_job(scheduled_pnl_cache_warm, 'interval', minutes=4, id='pnl_cache_warm', max_instances=1, coalesce=True)
         # Changes-feed sync every 15 minutes (restored 2026-10-08 at Steve's
         # request): a daily run left Joel's fresh uploads invisible to Abel for
         # up to ~19h. The feed is cheap when nothing changed, and the shared
