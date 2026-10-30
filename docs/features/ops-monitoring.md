@@ -55,3 +55,36 @@ Measured first in Steve's Chrome: every page's data finished in under 4s warm. T
   - Research calls browse-ads once.
 - **Unit-tested only:** the auth dependencies (`/auth/me`) and the Meta cap.
 - **Not verified:** the auto-pause run at boot+2 in production, because it logs nothing when no rule fires.
+
+## Speed pass, batch 2 (2026-10-30)
+
+**Changes:**
+- **Campaign Performance and Dashboard start from the saved ad account.**
+  - They no longer wait for `/facebook/accounts`.
+  - The account list still loads in the background. If the saved account isn't in it, the page switches accounts.
+  - If the user switches accounts while the list is loading, the user's choice wins: the list handler re-reads storage.
+  - Dashboard's load depends on a `noActiveAccount` boolean instead of `adAccounts.length`, so the list arriving no longer reloads the page.
+- **niche-profitability** (Campaign Performance's slowest call, 3.1s):
+  - Meta and RedTrack are fetched in parallel.
+  - Requests for the same range share one fetch.
+  - Its own 30s Meta cap now actually caps.
+  - RedTrack has a 45s backstop.
+- **`get_account_insights_bulk` has one shared 60s cache.**
+  - It is single-flight and returns deep copies. Before, each page kept its own cache or had none.
+  - The Refresh buttons pass `refresh` through and skip it.
+  - The auto-pause job always reads Meta directly (`refresh=True`), so pause and budget decisions never use cached numbers.
+- **`/facebook/pages` and `/facebook/pixels` are cached for 5 minutes per account**, with `?refresh=true` to skip.
+  - Pages measured 1.95s live.
+  - Empty lists are never cached.
+  - Page access tokens are stripped before caching.
+  - `/pixels` now runs the same account check as `/pages`.
+- **API gzip level is now 6** (was 9). That saves about 20ms on the 4 MB Drive list for almost the same size.
+
+**Deliberately not done:**
+- **Paging the Drive list.** It takes about 170ms on the server and sends 449 KB gzipped. Paging would mean reworking the launcher's picker.
+- **Caching live ad sets (5.4s) and campaigns.** A launch modal must show an ad set the moment it's created, and many write paths would need to clear the cache.
+
+**Status:**
+- **Unit-tested:**
+  - The new tests fail on the old code: the fetches ran serially, and 3 concurrent requests made 3 Meta pulls.
+  - Cache tests cover hits, refresh, expiry, deep copies, and single-flight.

@@ -28,6 +28,15 @@ _STATE_INSIGHTS_INFLIGHT_KEYS: dict[str, tuple[object, float]] = {}
 _STATE_INSIGHTS_INFLIGHT_LOCK = threading.Lock()
 STATE_INSIGHTS_INFLIGHT_TTL_SECONDS = 30
 
+# Shared cache for get_account_insights_bulk (2026-10-30). Campaign Performance, Dashboard,
+# niche summary, AI insights and the auto-pause job each kept their own cache (or none), so
+# moving between pages re-pulled the same account-level Meta report. One short TTL plus
+# single-flight here means one Meta call per (account, range) per minute, whoever asks.
+ACCOUNT_INSIGHTS_CACHE_TTL_SECONDS = 60
+_ACCOUNT_INSIGHTS_CACHE: dict[tuple, tuple[float, dict]] = {}
+_ACCOUNT_INSIGHTS_GUARD = threading.Lock()
+_ACCOUNT_INSIGHTS_KEY_LOCKS: dict[tuple, threading.Lock] = {}
+
 # Load .env from project root (parent of backend)
 env_path = Path(__file__).resolve().parent.parent.parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
@@ -1944,6 +1953,36 @@ class FacebookService:
         }
 
     def get_account_insights_bulk(
+        self,
+        ad_account_id: str = None,
+        date_preset: str = 'last_7d',
+        date_from: str = None,
+        date_to: str = None,
+        refresh: bool = False,
+    ) -> dict:
+        """Cached wrapper (60s, single-flight) around _fetch_account_insights_bulk.
+
+        refresh=True skips the read but still stores the fresh result. Callers get a deep
+        copy because several of them annotate the rows in place (RedTrack revenue etc.)."""
+        import copy
+        account_key = str(ad_account_id or '')
+        if account_key and not account_key.startswith('act_'):
+            account_key = f'act_{account_key}'
+        key = (account_key, date_preset if not (date_from and date_to) else None, date_from, date_to)
+        with _ACCOUNT_INSIGHTS_GUARD:
+            key_lock = _ACCOUNT_INSIGHTS_KEY_LOCKS.setdefault(key, threading.Lock())
+        with key_lock:
+            hit = _ACCOUNT_INSIGHTS_CACHE.get(key)
+            if hit and not refresh and time.monotonic() - hit[0] < ACCOUNT_INSIGHTS_CACHE_TTL_SECONDS:
+                return copy.deepcopy(hit[1])
+            out = self._fetch_account_insights_bulk(ad_account_id, date_preset, date_from, date_to)
+            with _ACCOUNT_INSIGHTS_GUARD:
+                if len(_ACCOUNT_INSIGHTS_CACHE) >= 64:
+                    _ACCOUNT_INSIGHTS_CACHE.pop(min(_ACCOUNT_INSIGHTS_CACHE, key=lambda k: _ACCOUNT_INSIGHTS_CACHE[k][0]), None)
+                _ACCOUNT_INSIGHTS_CACHE[key] = (time.monotonic(), out)
+            return copy.deepcopy(out)
+
+    def _fetch_account_insights_bulk(
         self,
         ad_account_id: str = None,
         date_preset: str = 'last_7d',

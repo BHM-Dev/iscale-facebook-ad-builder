@@ -311,6 +311,7 @@ def get_niche_summary(
             date_preset=date_preset,
             date_from=date_from,
             date_to=date_to,
+            refresh=refresh,
         )
 
         account_adsets = (
@@ -552,7 +553,7 @@ def get_performance_brief(ad_account_id: str | None = Query(None), date_from: st
     began = time.monotonic()
     try:
         svc = FacebookService(); daily_meta = svc.get_account_daily_insights(ad_account_id, str(previous_start), str(end)); by_date = {row['date']: row for row in daily_meta}
-        current, previous = svc.get_account_insights_bulk(ad_account_id=ad_account_id, date_from=str(start), date_to=str(end)), svc.get_account_insights_bulk(ad_account_id=ad_account_id, date_from=str(previous_start), date_to=str(previous_end))
+        current, previous = svc.get_account_insights_bulk(ad_account_id=ad_account_id, date_from=str(start), date_to=str(end), refresh=refresh), svc.get_account_insights_bulk(ad_account_id=ad_account_id, date_from=str(previous_start), date_to=str(previous_end), refresh=refresh)
         if current_user.has_permission('pnl:read'):
             revenue, prior_revenue = _daily_billable_revenue(db, ad_account_id, start, end, refresh, began), _daily_billable_revenue(db, ad_account_id, previous_start, previous_end, refresh, began)
         else: revenue = prior_revenue = {'status': 'access_denied', 'daily': {}}

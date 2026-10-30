@@ -1,6 +1,7 @@
 import logging
 import os
 import threading
+import time
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from requests.exceptions import Timeout as RequestsTimeout
@@ -436,17 +437,40 @@ def create_campaign(
         logger.exception("Create campaign failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
+# Pixels and Pages for an ad account change rarely, but every launch modal asks for them
+# (Pages measured at ~2s live, 2026-10-30). Short per-account cache; ?refresh=true skips it.
+_META_LIST_CACHE_TTL_SECONDS = 300
+_meta_list_cache: dict[tuple[str, str], tuple[float, list]] = {}
+_meta_list_cache_lock = threading.Lock()
+
+
+def _cached_meta_list(kind: str, account_id: Optional[str], refresh: bool, fetch):
+    key = (kind, str(account_id or ''))
+    if not refresh:
+        with _meta_list_cache_lock:
+            hit = _meta_list_cache.get(key)
+        if hit and time.monotonic() - hit[0] < _META_LIST_CACHE_TTL_SECONDS:
+            return [dict(item) for item in hit[1]]
+    data = fetch()
+    if data:  # never cache an empty list: a just-connected Page/Pixel must show up on the next open
+        with _meta_list_cache_lock:
+            _meta_list_cache[key] = (time.monotonic(), data)
+    return [dict(item) for item in data]
+
+
 @router.get("/pixels")
 def read_pixels(
     ad_account_id: Optional[str] = None,
+    refresh: bool = False,
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(get_current_active_user)
 ):
+    _assert_account_allowed(current_user, ad_account_id)
     ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     try:
-        pixels = service.get_pixels(ad_account_id)
         # Convert FB objects to dicts
-        return [dict(p) for p in pixels]
+        return _cached_meta_list("pixels", ad_account_id, refresh,
+                                 lambda: [dict(p) for p in service.get_pixels(ad_account_id)])
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -494,15 +518,18 @@ def get_rate_limit_usage(
 @router.get("/pages")
 def read_pages(
     ad_account_id: Optional[str] = None,
+    refresh: bool = False,
     service: FacebookService = Depends(get_facebook_service),
     current_user: User = Depends(get_current_active_user)
 ):
     _assert_account_allowed(current_user, ad_account_id)
     ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
     try:
-        pages = service.get_pages(ad_account_id)
-        # Strip page access_token — sensitive credential, never send it to the browser.
-        return [{k: v for k, v in p.items() if k != 'access_token'} for p in pages]
+        # Strip page access_token — sensitive credential, never send it to the browser
+        # (stripped before caching, so the cache never holds it either).
+        return _cached_meta_list("pages", ad_account_id, refresh, lambda: [
+            {k: v for k, v in p.items() if k != 'access_token'} for p in service.get_pages(ad_account_id)
+        ])
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

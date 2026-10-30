@@ -308,8 +308,16 @@ export const CampaignProvider = ({ children }) => {
         let cancelled = false;
 
         const resolveActiveAccount = async () => {
-            setActiveAccountLoading(true);
             const cached = normalizeAccountId(safeLocalStorageGet('fb_ad_account_id') || '');
+            // With a saved account, pages start loading straight away instead of waiting on
+            // /facebook/accounts (a live Meta call when its cache is cold). The list below still
+            // resolves; if the saved account is no longer in it, we switch and pages reload.
+            if (cached) {
+                setActiveAccountId(cached);
+                setActiveAccountLoading(false);
+            } else {
+                setActiveAccountLoading(true);
+            }
 
             try {
                 const accountsResponse = await authFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'}/facebook/accounts`);
@@ -322,8 +330,11 @@ export const CampaignProvider = ({ children }) => {
                         .map(account => normalizeAccountId(account.id || account.account_id || account.accountId))
                         .filter(Boolean);
 
-                    if (cached && accountIds.includes(cached)) {
-                        setActiveAccountId(cached);
+                    // Re-read storage: the user may have switched accounts while this list loaded
+                    // (pages are already live on the saved account), and that choice must win.
+                    const current = normalizeAccountId(safeLocalStorageGet('fb_ad_account_id') || '') || cached;
+                    if (current && accountIds.includes(current)) {
+                        setActiveAccountId(current);
                     } else if (accountIds.length > 0) {
                         setActiveAccountId(accountIds[0]);
                     } else {
@@ -339,7 +350,8 @@ export const CampaignProvider = ({ children }) => {
                 const configResponse = await authFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'}/facebook/config`);
                 if (!cancelled && configResponse.ok) {
                     const config = await configResponse.json();
-                    setActiveAccountId(config.ad_account_id || cached || '');
+                    const current = normalizeAccountId(safeLocalStorageGet('fb_ad_account_id') || '') || cached;
+                    setActiveAccountId(current || config.ad_account_id || '');
                 } else if (!cancelled) {
                     setActiveAccountId(cached);
                 }

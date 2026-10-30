@@ -14,6 +14,7 @@ import logging
 import json
 import os
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta, datetime
@@ -190,13 +191,16 @@ def _fetch_meta_insights(ad_account_id: Optional[str], date_from: str, date_to: 
         if day_filter != "all":
             params['time_increment'] = 1  # daily breakdown for DOW filtering
 
-        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-        with ThreadPoolExecutor(max_workers=1) as ex:
-            future = ex.submit(account.get_insights, fields, params)
-            try:
-                results = future.result(timeout=30)
-            except FuturesTimeout:
-                raise RuntimeError("Meta API timeout — try again in a moment")
+        from concurrent.futures import TimeoutError as FuturesTimeout
+        # No ``with`` block: its shutdown(wait=True) waits for a hung SDK call, so the cap never fired.
+        ex = ThreadPoolExecutor(max_workers=1)
+        future = ex.submit(account.get_insights, fields, params)
+        try:
+            results = future.result(timeout=30)
+        except FuturesTimeout:
+            raise RuntimeError("Meta API timeout — try again in a moment")
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
 
     except RuntimeError:
         raise
@@ -603,6 +607,8 @@ _GEOGRAPHY_RESULT_CACHE_TTL_SECONDS = 5 * 60
 
 _NICHE_PROFITABILITY_RESULT_CACHE: dict[tuple[str, str, str, str], tuple[dict, float]] = {}
 _NICHE_PROFITABILITY_RESULT_CACHE_TTL_SECONDS = 5 * 60
+_NICHE_INFLIGHT_GUARD = threading.Lock()
+_NICHE_INFLIGHT_LOCKS: dict[tuple[str, str, str, str], threading.Lock] = {}
 
 
 def _get_cached_best_times(cache_key: tuple[str, str, str, str]) -> Optional[dict]:
@@ -1718,12 +1724,35 @@ def niche_profitability(
     if cached is not None:
         return cached
 
+    # Single-flight per key: Campaign Performance prefetches this, so two tabs (or a prefetch
+    # plus an open) used to pull Meta twice. A waiter re-checks the cache once it gets the lock.
+    with _NICHE_INFLIGHT_GUARD:
+        key_lock = _NICHE_INFLIGHT_LOCKS.setdefault(cache_key, threading.Lock())
+    with key_lock:
+        cached = None if refresh else _get_cached_niche_profitability(cache_key)
+        if cached is not None:
+            return cached
+        return _compute_niche_profitability(
+            db, cache_key, preset, ad_account_id, resolved_from, resolved_to, day_filter, preset_label,
+        )
+
+
+def _compute_niche_profitability(db, cache_key, preset, ad_account_id, resolved_from, resolved_to, day_filter, preset_label):
+    # Meta and RedTrack in parallel (were serial: ~3s on Joel's page, measured 2026-10-30).
+    # _fetch_redtrack never raises; it returns {} on failure.
+    rt_pool = ThreadPoolExecutor(max_workers=1)
+    rt_future = rt_pool.submit(_fetch_redtrack, resolved_from, resolved_to)
     try:
         meta_data = _fetch_meta_insights(ad_account_id, resolved_from, resolved_to, day_filter)
     except RuntimeError as e:
         raise HTTPException(502, str(e))
-
-    rt_data = _fetch_redtrack(resolved_from, resolved_to)
+    finally:
+        rt_pool.shutdown(wait=False)
+    try:
+        rt_data = rt_future.result(timeout=45)  # RedTrack has its own HTTP timeouts; this is a backstop
+    except Exception:
+        logger.warning("niche-profitability: RedTrack fetch did not finish; continuing without it")
+        rt_data = {}
 
     # Budget lookup from local DB — no extra Meta API call
     adset_ids = list(meta_data.keys())

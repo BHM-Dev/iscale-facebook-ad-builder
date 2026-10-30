@@ -73,7 +73,7 @@ app.add_middleware(
 
 # Compress JSON responses. Several list endpoints are large (drive-assets ~4 MB,
 # adsets/saved ~0.5 MB, measured 2026-10-30) and went out uncompressed.
-app.add_middleware(GZipMiddleware, minimum_size=1024)
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)  # level 9 cost ~70ms on the 4 MB drive list; 6 is ~50ms for ~the same size
 
 @app.get("/")
 async def root():

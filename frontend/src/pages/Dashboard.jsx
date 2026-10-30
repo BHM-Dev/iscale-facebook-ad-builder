@@ -605,6 +605,9 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { showSuccess, showError, showWarning } = useToast();
   const { activeAccountId, activeAccountLoading, adAccounts } = useCampaign();
+  // A boolean, not adAccounts.length: the account list now arrives after the first load
+  // (CampaignContext starts from the saved account), and a length dep re-ran the whole load.
+  const noActiveAccount = !activeAccountId && adAccounts.length > 0;
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncingRT, setSyncingRT] = useState(false);
@@ -665,7 +668,7 @@ export default function Dashboard() {
       setLoading(false); setTrendLoading(false);
       return;
     }
-    if (!activeAccountId && adAccounts.length > 0) {
+    if (noActiveAccount) {
       setAdsets([]);
       setBulkInsights({});
       setTrend(null); setNicheSummary([]); setRules([]); setAdStatusByAdset({});
@@ -771,7 +774,7 @@ export default function Dashboard() {
         setTrendLoading(false);
       }
     }
-  }, [activeAccountId, activeAccountLoading, adAccounts.length]);
+  }, [activeAccountId, activeAccountLoading, noActiveAccount]);
 
 
   const syncAll = useCallback(async () => {

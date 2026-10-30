@@ -648,6 +648,7 @@ def get_insights_bulk(
             date_preset=date_preset if not include_niche_summary else "custom",
             date_from=date_from if not include_niche_summary else date_from_str,
             date_to=date_to if not include_niche_summary else date_to_str,
+            refresh=refresh,
         )
     except RuntimeError as e:
         raise HTTPException(400, str(e))
@@ -1142,7 +1143,8 @@ def _run_check(db: Session, ad_account_id: Optional[str] = None) -> dict:
     failed_ads_accounts = set()
     for account in target_accounts:
         try:
-            bulk_insights.update(svc.get_account_insights_bulk(ad_account_id=account))
+            # refresh: pause/budget decisions always read Meta now (the result still warms the shared cache).
+            bulk_insights.update(svc.get_account_insights_bulk(ad_account_id=account, refresh=True))
         except Exception as e:
             logger.error("Bulk insights fetch failed for account %s: %s", account or "(default)", e)
             failed_accounts.add(account)
