@@ -45,6 +45,13 @@ Measured first in Steve's Chrome: every page's data finished in under 4s warm. T
 - **Research:** browse-ads is fetched once per visit instead of twice.
 - **Library grids:** images use `loading="lazy"`.
 
+- **Shared chunks** (`3d6474d`): React and the router sit in one `vendor` chunk (73 KB gz). It changes only when those packages are upgraded, so it stays cached across deploys. Lucide icons sit in one `icons` chunk; they used to be a dozen tiny files fetched in a chain.
+
 **Status:**
-- Unit-tested: auth via `/auth/me`, the Meta cap, and frontend vitest.
-- Not verified in production until after the deploy.
+- **Verified in production 2026-10-30** (Steve's Chrome):
+  - The main JS is now served gzipped. The API returns `content-encoding: gzip`.
+  - Opening a page now loads 4–7 JS files with no page errors. All 28 page chunks were import-tested against the built bundle.
+  - Every measured page has its data in 0.75–1.45s, including Campaign Performance at 0.87s. That number is a warm-cache figure, not a fixed one.
+  - Research calls browse-ads once.
+- **Unit-tested only:** the auth dependencies (`/auth/me`) and the Meta cap.
+- **Not verified:** the auto-pause run at boot+2 in production, because it logs nothing when no rule fires.
