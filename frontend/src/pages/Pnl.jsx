@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, DollarSign, Download, Edit2, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, DollarSign, Download, Edit2, ExternalLink, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { authFetch } from '../lib/facebookApi';
 import { useCampaign } from '../context/CampaignContext';
 import { useToast } from '../context/ToastContext';
+
+const DETAILED_PNL_SHEET_URL = 'https://docs.google.com/spreadsheets/d/175im8vEPPtDYilFyusBSFoLXOreRfrv-7vfE3jsdPdc/edit?gid=0#gid=0';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -483,6 +485,16 @@ export default function Pnl() {
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             Refresh
           </button>
+          <a
+            href={DETAILED_PNL_SHEET_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-100"
+            title="Open Joel's detailed P&L Google Sheet"
+          >
+            <ExternalLink size={14} />
+            Detailed P&L
+          </a>
         </div>
       </div>
 
