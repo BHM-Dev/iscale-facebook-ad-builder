@@ -21,7 +21,7 @@ const BID_STRATEGIES = [
     { value: 'COST_CAP', label: 'Cost Cap (Cost Per Result Goal)' }
 ];
 
-const CampaignStep = ({ onNext, onBack, forceExistingMode = false }) => {
+const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession = false }) => {
     const { campaignData, setCampaignData, selectedAdAccount } = useCampaign();
     const { showError, showWarning } = useToast();
     // Initialize from context, not a hardcoded default — CampaignStep unmounts/remounts
@@ -86,7 +86,7 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false }) => {
             }
         }
 
-        if (selectedAdAccount) {
+        if (selectedAdAccount && !freshSession) {
             const lastId = safeLocalStorageGet('lastSelectedCampaignId_' + selectedAdAccount.id);
             if (lastId) {
                 const match = existingCampaigns.find(c => c.id === lastId);
@@ -95,7 +95,7 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false }) => {
                 }
             }
         }
-    }, [existingCampaigns, mode, campaignData.isExisting, campaignData.fbCampaignId, selectedAdAccount]);
+    }, [existingCampaigns, mode, campaignData.isExisting, campaignData.fbCampaignId, selectedAdAccount, freshSession]);
 
     // Last-used campaign on this ad account first (it's the one that's about to
     // get auto-selected below — Abel, 2026-10-21: he has to search/scroll to

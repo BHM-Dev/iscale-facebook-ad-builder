@@ -155,6 +155,7 @@ const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaig
 };
 
 const FacebookCampaignWizardInner = () => {
+    const freshSession = new URLSearchParams(window.location.search).get('freshLaunch') === '1';
     const [restoredWizardState] = useState(restoreWizardState);
     const [currentStep, setCurrentStep] = useState(() => restoredWizardState.currentStep || 1);
     // Keep every step reached in this wizard directly selectable. `currentStep`
@@ -912,6 +913,7 @@ const FacebookCampaignWizardInner = () => {
                             onNext={handleNext}
                             onBack={handleBack}
                             forceExistingMode={Boolean(quickAdTarget) || driveLaunchActive}
+                            freshSession={freshSession}
                         />
                     )}
                     {currentStep === 3 && (
@@ -923,6 +925,7 @@ const FacebookCampaignWizardInner = () => {
                             onNext={handleNext}
                             onBack={handleBack}
                             forceExistingMode={Boolean(quickAdTarget) || driveLaunchActive}
+                            freshSession={freshSession}
                         />
                     )}
                     {currentStep === 4 && (

@@ -1,4 +1,4 @@
-import React, { Suspense, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Wand2, Settings, LogOut, ShoppingBag, Target, ChevronLeft, ChevronRight, UserCog, Search, Library, DollarSign, BriefcaseBusiness } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -8,6 +8,24 @@ import { useBrands } from '../context/BrandContext';
 import { useCampaign } from '../context/CampaignContext';
 import { VERTICAL_FILTERS } from '../lib/verticals';
 import AskAiWidget from './AskAiWidget';
+import { safeLocalStorageGet } from '../lib/safeLocalStorage';
+
+const ACTIVE_LAUNCH_STORAGE_KEY = 'adbuilder_active_launches_v1';
+const ACTIVE_LAUNCH_STALE_MS = 30 * 60 * 1000;
+
+const readActiveLaunches = () => {
+    try {
+        const value = JSON.parse(safeLocalStorageGet(ACTIVE_LAUNCH_STORAGE_KEY) || '[]');
+        if (!Array.isArray(value)) return [];
+        return value.map(item => {
+            const heartbeat = item.lastHeartbeatAt || item.updatedAt || item.startedAt;
+            const stale = heartbeat && Date.now() - new Date(heartbeat).getTime() > ACTIVE_LAUNCH_STALE_MS;
+            return { ...item, stale };
+        });
+    } catch {
+        return [];
+    }
+};
 
 // BHM mark — flat single-color circle with horizon lines, matching
 // bhm_logo_1color_blue@3x.png (#301A5B), sized for 40×40 container
@@ -50,6 +68,16 @@ export default function Layout() {
     const LAUNCH_WIZARD_PATH = '/facebook-campaigns';
     const [isCollapsed, setIsCollapsed] = useState(() => location.pathname === LAUNCH_WIZARD_PATH);
     const [prevPath, setPrevPath] = useState(location.pathname);
+    const [activeLaunches, setActiveLaunches] = useState(readActiveLaunches);
+    useEffect(() => {
+        const refresh = () => setActiveLaunches(readActiveLaunches());
+        window.addEventListener('storage', refresh);
+        const timer = window.setInterval(refresh, 2000);
+        return () => {
+            window.removeEventListener('storage', refresh);
+            window.clearInterval(timer);
+        };
+    }, []);
     if (location.pathname !== prevPath) {
         setPrevPath(location.pathname);
         if (location.pathname === LAUNCH_WIZARD_PATH) setIsCollapsed(true);
@@ -209,6 +237,29 @@ export default function Layout() {
                                 className="shrink-0 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
                             >
                                 Sign in (new tab)
+                            </button>
+                        </div>
+                    )}
+                    {activeLaunches.length > 0 && location.pathname !== LAUNCH_WIZARD_PATH && (
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 shadow-sm">
+                            <div>
+                                <p className="text-sm font-semibold text-blue-900">
+                                    {activeLaunches.some(item => item.stale)
+                                        ? 'A launch may have been interrupted'
+                                        : `${activeLaunches.length} ad-set launch${activeLaunches.length === 1 ? '' : 'es'} still processing`}
+                                </p>
+                                <p className="text-xs text-blue-800">
+                                    {activeLaunches.some(item => item.stale)
+                                        ? 'Check the original builder tab and Ads Manager before retrying. You can start another ad set after confirming the account is clear.'
+                                        : `${activeLaunches[0]?.adsetName || 'The launch'} is continuing in its builder tab. You can start another ad set now.`}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => window.open('/facebook-campaigns?freshLaunch=1', '_blank', 'noopener,noreferrer')}
+                                className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-800"
+                            >
+                                Start another ad set
                             </button>
                         </div>
                     )}

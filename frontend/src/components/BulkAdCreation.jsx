@@ -28,6 +28,36 @@ import NamingTemplateField from './NamingTemplateField';
 import { isValidDestinationUrl, normalizeDestinationUrl } from '../lib/destinationUrl';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+const ACTIVE_LAUNCH_STORAGE_KEY = 'adbuilder_active_launches_v1';
+
+const readActiveLaunches = () => {
+    try {
+        const value = JSON.parse(safeLocalStorageGet(ACTIVE_LAUNCH_STORAGE_KEY) || '[]');
+        return Array.isArray(value) ? value : [];
+    } catch {
+        return [];
+    }
+};
+
+const writeActiveLaunches = (launches) => {
+    try {
+        safeLocalStorageSet(ACTIVE_LAUNCH_STORAGE_KEY, JSON.stringify(launches));
+    } catch {
+        // Cross-tab presence is helpful UX, but must never affect a Meta launch.
+    }
+};
+
+const updateActiveLaunch = (launchId, patch) => {
+    const current = readActiveLaunches();
+    const next = current.some(item => item.id === launchId)
+        ? current.map(item => item.id === launchId ? { ...item, ...patch, updatedAt: new Date().toISOString() } : item)
+        : [...current, { id: launchId, startedAt: new Date().toISOString(), ...patch, updatedAt: new Date().toISOString() }];
+    writeActiveLaunches(next);
+};
+
+const removeActiveLaunch = (launchId) => {
+    writeActiveLaunches(readActiveLaunches().filter(item => item.id !== launchId));
+};
 
 // A review row is only meaningful if it can produce a Meta creative. A stale
 // CampaignContext can retain a permutation after its selected Drive/library
@@ -148,7 +178,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const { campaignData, setCampaignData, adsetData, setAdsetData, creativeData, setCreativeData, adsData, setAdsData, selectedAdAccount, setLaunchSummary, setLaunchReceipt } = useCampaign();
     const [loading, setLoading] = useState(false);
     const launchInFlightRef = React.useRef(false);
-    const [progress, setProgress] = useState({ current: 0, total: 0, status: '' });
+    const [progress, setProgressState] = useState({ current: 0, total: 0, status: '' });
     const [errors, setErrors] = useState([]);
     // Gates the actual launch behind one extra confirm step when per-media mode
     // + ABO means N distinct budgets stack — the Review screen already shows this
@@ -173,6 +203,30 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         selectedAdAccount?.accountId || selectedAdAccount?.id,
         reconciliationDraftFingerprint,
     ), [selectedAdAccount?.accountId, selectedAdAccount?.id, reconciliationDraftFingerprint]);
+    const setProgress = React.useCallback((next) => {
+        setProgressState(previous => {
+            const resolved = typeof next === 'function' ? next(previous) : next;
+            if (launchInFlightRef.current) {
+                updateActiveLaunch(reconciliationLaunchId, {
+                    accountId: selectedAdAccount?.accountId || selectedAdAccount?.id || null,
+                    accountName: selectedAdAccount?.name || null,
+                    campaignName: campaignData?.name || null,
+                    adsetName: adsetData?.name || null,
+                    current: resolved.current || 0,
+                    total: resolved.total || 0,
+                    status: resolved.status || 'Starting…',
+                });
+            }
+            return resolved;
+        });
+    }, [adsetData?.name, campaignData?.name, reconciliationLaunchId, selectedAdAccount?.accountId, selectedAdAccount?.id, selectedAdAccount?.name]);
+    useEffect(() => {
+        if (!loading) return undefined;
+        const heartbeat = () => updateActiveLaunch(reconciliationLaunchId, { lastHeartbeatAt: new Date().toISOString() });
+        heartbeat();
+        const timer = window.setInterval(heartbeat, 5000);
+        return () => window.clearInterval(timer);
+    }, [loading, reconciliationLaunchId]);
     const reconciliationPackageFingerprint = fingerprintReconciliationPackage({
         ads: (adsData || []).map(ad => ({
             id: ad.id,
@@ -1244,7 +1298,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         } catch { /* ignore */ }
     };
 
-    const handleSubmit = async () => {
+    const executeLaunch = async () => {
         if (loading || launchInFlightRef.current) return;
         if (liveLaunchHeld) {
             showWarning(liveCheckPending
@@ -1408,11 +1462,22 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         const hasLinkedPlacement = launchAds.some(ad => ad.dualPlacement);
         const hasIndependentPlacement = launchAds.some(ad => !ad.dualPlacement);
         if (!perMediaMode && hasLinkedPlacement && hasIndependentPlacement) {
+            clearSuccessfulLaunchIntent();
             setLoading(false);
             launchInFlightRef.current = false;
             showWarning('This batch mixes linked Feed + Stories pairs with independent placement ads. Separate them into their own launches until placement routing is configured for this combination.');
             return;
         }
+
+        updateActiveLaunch(reconciliationLaunchId, {
+            accountId: selectedAdAccount?.accountId || selectedAdAccount?.id || null,
+            accountName: selectedAdAccount?.name || null,
+            campaignName: campaignData?.name || null,
+            adsetName: adsetData?.name || null,
+            current: 0,
+            total: launchAds.length,
+            status: 'Starting…',
+        });
 
         setProgress({ current: 0, total: launchAds.length, status: 'Checking Meta rate limits...' });
 
@@ -2058,6 +2123,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 setProgress({ current: attempted, total: launchAds.length, status: `Stopped — ${createdIndexes.length} of ${launchAds.length} ads created` });
                 setLoading(false);
                 launchInFlightRef.current = false;
+                removeActiveLaunch(reconciliationLaunchId);
             } else if (failedCount === 0) {
                 // All ads created — auto-advance after brief success display
                 reportOutcome('success');
@@ -2104,6 +2170,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 });
                 setProgress({ current: launchAds.length, total: launchAds.length, status: 'Complete!' });
                 launchInFlightRef.current = false;
+                removeActiveLaunch(reconciliationLaunchId);
                 setTimeout(() => { onNext(); }, 1500);
             } else {
                 reportOutcome(createdIndexes.length > 0 ? 'partial' : 'failed');
@@ -2114,6 +2181,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 setProgress({ current: createdIndexes.length, total: launchAds.length, status: `${createdIndexes.length} of ${launchAds.length} ads created` });
                 setLoading(false);
                 launchInFlightRef.current = false;
+                removeActiveLaunch(reconciliationLaunchId);
             }
 
         } catch (error) {
@@ -2135,7 +2203,26 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             setErrors(prev => [...prev, error.message]);
             setLoading(false);
             launchInFlightRef.current = false;
+            removeActiveLaunch(reconciliationLaunchId);
         }
+    };
+
+    // Browser tabs share Meta credentials and localStorage. Use the browser's
+    // native cross-tab lock while this tab owns the sequential Meta write chain;
+    // without it, two nearly simultaneous launches can both pass the existing
+    // reconciliation read before either one writes its lock.
+    const handleSubmit = async () => {
+        const accountId = selectedAdAccount?.accountId || selectedAdAccount?.id || 'default';
+        if (typeof navigator !== 'undefined' && navigator.locks?.request) {
+            return navigator.locks.request(`adbuilder-meta-launch:${accountId}`, { ifAvailable: true }, async (lock) => {
+                if (!lock) {
+                    showWarning('Another launch is already sending ads for this Meta account. Finish or reconcile it before starting another launch here.');
+                    return null;
+                }
+                return executeLaunch();
+            });
+        }
+        return executeLaunch();
     };
 
     return (
@@ -3189,9 +3276,24 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 {campaignData.isExisting ? <>Ads were added to an <strong>existing campaign</strong> and follow its current status. Verify delivery state in Ads Manager.</> : <>The campaign is <strong>PAUSED</strong>; its ad sets and ads are active beneath it. Activate the campaign in Ads Manager when ready.</>}
                             </p>
                         ) : (
-                            <p className="text-sm text-gray-500 mt-3">
-                                Meta is processing the remaining creatives. Keep this tab open.
-                            </p>
+                            <>
+                                <p className="text-sm text-gray-500 mt-3">
+                                    Meta is processing the remaining creatives. Keep this tab open.
+                                </p>
+                                <div className="mx-auto mt-5 max-w-md rounded-xl border border-blue-200 bg-blue-50 p-4 text-left">
+                                    <p className="text-sm font-semibold text-blue-900">Want to load another ad set?</p>
+                                    <p className="mt-1 text-xs leading-5 text-blue-800">
+                                        Open a fresh builder tab while this launch continues here. The current launch will remain isolated and visible in this tab.
+                                    </p>
+                                    <button
+                                        type="button"
+                                        onClick={() => window.open('/facebook-campaigns?freshLaunch=1', '_blank', 'noopener,noreferrer')}
+                                        className="mt-3 rounded-lg bg-blue-700 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-800"
+                                    >
+                                        Work on another ad set
+                                    </button>
+                                </div>
+                            </>
                         )}
                     </div>
                 </>

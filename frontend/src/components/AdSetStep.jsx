@@ -80,7 +80,7 @@ const COUNTRIES = [
 // HEC categories restrict age, gender, city, DMA, and location exclusions at ad set level
 const HEC_CATEGORIES = new Set(['HOUSING', 'EMPLOYMENT', 'FINANCIAL_PRODUCTS_SERVICES']);
 
-const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
+const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = false }) => {
     const { campaignData, adsetData, setAdsetData, selectedAdAccount, creativeData } = useCampaign();
     const { showError, showWarning } = useToast();
     const isHECRestricted = (campaignData.specialAdCategories || []).some(c => HEC_CATEGORIES.has(c));
@@ -187,7 +187,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
         }
 
         const campaignIdToUse = campaignData.fbCampaignId || campaignData.id;
-        if (campaignIdToUse) {
+        if (campaignIdToUse && !freshSession) {
             const lastId = safeLocalStorageGet('lastSelectedAdSetId_' + campaignIdToUse);
             if (lastId) {
                 const match = existingAdsets.find(a => a.id === lastId);
@@ -196,7 +196,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false }) => {
                 }
             }
         }
-    }, [existingAdsets, mode, adsetData.isExisting, adsetData.fbAdsetId, campaignData.fbCampaignId, campaignData.id]);
+    }, [existingAdsets, mode, adsetData.isExisting, adsetData.fbAdsetId, campaignData.fbCampaignId, campaignData.id, freshSession]);
 
     useEffect(() => {
         if (selectedAdAccount) {
