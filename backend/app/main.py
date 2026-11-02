@@ -368,6 +368,7 @@ async def startup_event():
                         # A re-sync that hit file errors did not heal the package; do not spend
                         # one of its limited attempts on it.
                         raise RuntimeError(f"re-sync finished with {outcome['errors']} error(s)")
+                    return outcome.get("unmatched_brand_names") or []
                 finally:
                     heal_db.close()
 

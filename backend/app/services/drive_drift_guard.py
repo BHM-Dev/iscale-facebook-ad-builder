@@ -32,7 +32,7 @@ def run_guard(
     *,
     load_state: Callable[[], Optional[Dict[str, Any]]],
     save_state: Callable[[Dict[str, Any]], None],
-    heal: Callable[[str], None],
+    heal: Callable[[str], Optional[List[str]]],
     alert: Callable[[str, str], Any],
 ) -> Dict[str, Any]:
     """Decision logic; every side effect is injected so it can be tested."""
@@ -44,6 +44,9 @@ def run_guard(
     prev_sightings: Dict[str, int] = state.get("sightings") or {}
     prev_heals: Dict[str, int] = state.get("heal_counts") or {}
     prev_healed_ok = set(state.get("healed_last_run") or [])
+    prev_unmatched = state.get("unmatched_brands")
+    if not isinstance(prev_unmatched, dict):
+        prev_unmatched = {}
     alerted_hash = state.get("alerted_hash")
 
     gaps: List[Dict[str, Any]] = [
@@ -55,6 +58,9 @@ def run_guard(
     survived_heal = {g["folder_id"] for g in gaps if g["folder_id"] in prev_healed_ok}
     heal_counts = {g["folder_id"]: int(prev_heals.get(g["folder_id"], 0)) for g in gaps}
 
+    # heal() may report Drive brand folders that matched no brand row: that is the one cause a
+    # re-sync can never fix, so it is remembered per folder and named in the alert.
+    unmatched: Dict[str, List[str]] = {f: n for f, n in prev_unmatched.items() if f in heal_counts and n}
     healed_ok: List[str] = []
     candidates = sorted(
         (g for g in gaps if heal_counts[g["folder_id"]] < MAX_HEALS_PER_PACKAGE),
@@ -64,7 +70,11 @@ def run_guard(
         if len(healed_ok) >= MAX_HEALS_PER_RUN:
             break
         try:
-            heal(gap["folder_id"])
+            names = heal(gap["folder_id"])
+            if isinstance(names, list) and names:
+                unmatched[gap["folder_id"]] = names
+            else:
+                unmatched.pop(gap["folder_id"], None)
             healed_ok.append(gap["folder_id"])
             heal_counts[gap["folder_id"]] += 1
         except Exception:  # noqa: BLE001 - one bad package must not stop the others
@@ -81,10 +91,20 @@ def run_guard(
         new_hash = hashlib.sha1(",".join(sorted(g["folder_id"] for g in persistent)).encode()).hexdigest()
         if new_hash != alerted_hash:
             lines = [f"{g['path']} — {g['missing_count']} of {g['media_count']} files not in the picker" for g in persistent[:6]]
+            no_brand = sorted({n for g in persistent for n in unmatched.get(g["folder_id"], [])})
+            if no_brand:
+                lines.append(
+                    "No brand matches the Drive folder " + ", ".join(f'"{n}"' for n in no_brand)
+                    + " — create a brand with that name (or one containing it after a ' - ') and the next sync will import them."
+                )
             try:
                 alert_sent = bool(alert(
                     f"{len(persistent)} Drive package(s) still have files missing from the picker",
-                    "\n> ".join(lines) + "\nAn automatic re-sync did not fix them. Check Drive Package Health.",
+                    "\n> ".join(lines) + (
+                        "\nA re-sync cannot fix this until the brand exists."
+                        if no_brand
+                        else "\nAn automatic re-sync did not fix them. Check Drive Package Health."
+                    ),
                 ))
             except Exception:  # noqa: BLE001
                 logger.exception("Drive drift guard could not send its alert")
@@ -96,6 +116,7 @@ def run_guard(
         "sightings": sightings,
         "heal_counts": heal_counts,
         "healed_last_run": healed_ok,
+        "unmatched_brands": unmatched,
         "alerted_hash": new_hash,
     })
     return {"gaps": len(gaps), "healed": healed_ok, "persistent": len(persistent), "alerted": alert_sent}

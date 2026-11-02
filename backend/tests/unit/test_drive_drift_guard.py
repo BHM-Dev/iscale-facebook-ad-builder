@@ -13,12 +13,14 @@ class Harness:
         self.alerts = []
         self.heal_error_for = set()
         self.alert_ok = alert_ok
+        self.unmatched = {}
 
     def run(self, missing):
         def heal(folder_id):
             if folder_id in self.heal_error_for:
                 raise RuntimeError("drive unavailable or locked")
             self.healed.append(folder_id)
+            return self.unmatched.get(folder_id)
 
         def alert(summary, detail):
             self.alerts.append((summary, detail))
@@ -126,3 +128,31 @@ def test_an_unusable_report_does_not_wipe_the_guards_memory():
     )
 
     assert out["skipped"] is True and h.state == before
+
+
+def test_alert_names_the_drive_brand_folder_that_has_no_brand_row():
+    h = Harness()
+    h.unmatched = {"a": ["Auto Insurance"]}
+    h.run([gap("a")])
+    h.run([gap("a")])
+
+    summary, detail = h.alerts[0]
+    assert '"Auto Insurance"' in detail and "Brand / Cat / a" in detail and "brand exists" in detail
+
+
+def test_alert_without_unmatched_brand_keeps_the_generic_message():
+    h = Harness()
+    h.run([gap("a")])
+    h.run([gap("a")])
+
+    assert "Check Drive Package Health" in h.alerts[0][1] and "No brand matches" not in h.alerts[0][1]
+
+
+def test_unmatched_brand_memory_clears_once_the_folder_heals():
+    h = Harness()
+    h.unmatched = {"a": ["Auto Insurance"]}
+    h.run([gap("a")])
+    assert h.state["unmatched_brands"] == {"a": ["Auto Insurance"]}
+    h.unmatched = {}
+    h.run([gap("a")])
+    assert h.state["unmatched_brands"] == {}
