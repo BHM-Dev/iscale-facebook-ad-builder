@@ -62,7 +62,7 @@ Thresholds come from a replay of RHO's real 30 days (see the brief §1), and liv
 | `PROPOSALS_ENABLED` | true | Turns the hourly job on or off |
 | `PROPOSALS_SHADOW` | true | Shadow week on |
 | `PROPOSALS_SHADOW_VIEWERS` | none | Comma-separated emails who can see proposals during the shadow week |
-| `PROPOSALS_ACCOUNT_IDS` | Every Switchboard-revenue account | Accounts the evaluator covers. Only accounts with a Switchboard revenue source are kept |
+| `PROPOSALS_ACCOUNT_IDS` | Every Switchboard-revenue account | Accounts the evaluator covers. Only accounts with a Switchboard revenue source are kept. **Production (set 2026-11-02, Steve):** `act_521142087204815,act_737291135429748` — RHO and RHO 4, the accounts actively running commercial insurance |
 
 ## Status
 - **Unit-tested:** triggers, dedupe and expiry, approve (executed, stale, failed then retry, double click), dismiss validation, activity-log parsing, and shadow matching (`tests/unit/test_proposals.py`).
