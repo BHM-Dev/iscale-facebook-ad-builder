@@ -8,6 +8,7 @@ import { summarizeSyncFreshness } from '../lib/syncFreshness';
 import { useBrands } from '../context/BrandContext';
 import { useCampaign } from '../context/CampaignContext';
 import { safeLocalStorageSet } from '../lib/safeLocalStorage';
+import ProposalsPanel from '../components/ProposalsPanel';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -2910,6 +2911,7 @@ export default function CampaignPerformance() {
       )}
 
       <div className="px-5 pb-5 space-y-4 mt-1">
+      <ProposalsPanel />
       <CreativeCompass
         buckets={compassBuckets}
         onOpenAdset={openCompassAdset}

@@ -9,6 +9,9 @@ import { useCampaign } from '../context/CampaignContext';
 import { VERTICAL_FILTERS } from '../lib/verticals';
 import AskAiWidget from './AskAiWidget';
 import { safeLocalStorageGet } from '../lib/safeLocalStorage';
+import { authFetch } from '../lib/facebookApi';
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 const ACTIVE_LAUNCH_STORAGE_KEY = 'adbuilder_active_launches_v1';
 const ACTIVE_LAUNCH_STALE_MS = 30 * 60 * 1000;
@@ -69,6 +72,35 @@ export default function Layout() {
     const [isCollapsed, setIsCollapsed] = useState(() => location.pathname === LAUNCH_WIZARD_PATH);
     const [prevPath, setPrevPath] = useState(location.pathname);
     const [activeLaunches, setActiveLaunches] = useState(readActiveLaunches);
+    const [proposalCount, setProposalCount] = useState(0);
+    const [proposalsVisible, setProposalsVisible] = useState(false);
+    useEffect(() => {
+        let disposed = false;
+        const refreshProposals = async () => {
+            if (document.visibilityState !== 'visible') return;
+            try {
+                const response = await authFetch(`${API_BASE}/proposals`);
+                if (!response.ok) return;
+                const data = await response.json();
+                if (disposed) return;
+                setProposalsVisible(data.visible === true);
+                setProposalCount(data.visible === true ? (data.proposals || []).filter(item => ['open', 'executing', 'failed'].includes(item.status)).length : 0);
+            } catch {
+                if (!disposed) {
+                    setProposalsVisible(false);
+                    setProposalCount(0);
+                }
+            }
+        };
+        refreshProposals();
+        const interval = window.setInterval(refreshProposals, 5 * 60 * 1000);
+        document.addEventListener('visibilitychange', refreshProposals);
+        return () => {
+            disposed = true;
+            window.clearInterval(interval);
+            document.removeEventListener('visibilitychange', refreshProposals);
+        };
+    }, []);
     useEffect(() => {
         const refresh = () => setActiveLaunches(readActiveLaunches());
         window.addEventListener('storage', refresh);
@@ -148,13 +180,14 @@ export default function Layout() {
                             <Link
                                 key={item.path}
                                 to={item.path}
-                                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 group ${
+                                className={`relative flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 group ${
                                     isActive ? 'bg-gray-100 text-gray-900 font-medium' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
                                 } ${isCollapsed ? 'justify-center px-2' : ''}`}
                                 title={isCollapsed ? item.label : ''}
                             >
                                 <Icon size={18} className="flex-shrink-0 transition-colors" />
-                                {!isCollapsed && <span className="text-sm whitespace-nowrap overflow-hidden">{item.label}</span>}
+                                {!isCollapsed && <span className="flex min-w-0 items-center gap-2 text-sm whitespace-nowrap overflow-hidden"><span className="overflow-hidden text-ellipsis">{item.label}</span>{item.path === '/facebook-hub' && proposalsVisible && proposalCount > 0 && <span className="rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold leading-4 text-white">{proposalCount}</span>}</span>}
+                                {isCollapsed && item.path === '/facebook-hub' && proposalsVisible && proposalCount > 0 && <span className="absolute right-1 top-1 rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold leading-4 text-white">{proposalCount}</span>}
                             </Link>
                         );
                     })}
