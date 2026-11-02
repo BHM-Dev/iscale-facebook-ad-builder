@@ -2207,16 +2207,16 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         }
     };
 
-    // Browser tabs share Meta credentials and localStorage. Use the browser's
-    // native cross-tab lock while this tab owns the sequential Meta write chain;
-    // without it, two nearly simultaneous launches can both pass the existing
-    // reconciliation read before either one writes its lock.
+    // Browser tabs share Meta credentials and Meta rate limits are not isolated
+    // enough to safely burst separate launches from different accounts at once.
+    // Use one global native cross-tab lock while this tab owns the sequential
+    // Meta write chain; Abel can prepare another launch, but its final submit
+    // waits until the current launch releases the lock.
     const handleSubmit = async () => {
-        const accountId = selectedAdAccount?.accountId || selectedAdAccount?.id || 'default';
         if (typeof navigator !== 'undefined' && navigator.locks?.request) {
-            return navigator.locks.request(`adbuilder-meta-launch:${accountId}`, { ifAvailable: true }, async (lock) => {
+            return navigator.locks.request('adbuilder-meta-launch-global', { ifAvailable: true }, async (lock) => {
                 if (!lock) {
-                    showWarning('Another launch is already sending ads for this Meta account. Finish or reconcile it before starting another launch here.');
+                    showWarning('Another launch is already sending ads to Meta. This launch is ready, but wait for the current launch to finish before submitting it.');
                     return null;
                 }
                 return executeLaunch();
