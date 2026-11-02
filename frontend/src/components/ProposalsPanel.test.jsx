@@ -3,10 +3,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ProposalsPanel from './ProposalsPanel';
 
-const { authFetch, showError } = vi.hoisted(() => ({ authFetch: vi.fn(), showError: vi.fn() }));
+const { authFetch, showError, showSuccess, showInfo } = vi.hoisted(() => ({ authFetch: vi.fn(), showError: vi.fn(), showSuccess: vi.fn(), showInfo: vi.fn() }));
 
 vi.mock('../lib/facebookApi', () => ({ authFetch }));
-vi.mock('../context/ToastContext', () => ({ useToast: () => ({ showError }) }));
+vi.mock('../context/ToastContext', () => ({ useToast: () => ({ showError, showSuccess, showInfo }) }));
 vi.mock('../context/CampaignContext', () => ({ useCampaign: () => ({ adAccounts: [{ id: 'act_1', name: 'RHO' }] }) }));
 
 const proposal = (overrides = {}) => ({
@@ -42,6 +42,8 @@ const response = (body, ok = true, status = 200) => ({ ok, status, json: async (
 beforeEach(() => {
     authFetch.mockReset();
     showError.mockReset();
+    showSuccess.mockReset();
+    showInfo.mockReset();
 });
 
 describe('ProposalsPanel', () => {
@@ -92,5 +94,41 @@ describe('ProposalsPanel', () => {
         expect(dismissButton).toBeDisabled();
         fireEvent.change(screen.getByPlaceholderText('What should the rule have known?'), { target: { value: 'Keep testing.' } });
         expect(dismissButton).not.toBeDisabled();
+    });
+
+    it('says so when another person already decided the proposal (409)', async () => {
+        authFetch.mockImplementation((url, options = {}) => {
+            if (url.endsWith('/events')) return Promise.resolve(response({}, true, 204));
+            if (options.method === 'POST') return Promise.resolve(response({ detail: 'Already decided' }, false, 409));
+            return Promise.resolve(response(openPayload()));
+        });
+        render(<ProposalsPanel />);
+        fireEvent.click(await screen.findByText('Approve — pause ad set'));
+        await waitFor(() => expect(showInfo).toHaveBeenCalledWith('Already handled — see History.'));
+    });
+
+    it('survives a non-JSON gateway error and reloads the list', async () => {
+        let gets = 0;
+        authFetch.mockImplementation((url, options = {}) => {
+            if (url.endsWith('/events')) return Promise.resolve(response({}, true, 204));
+            if (options.method === 'POST') return Promise.resolve({ ok: false, status: 504, json: async () => { throw new SyntaxError("Unexpected token '<'"); } });
+            gets += 1;
+            return Promise.resolve(response(openPayload()));
+        });
+        render(<ProposalsPanel />);
+        fireEvent.click(await screen.findByText('Approve — pause ad set'));
+        await waitFor(() => expect(showError).toHaveBeenCalledWith('Approval failed'));
+        await waitFor(() => expect(gets).toBe(2));
+    });
+
+    it('confirms a successful pause', async () => {
+        authFetch.mockImplementation((url, options = {}) => {
+            if (url.endsWith('/events')) return Promise.resolve(response({}, true, 204));
+            if (options.method === 'POST') return Promise.resolve(response(proposal({ status: 'executed' })));
+            return Promise.resolve(response(openPayload()));
+        });
+        render(<ProposalsPanel />);
+        fireEvent.click(await screen.findByText('Approve — pause ad set'));
+        await waitFor(() => expect(showSuccess).toHaveBeenCalledWith('Paused Churches - Batch 3'));
     });
 });

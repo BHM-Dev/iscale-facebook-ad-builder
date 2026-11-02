@@ -79,3 +79,9 @@ Thresholds come from a replay of RHO's real 30 days (see the brief §1), and liv
 
 ## Changelog
 - 2026-11-02: Phase 1 backend (models, migration `ad5e6f708192`, evaluator, endpoints, shadow report).
+
+## Panel (2026-11-02)
+- `ProposalsPanel.jsx` sits on Campaign Performance, above Creative Compass. The open count shows as a badge on the Facebook nav item. Both are hidden for anyone outside `PROPOSALS_SHADOW_VIEWERS` during the shadow week.
+- Approve shows a success toast. A 409 shows "Already handled". Stale and failed results stay on the card (failed ones get a Retry). A gateway or non-JSON error reloads the list, because the Meta write may have landed.
+- Only one approve can be in flight at a time.
+- *Unit-tested only* (8 vitest cases); not yet clicked in production.

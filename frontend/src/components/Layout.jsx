@@ -95,10 +95,12 @@ export default function Layout() {
         refreshProposals();
         const interval = window.setInterval(refreshProposals, 5 * 60 * 1000);
         document.addEventListener('visibilitychange', refreshProposals);
+        window.addEventListener('proposals:changed', refreshProposals);
         return () => {
             disposed = true;
             window.clearInterval(interval);
             document.removeEventListener('visibilitychange', refreshProposals);
+            window.removeEventListener('proposals:changed', refreshProposals);
         };
     }, []);
     useEffect(() => {

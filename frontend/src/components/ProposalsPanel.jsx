@@ -64,7 +64,7 @@ function Evidence({ proposal, onExpanded }) {
                             <tr className="text-right text-gray-400">
                                 <th className="py-1 pr-3 text-left font-medium">Day</th>
                                 <th className="px-2 py-1 font-medium">Spend</th>
-                                <th className="px-2 py-1 font-medium">Leads</th>
+                                <th className="hidden px-2 py-1 font-medium md:table-cell">Leads</th>
                                 <th className="px-2 py-1 font-medium">Revenue</th>
                                 <th className="py-1 pl-2 font-medium">Profit</th>
                             </tr>
@@ -76,7 +76,7 @@ function Evidence({ proposal, onExpanded }) {
                                     <tr key={`${day.day}-${index}`} className="border-t border-gray-100 text-right">
                                         <td className="py-1 pr-3 text-left text-gray-600">{dayLabel(day.day, index === days.length - 1)}</td>
                                         <td className="px-2 py-1 text-gray-700">{money(day.spend)}</td>
-                                        <td className="px-2 py-1 text-gray-700">{day.leads ?? 0}</td>
+                                        <td className="hidden px-2 py-1 text-gray-700 md:table-cell">{day.leads ?? 0}</td>
                                         <td className="px-2 py-1 text-gray-700">{money(day.revenue)}</td>
                                         <td className={`py-1 pl-2 ${profit < 0 ? 'text-red-600' : 'text-green-700'}`}>{money(profit)}</td>
                                     </tr>
@@ -85,7 +85,7 @@ function Evidence({ proposal, onExpanded }) {
                             <tr className="font-semibold text-right">
                                 <td className="py-1 pr-3 text-left">7 days</td>
                                 <td className="px-2 py-1">{money(totals.spend)}</td>
-                                <td className="px-2 py-1">{totals.leads ?? 0}</td>
+                                <td className="hidden px-2 py-1 md:table-cell">{totals.leads ?? 0}</td>
                                 <td className="px-2 py-1">{money(totals.revenue)}</td>
                                 <td className={`py-1 pl-2 ${Number(totals.profit || 0) < 0 ? 'text-red-600' : 'text-green-700'}`}>{money(totals.profit)}</td>
                             </tr>
@@ -97,15 +97,18 @@ function Evidence({ proposal, onExpanded }) {
     );
 }
 
-function ProposalCard({ proposal, accountName, dismissReasons, onApprove, onDismiss, onEvent, busy }) {
+function ProposalCard({ proposal, accountName, dismissReasons, onApprove, onDismiss, onEvent, busy, anyBusy }) {
     const [dismissOpen, setDismissOpen] = useState(false);
     const [reason, setReason] = useState('');
     const [note, setNote] = useState('');
     const pause = proposal.action === 'pause';
     const raiseTo = Number(proposal.action_params?.to_cents || 0) / 100;
+    const raiseFrom = Number(proposal.action_params?.from_cents || 0) / 100;
+    const raisePct = raiseFrom > 0 ? Math.round(((raiseTo - raiseFrom) / raiseFrom) * 100) : null;
     const current = proposal.evidence?.current || {};
     const failedMessage = proposal.status === 'failed' ? proposal.execution_result?.error : null;
     const stale = proposal.status === 'stale';
+    const locked = stale || proposal.status === 'executing';
     const dismissDisabled = !reason || (reason === 'Other' && !note.trim()) || busy;
     const adsManagerUrl = `https://adsmanager.facebook.com/adsmanager/manage/adsets?act=${String(proposal.fb_account_id || '').replace(/^act_/, '')}&selected_adset_ids=${encodeURIComponent(proposal.fb_adset_id || '')}`;
 
@@ -124,23 +127,23 @@ function ProposalCard({ proposal, accountName, dismissReasons, onApprove, onDism
 
             <div className="my-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-600">
                 <span>Current: <b className="text-gray-900">{current.status || '—'}{current.daily_budget_cents != null ? ` · ${money(current.daily_budget_cents / 100)}/day` : ''}</b></span>
-                <span>Proposed: <b className="text-gray-900">{pause ? 'PAUSE' : `${money(raiseTo)}/day (+20%)`}</b></span>
+                <span>Proposed: <b className="text-gray-900">{pause ? 'PAUSE' : `${money(raiseTo)}/day${raisePct != null ? ` (+${raisePct}%)` : ''}`}</b></span>
             </div>
 
             {stale && <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{proposal.status_reason || 'This ad set changed since the proposal. Nothing was sent.'}</div>}
             {failedMessage && (
                 <div className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
                     Meta rejected the change: {failedMessage}{' '}
-                    <button type="button" className="font-semibold underline" onClick={() => onApprove(proposal)} disabled={busy}>Retry</button>
+                    <button type="button" className="font-semibold underline" onClick={() => onApprove(proposal)} disabled={anyBusy}>{pause ? 'Retry' : `Retry — raise to ${money(raiseTo)}/day`}</button>
                 </div>
             )}
-            {busy && <div className="mb-3 text-xs text-amber-700">Checking the ad set in Meta…</div>}
+            {(busy || proposal.status === 'executing') && <div className="mb-3 text-xs text-amber-700">Checking the ad set in Meta…</div>}
 
             <div className="flex flex-wrap items-center gap-2">
-                <button type="button" className={`w-full rounded-lg px-3 py-2 text-sm font-semibold text-white sm:w-auto ${pause ? 'bg-red-700 hover:bg-red-800' : 'bg-indigo-600 hover:bg-indigo-700'} disabled:cursor-not-allowed disabled:opacity-50`} onClick={() => onApprove(proposal)} disabled={busy || stale}>
+                <button type="button" className={`w-full rounded-lg px-3 py-2 text-sm font-semibold text-white sm:w-auto ${pause ? 'bg-red-700 hover:bg-red-800' : 'bg-indigo-600 hover:bg-indigo-700'} disabled:cursor-not-allowed disabled:opacity-50`} onClick={() => onApprove(proposal)} disabled={anyBusy || locked}>
                     {pause ? 'Approve — pause ad set' : `Approve — raise to ${money(raiseTo)}/day`}
                 </button>
-                <button type="button" className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 hover:bg-gray-50 disabled:opacity-50 sm:w-auto" onClick={() => setDismissOpen(value => !value)} disabled={busy || stale}>
+                <button type="button" className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 hover:bg-gray-50 disabled:opacity-50 sm:w-auto" onClick={() => setDismissOpen(value => !value)} disabled={busy || locked}>
                     Dismiss ▾
                 </button>
                 <a className="w-full text-sm text-indigo-600 hover:text-indigo-800 sm:w-auto" href={adsManagerUrl} target="_blank" rel="noreferrer" onClick={() => onEvent('ads_manager_opened', proposal.id)}>
@@ -169,7 +172,7 @@ function ProposalCard({ proposal, accountName, dismissReasons, onApprove, onDism
 
 export default function ProposalsPanel() {
     const { adAccounts = [] } = useCampaign();
-    const { showError } = useToast();
+    const { showError, showSuccess, showInfo } = useToast();
     const [payload, setPayload] = useState(null);
     const [proposals, setProposals] = useState([]);
     const [tab, setTab] = useState('open');
@@ -189,6 +192,7 @@ export default function ProposalsPanel() {
             if (!response.ok) throw new Error('Failed to load proposals');
             const data = await response.json();
             setPayload(data);
+            window.dispatchEvent(new Event('proposals:changed'));
             setProposals(data.visible ? (data.proposals || []) : []);
             (data.proposals || []).forEach(proposal => {
                 if (!viewed.current.has(proposal.id)) {
@@ -218,8 +222,9 @@ export default function ProposalsPanel() {
                 setStats(await response.json());
             }).catch(error => showError(error.message));
         }
-        event('proposal_tab_viewed', null, { tab });
-    }, [event, history, showError, stats, tab]);
+    }, [history, showError, stats, tab]);
+
+    useEffect(() => { event('proposal_tab_viewed', null, { tab }); }, [event, tab]);
 
     const accountNames = useMemo(() => new Map(adAccounts.map(account => [accountId(account), account.name || account.account_name || account.label])), [adAccounts]);
     if (payload?.visible === false) return null;
@@ -231,19 +236,26 @@ export default function ProposalsPanel() {
         setBusyId(proposal.id);
         try {
             const response = await authFetch(`${API_BASE}/proposals/${proposal.id}/approve`, { method: 'POST' });
-            if (response.status === 409) { await loadOpen(); return; }
-            const data = await response.json();
+            if (response.status === 409) {
+                showInfo('Already handled — see History.');
+                await loadOpen();
+                return;
+            }
+            const data = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(data.detail || 'Approval failed');
-            if (data.status === 'stale') {
-                setProposals(current => current.map(item => item.id === proposal.id ? data : item));
-                window.setTimeout(loadOpen, 1500);
-            } else if (data.status === 'failed') {
+            if (data.status === 'stale' || data.status === 'failed') {
+                // Keep the card in place so the reason stays readable; the next load drops a stale one.
                 setProposals(current => current.map(item => item.id === proposal.id ? data : item));
             } else {
+                showSuccess(data.action === 'pause'
+                    ? `Paused ${data.adset_name}`
+                    : `Raised ${data.adset_name} to ${money(Number(data.action_params?.to_cents || 0) / 100)}/day`);
                 await loadOpen();
             }
         } catch (error) {
             showError(error.message || 'Approval failed');
+            // The write may have landed even if the response didn't; show the server's state.
+            loadOpen();
         } finally {
             setBusyId(null);
         }
@@ -253,7 +265,7 @@ export default function ProposalsPanel() {
         setBusyId(proposal.id);
         try {
             const response = await authFetch(`${API_BASE}/proposals/${proposal.id}/dismiss`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason, note: note || '' }) });
-            const data = await response.json();
+            const data = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(data.detail || 'Dismissal failed');
             await loadOpen();
         } catch (error) {
@@ -273,10 +285,10 @@ export default function ProposalsPanel() {
             </div>
             {payload.shadow && <div className="border-b border-gray-100 px-4 py-2.5 text-xs text-gray-600">Shadow week: only you can see these. Joel and Abel don't see this panel yet.</div>}
             <div className={`border-b border-gray-100 px-4 py-2.5 text-xs ${unavailable ? 'bg-amber-50 text-amber-800' : 'text-gray-600'}`}>
-                {unavailable ? 'Revenue source unavailable — no new proposals until Switchboard responds. Missing revenue is never treated as $0.' : 'Nothing changes in Meta until someone approves. Existing auto-pause rules are unchanged.'}
+                {unavailable ? 'Revenue source unavailable — no new proposals until revenue data is back. Missing revenue is never treated as $0.' : 'Nothing changes in Meta until someone approves. Existing auto-pause rules are unchanged.'}
             </div>
             {tab === 'open' && (proposals.length === 0 ? <div className="px-4 py-7 text-center text-sm text-gray-400">No proposals right now. The next check runs within the hour.</div> : proposals.map(proposal => (
-                <ProposalCard key={proposal.id} proposal={proposal} accountName={accountNames.get(accountId({ id: proposal.fb_account_id })) || accountNames.get(String(proposal.fb_account_id || '').replace(/^act_/, ''))} dismissReasons={payload.dismiss_reasons || []} onApprove={approve} onDismiss={dismiss} onEvent={event} busy={busyId === proposal.id} />
+                <ProposalCard key={proposal.id} proposal={proposal} accountName={accountNames.get(accountId({ id: proposal.fb_account_id })) || accountNames.get(String(proposal.fb_account_id || '').replace(/^act_/, ''))} dismissReasons={payload.dismiss_reasons || []} onApprove={approve} onDismiss={dismiss} onEvent={event} busy={busyId === proposal.id} anyBusy={busyId !== null} />
             )))}
             {tab === 'history' && <HistoryTable rows={history} />}
             {tab === 'stats' && <StatsTable stats={stats} />}
