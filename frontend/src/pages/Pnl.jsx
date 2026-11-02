@@ -59,6 +59,29 @@ function monthValue(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function dateValue(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+const RANGE_PERIODS = new Set(['today', 'yesterday', 'last_7d', 'last_30d', 'last_month']);
+
+function presetRange(period, now = new Date()) {
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (period === 'today') return { from: dateValue(end), to: dateValue(end) };
+  if (period === 'yesterday') {
+    end.setDate(end.getDate() - 1);
+    return { from: dateValue(end), to: dateValue(end) };
+  }
+  if (period === 'last_month') {
+    const lastDay = new Date(end.getFullYear(), end.getMonth(), 0);
+    return { from: dateValue(new Date(lastDay.getFullYear(), lastDay.getMonth(), 1)), to: dateValue(lastDay) };
+  }
+  const days = period === 'last_30d' ? 29 : 6;
+  const start = new Date(end);
+  start.setDate(start.getDate() - days);
+  return { from: dateValue(start), to: dateValue(end) };
+}
+
 function firstOfMonth(month) {
   return `${month}-01`;
 }
@@ -279,6 +302,7 @@ export default function Pnl() {
   });
   const isAllScope = scope === 'all';
   const requestAccountId = isAllScope ? 'all' : activeAccountId;
+  const isDateRangePeriod = period === 'custom' || RANGE_PERIODS.has(period);
 
   // The two fetches are deliberately NOT awaited together. /pnl/months walks six
   // months of Meta + revenue calls and took 12-24s in production; sharing one
@@ -300,8 +324,8 @@ export default function Pnl() {
     const current = () => loadToken.current === token;
     setLoadError('');
 
-    const params = new URLSearchParams({ ad_account_id: requestAccountId, period });
-    if (period === 'custom') {
+    const params = new URLSearchParams({ ad_account_id: requestAccountId, period: isDateRangePeriod ? 'custom' : period });
+    if (isDateRangePeriod) {
       if (!customFrom || !customTo) {
         setSummary(null);
         setMonths([]);
@@ -426,6 +450,14 @@ export default function Pnl() {
   const isIncomplete = summary?.data_incomplete;
   const grossTone = isIncomplete ? 'neutral' : summary?.gross_profit > 0 ? 'good' : summary?.gross_profit < 0 ? 'bad' : 'neutral';
   const netTone = isIncomplete ? 'neutral' : summary?.net_profit > 0 ? 'good' : summary?.net_profit < 0 ? 'bad' : 'neutral';
+  const changePeriod = (nextPeriod) => {
+    setPeriod(nextPeriod);
+    if (RANGE_PERIODS.has(nextPeriod)) {
+      const range = presetRange(nextPeriod);
+      setCustomFrom(range.from);
+      setCustomTo(range.to);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
@@ -468,17 +500,26 @@ export default function Pnl() {
               Active account
             </button>
           </div>
-          {period !== 'custom' ? (
-            <input type="month" value={month} onChange={e => setMonth(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" />
-          ) : (
+          {period === 'custom' ? (
             <>
               <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" />
               <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" />
             </>
+          ) : RANGE_PERIODS.has(period) ? (
+            <span className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
+              {customFrom} – {customTo}
+            </span>
+          ) : (
+            <input type="month" value={month} onChange={e => setMonth(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" />
           )}
-          <select value={period} onChange={e => setPeriod(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm">
+          <select value={period} onChange={e => changePeriod(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm">
             <option value="mtd">MTD</option>
             <option value="month">Month</option>
+            <option value="today">Today</option>
+            <option value="yesterday">Yesterday</option>
+            <option value="last_7d">Last 7 days</option>
+            <option value="last_30d">Last 30 days</option>
+            <option value="last_month">Last month</option>
             <option value="custom">Custom range</option>
           </select>
           <button onClick={load} disabled={loading} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
