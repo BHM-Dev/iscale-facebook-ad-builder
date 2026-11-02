@@ -66,7 +66,11 @@ Thresholds come from a replay of RHO's real 30 days (see the brief §1), and liv
 
 ## Status
 - **Unit-tested:** triggers, dedupe and expiry, approve (executed, stale, failed then retry, double click), dismiss validation, activity-log parsing, and shadow matching (`tests/unit/test_proposals.py`).
-- **Not verified yet:** the first production evaluation run, the shadow report on the live log, and the panel UI (with Codex: `CODEX_BRIEF_approvals-queue-panel.md`).
+- **Verified in production 2026-11-02** (`c8ec09d`, run from Steve's Chrome):
+  - Migration `ad5e6f708192` applied, and both tables exist.
+  - First evaluation: 4 Switchboard accounts in 12.3s, revenue available on all. RHO got 7 `scale_winner` proposals, for example ROI 82–105% on $441–$3,349 of 7-day spend, with raises such as $350 → $420/day. No pause proposals (the run was mid-morning in the account's timezone). The other 3 accounts got none.
+  - Shadow report on RHO's live activity log (8.4s): Joel made 57 ad-set pauses and 47 budget increases over 7 days. 17 actions by the token owner were counted as people. 0 were excluded as rule actions, because no rule fired.
+- **Not verified:** a real Approve or Dismiss (nothing has been clicked yet), the hourly job firing unattended, and the panel UI (with Codex: `CODEX_BRIEF_approvals-queue-panel.md`).
 
 ## Open items
 - Phase 1.5: an outcome job that fills `outcome_3d`.
