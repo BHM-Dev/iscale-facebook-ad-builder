@@ -13,6 +13,7 @@ Claude) can see what exists and why before changing it. Update the file in the s
 | Ops & monitoring (backups, watchers, weekly/monthly reviews) | [ops-monitoring.md](ops-monitoring.md) | Nightly backup + restore drill verified 2026-10-25 |
 | Profit / Loss (`/pnl`) | [pnl.md](pnl.md) | Revenue rules recorded; non-Meta-id revenue excluded 2026-10-24 |
 | Research (`/research`) | [research.md](research.md) | Audited 2026-10-07 (read-only); fixes not started |
+| Approvals Queue (proposals on Campaign Performance) | [approvals-queue.md](approvals-queue.md) | Phase 1 backend 2026-11-02; shadow week; panel with Codex |
 | Ad Launcher (Campaign → Ad Set → Drive picker → Review → Launch) | [ad-launcher.md](ad-launcher.md) | Live status gate shipped; browser-verified 2026-10-06 |
 
 ## How to add / update an entry

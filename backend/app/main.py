@@ -587,6 +587,24 @@ async def startup_event():
                 print(f"⚠️  P&L cache warm failed: {exc}")   # the page still works, it just pulls live
 
         scheduler.add_job(scheduled_pnl_cache_warm, 'interval', minutes=4, id='pnl_cache_warm', max_instances=1, coalesce=True)
+
+        def scheduled_proposal_evaluate():
+            """Hourly: approvals-queue proposals from real profit. Writes proposals only, never to Meta."""
+            from app.services import proposal_service
+            if not proposal_service.enabled():
+                return
+            db = SessionLocal()
+            try:
+                result = proposal_service.run_evaluation(db)
+                print(f"🗳  Proposals evaluated: {result}")
+            except Exception as exc:
+                print(f"⚠️  Proposal evaluation failed: {exc}")
+            finally:
+                db.close()
+
+        # Boot+27 min then hourly: clear of auto-pause (+2/+32), Drive (+7/22/37/52), RedTrack (+10/+40), Meta sync (+20/+50).
+        scheduler.add_job(scheduled_proposal_evaluate, 'interval', minutes=60, id='proposal_evaluate',
+                          start_date=_boot + timedelta(minutes=27), max_instances=1, coalesce=True)
         # Changes-feed sync every 15 minutes (restored 2026-10-08 at Steve's
         # request): a daily run left Joel's fresh uploads invisible to Abel for
         # up to ~19h. The feed is cheap when nothing changed, and the shared
@@ -664,7 +682,7 @@ async def shutdown_event():
 
 
 # Include Routers
-from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence, creative_angles, pnl, drive_assets, drive_health, drive_sync_runs, capi_quality, launch_packs, launch_outcomes
+from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence, creative_angles, pnl, drive_assets, drive_health, drive_sync_runs, capi_quality, launch_packs, launch_outcomes, proposals
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
@@ -694,6 +712,7 @@ app.include_router(drive_health.router, prefix="/api/v1/drive", tags=["drive-hea
 app.include_router(drive_sync_runs.router, prefix="/api/v1/drive-assets", tags=["drive-assets"])
 app.include_router(capi_quality.router, prefix="/api/v1/capi-quality", tags=["capi-quality"])
 app.include_router(launch_outcomes.router, prefix="/api/v1/launch-outcomes", tags=["launch-outcomes"])
+app.include_router(proposals.router, prefix="/api/v1/proposals", tags=["proposals"])
 
 # Mount static files for uploads (same path as generated_ads save location)
 uploads_dir = str(settings.upload_dir)

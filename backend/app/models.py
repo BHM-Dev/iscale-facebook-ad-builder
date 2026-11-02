@@ -1156,3 +1156,49 @@ class LaunchOutcome(Base):
     meta = Column(JSON, nullable=True)
     alerted_at = Column(DateTime(timezone=True), nullable=True)
     investigated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class ActionProposal(Base):
+    """Approvals queue (docs/briefs/AdBuilder-Approvals-Queue-Brief.md): a proposed pause or budget
+    raise for one ad set, backed by real revenue. Nothing reaches Meta until a person approves.
+
+    status: open | executing | executed | failed | dismissed | expired | stale.
+    `evidence` freezes the numbers shown on the card at creation time. soft_tags/variant/geo are
+    reserved (always null in MVP)."""
+    __tablename__ = "action_proposals"
+    __table_args__ = (Index("ix_action_proposals_account_status", "fb_account_id", "status"),)
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    fb_account_id = Column(String, nullable=False)
+    fb_adset_id = Column(String, nullable=False, index=True)
+    adset_name = Column(String, nullable=True)
+    trigger_key = Column(String, nullable=False)       # no_revenue_spend | loss_3d | scale_winner
+    trigger_keys = Column(JSON, nullable=True)         # every trigger that fired (both pause triggers can)
+    action = Column(String, nullable=False)            # pause | budget_increase
+    action_params = Column(JSON, nullable=True)        # {"from_cents":7500,"to_cents":9000} / {"from_status":"ACTIVE"}
+    evidence = Column(JSON, nullable=True)
+    status = Column(String, nullable=False, default="open", index=True)
+    status_reason = Column(String, nullable=True)      # e.g. expired: condition cleared / timed out
+    decided_by = Column(String, nullable=True)         # user email
+    decided_at = Column(DateTime(timezone=True), nullable=True)
+    dismiss_reason = Column(String, nullable=True)
+    dismiss_note = Column(Text, nullable=True)
+    execution_result = Column(JSON, nullable=True)
+    outcome_3d = Column(JSON, nullable=True)
+    soft_tags = Column(JSON, nullable=True)
+    variant = Column(String, nullable=True)
+    geo = Column(String, nullable=True)
+
+
+class ProposalEvent(Base):
+    """Event log for the approvals queue (created, viewed, approved, executed, dismissed, ...)."""
+    __tablename__ = "proposal_events"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    proposal_id = Column(String, ForeignKey("action_proposals.id", ondelete="CASCADE"), nullable=True, index=True)
+    event = Column(String, nullable=False)
+    user_email = Column(String, nullable=True)
+    props = Column(JSON, nullable=True)
