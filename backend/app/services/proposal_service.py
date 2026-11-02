@@ -179,7 +179,11 @@ def evaluate(meta: dict, revenue: dict, live: dict, today: date, max_daily_cents
         s7, l7, r7 = _window(series, today, SCALE_DAYS)
         triggers = []
         if today_spend >= NO_REV_MIN_SPEND_TODAY and rev_lookback == 0:
-            triggers.append(("no_revenue_spend", f"Spent ${today_spend:,.0f} today with no revenue in {NO_REV_LOOKBACK_DAYS} days"))
+            # Say what the data is: an ad set new (or restarted) today has one day of history, not three.
+            spent_before = any(v.get("spend", 0.0) > 0 for d, v in series.items() if d < _day(today))
+            why = (f"Spent ${today_spend:,.0f} today, its first spend in {SCALE_DAYS}+ days, with no revenue yet"
+                   if not spent_before else f"Spent ${today_spend:,.0f} today with no revenue in {NO_REV_LOOKBACK_DAYS} days")
+            triggers.append(("no_revenue_spend", why))
         if s3 >= LOSS_MIN_SPEND and (r3 - s3) <= -LOSS_MIN_LOSS:
             triggers.append(("loss_3d", f"Lost ${s3 - r3:,.0f} over the last {LOSS_DAYS} days on ${s3:,.0f} spend"))
         action, params = None, None

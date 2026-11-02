@@ -43,6 +43,18 @@ def test_no_revenue_spend_fires():
     assert ev["current"] == {"status": "ACTIVE", "daily_budget_cents": 7500}
 
 
+def test_no_revenue_first_day_says_so():
+    """Replay 2026-11-02: first-day no-revenue ad sets lost money over the next 7 days 93% of the
+    time, so they stay proposed; the reason just mustn't claim 3 days of history."""
+    first = _eval([(0, 0, 0)] * 6 + [(65, 0, 0)])
+    assert first[0]["trigger_keys"] == ["no_revenue_spend"]
+    assert first[0]["evidence"]["why"] == "Spent $65 today, its first spend in 7+ days, with no revenue yet"
+    restarted = _eval([(0, 0, 0)] * 2 + [(40, 1, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (55, 0, 0)])
+    assert restarted[0]["evidence"]["why"] == "Spent $55 today with no revenue in 3 days"
+    steady = _eval([(0, 0, 0)] * 4 + [(40, 2, 0), (40, 2, 0), (55, 3, 0)])
+    assert steady[0]["evidence"]["why"] == "Spent $55 today with no revenue in 3 days"
+
+
 def test_no_revenue_needs_50_today_and_zero_revenue_for_3_days():
     assert _eval([(0, 0, 0)] * 4 + [(40, 2, 0), (40, 2, 0), (49, 3, 0)]) == []          # $49 today
     assert _eval([(0, 0, 0)] * 4 + [(40, 2, 5), (40, 2, 0), (55, 3, 0)]) == []          # $5 two days ago

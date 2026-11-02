@@ -85,3 +85,13 @@ Thresholds come from a replay of RHO's real 30 days (see the brief §1), and liv
 - Approve shows a success toast. A 409 shows "Already handled". Stale and failed results stay on the card (failed ones get a Retry). A gateway or non-JSON error reloads the list, because the Meta write may have landed.
 - Only one approve can be in flight at a time.
 - *Unit-tested only* (8 vitest cases); not yet clicked in production.
+
+## Trigger check: first-day ad sets (2026-11-02)
+The first live pause proposal was for an ad set whose first day of spend was today. The reason text claimed "no revenue in 3 days", which looked wrong. I re-ran the RHO replay (2026-10-03..11-01, $122.9k spend) to see whether `no_revenue_spend` should require spend on at least 2 of the 3 days.
+
+| Group | Proposals | Next 7 days | Lost money | Turned profitable |
+|---|---|---|---|---|
+| First day of spend | 14 | −$551 on $1,201 spend | 93% | 7% |
+| ≥2 days of spend | 11 | −$110 on $320 spend | 55% | 27% |
+
+Requiring 2 days would have dropped the trigger's most accurate cases, so the trigger is unchanged. Only the reason text changed: an ad set with no spend in the previous 7 days now reads "Spent $X today, its first spend in 7+ days, with no revenue yet". A restarted ad set with earlier spend keeps the 3-day wording.
