@@ -19,7 +19,7 @@ from app.core.deps import require_permission
 from app.database import SessionLocal, get_db
 from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, PnlCostEntry, PnlMonthSnapshot, User, normalize_account_id
 from app.services.bhm_everflow_service import BhmEverflowService
-from app.services.everflow_service import EVERFLOW_TZ_BY_ID, META_ID_RE, EverflowService
+from app.services.everflow_service import DEFAULT_TIMEZONE_ID, EVERFLOW_TZ_BY_ID, META_ID_RE, EverflowService
 from app.services.facebook_service import FacebookService
 from app.services.redtrack_service import RedTrackService, today_in_rt_tz
 
@@ -1330,7 +1330,7 @@ def warm_current_month_cache() -> None:
     switchboard = EverflowService()
     if switchboard.is_configured():
         try:
-            rows = switchboard._fetch_conversion_rows(start.isoformat(), end.isoformat(), 80, refresh=True)
+            rows = switchboard._fetch_conversion_rows(start.isoformat(), end.isoformat(), DEFAULT_TIMEZONE_ID, refresh=True)
             db = SessionLocal()
             try:
                 _recover_macro_adsets(db, rows)   # warms the RedTrack click -> ad id map for these rows
@@ -1586,7 +1586,7 @@ def get_attribution_audit(
         except ValueError:
             raise HTTPException(status_code=400, detail="date_from and date_to must be YYYY-MM-DD.")
     else:
-        end = datetime.now(EVERFLOW_TZ_BY_ID[80]).date()
+        end = datetime.now(EVERFLOW_TZ_BY_ID[DEFAULT_TIMEZONE_ID]).date()
         start = end - timedelta(days=29)
     if end < start:
         raise HTTPException(status_code=400, detail="date_to must be on or after date_from.")
@@ -1618,7 +1618,7 @@ def get_attribution_audit(
         "ad_account_id": account_id,
         "date_from": start.isoformat(),
         "date_to": end.isoformat(),
-        "timezone": "America/New_York",
+        "timezone": EVERFLOW_TZ_BY_ID[DEFAULT_TIMEZONE_ID].key,
         "offer_names": sorted(offers),
         "source_report": source,
         "meta_identity_counts": {

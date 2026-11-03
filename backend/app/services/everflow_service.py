@@ -17,16 +17,15 @@ import httpx
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.eflow.team"
-# Eastern, matching Switchboard/Everflow's own portal default (confirmed by
-# Steve 2026-09-09 — Everflow's revenue is the point of truth for billable
-# revenue, so our day/month boundaries must match its own bucketing or the two
-# never fully reconcile). Previously Pacific — that mismatch only accounted for
-# ~$50-150 of variance on a 9-day MTD window, not the ~$2,557 Joel flagged in
-# Slack on 2026-09-09; the bulk of that gap was the P&L "All Accounts" view
-# blending this account's Everflow revenue with a second account's RedTrack
-# revenue, not a calculation bug (confirmed live same day: $18,596.97 Everflow
-# + $3,144.06 RedTrack ≈ the $21,340 he saw). Kept as a real, if smaller, fix.
-DEFAULT_TIMEZONE_ID = 80
+# Pacific (confirmed by Steve 2026-11-03, superseding the 2026-09-09 Eastern
+# decision below) — Joel's Meta ad account and his own Everflow-side view are
+# both PST, so P&L day/month boundaries now match his side instead of
+# Switchboard's portal default. The 2026-09-09 reconciliation concern was
+# mostly a different bug (an "All Accounts" view blending this account's
+# Everflow revenue with a second account's RedTrack revenue, not a timezone
+# calculation bug) with only ~$50-150 of real variance from the timezone
+# mismatch itself — small next to the benefit of matching Joel's own numbers.
+DEFAULT_TIMEZONE_ID = 90
 USD_CURRENCY_ID = "USD"
 CENT = Decimal("0.01")
 META_ID_RE = re.compile(r"^\d{10,}$")
@@ -258,8 +257,8 @@ class EverflowService:
         """Return a conversion's calendar date in the reporting timezone.
 
         Must not use a naive datetime. The VPS clock is UTC while we report in
-        Eastern (timezone_id 80), so a conversion at 2026-07-01 03:00 UTC is
-        2026-06-30 23:00 Eastern. Treating that timestamp as a naive server date
+        Pacific (timezone_id 90), so a conversion at 2026-07-01 06:00 UTC is
+        2026-06-30 23:00 Pacific. Treating that timestamp as a naive server date
         puts both daily trend and month reporting in the wrong calendar bucket.
         """
         tz = EVERFLOW_TZ_BY_ID.get(timezone_id, EVERFLOW_TZ_BY_ID[DEFAULT_TIMEZONE_ID])
