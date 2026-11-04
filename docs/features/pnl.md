@@ -70,6 +70,7 @@ Checked live against Meta and Everflow for today, yesterday and MTD (*verified i
 - **Not measured:** an actual browser page load (no signed-in session).
 
 ## Changelog
+- 2026-11-01 September re-fetched (`POST /months/2026-09/resync`, Steve's OK) after cross-check with Joel's Sheet: revenue $39,605 → $41,096, net $2,331 → $3,822 (frozen Sep predated the 10-26 `{{adset.id}}` rule). Sheet shows $41,066. *Verified in production.* Jul/Aug not re-fetched. Oct sheet vs /pnl: revenue $158,518 vs $158,041 (~$205 is excluded Fast Auto Quote outside traffic, ~$272 unexplained).
 - 2026-10-30 speed: frozen closed months in /summary, account-level spend, parallel Switchboard windows, row cache + 4-min warm job.
 - 2026-10-29 BHM Everflow revenue source for Splitero / LoanDepot.
 - 2026-10-26 all-internal offers (GBC, FBQ) count every conversion; Meta ad→ad set lookup (cached, ≤30/call) fills ads missing from the local table for macro recovery.
@@ -78,3 +79,8 @@ Checked live against Meta and Everflow for today, yesterday and MTD (*verified i
 - 2026-10-26 scheduled Meta sync defaults to all Everflow-mapped accounts.
 - 2026-10-25 closed months frozen (extras segment), per-scope rows, 3-day grace, resync surfaces incomplete extras.
 - 2026-10-24 non-Meta-id revenue moved from "unknown" (added) to `network_revenue` (excluded, reported); UI line added.
+
+## Second Switchboard account for auto insurance — 2026-11-04 (Steve)
+- Auto Meta traffic got its own Switchboard affiliate account so it is separate from network revenue on the first. **From 2026-11-01** (`SWITCHBOARD_EVERFLOW_2_START`), `EverflowService` merges rows: the first account's `Fast Auto Quote(.org)` rows are ignored, the second account's rows are used (tagged `_realm: 2`; all of them count as ours, even with no Meta sub3). Before the cutover nothing changes. All callers (P&L, dashboard, auto-pause, intelligence) get this through the shared service.
+- Env on the VPS: `SWITCHBOARD_EVERFLOW_2_API_KEY` (secret), optional `SWITCHBOARD_EVERFLOW_2_START`, `SWITCHBOARD_EVERFLOW_2_OFFERS` (default `Fast Auto Quote.org,Fast Auto Quote`). The auto accounts' entries in `SWITCHBOARD_EVERFLOW_ACCOUNT_OFFERS` must list the second account's offer name.
+- *Unit-tested only* (`tests/test_everflow_second_account.py`). *Not verified live:* the second account had 0 conversions on 2026-11-04, so its offer name and field shape are unconfirmed. A second-account outage makes the whole Switchboard pull fail (P&L shows incomplete, including commercial).

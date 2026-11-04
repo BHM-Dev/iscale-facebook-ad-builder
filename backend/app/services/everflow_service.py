@@ -70,8 +70,40 @@ class EverflowService:
     and advertiser realm endpoints return 403 for this integration.
     """
 
-    def __init__(self):
-        self.api_key = os.getenv("SWITCHBOARD_EVERFLOW_API_KEY")
+    # Second Switchboard affiliate account (Steve, 2026-11-04): the auto-insurance Meta traffic got its own account so it
+    # stays separate from the network revenue on the first one. From the cutover date on, auto-offer rows come ONLY
+    # from that account and the first account's auto-offer rows are ignored; before it, nothing changes. Everything
+    # downstream (P&L, dashboard, auto-pause, intelligence) keeps calling the same methods and just sees the merged
+    # rows. Rows from the second account carry `_realm: 2` so the P&L can treat them as all-internal.
+    REALM2_KEY_ENV = "SWITCHBOARD_EVERFLOW_2_API_KEY"
+    REALM2_START_ENV = "SWITCHBOARD_EVERFLOW_2_START"
+    REALM2_OFFERS_ENV = "SWITCHBOARD_EVERFLOW_2_OFFERS"
+    DEFAULT_REALM2_START = "2026-11-01"
+    DEFAULT_REALM2_OFFERS = "Fast Auto Quote.org,Fast Auto Quote"
+
+    def __init__(self, api_key: str | None = None):
+        self.api_key = api_key or os.getenv("SWITCHBOARD_EVERFLOW_API_KEY")
+
+    @classmethod
+    def realm2_cutover(cls) -> date | None:
+        """Date the second account takes over auto revenue, or None when no second key is configured."""
+        if not os.getenv(cls.REALM2_KEY_ENV):
+            return None
+        raw = os.getenv(cls.REALM2_START_ENV) or cls.DEFAULT_REALM2_START
+        try:
+            return datetime.strptime(raw.strip(), "%Y-%m-%d").date()
+        except ValueError:
+            raise RuntimeError(f"{cls.REALM2_START_ENV} must be YYYY-MM-DD, got {raw!r}")
+
+    @classmethod
+    def realm2_offer_names(cls) -> set[str]:
+        raw = os.getenv(cls.REALM2_OFFERS_ENV) or cls.DEFAULT_REALM2_OFFERS
+        return {cls._norm_offer(name) for name in raw.split(",") if name.strip()}
+
+    @staticmethod
+    def _norm_offer(name: str) -> str:
+        """Casefolded, alphanumerics only, so 'Fast Auto Quote.org', 'fast auto quote ' and 'Fast-Auto-Quote' compare equal."""
+        return re.sub(r"[^a-z0-9]", "", str(name).casefold())
 
     def is_configured(self) -> bool:
         return bool(self.api_key)
@@ -335,6 +367,29 @@ class EverflowService:
             return list(rows)
 
     def _fetch_conversion_rows_uncached(self, date_from: str, date_to: str, timezone_id: int) -> list[dict]:
+        rows = self._fetch_single_account_rows(date_from, date_to, timezone_id)
+        cutover = self.realm2_cutover()
+        if cutover is None:
+            return rows
+        end = datetime.strptime(date_to, "%Y-%m-%d").date()
+        auto_offers = self.realm2_offer_names()
+        # First account: drop its auto-offer rows from the cutover on (they are network traffic, not ours).
+        kept = [
+            r for r in rows
+            if not (self._norm_offer(self._offer_name(r)) in auto_offers and self._conversion_date(r, timezone_id) >= cutover)
+        ]
+        if end < cutover:
+            return kept
+        # Second account: only the days on/after the cutover. A failure raises, so the P&L shows data_incomplete
+        # rather than quietly reporting auto revenue as $0.
+        second = EverflowService(api_key=os.getenv(self.REALM2_KEY_ENV))
+        start = datetime.strptime(date_from, "%Y-%m-%d").date()
+        second_rows = second._fetch_single_account_rows(max(start, cutover).isoformat(), date_to, timezone_id)
+        second_rows = [{**r, "_realm": 2} for r in second_rows
+                       if self._conversion_date(r, timezone_id) >= cutover and self._norm_offer(self._offer_name(r)) in auto_offers]
+        return kept + second_rows
+
+    def _fetch_single_account_rows(self, date_from: str, date_to: str, timezone_id: int) -> list[dict]:
         start = datetime.strptime(date_from, "%Y-%m-%d").date()
         end = datetime.strptime(date_to, "%Y-%m-%d").date()
         if end < start:

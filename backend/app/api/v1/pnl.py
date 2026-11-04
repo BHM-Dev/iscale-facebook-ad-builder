@@ -1248,7 +1248,8 @@ def _everflow_unknown_revenue(
             macro_rows += 1
             continue
         if not META_ID_RE.fullmatch(sub3):
-            if EverflowService._offer_name(row).casefold() in internal_offers:
+            # Rows from the second (auto-only, Meta-only) Switchboard account are all ours, tag or no tag.
+            if row.get("_realm") == 2 or EverflowService._offer_name(row).casefold() in internal_offers:
                 unknown += revenue      # an all-internal offer: every conversion is ours, tag or no tag
             else:
                 network += revenue      # no Meta id on an offer that carries outside traffic — reported, never added
