@@ -9,6 +9,7 @@ import { useBrands } from '../context/BrandContext';
 import { useCampaign } from '../context/CampaignContext';
 import { safeLocalStorageSet } from '../lib/safeLocalStorage';
 import ProposalsPanel from '../components/ProposalsPanel';
+import DailyCloseCard from '../components/DailyCloseCard';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -1851,6 +1852,20 @@ export default function CampaignPerformance() {
   const [bulkInsights, setBulkInsights]       = useState(null);
   const [bulkInsightsLoading, setBulkInsightsLoading] = useState(false);
   const [bulkInsightsError, setBulkInsightsError]   = useState(null);
+  const [maxCplData, setMaxCplData] = useState(null);
+  const [maxCplLoading, setMaxCplLoading] = useState(false);
+
+  useEffect(() => {
+    if (!adAccountId) { setMaxCplData(null); return; }
+    let alive = true;
+    setMaxCplLoading(true);
+    authFetch(`${API_BASE}/insights/max-cpl?ad_account_id=${encodeURIComponent(adAccountId)}`)
+      .then(response => response.json())
+      .then(data => alive && setMaxCplData(data))
+      .catch(() => alive && setMaxCplData({ available: false }))
+      .finally(() => alive && setMaxCplLoading(false));
+    return () => { alive = false; };
+  }, [adAccountId]);
 
   // Ad-level (creative) breakdown state
   const [adsBulk, setAdsBulk]           = useState(null);
@@ -2911,6 +2926,7 @@ export default function CampaignPerformance() {
       )}
 
       <div className="px-5 pb-5 space-y-4 mt-1">
+      <DailyCloseCard accountNames={Object.fromEntries(adAccounts.map(account => [account.id || account.account_id, account.name || account.account_name || account.label]))} />
       <ProposalsPanel />
       <CreativeCompass
         buckets={compassBuckets}
@@ -3334,6 +3350,7 @@ export default function CampaignPerformance() {
                             <th className="px-3 py-2.5 text-right">Spend</th>
                             <th className="px-3 py-2.5 text-right">Leads</th>
                             <th className="px-3 py-2.5 text-right">CPL</th>
+                            <th className="px-3 py-2.5 text-right">Max CPL</th>
                             <th className="px-3 py-2.5 text-right">ROAS</th>
                             <th className="px-3 py-2.5 text-right">Profit</th>
                             <th className="px-3 py-2.5">Brand</th>
@@ -3346,6 +3363,8 @@ export default function CampaignPerformance() {
                             const effectiveStatus = getAdsetStatus(adset);
                             const isPausingAdset = pausingAdsets.has(adset.fb_adset_id);
                             const d = bulkInsights?.[adset.fb_adset_id];
+                            const maxCpl = maxCplData?.available ? maxCplData.adsets?.[adset.fb_adset_id] : null;
+                            const cplClass = maxCpl?.max_cpl != null && d?.cpl != null ? (d.cpl <= maxCpl.max_cpl * 0.85 ? 'text-emerald-700' : d.cpl <= maxCpl.max_cpl ? 'text-amber-700' : 'text-red-600') : cplCellClass(d?.cpl);
                             const rt = d?.redtrack;
                             const rowRoas = rt?.roas ?? d?.roas ?? null;
                             const rowProfit = rt?.profit ?? null;
@@ -3473,7 +3492,8 @@ export default function CampaignPerformance() {
                                   </td>
                                   <td className="px-3 py-3 text-right font-medium text-gray-800 align-middle">{bulkInsightsLoading && !d ? '--' : formatMoneyCell(d?.spend)}</td>
                                   <td className="px-3 py-3 text-right text-gray-700 align-middle">{bulkInsightsLoading && !d ? '--' : formatNumberCell(d?.leads)}</td>
-                                  <td className={`px-3 py-3 text-right font-semibold align-middle ${cplCellClass(d?.cpl)}`}>{bulkInsightsLoading && !d ? '--' : formatMoneyCell(d?.cpl, 2)}</td>
+                                  <td className={`px-3 py-3 text-right font-semibold align-middle ${cplClass}`}>{bulkInsightsLoading && !d ? '--' : formatMoneyCell(d?.cpl, 2)}</td>
+                                  <td className="px-3 py-3 text-right align-middle" title={maxCpl ? (maxCpl.source === 'acct_avg' ? `${maxCpl.niche}: under 40 leads in 30 days, so this uses the account average (${formatMoneyCell(maxCpl.rpl, 2)}/lead).` : `${maxCpl.niche} leads earned ${formatMoneyCell(maxCpl.rpl, 2)} each over 30 days. At your ${maxCplData.target_roas}x goal, max CPL is ${formatMoneyCell(maxCpl.max_cpl, 2)}.`) : undefined}>{maxCplLoading ? '…' : maxCpl?.max_cpl != null ? <>{formatMoneyCell(maxCpl.max_cpl, 2)} {maxCpl.source === 'acct_avg' && <span className="ml-1 rounded bg-gray-100 px-1 text-[10px] text-gray-500">acct avg</span>}</> : '—'}</td>
                                   <td className={`px-3 py-3 text-right font-semibold align-middle ${roasCellClass(rowRoas)}`}>
                                     {bulkInsightsLoading && !d ? '--' : (
                                       <span>

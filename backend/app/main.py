@@ -602,6 +602,20 @@ async def startup_event():
             finally:
                 db.close()
 
+        def scheduled_daily_close():
+            """Hourly PT close snapshots; read-only on Meta and never posts to Slack."""
+            from app.services.daily_close_service import run_close
+            db = SessionLocal()
+            try:
+                print(f"📊 Daily close: {run_close(db)}")
+            except Exception as exc:
+                print(f"⚠️  Daily close failed: {exc}")
+            finally:
+                db.close()
+
+        scheduler.add_job(scheduled_daily_close, 'cron', hour='0-6', minute=15,
+                          timezone='America/Los_Angeles', id='daily_close', max_instances=1, coalesce=True)
+
         # Boot+27 min then hourly: clear of auto-pause (+2/+32), Drive (+7/22/37/52), RedTrack (+10/+40), Meta sync (+20/+50).
         scheduler.add_job(scheduled_proposal_evaluate, 'interval', minutes=60, id='proposal_evaluate',
                           start_date=_boot + timedelta(minutes=27), max_instances=1, coalesce=True)
@@ -682,7 +696,7 @@ async def shutdown_event():
 
 
 # Include Routers
-from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence, creative_angles, pnl, drive_assets, drive_health, drive_sync_runs, capi_quality, launch_packs, launch_outcomes, proposals
+from app.api.v1 import brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence, creative_angles, pnl, drive_assets, drive_health, drive_sync_runs, capi_quality, launch_packs, launch_outcomes, proposals, insights, daily_close
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
@@ -713,6 +727,8 @@ app.include_router(drive_sync_runs.router, prefix="/api/v1/drive-assets", tags=[
 app.include_router(capi_quality.router, prefix="/api/v1/capi-quality", tags=["capi-quality"])
 app.include_router(launch_outcomes.router, prefix="/api/v1/launch-outcomes", tags=["launch-outcomes"])
 app.include_router(proposals.router, prefix="/api/v1/proposals", tags=["proposals"])
+app.include_router(insights.router, prefix="/api/v1/insights", tags=["insights"])
+app.include_router(daily_close.router, prefix="/api/v1/daily-close", tags=["daily-close"])
 
 # Mount static files for uploads (same path as generated_ads save location)
 uploads_dir = str(settings.upload_dir)

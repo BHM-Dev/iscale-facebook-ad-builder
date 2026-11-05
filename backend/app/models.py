@@ -1202,3 +1202,22 @@ class ProposalEvent(Base):
     event = Column(String, nullable=False)
     user_email = Column(String, nullable=True)
     props = Column(JSON, nullable=True)
+
+
+class DailyCloseVersion(Base):
+    """Immutable hourly snapshot of the read-only daily close."""
+    __tablename__ = "daily_close_versions"
+    __table_args__ = (UniqueConstraint("account_id", "day", "version", name="uq_daily_close_account_day_version"),
+                      Index("ix_daily_close_account_day", "account_id", "day"))
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    account_id = Column(String, nullable=False, index=True)
+    day = Column(Date, nullable=False)
+    version = Column(Integer, nullable=False, default=1)
+    computed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    revenue_as_of = Column(DateTime(timezone=True), nullable=False)
+    payload = Column(JSON, nullable=False)
+    target_roas = Column(Numeric, nullable=True)
+    notes = Column(Text, nullable=True)
+    posted_at = Column(DateTime(timezone=True), nullable=True)
+    posted_by = Column(String, nullable=True)

@@ -85,7 +85,6 @@ def fetch_inputs(db: Session, account_id: str, days: int = SCALE_DAYS + 1):
     """Daily per-ad-set spend/leads (Meta), live ACTIVE ad sets (Meta) and billable revenue by
     ad set by day (Switchboard sub3). Raises RevenueUnavailable if revenue can't be read."""
     from app.api.v1 import pnl
-    from app.services.everflow_service import EverflowService
     from app.services.facebook_service import FacebookService
 
     svc = FacebookService()
@@ -117,6 +116,25 @@ def fetch_inputs(db: Session, account_id: str, days: int = SCALE_DAYS + 1):
             "lifetime_budget_cents": int(a["lifetime_budget"]) if a.get("lifetime_budget") else None,
         }
 
+    total_spend = sum(v["spend"] for s in meta.values() for v in s.values())
+    revenue = revenue_by_adset_day(db, account_id, since, until, total_spend)
+    return meta, revenue, live, names, until
+
+
+class RevenueUnavailable(RuntimeError):
+    pass
+
+
+def revenue_by_adset_day(db: Session, account_id: str, since: date, until: date,
+                         total_spend: float = 0.0) -> dict[str, dict[str, float]]:
+    """Return Switchboard revenue keyed by Meta ad set and Pacific-bucketed day.
+
+    This is deliberately shared by proposals, Max CPL, and Daily Close so all
+    ad-set revenue uses the same offer filtering and macro recovery rules.
+    """
+    from app.api.v1 import pnl
+    from app.services.everflow_service import EverflowService
+
     try:
         offers = pnl._everflow_offer_names_for_account(account_id)
         if not offers:
@@ -133,16 +151,9 @@ def fetch_inputs(db: Session, account_id: str, days: int = SCALE_DAYS + 1):
         if aid:
             d = _day(ef._conversion_date(c))
             revenue.setdefault(aid, {})[d] = revenue.get(aid, {}).get(d, 0.0) + float(c.get("revenue") or 0)
-    # Everflow raises on failure, but a silently empty response would read as "$0 revenue" and trip
-    # every pause trigger. Real spend with zero revenue across the whole account = treat as unavailable.
-    total_spend = sum(v["spend"] for s in meta.values() for v in s.values())
     if total_spend >= 500 and not any(revenue.values()):
         raise RevenueUnavailable(f"no revenue rows for ${total_spend:,.0f} of spend; refusing to read that as $0")
-    return meta, revenue, live, names, until
-
-
-class RevenueUnavailable(RuntimeError):
-    pass
+    return revenue
 
 
 def account_today(account) -> date:

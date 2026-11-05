@@ -56,3 +56,10 @@ API: `backend/app/api/v1/{facebook,auto_pause}.py`; Meta calls: `backend/app/ser
 - 2026-10-07 `d286cc0` rule validation/2-step modal, `campaigns:write` on status/delete, Meta error mapping.
 - 2026-10-07 `8106e24` live budget pre-read + large-change guard, ad set Pause/Resume fixes, sync refreshes budgets.
 - Audit that drove all of this: [`CampaignPerformance-MoneySafety-Audit.md`](../../CampaignPerformance-MoneySafety-Audit.md).
+## Max CPL and daily close
+
+The Max CPL column, niche resolver, hourly cache, daily-close card, read-only
+endpoints, and Slack-copy formatter are **unit-tested only** in this change.
+Production parity with the P&L page, the 3:15am ET scheduler run, late-revenue
+reruns, and the five-value Max CPL spot check are **not verified** here and are
+the Claude Code deployment/live-proof steps.
