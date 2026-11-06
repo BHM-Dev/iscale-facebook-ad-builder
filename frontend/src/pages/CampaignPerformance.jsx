@@ -1858,9 +1858,10 @@ export default function CampaignPerformance() {
   useEffect(() => {
     if (!adAccountId) { setMaxCplData(null); return; }
     let alive = true;
+    setMaxCplData(null);
     setMaxCplLoading(true);
     authFetch(`${API_BASE}/insights/max-cpl?ad_account_id=${encodeURIComponent(adAccountId)}`)
-      .then(response => response.json())
+      .then(response => (response.ok ? response.json() : { available: false }))
       .then(data => alive && setMaxCplData(data))
       .catch(() => alive && setMaxCplData({ available: false }))
       .finally(() => alive && setMaxCplLoading(false));
@@ -3571,7 +3572,7 @@ export default function CampaignPerformance() {
                                 </tr>
                                 {isExpanded && (
                                   <tr className="bg-gray-50/40">
-                                    <td colSpan={10} className="px-6 pb-4 pt-2 border-t border-gray-100">
+                                    <td colSpan={11} className="px-6 pb-4 pt-2 border-t border-gray-100">
                                       {isRefreshCandidate && (
                                         <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                                           <p><span className="font-semibold">Rotation ready:</span> this ad set started about {refreshAgeDays} days ago, has {formatMoney(d?.spend)} in the selected period, and RT ROAS of {rowRoas != null ? `${Number(rowRoas).toFixed(2)}x` : '—'}. A <span className="font-semibold">Source ad</span> must be active in Meta, have leads, and meet RT ROAS ≥1.00x in this period; otherwise the table asks for manual review.</p>

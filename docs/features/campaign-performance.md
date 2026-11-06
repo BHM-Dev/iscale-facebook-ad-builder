@@ -56,10 +56,19 @@ API: `backend/app/api/v1/{facebook,auto_pause}.py`; Meta calls: `backend/app/ser
 - 2026-10-07 `d286cc0` rule validation/2-step modal, `campaigns:write` on status/delete, Meta error mapping.
 - 2026-10-07 `8106e24` live budget pre-read + large-change guard, ad set Pause/Resume fixes, sync refreshes budgets.
 - Audit that drove all of this: [`CampaignPerformance-MoneySafety-Audit.md`](../../CampaignPerformance-MoneySafety-Audit.md).
-## Max CPL and daily close
+## Max CPL and daily close (2026-11-05)
 
-The Max CPL column, niche resolver, hourly cache, daily-close card, read-only
-endpoints, and Slack-copy formatter are **unit-tested only** in this change.
-Production parity with the P&L page, the 3:15am ET scheduler run, late-revenue
-reruns, and the five-value Max CPL spot check are **not verified** here and are
-the Claude Code deployment/live-proof steps.
+- **Max CPL column:** niche from the campaign name (`services/niche_resolver.py`), then 30 complete PT days
+  (ending yesterday) of Switchboard revenue ÷ Meta leads ÷ 1.30. Niches under 40 leads, or with no attributed
+  revenue, use the account figure and say "acct avg". Cached 1 h per account; failures cached 2 min and shown
+  as "—", never $0. Endpoint `GET /api/v1/insights/max-cpl`. *Unit-tested only.*
+- **Leads are counted with `proposal_service.count_leads`**, which prefers Meta's `lead` action. Meta also
+  returns `offsite_conversion.fb_pixel_lead` with the same value (RHO 2026-11-04: 167 real leads, 334 if
+  summed). *Verified in production* against Meta for that day. Other Leads figures in the app still sum the
+  types; that's a separate fix.
+- **Daily close card:** the scheduler writes versions of yesterday's PT close at 00:15–06:15 PT
+  (`daily_close_versions`). Topline uses the P&L page's own spend and revenue functions. The card shows the
+  newest *available* version; an Everflow failure never replaces a good read, and unavailable month-to-date or
+  last-month revenue shows "—", not $0. Movers are colour only. The endpoint never computes a close; before
+  the first run it says so. Copy for Slack matches Joel's format. *Unit-tested only.*
+- **Not verified yet:** parity with the P&L page to the cent, the first scheduled run, Max CPL spot checks.

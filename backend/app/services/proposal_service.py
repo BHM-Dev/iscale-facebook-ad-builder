@@ -41,6 +41,23 @@ DISMISS_REASONS = ("Revenue is lagging", "Still testing", "Handled it myself", "
 TRIGGER_LABELS = {"no_revenue_spend": "Spending, no revenue", "loss_3d": "3-day loss", "scale_winner": "Scale winner"}
 LEAD_TYPES = {"lead", "onsite_conversion.lead_grouped", "offsite_conversion.fb_pixel_lead"}
 
+
+def count_leads(actions) -> int:
+    """Leads from a Meta insights `actions` list.
+
+    Meta reports `lead` as the aggregate of the pixel and on-Facebook variants, so summing every
+    lead type double-counts: RHO on 2026-11-04 returned lead=167 AND fb_pixel_lead=167 on 51 of 71
+    ad sets (real total 167, summed 334). Prefer `lead`; fall back to the largest single variant.
+    """
+    by_type: dict[str, int] = {}
+    for a in actions or []:
+        t = a.get("action_type")
+        if t in LEAD_TYPES:
+            by_type[t] = by_type.get(t, 0) + int(float(a.get("value") or 0))
+    if not by_type:
+        return 0
+    return by_type.get("lead", max(by_type.values()))
+
 # Last evaluation per account, for the panel ("revenue source unavailable" etc.). Process memory only.
 LAST_RUN: dict[str, dict] = {}
 
@@ -84,7 +101,6 @@ def _day(d) -> str:
 def fetch_inputs(db: Session, account_id: str, days: int = SCALE_DAYS + 1):
     """Daily per-ad-set spend/leads (Meta), live ACTIVE ad sets (Meta) and billable revenue by
     ad set by day (Switchboard sub3). Raises RevenueUnavailable if revenue can't be read."""
-    from app.api.v1 import pnl
     from app.services.facebook_service import FacebookService
 
     svc = FacebookService()
@@ -103,7 +119,7 @@ def fetch_inputs(db: Session, account_id: str, days: int = SCALE_DAYS + 1):
         if not aid:
             continue
         names[aid] = str(r.get("adset_name") or "")
-        leads = sum(int(float(a.get("value") or 0)) for a in (r.get("actions") or []) if a.get("action_type") in LEAD_TYPES)
+        leads = count_leads(r.get("actions"))
         meta.setdefault(aid, {})[str(r.get("date_start"))] = {"spend": float(r.get("spend") or 0), "leads": leads}
 
     live: dict[str, dict] = {}
