@@ -14,6 +14,7 @@ Claude) can see what exists and why before changing it. Update the file in the s
 | Profit / Loss (`/pnl`) | [pnl.md](pnl.md) | Revenue rules recorded; non-Meta-id revenue excluded 2026-10-24 |
 | Research (`/research`) | [research.md](research.md) | Audited 2026-10-07 (read-only); fixes not started |
 | Approvals Queue (proposals on Campaign Performance) | [approvals-queue.md](approvals-queue.md) | Phase 1 backend 2026-11-02; shadow week; panel with Codex |
+| Lead counting (cross-cutting: every Leads/CPL figure) | [lead-counting.md](lead-counting.md) | Double-count fixed 2026-11-06 (unit-tested); auto-pause CPL change proposed, not shipped |
 | Ad Launcher (Campaign → Ad Set → Drive picker → Review → Launch) | [ad-launcher.md](ad-launcher.md) | Live status gate shipped; browser-verified 2026-10-06 |
 
 ## How to add / update an entry

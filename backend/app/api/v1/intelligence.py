@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_current_active_user, get_db, require_permission
 from app.api.v1.facebook import _resolve_scoped_default_account
 from app.models import User, FacebookAdSet, normalize_account_id
+from app.services.meta_actions import count_leads
 from app.services.redtrack_service import RedTrackService, today_in_rt_tz
 from app.services.everflow_service import CONVERSION_DATE_FIELDS, DEFAULT_TIMEZONE_ID, EVERFLOW_TZ_BY_ID, EverflowService
 from app.services.niche_extraction import _extract_niche as _shared_extract_niche
@@ -180,8 +181,6 @@ def _fetch_meta_insights(ad_account_id: Optional[str], date_from: str, date_to: 
         'adset_id', 'adset_name', 'campaign_name', 'spend', 'impressions', 'actions',
     ]
 
-    lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
-
     try:
         account = svc._get_account(ad_account_id)
         params: dict = {
@@ -229,11 +228,7 @@ def _fetch_meta_insights(ad_account_id: Optional[str], date_from: str, date_to: 
             continue
 
         spend = float(row.get('spend', 0) or 0)
-        leads = sum(
-            int(float(a.get('value', 0) or 0))
-            for a in (row.get('actions') or [])
-            if a.get('action_type') in lead_types
-        )
+        leads = count_leads(row.get('actions'))  # summing every lead type double-counts
         impressions = int(row.get('impressions', 0) or 0)
 
         if fb_id not in out:
@@ -1137,7 +1132,6 @@ def _fetch_best_times_meta(ad_account_id: Optional[str], date_from: str, date_to
         error = body.get('error', {}) if isinstance(body, dict) else {}
         raise RuntimeError(f"Facebook API: {error.get('message') or str(exc)}") from exc
 
-    lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
     rows = []
     adsets = {}
     valid_dows = ({5, 6} if day_filter == 'weekend' else {0, 1, 2, 3, 4}) if day_filter != 'all' else None
@@ -1160,11 +1154,7 @@ def _fetch_best_times_meta(ad_account_id: Optional[str], date_from: str, date_to
             hour = _parse_hour_value(row.get('hour'))
         if hour is None:
             continue
-        leads = sum(
-            int(float(action.get('value', 0) or 0))
-            for action in (row.get('actions') or [])
-            if action.get('action_type') in lead_types
-        )
+        leads = count_leads(row.get('actions'))  # summing every lead type double-counts
         adsets[fb_id] = {
             'adset_name': str(row.get('adset_name') or ''),
             'campaign_id': str(row.get('campaign_id') or ''),

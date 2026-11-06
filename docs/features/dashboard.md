@@ -31,4 +31,5 @@ This file covers the **money-moving actions**; other cards are documented in the
 - Campaign Performance still has its own inline copy of the confirm modal; fold it onto `BudgetConfirmModal`.
 
 ## Changelog
+- 2026-11-06 trend leads/CPL/revenue-per-lead and niche-summary leads/CPL now count leads once. Before this, leads were 2× and CPL/RPL about half the real value. See [lead-counting.md](lead-counting.md).
 - 2026-10-07 shared live-budget confirm for all Dashboard budget actions; scale from live budget; keyboard + feedback.

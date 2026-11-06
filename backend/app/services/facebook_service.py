@@ -15,6 +15,19 @@ import time
 import threading
 from datetime import datetime
 from requests.exceptions import RequestException
+from app.services.meta_actions import LEAD_TYPES, count_leads
+
+
+def _legacy_summed_leads(actions) -> int:
+    """Sum of every lead action type: double-counts when Meta returns both `lead` and
+    `offsite_conversion.fb_pixel_lead` (see meta_actions.count_leads).
+
+    Kept ONLY for the CPL fallback (used when cost_per_action_type has no lead entry) in the three
+    insights readers that feed auto-pause rules, so this change leaves rule triggers exactly as they
+    were. Switching that fallback to count_leads is a trigger-behaviour change awaiting sign-off from
+    Steve and the buyers — see docs/features/lead-counting.md. Do not use it for displayed lead counts.
+    """
+    return sum(int(float(a.get('value', 0) or 0)) for a in (actions or []) if a.get('action_type') in LEAD_TYPES)
 
 
 # Geography's daily, state-level view can fan out into many Insight pages.
@@ -749,7 +762,6 @@ class FacebookService:
         Used by Research test outcomes: a handful of linked ads, read individually and cached by the caller,
         instead of paging the whole account. Returns None when the ad has no delivery yet.
         """
-        lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
         try:
             rows = list(Ad(str(ad_id), api=self.api).get_insights(
                 fields=['spend', 'impressions', 'clicks', 'actions', 'cost_per_action_type', 'date_start'],
@@ -762,8 +774,7 @@ class FacebookService:
         row = rows[0]
         spend = float(row.get('spend', 0) or 0)
         # Meta reports 'lead' as the aggregate of the pixel/on-Facebook variants, so summing all three double-counts.
-        by_type = {a.get('action_type'): int(float(a.get('value', 0))) for a in (row.get('actions') or []) if a.get('action_type') in lead_types}
-        leads = by_type.get('lead', max(by_type.values()) if by_type else 0)
+        leads = count_leads(row.get('actions'))
         cpl = None
         if leads > 0 and spend > 0:
             cpl = round(spend / leads, 2)
@@ -1899,21 +1910,20 @@ class FacebookService:
         # get_account_insights_bulk above.
         ctr = float(row['ctr']) if row.get('ctr') is not None else None
 
-        # Count leads: action_type = 'lead' or 'onsite_conversion.lead_grouped'
-        leads = 0
-        lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
-        for action in (row.get('actions') or []):
-            if action.get('action_type') in lead_types:
-                leads += int(float(action.get('value', 0)))
+        # `lead` is Meta's aggregate of the pixel/on-Facebook variants; summing them double-counts.
+        leads = count_leads(row.get('actions'))
+        lead_types = LEAD_TYPES
 
-        # CPL from cost_per_action_type
+        # CPL from cost_per_action_type. Auto-pause reads this; the fallback deliberately stays
+        # on the legacy summed count until the trigger change is signed off (_legacy_summed_leads).
         cpl = None
         for cpa in (row.get('cost_per_action_type') or []):
             if cpa.get('action_type') in lead_types:
                 cpl = float(cpa.get('value', 0))
                 break
-        if cpl is None and leads > 0 and spend > 0:
-            cpl = round(spend / leads, 2)
+        legacy_leads = _legacy_summed_leads(row.get('actions'))
+        if cpl is None and legacy_leads > 0 and spend > 0:
+            cpl = round(spend / legacy_leads, 2)
 
         # Revenue from action_values — check purchases first, then leads (lead-gen campaigns
         # pass payout value with every lead event, so this covers both ecomm and lead-gen)
@@ -2054,7 +2064,7 @@ class FacebookService:
             logger.error("Meta bulk insights error: %s", msg)
             raise RuntimeError(f"Facebook API: {msg}") from e
 
-        lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
+        lead_types = LEAD_TYPES
         purchase_types = {'purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase'}
         out = {}
 
@@ -2076,18 +2086,18 @@ class FacebookService:
             # 2026-08-21 audit).
             ctr = float(row['ctr']) if row.get('ctr') is not None else None
 
-            leads = 0
-            for action in (row.get('actions') or []):
-                if action.get('action_type') in lead_types:
-                    leads += int(float(action.get('value', 0)))
+            # `lead` is Meta's aggregate of the variants; summing them double-counts.
+            leads = count_leads(row.get('actions'))
 
+            # Auto-pause reads this cpl; fallback stays on the legacy sum pending sign-off.
             cpl = None
             for cpa in (row.get('cost_per_action_type') or []):
                 if cpa.get('action_type') in lead_types:
                     cpl = float(cpa.get('value', 0))
                     break
-            if cpl is None and leads > 0 and spend > 0:
-                cpl = round(spend / leads, 2)
+            legacy_leads = _legacy_summed_leads(row.get('actions'))
+            if cpl is None and legacy_leads > 0 and spend > 0:
+                cpl = round(spend / legacy_leads, 2)
 
             revenue = None
             for av in (row.get('action_values') or []):
@@ -2156,11 +2166,9 @@ class FacebookService:
             logger.error('Meta daily insights error: %s', msg)
             raise RuntimeError(f'Facebook API: {msg}') from e
 
-        lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
         daily = []
         for row in results:
-            leads = sum(int(float(action.get('value', 0) or 0)) for action in (row.get('actions') or [])
-                        if action.get('action_type') in lead_types)
+            leads = count_leads(row.get('actions'))  # summing every lead type double-counts
             spend = round(float(row.get('spend', 0) or 0), 2)
             daily.append({
                 'date': str(row.get('date_start') or ''),
@@ -2319,7 +2327,6 @@ class FacebookService:
             logger.error('Meta state insights error: %s', message)
             raise RuntimeError(f'Facebook API: {message}') from e
 
-        lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
         state_totals = {}
         for row in results:
             if day_filter != 'all':
@@ -2335,11 +2342,7 @@ class FacebookService:
             if not region:
                 continue
             spend = float(row.get('spend', 0) or 0)
-            leads = sum(
-                int(float(action.get('value', 0) or 0))
-                for action in (row.get('actions') or [])
-                if action.get('action_type') in lead_types
-            )
+            leads = count_leads(row.get('actions'))  # summing every lead type double-counts
             key = (str(row.get('campaign_id') or ''), region)
             total = state_totals.setdefault(key, {
                 'campaign_id': key[0],
@@ -2498,7 +2501,7 @@ class FacebookService:
         if results is None:
             raise RuntimeError(f"Facebook API: {last_error}" if last_error else "Meta API returned no data")
 
-        lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
+        lead_types = LEAD_TYPES
         purchase_types = {'purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase'}
         out = {}  # keyed by fb_adset_id → list of ads
 
@@ -2513,18 +2516,18 @@ class FacebookService:
             clicks      = int(row.get('clicks', 0) or 0)
             ctr         = round(float(row.get('ctr', 0) or 0), 4)
 
-            leads = 0
-            for action in (row.get('actions') or []):
-                if action.get('action_type') in lead_types:
-                    leads += int(float(action.get('value', 0)))
+            # `lead` is Meta's aggregate of the variants; summing them double-counts.
+            leads = count_leads(row.get('actions'))
 
+            # Ad-level auto-pause rules read this cpl; fallback stays on the legacy sum pending sign-off.
             cpl = None
             for cpa in (row.get('cost_per_action_type') or []):
                 if cpa.get('action_type') in lead_types:
                     cpl = round(float(cpa.get('value', 0)), 2)
                     break
-            if cpl is None and leads > 0 and spend > 0:
-                cpl = round(spend / leads, 2)
+            legacy_leads = _legacy_summed_leads(row.get('actions'))
+            if cpl is None and legacy_leads > 0 and spend > 0:
+                cpl = round(spend / legacy_leads, 2)
 
             revenue = None
             for av in (row.get('action_values') or []):
@@ -3417,7 +3420,7 @@ class FacebookService:
             return {}
 
         account = self._get_account(ad_account_id)
-        lead_types = {'lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'}
+        lead_types = LEAD_TYPES
         fields = ['ad_id', 'spend', 'actions', 'cost_per_action_type']
         out = {}
 
@@ -3469,10 +3472,7 @@ class FacebookService:
                         cpl = float(cpa.get('value', 0))
                         break
                 if cpl is None:
-                    leads = 0
-                    for action in (row.get('actions') or []):
-                        if action.get('action_type') in lead_types:
-                            leads += int(float(action.get('value', 0)))
+                    leads = count_leads(row.get('actions'))
                     if leads > 0 and spend > 0:
                         cpl = round(spend / leads, 2)
                 out[fb_ad_id] = {"spend": spend, "cpl": cpl}

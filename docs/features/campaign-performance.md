@@ -64,8 +64,9 @@ API: `backend/app/api/v1/{facebook,auto_pause}.py`; Meta calls: `backend/app/ser
   as "—", never $0. Endpoint `GET /api/v1/insights/max-cpl`. *Unit-tested only.*
 - **Leads are counted with `proposal_service.count_leads`**, which prefers Meta's `lead` action. Meta also
   returns `offsite_conversion.fb_pixel_lead` with the same value (RHO 2026-11-04: 167 real leads, 334 if
-  summed). *Verified in production* against Meta for that day. Other Leads figures in the app still sum the
-  types; that's a separate fix.
+  summed). *Verified in production* against Meta for that day. Since 2026-11-06 every Leads figure in the app
+  uses it (`meta_actions.count_leads`). Before that, the Leads column was 2× and the totals-row CPL was about
+  half the real value. See [lead-counting.md](lead-counting.md).
 - **Daily close card:** the scheduler writes versions of yesterday's PT close at 00:15–06:15 PT
   (`daily_close_versions`). Topline uses the P&L page's own spend and revenue functions. The card shows the
   newest *available* version; an Everflow failure never replaces a good read, and unavailable month-to-date or

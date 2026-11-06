@@ -32,8 +32,10 @@ Code: `frontend/src/pages/AutoPauseRules.jsx`, `backend/app/api/v1/auto_pause.py
 - Retry-forever on token/permission errors (no failure counter); ad-scoped rules can't detect a deleted ad.
 - Decimal thresholds (ROAS 1.5, CTR 0.5) need a DB migration (threshold is Integer).
 - Unscoped users can create increase/duplicate rules; consider a permission.
+- **CPL source (proposal, awaiting Steve + Joel/Abel sign-off):** rules use Meta's first lead-type `cost_per_action_type`. The fallback (no lead CPA entry) still divides spend by the *summed* lead types, which is about half the real CPL, so it under-fires. The fix is to prefer `cost_per_action_type['lead']`, otherwise use spend ÷ `count_leads`. Sizing and details: [lead-counting.md](lead-counting.md).
 
 ## Changelog
+- 2026-11-06 lead-count fix elsewhere in the app leaves rule CPL unchanged by design: displayed `leads` are now counted once, and the CPL fallback is held on the legacy sum. See [lead-counting.md](lead-counting.md).
 - 2026-10-07 UI hardening round 2 (Codex `70b58a1` + Esc/focus/warning fixes).
 - 2026-10-07 UI hardening round 1 (Codex `00109f4` + Claude integer/payload and edit-confirm fixes).
 - 2026-10-07 enforcement hardening (claim-before-write, live-ACTIVE check, ceiling, zero-lead CPL, min_spend floor, failure alerts); frontend brief for Codex.
