@@ -209,6 +209,12 @@ export default function ProposalsPanel() {
 
     useEffect(() => { loadOpen(); }, [loadOpen]);
 
+    // The nav badge links to /campaign-performance#proposals; scroll here once the panel has rendered.
+    const sectionRef = useRef(null);
+    useEffect(() => {
+        if (!loading && window.location.hash === '#proposals') sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, [loading]);
+
     useEffect(() => {
         if (tab === 'history' && history === null) {
             authFetch(`${API_BASE}/proposals/history?limit=100`).then(async response => {
@@ -276,7 +282,7 @@ export default function ProposalsPanel() {
     };
 
     return (
-        <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm" data-testid="proposals-panel">
+        <section ref={sectionRef} id="proposals" className="scroll-mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm" data-testid="proposals-panel">
             <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 px-4 py-3">
                 <h2 className="text-sm font-semibold text-gray-900">Proposals ({proposals.filter(item => ['open', 'executing', 'failed'].includes(item.status)).length})</h2>
                 <div className="ml-auto flex flex-wrap gap-1">

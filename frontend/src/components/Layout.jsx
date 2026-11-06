@@ -74,6 +74,14 @@ export default function Layout() {
     const [activeLaunches, setActiveLaunches] = useState(readActiveLaunches);
     const [proposalCount, setProposalCount] = useState(0);
     const [proposalsVisible, setProposalsVisible] = useState(false);
+    const proposalBadgeTitle = `${proposalCount} proposal${proposalCount === 1 ? '' : 's'} waiting for review on Campaign Performance`;
+    const openProposals = (e) => {
+        // The badge sits inside the Facebook nav link; open the proposals panel instead of the Facebook hub.
+        e.preventDefault();
+        e.stopPropagation();
+        navigate('/campaign-performance#proposals');
+        if (location.pathname === '/campaign-performance') document.getElementById('proposals')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
     useEffect(() => {
         let disposed = false;
         const refreshProposals = async () => {
@@ -188,8 +196,8 @@ export default function Layout() {
                                 title={isCollapsed ? item.label : ''}
                             >
                                 <Icon size={18} className="flex-shrink-0 transition-colors" />
-                                {!isCollapsed && <span className="flex min-w-0 items-center gap-2 text-sm whitespace-nowrap overflow-hidden"><span className="overflow-hidden text-ellipsis">{item.label}</span>{item.path === '/facebook-hub' && proposalsVisible && proposalCount > 0 && <span className="rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold leading-4 text-white">{proposalCount}</span>}</span>}
-                                {isCollapsed && item.path === '/facebook-hub' && proposalsVisible && proposalCount > 0 && <span className="absolute right-1 top-1 rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold leading-4 text-white">{proposalCount}</span>}
+                                {!isCollapsed && <span className="flex min-w-0 items-center gap-2 text-sm whitespace-nowrap overflow-hidden"><span className="overflow-hidden text-ellipsis">{item.label}</span>{item.path === '/facebook-hub' && proposalsVisible && proposalCount > 0 && <span role="link" tabIndex={0} title={proposalBadgeTitle} aria-label={proposalBadgeTitle} onClick={openProposals} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && openProposals(e)} className="cursor-pointer rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold leading-4 text-white hover:bg-indigo-700">{proposalCount}</span>}</span>}
+                                {isCollapsed && item.path === '/facebook-hub' && proposalsVisible && proposalCount > 0 && <span role="link" tabIndex={0} title={proposalBadgeTitle} aria-label={proposalBadgeTitle} onClick={openProposals} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && openProposals(e)} className="absolute right-1 top-1 cursor-pointer rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold leading-4 text-white hover:bg-indigo-700">{proposalCount}</span>}
                             </Link>
                         );
                     })}
