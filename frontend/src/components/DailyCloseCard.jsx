@@ -53,6 +53,11 @@ export default function DailyCloseCard({ accountNames = {} }) {
     <p className="mt-3 text-xs text-gray-600">Month to date {signed(close.mtd?.profit)} · {close.mtd?.days_elapsed} days · pacing {signed(close.mtd?.pace)} vs last month {signed(close.mtd?.last_month_profit)} <span className="text-gray-400">(Meta spend vs Switchboard revenue, before other costs)</span></p>
     {close.partial && <p className="mt-2 text-xs text-amber-700">Missing {close.missing_accounts.map(a => accountNames[a] || a).join(', ')} — totals cover the other accounts only.</p>}
     {close.movers_unavailable && <p className="mt-2 text-xs text-gray-400">Ad-set movers unavailable for this read.</p>}
-    <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2"><div><span className="font-semibold text-emerald-700">Up</span> {(close.movers?.up || []).map(row => <span key={row.adset_id} className="ml-2 inline-block max-w-[180px] truncate align-bottom" title={row.name}>{row.name} {signed(row.profit)}</span>)}</div><div><span className="font-semibold text-red-600">Down</span> {(close.movers?.down || []).map(row => <span key={row.adset_id} className="ml-2 inline-block max-w-[180px] truncate align-bottom" title={row.name}>{row.name} {signed(row.profit)}</span>)}</div></div>
+    <div className="mt-3 grid gap-4 border-t border-gray-100 pt-3 text-xs sm:grid-cols-2">
+      {[['Top 3 ad sets by profit', close.movers?.up || [], 'text-emerald-700'], ['Bottom 3 ad sets by profit', close.movers?.down || [], 'text-red-600']].map(([title, rows, tone]) => <div key={title} className="min-w-0">
+        <p className={`mb-1.5 font-semibold ${tone}`}>{title}</p>
+        {rows.length ? <ul className="space-y-1">{rows.map(row => <li key={row.adset_id} className="flex items-start justify-between gap-3"><span className="min-w-0 text-gray-700" style={{ overflowWrap: 'anywhere' }}>{row.name}</span><span className={`shrink-0 font-semibold tabular-nums ${row.profit == null ? 'text-gray-400' : row.profit >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{signed(row.profit)}</span></li>)}</ul> : <p className="text-gray-400">—</p>}
+      </div>)}
+    </div>
   </section>;
 }
