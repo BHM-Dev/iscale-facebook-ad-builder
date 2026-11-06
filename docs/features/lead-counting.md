@@ -26,9 +26,28 @@ older callers. Never sum `LEAD_TYPES`.
 | `proposal_service.fetch_inputs`, `max_cpl_service`, `daily_close_service` | Approvals queue, Max CPL, Daily close | Already fixed in `ce70c8a` | unchanged |
 | Frontend (`Dashboard.jsx` niche summary, `CampaignPerformance.jsx` totals) | Recompute CPL as spend ÷ summed backend leads | Inherited the ×2 | Correct once the backend is fixed; no frontend change |
 
-How "Before" was established: by reading the code, plus the verified 2026-11-04 RHO numbers above. A
-per-surface comparison against Ads Manager for one live day has **not** been run yet. The read-only probe
-(`lead_probe` script, run in the API container) needs Steve's go-ahead to run over SSH.
+How "Before" was established: by reading the code, plus the verified 2026-11-04 RHO numbers above.
+
+**Verified in production 2026-11-06** (after `a69b8de` went live): RHO on 2026-11-05, read from the live API.
+
+| Source | Leads |
+|---|---|
+| Dashboard trend | 184 |
+| Campaign Performance, ad-set rows summed | 184 |
+| Campaign Performance, ad rows summed | 184 |
+| Daily close | 184 |
+| RedTrack conversions | 182 |
+| Switchboard Everflow `Lead Rev` events | 190 |
+
+Before the fix the app would have shown about 368. Intelligence (default last 7 days, 10-31 to 11-06) shows
+887 leads against 923 RedTrack conversions.
+
+- The P&L "conversions" figure (359) is NOT a lead count: 190 `Lead Rev` + 161 `Click` + 8 `Call` events.
+- RedTrack (−1%) and Everflow (+3%) are independent counts, not expected to tie exactly. Likely causes are the
+  day boundary (Everflow buckets on Eastern, Meta on Pacific) and click vs pixel tracking. Neither cause has
+  been confirmed. The check rules out a 2× error; it is not a reconciliation to the lead.
+- Not checked live: Geography and Best Times (unit-tested only), and Ads Manager in the browser. 184 is the
+  Meta API's `lead` action, which is assumed (not verified here) to be what Ads Manager's Leads column shows.
 
 Ratios are unaffected wherever both sides doubled. Examples: Geography's "state CPL ≥ 1.5× blended", ROAS,
 profit, and revenue (read from `action_values`, first match, never summed). Absolute lead gates did shift,
@@ -65,5 +84,6 @@ probe first to size how many rules would change state. Then get sign-off, ship, 
 ## Changelog
 - 2026-11-06 — all remaining lead counts moved to `meta_actions.count_leads`. The auto-pause CPL fallback is
   held on the legacy sum pending sign-off. Tests: `tests/unit/test_lead_counting.py`. 8 of its 9 tests fail
-  on the pre-fix code. *Unit-tested only.*
+  on the pre-fix code. *Verified in production* 2026-11-06 for RHO 2026-11-05: 184 leads on every surface, cross-checked
+  against RedTrack (182) and Everflow Lead Rev (190).
 - 2026-11-05 `ce70c8a` — `count_leads` added; Max CPL, daily close and proposals switched to it.
