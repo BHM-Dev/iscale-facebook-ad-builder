@@ -765,6 +765,28 @@ class LaunchPack(Base):
         UniqueConstraint('ad_account_id', 'campaign_id', 'adset_id', name='uq_launch_pack_target'),
     )
 
+class NamingPreset(Base):
+    """Shared per-ad-account naming convention (templates + code dictionaries).
+
+    One row per account, shared by everyone who launches on it. `variant` and
+    `soft_tags` are reserved for later (per-buyer variants, tagging)."""
+    __tablename__ = "naming_presets"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    ad_account_id = Column(String, nullable=False, unique=True, index=True)
+    brand_code = Column(String, nullable=True)
+    tracking_tag = Column(String, nullable=True)
+    uppercase = Column(Boolean, nullable=False, default=True)
+    templates = Column(JSON, nullable=False, default=dict)
+    waves = Column(JSON, nullable=False, default=list)
+    niche_codes = Column(JSON, nullable=False, default=list)
+    objective_tags = Column(JSON, nullable=False, default=dict)
+    variant = Column(String, nullable=True)
+    soft_tags = Column(JSON, nullable=True)
+    updated_by = Column(String, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
 class Prompt(Base):
     __tablename__ = "prompts"
 

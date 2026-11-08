@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Naming Templates Prototype</title>
+<style>
+:root{--line:#e5e7eb;--ink:#111827;--ink2:#374151;--mute:#6b7280;--indigo:#4f46e5;--in50:#eef2ff;--green:#047857;--g50:#ecfdf5;--amber:#b45309;--a50:#fffbeb}
+*{box-sizing:border-box}body{margin:0;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;color:var(--ink);background:#f8fafc}
+input,select,button{font:inherit}button{cursor:pointer}
+.dev{position:sticky;top:0;z-index:50;background:#111827;color:#d1d5db;font:11px ui-monospace,Menlo,monospace;display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:7px 12px}.dev b{color:#fff}.dev button{background:#374151;color:#fff;border:0;border-radius:4px;padding:3px 8px}
+.wrap{max-width:1180px;margin:0 auto;padding:18px 16px 80px;display:grid;grid-template-columns:1fr 380px;gap:16px;align-items:start}
+@media(max-width:960px){.wrap{grid-template-columns:1fr}}
+.card{min-width:0;background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px}
+h1{font-size:18px;margin:0 0 2px}h2{font-size:14px;margin:0 0 10px}.sub{color:var(--mute);font-size:12px;margin:0 0 14px}
+label{display:block;font-size:11px;font-weight:600;color:var(--mute);margin:10px 0 4px;text-transform:uppercase;letter-spacing:.03em}
+input[type=text],select{width:100%;border:1px solid var(--line);border-radius:8px;padding:7px 10px;background:#fff}
+.row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}@media(max-width:640px){.row{grid-template-columns:1fr}}
+.name{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;margin-top:4px;background:#fafafa}
+.name input{border:0;background:transparent;flex:1;min-width:0;font:12.5px ui-monospace,Menlo,monospace;padding:0}
+.ok{font-size:11px;font-weight:700;color:var(--green);background:var(--g50);border-radius:999px;padding:2px 8px;white-space:nowrap}
+.cust{font-size:11px;font-weight:700;color:var(--mute);background:#f3f4f6;border-radius:999px;padding:2px 8px;white-space:nowrap}
+.warn{font-size:11px;font-weight:700;color:var(--amber);background:var(--a50);border-radius:999px;padding:2px 8px;white-space:nowrap}
+.reset{border:0;background:none;color:var(--indigo);font-size:11px;font-weight:600;padding:0;white-space:nowrap}
+.lvl{font-size:11px;font-weight:700;color:var(--indigo);margin-top:14px}
+.ads .name{margin-top:6px}.file{font-size:11px;color:var(--mute);margin-top:10px}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}.chip{border:1px solid var(--line);background:#fff;border-radius:6px;padding:2px 7px;font:11px ui-monospace,Menlo,monospace;color:var(--ink2)}
+.chip:hover{border-color:var(--indigo);color:var(--indigo)}
+.tpl{font:12px ui-monospace,Menlo,monospace}
+table{width:100%;border-collapse:collapse;font-size:12px}td{padding:4px 0;border-bottom:1px solid #f1f5f9}td input{border:1px solid var(--line);border-radius:6px;padding:3px 6px;width:70px;font:12px ui-monospace,Menlo,monospace}
+.src{color:var(--mute);font-size:11px}.dim{opacity:.55}
+.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 12px;font-weight:600}.btn.pri{background:var(--indigo);color:#fff;border-color:var(--indigo)}
+.tele{position:fixed;left:0;right:0;bottom:0;background:#111827;color:#e5e7eb;font:11px/1.5 ui-monospace,Menlo,monospace;transform:translateY(calc(100% - 26px));transition:transform .2s;z-index:60}
+.tele.open{transform:none}.tele header{padding:5px 12px;cursor:pointer;display:flex;gap:8px}.tele header button{background:none;border:0;color:#9ca3af;font:inherit}.tele header button.on{color:#fff;background:#374151;border-radius:4px;padding:0 6px}
+.tele pre{margin:0;max-height:200px;overflow:auto;padding:8px 12px;white-space:pre-wrap}
+</style></head><body>
+<div class="dev"><span>BUILD <b>naming-v1 · 2026-11-07</b></span><span>matched <b id="dMatch"></b></span><span>overrides <b id="dOv">0</b></span><span>events <b id="dEv">0</b></span><span style="color:#fbbf24">Examples from real RHO names; nothing is sent to Meta</span><button onclick="resetAll()">Reset</button></div>
+<div class="wrap">
+ <main class="card">
+  <h1>Launch — names</h1><p class="sub">Pick wave, niche and angle once. Every campaign, ad set and ad name fills in. Type over any name to keep your own.</p>
+  <div class="row">
+   <div><label>Wave</label><select id="wave" onchange="S.wave=this.value;log('input',{wave:this.value});render()"></select></div>
+   <div><label>Niche</label><select id="niche" onchange="S.niche=this.value;log('input',{niche:this.value});render()"></select></div>
+   <div><label>Budget</label><select id="budget" onchange="S.budget=this.value;render()"><option>ABO</option><option>CBO</option></select></div>
+  </div>
+  <label>Ad set angle</label><input type="text" id="angle" oninput="S.angle=this.value;render()">
+  <div class="lvl">CAMPAIGN</div><div id="campName"></div>
+  <div class="lvl">AD SET</div><div id="adsetName"></div>
+  <div class="lvl">ADS · from 5 Drive files</div><div class="ads" id="ads"></div>
+  <p class="file">Concept is taken from the Drive filename with extension and any old wave-code-seq prefix stripped. If one creative gets 2+ copy variants, -H1B1 style suffix is added so names stay unique.</p>
+ </main>
+ <aside class="card">
+  <h2>Naming settings · RHO - Commercial Insurance</h2><p class="sub">Shared by everyone on this account (stored server-side, not per browser).</p>
+  <div class="row" style="grid-template-columns:1fr 1fr"><div><label>Brand code</label><input type="text" id="brand" oninput="P.brand=this.value;saved();render()"></div><div><label>Tracking tag</label><input type="text" id="track" oninput="P.track=this.value;saved();render()"></div></div>
+  <label>Templates</label>
+  <div class="tpl"><div class="src">Campaign</div><input type="text" id="tCamp" class="tpl" oninput="P.t.campaign=this.value;saved();render()"></div>
+  <div class="tpl"><div class="src" style="margin-top:6px">Ad set</div><input type="text" id="tSet" class="tpl" oninput="P.t.adset=this.value;saved();render()"></div>
+  <div class="tpl"><div class="src" style="margin-top:6px">Ad</div><input type="text" id="tAd" class="tpl" oninput="P.t.ad=this.value;saved();render()"></div>
+  <div class="chips" id="chips"></div>
+  <label>Waves</label><table id="waves"></table>
+  <label>Niche codes <span class="src" style="text-transform:none;font-weight:400">· prefilled from your existing ad set names</span></label><table id="codes"></table>
+ </aside>
+</div>
+<div class="tele" id="tele"><header onclick="tTog(event)"><b style="color:#fff">Telemetry ▴</b><button class="on" data-t="events">Events</button><button data-t="session">Session</button><button data-t="rpu">RPU</button></header><pre id="tOut"></pre></div>
+<script>
+const FILES=['WW8-FUN-01-FleetMargin.jpg','HearseAndStaff.jpg','NewHearse_v2.png','KeyRackCloseUp.jpg','FleetCosts.mp4'];
+const DEFP={brand:'RHO v1',track:'CAPI',upper:true,
+ t:{campaign:'{brand_code} | {budget_type} | {wave} {niche} | {tracking} | {date:MM.DD.YYYY}',adset:'{wave_code}-{niche_code} | {angle}',ad:'{wave_code}-{niche_code}-{seq:02}-{concept}-{media}-{ratio}'},
+ waves:[['VEHICLE W2','VW'],['BREADTH W1','BW1'],['BREADTH W2T','BW2T'],['WAVE 8','WW8']],
+ codes:[['FUNERAL HOMES','FUN',12],['LOCKSMITHS','LOCK',9],['PAINTING CONTRACTORS','PAINT',14],['COURIERS','CUR',11],['AUTO DEALERSHIPS','DLR',8],['TOWING','TOW',21],['BAKERIES','BAKE',3],['NEMT','NEMT',6],['TREE SERVICE','',0]]};
+const DEFS={wave:'WAVE 8',niche:'FUNERAL HOMES',budget:'ABO',angle:'Fleet and crew',edits:{}};
+let P,S,EV=[],T0=Date.now();
+function load(){P=JSON.parse(JSON.stringify(DEFP));S=JSON.parse(JSON.stringify(DEFS))}
+function log(e,p={}){EV.push({t:((Date.now()-T0)/1000).toFixed(1)+'s',event:e,...p});dEv.textContent=EV.length;tUpd()}
+let st;function saved(){clearTimeout(st);st=setTimeout(()=>log('naming_preset_saved'),600)}
+const pad=(n,w)=>String(n).padStart(w,'0');
+function dateFmt(f){const d=new Date(2026,10,9);if(f==='MM.DD.YYYY')return pad(d.getMonth()+1,2)+'.'+pad(d.getDate(),2)+'.'+d.getFullYear();if(f==='MM.DD')return pad(d.getMonth()+1,2)+'.'+pad(d.getDate(),2);return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})}
+function concept(f){let c=f.replace(/\.[a-z0-9]+$/i,'');c=c.replace(/^[A-Z0-9]+-[A-Z0-9]+-\d+-/,'');return c.replace(/[_\s]+v\d+$/i,'').replace(/[_\s]+/g,'')}
+function tokens(extra={}){const w=P.waves.find(x=>x[0]===S.wave)||['',''],c=P.codes.find(x=>x[0]===S.niche);
+ return {brand_code:P.brand,budget_type:S.budget,tracking:P.track,wave:S.wave,wave_code:w[1],niche:S.niche,niche_code:c?.[1]||'',angle:S.angle,...extra}}
+function resolve(tpl,tk,upper){let out=tpl.replace(/\{(\w+)(?::([^}]+))?\}/g,(m,k,f)=>{if(k==='date')return dateFmt(f);if(k==='seq')return pad(tk.seq,(f||'1').length);return k in tk?(tk[k]??''):m});
+ out=out.replace(/(\s*\|\s*)+(?=\s*\|)/g,'').replace(/\|\s*\|/g,'|').replace(/--+/g,'-').replace(/-(?=\s*\||$)/g,'').replace(/(\|\s*)-/g,'$1').replace(/^[\s|-]+|[\s|-]+$/g,'').replace(/\s{2,}/g,' ');
+ if(upper){const b=tk.brand_code;out=out.toUpperCase();if(b)out=out.replace(b.toUpperCase(),b)}return out}
+function missing(tk,tpl){return [...tpl.matchAll(/\{(\w+)/g)].map(m=>m[1]).filter(k=>!['date','seq','concept','media','ratio'].includes(k)&&!tk[k])}
+function field(id,auto,miss){const v=S.edits[id]??auto,custom=id in S.edits;
+ const badge=custom?'<span class="cust">custom</span>':miss.length?`<span class="warn">fill ${miss.join(', ')}</span>`:'<span class="ok">✓ matches</span>';
+ return `<div class="name"><input value="${v.replace(/"/g,'&quot;')}" oninput="edit('${id}',this.value)">${badge}${custom?`<button class="reset" onclick="unedit('${id}')">use template</button>`:''}</div>`}
+function edit(id,v){if(!(id in S.edits))log('naming_name_overridden',{field:id});S.edits[id]=v;dOv.textContent=Object.keys(S.edits).length;renderBadges()}
+function unedit(id){delete S.edits[id];dOv.textContent=Object.keys(S.edits).length;render()}
+function renderBadges(){render(true)}
+function render(keepFocus){const tk=tokens();let m=0,n=0;
+ const camp=resolve(P.t.campaign,tk,P.upper),cm=missing(tk,P.t.campaign);
+ const set=resolve(P.t.adset,tk,P.upper),sm=missing(tk,P.t.adset);
+ const ads=FILES.map((f,i)=>{const isV=/\.mp4$/i.test(f);return {id:'ad'+i,f,auto:resolve(P.t.ad,tokens({seq:i+1,concept:concept(f),media:isV?'VID':'IMG',ratio:isV?'9x16':'1x1'}),false)}});
+ const seen={};ads.forEach(a=>{let nm=a.auto,k=0;while(seen[nm]){k++;nm=a.auto+'-'+'bcdefg'[k-1]}seen[nm]=1;a.auto=nm});
+ if(keepFocus===true){const ae=document.activeElement;}
+ const rows=[['camp',camp,cm],['set',set,sm],...ads.map(a=>[a.id,a.auto,missing(tk,P.t.ad)])];
+ rows.forEach(r=>{n++;if(!(r[0] in S.edits)&&!r[2].length)m++});dMatch.textContent=m+'/'+n;
+ if(keepFocus===true){document.querySelectorAll('.name').forEach((el,i)=>{const r=rows[i];if(!r)return;const custom=r[0] in S.edits;el.querySelector('span').outerHTML=custom?'<span class="cust">custom</span>':r[2].length?`<span class="warn">fill ${r[2].join(', ')}</span>`:'<span class="ok">✓ matches</span>'});return}
+ campName.innerHTML=field('camp',camp,cm);adsetName.innerHTML=field('set',set,sm);
+ document.getElementById('ads').innerHTML=ads.map(a=>`<div class="src" style="margin-top:8px">${a.f}</div>`+field(a.id,a.auto,missing(tk,P.t.ad))).join('');
+ // settings
+ wave.innerHTML=P.waves.map(w=>`<option ${w[0]===S.wave?'selected':''}>${w[0]}</option>`).join('');
+ niche.innerHTML=P.codes.map(c=>`<option ${c[0]===S.niche?'selected':''}>${c[0]}</option>`).join('');budget.value=S.budget;angle.value=S.angle;
+ brand.value=P.brand;track.value=P.track;tCamp.value=P.t.campaign;tSet.value=P.t.adset;tAd.value=P.t.ad;
+ chips.innerHTML=['{brand_code}','{budget_type}','{objective_tag}','{wave}','{wave_code}','{niche}','{niche_code}','{angle}','{tracking}','{date:MM.DD.YYYY}','{seq:02}','{concept}','{media}','{ratio}'].map(t=>`<span class="chip">${t}</span>`).join('');
+ waves.innerHTML=P.waves.map((w,i)=>`<tr><td>${w[0]}</td><td style="text-align:right"><input value="${w[1]}" oninput="P.waves[${i}][1]=this.value;saved();render()"></td></tr>`).join('');
+ codes.innerHTML=P.codes.map((c,i)=>`<tr class="${c[1]?'':'dim'}"><td>${c[0]}<div class="src">${c[2]?'seen in '+c[2]+' ad sets':'not used yet — suggested'}</div></td><td style="text-align:right"><input value="${c[1]||c[0].replace(/[^A-Z]/g,'').slice(0,4)}" oninput="P.codes[${i}][1]=this.value;saved();render()"></td></tr>`).join('');
+}
+let TT='events';function tTog(e){if(e.target.dataset.t){TT=e.target.dataset.t;document.querySelectorAll('.tele header button').forEach(b=>b.classList.toggle('on',b.dataset.t===TT));tele.classList.add('open');tUpd();return}tele.classList.toggle('open')}
+function tUpd(){tOut.textContent=TT==='events'?(EV.map(e=>JSON.stringify(e)).join('\n')||'No events yet.'):TT==='session'?JSON.stringify({launch:S,preset:P},null,2):'RPU: n/a — internal tool. Success = ≥80% of new ad sets match the convention, <20% names overridden (brief §6).'}
+function resetAll(){load();EV=[];dEv.textContent=0;dOv.textContent=0;render();tUpd()}
+load();render();tUpd();
+</script></body></html>
