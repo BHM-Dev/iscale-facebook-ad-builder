@@ -20,6 +20,24 @@ DEFAULT_TEMPLATES = {
 }
 
 
+_UNRESOLVED = re.compile(r"\{[A-Za-z0-9_]+(?::[^}]*)?\}")
+
+
+def strip_unresolved_tokens(name):
+    """Last line of defence before Meta: a blank template field must never ship as
+    literal `{wave_code}`. Drop unresolved tokens and the separators they leave."""
+    if not isinstance(name, str) or "{" not in name:
+        return name
+    cleaned = _UNRESOLVED.sub("", name)
+    segments = []
+    for seg in cleaned.split("|"):
+        seg = re.sub(r"-{2,}", "-", seg.strip())
+        seg = re.sub(r"\s{2,}", " ", seg).strip(" -")
+        if seg:
+            segments.append(seg)
+    return " | ".join(segments) or "Untitled"
+
+
 def default_preset(ad_account_id: str) -> dict:
     return {
         "ad_account_id": ad_account_id,
@@ -44,6 +62,9 @@ _ADSET_PREFIX = re.compile(r"^\s*([A-Z0-9]{1,8})-([A-Z0-9]{2,8})\s*\|\s*(.+?)\s*
 _WAVE_PREFIX = re.compile(r"^((?:[A-Z]+\s+)?W\d+[A-Z]?|WAVE\s+\d+)\s+(.+)$")
 _DATE = re.compile(r"^\d{1,2}\.\d{1,2}(\.\d{2,4})?$")
 _NOISE = {"ABO", "CBO", "LEADS", "CAPI", "SALES", "TRAFFIC"}
+_TRACKING = {"CAPI", "PIXEL"}
+# Codes that are test/version markers, not niches.
+_JUNK_CODES = {"TEST", "COPY", "NEW", "OLD", "DUP"}
 
 
 def campaign_niche_segment(campaign_name: str) -> str | None:
@@ -73,17 +94,28 @@ def observe_codes(rows: Iterable[tuple[str, str]]) -> dict:
     """
     niche_counts: dict[str, Counter] = defaultdict(Counter)
     wave_counts: dict[str, Counter] = defaultdict(Counter)
+    brand_counts: Counter = Counter()
+    tracking_counts: Counter = Counter()
     for adset_name, campaign_name in rows:
         m = _ADSET_PREFIX.match((adset_name or "").upper())
         if not m:
             continue
         wave_code, niche_code, _angle = m.groups()
+        if niche_code in _JUNK_CODES:
+            continue
         wave, niche = split_wave(campaign_niche_segment(campaign_name))
         # Only trust the campaign's niche segment. The ad-set text after `|` is an
         # angle ("FLEET AND CREW"), so it must never be recorded as a niche.
         if niche:
             niche_counts[niche_code][niche] += 1
-        wave_counts[wave_code][wave or ""] += 1
+        # Campaigns without wave words (WW8, POP) still name a real wave: label it by its code.
+        wave_counts[wave_code][wave or wave_code] += 1
+        parts = [p.strip() for p in (campaign_name or "").split("|")]
+        if len(parts) > 2 and parts[0]:
+            brand_counts[parts[0]] += 1
+        for part in parts:
+            if part.upper() in _TRACKING:
+                tracking_counts[part.upper()] += 1
 
     def pick(counter: Counter) -> tuple[str, int]:
         name, _ = counter.most_common(1)[0]
@@ -97,4 +129,9 @@ def observe_codes(rows: Iterable[tuple[str, str]]) -> dict:
         ({"wave": pick(c)[0], "code": code, "seen": pick(c)[1]} for code, c in wave_counts.items()),
         key=lambda r: (-r["seen"], r["code"]),
     )
-    return {"niche_codes": niche_codes, "waves": waves}
+    return {
+        "niche_codes": niche_codes,
+        "waves": waves,
+        "brand_code": brand_counts.most_common(1)[0][0] if brand_counts else "",
+        "tracking_tag": tracking_counts.most_common(1)[0][0] if tracking_counts else "",
+    }

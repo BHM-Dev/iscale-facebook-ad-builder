@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ChevronRight, Plus, Check, Loader, X, AlertTriangle } from 'lucide-react';
 import { useCampaign, createDefaultAdsetData } from '../context/CampaignContext';
 import { useToast } from '../context/ToastContext';
 import { getAdSets, getPixels, searchGeoLocations } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 import NamingTemplateField from './NamingTemplateField';
+import NamingSettingsDrawer from './NamingSettingsDrawer';
+import useNamingPreset from '../lib/useNamingPreset';
+import { resolveNamingTemplate } from '../lib/namingTemplates';
 
 const OPTIMIZATION_GOALS = [
     // These are the website lead-generation choices this launcher can actually
@@ -20,6 +23,15 @@ const CONVERSION_EVENTS = [
     'PURCHASE', 'LEAD', 'COMPLETE_REGISTRATION', 'ADD_TO_CART',
     'INITIATE_CHECKOUT', 'ADD_PAYMENT_INFO', 'CONTACT', 'SUBSCRIBE'
 ];
+
+const OBJECTIVE_LABELS = {
+    OUTCOME_SALES: 'Sales',
+    OUTCOME_TRAFFIC: 'Traffic',
+    OUTCOME_LEADS: 'Leads',
+    OUTCOME_ENGAGEMENT: 'Engagement',
+    OUTCOME_AWARENESS: 'Awareness',
+    OUTCOME_APP_PROMOTION: 'App Promotion'
+};
 
 // Meta's adset_schedule DayPart objects use days/start_minute/end_minute
 // (snake_case, matching this app's local adSchedule shape 1:1 apart from
@@ -83,31 +95,35 @@ const HEC_CATEGORIES = new Set(['HOUSING', 'EMPLOYMENT', 'FINANCIAL_PRODUCTS_SER
 const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = false }) => {
     const { campaignData, adsetData, setAdsetData, selectedAdAccount, creativeData } = useCampaign();
     const { showError, showWarning } = useToast();
+    const naming = useNamingPreset(selectedAdAccount);
+    const [namingOpen, setNamingOpen] = useState(false);
     const isHECRestricted = (campaignData.specialAdCategories || []).some(c => HEC_CATEGORIES.has(c));
-    const objectiveLabels = {
-        OUTCOME_SALES: 'Sales',
-        OUTCOME_TRAFFIC: 'Traffic',
-        OUTCOME_LEADS: 'Leads',
-        OUTCOME_ENGAGEMENT: 'Engagement',
-        OUTCOME_AWARENESS: 'Awareness',
-        OUTCOME_APP_PROMOTION: 'App Promotion'
-    };
-    const adsetNamingTokens = {
-        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-        objective: objectiveLabels[campaignData.objective] || '',
+    const waveRow = naming.preset.waves.find(row => row.wave === campaignData.namingWave);
+    const nicheRow = naming.preset.niche_codes.find(row => row.niche === campaignData.namingNiche);
+    const adsetNamingTokens = useMemo(() => ({
+        brand_code: naming.preset.brand_code,
+        wave: campaignData.namingWave || '',
+        wave_code: waveRow?.code || '',
+        niche: campaignData.namingNiche || '',
+        niche_code: nicheRow?.code || '',
+        angle: adsetData.namingAngle || '',
+        tracking: naming.preset.tracking_tag,
+        date: new Date(),
+        objective: OBJECTIVE_LABELS[campaignData.objective] || '',
         countries: (adsetData.targeting?.geo_locations?.countries || []).join('/') || 'US',
         age_range: `${adsetData.targeting?.ageMin ?? 18}-${adsetData.targeting?.ageMax ?? 65}`
-    };
-    const adsetNamingTokenList = [
-        { key: 'date', label: 'Date' },
-        { key: 'objective', label: 'Objective' },
-        { key: 'countries', label: 'Countries' },
-        { key: 'age_range', label: 'Age Range' }
-    ];
+    }), [naming.preset, campaignData.namingWave, campaignData.namingNiche, campaignData.objective, adsetData.namingAngle, adsetData.targeting, waveRow, nicheRow]);
     // Initialize from context, not a hardcoded default — see CampaignStep.jsx for why:
     // this component unmounts/remounts on step navigation and adsetData.isExisting is
     // the durable record of a prior "Use Existing" selection.
     const [mode, setMode] = useState(adsetData.isExisting ? 'existing' : 'new');
+    useEffect(() => {
+        if (mode !== 'new' || naming.loading || adsetData.nameManuallyEdited) return;
+        const generated = resolveNamingTemplate(naming.preset.templates.adset, adsetNamingTokens, {
+            uppercase: naming.preset.uppercase, keepMissing: true,
+        });
+        setAdsetData(previous => previous.name === generated ? previous : { ...previous, name: generated });
+    }, [mode, naming.loading, naming.preset, adsetNamingTokens, adsetData.nameManuallyEdited, adsetData.namingAngle, campaignData.namingWave, campaignData.namingNiche, setAdsetData]);
     // Quick Ad — see the matching effect in CampaignStep.jsx for why this is needed
     // (same mode-gating bug, same fix).
     useEffect(() => {
@@ -692,16 +708,27 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                     )}
 
                     <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Angle *</label>
+                        <input value={adsetData.namingAngle || ''} onChange={event => handleInputChange('namingAngle', event.target.value)} placeholder="Fleet and crew" className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:ring-2 focus:ring-amber-500 focus:border-transparent" />
+                    </div>
+
+                    <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                             Ad Set Name *
                         </label>
                         <NamingTemplateField
                             value={adsetData.name}
-                            onChange={(value) => handleInputChange('name', value)}
+                            onManualChange={(value) => {
+                                if (!adsetData.nameManuallyEdited) naming.trackEvent('naming_name_overridden', { level: 'adset' });
+                                setAdsetData(previous => ({ ...previous, name: value, nameManuallyEdited: true, isExisting: false }));
+                            }}
                             placeholder="US - Adults 25-55"
                             tokens={adsetNamingTokens}
-                            tokenList={adsetNamingTokenList}
                             scope="adset"
+                            preset={naming.preset}
+                            manuallyEdited={adsetData.nameManuallyEdited}
+                            onOpenNaming={() => setNamingOpen(true)}
+                            onUseTemplate={(value) => setAdsetData(previous => ({ ...previous, name: value, nameManuallyEdited: false }))}
                         />
                     </div>
 
@@ -1542,6 +1569,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                     {loading ? 'Saving...' : 'Next Step'} <ChevronRight size={20} />
                 </button>
             </div>
+            <NamingSettingsDrawer open={namingOpen} onClose={() => setNamingOpen(false)} accountName={selectedAdAccount?.name} preset={naming.preset} setPreset={naming.setPreset} onSave={naming.savePreset} saving={naming.saving} loading={naming.loading} legacySuggestions={naming.legacySuggestions} />
         </div >
     );
 };

@@ -1,9 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Rocket, Loader, X, CheckCircle2, ExternalLink, PlusCircle, ListFilter } from 'lucide-react';
 import { getAdAccounts, getCampaigns, getAdSets, getPages, createCompleteAd, createFacebookAdSet, authFetch } from '../lib/facebookApi';
 import { useToast } from '../context/ToastContext';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 import CreativeEnhancementsPanel from './CreativeEnhancementsPanel';
+import NamingTemplateField from './NamingTemplateField';
+import NamingSettingsDrawer from './NamingSettingsDrawer';
+import useNamingPreset from '../lib/useNamingPreset';
+import { conceptFromFilename, parseName, resolveNamingTemplate } from '../lib/namingTemplates';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -84,12 +88,14 @@ export default function PushToMetaModal({
 
     // Always default to 'new' — Joel always creates a fresh ad set when pushing
     const [adsetMode, setAdsetMode] = useState('new');
-    const _today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     const [newAdset, setNewAdset] = useState({
-        name: niche ? `${_today} - ${niche} - Testing` : `${_today} - Testing`,
+        name: '',
         dailyBudget: '',
         cloneFromId: '',   // ad set ID to copy targeting/optimization from
     });
+    const [newAdsetNameManuallyEdited, setNewAdsetNameManuallyEdited] = useState(false);
+    const [adName, setAdName] = useState('');
+    const [adNameManuallyEdited, setAdNameManuallyEdited] = useState(false);
 
     const [selectedCampaign, setSelectedCampaign] = useState(null);
     // Account/campaign/page/URL are usually pre-filled from history — collapse them into
@@ -113,6 +119,35 @@ export default function PushToMetaModal({
             cta: initialCta || 'LEARN_MORE',
         };
     });
+    const naming = useNamingPreset(pushForm.adAccountId);
+    const [namingOpen, setNamingOpen] = useState(false);
+    const namingSourceAdset = cloneSourceAdSets.find(item => item.id === newAdset.cloneFromId)
+        || pushAdSets.find(item => item.id === pushForm.adsetId);
+    const parsedSourceName = parseName(namingSourceAdset?.name || '', naming.preset.templates.adset) || {};
+    const nicheRow = naming.preset.niche_codes.find(row => row.niche === niche || row.code === parsedSourceName.niche_code);
+    const pushNamingTokens = useMemo(() => ({
+        brand_code: naming.preset.brand_code,
+        wave: parsedSourceName.wave || '',
+        wave_code: parsedSourceName.wave_code || '',
+        niche: niche || nicheRow?.niche || '',
+        niche_code: parsedSourceName.niche_code || nicheRow?.code || '',
+        angle: parsedSourceName.angle || conceptFromFilename(imageUrl) || 'New Creative',
+        tracking: naming.preset.tracking_tag,
+        date: new Date(),
+    }), [naming.preset.brand_code, naming.preset.tracking_tag, parsedSourceName.wave, parsedSourceName.wave_code, parsedSourceName.niche_code, parsedSourceName.angle, niche, nicheRow, imageUrl]);
+
+    useEffect(() => {
+        if (naming.loading) return;
+        if (!newAdsetNameManuallyEdited) {
+            const nextAdsetName = resolveNamingTemplate(naming.preset.templates.adset, pushNamingTokens, { uppercase: naming.preset.uppercase, keepMissing: true });
+            setNewAdset(previous => previous.name === nextAdsetName ? previous : { ...previous, name: nextAdsetName });
+        }
+        if (!adNameManuallyEdited) {
+            setAdName(resolveNamingTemplate(naming.preset.templates.ad, {
+                ...pushNamingTokens, seq: 1, concept: conceptFromFilename(imageUrl) || 'Creative1', media: 'IMG', ratio: '1x1',
+            }, { keepMissing: true }));
+        }
+    }, [naming.loading, naming.preset, pushNamingTokens, newAdsetNameManuallyEdited, adNameManuallyEdited, newAdset.cloneFromId, pushForm.adsetId, niche, imageUrl]);
 
     // When accounts.length <= 1, the Ad Account field below falls back to a
     // free-text input whose onChange fires on every keystroke — a plain
@@ -311,6 +346,7 @@ export default function PushToMetaModal({
             }
         }
 
+        naming.trackEvent('naming_launch', { level: 'single', matched: String(!newAdsetNameManuallyEdited && !adNameManuallyEdited) });
         setPushSubmitting(true);
         setPushError(null);
         setHecWarning(null);
@@ -369,7 +405,7 @@ export default function PushToMetaModal({
                     websiteUrl: pushForm.websiteUrl,
                     creative_enhancements: creativeEnhancements,
                 },
-                { id: `pushed_img_${Date.now()}`, name: pushForm.headline || 'Ad from Image Builder' },
+                { id: `pushed_img_${Date.now()}`, name: adName || 'Ad from Image Builder' },
                 pushForm.pageId,
                 pushForm.adAccountId,
                 'ABO'
@@ -750,12 +786,20 @@ export default function PushToMetaModal({
                                     {/* Name */}
                                     <div>
                                         <label className="block text-xs font-medium text-gray-600 mb-1">Ad Set Name *</label>
-                                        <input
-                                            type="text"
-                                            placeholder="e.g. Church Insurance — Square — May 12"
+                                        <NamingTemplateField
+                                            placeholder="Ad set name"
                                             value={newAdset.name}
-                                            onChange={(e) => setNewAdset(p => ({ ...p, name: e.target.value }))}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 bg-white"
+                                            onManualChange={value => {
+                                                if (!newAdsetNameManuallyEdited) naming.trackEvent('naming_name_overridden', { level: 'adset' });
+                                                setNewAdsetNameManuallyEdited(true);
+                                                setNewAdset(p => ({ ...p, name: value }));
+                                            }}
+                                            tokens={pushNamingTokens}
+                                            scope="adset"
+                                            preset={naming.preset}
+                                            manuallyEdited={newAdsetNameManuallyEdited}
+                                            onOpenNaming={() => setNamingOpen(true)}
+                                            onUseTemplate={value => { setNewAdset(p => ({ ...p, name: value })); setNewAdsetNameManuallyEdited(false); }}
                                         />
                                     </div>
                                     {/* Daily budget */}
@@ -806,6 +850,15 @@ export default function PushToMetaModal({
                     )}
 
                     <CreativeEnhancementsPanel value={creativeEnhancements} onChange={setCreativeEnhancements} />
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Ad name</label>
+                        <NamingTemplateField value={adName} onManualChange={value => {
+                            if (!adNameManuallyEdited) naming.trackEvent('naming_name_overridden', { level: 'ad' });
+                            setAdNameManuallyEdited(true);
+                            setAdName(value);
+                        }} tokens={{ ...pushNamingTokens, seq: 1, concept: conceptFromFilename(imageUrl) || 'Creative1', media: 'IMG', ratio: '1x1' }} scope="ad" preset={naming.preset} manuallyEdited={adNameManuallyEdited} onOpenNaming={() => setNamingOpen(true)} onUseTemplate={value => { setAdName(value); setAdNameManuallyEdited(false); }} />
+                    </div>
 
                     {/* Headline */}
                     <div>
@@ -872,6 +925,7 @@ export default function PushToMetaModal({
                         )}
                     </div>
                 )}
+                <NamingSettingsDrawer open={namingOpen} onClose={() => setNamingOpen(false)} accountName={accounts.find(account => String(account.id || account.accountId) === String(pushForm.adAccountId))?.name || pushForm.adAccountId} preset={naming.preset} setPreset={naming.setPreset} onSave={naming.savePreset} saving={naming.saving} loading={naming.loading} legacySuggestions={naming.legacySuggestions} />
 
                 <div className="flex gap-3 mt-6">
                     <button

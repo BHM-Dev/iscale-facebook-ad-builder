@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ChevronRight, Check, Loader, Plus, Search } from 'lucide-react';
 import { useCampaign, createDefaultCampaignData } from '../context/CampaignContext';
 import { useToast } from '../context/ToastContext';
 import { getCampaigns } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 import NamingTemplateField from './NamingTemplateField';
+import NamingSettingsDrawer from './NamingSettingsDrawer';
+import useNamingPreset from '../lib/useNamingPreset';
+import { resolveNamingTemplate } from '../lib/namingTemplates';
 
 const CAMPAIGN_OBJECTIVES = [
     { value: 'OUTCOME_SALES', label: 'Sales - Drive purchases and conversions' },
@@ -24,6 +27,8 @@ const BID_STRATEGIES = [
 const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession = false }) => {
     const { campaignData, setCampaignData, selectedAdAccount } = useCampaign();
     const { showError, showWarning } = useToast();
+    const naming = useNamingPreset(selectedAdAccount);
+    const [namingOpen, setNamingOpen] = useState(false);
     // Initialize from context, not a hardcoded default — CampaignStep unmounts/remounts
     // when the wizard navigates between steps, and campaignData.isExisting is the only
     // durable record of a prior "Use Existing" selection (local `mode` state is not).
@@ -219,14 +224,34 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
     };
 
     const objectiveLabel = CAMPAIGN_OBJECTIVES.find(o => o.value === campaignData.objective)?.label.split(' - ')[0] || '';
-    const namingTokens = {
-        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-        objective: objectiveLabel
-    };
-    const namingTokenList = [
-        { key: 'date', label: 'Date' },
-        { key: 'objective', label: 'Objective' }
-    ];
+    const selectedWave = naming.preset.waves.find(row => row.wave === campaignData.namingWave);
+    const selectedNiche = naming.preset.niche_codes.find(row => row.niche === campaignData.namingNiche);
+    const namingTokens = useMemo(() => ({
+        brand_code: naming.preset.brand_code,
+        budget_type: campaignData.budgetType || 'ABO',
+        objective_tag: naming.preset.objective_tags?.[campaignData.objective] || '',
+        wave: campaignData.namingWave || selectedWave?.wave || '',
+        wave_code: selectedWave?.code || '',
+        niche: campaignData.namingNiche || selectedNiche?.niche || '',
+        niche_code: selectedNiche?.code || '',
+        tracking: naming.preset.tracking_tag,
+        date: new Date(),
+        objective: objectiveLabel,
+    }), [naming.preset, campaignData.budgetType, campaignData.objective, campaignData.namingWave, campaignData.namingNiche, selectedWave, selectedNiche, objectiveLabel]);
+
+    useEffect(() => {
+        if (mode !== 'new' || naming.loading || campaignData.nameManuallyEdited) return;
+        // Only picks that exist in THIS account's preset count (account switches leave stale picks behind).
+        const wave = naming.preset.waves.some(row => row.wave === campaignData.namingWave) ? campaignData.namingWave : '';
+        const niche = naming.preset.niche_codes.some(row => row.niche === campaignData.namingNiche) ? campaignData.namingNiche : '';
+        const waveRow = naming.preset.waves.find(row => row.wave === wave);
+        const nicheRow = naming.preset.niche_codes.find(row => row.niche === niche);
+        const generated = resolveNamingTemplate(naming.preset.templates.campaign, {
+            ...namingTokens, wave, wave_code: waveRow?.code || '', niche, niche_code: nicheRow?.code || '',
+        }, { uppercase: naming.preset.uppercase, keepMissing: true });
+        setCampaignData(previous => previous.name === generated && previous.namingWave === wave && previous.namingNiche === niche
+            ? previous : { ...previous, name: generated, namingWave: wave, namingNiche: niche });
+    }, [mode, naming.loading, naming.preset, naming.lastWave, namingTokens, campaignData.nameManuallyEdited, campaignData.namingWave, campaignData.namingNiche, campaignData.budgetType, campaignData.objective, setCampaignData]);
 
     return (
         <div>
@@ -356,17 +381,37 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
             {/* New Campaign Form */}
             {mode === 'new' && (
                 <div className="space-y-4">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                        <label className="block text-sm font-medium text-gray-700">Wave
+                            <select value={campaignData.namingWave || selectedWave?.wave || ''} onChange={event => { handleInputChange('namingWave', event.target.value); naming.rememberWave(event.target.value); }} className="mt-2 w-full rounded-lg border border-gray-300 px-4 py-2 focus:ring-2 focus:ring-amber-500">
+                                <option value="">{naming.preset.waves.length ? 'Pick wave…' : 'Set up waves in Naming'}</option>
+                                {naming.preset.waves.map(row => <option key={`${row.code}-${row.wave}`} value={row.wave || ''}>{row.wave || row.code} ({row.code})</option>)}
+                            </select>
+                        </label>
+                        <label className="block text-sm font-medium text-gray-700">Niche
+                            <select value={campaignData.namingNiche || selectedNiche?.niche || ''} onChange={event => handleInputChange('namingNiche', event.target.value)} className="mt-2 w-full rounded-lg border border-gray-300 px-4 py-2 focus:ring-2 focus:ring-amber-500">
+                                <option value="">{naming.preset.niche_codes.length ? 'Pick niche…' : 'Set up niches in Naming'}</option>
+                                {naming.preset.niche_codes.map(row => <option key={`${row.code}-${row.niche}`} value={row.niche || ''}>{row.niche || row.code} ({row.code})</option>)}
+                            </select>
+                        </label>
+                    </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                             Campaign Name *
                         </label>
                         <NamingTemplateField
                             value={campaignData.name}
-                            onChange={(value) => handleInputChange('name', value)}
+                            onManualChange={(value) => {
+                                if (!campaignData.nameManuallyEdited) naming.trackEvent('naming_name_overridden', { level: 'campaign' });
+                                setCampaignData(previous => ({ ...previous, name: value, nameManuallyEdited: true, isExisting: false }));
+                            }}
                             placeholder="Summer Sale Campaign"
                             tokens={namingTokens}
-                            tokenList={namingTokenList}
                             scope="campaign"
+                            preset={naming.preset}
+                            manuallyEdited={campaignData.nameManuallyEdited}
+                            onOpenNaming={() => setNamingOpen(true)}
+                            onUseTemplate={(value) => setCampaignData(previous => ({ ...previous, name: value, nameManuallyEdited: false }))}
                         />
                     </div>
 
@@ -620,6 +665,7 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                     {loading ? 'Saving...' : 'Next Step'} <ChevronRight size={20} />
                 </button>
             </div>
+            <NamingSettingsDrawer open={namingOpen} onClose={() => setNamingOpen(false)} accountName={selectedAdAccount?.name} preset={naming.preset} setPreset={naming.setPreset} onSave={naming.savePreset} saving={naming.saving} loading={naming.loading} legacySuggestions={naming.legacySuggestions} />
         </div>
     );
 };

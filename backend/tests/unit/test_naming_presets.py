@@ -1,5 +1,6 @@
 """Naming presets: code observation over real RHO name shapes (2026-11-07 sample)."""
 from app.services.naming_presets import (
+    strip_unresolved_tokens,
     DEFAULT_TEMPLATES,
     campaign_niche_segment,
     default_preset,
@@ -43,7 +44,7 @@ def test_observe_codes_uses_only_conforming_adsets_and_counts_them():
     assert out["niche_codes"][0]["code"] == "FUN"  # most-seen first
     waves = {r["code"]: r["wave"] for r in out["waves"]}
     assert waves["BW1"] == "BREADTH W1" and waves["BW2T"] == "BREADTH W2T"
-    assert waves["POP"] == ""  # campaign had no wave words
+    assert waves["POP"] == "POP"  # no wave words in the campaign: labelled by code
 
 
 def test_default_preset_is_templates_only_and_unsaved():
@@ -57,3 +58,18 @@ def test_angle_text_is_never_recorded_as_a_niche():
     out = observe_codes([("XX-LIMO | NEW IMAGES", "RHO v1 | ABO | LEADS | CAPI | 10.06.2026")])
     assert out["niche_codes"] == []
     assert out["waves"][0]["code"] == "XX"
+
+
+def test_junk_codes_skipped_and_brand_tracking_guessed():
+    out = observe_codes(REAL + [("BW1-TEST | RESTAURANTS", "RHO v1 | ABO | BREADTH W1 RESTAURANTS | CAPI | 10.21.2026")])
+    assert "TEST" not in {r["code"] for r in out["niche_codes"]}
+    assert out["brand_code"] == "RHO v1" and out["tracking_tag"] == "CAPI"
+
+
+def test_unresolved_tokens_never_reach_meta():
+    assert strip_unresolved_tokens("{brand_code} | ABO | {wave} FUNERAL HOMES | {tracking} | 11.09.2026") == "ABO | FUNERAL HOMES | 11.09.2026"
+    assert strip_unresolved_tokens("{wave_code}-FUN | {angle}") == "FUN"
+    assert strip_unresolved_tokens("{wave_code}-{niche_code}-01-HearseAndStaff-IMG-1x1") == "01-HearseAndStaff-IMG-1x1"
+    assert strip_unresolved_tokens("WW8-FUN | FLEET AND CREW") == "WW8-FUN | FLEET AND CREW"
+    assert strip_unresolved_tokens("{angle}") == "Untitled"
+    assert strip_unresolved_tokens(None) is None

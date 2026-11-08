@@ -3,6 +3,7 @@ import os
 import threading
 import time
 import uuid
+from app.services.naming_presets import strip_unresolved_tokens
 from fastapi import APIRouter, Depends, HTTPException, Query
 from requests.exceptions import Timeout as RequestsTimeout
 from pydantic import BaseModel, Field
@@ -420,6 +421,8 @@ def create_campaign(
     current_user: User = Depends(require_permission("campaigns:write"))
 ):
     _assert_account_allowed(current_user, ad_account_id)
+    if "name" in campaign:
+        campaign = {**campaign, "name": strip_unresolved_tokens(campaign["name"])}
     try:
         result = service.create_campaign(campaign, ad_account_id)
         return dict(result)
@@ -1040,6 +1043,8 @@ def create_adset(
     current_user: User = Depends(require_permission("campaigns:write"))
 ):
     _assert_account_allowed(current_user, ad_account_id)
+    if "name" in adset:
+        adset = {**adset, "name": strip_unresolved_tokens(adset["name"])}
     try:
         result = service.create_adset(adset, ad_account_id)
         return dict(result)
@@ -1083,6 +1088,8 @@ def create_ad(
     current_user: User = Depends(require_permission("campaigns:write"))
 ):
     _assert_account_allowed(current_user, ad_account_id)
+    if "name" in ad:
+        ad = {**ad, "name": strip_unresolved_tokens(ad["name"])}
     try:
         result = service.create_ad(ad, ad_account_id)
         return dict(result)
@@ -1144,7 +1151,7 @@ def save_campaign_locally(
 
         new_campaign = FacebookCampaign(
             id=campaign_data.get('id'),
-            name=campaign_data.get('name'),
+            name=strip_unresolved_tokens(campaign_data.get('name')),
             objective=campaign_data.get('objective'),
             budget_type=campaign_data.get('budgetType', 'ABO'),
             budget_schedule_type=campaign_data.get('budgetScheduleType', 'DAILY'),
@@ -1225,7 +1232,7 @@ def save_adset_locally(
         new_adset = FacebookAdSet(
             id=adset_data.get('id'),
             campaign_id=campaign_id,
-            name=adset_data.get('name'),
+            name=strip_unresolved_tokens(adset_data.get('name')),
             optimization_goal=adset_data.get('optimizationGoal'),
             budget_schedule_type=adset_data.get('budgetScheduleType', 'DAILY'),
             daily_budget=daily_budget,
@@ -1276,7 +1283,7 @@ def save_ad_locally(
             db.add(local_ad)
 
         local_ad.adset_id = ad_data.get('adsetId')
-        local_ad.name = ad_data.get('name')
+        local_ad.name = strip_unresolved_tokens(ad_data.get('name'))
         local_ad.creative_name = ad_data.get('creativeName')
         local_ad.image_url = ad_data.get('imageUrl')
         # Video support fields
@@ -1862,7 +1869,7 @@ def push_to_meta(
         ad = service.create_ad({
             "adset_id": adset_id,
             "creative_id": creative_id,
-            "name": ad_name,
+            "name": strip_unresolved_tokens(ad_name),
             "status": status,
         }, ad_account_id)
 

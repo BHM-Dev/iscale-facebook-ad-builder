@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
     Rocket, Loader, X, CheckCircle2, AlertCircle, ExternalLink,
     PlusCircle, ListFilter, ChevronDown, ChevronUp
@@ -7,6 +7,10 @@ import { getCampaigns, getAdSets, getPages, createCompleteAd, createFacebookAdSe
 import { useToast } from '../context/ToastContext';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 import CreativeEnhancementsPanel from './CreativeEnhancementsPanel';
+import NamingTemplateField from './NamingTemplateField';
+import NamingSettingsDrawer from './NamingSettingsDrawer';
+import useNamingPreset from '../lib/useNamingPreset';
+import { conceptFromFilename, conventionNameFromFilename, mediaToken, parseName, ratioToken, resolveNamingTemplate, uniqueNames } from '../lib/namingTemplates';
 
 const FB_API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1') + '/facebook';
 const GEN_ADS_API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1') + '/generated-ads';
@@ -76,6 +80,8 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
 
     // Shared form fields
     const [adAccountId, setAdAccountId] = useState(safeLocalStorageGet('fb_ad_account_id') || '');
+    const naming = useNamingPreset(adAccountId);
+    const [namingOpen, setNamingOpen] = useState(false);
     const [campaigns, setCampaigns] = useState([]);
     const [selectedCampaignId, setSelectedCampaignId] = useState('');
     const [selectedCampaign, setSelectedCampaign] = useState(null);
@@ -105,13 +111,8 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
     // Ad set mode — always default to 'new' so Joel creates a fresh ad set each push
     const [adsetMode, setAdsetMode] = useState('new');
     const [sharedAdsetId, setSharedAdsetId] = useState('');
-    const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    const suggestedAdsetName = niche
-        ? `${today} - ${niche} - Testing`
-        : preselectedAdsetName
-        ? `${preselectedAdsetName} - New Creative - ${today}`
-        : `${today} - Testing`;
-    const [newAdset, setNewAdset] = useState({ name: suggestedAdsetName, dailyBudget: '', cloneFromId: preselectedAdsetId });
+    const [newAdset, setNewAdset] = useState({ name: '', dailyBudget: '', cloneFromId: preselectedAdsetId });
+    const [newAdsetNameManuallyEdited, setNewAdsetNameManuallyEdited] = useState(false);
 
     // Per-item copy overrides (editable inline)
     const [itemCopy, setItemCopy] = useState(() =>
@@ -123,6 +124,39 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
         }]))
     );
     const [expandedItem, setExpandedItem] = useState(null);
+    const [itemNames, setItemNames] = useState({});
+    const [manualItemNames, setManualItemNames] = useState({});
+
+    const parsedSourceName = parseName(preselectedAdsetName, naming.preset.templates.adset) || {};
+    const nicheRow = naming.preset.niche_codes.find(row => row.niche === niche || row.code === parsedSourceName.niche_code);
+    const batchNamingTokens = useMemo(() => ({
+        brand_code: naming.preset.brand_code,
+        wave: parsedSourceName.wave || '',
+        wave_code: parsedSourceName.wave_code || '',
+        niche: niche || nicheRow?.niche || '',
+        niche_code: parsedSourceName.niche_code || nicheRow?.code || '',
+        angle: parsedSourceName.angle || conceptFromFilename(items[0]?.variantName || items[0]?.imageUrl) || 'New Creative',
+        tracking: naming.preset.tracking_tag,
+        date: new Date(),
+    }), [naming.preset.brand_code, naming.preset.tracking_tag, parsedSourceName.wave, parsedSourceName.wave_code, parsedSourceName.niche_code, parsedSourceName.angle, niche, nicheRow, items]);
+
+    useEffect(() => {
+        if (naming.loading || newAdsetNameManuallyEdited) return;
+        const name = resolveNamingTemplate(naming.preset.templates.adset, batchNamingTokens, { uppercase: naming.preset.uppercase, keepMissing: true });
+        setNewAdset(previous => previous.name === name ? previous : { ...previous, name });
+    }, [naming.loading, naming.preset, batchNamingTokens, newAdsetNameManuallyEdited, preselectedAdsetName, niche]);
+
+    useEffect(() => {
+        if (naming.loading) return;
+        const generated = uniqueNames(items.map((item, index) => conventionNameFromFilename(item.variantName) || resolveNamingTemplate(naming.preset.templates.ad, {
+            ...batchNamingTokens,
+            seq: index + 1,
+            concept: conceptFromFilename(item.variantName || item.imageUrl) || `Creative${index + 1}`,
+            media: mediaToken(item),
+            ratio: ratioToken(item),
+        }, { keepMissing: true })));
+        setItemNames(previous => Object.fromEntries(items.map((item, index) => [item.key, manualItemNames[item.key] ? previous[item.key] : generated[index]])));
+    }, [naming.loading, naming.preset, batchNamingTokens, items, manualItemNames, preselectedAdsetName, niche]);
 
     // Push state
     const [pushing, setPushing] = useState(false);
@@ -346,6 +380,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
 
     const handlePushAll = async () => {
         if (!validate()) return;
+        naming.trackEvent('naming_launch', { level: 'batch', matched: String(!newAdsetNameManuallyEdited && Object.keys(manualItemNames).length === 0) });
         setPushErrors(prev => Object.fromEntries(Object.entries(prev).filter(([key]) =>
             retryableItems.some(item => item.key === key)
         )));
@@ -473,7 +508,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                         websiteUrl,
                         creative_enhancements: creativeEnhancements,
                     },
-                    { id: `batch_${item.key}_${Date.now()}`, name: copy.headline || item.headline || 'Batch Ad' },
+                    { id: `batch_${item.key}_${Date.now()}`, name: itemNames[item.key] || `Ad ${items.indexOf(item) + 1}` },
                     pageId,
                     adAccountId,
                     isCBO ? 'CBO' : 'ABO'
@@ -705,7 +740,8 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                     setAdSets([]);
                                     setSharedAdsetId('');
                                     // Keep adsetMode as 'new' — Joel should always explicitly choose to use existing
-                                    setNewAdset({ name: suggestedAdsetName, dailyBudget: '', cloneFromId: '' });
+                                    setNewAdset({ name: '', dailyBudget: '', cloneFromId: '' });
+                                    setNewAdsetNameManuallyEdited(false);
                                     loadAdSets(e.target.value);
                                 }}
                                 className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 disabled:bg-gray-50 ${
@@ -802,18 +838,22 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                     )}
                                     <div>
                                         <label className="block text-xs font-medium text-gray-600 mb-1">Ad Set Name *</label>
-                                        <input
-                                            type="text"
-                                            placeholder="e.g. Church Insurance — Square — May 12"
+                                        <NamingTemplateField
+                                            placeholder="Ad set name"
                                             value={newAdset.name}
                                             disabled={pushing}
-                                            onChange={e => {
-                                                setNewAdset(p => ({ ...p, name: e.target.value }));
+                                            onManualChange={value => {
+                                                if (!newAdsetNameManuallyEdited) naming.trackEvent('naming_name_overridden', { level: 'adset' });
+                                                setNewAdsetNameManuallyEdited(true);
+                                                setNewAdset(p => ({ ...p, name: value }));
                                                 setFieldErrors(p => ({ ...p, adsetName: undefined }));
                                             }}
-                                            className={`w-full px-3 py-2 border rounded-lg text-sm bg-white focus:ring-2 ${
-                                                fieldErrors.adsetName ? 'border-red-400 focus:ring-red-500' : 'border-gray-300 focus:ring-green-500'
-                                            }`}
+                                            tokens={batchNamingTokens}
+                                            scope="adset"
+                                            preset={naming.preset}
+                                            manuallyEdited={newAdsetNameManuallyEdited}
+                                            onOpenNaming={() => setNamingOpen(true)}
+                                            onUseTemplate={value => { setNewAdset(p => ({ ...p, name: value })); setNewAdsetNameManuallyEdited(false); }}
                                         />
                                         {fieldErrors.adsetName && (
                                             <p className="text-xs text-red-600 mt-1">{fieldErrors.adsetName}</p>
@@ -960,7 +1000,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                             <span className="ml-1 text-xs font-normal text-gray-400">— click any row to edit copy</span>
                         </label>
                         <div className="space-y-2">
-                            {items.map(item => {
+                            {items.map((item, itemIndex) => {
                                 const status = pushStatuses[item.key];
                                 const copy = itemCopy[item.key];
                                 const isExpanded = expandedItem === item.key;
@@ -1002,6 +1042,17 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                                         {/* Expandable copy editor */}
                                         {isExpanded && !pushing && (
                                             <div className="px-3 pb-3 pt-1 border-t border-gray-100 bg-gray-50 space-y-2">
+                                                <div>
+                                                    <label className="text-xs font-medium text-gray-600">Ad name</label>
+                                                    <NamingTemplateField value={itemNames[item.key] || ''} onManualChange={value => {
+                                                        if (!manualItemNames[item.key]) naming.trackEvent('naming_name_overridden', { level: 'ad' });
+                                                        setManualItemNames(previous => ({ ...previous, [item.key]: true }));
+                                                        setItemNames(previous => ({ ...previous, [item.key]: value }));
+                                                    }} tokens={{ ...batchNamingTokens, seq: itemIndex + 1, concept: conceptFromFilename(item.variantName || item.imageUrl) || `Creative${itemIndex + 1}`, media: mediaToken(item), ratio: ratioToken(item) }} scope="ad" preset={naming.preset} manuallyEdited={Boolean(manualItemNames[item.key])} onOpenNaming={() => setNamingOpen(true)} onUseTemplate={value => {
+                                                        setManualItemNames(previous => ({ ...previous, [item.key]: false }));
+                                                        setItemNames(previous => ({ ...previous, [item.key]: value }));
+                                                    }} />
+                                                </div>
                                                 <div>
                                                     <label className="text-xs font-medium text-gray-600">Headline</label>
                                                     <input
@@ -1049,6 +1100,7 @@ export default function BatchPushModal({ items, onClose, preselectedCampaignId =
                         </div>
                     </div>
                 </div>
+                <NamingSettingsDrawer open={namingOpen} onClose={() => setNamingOpen(false)} accountName={selectedCampaign?.account_name || adAccountId} preset={naming.preset} setPreset={naming.setPreset} onSave={naming.savePreset} saving={naming.saving} loading={naming.loading} legacySuggestions={naming.legacySuggestions} />
 
                 {/* Footer */}
                 <div className="px-6 py-4 border-t border-gray-100 shrink-0">

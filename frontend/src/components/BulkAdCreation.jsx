@@ -16,7 +16,7 @@ import {
     rateLimitStopMessage,
 } from '../lib/metaRateLimit';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
-import { resolveNamingTemplate } from '../lib/namingTemplates';
+import { conceptFromFilename, conventionNameFromFilename, mediaToken, ratioToken, resolveNamingTemplate, seqFromFilename } from '../lib/namingTemplates';
 import {
     buildReconciliationRecord,
     buildReconciliationScope,
@@ -25,6 +25,8 @@ import {
     fingerprintReconciliationPackage,
 } from '../lib/reconciliationScope';
 import NamingTemplateField from './NamingTemplateField';
+import NamingSettingsDrawer from './NamingSettingsDrawer';
+import useNamingPreset from '../lib/useNamingPreset';
 import { isValidDestinationUrl, normalizeDestinationUrl } from '../lib/destinationUrl';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -88,8 +90,6 @@ const displayDomain = (url) => {
         return url;
     }
 };
-
-const formatNamingDate = () => new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
 // 'LEARN_MORE' -> 'Learn More' — same values BulkAdCreation already sends to Meta
 // (AdCreativeStep.jsx's CTA_OPTIONS), just title-cased for a native-looking button.
@@ -160,7 +160,14 @@ const existingStoriesPlacementStatus = (targeting = {}, instagramUserId = null) 
 // trailer at the end, and insert the Drive category before the creative label
 // so a 100-ad-set batch stays legible in Meta instead of becoming a filename
 // dump with no business grouping.
-const buildPerMediaAdsetName = (baseName, creative, index) => {
+const buildPerMediaAdsetName = (baseName, creative, index, naming = null) => {
+    if (naming?.preset?.templates?.adset) {
+        return resolveNamingTemplate(naming.preset.templates.adset, {
+            ...naming.tokens,
+            angle: [naming.tokens?.angle, conceptFromFilename(creative?.name) || `Creative ${index + 1}`].filter(Boolean).join(' '),
+            seq: index + 1,
+        }, { uppercase: naming.preset.uppercase, keepMissing: true });
+    }
     const base = (baseName || 'Ad Set').trim();
     const capiMatch = base.match(/\s*-\s*CAPI\s*$/i);
     const stem = capiMatch ? base.slice(0, capiMatch.index).trim() : base;
@@ -176,6 +183,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const { showWarning, showError, showSuccess } = useToast();
     const { authFetch } = useAuth();
     const { campaignData, setCampaignData, adsetData, setAdsetData, creativeData, setCreativeData, adsData, setAdsData, selectedAdAccount, setLaunchSummary, setLaunchReceipt } = useCampaign();
+    const naming = useNamingPreset(selectedAdAccount);
+    const [namingOpen, setNamingOpen] = useState(false);
     const [loading, setLoading] = useState(false);
     const launchInFlightRef = React.useRef(false);
     const [progress, setProgressState] = useState({ current: 0, total: 0, status: '' });
@@ -665,34 +674,44 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             if (returnFocusTarget instanceof HTMLElement && returnFocusTarget.isConnected) returnFocusTarget.focus();
         };
     }, [editDrawerOpen]);
-    // Was read-only from localStorage with no in-app control — Joel could only
-    // change it by hand-editing browser storage. NamingTemplateField below
-    // gives it the same Templates UI Campaign/Ad Set naming already has
-    // (2931145), reusing the same resolveNamingTemplate/saveNamingTemplate
-    // infra — this field just needed the last bit of UI wiring.
-    const [adNamingPattern, setAdNamingPattern] = useState(
-        () => safeLocalStorageGet('adNamingPattern') || '{media_name} - H{headline_num}B{body_num}'
-    );
+    const [adNamingPattern, setAdNamingPattern] = useState(naming.preset.templates.ad);
+    const [lastAppliedNamingPattern, setLastAppliedNamingPattern] = useState(naming.preset.templates.ad);
+    const namingPatternEditedRef = React.useRef(false);
+    useEffect(() => {
+        if (!naming.loading && !namingPatternEditedRef.current) {
+            setAdNamingPattern(naming.preset.templates.ad);
+            setLastAppliedNamingPattern(naming.preset.templates.ad);
+        }
+    }, [naming.loading, naming.preset.templates.ad]);
     const handleAdNamingPatternChange = (value) => {
+        namingPatternEditedRef.current = true;
         setAdNamingPattern(value);
-        safeLocalStorageSet('adNamingPattern', value);
     };
+    const waveRow = naming.preset.waves.find(row => row.wave === campaignData.namingWave);
+    const nicheRow = naming.preset.niche_codes.find(row => row.niche === campaignData.namingNiche);
+    // Adding ads to an existing ad set: its own `WAVE-NICHE | ...` prefix is the source of truth.
+    // Otherwise leftover wave/niche picks from the Campaign step would mislabel every ad.
+    const existingPrefix = adsetData.isExisting ? /^\s*([A-Z0-9]{1,8})-([A-Z0-9]{2,8})\s*\|/i.exec(adsetData.name || '') : null;
     const adNamingTokens = {
+        brand_code: naming.preset.brand_code,
+        wave: adsetData.isExisting ? '' : (campaignData.namingWave || ''),
+        wave_code: existingPrefix ? existingPrefix[1].toUpperCase() : adsetData.isExisting ? '' : (waveRow?.code || ''),
+        niche: adsetData.isExisting ? '' : (campaignData.namingNiche || ''),
+        niche_code: existingPrefix ? existingPrefix[2].toUpperCase() : adsetData.isExisting ? '' : (nicheRow?.code || ''),
+        angle: adsetData.namingAngle || '',
+        tracking: naming.preset.tracking_tag,
         campaign_name: campaignData.name || '',
         ad_set_name: adsetData.name || '',
+        seq: 1,
+        concept: conceptFromFilename(creativeData.creatives?.[0]?.name) || 'Creative',
+        media: mediaToken(creativeData.creatives?.[0]),
+        ratio: ratioToken(creativeData.creatives?.[0]),
         headline_num: 1,
         body_num: 1,
         media_name: creativeData.creatives?.[0]?.name || 'Image 1',
-        date: formatNamingDate(),
+        date: new Date(),
     };
-    const adNamingTokenList = [
-        { key: 'campaign_name', label: 'Campaign Name' },
-        { key: 'ad_set_name', label: 'Ad Set Name' },
-        { key: 'media_name', label: 'Media Name' },
-        { key: 'headline_num', label: 'Headline #' },
-        { key: 'body_num', label: 'Body #' },
-        { key: 'date', label: 'Date' },
-    ];
+    const perMediaNaming = { preset: naming.preset, tokens: adNamingTokens };
 
     // Tracks whichever pattern is actually baked into the CURRENT adsData —
     // vs. adNamingPattern, which tracks whatever's live in the field right now.
@@ -701,7 +720,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // review, joel-perspective: P1 — a silent field with no bound-looking grid
     // reads as either broken or already-applied; either way he could launch on
     // stale names without realizing it).
-    const [lastAppliedNamingPattern, setLastAppliedNamingPattern] = useState(adNamingPattern);
+    const namingPresetReady = !naming.loading
+        && (namingPatternEditedRef.current || adNamingPattern === naming.preset.templates.ad);
 
     // Shared by initial generation, the explicit re-apply action, and undo —
     // one place computing a pattern-derived ad name so all three can never
@@ -709,18 +729,49 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const computeAdName = (pattern, { headlineIndex, bodyIndex, creativeId, mediaType }) => {
         const creativeIndex = creativeData.creatives.findIndex(c => c.id === creativeId);
         const creative = creativeIndex >= 0 ? creativeData.creatives[creativeIndex] : null;
-        // Drive filenames are the buyer's source-of-truth ad names. Do not
-        // append the generated H/B suffix to them: Abel uses these names to
-        // identify the exact file in Ads Manager.
-        if (creative?.source === 'drive' && creative.name?.trim()) return creative.name.trim();
         const mediaLabel = mediaType === 'video' ? 'Video' : 'Image';
-        return resolveNamingTemplate(pattern, {
+        const headlineCount = creative?.source === 'drive' || creative?.headline
+            ? 1 : creativeData.headlines.filter(value => value?.trim()).length;
+        const bodyCount = creative?.source === 'drive' || creative?.body
+            ? 1 : creativeData.bodies.filter(value => value?.trim()).length;
+        const hasMultipleCopyVariants = headlineCount * bodyCount > 1;
+        const fileName = conventionNameFromFilename(creative?.name);
+        const base = fileName || resolveNamingTemplate(pattern, {
+            ...adNamingTokens,
             campaign_name: campaignData.name || '',
             ad_set_name: adsetData.name || '',
-            headline_num: headlineIndex + 1,
-            body_num: bodyIndex + 1,
+            seq: seqFromFilename(creative?.name) ?? creativeIndex + 1,
+            concept: conceptFromFilename(creative?.name) || `Creative${creativeIndex + 1}`,
+            media: mediaToken(creative || { mediaType }),
+            ratio: ratioToken(creative || {}),
+            headline_num: (headlineIndex ?? 0) + 1,
+            body_num: (bodyIndex ?? 0) + 1,
             media_name: creative?.name || `${mediaLabel} ${creativeIndex + 1}`,
-            date: formatNamingDate(),
+            date: new Date(),
+        }, { keepMissing: true });
+        return hasMultipleCopyVariants ? `${base}-H${(headlineIndex ?? 0) + 1}B${(bodyIndex ?? 0) + 1}` : base;
+    };
+
+    const ensureUniqueAdNames = (ads) => {
+        const reserved = new Map();
+        ads.filter(ad => ad.nameManuallyEdited).forEach(ad => {
+            const group = adsetData.creationMode === 'per_media' ? ad.creativeId : 'shared';
+            if (!reserved.has(group)) reserved.set(group, new Set());
+            reserved.get(group).add(ad.name);
+        });
+        return ads.map(ad => {
+            const group = adsetData.creationMode === 'per_media' ? ad.creativeId : 'shared';
+            if (!reserved.has(group)) reserved.set(group, new Set());
+            const used = reserved.get(group);
+            if (ad.nameManuallyEdited) return ad;
+            let candidate = ad.name;
+            let duplicate = 1;
+            while (used.has(candidate)) {
+                candidate = `${ad.name}-${String.fromCharCode(97 + duplicate)}`;
+                duplicate += 1;
+            }
+            used.add(candidate);
+            return candidate === ad.name ? ad : { ...ad, name: candidate };
         });
     };
 
@@ -778,6 +829,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
 
     // Initialize ads based on creatives - generate all permutations
     React.useEffect(() => {
+        if (!namingPresetReady) return;
         // Review is mounted/unmounted as Joel moves Back and Next through the
         // wizard. If the campaign context already has a batch, preserve its
         // stable row IDs, edits, and excludedFromLaunch flags instead of
@@ -804,17 +856,17 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             if (preservedCount > 0) {
                 showSuccess(`Restored your previous review — ${preservedCount} excluded or renamed ad${preservedCount !== 1 ? 's' : ''} kept as you left ${preservedCount !== 1 ? 'them' : 'it'}.`);
             }
-            setAdsData(prev => prev.map(ad => ad.nameManuallyEdited
+            setAdsData(prev => ensureUniqueAdNames(prev.map(ad => ad.nameManuallyEdited
                 ? ad
                 : { ...ad, name: computeAdName(lastAppliedNamingPattern, ad) }
-            ));
+            )));
             return;
         }
         const inputsChanged = permutationInputsRef.current !== permutationInputKey;
         if (!inputsChanged && adsData.length > 0) {
-            setAdsData(prev => prev.map(ad => (
+            setAdsData(prev => ensureUniqueAdNames(prev.map(ad => (
                 ad.nameManuallyEdited ? ad : { ...ad, name: computeAdName(lastAppliedNamingPattern, ad) }
-            )));
+            ))));
             return;
         }
         permutationInputsRef.current = permutationInputKey;
@@ -916,7 +968,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 );
             }
 
-            setAdsData(permutations);
+            setAdsData(ensureUniqueAdNames(permutations));
             setLastAppliedNamingPattern(adNamingPattern);
         } else {
             // Fallback if no creatives (shouldn't happen due to validation)
@@ -924,7 +976,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         }
     // `adNamingPattern` remains deliberately absent: changing it needs the
     // explicit "Rename current ads" action so manual names are never wiped.
-    }, [permutationInputKey, campaignData.name, adsetData.name]);
+    }, [permutationInputKey, campaignData.name, adsetData.name, namingPresetReady]);
 
     // A Drive refresh changes copy, not the media/permutation structure. Sync
     // those values into the existing review rows so exclusions, names, and
@@ -1076,7 +1128,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
             headline.trim() && body.trim() && isValidDestinationUrl(websiteUrl) && isValidMetaCta(cta)
         );
         const adsetName = driveManifestCreatesSeparateAdsets
-            ? buildPerMediaAdsetName(adsetData.name, creative, creativeIndex >= 0 ? creativeIndex : index)
+            ? buildPerMediaAdsetName(adsetData.name, creative, creativeIndex >= 0 ? creativeIndex : index, perMediaNaming)
             : adsetData.name;
         const destinationLabel = driveManifestCreatesSeparateAdsets
             ? '1 new ad set'
@@ -1226,10 +1278,11 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const updateManifestField = (row, field, value) => {
         if (!row) return;
         if (field === 'name') {
-            setAdsData(prev => prev.map(ad => ad.id === row.ad.id
+            if (!row.ad.nameManuallyEdited) naming.trackEvent('naming_name_overridden', { level: 'ad' });
+            setAdsData(prev => ensureUniqueAdNames(prev.map(ad => ad.id === row.ad.id
                 ? { ...ad, name: value, nameManuallyEdited: true }
                 : ad
-            ));
+            )));
             return;
         }
         setAdsData(prev => prev.map(ad => {
@@ -1255,7 +1308,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     };
 
     const updateAdName = (index, name) => {
-        setAdsData(prev => prev.map((ad, i) => i === index ? { ...ad, name, nameManuallyEdited: true } : ad));
+        if (!adsData[index]?.nameManuallyEdited) naming.trackEvent('naming_name_overridden', { level: 'ad' });
+        setAdsData(prev => ensureUniqueAdNames(prev.map((ad, i) => i === index ? { ...ad, name, nameManuallyEdited: true } : ad)));
     };
 
     // Explicit, opt-in re-name of the CURRENT batch against whatever pattern is
@@ -1268,13 +1322,13 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     // this is the one place a manual rename is expected to be replaced; the
     // nameManuallyEdited flag resets since the name is pattern-derived again.
     const applyNamingPatternToCurrentAds = () => {
-        setAdsData(prev => prev.map(ad => {
+        setAdsData(prev => ensureUniqueAdNames(prev.map(ad => {
             return {
                 ...ad,
                 name: computeAdName(adNamingPattern, ad),
                 nameManuallyEdited: false,
             };
-        }));
+        })));
         setLastAppliedNamingPattern(adNamingPattern);
         showSuccess(`Renamed ${adsData.length} ad${adsData.length !== 1 ? 's' : ''} using the new pattern.`);
     };
@@ -1437,6 +1491,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         }
 
         try {
+            naming.trackEvent('naming_launch', { level: 'bulk', matched: String(launchAds.every(ad => !ad.nameManuallyEdited)) });
             // Persist before the first Meta mutation. The account record is the
             // reload/crash fallback when generated ad IDs and wizard state are
             // gone after a browser refresh.
@@ -1663,7 +1718,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         : sampleAd?.format === 'stories' ? storiesTargeting : feedTargeting;
                     const payload = {
                         ...baseAdsetPayload,
-                        name: buildPerMediaAdsetName(adsetData.name, creative, creativeIndex >= 0 ? creativeIndex : m),
+                        name: buildPerMediaAdsetName(adsetData.name, creative, creativeIndex >= 0 ? creativeIndex : m, perMediaNaming),
                         targeting,
                     };
 
@@ -2134,7 +2189,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         const creativeIndex = creativeData.creatives?.findIndex(item => item.id === creativeId);
                         return {
                             id: value.fbAdsetId,
-                            name: buildPerMediaAdsetName(adsetData.name, creative, creativeIndex >= 0 ? creativeIndex : index),
+                            name: buildPerMediaAdsetName(adsetData.name, creative, creativeIndex >= 0 ? creativeIndex : index, perMediaNaming),
                         };
                     })
                     : isMixed
@@ -2442,11 +2497,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 </label>
                 <NamingTemplateField
                     value={adNamingPattern}
-                    onChange={handleAdNamingPatternChange}
-                    placeholder="{media_name} - H{headline_num}B{body_num}"
+                    onManualChange={handleAdNamingPatternChange}
+                    placeholder="{wave_code}-{niche_code}-{seq:02}-{concept}-{media}-{ratio}"
                     tokens={adNamingTokens}
-                    tokenList={adNamingTokenList}
                     scope="ad"
+                    preset={naming.preset}
+                    template={adNamingPattern}
+                    patternMode
+                    onOpenNaming={() => setNamingOpen(true)}
                 />
                 {adNamingPattern !== lastAppliedNamingPattern && adsData.length > 0 ? (
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
@@ -2475,6 +2533,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                     </div>
                 )}
             </div>
+            <NamingSettingsDrawer open={namingOpen} onClose={() => setNamingOpen(false)} accountName={selectedAdAccount?.name} preset={naming.preset} setPreset={naming.setPreset} onSave={naming.savePreset} saving={naming.saving} loading={naming.loading} legacySuggestions={naming.legacySuggestions} />
 
             {!loading ? (
                 <>
@@ -2865,12 +2924,23 @@ const BulkAdCreation = ({ onNext, onBack }) => {
 
                                     {/* Rename — same input as before, moved into the card footer */}
                                     <div className="px-3 py-2 border-t border-gray-100">
-                                        <input
-                                            type="text"
+                                        <NamingTemplateField
                                             value={ad.name}
-                                            onChange={(e) => updateAdName(index, e.target.value)}
+                                            onManualChange={(value) => updateAdName(index, value)}
                                             placeholder={`Ad ${index + 1} name`}
-                                            className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            tokens={{
+                                                ...adNamingTokens,
+                                                seq: Math.max(1, creativeData.creatives.findIndex(item => item.id === ad.creativeId) + 1),
+                                                concept: conceptFromFilename(creative?.name) || `Creative${index + 1}`,
+                                                media: mediaToken(creative || { mediaType: ad.mediaType }),
+                                                ratio: ratioToken(creative || { format: ad.format }),
+                                            }}
+                                            scope="ad"
+                                            preset={naming.preset}
+                                            template={adNamingPattern}
+                                            manuallyEdited={ad.nameManuallyEdited}
+                                            onOpenNaming={() => setNamingOpen(true)}
+                                            onUseTemplate={() => setAdsData(previous => ensureUniqueAdNames(previous.map((item, itemIndex) => itemIndex === index ? { ...item, name: computeAdName(adNamingPattern, item), nameManuallyEdited: false } : item)))}
                                         />
                                     </div>
                                 </div>
@@ -3236,7 +3306,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                     <label className="block text-xs font-semibold text-gray-700">Description <span className="font-normal text-gray-400">(optional)</span><input value={selectedManifestRow.description} onChange={(event) => updateManifestField(selectedManifestRow, 'description', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
                                     <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs leading-5 text-gray-600">Destination URL is set once in Ad Creative and applies to every ad in this launch.</p>
                                     <label className="block text-xs font-semibold text-gray-700">Meta CTA * <span className="font-normal text-gray-400">({selectedManifestRow.ctaSource})</span><select value={selectedManifestRow.cta} onChange={(event) => updateManifestField(selectedManifestRow, 'cta', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100"><option value="">Select a CTA...</option>{[...META_CTA_OPTIONS].map(cta => <option key={cta} value={cta}>{formatCtaLabel(cta)}</option>)}</select></label>
-                                    <label className="block text-xs font-semibold text-gray-700">Ad name<input value={selectedManifestRow.ad.name} onChange={(event) => updateManifestField(selectedManifestRow, 'name', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
+                                    <label className="block text-xs font-semibold text-gray-700">Ad name<div className="mt-1 font-normal"><NamingTemplateField value={selectedManifestRow.ad.name} onManualChange={value => updateManifestField(selectedManifestRow, 'name', value)} tokens={{ ...adNamingTokens, seq: Math.max(1, (creativeData.creatives.findIndex(item => item.id === selectedManifestRow.ad.creativeId) + 1)), concept: conceptFromFilename(selectedManifestRow.creative?.name) || `Creative${selectedManifestRow.index + 1}`, media: mediaToken(selectedManifestRow.creative || { mediaType: selectedManifestRow.ad.mediaType }), ratio: ratioToken(selectedManifestRow.creative || { format: selectedManifestRow.ad.format }) }} scope="ad" preset={naming.preset} template={adNamingPattern} manuallyEdited={selectedManifestRow.ad.nameManuallyEdited} onOpenNaming={() => setNamingOpen(true)} onUseTemplate={() => setAdsData(previous => ensureUniqueAdNames(previous.map(item => item.id === selectedManifestRow.ad.id ? { ...item, name: computeAdName(adNamingPattern, item), nameManuallyEdited: false } : item)))} /></div></label>
                                 </div>
                                 <div className="border-t border-gray-200 p-4">
                                     <p className="mb-2 text-center text-[11px] text-gray-400">{protectedReconciliationIdSet.has(selectedManifestRow.ad.id) ? 'Changes save automatically for a fresh replacement batch — this protected row will not be retried here.' : 'Changes save automatically as you type — closing is always safe.'}</p>
