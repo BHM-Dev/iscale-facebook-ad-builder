@@ -14,10 +14,11 @@ export function formatCloseForSlack(close) {
   return `*${day} closed at ${signed(close.profit)}:* ${money(close.spend)} Meta spend, ${money(close.revenue)} Everflow revenue (${roas})\nMTD ${signed(close.mtd?.profit)} · Up: ${up} · Down: ${down}`;
 }
 
-export default function DailyCloseCard({ accountNames = {} }) {
+export default function DailyCloseCard({ accountNames = {}, variant = 'full' }) {
   const { showSuccess, showError } = useToast();
   const [data, setData] = useState(null);
   const [error, setError] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   useEffect(() => {
     let alive = true;
     authFetch(`${API_BASE}/daily-close/latest`).then(async response => {
@@ -28,6 +29,12 @@ export default function DailyCloseCard({ accountNames = {} }) {
     authFetch(`${API_BASE}/daily-close/event`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'close_card_viewed', props: {} }) }).catch(() => {});
     return () => { alive = false; };
   }, []);
+  useEffect(() => {
+    if (!detailsOpen) return undefined;
+    const closeOnEscape = event => { if (event.key === 'Escape') setDetailsOpen(false); };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [detailsOpen]);
   const close = data?.combined;
   const label = close?.day ? new Date(`${close.day}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }) : '';
   const asOf = close?.revenue_as_of ? new Date(close.revenue_as_of).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }) : null;
@@ -41,12 +48,16 @@ export default function DailyCloseCard({ accountNames = {} }) {
     showSuccess('Close copied');
     authFetch(`${API_BASE}/daily-close/event`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'close_copied', props: { day: close.day } }) }).catch(() => {});
   };
+  const openDetails = () => {
+    setDetailsOpen(true);
+    authFetch(`${API_BASE}/daily-close/event`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'close_details_opened', props: { day: close.day } }) }).catch(() => {});
+  };
   if (error) return <p className="px-1 text-xs text-gray-400">Yesterday’s close is unavailable right now.</p>;
   if (data?.pending) return <p className="px-1 text-xs text-gray-400">Yesterday’s close is computed from 12:15am PT (3:15am ET); the first one appears after that run.</p>;
   if (!close) return null;
   if (!close.available) return <section className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Revenue not in yet (Everflow unavailable)</section>;
   const since = (close.first_read?.revenue != null && close.revenue != null) ? close.revenue - close.first_read.revenue : null;
-  return <section className="rounded-xl border border-gray-200 bg-white px-4 py-4 shadow-sm" data-testid="daily-close-card">
+  const fullCard = <section className="rounded-xl border border-gray-200 bg-white px-4 py-4 shadow-sm" data-testid="daily-close-card">
     <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-sm font-semibold text-gray-900">Yesterday’s close · {label} (PT)</h2><p className="text-xs text-gray-500">Revenue as of {asOf || '—'} ET{since != null && ` · ${signed(since)} since first read`}</p></div><button type="button" onClick={copy} title="Copy close for Slack" className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50">Copy for Slack</button></div>
     <div className="mt-4 flex flex-wrap gap-x-7 gap-y-3 text-sm"><div><div className="text-xs text-gray-500">Spend</div><strong>{money(close.spend, 2)}</strong></div><div><div className="text-xs text-gray-500">Revenue</div><strong>{money(close.revenue, 2)}</strong></div><div><div className="text-xs text-gray-500">Profit</div><strong className={close.profit >= 0 ? 'text-emerald-700' : 'text-red-600'}>{signed(close.profit)}</strong></div><div><div className="text-xs text-gray-500">ROAS</div><strong>{close.roas == null ? '—' : `${Number(close.roas).toFixed(2)}x`}</strong></div><div><div className="text-xs text-gray-500">Leads</div><strong>{Number(close.leads || 0).toLocaleString()}</strong></div></div>
     <div className="mt-3 border-t border-gray-100 pt-3 text-xs text-gray-600">{(data.accounts || []).map(row => <span key={row.account_id} className="mr-4">{accountNames[row.account_id] || row.account_id} {!row.available ? 'revenue not in yet' : row.spend ? `${signed(row.profit)} (${row.roas == null ? '—' : `${Number(row.roas).toFixed(2)}x`})` : '—'}</span>)}</div>
@@ -60,4 +71,31 @@ export default function DailyCloseCard({ accountNames = {} }) {
       </div>)}
     </div>
   </section>;
+
+  if (variant !== 'strip') return fullCard;
+
+  const missing = close.partial
+    ? (close.missing_accounts || []).map(account => accountNames[account] || account).join(', ')
+    : '';
+  return <>
+    <section className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-700 shadow-sm" data-testid="daily-close-strip">
+      <span className="font-semibold text-gray-900">{label} closed</span>
+      <span className={close.profit >= 0 ? 'font-bold text-emerald-700' : 'font-bold text-red-600'}>{signed(close.profit)}</span>
+      <span className="text-gray-300">·</span><span>{money(close.spend)} spend</span>
+      <span className="text-gray-300">·</span><span>{close.roas == null ? '—' : `${Number(close.roas).toFixed(2)}x`}</span>
+      <span className="text-gray-300">·</span><span>{Number(close.leads || 0).toLocaleString()} leads</span>
+      <span className="text-gray-300">·</span><span>MTD <span className={Number(close.mtd?.profit || 0) >= 0 ? 'font-semibold text-emerald-700' : 'font-semibold text-red-600'}>{signed(close.mtd?.profit)}</span> (pace {signed(close.mtd?.pace)})</span>
+      {close.partial && <span className="font-medium text-amber-700">· partial: missing {missing}</span>}
+      <span className="ml-auto flex items-center gap-3 whitespace-nowrap">
+        <button type="button" className="font-semibold text-indigo-600 hover:text-indigo-800" onClick={openDetails}>Details ▸</button>
+        <button type="button" className="font-semibold text-indigo-600 hover:text-indigo-800" onClick={copy}>Copy</button>
+      </span>
+    </section>
+    {detailsOpen && <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-[1px]" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDetailsOpen(false); }}>
+      <aside className="ml-auto h-full w-full max-w-[480px] overflow-y-auto bg-white p-5 shadow-2xl" role="dialog" aria-modal="true" aria-label="Yesterday's close details">
+        <div className="mb-3 flex justify-end"><button type="button" className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50" onClick={() => setDetailsOpen(false)}>Close</button></div>
+        {fullCard}
+      </aside>
+    </div>}
+  </>;
 }

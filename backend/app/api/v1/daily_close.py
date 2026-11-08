@@ -85,7 +85,7 @@ _EVENT_PROPS = {"day", "version"}
 
 @router.post("/event")
 def event(body: EventBody, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
-    if body.event not in {"close_card_viewed", "close_copied"}:
+    if body.event not in {"close_card_viewed", "close_copied", "close_details_opened"}:
         raise HTTPException(status_code=400, detail="Unsupported close event")
     props = {k: str(v)[:40] for k, v in (body.props or {}).items() if k in _EVENT_PROPS}
     proposal_service.log_event(db, body.event, None, current_user.email, **props)

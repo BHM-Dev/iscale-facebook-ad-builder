@@ -12,6 +12,23 @@ API: `backend/app/api/v1/{facebook,auto_pause}.py`; Meta calls: `backend/app/ser
   can't reach (legacy, deleted in Meta, another account). Hover for explanation.
 - Ad rows (expand an ad set) show real delivery status from one account-level Meta read.
 
+## Layout (2026-11-07)
+- One-line **close strip** (`DailyCloseCard variant="strip"`); Details opens the full card in a drawer.
+- Tabs: **Ad sets** / **Creative Compass** / **Intelligence** (`?tab=`).
+- Sticky toolbar: **goal line** (spending · under / over / no Max CPL, each with its spend; a chip click filters),
+  search, Filters popover (status, niche, metric, Rotation queue / Needs attention / Top performers presets),
+  sort (incl. "Over Max CPL first"), Group-by-campaign toggle, Proposals button. Active filters show as
+  removable chips; the old dashboard deep-link banner is gone. Removing a chip never resets the date range.
+- Goal-line rule: 0 leads counts as **over** once spend ≥ one Max CPL. This is a display rule only; it does
+  not change auto-pause triggers.
+- **Proposals rail** docks beside the table only at viewport ≥ 1800px. Below that it is an overlay and the
+  button turns solid "Review proposals (n)". The Brand column hides while the rail is docked.
+- Sticky ad-set name column (truncated at 280px, full name on hover) and sticky Actions column, so
+  Iterate/Pause stay on screen at 1440px.
+- *Verified in production data* (local frontend → prod API, 2026-11-07): goal-line counts matched an
+  independent API recompute (117 / 51 / 66 / 0, last 7d RHO Commercial); deep links and the nav badge
+  were re-tested after review fixes. *Not verified:* true phone width (Chrome min 606px).
+
 ## Money safeguards (all enforced server-side unless noted)
 | Action | Guard |
 |---|---|
@@ -47,6 +64,7 @@ API: `backend/app/api/v1/{facebook,auto_pause}.py`; Meta calls: `backend/app/ser
 - Status overrides (local optimistic state) are not cleared by Sync.
 
 ## Changelog (newest first)
+- 2026-11-07 Layout pass: close strip, tabs, sticky toolbar + chips, Max CPL goal line, proposals rail, total row, effective status, group-by toggle (Codex build; Claude review fixes for deep-link state, rail width, RT-missing profit).
 - 2026-10-07 live-verified the 409 large-change guard on a paused ad set (see Verified).
 - 2026-10-07 `merge_duplicate_rows.py` run in prod: merged 14 legacy duplicate campaign/ad-set row pairs, removed
   CLAUDE TEST leftovers (local DB only; backup `/home/ubuntu/backups/pre-dedupe-20261007-172535.sql` on the VPS).

@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Performance Layout Prototype</title>
+<style>
+:root{--bg:#f8fafc;--card:#fff;--line:#e5e7eb;--line2:#f1f5f9;--ink:#111827;--ink2:#374151;--mute:#6b7280;--mute2:#9ca3af;--indigo:#4f46e5;--indigo50:#eef2ff;--green:#047857;--green50:#ecfdf5;--amber:#b45309;--amber50:#fffbeb;--red:#dc2626;--red50:#fef2f2}
+*{box-sizing:border-box}body{margin:0;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;color:var(--ink);background:var(--bg)}
+button{font:inherit;cursor:pointer}input,select{font:inherit}
+.dev{position:sticky;top:0;z-index:60;background:#111827;color:#d1d5db;font:11px/1 ui-monospace,Menlo,monospace;display:flex;gap:14px;align-items:center;padding:7px 12px;flex-wrap:wrap}
+.dev b{color:#fff}.dev button{background:#374151;color:#fff;border:0;border-radius:4px;padding:4px 8px;font:inherit}
+.app{display:flex;min-height:calc(100vh - 25px)}
+.nav{width:56px;background:#fff;border-right:1px solid var(--line);flex:none;display:flex;flex-direction:column;align-items:center;padding-top:14px;gap:14px;color:var(--mute2)}
+.nav .dot{width:28px;height:28px;border-radius:8px;background:var(--line2)}.nav .dot.on{background:var(--indigo50);outline:2px solid var(--indigo)}
+.main{flex:1;min-width:0}
+.hdr{display:flex;align-items:center;gap:10px;padding:14px 20px 10px;flex-wrap:wrap}
+.hdr h1{font-size:19px;margin:0 auto 0 0;font-weight:700}
+.sel{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 10px;color:var(--ink2)}
+.pill{font-size:11px;font-weight:600;padding:4px 8px;border-radius:6px;background:var(--green50);color:var(--green);border:1px solid #a7f3d0}
+.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 11px;color:var(--ink2);font-weight:500}
+.btn:hover{background:#f9fafb}.btn.pri{background:var(--indigo);border-color:var(--indigo);color:#fff}
+.menu{position:relative}.menu .pop{display:none;position:absolute;right:0;top:34px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.08);padding:6px;min-width:220px;z-index:40}
+.menu.open .pop{display:block}.pop button{display:block;width:100%;text-align:left;border:0;background:none;padding:8px 10px;border-radius:6px}.pop button:hover{background:#f3f4f6}
+.close{margin:0 20px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px 14px;display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;color:var(--ink2)}
+.close .day{font-weight:600;color:var(--ink)}.pos{color:var(--green);font-weight:700}.neg{color:var(--red);font-weight:700}
+.close .sep{color:#d1d5db}.close .act{margin-left:auto;display:flex;gap:12px}.link{background:none;border:0;color:var(--indigo);font-weight:600;padding:0}
+.tabs{display:flex;gap:2px;padding:12px 20px 0;border-bottom:1px solid var(--line);overflow-x:auto}
+.tab{border:0;background:none;padding:9px 14px;font-weight:600;color:var(--mute);border-bottom:2px solid transparent;white-space:nowrap}
+.tab.on{color:var(--ink);border-bottom-color:var(--indigo)}
+.sticky{position:sticky;top:25px;z-index:30;background:var(--bg);padding:10px 20px 8px;border-bottom:1px solid var(--line)}
+.bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.goal{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-right:auto}
+.goal .n{color:var(--ink2);font-weight:600;padding:5px 4px}
+.gchip{border:1px solid transparent;background:none;border-radius:999px;padding:4px 10px;display:inline-flex;align-items:center;gap:6px;color:var(--ink2);font-weight:600}
+.gchip:hover{background:#fff;border-color:var(--line)}.gchip.on{background:#fff;border-color:var(--ink2)}
+.d{width:8px;height:8px;border-radius:50%;display:inline-block}.d.g{background:#10b981}.d.r{background:#ef4444}.d.o{background:#fff;border:1.5px solid #9ca3af}
+.search{border:1px solid var(--line);border-radius:8px;padding:6px 10px;width:170px;background:#fff}
+.count{background:var(--indigo);color:#fff;border-radius:999px;font-size:10px;font-weight:700;padding:1px 6px;margin-left:4px}
+.btn.on{border-color:var(--indigo);color:var(--indigo);background:var(--indigo50)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.chip{background:#fff;border:1px solid var(--line);border-radius:999px;padding:3px 6px 3px 10px;font-size:12px;display:inline-flex;gap:6px;align-items:center}
+.chip button{border:0;background:none;color:var(--mute);padding:0 2px}
+.body{display:flex;gap:14px;padding:12px 20px 40px;align-items:flex-start}
+.tablewrap{flex:1;min-width:0;background:#fff;border:1px solid var(--line);border-radius:10px;overflow-x:auto}
+table{border-collapse:separate;border-spacing:0;width:100%;min-width:920px}
+th{position:sticky;top:0;background:#f9fafb;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute2);font-weight:600;text-align:right;padding:8px 10px;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left;position:sticky;left:0;background:inherit;z-index:2}
+th:first-child{background:#f9fafb}
+td{padding:8px 10px;border-bottom:1px solid var(--line2);text-align:right;white-space:nowrap;background:#fff}
+tr.tot td{background:#f9fafb;font-weight:700;border-bottom:1px solid var(--line)}
+tr.camp td{background:#f8faff;font-weight:600}
+tr.camp .cname{background:none;border:0;padding:0;font-weight:600;color:var(--ink);text-align:left}
+tr.camp .cname:hover{color:var(--indigo);text-decoration:underline}
+tr.as td:first-child{padding-left:34px}tr.flat td:first-child{padding-left:12px}
+tr.hl td{background:var(--indigo50)!important}tr.hl td:first-child{box-shadow:inset 3px 0 0 var(--indigo)}
+.chev{border:0;background:none;color:var(--mute);width:18px;padding:0}
+.sub{display:block;color:var(--mute2);font-size:11px;font-weight:400}
+.st{font-size:11px;font-weight:600;padding:2px 7px;border-radius:999px}.st.a{background:var(--green50);color:var(--green)}.st.p{background:#f3f4f6;color:var(--mute)}.st.pc{background:var(--amber50);color:var(--amber)}
+.cg{color:var(--green);font-weight:600}.ca{color:var(--amber);font-weight:600}.cr{color:var(--red);font-weight:600}.cm{color:var(--mute2)}
+.rowact{display:inline-flex;gap:6px}.mini{border:1px solid var(--line);background:#fff;border-radius:6px;padding:2px 8px;font-size:11px;color:var(--ink2)}
+tr.ads td{background:#fcfcfd;padding:0 10px 10px 34px;text-align:left}
+.adsbox{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--ink2)}
+.adsbox div{display:flex;justify-content:space-between;padding:3px 0;gap:10px}
+.rail{width:320px;flex:none;background:#fff;border:1px solid var(--line);border-radius:10px;position:sticky;top:140px;max-height:calc(100vh - 160px);overflow:auto}
+.rail h3{margin:0;font-size:13px;padding:11px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:#fff}
+.pcard{padding:12px 14px;border-bottom:1px solid var(--line2)}
+.ac{font-size:10px;font-weight:700;letter-spacing:.04em;padding:2px 6px;border-radius:5px}.ac.pause{background:var(--red50);color:var(--red)}.ac.raise{background:var(--green50);color:var(--green)}
+.pname{display:block;border:0;background:none;padding:0;margin:6px 0 2px;font-weight:600;text-align:left;color:var(--ink)}.pname:hover{color:var(--indigo);text-decoration:underline}
+.why{color:var(--mute);font-size:12px;margin:2px 0 6px}
+.cur{font-size:12px;color:var(--ink2)}.cur b{color:var(--ink)}
+.data{font-size:11px;color:var(--mute2);margin:6px 0 8px;display:flex;align-items:center;gap:8px}
+.pbtns{display:flex;gap:6px}.pbtns .btn{padding:4px 10px;font-size:12px}.pbtns .ok{background:var(--ink);color:#fff;border-color:var(--ink)}
+.pending{font-size:11px;color:var(--mute);padding:10px 14px}
+.drawer-bg{position:fixed;inset:0;background:rgba(17,24,39,.3);backdrop-filter:blur(2px);z-index:70;display:none}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(480px,100vw);background:#fff;z-index:71;box-shadow:-8px 0 24px rgba(0,0,0,.1);transform:translateX(100%);transition:transform .2s;overflow:auto;padding:18px}
+.drawer.open{transform:none}.drawer-bg.open{display:block}
+.drawer h2{font-size:15px;margin:0 0 4px}.kv{display:flex;gap:22px;flex-wrap:wrap;margin:14px 0}.kv div span{display:block;font-size:11px;color:var(--mute)}
+.kv strong{font-size:15px}.mv{font-size:12px;border-top:1px solid var(--line2);padding-top:10px;margin-top:10px}.mv p{font-weight:600;margin:0 0 4px}.mv li{display:flex;justify-content:space-between;gap:10px;padding:2px 0}
+.mv ul{list-style:none;padding:0;margin:0 0 10px}
+.panel{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px;flex:1}
+.grey td{color:#c4c8cf}.phase2{font-size:10px;font-weight:700;color:#7c3aed;background:#f5f3ff;padding:2px 6px;border-radius:5px;margin-left:6px;vertical-align:middle}
+.fpop{position:absolute;right:0;top:36px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.08);padding:12px;width:260px;z-index:45;display:none}
+.fpop.open{display:block}.fpop label{display:block;font-size:11px;color:var(--mute);margin:8px 0 3px}.fpop select,.fpop input{width:100%;border:1px solid var(--line);border-radius:6px;padding:5px 8px}
+.preset{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}.preset button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:3px 9px;font-size:11px}
+.preset button.on{border-color:var(--amber);background:var(--amber50);color:var(--amber)}
+.tele{position:fixed;left:0;right:0;bottom:0;z-index:65;background:#111827;color:#e5e7eb;font:11px/1.5 ui-monospace,Menlo,monospace;transform:translateY(calc(100% - 26px));transition:transform .2s}
+.tele.open{transform:none}.tele header{display:flex;gap:4px;padding:4px 10px;cursor:pointer;align-items:center}
+.tele header button{background:none;border:0;color:#9ca3af;font:inherit;padding:2px 8px}.tele header button.on{color:#fff;background:#374151;border-radius:4px}
+.tele pre{margin:0;max-height:200px;overflow:auto;padding:8px 12px;white-space:pre-wrap}
+@media(max-width:1279px){.rail{position:fixed;top:0;right:0;bottom:0;max-height:none;border-radius:0;z-index:71;width:min(360px,100vw);box-shadow:-8px 0 24px rgba(0,0,0,.12)}.rail.hidden{display:none}}
+@media(min-width:1280px){.rail.hidden{display:none}}
+@media(max-width:767px){.nav{display:none}.hdr,.sticky,.body{padding-left:16px;padding-right:16px}.close{margin:0 16px}.goal{width:100%}.search{width:120px}.close .act{margin-left:0}}
+</style>
+</head>
+<body>
+<div class="dev" id="dev">
+  <span>BUILD <b>perf-layout-v1 · 2026-11-07</b></span>
+  <span>tab <b id="dTab"></b></span>
+  <span>filters <b id="dFil"></b></span>
+  <span>rail <b id="dRail"></b></span>
+  <span>events <b id="dEv">0</b></span>
+  <span style="color:#fbbf24">SAMPLE DATA — not live numbers</span>
+  <button onclick="resetAll()">Reset</button>
+</div>
+<div class="app">
+  <nav class="nav"><div class="dot"></div><div class="dot on" title="Performance"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div></nav>
+  <main class="main">
+    <div class="hdr">
+      <h1>Campaign Performance</h1>
+      <select class="sel"><option>RHO - Commercial Insurance</option><option>RHO 4</option><option>Trusted Home Service</option></select>
+      <select class="sel" id="date" onchange="log('date_changed',{preset:this.value});render()"><option value="7">Last 7 days</option><option value="1">Yesterday</option><option value="0">Today</option><option value="30">Last 30 days</option></select>
+      <span class="pill" title="Status and budgets from last Sync; spend, CPL, ROAS are live">Synced 4m ago</span>
+      <button class="btn" onclick="log('sync_clicked')">↻ Sync</button>
+      <div class="menu" id="more"><button class="btn" onclick="toggleMenu(event)">⋯</button>
+        <div class="pop"><button onclick="log('add_rule_opened');toggleMenu(event)">+ Add auto-pause rule</button><button onclick="setTab('intel');toggleMenu(event)">Open Intelligence</button></div>
+      </div>
+    </div>
+
+    <div class="close" id="close">
+      <span class="day">Thu Nov 6 closed</span><span class="pos">+$615</span><span class="sep">·</span>
+      <span>$6,712 spend</span><span class="sep">·</span><span>1.09x</span><span class="sep">·</span><span>167 leads</span><span class="sep">·</span>
+      <span>MTD <span class="pos">+$12,340</span> (pace +$30.4k)</span>
+      <span class="act"><button class="link" onclick="openClose()">Details ▸</button><button class="link" onclick="log('close_copied')">Copy</button></span>
+    </div>
+
+    <div class="tabs">
+      <button class="tab" data-t="adsets" onclick="setTab('adsets')">Ad sets</button>
+      <button class="tab" data-t="compass" onclick="setTab('compass')">Creative Compass</button>
+      <button class="tab" data-t="intel" onclick="setTab('intel')">Intelligence</button>
+    </div>
+
+    <div id="adsetsView">
+      <div class="sticky">
+        <div class="bar">
+          <div class="goal" id="goal"></div>
+          <input class="search" id="q" placeholder="Search ad sets…" oninput="S.q=this.value;render()">
+          <div style="position:relative"><button class="btn" id="fBtn" onclick="toggleF()">Filters<span id="fCount"></span></button>
+            <div class="fpop" id="fpop">
+              <label>Status</label><select id="fStatus" onchange="S.status=this.value;log('filter_set',{status:this.value});render()"><option value="all">All</option><option value="ACTIVE">Active</option><option value="PAUSED">Paused</option></select>
+              <label>Niche</label><select id="fNiche" onchange="S.niche=this.value;render()"></select>
+              <label>CPL less than</label><input id="fCpl" type="number" placeholder="value" oninput="S.cplLt=this.value;render()">
+              <label>Presets</label><div class="preset"><button id="pRot" onclick="togglePreset('rotation')">↻ Rotation queue · 3</button><button id="pAtt" onclick="togglePreset('attention')">⚠ Needs attention</button></div>
+            </div>
+          </div>
+          <select class="sel" id="sort" onchange="S.sort=this.value;log('sort_set',{sort:this.value});render()">
+            <option value="spend">Sort: Spend ↓</option><option value="over">Sort: Over Max CPL first</option><option value="cpl">Sort: CPL ↑</option><option value="roas">Sort: ROAS ↓</option><option value="name">Sort: Name A–Z</option>
+          </select>
+          <button class="btn" id="gBtn" onclick="S.group=!S.group;log('group_by_toggled',{on:S.group});render()">☰ Group by campaign</button>
+          <button class="btn" id="rBtn" onclick="toggleRail()">Proposals<span class="count" id="rCount"></span></button>
+        </div>
+        <div class="chips" id="chips"></div>
+      </div>
+      <div class="body">
+        <div class="tablewrap"><table><thead><tr><th style="min-width:300px">Ad set</th><th style="text-align:left">Status</th><th>Spend</th><th>Leads</th><th>CPL</th><th>Max CPL</th><th>ROAS</th><th>Profit</th><th style="text-align:left">Brand</th><th>Actions</th></tr></thead><tbody id="tb"></tbody></table></div>
+        <aside class="rail" id="rail"></aside>
+      </div>
+    </div>
+
+    <div id="compassView" class="body" style="display:none">
+      <div class="panel">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><strong>Creative Compass</strong><span class="phase2">PHASE 2 SHAPE</span>
+          <span style="margin-left:auto;color:var(--mute);font-size:12px">Group by</span>
+          <select class="sel"><option>Creative</option><option>Headline</option><option>Body</option><option>Niche</option></select></div>
+        <p style="color:var(--mute);margin:0 0 10px;font-size:12px">Duplicate creative names merged. Ranks under 10 leads are greyed — too few to trust. Phase 1 keeps today's Compass unchanged.</p>
+        <div style="overflow-x:auto"><table style="min-width:600px"><thead><tr><th>Creative</th><th>Ad sets</th><th>Spend</th><th>Leads</th><th>CPL</th><th>Rank</th></tr></thead><tbody id="compassTb"></tbody></table></div>
+      </div>
+    </div>
+    <div id="intelView" class="body" style="display:none"><div class="panel"><strong>Intelligence</strong><p style="color:var(--mute)">Existing <code>CampaignIntelligencePanel</code> renders here, open by default (niche · best times · geography). Moved out of the header button — no behavior change.</p></div></div>
+  </main>
+</div>
+
+<div class="drawer-bg" id="dbg" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <div style="display:flex;justify-content:space-between"><div><h2>Yesterday's close · Thu Nov 6 (PT)</h2><div style="color:var(--mute);font-size:12px">Revenue as of 9:12am ET · Everflow + Switchboard</div></div><button class="btn" onclick="closeDrawer()">×</button></div>
+  <div class="kv"><div><span>Spend</span><strong>$6,712.40</strong></div><div><span>Revenue</span><strong>$7,327.10</strong></div><div><span>Profit</span><strong class="pos">+$615</strong></div><div><span>ROAS</span><strong>1.09x</strong></div><div><span>Leads</span><strong>167</strong></div></div>
+  <div style="font-size:12px;color:var(--ink2)">RHO - Commercial Insurance +$702 · RHO 4 −$87</div>
+  <p style="font-size:12px;color:var(--ink2)">Month to date +$12,340 · 6 days · pacing +$30.4k vs last month +$24.1k</p>
+  <div class="mv"><p class="cg">Top 3 ad sets by profit</p><ul><li><span>RHO v1 | ABO | TOWING | 10.21 — Tow Owners Broad</span><b class="cg">+$412</b></li><li><span>RHO v1 | ABO | SNOW PLOWING | 10.30 — Plow Price Anchor</span><b class="cg">+$238</b></li><li><span>LEADS | LIMO | 10.06 — WW3-LIMO-SUV-02</span><b class="cg">+$191</b></li></ul>
+  <p class="cr">Bottom 3 ad sets by profit</p><ul><li><span>RHO v1 | CBO | FUNERAL HOMES | 10.24 — Funeral CBO 2</span><b class="cr">−$188</b></li><li><span>TRUCKING | 10.06 — TRUCK-RB-05</span><b class="cr">−$121</b></li><li><span>RESTAURANTS | 10.08 — Rest Owners 01</span><b class="cr">−$64</b></li></ul></div>
+  <p style="font-size:11px;color:var(--mute)">This drawer is today's full DailyCloseCard, unchanged. Copy for Slack uses the existing formatter.</p>
+</div>
+
+<div class="tele" id="tele">
+  <header onclick="toggleTele(event)"><b style="color:#fff;margin-right:8px">Telemetry ▴</b><button class="on" data-tt="events">Events</button><button data-tt="session">Session</button><button data-tt="rpu">RPU</button></header>
+  <pre id="teleOut"></pre>
+</div>
+
+<script>
+// ---------- sample data (illustrative, not live) ----------
+const CAMPS=[
+ {id:'c1',name:'LEADS | LIMO | 10.06',status:'ACTIVE',adsets:[
+  {id:'a1',name:'WW3-LIMO-SUV-02',status:'ACTIVE',spend:1212,leads:31,max:45,rev:1488,niche:'Limo'},
+  {id:'a2',name:'WW3-LIMO-SED-01',status:'ACTIVE',spend:388,leads:7,max:45,rev:310,niche:'Limo'}]},
+ {id:'c2',name:'RHO v1 | ABO | TOWING | 10.21',status:'ACTIVE',adsets:[
+  {id:'a3',name:'Tow Owners Broad',status:'ACTIVE',spend:1010,leads:47,max:38,rev:1690,niche:'Towing'},
+  {id:'a4',name:'Tow + Handyman Stack',status:'ACTIVE',spend:296,leads:9,max:38,rev:240,niche:'Towing'}]},
+ {id:'c3',name:'RHO v1 | CBO | FUNERAL HOMES | 10.24',status:'ACTIVE',adsets:[
+  {id:'a5',name:'Funeral CBO 2',status:'ACTIVE',spend:992,leads:14,max:45,rev:690,niche:'Funeral Homes'},
+  {id:'a6',name:'Funeral Directors LAL',status:'ACTIVE',spend:121,leads:0,max:45,rev:0,niche:'Funeral Homes'}]},
+ {id:'c4',name:'TRUCKING | 10.06',status:'ACTIVE',adsets:[
+  {id:'a7',name:'TRUCK-RB-05',status:'ACTIVE',spend:844,leads:11,max:80,rev:610,niche:'Trucking'},
+  {id:'a8',name:'TRUCK-OO-02',status:'PAUSED',spend:0,leads:0,max:80,rev:0,niche:'Trucking'}]},
+ {id:'c5',name:'RHO v1 | ABO | SNOW PLOWING | 10.30',status:'ACTIVE',adsets:[
+  {id:'a9',name:'Plow Price Anchor',status:'ACTIVE',spend:151,leads:16,max:null,rev:389,niche:'Snow Plowing'}]},
+ {id:'c6',name:'RESTAURANTS | 10.08',status:'PAUSED',adsets:[
+  {id:'a10',name:'Rest Owners 01',status:'ACTIVE',spend:214,leads:4,max:60,rev:150,niche:'Restaurants'}]},
+ {id:'c7',name:'RHO v1 | ABO | LANDSCAPING | 10.27',status:'ACTIVE',adsets:[
+  {id:'a11',name:'Landscape Crew Owners',status:'ACTIVE',spend:649,leads:11,max:65,rev:702,niche:'Landscaping'},
+  {id:'a12',name:'Lawn Care 1-3 Trucks',status:'ACTIVE',spend:310,leads:9,max:65,rev:350,niche:'Landscaping'}]},
+];
+const PROPS=[
+ {id:'p1',adset:'a5',action:'pause',why:'CPL $71 vs Max CPL $45 for 3 straight days with $992 spend.',cur:'Active · $150/day',prop:'Pause',days:[52,58,66,71,74,69,71],thru:'Nov 6',age:'2h ago'},
+ {id:'p2',adset:'a3',action:'raise',why:'CPL $21.50 — 43% under Max CPL for 5 days, ROAS 1.67x.',cur:'Active · $200/day',prop:'$240/day (+20%)',days:[26,24,23,22,21,22,21],thru:'Nov 6',age:'2h ago'},
+ {id:'p3',adset:'a6',action:'pause',why:'$121 spent, 0 leads — past one Max CPL with nothing to show.',cur:'Active · $40/day',prop:'Pause',days:[0,0,0,0,0,0,0],thru:'Nov 6',age:'2h ago'},
+ {id:'p4',adset:'a9',action:'raise',why:'CPL $9.42 on 16 leads, ROAS 2.58x. No Max CPL set for this niche yet.',cur:'Active · $25/day',prop:'$30/day (+20%)',days:[11,10,9,10,9,9,9],thru:'Nov 6',age:'2h ago'},
+];
+const COMPASS=[['Plate-01 "Commercial auto from $X"',4,1830,62],['Price Anchor – clipboard',6,2410,58],['Claim Denied – red stamp',3,980,21],['SUV night shot',2,1212,31],['Funeral – family van',2,1113,14],['Dealer lot aerial',1,190,3],['Handyman truck UGC',1,96,2]];
+
+// ---------- state ----------
+const DEF={tab:'adsets',q:'',status:'all',niche:'',cplLt:'',goal:'',preset:'',campaign:'',sort:'spend',group:true,rail:true,collapsed:[],expanded:[],hl:'',done:[]};
+let S, EV=[], T0=Date.now();
+function load(){let saved=null;try{saved=JSON.parse(sessionStorage.getItem('perfProto')||'null')}catch(e){}S=Object.assign({},DEF,saved||{});if(!saved&&window.innerWidth<1280)S.rail=false}
+function save(){try{sessionStorage.setItem('perfProto',JSON.stringify(S))}catch(e){}}
+function log(e,p={}){EV.push({t:((Date.now()-T0)/1000).toFixed(1)+'s',event:e,...p});document.getElementById('dEv').textContent=EV.length;tele()}
+
+// ---------- helpers ----------
+const money=v=>v==null?'—':'$'+Math.round(v).toLocaleString();
+const money2=v=>v==null?'—':'$'+v.toFixed(2);
+const all=()=>CAMPS.flatMap(c=>c.adsets.map(a=>({...a,camp:c})));
+function eff(a){if(a.status!=='ACTIVE')return['Paused','p'];if(a.camp.status!=='ACTIVE')return['Paused (campaign)','pc'];return['Active','a']}
+function cpl(a){return a.leads?a.spend/a.leads:null}
+function bucket(a){if(!a.spend)return null;if(a.max==null)return'none';if(!a.leads)return a.spend>=a.max?'over':'under';return cpl(a)>a.max?'over':'under'}
+function cplCls(a){const b=bucket(a),c=cpl(a);if(b==='none'||b==null)return'';if(!a.leads)return b==='over'?'cr':'cm';return c<=a.max*.85?'cg':c<=a.max?'ca':'cr'}
+function pass(a){
+ if(S.q&&!(a.name+' '+a.camp.name).toLowerCase().includes(S.q.toLowerCase()))return false;
+ if(S.status!=='all'&&a.status!==S.status)return false;
+ if(S.niche&&a.niche!==S.niche)return false;
+ if(S.cplLt!==''&&!(cpl(a)!=null&&cpl(a)<+S.cplLt))return false;
+ if(S.campaign&&a.camp.id!==S.campaign)return false;
+ if(S.goal&&bucket(a)!==S.goal)return false;
+ if(S.preset==='rotation'&&!['a3','a1','a11'].includes(a.id))return false;
+ if(S.preset==='attention'&&!['a5','a6','a7'].includes(a.id))return false;
+ return true}
+function sorter(x,y){const k=S.sort;
+ if(k==='name')return x.name.localeCompare(y.name);
+ if(k==='cpl')return (cpl(x)??1e9)-(cpl(y)??1e9);
+ if(k==='roas')return (y.spend?y.rev/y.spend:-1)-(x.spend?x.rev/x.spend:-1);
+ if(k==='over'){const r=a=>a.max==null||!a.spend?-1:(a.leads?cpl(a)/a.max:a.spend/a.max);return r(y)-r(x)}
+ return y.spend-x.spend}
+
+// ---------- render ----------
+function render(){save();
+ document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.dataset.t===S.tab));
+ adsetsView.style.display=S.tab==='adsets'?'':'none';compassView.style.display=S.tab==='compass'?'':'none';intelView.style.display=S.tab==='intel'?'':'none';
+ // goal line (pre-toolbar scope = all spending)
+ const sp=all().filter(a=>a.spend>0),c={under:0,over:0,none:0};sp.forEach(a=>c[bucket(a)]++);
+ goal.innerHTML=`<span class="n">${sp.length} spending</span>`+
+  [['under','g','under Max CPL'],['over','r','over'],['none','o','no Max CPL']].map(([k,d,l])=>`<button class="gchip ${S.goal===k?'on':''}" onclick="setGoal('${k}')"><span class="d ${d}"></span>${c[k]} ${l}</button>`).join('');
+ // filters count + chips
+ const chips=[];
+ if(S.goal)chips.push(['goal',{under:'Under Max CPL',over:'Over Max CPL',none:'No Max CPL'}[S.goal]]);
+ if(S.campaign)chips.push(['campaign','Campaign: '+CAMPS.find(c=>c.id===S.campaign).name]);
+ if(S.status!=='all')chips.push(['status','Status: '+S.status[0]+S.status.slice(1).toLowerCase()]);
+ if(S.niche)chips.push(['niche','Niche: '+S.niche]);
+ if(S.cplLt!=='')chips.push(['cplLt','CPL < $'+S.cplLt]);
+ if(S.preset)chips.push(['preset',S.preset==='rotation'?'↻ Rotation queue':'⚠ Needs attention']);
+ if(S.q)chips.push(['q','Search: "'+S.q+'"']);
+ const nf=[S.status!=='all',S.niche,S.cplLt!=='',S.preset].filter(Boolean).length;
+ fCount.innerHTML=nf?`<span class="count">${nf}</span>`:'';fBtn.classList.toggle('on',!!nf);
+ document.getElementById('chips').innerHTML=chips.length?chips.map(([k,l])=>`<span class="chip">${l}<button onclick="clearChip('${k}')" aria-label="Remove">×</button></span>`).join('')+`<button class="link" style="font-size:12px" onclick="clearAll()">Clear all</button>`:'';
+ document.getElementById('chips').style.display=chips.length?'':'none';
+ fStatus.value=S.status;fNiche.innerHTML='<option value="">All niches</option>'+[...new Set(all().map(a=>a.niche))].sort().map(n=>`<option ${n===S.niche?'selected':''}>${n}</option>`).join('');fCpl.value=S.cplLt;q.value=S.q;sort.value=S.sort;
+ pRot.classList.toggle('on',S.preset==='rotation');pAtt.classList.toggle('on',S.preset==='attention');
+ gBtn.classList.toggle('on',S.group);
+ // table
+ const rows=all().filter(pass).sort(sorter);
+ const T=rows.reduce((t,a)=>({s:t.s+a.spend,l:t.l+a.leads,r:t.r+a.rev}),{s:0,l:0,r:0});
+ let h=`<tr class="tot"><td>Total · ${rows.length} ad set${rows.length===1?'':'s'}</td><td></td><td>${money(T.s)}</td><td>${T.l}</td><td>${T.l?money2(T.s/T.l):'—'}</td><td></td><td>${T.s?(T.r/T.s).toFixed(2)+'x':'—'}</td><td class="${T.r-T.s>=0?'cg':'cr'}">${sgn(T.r-T.s)}</td><td></td><td></td></tr>`;
+ if(!rows.length)h+=`<tr><td colspan="10" style="text-align:center;color:var(--mute);padding:30px">No ad sets match these filters. <button class="link" onclick="clearAll()">Clear all</button></td></tr>`;
+ if(S.group){
+  CAMPS.forEach(cp=>{const rs=rows.filter(a=>a.camp.id===cp.id);if(!rs.length)return;
+   const col=S.collapsed.includes(cp.id)&&!S.campaign,cs=rs.reduce((t,a)=>({s:t.s+a.spend,l:t.l+a.leads,r:t.r+a.rev}),{s:0,l:0,r:0});
+   h+=`<tr class="camp"><td><button class="chev" onclick="toggleCamp('${cp.id}')">${col?'▸':'▾'}</button><button class="cname" onclick="drill('${cp.id}')" title="Show only this campaign">${cp.name}</button>${cp.status!=='ACTIVE'?' <span class="st pc">Campaign paused</span>':''}</td><td></td><td>${money(cs.s)}</td><td>${cs.l}</td><td>${cs.l?money2(cs.s/cs.l):'—'}</td><td></td><td>${cs.s?(cs.r/cs.s).toFixed(2)+'x':'—'}</td><td class="${cs.r-cs.s>=0?'cg':'cr'}">${sgn(cs.r-cs.s)}</td><td></td><td></td></tr>`;
+   if(!col)rs.forEach(a=>h+=row(a,'as'))})
+ }else rows.forEach(a=>h+=row(a,'flat'));
+ tb.innerHTML=h;
+ // rail
+ const open=PROPS.filter(p=>!S.done.includes(p.id));rCount.textContent=open.length;rBtn.classList.toggle('on',S.rail);
+ rail.classList.toggle('hidden',!S.rail);
+ rail.innerHTML=`<h3>Proposals (${open.length})<button class="btn" style="padding:2px 8px" onclick="toggleRail()">×</button></h3>`+(open.length?open.map(pc).join(''):`<div class="pending">No proposals. Rules ran 9:00am ET.</div>`)+`<div class="pending"><button class="link" style="font-size:11px" onclick="log('proposal_history_opened')">View history</button> · Approve/Dismiss use today's confirm + stale/failed handling.</div>`;
+ // compass
+ compassTb.innerHTML=COMPASS.map(([n,a,s,l],i)=>`<tr class="${l<10?'grey':''}"><td>${n}</td><td>${a}</td><td>${money(s)}</td><td>${l}</td><td>${money2(s/l)}</td><td>${l<10?'— (n&lt;10)':'#'+(i+1)}</td></tr>`).join('');
+ // dev
+ dTab.textContent=S.tab;dFil.textContent=chips.length?chips.map(c=>c[0]).join(','):'none';dRail.textContent=S.rail?'open':'closed';
+}
+function sgn(v){return (v>=0?'+':'−')+money(Math.abs(v))}
+function row(a,cls){const [l,k]=eff(a),c=cpl(a),b=bucket(a),ex=S.expanded.includes(a.id);
+ let r=`<tr class="${cls} ${S.hl===a.id?'hl':''}" id="row-${a.id}"><td><button class="chev" onclick="toggleAds('${a.id}')">${ex?'▾':'▸'}</button>${a.name}${cls==='flat'?`<span class="sub" style="padding-left:18px">${a.camp.name}</span>`:''}</td>
+ <td style="text-align:left"><span class="st ${k}">${l}</span></td><td>${money(a.spend)}</td><td>${a.leads}</td>
+ <td class="${cplCls(a)}">${c!=null?money2(c):(a.spend?'0 leads':'—')}</td><td class="cm">${a.max!=null?money(a.max):'—'}</td>
+ <td>${a.spend?(a.rev/a.spend).toFixed(2)+'x':'—'}</td><td class="${a.rev-a.spend>=0?'cg':'cr'}">${a.spend?sgn(a.rev-a.spend):'—'}</td>
+ <td style="text-align:left"><span class="mini">Get Business Coverage</span></td><td><span class="rowact"><button class="mini" onclick="log('remix_opened',{adset:'${a.id}'})">Remix</button><button class="mini" onclick="log('quick_generate',{adset:'${a.id}'})">⚡</button></span></td></tr>`;
+ if(ex)r+=`<tr class="ads"><td colspan="10"><div class="adsbox"><div><b>Ads in ${a.name}</b><span style="color:var(--mute)">existing AdsBreakdown — unchanged (Remix · Quick Ad · pause ad)</span></div><div><span>Plate-01 "Commercial auto from $X"</span><span>${money(a.spend*.6)} · ${Math.round(a.leads*.65)} leads</span></div><div><span>Price Anchor – clipboard</span><span>${money(a.spend*.4)} · ${a.leads-Math.round(a.leads*.65)} leads</span></div></div></td></tr>`;
+ return r}
+function spark(d){const mx=Math.max(...d),mn=Math.min(...d),rg=(mx-mn)||1,w=70,hh=18;return `<svg width="${w}" height="${hh}" style="flex:none" aria-hidden="true"><polyline fill="none" stroke="#6b7280" stroke-width="1.5" points="${d.map((v,i)=>`${2+i*((w-4)/(d.length-1))},${mx===mn?hh/2:hh-2-((v-mn)/rg)*(hh-4)}`).join(' ')}"/></svg>`}
+function pc(p){const a=all().find(x=>x.id===p.adset);return `<div class="pcard"><span class="ac ${p.action}">${p.action==='pause'?'PAUSE':'RAISE BUDGET'}</span><button class="pname" onclick="jump('${a.id}')">${a.name}</button><div class="sub">${a.camp.name}</div><p class="why">${p.why}</p><div class="cur">Current <b>${p.cur}</b> → <b>${p.prop}</b></div><div class="data">${spark(p.days)}<span>CPL, 7d · data through ${p.thru} · proposed ${p.age}</span></div><div class="pbtns"><button class="btn ok" onclick="decide('${p.id}','approve')">Approve</button><button class="btn" onclick="decide('${p.id}','dismiss')">Dismiss</button><a class="link" style="font-size:11px;margin-left:auto;align-self:center" href="#" onclick="log('ads_manager_opened');return false">Ads Manager ↗</a></div></div>`}
+
+// ---------- actions ----------
+function setTab(t){S.tab=t;log('perf_tab_viewed',{tab:t});render()}
+function setGoal(k){S.goal=S.goal===k?'':k;log('goal_chip_clicked',{chip:k,on:!!S.goal});render()}
+function clearChip(k){const m={goal:['goal',''],campaign:['campaign',''],status:['status','all'],niche:['niche',''],cplLt:['cplLt',''],preset:['preset',''],q:['q','']}[k];S[m[0]]=m[1];log('chip_removed',{chip:k});render()}
+function clearAll(){Object.assign(S,{goal:'',campaign:'',status:'all',niche:'',cplLt:'',preset:'',q:''});log('filters_cleared');render()}
+function togglePreset(p){S.preset=S.preset===p?'':p;log('preset_toggled',{preset:p});render()}
+function toggleCamp(id){S.collapsed=S.collapsed.includes(id)?S.collapsed.filter(x=>x!==id):[...S.collapsed,id];render()}
+function toggleAds(id){S.expanded=S.expanded.includes(id)?S.expanded.filter(x=>x!==id):[...S.expanded,id];log('adset_expanded',{adset:id});render()}
+function drill(id){S.campaign=id;S.group=true;log('campaign_drilled',{campaign:id});render()}
+function toggleRail(){S.rail=!S.rail;log('proposal_rail_toggled',{open:S.rail});render()}
+function jump(id){const a=all().find(x=>x.id===id);Object.assign(S,{tab:'adsets',hl:id,collapsed:S.collapsed.filter(c=>c!==a.camp.id)});if(!all().filter(pass).some(x=>x.id===id))clearAll();if(window.innerWidth<1280)S.rail=false;log('proposal_row_jumped',{adset:id});render();
+ const el=document.getElementById('row-'+id);if(el)el.scrollIntoView({block:'center',behavior:'smooth'});setTimeout(()=>{S.hl='';render()},4000)}
+function decide(id,how){S.done.push(id);log('proposal_'+how,{proposal:id,note:'prototype only — real flow keeps confirm modal + Meta pre-check'});render()}
+function toggleF(){fpop.classList.toggle('open')}
+function toggleMenu(e){e.stopPropagation();more.classList.toggle('open')}
+document.addEventListener('click',e=>{if(!more.contains(e.target))more.classList.remove('open');if(!fpop.contains(e.target)&&e.target!==fBtn&&!fBtn.contains(e.target))fpop.classList.remove('open')});
+function openClose(){drawer.classList.add('open');dbg.classList.add('open');log('close_details_opened')}
+function closeDrawer(){drawer.classList.remove('open');dbg.classList.remove('open')}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDrawer();fpop.classList.remove('open')}});
+let TT='events';
+function toggleTele(e){if(e.target.dataset.tt){TT=e.target.dataset.tt;document.querySelectorAll('.tele header button').forEach(b=>b.classList.toggle('on',b.dataset.tt===TT));document.getElementById('tele').classList.add('open');teleUpd();return}document.getElementById('tele').classList.toggle('open')}
+function teleUpd(){teleOut.textContent=TT==='events'?(EV.length?EV.map(e=>JSON.stringify(e)).join('\n'):'No events yet — click around.'):TT==='session'?JSON.stringify(S,null,2):'RPU: n/a — internal tool, no revenue path. Success metrics: proposal decision latency, goal-chip usage, close-details opens (brief §6).'}
+function tele(){teleUpd()}
+function resetAll(){try{sessionStorage.removeItem('perfProto')}catch(e){}EV=[];document.getElementById('dEv').textContent=0;load();render();teleUpd()}
+load();render();teleUpd();
+</script>
+</body>
+</html>

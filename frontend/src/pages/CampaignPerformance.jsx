@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { PauseCircle, PlayCircle, RefreshCw, AlertTriangle, TrendingDown, Target, Zap, ChevronDown, ChevronRight, TrendingUp, X, Repeat2, Sparkles, Tag, ChevronLeft, BarChart2, ShieldAlert, DollarSign, Check, Search, Rocket, MapPin } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { authFetch } from '../lib/facebookApi';
 import { budgetErrorMessage, describeBudgetRatio } from '../lib/budgetErrors';
 import { summarizeSyncFreshness } from '../lib/syncFreshness';
@@ -10,6 +10,7 @@ import { useCampaign } from '../context/CampaignContext';
 import { safeLocalStorageSet } from '../lib/safeLocalStorage';
 import ProposalsPanel from '../components/ProposalsPanel';
 import DailyCloseCard from '../components/DailyCloseCard';
+import { deepLinkState, maxCplBucket } from '../lib/performanceLayout';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
@@ -96,6 +97,11 @@ function isRefreshTimingEligible(adset, insight, isActive) {
 
 function isRefreshSoonAdset(adset, insight, isActive) {
   return isRefreshTimingEligible(adset, insight, isActive) && Number(insight?.redtrack?.roas || 0) >= 1;
+}
+
+function compactSpend(value) {
+  if (!value) return '';
+  return value >= 1000 ? ` · $${(value / 1000).toFixed(1)}k` : ` · $${Math.round(value)}`;
 }
 
 function formatMoney(value) {
@@ -1793,10 +1799,24 @@ export default function CampaignPerformance() {
   const [rules, setRules]       = useState([]); // still needed for isFlagged + rule badges
   // searchParams must be declared before the date useState initialisers that read it
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+  const initialDeepLink = useMemo(() => deepLinkState(searchParams), []); // URL is the mount contract; the sync effect handles later navigation.
+  const [activeTab, setActiveTab] = useState(initialDeepLink.tab);
+  const [campaignFilter, setCampaignFilter] = useState(initialDeepLink.campaignFilter);
+  const [groupByCampaign, setGroupByCampaign] = useState(() => localStorage.getItem('perfGroupByCampaign') !== 'false');
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [proposalCount, setProposalCount] = useState(0);
+  const [proposalsOpen, setProposalsOpen] = useState(() => {
+    if (initialDeepLink.proposalsOpen || window.location.hash === '#proposals') return true;
+    const saved = localStorage.getItem('perfProposalsRail');
+    return saved == null ? false : saved === 'open';
+  });
+  const lastUrlViewRef = useRef(searchParams.get('view'));
   // Inherit date from Dashboard URL params (preset / date_from / date_to)
   const [datePreset, setDatePreset] = useState(() => {
     if (searchParams.get('date_from') && searchParams.get('date_to')) return 'custom';
-    return searchParams.get('preset') || localStorage.getItem('bhm_date_preset') || 'today';
+    return searchParams.get('date_preset') || searchParams.get('preset') || localStorage.getItem('bhm_date_preset') || 'today';
   });
   const [dateFrom, setDateFrom] = useState(() => searchParams.get('date_from') || '');
   const [dateTo, setDateTo] = useState(() => searchParams.get('date_to') || '');
@@ -1839,7 +1859,6 @@ export default function CampaignPerformance() {
   // already-loaded bulkInsights numbers, same data source status/search use —
   // no new API call.
   const [metricFilter, setMetricFilter] = useState({ metric: 'cpl', operator: 'lt', value: '' });
-  const dashboardView = searchParams.get('view'); // derived live from URL — never stale
   const targetAdsetId = searchParams.get('adsetId');
   // Launch receipts carry their account explicitly. The launcher has a separate
   // account picker, so relying on the last global selection here can show the
@@ -2212,12 +2231,33 @@ export default function CampaignPerformance() {
   // Sync filter/sort state when URL params change (handles component staying mounted across navigations)
   useEffect(() => {
     const view = searchParams.get('view');
+    setActiveTab(searchParams.get('tab') || 'adsets');
+    setCampaignFilter(searchParams.get('campaign') || '');
     setNameSearch(searchParams.get('search') || '');
     setNicheFilter(searchParams.get('niche') || '');
-    if (view === 'attention') { setStatusFilter('flagged'); setSortBy('spend'); }
-    else if (view === 'top-performers') { setStatusFilter('top_performers'); setSortBy('roas'); }
-    else if (view === 'refresh-soon') { setStatusFilter('refresh_soon'); setSortBy('spend'); }
+    // Only react when `view` itself changed. Re-applying on every param change wiped the
+    // buyer's own status/sort choice whenever search, tab or proposals touched the URL.
+    const previousView = lastUrlViewRef.current;
+    if (view !== previousView) {
+      if (view === 'attention') { setStatusFilter('flagged'); setSortBy('spend'); }
+      else if (view === 'top-performers') { setStatusFilter('top_performers'); setSortBy('roas'); }
+      else if (view === 'refresh-soon') { setStatusFilter('refresh_soon'); setSortBy('spend'); }
+      else if (previousView && ['attention', 'top-performers', 'refresh-soon'].includes(previousView)) setStatusFilter('all');
+    }
+    lastUrlViewRef.current = view;
   }, [searchParams]);
+
+  // Nav badge links to `/campaign-performance#proposals`; handle it while already mounted too.
+  useEffect(() => {
+    if (location.hash !== '#proposals' && searchParams.get('proposals') !== 'open') return;
+    setActiveTab('adsets');
+    setProposalsOpen(true);
+  }, [location.hash, location.key]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    // Auto-open only where the rail docks beside the table; below 1800px it is an overlay and would cover the table on load.
+    if (proposalCount > 0 && localStorage.getItem('perfProposalsRail') == null && window.innerWidth >= 1800) setProposalsOpen(true);
+  }, [proposalCount]);
 
   // Sync Dashboard-provided date params when this component stays mounted across navigations.
   useEffect(() => {
@@ -2225,7 +2265,7 @@ export default function CampaignPerformance() {
     const nextTo = searchParams.get('date_to') || '';
     const nextPreset = nextFrom && nextTo
       ? 'custom'
-      : searchParams.get('preset') || localStorage.getItem('bhm_date_preset') || 'today';
+      : searchParams.get('date_preset') || searchParams.get('preset') || localStorage.getItem('bhm_date_preset') || 'today';
 
     setDatePreset(nextPreset);
     setDateFrom(nextFrom);
@@ -2263,6 +2303,12 @@ export default function CampaignPerformance() {
     setHighlightedAdsetId(targetAdsetId);
     scrolledToRef.current = null; // reset so scroll effect fires for this new target
   }, [adsets, targetAdsetId]);
+
+  useEffect(() => {
+    if (!highlightedAdsetId) return undefined;
+    const timeout = setTimeout(() => setHighlightedAdsetId(null), 4000);
+    return () => clearTimeout(timeout);
+  }, [highlightedAdsetId]);
 
 
   const syncAll = async () => {
@@ -2590,13 +2636,21 @@ export default function CampaignPerformance() {
       list = list.filter(a => isActiveDelivery(a) && isFlagged(a));
     } else if (statusFilter === 'refresh_soon') {
       list = list.filter(a => isRefreshSoonAdset(a, bulkInsights?.[a.fb_adset_id], isActiveDelivery(a)));
+    } else if (['over_max', 'under_max', 'no_max'].includes(statusFilter)) {
+      list = list.filter(a => maxCplBucket(
+        bulkInsights?.[a.fb_adset_id],
+        maxCplData?.adsets?.[a.fb_adset_id],
+        maxCplData?.available !== false,
+      ) === statusFilter);
     }
 
     // Name search
     const q = nameSearch.trim().toLowerCase();
     if (q) {
-      list = list.filter(a => a.name?.toLowerCase().includes(q));
+      list = list.filter(a => `${a.name || ''} ${a.campaign_name || ''}`.toLowerCase().includes(q));
     }
+
+    if (campaignFilter) list = list.filter(a => String(a.campaign_id ?? a.fb_campaign_id ?? '') === campaignFilter);
 
     if (nicheFilter) {
       list = list.filter(a => extractNiche(a.name) === nicheFilter);
@@ -2642,11 +2696,40 @@ export default function CampaignPerformance() {
         const rb = bulkInsights?.[b.fb_adset_id]?.redtrack?.roas ?? -1;
         return rb - ra; // highest RT ROAS first
       }
+      if (sortBy === 'over_max') {
+        const ratio = adset => {
+          const insight = bulkInsights?.[adset.fb_adset_id];
+          const max = maxCplData?.available ? maxCplData.adsets?.[adset.fb_adset_id]?.max_cpl : null;
+          if (!insight || max == null || Number(insight.spend || 0) <= 0) return -Infinity;
+          return Number(insight.leads || 0) > 0 ? Number(insight.cpl || 0) / Number(max) : Number(insight.spend || 0) / Number(max);
+        };
+        return ratio(b) - ratio(a);
+      }
       return 0;
     });
 
     return list;
-  }, [adsets, statusFilter, sortBy, nameSearch, nicheFilter, metricFilter, bulkInsights, bulkInsightsError, isFlagged, getAdsetStatus, isActiveDelivery, isPausedDelivery]);
+  }, [adsets, statusFilter, sortBy, nameSearch, nicheFilter, campaignFilter, metricFilter, bulkInsights, bulkInsightsError, maxCplData, isFlagged, getAdsetStatus, isActiveDelivery, isPausedDelivery]);
+
+  const goalLine = useMemo(() => {
+    const counts = { under_max: 0, over_max: 0, no_max: 0 };
+    const spend = { under_max: 0, over_max: 0, no_max: 0 };
+    let spending = 0;
+    adsets.filter(adset => adset.fb_adset_id).forEach(adset => {
+      const bucket = maxCplBucket(
+        bulkInsights?.[adset.fb_adset_id],
+        maxCplData?.adsets?.[adset.fb_adset_id],
+        maxCplData?.available !== false,
+      );
+      if (!bucket) return;
+      spending += 1;
+      counts[bucket] += 1;
+      spend[bucket] += Number(bulkInsights?.[adset.fb_adset_id]?.spend || 0);
+    });
+    // Counts alone overstate the problem (many small tests "over" vs a few big
+    // winners "under"), so each chip also carries the spend it represents.
+    return { spending, spend, ...counts };
+  }, [adsets, bulkInsights, maxCplData]);
 
   useEffect(() => {
     if (!targetAdsetId || targetAdsetId === 'null') return;
@@ -2686,7 +2769,7 @@ export default function CampaignPerformance() {
       const insight = bulkInsights?.[adset.fb_adset_id];
       group.totalSpend += insight?.spend ?? 0;
       group.totalLeads += insight?.leads ?? 0;
-      group.totalRevenue += insight?.redtrack?.revenue ?? 0;
+      if (insight?.redtrack?.revenue != null) { group.totalRevenue += insight.redtrack.revenue; group.revenueSeen = true; }
     }
     const targetAdsetId = searchParams.get('adsetId');
     return [...map.values()].map(group => ({
@@ -2706,13 +2789,38 @@ export default function CampaignPerformance() {
     });
   }, [visibleAdsets, bulkInsights, searchParams]);
 
+  const renderedGroups = useMemo(() => {
+    if (groupByCampaign) return groupedCampaigns;
+    return [{
+      key: '__flat',
+      campaignId: null,
+      campaignName: null,
+      campaignStatus: null,
+      adsets: visibleAdsets,
+      totalSpend: 0,
+      totalLeads: 0,
+      totalRevenue: 0,
+      rtRoas: null,
+      cpl: null,
+    }];
+  }, [groupByCampaign, groupedCampaigns, visibleAdsets]);
+
+  const effectiveStatusLabel = useCallback(adset => {
+    const adsetStatus = getAdsetStatus(adset);
+    const campaignStatus = getCampaignStatus(adset);
+    if (adsetStatus === 'ARCHIVED' || campaignStatus === 'ARCHIVED') return 'Archived';
+    if (adsetStatus === 'ACTIVE' && campaignStatus && campaignStatus !== 'ACTIVE') return 'Paused (campaign)';
+    if (adsetStatus === 'ACTIVE' && adset.daily_budget === 0 && !adset.campaign_daily_budget) return 'Off (budget 0)';
+    return adsetStatus === 'ACTIVE' ? 'Active' : 'Paused';
+  }, [getAdsetStatus, getCampaignStatus]);
+
   const visibleSummary = useMemo(() => {
     const countedCboCampaigns = new Set();
     const totals = visibleAdsets.reduce((acc, adset) => {
       const insight = bulkInsights?.[adset.fb_adset_id];
       acc.spend += insight?.spend ?? 0;
       acc.leads += insight?.leads ?? 0;
-      acc.revenue += insight?.redtrack?.revenue ?? 0;
+      if (insight?.redtrack?.revenue != null) { acc.revenue += insight.redtrack.revenue; acc.revenueSeen = true; }
       if (adset.campaign_budget_optimization === 'CBO' || adset.campaign_daily_budget) {
         const campaignKey = adset.fb_campaign_id || adset.campaign_id || `adset-${adset.id}`;
         if (!countedCboCampaigns.has(campaignKey)) {
@@ -2738,6 +2846,7 @@ export default function CampaignPerformance() {
       totalLeads: totals.leads,
       cpl: totals.spend > 0 && totals.leads > 0 ? totals.spend / totals.leads : null,
       rtRoas: totals.spend > 0 && totals.revenue > 0 ? totals.revenue / totals.spend : null,
+      profit: totals.revenueSeen ? totals.revenue - totals.spend : null, // no RedTrack data at all → "--", not a fake -spend loss
       dailyBudget: totals.dailyBudget > 0 ? totals.dailyBudget / 100 : null,
     };
   }, [visibleAdsets, bulkInsights, groupedCampaigns.length, isActiveDelivery]);
@@ -2778,12 +2887,19 @@ export default function CampaignPerformance() {
     // status/search/metric filter active when they clicked.
     setStatusFilter('ACTIVE');
     setNameSearch('');
+    setNicheFilter('');
+    setCampaignFilter('');
     setMetricFilter({ metric: 'cpl', operator: 'lt', value: '' });
+    setActiveTab('adsets');
     setHighlightedAdsetId(adset.fb_adset_id);
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
       next.set('adsetId', adset.fb_adset_id);
-      next.set('view', 'compass');
+      next.delete('view');
+      next.delete('tab');
+      next.delete('niche');
+      next.delete('campaign');
+      next.delete('search');
       return next;
     });
   }, [setSearchParams]);
@@ -2804,35 +2920,166 @@ export default function CampaignPerformance() {
     });
   }, [setSearchParams]);
 
+  const selectTab = useCallback(tab => {
+    setActiveTab(tab);
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous);
+      if (tab === 'adsets') next.delete('tab');
+      else next.set('tab', tab);
+      return next;
+    });
+  }, [setSearchParams]);
+
+  const toggleProposals = useCallback(nextOpen => {
+    const open = nextOpen ?? !proposalsOpen;
+    setProposalsOpen(open);
+    safeLocalStorageSet('perfProposalsRail', open ? 'open' : 'closed');
+    authFetch(`${API_BASE}/proposals/events`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'proposal_rail_toggled', proposal_id: null, props: { open } }) }).catch(() => {});
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous);
+      if (open) next.set('proposals', 'open');
+      else next.delete('proposals');
+      return next;
+    });
+  }, [proposalsOpen, setSearchParams]);
+
+  const drillCampaign = useCallback(group => {
+    const key = String(group.campaignId ?? group.fbCampaignId ?? group.key);
+    setCampaignFilter(key);
+    setGroupByCampaign(true);
+    safeLocalStorageSet('perfGroupByCampaign', 'true');
+    setCollapsedCampaigns(previous => {
+      const next = new Set(previous);
+      next.delete(group.key);
+      return next;
+    });
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous);
+      next.set('campaign', key);
+      return next;
+    });
+  }, [setSearchParams]);
+
+  const jumpToProposalRow = useCallback(proposal => {
+    const target = adsets.find(adset => adset.fb_adset_id === proposal.fb_adset_id);
+    setActiveTab('adsets');
+    setStatusFilter('all');
+    setNameSearch('');
+    setNicheFilter('');
+    setCampaignFilter('');
+    setMetricFilter(previous => ({ ...previous, value: '' }));
+    setHighlightedAdsetId(proposal.fb_adset_id);
+    authFetch(`${API_BASE}/proposals/events`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'proposal_row_jumped', proposal_id: proposal.id, props: { adset_id: proposal.fb_adset_id } }) }).catch(() => {});
+    scrolledToRef.current = null;
+    if (target?.campaign_id) setCollapsedCampaigns(previous => { const next = new Set(previous); next.delete(target.campaign_id); return next; });
+    if (window.innerWidth < 1800) setProposalsOpen(false);
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous);
+      ['tab', 'view', 'niche', 'campaign', 'search', 'proposals'].forEach(key => next.delete(key));
+      next.set('adsetId', proposal.fb_adset_id);
+      return next;
+    });
+  }, [adsets, setSearchParams]);
+
+  const clearFilter = useCallback(key => {
+    if (key === 'status') setStatusFilter('all');
+    if (key === 'niche') setNicheFilter('');
+    if (key === 'campaign') setCampaignFilter('');
+    if (key === 'search') setNameSearch('');
+    if (key === 'metric') setMetricFilter(previous => ({ ...previous, value: '' }));
+    if (key === 'target') setHighlightedAdsetId(null);
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous);
+      if (key === 'status') next.delete('view');
+      if (key === 'niche') next.delete('niche');
+      if (key === 'campaign') next.delete('campaign');
+      if (key === 'search') next.delete('search');
+      if (key === 'target') next.delete('adsetId');
+      return next;
+    });
+  }, [setSearchParams]);
+
+  const applyStatusFilter = useCallback(value => {
+    lastUrlViewRef.current = null;
+    setStatusFilter(value);
+    setHighlightedAdsetId(null);
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous);
+      next.delete('view');
+      next.delete('adsetId');
+      return next;
+    });
+  }, [setSearchParams]);
+
+  const clearAllFilters = useCallback(() => {
+    setStatusFilter('all');
+    setNameSearch('');
+    setNicheFilter('');
+    setCampaignFilter('');
+    setMetricFilter(previous => ({ ...previous, value: '' }));
+    setHighlightedAdsetId(null);
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous);
+      ['view', 'niche', 'campaign', 'search', 'adsetId'].forEach(key => next.delete(key));
+      return next;
+    });
+  }, [setSearchParams]);
+
+  const updateDatePreset = useCallback(value => {
+    setDatePreset(value);
+    setDateFrom('');
+    setDateTo('');
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous);
+      next.delete('preset');
+      next.delete('date_from');
+      next.delete('date_to');
+      next.set('date_preset', value);
+      return next;
+    });
+  }, [setSearchParams]);
+
+  const updateCustomDate = useCallback((key, value) => {
+    if (key === 'date_from') setDateFrom(value);
+    else setDateTo(value);
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous);
+      next.set('date_preset', 'custom');
+      if (value) next.set(key, value);
+      else next.delete(key);
+      return next;
+    });
+  }, [setSearchParams]);
+
+  const activeFilterCount = [statusFilter !== 'all', nicheFilter, metricFilter.value !== ''].filter(Boolean).length;
+  const filterChips = [
+    statusFilter !== 'all' && ['status', statusFilter === 'flagged' ? 'Needs attention' : statusFilter === 'top_performers' ? 'Top performers' : statusFilter === 'refresh_soon' ? 'Rotation queue' : statusFilter === 'over_max' ? 'Over Max CPL' : statusFilter === 'under_max' ? 'Under Max CPL' : statusFilter === 'no_max' ? 'No Max CPL' : `Status: ${statusFilter === 'ACTIVE' ? 'Active' : statusFilter === 'PAUSED' ? 'Paused' : 'Has spend'}`],
+    nicheFilter && ['niche', `Niche: ${nicheFilter}`],
+    campaignFilter && ['campaign', `Campaign: ${adsets.find(adset => String(adset.campaign_id ?? adset.fb_campaign_id ?? '') === campaignFilter)?.campaign_name || campaignFilter}`],
+    nameSearch && ['search', `Search: ${nameSearch}`],
+    metricFilter.value !== '' && ['metric', `${metricFilter.metric.toUpperCase()} ${metricFilter.operator === 'lt' ? '<' : '>'} ${metricFilter.value}`],
+    targetAdsetId && ['target', `Viewing: ${adsets.find(adset => adset.fb_adset_id === targetAdsetId)?.name || targetAdsetId}`],
+  ].filter(Boolean);
+
   return (
     <>
     <div className="-m-5 mx-auto max-w-[1800px] space-y-0">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-5 pt-5 pb-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <BarChart2 size={26} className="text-indigo-500" />
-            Campaign Performance
-          </h1>
-          <p className="text-gray-500 text-sm mt-1">
-            Live Meta insights · RedTrack conversions · Auto-pause rules
-          </p>
-        </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <button
-            onClick={() => setShowAddRuleModal(true)}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-orange-200 text-orange-600 bg-orange-50 hover:bg-orange-100 transition-colors"
-            title="Create an auto-pause rule for any tracked ad set"
-          >
-            <ShieldAlert size={14} />
-            + Add Rule
-          </button>
-          <CampaignIntelligencePanel
-            adAccountId={adAccountId}
-            pageDatePreset={datePreset}
-            pageDateFrom={dateFrom}
-            pageDateTo={dateTo}
-          />
+      <div className="flex flex-wrap items-center gap-2 px-5 pb-3 pt-5">
+        <h1 className="mr-auto flex items-center gap-2 text-xl font-bold text-gray-900"><BarChart2 size={22} className="text-indigo-500" />Campaign Performance</h1>
+        <select
+          className="rounded-lg border border-gray-200 px-3 py-2 text-sm"
+          value={datePreset}
+          onChange={event => updateDatePreset(event.target.value)}
+          title={datePreset === 'today' && [0, 6].includes(new Date().getDay()) ? 'Weekend — switch to Last 7 Days to see recent ads' : undefined}
+        >
+          {DATE_PRESETS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+        {datePreset === 'custom' && <><input type="date" value={dateFrom} onChange={event => updateCustomDate('date_from', event.target.value)} className="rounded-lg border border-gray-200 px-2 py-2 text-sm" /><span className="text-gray-400">→</span><input type="date" value={dateTo} onChange={event => updateCustomDate('date_to', event.target.value)} className="rounded-lg border border-gray-200 px-2 py-2 text-sm" /></>}
+        {(() => {
+          const fresh = summarizeSyncFreshness(adsets, freshnessClock);
+          if (fresh.state === 'empty') return null;
+          return <span className={`rounded-md border px-2 py-1 text-xs font-medium ${fresh.state === 'fresh' ? 'border-green-200 bg-green-50 text-green-700' : 'border-amber-300 bg-amber-50 text-amber-800'}`} title="Status and budgets come from the last Sync; spend, CPL and ROAS are live.">{fresh.label}</span>;
+        })()}
           <button
             onClick={syncAll}
             disabled={syncing || syncingRT}
@@ -2842,244 +3089,51 @@ export default function CampaignPerformance() {
             <RefreshCw size={14} className={(syncing || syncingRT) ? 'animate-spin' : ''} />
             {(syncing || syncingRT) ? 'Syncing...' : 'Sync'}
           </button>
-          {(() => {
-            const fresh = summarizeSyncFreshness(adsets, freshnessClock);
-            if (fresh.state === 'empty') return null;
-            return (
-              <span
-                className={`text-xs font-medium px-2 py-1 rounded-md border ${fresh.state === 'fresh' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-amber-50 text-amber-800 border-amber-300'}`}
-                title={`Status and budgets come from the last Sync (spend, CPL and ROAS are live). If this is old, press Sync before changing budgets or status.${fresh.neverCount > 0 ? ` ${fresh.neverCount} ad set(s) were not found by Sync (legacy, deleted in Meta, or another account) and may show outdated status or budget.` : ''}`}
-                role="status"
-              >
-                {fresh.label}
-              </span>
-            );
-          })()}
-          <div className="flex flex-col items-end gap-1">
-            <div className="flex items-center gap-2">
-              <select
-                className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
-                value={datePreset}
-                onChange={e => { setDatePreset(e.target.value); setDateFrom(''); setDateTo(''); }}
-              >
-                {DATE_PRESETS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
-              </select>
-              {datePreset === 'custom' && (
-                <>
-                  <input
-                    type="date"
-                    value={dateFrom}
-                    onChange={e => setDateFrom(e.target.value)}
-                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
-                  />
-                  <span className="text-gray-400 text-sm">→</span>
-                  <input
-                    type="date"
-                    value={dateTo}
-                    onChange={e => setDateTo(e.target.value)}
-                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
-                  />
-                </>
-              )}
-            </div>
-            {datePreset === 'today' && [0, 6].includes(new Date().getDay()) && (
-              <span className="text-xs text-amber-600 font-medium">
-                Weekend — switch to Last 7 Days to see recent ads
-              </span>
-            )}
+          <div className="relative">
+            <button type="button" className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50" onClick={() => setMoreMenuOpen(open => !open)} aria-label="More actions">⋯</button>
+            {moreMenuOpen && <div className="absolute right-0 top-11 z-40 w-56 rounded-xl border border-gray-200 bg-white p-1.5 shadow-xl"><button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-gray-50" onClick={() => { setMoreMenuOpen(false); setShowAddRuleModal(true); }}><ShieldAlert size={14} />Add auto-pause rule</button></div>}
           </div>
-        </div>
       </div>
 
-      {/* Dashboard deep-link banner */}
-      {dashboardView && (
-        <div className={`flex items-center justify-between mx-5 mb-2 rounded-xl px-4 py-3 text-sm font-medium border ${
-          highlightedAdsetId
-            ? 'bg-indigo-50 border-indigo-200 text-indigo-800'
-            : dashboardView === 'attention'
-              ? 'bg-orange-50 border-orange-200 text-orange-800'
-              : 'bg-green-50 border-green-200 text-green-800'
-        }`}>
-          <div className="flex items-center gap-2">
-            {highlightedAdsetId
-              ? (() => {
-                  const target = adsets.find(a => a.fb_adset_id === highlightedAdsetId);
-                  return <><Target size={15} /> Viewing: <span className="font-semibold">{target?.name ?? highlightedAdsetId}</span></>;
-                })()
-              : dashboardView === 'attention'
-                ? <><AlertTriangle size={15} /> Showing flagged ad sets — high frequency, zero-lead spend, or auto-paused</>
-              : nicheFilter
-                ? <><Target size={15} /> Showing all ad sets in niche <span className="font-semibold">{nicheFilter}</span></>
-                : dashboardView === 'top-performers'
-                  ? <><TrendingUp size={15} /> Showing top performers — at least $50 spend and positive RT ROAS</>
-                  : dashboardView === 'refresh-soon'
-                    ? <><Repeat2 size={15} /> Showing the rotation queue — eligible active ad sets ready for a creative-rotation review</>
-                  : <><TrendingUp size={15} /> Showing all ad sets</>
-            }
-          </div>
-          <button
-            onClick={() => { setSearchParams({}); setStatusFilter('all'); setNameSearch(''); setNicheFilter(''); setSortBy('spend'); setHighlightedAdsetId(null); }}
-            className="ml-4 hover:opacity-70 transition-opacity"
-          >
-            <X size={14} />
-          </button>
-        </div>
-      )}
+      <div className="px-5"><DailyCloseCard variant="strip" accountNames={Object.fromEntries(adAccounts.map(account => [account.id || account.account_id, account.name || account.account_name || account.label]))} /></div>
+      <nav className="mt-3 flex overflow-x-auto border-b border-gray-200 px-5" aria-label="Performance views">
+        {[['adsets', 'Ad sets'], ['compass', 'Creative Compass'], ['intelligence', 'Intelligence']].map(([key, label]) => <button key={key} type="button" className={`whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-semibold ${activeTab === key ? 'border-indigo-600 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-800'}`} onClick={() => selectTab(key)}>{label}</button>)}
+      </nav>
 
-      <div className="px-5 pb-5 space-y-4 mt-1">
-      <DailyCloseCard accountNames={Object.fromEntries(adAccounts.map(account => [account.id || account.account_id, account.name || account.account_name || account.label]))} />
-      <ProposalsPanel />
-      <CreativeCompass
-        buckets={compassBuckets}
-        onOpenAdset={openCompassAdset}
-        dateRangeLabel={dateRangeLabel}
-      />
+      {activeTab === 'compass' && <div className="p-5"><CreativeCompass buckets={compassBuckets} onOpenAdset={openCompassAdset} dateRangeLabel={dateRangeLabel} /></div>}
+      {activeTab === 'intelligence' && <div className="p-5"><CampaignIntelligencePanel adAccountId={adAccountId} pageDatePreset={datePreset} pageDateFrom={dateFrom} pageDateTo={dateTo} initialOpen /></div>}
+      {activeTab === 'adsets' && <div className="pb-5">
+      <div className="sticky top-0 z-30 border-b border-gray-200 bg-gray-50/95 px-5 py-2.5 backdrop-blur">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="mr-auto flex w-full flex-wrap items-center gap-1 text-xs font-semibold text-gray-600 md:w-auto">
+            {bulkInsightsError ? <span>Performance unavailable</span> : (bulkInsightsLoading || maxCplLoading || !bulkInsights || maxCplData == null) ? <span>Loading…</span> : maxCplData?.available === false ? <span>{goalLine.spending} spending · Max CPL unavailable</span> : <>
+              <span className="px-1">{goalLine.spending} spending</span>
+              {[['under_max', 'bg-emerald-500', `${goalLine.under_max} under Max CPL${compactSpend(goalLine.spend.under_max)}`], ['over_max', 'bg-red-500', `${goalLine.over_max} over${compactSpend(goalLine.spend.over_max)}`], ['no_max', 'border border-gray-400 bg-white', `${goalLine.no_max} no Max CPL${compactSpend(goalLine.spend.no_max)}`]].map(([key, dot, label]) => <button key={key} type="button" className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${statusFilter === key ? 'border-gray-700 bg-white' : 'border-transparent hover:border-gray-200 hover:bg-white'}`} onClick={() => applyStatusFilter(statusFilter === key ? 'all' : key)}><span className={`h-2 w-2 rounded-full ${dot}`} />{label}</button>)}
+            </>}
+          </div>
+          <div className="relative"><Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" /><input type="search" value={nameSearch} onChange={event => { const value = event.target.value; setNameSearch(value); setSearchParams(previous => { const next = new URLSearchParams(previous); if (value) next.set('search', value); else next.delete('search'); return next; }); }} placeholder="Search ad sets…" className="w-40 rounded-lg border border-gray-200 py-1.5 pl-7 pr-2 text-xs focus:ring-2 focus:ring-indigo-500 sm:w-48" /></div>
+          <div className="relative">
+            <button type="button" className={`rounded-lg border px-3 py-1.5 text-xs font-semibold ${activeFilterCount ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-white text-gray-700'}`} onClick={() => setFiltersOpen(open => !open)}>Filters{activeFilterCount ? ` (${activeFilterCount})` : ''}</button>
+            {filtersOpen && <div className="absolute right-0 top-9 z-40 w-72 space-y-2 rounded-xl border border-gray-200 bg-white p-3 shadow-xl">
+              <label className="block text-[11px] font-semibold text-gray-500">Status<select className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-xs text-gray-700" value={['over_max', 'under_max', 'no_max'].includes(statusFilter) ? 'all' : statusFilter} onChange={event => applyStatusFilter(event.target.value)}><option value="all">All ad sets</option><option value="ACTIVE">Active only</option><option value="PAUSED">Paused only</option><option value="has_spend">Has spend</option></select></label>
+              <label className="block text-[11px] font-semibold text-gray-500">Niche<select className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-xs" value={nicheFilter} onChange={event => { const value = event.target.value; setNicheFilter(value); setSearchParams(previous => { const next = new URLSearchParams(previous); if (value) next.set('niche', value); else next.delete('niche'); return next; }); }}><option value="">All niches</option>{[...new Set(adsets.map(adset => extractNiche(adset.name)).filter(Boolean))].sort().map(niche => <option key={niche}>{niche}</option>)}</select></label>
+              <div className="flex gap-1"><select className="rounded-lg border border-gray-200 px-1.5 py-1 text-xs" value={metricFilter.metric} onChange={event => setMetricFilter(previous => ({ ...previous, metric: event.target.value }))}><option value="cpl">CPL</option><option value="spend">Spend</option><option value="roas">RT ROAS</option></select><select className="rounded-lg border border-gray-200 px-1.5 py-1 text-xs" value={metricFilter.operator} onChange={event => setMetricFilter(previous => ({ ...previous, operator: event.target.value }))}><option value="lt">&lt;</option><option value="gt">&gt;</option></select><input className="min-w-0 flex-1 rounded-lg border border-gray-200 px-2 py-1 text-xs" type="number" placeholder="value" value={metricFilter.value} onChange={event => setMetricFilter(previous => ({ ...previous, value: event.target.value }))} /></div>
+              <div className="flex flex-wrap gap-1"><button type="button" className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800" onClick={showRefreshSoon}>Rotation queue · {refreshSoonAdsets.length}</button><button type="button" className="rounded-full border border-orange-200 bg-orange-50 px-2 py-1 text-[11px] text-orange-800" onClick={() => applyStatusFilter('flagged')}>Needs attention</button><button type="button" className="rounded-full border border-green-200 bg-green-50 px-2 py-1 text-[11px] text-green-800" onClick={() => applyStatusFilter('top_performers')}>Top performers</button></div>
+              <button type="button" className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-left text-xs text-gray-700 sm:hidden" onClick={() => { const next = !groupByCampaign; setGroupByCampaign(next); safeLocalStorageSet('perfGroupByCampaign', String(next)); }}>{groupByCampaign ? '✓ ' : ''}Group by campaign</button>
+            </div>}
+          </div>
+          <select className="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700" value={sortBy} onChange={event => setSortBy(event.target.value)}><option value="status">Active first</option><option value="spend">Spend ↓</option><option value="cpl">CPL ↑</option><option value="roas">RT ROAS ↓</option><option value="over_max">Over Max CPL first</option><option value="name">Name A–Z</option></select>
+          <button type="button" className={`hidden rounded-lg border px-3 py-1.5 text-xs font-semibold sm:block ${groupByCampaign ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-white text-gray-700'}`} onClick={() => { const next = !groupByCampaign; setGroupByCampaign(next); safeLocalStorageSet('perfGroupByCampaign', String(next)); }}>☰ Group by campaign</button>
+          <button type="button" className={`rounded-lg border px-3 py-1.5 text-xs font-semibold ${proposalsOpen ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : proposalCount > 0 ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm hover:bg-indigo-700' : 'border-gray-200 bg-white text-gray-700'}`} onClick={() => toggleProposals()}>{!proposalsOpen && proposalCount > 0 ? 'Review proposals' : 'Proposals'} {proposalCount > 0 && <span className={`ml-1 rounded-full px-1.5 py-0.5 text-[10px] ${!proposalsOpen ? 'bg-white text-indigo-700' : 'bg-indigo-600 text-white'}`}>{proposalCount}</span>}</button>
+          <button type="button" className="rounded-lg border border-gray-200 bg-white p-1.5 text-gray-500 hover:bg-gray-50" title="Refresh performance" onClick={() => { const from = datePreset === 'custom' ? dateFrom : null; const to = datePreset === 'custom' ? dateTo : null; loadAdsets(); loadBulkInsights(adAccountId, datePreset, from, to); setAdsBulk(null); setRtAdsBulk(null); setAdsError(null); setRtAdsError(null); creativeDetailsKeyRef.current = null; if (expandedAdsets.size) loadCreativeDetails(adAccountId, datePreset, from, to); }}><RefreshCw size={14} /></button>
+        </div>
+        {filterChips.length > 0 && <div className="mt-2 flex flex-wrap items-center gap-1.5">{filterChips.map(([key, label]) => <span key={key} className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-700">{label}<button type="button" onClick={() => clearFilter(key)} aria-label={`Remove ${label}`}><X size={11} /></button></span>)}<button type="button" className="text-xs font-semibold text-indigo-600" onClick={clearAllFilters}>Clear all</button></div>}
+      </div>
+
+      <div className="group/perf flex min-w-0 items-start gap-3 px-5 pt-3" data-rail={proposalsOpen ? 'open' : 'closed'}>
 
       {/* Ad Set Performance Table */}
-      <div className="bg-white rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 shadow-sm overflow-clip">
-        <div className="px-6 py-4 border-b border-indigo-100 bg-indigo-50/35 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <h2 className="font-semibold text-gray-900 flex items-center gap-2">
-              <Target size={16} className="text-indigo-600" /> Performance
-              {nicheFilter && <span className="text-xs text-indigo-600 font-normal">· {nicheFilter}</span>}
-              <span className="text-xs text-gray-500 font-normal">
-                {groupedCampaigns.length} campaign{groupedCampaigns.length !== 1 ? 's' : ''} · {visibleAdsets.length} ad set{visibleAdsets.length !== 1 ? 's' : ''}
-              </span>
-            </h2>
-            <button
-              onClick={() => {
-                if (collapsedCampaigns.size === groupedCampaigns.length) {
-                  setCollapsedCampaigns(new Set());
-                } else {
-                  setCollapsedCampaigns(new Set(groupedCampaigns.map(g => g.key)));
-                }
-              }}
-              className="text-xs text-gray-500 hover:text-indigo-600 px-2 py-1 rounded-lg border border-gray-200 hover:border-indigo-200 transition-colors"
-            >
-              {collapsedCampaigns.size === groupedCampaigns.length ? 'Expand all' : 'Collapse all'}
-            </button>
-            <button
-              type="button"
-              onClick={showRefreshSoon}
-              className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors ${
-                statusFilter === 'refresh_soon'
-                  ? 'border-amber-300 bg-amber-100 text-amber-900'
-                  : 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100'
-              }`}
-              title="Show eligible active ad sets ready for creative-rotation review: $50+ spend, RT ROAS of at least 1.00x, and a Meta start date 12 or more days ago"
-            >
-              <Repeat2 size={12} /> Rotation queue {bulkInsightsLoading ? '· …' : bulkInsightsError ? '· unavailable' : `· ${refreshSoonAdsets.length}`}
-            </button>
-          </div>
-          <div className="flex items-center gap-2">
-            {/* Name search — real gap flagged in the competitor synthesis brief
-                (AdEspresso's campaign-list view has this, this page didn't). */}
-            <div className="relative">
-              <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-              <input
-                type="text"
-                placeholder="Search ad sets..."
-                value={nameSearch}
-                onChange={e => setNameSearch(e.target.value)}
-                className="border border-gray-200 rounded-lg pl-6 pr-6 py-1.5 text-xs text-gray-600 w-36 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:w-48 transition-all"
-              />
-              {nameSearch && (
-                <button
-                  onClick={() => setNameSearch('')}
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                  title="Clear search"
-                >
-                  <X size={12} />
-                </button>
-              )}
-            </div>
-            {/* Metric-threshold filter — the other filter-surface gap from the same
-                brief section (AdEspresso's "Filter by CPL < = > value"). Reads
-                already-loaded bulkInsights, no new API call. */}
-            <div className="flex items-center gap-1 border border-gray-200 rounded-lg px-1.5 py-1">
-              <select
-                className="text-xs text-gray-600 bg-transparent focus:outline-none"
-                value={metricFilter.metric}
-                disabled={bulkInsightsLoading || !!bulkInsightsError}
-                onChange={e => setMetricFilter(prev => ({ ...prev, metric: e.target.value }))}
-              >
-                <option value="cpl">CPL</option>
-                <option value="spend">Spend</option>
-                <option value="roas">RT ROAS</option>
-              </select>
-              <select
-                className="text-xs text-gray-600 bg-transparent focus:outline-none"
-                value={metricFilter.operator}
-                disabled={bulkInsightsLoading || !!bulkInsightsError}
-                onChange={e => setMetricFilter(prev => ({ ...prev, operator: e.target.value }))}
-              >
-                <option value="lt">&lt;</option>
-                <option value="gt">&gt;</option>
-              </select>
-              <input
-                type="number"
-                placeholder="value"
-                value={metricFilter.value}
-                disabled={bulkInsightsLoading || !!bulkInsightsError}
-                onChange={e => setMetricFilter(prev => ({ ...prev, value: e.target.value }))}
-                className="w-14 text-xs text-gray-600 bg-transparent focus:outline-none"
-              />
-              {metricFilter.value !== '' && (
-                <button
-                  onClick={() => setMetricFilter(prev => ({ ...prev, value: '' }))}
-                  className="text-gray-400 hover:text-gray-600"
-                  title="Clear metric filter"
-                >
-                  <X size={12} />
-                </button>
-              )}
-            </div>
-            {/* Status filter */}
-            <select
-              className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              value={statusFilter}
-              onChange={e => { setStatusFilter(e.target.value); setSearchParams(p => { const n = new URLSearchParams(p); n.delete('view'); n.delete('adsetId'); return n; }); setHighlightedAdsetId(null); }}
-            >
-              <option value="all">All ad sets</option>
-              <option value="ACTIVE">Active only</option>
-              <option value="PAUSED">Paused only</option>
-              <option value="has_spend">Has spend</option>
-              <option value="top_performers">Top performers</option>
-              <option value="refresh_soon">↻ Rotation queue</option>
-              <option value="flagged">⚠ Needs attention</option>
-            </select>
-            {/* Sort */}
-            <select
-              className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              value={sortBy}
-              onChange={e => { setSortBy(e.target.value); setSearchParams(p => { const n = new URLSearchParams(p); n.delete('view'); n.delete('adsetId'); return n; }); setHighlightedAdsetId(null); }}
-            >
-              <option value="status">Sort: Active first</option>
-              <option value="spend">Sort: Spend ↓</option>
-              <option value="cpl">Sort: CPL ↑</option>
-              <option value="roas">Sort: RT ROAS ↓</option>
-              <option value="name">Sort: Name A–Z</option>
-            </select>
-            <button
-              onClick={() => {
-                const from = datePreset === 'custom' ? dateFrom : null;
-                const to = datePreset === 'custom' ? dateTo : null;
-                loadAdsets();
-                loadBulkInsights(adAccountId, datePreset, from, to);
-                setAdsBulk(null);
-                setRtAdsBulk(null);
-                setAdsError(null);
-                setRtAdsError(null);
-                creativeDetailsKeyRef.current = null;
-                if (expandedAdsets.size) loadCreativeDetails(adAccountId, datePreset, from, to);
-              }}
-              className="text-gray-400 hover:text-gray-600 transition-colors"
-              title="Refresh"
-            >
-              <RefreshCw size={14} />
-            </button>
-          </div>
-        </div>
+      <div className="min-w-0 flex-1 overflow-x-auto rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 bg-white shadow-sm">
 
         {/* Show spinner while loading — especially important for insight-dependent filters */}
         {bulkInsightsError && statusFilter === 'top_performers' && (
@@ -3108,7 +3162,7 @@ export default function CampaignPerformance() {
         )}
         {rtAdsError && <div role="status" className="mx-5 mb-4 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">RedTrack creative-level data is unavailable: {rtAdsError}. Meta creative metrics remain available.</div>}
         {adsetsError && <div role="alert" className="mx-5 mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{adsetsError}. <button type="button" className="font-semibold underline" onClick={loadAdsets}>Retry ad sets</button></div>}
-        {(loadingAdsets || (bulkInsightsLoading && (['flagged', 'has_spend', 'top_performers', 'refresh_soon', 'roas'].includes(statusFilter) || sortBy === 'cpl' || sortBy === 'roas' || metricFilter.value !== ''))) ? (
+        {(loadingAdsets || (bulkInsightsLoading && (['flagged', 'has_spend', 'top_performers', 'refresh_soon', 'over_max', 'under_max', 'no_max', 'roas'].includes(statusFilter) || sortBy === 'cpl' || sortBy === 'roas' || sortBy === 'over_max' || metricFilter.value !== ''))) ? (
           <div className="p-8 text-center text-gray-400 text-sm flex items-center justify-center gap-2">
             <RefreshCw size={14} className="animate-spin" /> Loading…
           </div>
@@ -3125,15 +3179,15 @@ export default function CampaignPerformance() {
           </div>
         ) : (
           <div>
-            <div className="grid grid-cols-[minmax(300px,1fr)_96px_84px_96px_96px_86px_124px] px-6 py-1.5 border-b border-slate-200 bg-slate-50 text-[10px] font-semibold uppercase tracking-wide text-gray-400 sticky top-0 z-10">
+            <div className="sticky top-0 z-10 grid min-w-[1000px] grid-cols-[minmax(300px,1fr)_96px_84px_96px_96px_96px_86px_124px] border-b border-slate-200 bg-slate-50 px-6 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
               <div />
-              {['Spend', 'Leads', 'CPL', 'ROAS'].map(col => (
+              {['Spend', 'Leads', 'CPL', 'ROAS', 'Profit'].map(col => (
                 <div key={col} className="border-l border-slate-200 px-3 text-right">{col}</div>
               ))}
               <div />
               <div className="border-l border-slate-200 px-3 text-right">Budget</div>
             </div>
-            <div className="grid grid-cols-[minmax(300px,1fr)_96px_84px_96px_96px_86px_124px] px-6 py-3 border-b border-indigo-100 bg-indigo-50/60 text-left">
+            <div className="sticky top-0 z-20 grid min-w-[1000px] grid-cols-[minmax(300px,1fr)_96px_84px_96px_96px_96px_86px_124px] border-b border-indigo-100 bg-indigo-50/95 px-6 py-3 text-left backdrop-blur">
               <div className="flex items-center gap-2 min-w-0 pr-4">
                 <span className="font-semibold text-gray-900 text-sm">Visible total</span>
                 <span className="text-xs text-gray-500">
@@ -3145,6 +3199,7 @@ export default function CampaignPerformance() {
                 ['Leads', bulkInsightsLoading ? '--' : formatNumberCell(visibleSummary.totalLeads)],
                 ['CPL', bulkInsightsLoading ? '--' : formatMoneyCell(visibleSummary.cpl, 2)],
                 ['ROAS', bulkInsightsLoading ? '--' : formatRoasCell(visibleSummary.rtRoas)],
+                ['Profit', bulkInsightsLoading ? '--' : formatMoneyCell(visibleSummary.profit)],
               ].map(([label, value]) => (
                 <div key={label} className="border-l border-indigo-100 px-3 text-right">
                   <span className="text-sm font-bold text-gray-900">{value}</span>
@@ -3158,15 +3213,15 @@ export default function CampaignPerformance() {
                 <div className="text-[10px] text-gray-400 uppercase tracking-wide">Daily</div>
               </div>
             </div>
-            {groupedCampaigns.map(group => {
-              const isCampaignOpen = !collapsedCampaigns.has(group.key);
+            {renderedGroups.map(group => {
+              const isCampaignOpen = !groupByCampaign || !collapsedCampaigns.has(group.key);
               const activeCount = group.adsets.filter(isActiveDelivery).length;
 
               return (
                 <div key={group.key} className="border-b border-gray-100 last:border-b-0">
-                  <div
+                  {groupByCampaign && <div
                     onClick={() => toggleCampaign(group.key)}
-                    className="w-full grid grid-cols-[minmax(300px,1fr)_96px_84px_96px_96px_86px_124px] px-6 py-3 bg-slate-100/80 hover:bg-slate-100 transition-colors text-left border-b border-slate-200 border-l-4 border-l-slate-500"
+                    className="grid w-full min-w-[1000px] grid-cols-[minmax(300px,1fr)_96px_84px_96px_96px_96px_86px_124px] border-b border-l-4 border-slate-200 border-l-slate-500 bg-slate-100/80 px-6 py-3 text-left transition-colors hover:bg-slate-100"
                     role="button"
                     tabIndex={0}
                     onKeyDown={e => {
@@ -3181,7 +3236,7 @@ export default function CampaignPerformance() {
                         ? <ChevronDown size={16} className="text-gray-500 flex-shrink-0" />
                         : <ChevronRight size={16} className="text-gray-500 flex-shrink-0" />
                       }
-                      <span className="font-semibold text-gray-800 text-sm truncate">{group.campaignName}</span>
+                      <button type="button" className="truncate text-left text-sm font-semibold text-gray-800 hover:text-indigo-700 hover:underline" onClick={event => { event.stopPropagation(); drillCampaign(group); }}>{group.campaignName}</button>
                       {group.campaignStatus && (
                         <span aria-hidden="true" className={`flex-shrink-0 text-xs px-2 py-0.5 rounded border font-medium ${
                           group.campaignStatus === 'ACTIVE'
@@ -3200,6 +3255,7 @@ export default function CampaignPerformance() {
                       ['Leads', bulkInsightsLoading ? '--' : formatNumberCell(group.totalLeads)],
                       ['CPL', bulkInsightsLoading ? '--' : formatMoneyCell(group.cpl, 2)],
                       ['ROAS', bulkInsightsLoading ? '--' : formatRoasCell(group.rtRoas)],
+                      ['Profit', bulkInsightsLoading ? '--' : formatMoneyCell(group.revenueSeen ? group.totalRevenue - group.totalSpend : null)],
                     ].map(([label, value]) => (
                       <div key={label} className="border-l border-slate-200 px-3 text-right">
                         <span className="text-sm font-semibold text-gray-800">{value}</span>
@@ -3330,14 +3386,14 @@ export default function CampaignPerformance() {
                         </div>
                       )}
                     </div>
-                  </div>
+                  </div>}
 
                   {isCampaignOpen && (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
+                    <div>
+                      <table className="w-full min-w-[960px] text-sm">
                         <thead className="bg-white border-b border-gray-100 sticky top-0 z-10">
                           <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-                            <th className="px-6 py-2.5 min-w-[200px] max-w-[260px]">Ad Set Name</th>
+                            <th className="sticky left-0 z-20 min-w-[220px] max-w-[280px] bg-white px-6 py-2.5">Ad Set Name</th>
                             <th className="px-3 py-2.5">Status</th>
                             <th className="px-3 py-2.5">
                               <span className="flex items-center gap-1">
@@ -3354,8 +3410,8 @@ export default function CampaignPerformance() {
                             <th className="px-3 py-2.5 text-right">Max CPL</th>
                             <th className="px-3 py-2.5 text-right">ROAS</th>
                             <th className="px-3 py-2.5 text-right">Profit</th>
-                            <th className="px-3 py-2.5">Brand</th>
-                            <th className="px-6 py-2.5 text-right">Actions</th>
+                            <th className="px-3 py-2.5 min-[1800px]:group-data-[rail=open]/perf:hidden">Brand</th>
+                            <th className="sticky right-0 z-10 bg-white px-3 py-2.5 text-right shadow-[-6px_0_6px_-6px_rgba(0,0,0,0.12)]">Actions</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
@@ -3365,7 +3421,10 @@ export default function CampaignPerformance() {
                             const isPausingAdset = pausingAdsets.has(adset.fb_adset_id);
                             const d = bulkInsights?.[adset.fb_adset_id];
                             const maxCpl = maxCplData?.available ? maxCplData.adsets?.[adset.fb_adset_id] : null;
-                            const cplClass = maxCpl?.max_cpl != null && d?.cpl != null ? (d.cpl <= maxCpl.max_cpl * 0.85 ? 'text-emerald-700' : d.cpl <= maxCpl.max_cpl ? 'text-amber-700' : 'text-red-600') : cplCellClass(d?.cpl);
+                            const rowGoalBucket = maxCplBucket(d, maxCpl, maxCplData?.available !== false);
+                            const cplClass = Number(d?.leads || 0) === 0 && Number(d?.spend || 0) > 0
+                              ? rowGoalBucket === 'over_max' ? 'text-red-600' : 'text-gray-400'
+                              : maxCpl?.max_cpl != null && d?.cpl != null ? (d.cpl <= maxCpl.max_cpl * 0.85 ? 'text-emerald-700' : d.cpl <= maxCpl.max_cpl ? 'text-amber-700' : 'text-red-600') : cplCellClass(d?.cpl);
                             const rt = d?.redtrack;
                             const rowRoas = rt?.roas ?? d?.roas ?? null;
                             const rowProfit = rt?.profit ?? null;
@@ -3399,16 +3458,16 @@ export default function CampaignPerformance() {
                                   }}
                                   className={`group transition-colors ${effectiveStatus === 'PAUSED' ? 'opacity-60' : ''} ${isHighlighted ? 'bg-indigo-50' : 'hover:bg-gray-50/70'}`}
                                 >
-                                  <td className={`px-6 py-3 align-middle ${isHighlighted ? 'border-l-4 border-indigo-500' : ''}`}>
+                                  <td className={`sticky left-0 z-10 max-w-[280px] overflow-hidden bg-white px-6 py-3 align-middle ${isHighlighted ? 'border-l-2 border-indigo-500 !bg-indigo-50' : ''}`}>
                                     <button
                                       onClick={toggleExpand}
-                                      className="flex items-center gap-2 min-w-0 text-left"
+                                      className="flex max-w-full items-center gap-2 min-w-0 text-left"
                                       title="Show creative breakdown (loaded on demand)"
                                     >
                                       <span className="flex-shrink-0 text-gray-400">
                                         {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                       </span>
-                                      <span className="font-medium text-gray-900 truncate" title={adset.name}>{adset.name}</span>
+                                      <span className="min-w-0"><span className="block truncate font-medium text-gray-900" title={adset.name}>{adset.name}</span>{!groupByCampaign && <span className="block truncate text-[11px] font-normal text-gray-400">{adset.campaign_name || 'Other'}</span>}</span>
                                       {isRefreshCandidate && (
                                         <span
                                           className="flex-shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
@@ -3430,9 +3489,9 @@ export default function CampaignPerformance() {
                                     </button>
                                   </td>
                                   <td className="px-3 py-3 align-middle">
-                                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-                                      effectiveStatus === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                                    }`}>{effectiveStatus}</span>
+                                    <span className={`whitespace-nowrap rounded px-1.5 py-0.5 text-xs font-medium ${
+                                      effectiveStatusLabel(adset) === 'Active' ? 'bg-green-100 text-green-700' : effectiveStatusLabel(adset) === 'Paused (campaign)' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'
+                                    }`}>{effectiveStatusLabel(adset)}</span>
                                   </td>
                                   <td className="px-3 py-3 align-middle">
                                     <div className="flex items-center">
@@ -3493,7 +3552,7 @@ export default function CampaignPerformance() {
                                   </td>
                                   <td className="px-3 py-3 text-right font-medium text-gray-800 align-middle">{bulkInsightsLoading && !d ? '--' : formatMoneyCell(d?.spend)}</td>
                                   <td className="px-3 py-3 text-right text-gray-700 align-middle">{bulkInsightsLoading && !d ? '--' : formatNumberCell(d?.leads)}</td>
-                                  <td className={`px-3 py-3 text-right font-semibold align-middle ${cplClass}`}>{bulkInsightsLoading && !d ? '--' : formatMoneyCell(d?.cpl, 2)}</td>
+                                  <td className={`px-3 py-3 text-right font-semibold align-middle ${cplClass}`}>{bulkInsightsLoading && !d ? '--' : Number(d?.spend || 0) > 0 && Number(d?.leads || 0) === 0 ? '0 leads' : formatMoneyCell(d?.cpl, 2)}</td>
                                   <td className="px-3 py-3 text-right align-middle" title={maxCpl ? (maxCpl.source === 'acct_avg' ? `${maxCpl.niche}: under 40 leads in 30 days, so this uses the account average (${formatMoneyCell(maxCpl.rpl, 2)}/lead).` : `${maxCpl.niche} leads earned ${formatMoneyCell(maxCpl.rpl, 2)} each over 30 days. At your ${maxCplData.target_roas}x goal, max CPL is ${formatMoneyCell(maxCpl.max_cpl, 2)}.`) : undefined}>{maxCplLoading ? '…' : maxCpl?.max_cpl != null ? <>{formatMoneyCell(maxCpl.max_cpl, 2)} {maxCpl.source === 'acct_avg' && <span className="ml-1 rounded bg-gray-100 px-1 text-[10px] text-gray-500">acct avg</span>}</> : '—'}</td>
                                   <td className={`px-3 py-3 text-right font-semibold align-middle ${roasCellClass(rowRoas)}`}>
                                     {bulkInsightsLoading && !d ? '--' : (
@@ -3504,7 +3563,7 @@ export default function CampaignPerformance() {
                                     )}
                                   </td>
                                   <td className={`px-3 py-3 text-right font-semibold align-middle ${profitCellClass(rowProfit)}`}>{bulkInsightsLoading && !d ? '--' : formatMoneyCell(rowProfit)}</td>
-                                  <td className="px-3 py-3 align-middle">
+                                  <td className="px-3 py-3 align-middle min-[1800px]:group-data-[rail=open]/perf:hidden">
                                     <span className="relative inline-block" onClick={e => e.stopPropagation()}>
                                       <select
                                         value={cb?.brand_id || ''}
@@ -3513,7 +3572,7 @@ export default function CampaignPerformance() {
                                           const selected = brands.find(b => b.id === e.target.value);
                                           assignBrandToAdset(adset.id, e.target.value || null, selected?.name || null);
                                         }}
-                                        className={`text-xs px-2 py-0.5 rounded-full border cursor-pointer appearance-none pr-5 max-w-[160px] ${
+                                        className={`text-xs px-2 py-0.5 rounded-full border cursor-pointer appearance-none pr-5 max-w-[130px] ${
                                           cb ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-blue-300'
                                         } disabled:opacity-50`}
                                         title="Assign brand to this ad set"
@@ -3524,7 +3583,7 @@ export default function CampaignPerformance() {
                                       {cb && <Tag size={9} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" />}
                                     </span>
                                   </td>
-                                  <td className="px-6 py-3 align-middle">
+                                  <td className={`sticky right-0 z-10 px-3 py-3 align-middle shadow-[-6px_0_6px_-6px_rgba(0,0,0,0.12)] ${isHighlighted ? "bg-indigo-50" : "bg-white"}`}>
                                     <div className="flex justify-end items-center gap-1.5">
                                       <button
                                         onClick={() => navigate(`/batch-generate?adsetName=${encodeURIComponent(adset.name)}&adsetId=${encodeURIComponent(adset.fb_adset_id || '')}&campaignId=${encodeURIComponent(adset.fb_campaign_id || '')}`)}
@@ -3647,8 +3706,10 @@ export default function CampaignPerformance() {
           </div>
         )}
       </div>
-
-      </div>{/* end space-y-4 card wrapper */}
+      {proposalsOpen && <aside className="fixed inset-0 z-40 bg-black/30 min-[1800px]:sticky min-[1800px]:top-28 min-[1800px]:z-20 min-[1800px]:h-[calc(100vh-8rem)] min-[1800px]:w-80 min-[1800px]:flex-none min-[1800px]:bg-transparent" onMouseDown={event => { if (event.target === event.currentTarget && window.innerWidth < 1800) toggleProposals(false); }}><div className="ml-auto h-full w-full max-w-sm min-[1800px]:max-w-none"><ProposalsPanel layout="rail" onClose={() => toggleProposals(false)} onPendingCountChange={setProposalCount} onAdsetJump={jumpToProposalRow} /></div></aside>}
+      {!proposalsOpen && <div className="hidden"><ProposalsPanel layout="rail" onPendingCountChange={setProposalCount} /></div>}
+      </div>
+      </div>}
     </div>
 
     {/* ── Add Rule Modal ───────────────────────────────────────────────────── */}

@@ -61,6 +61,17 @@ describe('ProposalsPanel', () => {
         expect(screen.getByText('Approve — pause ad set')).toBeInTheDocument();
     });
 
+    it('renders the compact rail layout and jumps from the ad-set name', async () => {
+        const onAdsetJump = vi.fn();
+        authFetch.mockResolvedValue(response(openPayload()));
+        render(<ProposalsPanel layout="rail" onAdsetJump={onAdsetJump} />);
+        const panel = await screen.findByTestId('proposals-panel');
+        expect(panel).toHaveAttribute('data-layout', 'rail');
+        fireEvent.click(screen.getByRole('button', { name: 'Churches - Batch 3' }));
+        expect(onAdsetJump).toHaveBeenCalledWith(expect.objectContaining({ fb_adset_id: 'adset-1' }));
+        expect(screen.queryByText('Hide the numbers')).not.toBeInTheDocument();
+    });
+
     it('shows the stale explanation after approval', async () => {
         authFetch.mockImplementation((url, options = {}) => {
             if (url.endsWith('/events')) return Promise.resolve(response({}, true, 204));

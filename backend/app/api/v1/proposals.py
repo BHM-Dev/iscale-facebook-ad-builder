@@ -117,7 +117,7 @@ class EventBody(BaseModel):
     props: Optional[dict] = None
 
 
-_CLIENT_EVENTS = {"proposal_viewed", "proposal_evidence_expanded", "ads_manager_opened", "proposal_tab_viewed"}
+_CLIENT_EVENTS = {"proposal_viewed", "proposal_evidence_expanded", "ads_manager_opened", "proposal_tab_viewed", "proposal_rail_toggled", "proposal_row_jumped"}
 
 
 @router.post("/events", status_code=204)

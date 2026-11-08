@@ -97,8 +97,9 @@ function Evidence({ proposal, onExpanded }) {
     );
 }
 
-function ProposalCard({ proposal, accountName, dismissReasons, onApprove, onDismiss, onEvent, busy, anyBusy }) {
+function ProposalCard({ proposal, accountName, dismissReasons, onApprove, onDismiss, onEvent, busy, anyBusy, layout = 'panel', onAdsetJump }) {
     const [dismissOpen, setDismissOpen] = useState(false);
+    const [whyExpanded, setWhyExpanded] = useState(false);
     const [reason, setReason] = useState('');
     const [note, setNote] = useState('');
     const pause = proposal.action === 'pause';
@@ -111,24 +112,31 @@ function ProposalCard({ proposal, accountName, dismissReasons, onApprove, onDism
     const locked = stale || proposal.status === 'executing';
     const dismissDisabled = !reason || (reason === 'Other' && !note.trim()) || busy;
     const adsManagerUrl = `https://adsmanager.facebook.com/adsmanager/manage/adsets?act=${String(proposal.fb_account_id || '').replace(/^act_/, '')}&selected_adset_ids=${encodeURIComponent(proposal.fb_adset_id || '')}`;
+    const isRail = layout === 'rail';
+    const lastEvidenceDay = proposal.evidence?.days?.at(-1)?.day;
+    const dataThrough = lastEvidenceDay
+        ? new Date(`${lastEvidenceDay}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+        : null;
 
     return (
-        <article className="border-b border-gray-100 p-4 last:border-b-0" data-testid={`proposal-${proposal.id}`}>
+        <article className={`border-b border-gray-100 last:border-b-0 ${isRail ? 'p-3' : 'p-4'}`} data-testid={`proposal-${proposal.id}`}>
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                 <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold tracking-wide ${pause ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
                     {pause ? 'PAUSE' : 'RAISE BUDGET'}
                 </span>
-                <span className="font-semibold text-gray-900">{proposal.adset_name}</span>
-                <span className="ml-auto text-xs text-gray-400">{accountName || proposal.fb_account_id} · {(proposal.trigger_labels || []).join(' + ')} · {relativeAge(proposal.created_at)}</span>
+                {isRail ? <button type="button" className="min-w-0 text-left font-semibold text-gray-900 hover:text-indigo-700 hover:underline" onClick={() => onAdsetJump?.(proposal)}>{proposal.adset_name}</button> : <span className="font-semibold text-gray-900">{proposal.adset_name}</span>}
+                {!isRail && <span className="ml-auto text-xs text-gray-400">{accountName || proposal.fb_account_id} · {(proposal.trigger_labels || []).join(' + ')} · {relativeAge(proposal.created_at)}</span>}
             </div>
-            <p className="mt-1 text-sm text-gray-600">{proposal.evidence?.why}</p>
+            <p className={`mt-1 text-sm text-gray-600 ${isRail && !whyExpanded ? 'line-clamp-2' : ''}`}>{proposal.evidence?.why}</p>
+            {isRail && <button type="button" className="mt-0.5 text-[11px] font-semibold text-indigo-600" onClick={() => setWhyExpanded(expanded => !expanded)}>{whyExpanded ? 'Less' : 'More'}</button>}
 
-            <div className="mt-2"><Evidence proposal={proposal} onExpanded={() => onEvent('proposal_evidence_expanded', proposal.id)} /></div>
+            {!isRail && <div className="mt-2"><Evidence proposal={proposal} onExpanded={() => onEvent('proposal_evidence_expanded', proposal.id)} /></div>}
 
             <div className="my-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-600">
                 <span>Current: <b className="text-gray-900">{current.status || '—'}{current.daily_budget_cents != null ? ` · ${money(current.daily_budget_cents / 100)}/day` : ''}</b></span>
                 <span>Proposed: <b className="text-gray-900">{pause ? 'PAUSE' : `${money(raiseTo)}/day${raisePct != null ? ` (+${raisePct}%)` : ''}`}</b></span>
             </div>
+            {isRail && <p className="mb-3 text-[11px] text-gray-400">{dataThrough ? `Data through ${dataThrough} · ` : ''}proposed {relativeAge(proposal.created_at)}</p>}
 
             {stale && <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{proposal.status_reason || 'This ad set changed since the proposal. Nothing was sent.'}</div>}
             {failedMessage && (
@@ -170,7 +178,7 @@ function ProposalCard({ proposal, accountName, dismissReasons, onApprove, onDism
     );
 }
 
-export default function ProposalsPanel() {
+export default function ProposalsPanel({ layout = 'panel', onClose, onPendingCountChange, onAdsetJump }) {
     const { adAccounts = [] } = useCampaign();
     const { showError, showSuccess, showInfo } = useToast();
     const [payload, setPayload] = useState(null);
@@ -232,12 +240,16 @@ export default function ProposalsPanel() {
 
     useEffect(() => { event('proposal_tab_viewed', null, { tab }); }, [event, tab]);
 
+    const pendingCount = proposals.filter(item => ['open', 'executing', 'failed'].includes(item.status)).length;
+    useEffect(() => { onPendingCountChange?.(pendingCount); }, [onPendingCountChange, pendingCount]);
+
     const accountNames = useMemo(() => new Map(adAccounts.map(account => [accountId(account), account.name || account.account_name || account.label])), [adAccounts]);
     if (payload?.visible === false) return null;
     if (loading && !payload) return null;
     if (!payload) return null;
 
     const unavailable = Object.values(payload.accounts || {}).some(account => account.revenue_available === false);
+    const lastRunAt = Object.values(payload.accounts || {}).map(account => account.at).filter(Boolean).sort().at(-1);
     const approve = async proposal => {
         setBusyId(proposal.id);
         try {
@@ -282,19 +294,20 @@ export default function ProposalsPanel() {
     };
 
     return (
-        <section ref={sectionRef} id="proposals" className="scroll-mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm" data-testid="proposals-panel">
-            <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 px-4 py-3">
-                <h2 className="text-sm font-semibold text-gray-900">Proposals ({proposals.filter(item => ['open', 'executing', 'failed'].includes(item.status)).length})</h2>
+        <section ref={sectionRef} id="proposals" className={`scroll-mt-4 border border-gray-200 bg-white shadow-sm ${layout === 'rail' ? 'h-full overflow-y-auto rounded-none min-[1800px]:rounded-xl' : 'overflow-hidden rounded-xl'}`} data-testid="proposals-panel" data-layout={layout}>
+            <div className={`flex flex-wrap items-center gap-2 border-b border-gray-200 px-4 py-3 ${layout === 'rail' ? 'sticky top-0 z-10 bg-white' : ''}`}>
+                <h2 className="text-sm font-semibold text-gray-900">Proposals ({pendingCount})</h2>
                 <div className="ml-auto flex flex-wrap gap-1">
-                    {TABS.map(item => <button key={item.key} type="button" className={`rounded-md border px-2.5 py-1 text-xs ${tab === item.key ? 'border-gray-200 bg-gray-100 font-semibold text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-900'}`} onClick={() => setTab(item.key)}>{item.label}</button>)}
+                    {TABS.map(item => <button key={item.key} type="button" className={`rounded-md border px-2.5 py-1 text-xs ${tab === item.key ? 'border-gray-200 bg-gray-100 font-semibold text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-900'} ${layout === 'rail' && item.key === 'stats' ? 'hidden' : ''}`} onClick={() => setTab(item.key)}>{layout === 'rail' && item.key === 'history' ? 'History' : item.label}</button>)}
+                    {layout === 'rail' && <button type="button" className="rounded-md border border-transparent px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-900" onClick={onClose} aria-label="Close proposals">×</button>}
                 </div>
             </div>
             {payload.shadow && <div className="border-b border-gray-100 px-4 py-2.5 text-xs text-gray-600">Shadow week: only you can see these. Joel and Abel don't see this panel yet.</div>}
             <div className={`border-b border-gray-100 px-4 py-2.5 text-xs ${unavailable ? 'bg-amber-50 text-amber-800' : 'text-gray-600'}`}>
                 {unavailable ? 'Revenue source unavailable — no new proposals until revenue data is back. Missing revenue is never treated as $0.' : 'Nothing changes in Meta until someone approves. Existing auto-pause rules are unchanged.'}
             </div>
-            {tab === 'open' && (proposals.length === 0 ? <div className="px-4 py-7 text-center text-sm text-gray-400">No proposals right now. The next check runs within the hour.</div> : proposals.map(proposal => (
-                <ProposalCard key={proposal.id} proposal={proposal} accountName={accountNames.get(accountId({ id: proposal.fb_account_id })) || accountNames.get(String(proposal.fb_account_id || '').replace(/^act_/, ''))} dismissReasons={payload.dismiss_reasons || []} onApprove={approve} onDismiss={dismiss} onEvent={event} busy={busyId === proposal.id} anyBusy={busyId !== null} />
+            {tab === 'open' && (proposals.length === 0 ? <div className="px-4 py-7 text-center text-sm text-gray-400">{layout === 'rail' ? `No proposals. Rules ran ${lastRunAt ? relativeAge(lastRunAt) : 'within the hour'}.` : 'No proposals right now. The next check runs within the hour.'}</div> : proposals.map(proposal => (
+                <ProposalCard key={proposal.id} proposal={proposal} accountName={accountNames.get(accountId({ id: proposal.fb_account_id })) || accountNames.get(String(proposal.fb_account_id || '').replace(/^act_/, ''))} dismissReasons={payload.dismiss_reasons || []} onApprove={approve} onDismiss={dismiss} onEvent={event} busy={busyId === proposal.id} anyBusy={busyId !== null} layout={layout} onAdsetJump={onAdsetJump} />
             )))}
             {tab === 'history' && <HistoryTable rows={history} />}
             {tab === 'stats' && <StatsTable stats={stats} />}
