@@ -453,8 +453,18 @@ class EverflowService:
 
     def _fetch_window(self, window_start: date, window_end: date, timezone_id: int) -> tuple[list[dict], int | None]:
         # Windows are now fetched several at a time, so a 429 is retried briefly instead of failing the whole pull.
+        # Switchboard's API also hangs intermittently: on 2026-11-10 the same 7-day window timed out at 30s, then
+        # returned in 2.6s on the next call. One hang must not take Max CPL / Daily Close / P&L down, so a timeout
+        # is retried too (each attempt is bounded by _post_window's timeout).
         for attempt in range(3):
-            resp = self._post_window(window_start, window_end, timezone_id)
+            try:
+                resp = self._post_window(window_start, window_end, timezone_id)
+            except (httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
+                if attempt == 2:
+                    raise
+                logger.warning("Switchboard Everflow %s..%s timed out (attempt %d); retrying: %s",
+                               window_start, window_end, attempt + 1, exc)
+                continue
             if resp.status_code != 429 or attempt == 2:
                 break
             time.sleep(2 * (attempt + 1))
@@ -479,7 +489,8 @@ class EverflowService:
                 "show_events": True,
                 "query": {"filters": []},
             },
-            timeout=30,
+            # 20s per attempt: a normal week returns in ~2-3s, and _fetch_window retries a hang.
+            timeout=httpx.Timeout(20.0, connect=5.0),
         )
 
     @staticmethod
