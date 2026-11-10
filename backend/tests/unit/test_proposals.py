@@ -43,12 +43,11 @@ def test_no_revenue_spend_fires():
     assert ev["current"] == {"status": "ACTIVE", "daily_budget_cents": 7500}
 
 
-def test_no_revenue_first_day_says_so():
-    """Replay 2026-11-02: first-day no-revenue ad sets lost money over the next 7 days 93% of the
-    time, so they stay proposed; the reason just mustn't claim 3 days of history."""
-    first = _eval([(0, 0, 0)] * 6 + [(65, 0, 0)])
-    assert first[0]["trigger_keys"] == ["no_revenue_spend"]
-    assert first[0]["evidence"]["why"] == "Spent $65 today, its first spend in 7+ days, with no revenue yet"
+def test_no_revenue_first_day_is_not_proposed():
+    """Disabled 2026-11-10 (Steve). Shadow week Nov 2-10: 19 ad sets flagged on their first day back made
+    +$430 over the next 3 days in total; most lost a little, a few became the biggest earners, and pausing
+    on day one cuts those off before revenue can land. (The 2026-11-02 replay counted losers, not dollars.)"""
+    assert _eval([(0, 0, 0)] * 6 + [(65, 0, 0)]) == []
     restarted = _eval([(0, 0, 0)] * 2 + [(40, 1, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (55, 0, 0)])
     assert restarted[0]["evidence"]["why"] == "Spent $55 today with no revenue in 3 days"
     steady = _eval([(0, 0, 0)] * 4 + [(40, 2, 0), (40, 2, 0), (55, 3, 0)])
@@ -231,10 +230,16 @@ def test_shadow_visibility(monkeypatch):
     monkeypatch.setenv("PROPOSALS_SHADOW", "true")
     monkeypatch.setenv("PROPOSALS_SHADOW_VIEWERS", "steve@x.com")
     assert ps.can_view(U())
+    assert ps.visible_actions(U()) is None              # shadow viewer sees every action
     U.email = "joel@x.com"
-    assert not ps.can_view(U())
+    monkeypatch.setenv("PROPOSALS_PUBLIC_ACTIONS", "")
+    assert not ps.can_view(U())                         # nothing public: buyers see nothing
+    monkeypatch.setenv("PROPOSALS_PUBLIC_ACTIONS", "budget_increase")
+    assert ps.can_view(U()) and ps.visible_actions(U()) == {"budget_increase"}   # raises only, no pauses
+    monkeypatch.delenv("PROPOSALS_PUBLIC_ACTIONS")
+    assert ps.visible_actions(U()) == {"budget_increase"}                         # the shipped default
     monkeypatch.setenv("PROPOSALS_SHADOW", "false")
-    assert ps.can_view(U())
+    assert ps.can_view(U()) and ps.visible_actions(U()) is None
 
 
 # ---------------------------------------------------------------- shadow comparison

@@ -26,7 +26,10 @@ def _require_view(user: User) -> None:
 
 def _scoped(query, user: User):
     accounts = _viewer_accounts(user)
-    return query if accounts is None else query.filter(ActionProposal.fb_account_id.in_(accounts))
+    if accounts is not None:
+        query = query.filter(ActionProposal.fb_account_id.in_(accounts))
+    actions = ps.visible_actions(user)
+    return query if actions is None else query.filter(ActionProposal.action.in_(actions))
 
 
 @router.get("")
@@ -38,7 +41,10 @@ def list_open(db: Session = Depends(get_db), current_user: User = Depends(get_cu
         ActionProposal.status.in_(["open", "executing", "failed"])).order_by(ActionProposal.created_at.desc()).all()
     scope = _viewer_accounts(current_user)
     runs = {a: r for a, r in ps.LAST_RUN.items() if scope is None or a in scope}
-    return {"visible": True, "shadow": ps.shadow_mode(), "proposals": [ps.serialize(p) for p in rows],
+    # "shadow" now means: this viewer also sees action types the buyers don't (pauses).
+    shadow = ps.shadow_mode() and ps.visible_actions(current_user) is None
+    return {"visible": True, "shadow": shadow, "public_actions": sorted(ps.public_actions()),
+            "proposals": [ps.serialize(p) for p in rows],
             "accounts": runs, "dismiss_reasons": list(ps.DISMISS_REASONS)}
 
 
@@ -86,6 +92,10 @@ def _load_for_decision(db: Session, proposal_id: str, user: User) -> ActionPropo
     if not p:
         raise HTTPException(status_code=404, detail="Proposal not found")
     _assert_account_allowed(user, p.fb_account_id)
+    actions = ps.visible_actions(user)
+    if actions is not None and p.action not in actions:
+        # A hidden action type can't be decided by id-guessing either.
+        raise HTTPException(status_code=404, detail="Proposal not found")
     return p
 
 
@@ -125,6 +135,11 @@ def client_event(body: EventBody, db: Session = Depends(get_db), current_user: U
     """UI events (brief §6). Server-side events (created/approved/executed/...) are logged where they happen."""
     if body.event not in _CLIENT_EVENTS or not ps.can_view(current_user):
         return None
+    actions = ps.visible_actions(current_user)
+    if body.proposal_id and actions is not None:
+        hit = db.query(ActionProposal.action).filter(ActionProposal.id == body.proposal_id).first()
+        if not hit or hit[0] not in actions:
+            return None   # no events against proposal types this user can't see
     props = body.props or {}
     if len(str(props)) > 2000:
         props = {"truncated": True}
@@ -137,7 +152,10 @@ def client_event(body: EventBody, db: Session = Depends(get_db), current_user: U
 def shadow_report(account: Optional[str] = None, days: int = Query(7, ge=1, le=14),
                   db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Proposals vs. the pauses and budget raises people actually made in Meta (activity log)."""
-    _require_view(current_user)
+    # Internal comparison of every proposal type (pauses included) and every buyer's own actions:
+    # shadow viewers only, even now that budget raises are public.
+    if ps.visible_actions(current_user) is not None:
+        raise HTTPException(status_code=403, detail="The shadow report is limited to shadow viewers.")
     accounts = [normalize_account_id(account)] if account else ps.proposal_accounts()
     out = []
     for a in accounts:

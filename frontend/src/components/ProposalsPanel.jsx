@@ -302,7 +302,7 @@ export default function ProposalsPanel({ layout = 'panel', onClose, onPendingCou
                     {layout === 'rail' && <button type="button" className="rounded-md border border-transparent px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-900" onClick={onClose} aria-label="Close proposals">×</button>}
                 </div>
             </div>
-            {payload.shadow && <div className="border-b border-gray-100 px-4 py-2.5 text-xs text-gray-600">Shadow week: only you can see these. Joel and Abel don't see this panel yet.</div>}
+            {payload.shadow && <div className="border-b border-gray-100 px-4 py-2.5 text-xs text-gray-600">{(payload.public_actions || []).includes('budget_increase') ? 'Budget raises are live for Joel and Abel. Pause proposals are still visible only to you.' : 'Shadow week: only you can see these. Joel and Abel don\'t see this panel yet.'}</div>}
             <div className={`border-b border-gray-100 px-4 py-2.5 text-xs ${unavailable ? 'bg-amber-50 text-amber-800' : 'text-gray-600'}`}>
                 {unavailable ? 'Revenue source unavailable — no new proposals until revenue data is back. Missing revenue is never treated as $0.' : 'Nothing changes in Meta until someone approves. Existing auto-pause rules are unchanged.'}
             </div>

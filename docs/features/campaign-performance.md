@@ -64,6 +64,7 @@ API: `backend/app/api/v1/{facebook,auto_pause}.py`; Meta calls: `backend/app/ser
 - Status overrides (local optimistic state) are not cleared by Sync.
 
 ## Changelog (newest first)
+- 2026-11-10 Proposals: budget raises are now visible to and approvable by Joel and Abel (`PROPOSALS_PUBLIC_ACTIONS`, default `budget_increase`; set it to empty to hide again). Pause proposals and the shadow report stay with shadow viewers. The "first spend in 7+ days, no revenue yet" pause trigger is disabled: in the Nov 2-10 shadow week those 19 ad sets made +$430 over the next 3 days. Do not add `pause` to the public list without re-checking that data.
 - 2026-11-10 Winning ads tab (`GET /winners`): creatives ranked by est. profit = leads × niche revenue-per-lead − spend (ads with no rpl excluded, row marked partial), 10-lead floor, Creative/Concept/Headline grouping, RedTrack revenue secondary. Relaunch opens Launch Ads at the Campaign step (never the last-used ad set) with the Drive file preselected; multi-niche concept rows can't relaunch as a group. *Verified on prod data (scratch run): 35/563 creatives ranked over 14d, est. profit reconciled by hand; 26/35 relaunchable, the rest are no longer in Drive.*
 - 2026-11-07 Layout pass: close strip, tabs, sticky toolbar + chips, Max CPL goal line, proposals rail, total row, effective status, group-by toggle (Codex build; Claude review fixes for deep-link state, rail width, RT-missing profit).
 - 2026-10-07 live-verified the 409 large-change guard on a paused ad set (see Verified).

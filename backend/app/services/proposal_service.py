@@ -60,11 +60,24 @@ def shadow_viewers() -> set[str]:
     return {e.strip().lower() for e in os.getenv("PROPOSALS_SHADOW_VIEWERS", "").split(",") if e.strip()}
 
 
+def public_actions() -> set[str]:
+    """Proposal actions shown to everyone while shadow mode is on (Steve, 2026-11-10: budget raises went live
+    after the shadow-week check; pauses stay with the shadow viewers). Comma list; empty hides everything."""
+    raw = os.getenv("PROPOSALS_PUBLIC_ACTIONS", "budget_increase")
+    return {a.strip() for a in raw.split(",") if a.strip()}
+
+
+def visible_actions(user) -> set[str] | None:
+    """None = every action. Shadow viewers (and everyone once shadow mode is off) see all of them."""
+    if not shadow_mode() or (getattr(user, "email", "") or "").lower() in shadow_viewers():
+        return None
+    return public_actions()
+
+
 def can_view(user) -> bool:
-    """Shadow week: only the listed viewers see proposals. After go-live, anyone with account access."""
-    if not shadow_mode():
-        return True
-    return (getattr(user, "email", "") or "").lower() in shadow_viewers()
+    """Shadow viewers see everything; everyone else sees the public actions (if any)."""
+    actions = visible_actions(user)
+    return actions is None or bool(actions)
 
 
 def proposal_accounts() -> list[str]:
@@ -192,9 +205,13 @@ def evaluate(meta: dict, revenue: dict, live: dict, today: date, max_daily_cents
         if today_spend >= NO_REV_MIN_SPEND_TODAY and rev_lookback == 0:
             # Say what the data is: an ad set new (or restarted) today has one day of history, not three.
             spent_before = any(v.get("spend", 0.0) > 0 for d, v in series.items() if d < _day(today))
-            why = (f"Spent ${today_spend:,.0f} today, its first spend in {SCALE_DAYS}+ days, with no revenue yet"
-                   if not spent_before else f"Spent ${today_spend:,.0f} today with no revenue in {NO_REV_LOOKBACK_DAYS} days")
-            triggers.append(("no_revenue_spend", why))
+            # The "first spend in 7+ days" case is disabled (Steve, 2026-11-10). Shadow week Nov 2-10: 19 ad sets
+            # flagged on their first day back went on to make +$430 over the next 3 days. Revenue lags spend, so
+            # "no revenue yet" on day one is reporting delay, not a loser. Only an ad set that has been spending
+            # with no revenue for the whole lookback still triggers.
+            if spent_before:
+                triggers.append(("no_revenue_spend",
+                                 f"Spent ${today_spend:,.0f} today with no revenue in {NO_REV_LOOKBACK_DAYS} days"))
         if s3 >= LOSS_MIN_SPEND and (r3 - s3) <= -LOSS_MIN_LOSS:
             triggers.append(("loss_3d", f"Lost ${s3 - r3:,.0f} over the last {LOSS_DAYS} days on ${s3:,.0f} spend"))
         action, params = None, None
