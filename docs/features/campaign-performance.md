@@ -64,6 +64,7 @@ API: `backend/app/api/v1/{facebook,auto_pause}.py`; Meta calls: `backend/app/ser
 - Status overrides (local optimistic state) are not cleared by Sync.
 
 ## Changelog (newest first)
+- 2026-11-10 Winning ads tab (`GET /winners`): creatives ranked by est. profit = leads × niche revenue-per-lead − spend (ads with no rpl excluded, row marked partial), 10-lead floor, Creative/Concept/Headline grouping, RedTrack revenue secondary. Relaunch opens Launch Ads at the Campaign step (never the last-used ad set) with the Drive file preselected; multi-niche concept rows can't relaunch as a group. *Verified on prod data (scratch run): 35/563 creatives ranked over 14d, est. profit reconciled by hand; 26/35 relaunchable, the rest are no longer in Drive.*
 - 2026-11-07 Layout pass: close strip, tabs, sticky toolbar + chips, Max CPL goal line, proposals rail, total row, effective status, group-by toggle (Codex build; Claude review fixes for deep-link state, rail width, RT-missing profit).
 - 2026-10-07 live-verified the 409 large-change guard on a paused ad set (see Verified).
 - 2026-10-07 `merge_duplicate_rows.py` run in prod: merged 14 legacy duplicate campaign/ad-set row pairs, removed

@@ -401,6 +401,7 @@ const FacebookCampaignWizardInner = () => {
     // multiple niches/ad accounts and could otherwise mass-launch Drive creatives
     // into the wrong one without any visible confirmation).
     const [driveLaunchResolved, setDriveLaunchResolved] = useState(null);
+    const [driveRelaunchTarget, setDriveRelaunchTarget] = useState(null);
     const driveLaunchTimeoutRef = useRef(null);
 
     const stopDriveLaunch = (warningMessage) => {
@@ -413,13 +414,17 @@ const FacebookCampaignWizardInner = () => {
 
     useEffect(() => {
         let raw;
+        let isWinnersRelaunch = false;
         try {
-            raw = localStorage.getItem('pendingDriveLaunch');
+            raw = localStorage.getItem('pendingDriveRelaunch');
+            isWinnersRelaunch = Boolean(raw);
+            if (!raw) raw = localStorage.getItem('pendingDriveLaunch');
         } catch {
             raw = null;
         }
         if (!raw) return;
         try {
+            localStorage.removeItem('pendingDriveRelaunch');
             localStorage.removeItem('pendingDriveLaunch');
         } catch { /* non-fatal */ }
         // If Quick Ad's own pending flag is ALSO sitting in localStorage (e.g. two
@@ -434,6 +439,23 @@ const FacebookCampaignWizardInner = () => {
             quickAdRaw = null;
         }
         if (quickAdRaw) return;
+        if (isWinnersRelaunch) {
+            try {
+                const parsed = JSON.parse(raw);
+                if (!parsed?.account_id || !Array.isArray(parsed.drive_file_ids) || !parsed.drive_file_ids.length) {
+                    throw new Error('Incomplete Winners relaunch payload');
+                }
+                // A handoff from a tab that never opened (popup blocked) must not hijack a later visit.
+                if (parsed.created_at && Date.now() - Number(parsed.created_at) > 10 * 60 * 1000) {
+                    return;
+                }
+                setDriveRelaunchTarget(parsed);
+                localStorage.setItem('lastSelectedAdAccountId', parsed.account_id);
+            } catch {
+                showWarning('The Winners relaunch handoff was unreadable. Continue manually below.');
+                return;
+            }
+        }
         setDriveLaunchActive(true);
         driveLaunchTimeoutRef.current = setTimeout(() => {
             stopDriveLaunch("Couldn't auto-resolve an ad account/campaign/ad set — continue manually below.");
@@ -445,7 +467,15 @@ const FacebookCampaignWizardInner = () => {
     useEffect(() => {
         if (!driveLaunchActive) return;
         if (currentStep === 1 && selectedAdAccount) {
+            if (driveRelaunchTarget && selectedAdAccount.id !== driveRelaunchTarget.account_id) return;
             setCurrentStep(2);
+        } else if (driveRelaunchTarget && currentStep === 2) {
+            // Winners relaunch never reuses the last-used campaign/ad set: a winning Limo creative must not land
+            // in yesterday's Tree Service ad set. Stop here so the buyer picks the target; the Creative step
+            // still preselects the files from driveRelaunchTarget.
+            clearTimeout(driveLaunchTimeoutRef.current);
+            setDriveLaunchActive(false);
+            showSuccess(`Pick the campaign and ad set for ${driveRelaunchTarget.drive_file_names?.[0] || 'this winner'}${driveRelaunchTarget.drive_file_ids.length > 1 ? ` and ${driveRelaunchTarget.drive_file_ids.length - 1} more` : ''}. The creative is preselected on the Creative step.`);
         } else if (currentStep === 2 && campaignData?.fbCampaignId) {
             setCurrentStep(3);
         } else if (currentStep === 3 && adsetData?.fbAdsetId) {
@@ -459,13 +489,14 @@ const FacebookCampaignWizardInner = () => {
                 accountName: selectedAdAccount?.name || '',
                 campaignName: campaignData?.name || '',
                 adsetName: adsetData?.name || '',
+                source: driveRelaunchTarget ? 'winners' : 'drive',
             });
             setCurrentStep(4);
             clearTimeout(driveLaunchTimeoutRef.current);
             setDriveLaunchActive(false);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [driveLaunchActive, currentStep, selectedAdAccount, campaignData, adsetData]);
+    }, [driveLaunchActive, driveRelaunchTarget, currentStep, selectedAdAccount, campaignData, adsetData]);
 
     const steps = [
         { id: 1, label: 'Account', icon: CreditCard, description: 'Choose which Meta ad account to build in.' },
@@ -903,6 +934,7 @@ const FacebookCampaignWizardInner = () => {
                             selectedAccount={formData.adAccountId}
                             onAccountSelect={(id) => setFormData({ ...formData, adAccountId: id })}
                             onNext={handleNext}
+                            targetAccountId={driveRelaunchTarget?.account_id || null}
                         />
                     )}
                     {currentStep === 2 && (
@@ -938,7 +970,8 @@ const FacebookCampaignWizardInner = () => {
                                 onNext={handleNext}
                                 onBack={handleBack}
                                 mode={batchMode}
-                                preferLaunchReady={Boolean(driveLaunchResolved)}
+                                preferLaunchReady={Boolean(driveLaunchResolved) && !driveRelaunchTarget}
+                                driveRelaunch={driveRelaunchTarget}
                             />
                         </div>
                     )}

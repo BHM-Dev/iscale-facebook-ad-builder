@@ -27,6 +27,7 @@ export const hasPendingLaunchIntent = () => {
             localStorage.getItem('pendingQuickAd')
             || localStorage.getItem('pendingLaunchPack')
             || localStorage.getItem('pendingDriveLaunch')
+            || localStorage.getItem('pendingDriveRelaunch')
         );
     } catch {
         return false;

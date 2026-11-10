@@ -84,6 +84,8 @@ class RedTrackService:
             return str(d), str(d)
         if date_preset == "last_7d":
             return str(today - timedelta(days=6)), str(today)
+        if date_preset == "last_3d":
+            return str(today - timedelta(days=2)), str(today)
         if date_preset == "last_14d":
             return str(today - timedelta(days=13)), str(today)
         if date_preset == "last_30d":

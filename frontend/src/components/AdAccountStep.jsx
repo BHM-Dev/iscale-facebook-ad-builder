@@ -5,7 +5,7 @@ import { useCampaign, createDefaultCampaignData, createDefaultAdsetData } from '
 import { getAdAccounts } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 
-const AdAccountStep = ({ onNext }) => {
+const AdAccountStep = ({ onNext, targetAccountId = null }) => {
     const { showWarning } = useToast();
     const { selectedAdAccount, setSelectedAdAccount, setCampaignData, setAdsetData } = useCampaign();
     const [adAccounts, setAdAccounts] = useState([]);
@@ -17,6 +17,16 @@ const AdAccountStep = ({ onNext }) => {
     useEffect(() => {
         fetchAdAccounts();
     }, []);
+
+    useEffect(() => {
+        if (!targetAccountId || !adAccounts.length) return;
+        const target = adAccounts.find(account => account.id === targetAccountId || account.accountId === String(targetAccountId).replace(/^act_/, ''));
+        if (target && selectedAdAccount?.id !== target.id) {
+            setSelectedAdAccount(target);
+            setSearchQuery(target.name);
+            safeLocalStorageSet('lastSelectedAdAccountId', target.id);
+        }
+    }, [adAccounts, selectedAdAccount?.id, setSelectedAdAccount, targetAccountId]);
 
     const fetchAdAccounts = async () => {
         setLoadingAccounts(true);

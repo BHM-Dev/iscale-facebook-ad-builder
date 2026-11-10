@@ -67,6 +67,31 @@ _TRACKING = {"CAPI", "PIXEL"}
 _JUNK_CODES = {"TEST", "COPY", "NEW", "OLD", "DUP"}
 
 
+def concept_from_filename(name: str | None) -> str:
+    """Return the cross-niche concept key used by Campaign Performance.
+
+    Keep this byte-for-byte equivalent in intent to the frontend
+    ``conceptFromFilename`` helper: remove the naming prefix, placement suffix,
+    and version suffix, then collapse separators.  A single server-owned parser
+    prevents concept ranking from drifting from the filename shown in the UI.
+    """
+    base = re.split(r"[\\/]", str(name or ""))[-1]
+    base = re.sub(r"\.[a-z0-9]+$", "", base, flags=re.IGNORECASE)
+    base = re.sub(r"^[a-z0-9]+-[a-z0-9]+-\d+-", "", base, flags=re.IGNORECASE)
+    base = re.sub(r"-(IMG|VID)-(1x1|4x5|9x16)$", "", base, flags=re.IGNORECASE)
+    base = re.sub(r"[_\s-]+v\d+$", "", base, flags=re.IGNORECASE)
+    return re.sub(r"[_\s]+", "", base)
+
+
+def parse_adset_prefix(name: str | None) -> dict:
+    """Parse the established ``WAVE-NICHE | ANGLE`` ad-set convention."""
+    match = _ADSET_PREFIX.match((name or "").upper())
+    if not match:
+        return {"wave_code": None, "niche_code": None, "angle": None}
+    wave_code, niche_code, angle = match.groups()
+    return {"wave_code": wave_code, "niche_code": niche_code, "angle": angle}
+
+
 def campaign_niche_segment(campaign_name: str) -> str | None:
     """The first segment that isn't brand / budget type / objective / tracking / date."""
     parts = [p.strip() for p in (campaign_name or "").split("|")]

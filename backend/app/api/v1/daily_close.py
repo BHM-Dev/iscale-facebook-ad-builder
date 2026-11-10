@@ -80,7 +80,7 @@ class EventBody(BaseModel):
     props: dict | None = None
 
 
-_EVENT_PROPS = {"day", "version", "level", "matched"}
+_EVENT_PROPS = {"day", "version", "level", "matched", "group_by", "count"}
 
 
 @router.post("/event")
@@ -88,6 +88,7 @@ def event(body: EventBody, db: Session = Depends(get_db), current_user: User = D
     if body.event not in {
         "close_card_viewed", "close_copied", "close_details_opened",
         "naming_preset_saved", "naming_name_overridden", "naming_launch",
+        "winners_viewed", "winners_relaunch", "winners_iterate",
     }:
         raise HTTPException(status_code=400, detail="Unsupported close event")
     props = {k: str(v)[:40] for k, v in (body.props or {}).items() if k in _EVENT_PROPS}

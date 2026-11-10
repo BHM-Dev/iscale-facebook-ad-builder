@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, X, Loader, Trash2, Copy, BookOpen, Check, La
 import { useCampaign } from '../context/CampaignContext';
 import { getPages } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
+import { resolveDriveRelaunch } from '../lib/driveRelaunch';
 import { isValidDestinationUrl, normalizeDestinationUrl } from '../lib/destinationUrl';
 import { resolveGlobalWebsiteUrl } from '../lib/driveCreativeSelection';
 import { cropImageToAspect } from '../lib/imageCrop';
@@ -397,7 +398,7 @@ const formatReconciliationRecords = (records) => records.map(record => {
     return `${ads} (Meta: ${meta}; ${scope}; ${when})`;
 }).join(' • ');
 
-const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchReady = false }) => {
+const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchReady = false, driveRelaunch = null }) => {
     const isMatchImport = mode === 'match-import';
     const { showWarning, showError, showSuccess } = useToast();
     const { authFetch } = useAuth();
@@ -490,6 +491,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
     const [driveAssets, setDriveAssets] = useState([]);
     const [driveLibraryLoading, setDriveLibraryLoading] = useState(false);
     const [driveLibraryError, setDriveLibraryError] = useState(null);
+    const [driveLibraryLoadedOnce, setDriveLibraryLoadedOnce] = useState(false);
     const [refreshingDriveCopy, setRefreshingDriveCopy] = useState(false);
     const [selectedDriveAssetIds, setSelectedDriveAssetIds] = useState(new Set());
     const [drivePreviewGroup, setDrivePreviewGroup] = useState(null);
@@ -1192,7 +1194,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
             if (throwOnError) throw err;
             return [];
         } finally {
-            if (requestId === driveFetchRequestRef.current) setDriveLibraryLoading(false);
+            if (requestId === driveFetchRequestRef.current) {
+                setDriveLibraryLoading(false);
+                setDriveLibraryLoadedOnce(true);
+            }
         }
     };
 
@@ -1430,6 +1435,25 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
     useEffect(() => {
         fetchDriveAssets();
     }, []);
+
+    const driveRelaunchAppliedRef = useRef(false);
+    useEffect(() => {
+        if (!driveRelaunch || driveRelaunchAppliedRef.current || !driveLibraryLoadedOnce || driveLibraryError) return;
+        const { requestedIds, selectedGroupIds, missingFiles } = resolveDriveRelaunch(allDriveAssetGroups, driveRelaunch);
+        if (!requestedIds.length) return;
+        setSelectedDriveAssetIds(selectedGroupIds);
+        setDriveSearchTerm('');
+        setDriveRepairPairId(null);
+        setDriveFormatFilter('');
+        setShowBlockedDriveOnly(false);
+        setShowNeedsCopyDriveOnly(false);
+        setShowLaunchReadyDriveOnly(false);
+        setShowDriveLibraryModal(true);
+        driveRelaunchAppliedRef.current = true;
+        if (missingFiles.length) {
+            showWarning(`These Winners files are missing from the Drive picker: ${missingFiles.join(', ')}. They were not silently dropped; sync Drive before relaunching them.`);
+        }
+    }, [allDriveAssetGroups, driveLibraryError, driveLibraryLoadedOnce, driveRelaunch, showWarning]);
 
     const dismissDriveLibraryHint = () => {
         setShowDriveLibraryHint(false);

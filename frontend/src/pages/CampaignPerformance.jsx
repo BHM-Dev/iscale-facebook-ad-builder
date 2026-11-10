@@ -10,6 +10,7 @@ import { useCampaign } from '../context/CampaignContext';
 import { safeLocalStorageSet } from '../lib/safeLocalStorage';
 import ProposalsPanel from '../components/ProposalsPanel';
 import DailyCloseCard from '../components/DailyCloseCard';
+import WinningAds from '../components/WinningAds';
 import { deepLinkState, maxCplBucket } from '../lib/performanceLayout';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -3097,9 +3098,10 @@ export default function CampaignPerformance() {
 
       <div className="px-5"><DailyCloseCard variant="strip" accountNames={Object.fromEntries(adAccounts.map(account => [account.id || account.account_id, account.name || account.account_name || account.label]))} /></div>
       <nav className="mt-3 flex overflow-x-auto border-b border-gray-200 px-5" aria-label="Performance views">
-        {[['adsets', 'Ad sets'], ['compass', 'Creative Compass'], ['intelligence', 'Intelligence']].map(([key, label]) => <button key={key} type="button" className={`whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-semibold ${activeTab === key ? 'border-indigo-600 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-800'}`} onClick={() => selectTab(key)}>{label}</button>)}
+        {[['adsets', 'Ad sets'], ['winners', 'Winning ads'], ['compass', 'Creative Compass'], ['intelligence', 'Intelligence']].map(([key, label]) => <button key={key} type="button" className={`whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-semibold ${activeTab === key ? 'border-indigo-600 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-800'}`} onClick={() => selectTab(key)}>{label}</button>)}
       </nav>
 
+      {activeTab === 'winners' && <WinningAds adAccountId={adAccountId} datePreset={datePreset} dateFrom={dateFrom} dateTo={dateTo} />}
       {activeTab === 'compass' && <div className="p-5"><CreativeCompass buckets={compassBuckets} onOpenAdset={openCompassAdset} dateRangeLabel={dateRangeLabel} /></div>}
       {activeTab === 'intelligence' && <div className="p-5"><CampaignIntelligencePanel adAccountId={adAccountId} pageDatePreset={datePreset} pageDateFrom={dateFrom} pageDateTo={dateTo} initialOpen /></div>}
       {activeTab === 'adsets' && <div className="pb-5">
