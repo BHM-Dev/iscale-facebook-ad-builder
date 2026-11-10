@@ -616,6 +616,36 @@ async def startup_event():
         scheduler.add_job(scheduled_daily_close, 'cron', hour='0-6', minute=15,
                           timezone='America/Los_Angeles', id='daily_close', max_instances=1, coalesce=True)
 
+        def scheduled_proposal_outcomes():
+            """Daily: 3-day outcome per proposal (read-only on Meta; writes outcome_3d only)."""
+            from app.services import proposal_service
+            db = SessionLocal()
+            try:
+                print(f"🗳  Proposal outcomes: {proposal_service.record_outcomes(db)}")
+            except Exception as exc:
+                print(f"⚠️  Proposal outcomes failed: {exc}")
+            finally:
+                db.close()
+
+        scheduler.add_job(scheduled_proposal_outcomes, 'cron', hour=8, minute=5,
+                          timezone='America/Los_Angeles', id='proposal_outcomes', max_instances=1, coalesce=True)
+
+        def scheduled_health_check():
+            """Every 30 min: DM Steve when revenue-dependent data has failed for over an hour, and on recovery."""
+            from app.services.health_monitor import run_check
+            db = SessionLocal()
+            try:
+                result = run_check(db)
+                if result["failing"]:
+                    print(f"🩺 Health check failing: {result}")
+            except Exception as exc:
+                print(f"⚠️  Health check failed: {exc}")
+            finally:
+                db.close()
+
+        scheduler.add_job(scheduled_health_check, 'interval', minutes=30, id='health_check',
+                          start_date=_boot + timedelta(minutes=12), max_instances=1, coalesce=True)
+
         # Boot+27 min then hourly: clear of auto-pause (+2/+32), Drive (+7/22/37/52), RedTrack (+10/+40), Meta sync (+20/+50).
         scheduler.add_job(scheduled_proposal_evaluate, 'interval', minutes=60, id='proposal_evaluate',
                           start_date=_boot + timedelta(minutes=27), max_instances=1, coalesce=True)

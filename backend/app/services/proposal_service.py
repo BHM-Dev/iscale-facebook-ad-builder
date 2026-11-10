@@ -588,3 +588,65 @@ def shadow_report(db: Session, account_id: str, days: int = 7, actions: list[dic
         "proposal_rows": sorted(rows, key=lambda r: r["created_at"], reverse=True)[:200],
         "people_actions_without_proposal": sorted(unproposed, key=lambda r: r["at"], reverse=True)[:200],
     }
+
+
+# ---------------------------------------------------------------- outcomes (2026-11-10)
+# What happened to each proposal's ad set in the 3 complete days after it was proposed, whatever the
+# buyer did with it. This is the evidence for keeping or retiring a trigger (the shadow-week check had to
+# be rebuilt by hand because nothing recorded it). Read-only on Meta; writes outcome_3d only.
+
+OUTCOME_DAYS = 3
+OUTCOME_LOOKBACK_DAYS = 14   # one Meta pull covers this; older unmeasured proposals are marked skipped
+
+
+def outcome_for(series: dict, as_of: date, status: str, measured_at: str) -> dict:
+    """Pure: sum spend/leads/revenue over the OUTCOME_DAYS after as_of (as_of itself excluded)."""
+    days = [(as_of + timedelta(days=i)).isoformat() for i in range(1, OUTCOME_DAYS + 1)]
+    spend = sum(float(series.get(d, {}).get("spend", 0.0)) for d in days)
+    leads = sum(int(series.get(d, {}).get("leads", 0)) for d in days)
+    revenue = sum(float(series.get(d, {}).get("rev", 0.0)) for d in days)
+    return {"window": [days[0], days[-1]], "spend": round(spend, 2), "leads": leads, "revenue": round(revenue, 2),
+            "profit": round(revenue - spend, 2), "status_at_measure": status, "measured_at": measured_at}
+
+
+def record_outcomes(db: Session) -> dict:
+    """Daily: fill outcome_3d for proposals whose 3-day window has fully closed."""
+    results = {}
+    for account_id in proposal_accounts():
+        pending = db.query(ActionProposal).filter(ActionProposal.fb_account_id == account_id,
+                                                  ActionProposal.outcome_3d.is_(None)).all()
+        if not pending:
+            results[account_id] = {"measured": 0}
+            continue
+        try:
+            meta, revenue, _, _, today = fetch_inputs(db, account_id, days=OUTCOME_LOOKBACK_DAYS)
+        except RevenueUnavailable as exc:
+            results[account_id] = {"error": f"revenue unavailable, retry tomorrow: {str(exc)[:120]}"}
+            continue
+        measured = skipped = 0
+        now = _now().isoformat()
+        for p in pending:
+            as_of_raw = (p.evidence or {}).get("as_of")
+            try:
+                as_of = date.fromisoformat(as_of_raw) if as_of_raw else p.created_at.date()
+            except ValueError:
+                as_of = p.created_at.date()
+            # Wait one extra day after the window closes: Meta lead attribution and Switchboard revenue
+            # still move for a day, and the outcome is written once.
+            if as_of + timedelta(days=OUTCOME_DAYS) >= today - timedelta(days=1):
+                continue
+            if (today - as_of).days > OUTCOME_LOOKBACK_DAYS:
+                p.outcome_3d = {"skipped": "older than the data window", "measured_at": now}
+                skipped += 1
+                continue
+            series = {d: dict(v) for d, v in meta.get(p.fb_adset_id, {}).items()}
+            for d, rv in revenue.get(p.fb_adset_id, {}).items():
+                series.setdefault(d, {"spend": 0.0, "leads": 0})["rev"] = rv
+            outcome = outcome_for(series, as_of, p.status, now)
+            # An ad set missing from both pulls is "no data", not a measured zero.
+            outcome["has_data"] = p.fb_adset_id in meta or p.fb_adset_id in revenue
+            p.outcome_3d = outcome
+            measured += 1
+        db.commit()
+        results[account_id] = {"measured": measured, "skipped": skipped}
+    return results
