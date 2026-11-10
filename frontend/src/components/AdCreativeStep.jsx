@@ -505,6 +505,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
     // One filter at a time. Both on at once yields "blocked AND needs copy",
     // an intersection nobody asked for behind two independent-looking toggles.
     const [showNeedsCopyDriveOnly, setShowNeedsCopyDriveOnly] = useState(false);
+    // Winners in the picker (Steve 2026-11-10: put proven creative where Abel already picks files, not on a
+    // separate page). drive_file_id -> { rank, est_profit, leads, cpl } from GET /winners (14 days, 10-lead floor).
+    const [driveWinners, setDriveWinners] = useState({ accountId: null, byFileId: {}, count: 0, error: false });
+    const [showWinnersDriveOnly, setShowWinnersDriveOnly] = useState(false);
+    useEffect(() => { setShowWinnersDriveOnly(false); }, [selectedAdAccount?.id, selectedAdAccount?.accountId]);
     // The Drive shortcut is the execution path, not a library-maintenance
     // screen. Start it on items that can actually survive the launch preflight;
     // incomplete assets remain discoverable through the explicit filters.
@@ -696,6 +701,18 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
     const blockedFilterActive = showBlockedDriveOnly && !driveRepairPairId;
     const needsCopyFilterActive = showNeedsCopyDriveOnly && !driveRepairPairId;
     const launchReadyFilterActive = showLaunchReadyDriveOnly && !driveRepairPairId;
+    const winnersFilterActive = showWinnersDriveOnly && !driveRepairPairId;
+    const currentWinnersAccount = selectedAdAccount?.id || selectedAdAccount?.accountId || null;
+    const driveGroupWinner = (group) => {
+        // Never show another account's winners while this account's list is loading or failed.
+        if (!currentWinnersAccount || driveWinners.accountId !== currentWinnersAccount) return null;
+        let best = null;
+        for (const asset of group?.assets || []) {
+            const hit = driveWinners.byFileId[String(asset?.drive_file_id)];
+            if (hit && (!best || hit.rank < best.rank)) best = hit;
+        }
+        return best;
+    };
 
     // A tile with no copy is not blocked -- it is selectable and launches once
     // the buyer types a headline and body. It just renders with no badge at all,
@@ -745,8 +762,47 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
         if (blockedFilterActive) return scopedDriveAssetGroups.filter(isDriveGroupSelectionBlocked);
         if (needsCopyFilterActive) return scopedDriveAssetGroups.filter(needsCopy);
         if (launchReadyFilterActive) return scopedDriveAssetGroups.filter(isLaunchReadyForDestination);
+        if (winnersFilterActive) {
+            return scopedDriveAssetGroups
+                .filter(group => driveGroupWinner(group))
+                .sort((a, b) => driveGroupWinner(a).rank - driveGroupWinner(b).rank);
+        }
         return scopedDriveAssetGroups;
-    }, [scopedDriveAssetGroups, blockedFilterActive, needsCopyFilterActive, launchReadyFilterActive, launchReadyDestination]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [scopedDriveAssetGroups, blockedFilterActive, needsCopyFilterActive, launchReadyFilterActive, launchReadyDestination, winnersFilterActive, driveWinners]);
+    // Only winners that are actually pickable here (in Drive, matching search/format) count on the button.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const winnerGroupCount = useMemo(() => scopedDriveAssetGroups.filter(group => driveGroupWinner(group)).length, [scopedDriveAssetGroups, driveWinners]);
+
+    // Load the account's winners once per account when the picker opens. Failure only hides the badges.
+    useEffect(() => {
+        const accountId = selectedAdAccount?.id || selectedAdAccount?.accountId;
+        if (!showDriveLibraryModal || !accountId || driveWinners.accountId === accountId) return undefined;
+        let alive = true;
+        const params = new URLSearchParams({ ad_account_id: accountId, date_preset: 'last_14d', group_by: 'creative', min_leads: '10' });
+        authFetch(`${API_URL}/winners?${params}`)
+            .then(response => {
+                if (!response.ok) throw new Error(`winners ${response.status}`);
+                return response.json();
+            })
+            .then(data => {
+                if (!alive || !data) return;
+                const byFileId = {};
+                let rank = 0;
+                // A creative losing money is not a winner, whatever its lead count.
+                (data.rows || []).filter(row => row.enough_data && (row.est_profit == null || row.est_profit > 0)).forEach(row => {
+                    rank += 1;
+                    const ids = row.drive_file_ids?.length ? row.drive_file_ids : (row.drive_file_id ? [row.drive_file_id] : []);
+                    ids.forEach(id => {
+                        if (!byFileId[String(id)]) byFileId[String(id)] = { rank, est_profit: row.est_profit, leads: row.leads, cpl: row.cpl };
+                    });
+                });
+                setDriveWinners({ accountId, byFileId, count: rank, error: false });
+            })
+            .catch(() => { if (alive) setDriveWinners({ accountId, byFileId: {}, count: 0, error: true }); });
+        return () => { alive = false; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showDriveLibraryModal, selectedAdAccount?.id, selectedAdAccount?.accountId]);
 
     const driveSections = useMemo(() => {
         const bySection = new Map();
@@ -844,7 +900,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
             setDriveSectionOverrides(current => ({ ...current, [preferredDriveFocus.sectionKey]: true }));
         }
     }, [driveParents, preferredDriveFocus, selectedDriveParentKey]);
-    const visibleDriveParents = selectedDriveParentKey
+    // Winners span many folders; the filter is only useful if it shows all of them at once.
+    const visibleDriveParents = selectedDriveParentKey && !winnersFilterActive
         ? driveParents.filter(parent => parent.key === selectedDriveParentKey)
         : driveParents;
 
@@ -852,10 +909,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
     // exactly what the rail is showing. Without this, they silently reach
     // across every other folder's assets while the grid shows only one.
     const visibleDriveAssetGroups = useMemo(() => {
-        if (!selectedDriveParentKey) return driveAssetGroups;
+        if (!selectedDriveParentKey || winnersFilterActive) return driveAssetGroups;
         const activeParent = driveParents.find(parent => parent.key === selectedDriveParentKey);
         return activeParent ? activeParent.groups : driveAssetGroups;
-    }, [driveAssetGroups, driveParents, selectedDriveParentKey]);
+    }, [driveAssetGroups, driveParents, selectedDriveParentKey, winnersFilterActive]);
 
     // Expansion is derived, with an explicit per-section override on top. A
     // plain state Set plus an effect to sync it against search/filter changes
@@ -1244,6 +1301,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
             // supplied, so don't hide the newly selected item behind the
             // execution-only filter when this began from Launch from Drive.
             setShowLaunchReadyDriveOnly(false);
+            setShowWinnersDriveOnly(false);
             setDriveRepairPairId(null);
             setSelectedDriveParentKey(null);
             setShowDriveUploadModal(false);
@@ -1448,6 +1506,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
         setShowBlockedDriveOnly(false);
         setShowNeedsCopyDriveOnly(false);
         setShowLaunchReadyDriveOnly(false);
+        setShowWinnersDriveOnly(false);
         setShowDriveLibraryModal(true);
         driveRelaunchAppliedRef.current = true;
         if (missingFiles.length) {
@@ -3528,6 +3587,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                     setShowLaunchReadyDriveOnly(current => !current);
                                     setShowNeedsCopyDriveOnly(false);
                                     setShowBlockedDriveOnly(false);
+                                    setShowWinnersDriveOnly(false);
                                 }}
                                 disabled={(scopedLaunchReadyDriveGroupCount === 0 && !launchReadyFilterActive) || Boolean(driveRepairPairId)}
                                 aria-pressed={launchReadyFilterActive}
@@ -3540,6 +3600,25 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                 {launchReadyFilterActive
                                     ? `Launch-ready in current filters (${scopedLaunchReadyDriveGroupCount})`
                                     : `Launch ready (${scopedLaunchReadyDriveGroupCount})`}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setShowWinnersDriveOnly(current => !current);
+                                    setShowLaunchReadyDriveOnly(false);
+                                    setShowNeedsCopyDriveOnly(false);
+                                    setShowBlockedDriveOnly(false);
+                                }}
+                                disabled={(!winnerGroupCount && !winnersFilterActive) || Boolean(driveRepairPairId)}
+                                aria-pressed={winnersFilterActive}
+                                title="Creatives with 10+ leads in the last 14 days, ranked by estimated profit (leads × niche revenue per lead − spend)"
+                                className={`whitespace-nowrap rounded-lg border px-3 py-1 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                                    winnersFilterActive
+                                        ? 'border-amber-300 bg-amber-50 text-amber-900'
+                                        : 'border-amber-200 bg-white text-amber-800 hover:bg-amber-50'
+                                }`}
+                            >
+                                {winnersFilterActive ? `Showing winners (${winnerGroupCount}) · all folders` : driveWinners.error && driveWinners.accountId === currentWinnersAccount ? 'Winners unavailable' : `Winners (${winnerGroupCount})`}
                             </button>
                             {scopedOtherLaunchReadyDestinationCount > 0 && (
                                 <span
@@ -3555,6 +3634,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                     setShowNeedsCopyDriveOnly(current => !current);
                                     setShowBlockedDriveOnly(false);
                                     setShowLaunchReadyDriveOnly(false);
+                                    setShowWinnersDriveOnly(false);
                                 }}
                                 disabled={(scopedNeedsCopyDriveGroupCount === 0 && !needsCopyFilterActive) || Boolean(driveRepairPairId)}
                                 aria-pressed={needsCopyFilterActive}
@@ -3572,6 +3652,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                     setShowBlockedDriveOnly(current => !current);
                                     setShowNeedsCopyDriveOnly(false);
                                     setShowLaunchReadyDriveOnly(false);
+                                    setShowWinnersDriveOnly(false);
                                 }}
                                 disabled={(scopedBlockedDriveGroupCount === 0 && !blockedFilterActive) || Boolean(driveRepairPairId)}
                                 aria-pressed={blockedFilterActive}
@@ -3623,6 +3704,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                         setShowBlockedDriveOnly(false);
                                         setShowNeedsCopyDriveOnly(false);
                                         setShowLaunchReadyDriveOnly(false);
+                                        setShowWinnersDriveOnly(false);
                                     }}
                                     className="px-3 py-1 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
                                 >
@@ -3764,7 +3846,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                             <button
                                                 key={parent.key}
                                                 type="button"
-                                                onClick={() => setSelectedDriveParentKey(parent.key)}
+                                                onClick={() => { setSelectedDriveParentKey(parent.key); setShowWinnersDriveOnly(false); }}
                                                 className={`mb-1 flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-xs transition-colors ${selected ? 'bg-white font-semibold text-gray-900 shadow-sm ring-1 ring-amber-300' : 'text-gray-700 hover:bg-white'}`}
                                                 title={parent.key}
                                             >
@@ -3965,6 +4047,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                             {alreadyAdded && (
                                                 <div className="absolute left-2 top-2 bg-blue-50 text-blue-700 border border-blue-300 text-[10px] font-medium px-1.5 py-0.5 rounded-full shadow-sm">
                                                     Already added
+                                                </div>
+                                            )}
+                                            {driveGroupWinner(group) && (
+                                                <div
+                                                    className={`absolute left-2 ${alreadyAdded ? 'top-8' : 'top-2'} rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900 shadow-sm`}
+                                                    title={`${driveGroupWinner(group).leads} leads${driveGroupWinner(group).cpl != null ? ` at $${Number(driveGroupWinner(group).cpl).toFixed(2)} CPL` : ''} in the last 14 days. Est. profit = leads × the niche's revenue per lead − spend (an estimate, not booked revenue).`}
+                                                >
+                                                    Winner #{driveGroupWinner(group).rank}{driveGroupWinner(group).est_profit != null ? ` · ${driveGroupWinner(group).est_profit >= 0 ? '+' : '−'}$${Math.abs(Math.round(driveGroupWinner(group).est_profit)).toLocaleString()} est.` : ''}
                                                 </div>
                                             )}
                                             <button
