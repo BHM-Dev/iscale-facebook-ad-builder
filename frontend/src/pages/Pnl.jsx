@@ -705,6 +705,89 @@ export default function Pnl() {
     }
   };
 
+  const monthsSection = (
+  <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+    <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-5 py-4">
+      <div>
+        <h2 className="font-semibold text-gray-900">Month over month</h2>
+        <p className="text-xs text-gray-400">
+          {isAllScope
+            ? 'Closed months store spend and revenue once. Costs stay live, so adding or backdating a cost entry still moves past months\' Net.'
+            : 'Closed months store spend and revenue once. Account rows show gross performance only.'}
+        </p>
+      </div>
+      <button onClick={exportCsv} className="flex shrink-0 items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50">
+        <Download size={14} />
+        Export CSV
+      </button>
+    </div>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="border-b border-gray-100 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <tr>
+            {(isAllScope
+              ? ['Month', 'Spend', 'Billable Revenue', 'Gross', 'Costs', 'Net', 'Net Margin', 'ROAS']
+              : ['Month', 'Spend', 'Billable Revenue', 'Gross', 'Gross Margin', 'ROAS']
+            ).map((col, idx) => (
+              <th key={col} className={`${idx === 0 ? 'pl-4 pr-3' : 'px-3'} py-3 ${idx === 0 ? 'text-left' : 'text-right'}`}>{col}</th>
+            ))}
+            <th className="w-12 px-3 py-3"><span className="sr-only">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-50">
+          {monthsLoading ? (
+            <tr><td colSpan={isAllScope ? 9 : 7} className="px-5 py-8 text-center text-sm text-gray-400">Loading month history — this walks six months of Meta and revenue data and can take a while.</td></tr>
+          ) : monthsError ? (
+            <tr><td colSpan={isAllScope ? 9 : 7} className="px-5 py-8 text-center text-sm text-amber-700"><div>{monthsError}</div><button type="button" onClick={load} className="mt-3 rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-medium hover:bg-amber-50">Retry month history</button></td></tr>
+          ) : !months.length ? (
+            <tr><td colSpan={isAllScope ? 9 : 7} className="px-5 py-8 text-center text-sm text-gray-400">No month history available.</td></tr>
+          ) : months.map(row => {
+            const positive = isAllScope ? row.net_profit > 0 : row.gross_profit > 0;
+            return (
+              <tr key={`${row.date_from}-${row.date_to}`} className="hover:bg-gray-50">
+                <td className="whitespace-nowrap py-3 pl-4 pr-3 font-medium text-gray-900">
+                  {row.period_label}
+                  {row.from_snapshot ? (
+                    <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">
+                      stored{row.synced_at ? ` ${new Date(row.synced_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
+                    </span>
+                  ) : (
+                    <span className="ml-2 rounded-full bg-green-50 px-2 py-0.5 text-[10px] font-medium text-green-700">live</span>
+                  )}
+                </td>
+                <td className="px-3 py-3 text-right tabular-nums">{money(row.spend)}</td>
+                <td className="px-3 py-3 text-right tabular-nums">{money(row.revenue)}</td>
+                <td className={`px-3 py-3 text-right tabular-nums font-semibold ${positive ? 'text-green-600' : 'text-red-600'}`}>{money(row.gross_profit)}</td>
+                {isAllScope && (
+                  <>
+                    <td className="px-3 py-3 text-right tabular-nums">{money(row.other_costs)}</td>
+                    <td className={`px-3 py-3 text-right tabular-nums font-semibold ${positive ? 'text-green-600' : 'text-red-600'}`}>{money(row.net_profit)}</td>
+                  </>
+                )}
+                <td className="px-3 py-3 text-right tabular-nums">{pct(row.margin)}</td>
+                <td className="px-3 py-3 text-right tabular-nums">{row.roas != null ? `${Number(row.roas).toFixed(2)}x` : '--'}</td>
+                <td className="px-3 py-3 text-right tabular-nums">
+                  {row.from_snapshot && (
+                    <button
+                      onClick={() => resyncMonth(row)}
+                      disabled={resyncing === (row.date_from || '').slice(0, 7)}
+                      aria-label={`Re-fetch ${row.period_label}`}
+                      className="inline-flex items-center rounded-lg border border-gray-200 p-1.5 text-xs text-gray-500 hover:bg-gray-50 hover:text-gray-700 disabled:opacity-40"
+                      title={`Re-fetch ${row.period_label} from Meta and the revenue source. Only this month.`}
+                    >
+                      <RefreshCw size={12} className={resyncing === (row.date_from || '').slice(0, 7) ? 'animate-spin' : ''} />
+                    </button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  );
+
   return (
     <div className="mx-auto max-w-7xl space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -864,11 +947,12 @@ export default function Pnl() {
         />
       </div>
 
-      {/* Middle band: where gross came from (campaigns, wide) next to what came off it (costs, narrow). On the
-          single-account view there are no campaigns or costs, so only the event split shows here. */}
+      {/* Two independent columns: campaigns then month history on the left, costs + event split on the right.
+          Month history lives in the left column so it never waits below the taller column (no dead gap). On
+          the single-account view there are no campaigns or costs, so month history renders full width below. */}
       {isAllScope ? (
         <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-          <div className="min-w-0">
+          <div className="min-w-0 space-y-6">
             {loading ? (
               <div className="rounded-xl border border-gray-200 bg-white px-5 py-10 text-center text-sm text-gray-400 shadow-sm">Loading campaigns...</div>
             ) : summary?.campaigns?.length > 0 ? (
@@ -876,6 +960,7 @@ export default function Pnl() {
             ) : (
               <div className="rounded-xl border border-gray-200 bg-white px-5 py-10 text-center text-sm text-gray-400 shadow-sm">No campaign activity for this period.</div>
             )}
+            {monthsSection}
           </div>
           <div className="space-y-6">
             <CostsLedger
@@ -898,86 +983,7 @@ export default function Pnl() {
         </div>
       )}
 
-      <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
-          <div>
-            <h2 className="font-semibold text-gray-900">Month over month</h2>
-            <p className="text-xs text-gray-400">
-              {isAllScope
-                ? 'Closed months store spend and revenue once. Costs stay live, so adding or backdating a cost entry still moves past months\' Net.'
-                : 'Closed months store spend and revenue once. Account rows show gross performance only.'}
-            </p>
-          </div>
-          <button onClick={exportCsv} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50">
-            <Download size={14} />
-            Export CSV
-          </button>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="border-b border-gray-100 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
-              <tr>
-                {(isAllScope
-                  ? ['Month', 'Spend', 'Billable Revenue', 'Gross', 'Costs', 'Net', 'Net Margin', 'ROAS']
-                  : ['Month', 'Spend', 'Billable Revenue', 'Gross', 'Gross Margin', 'ROAS']
-                ).map((col, idx) => (
-                  <th key={col} className={`px-5 py-3 ${idx === 0 ? 'text-left' : 'text-right'}`}>{col}</th>
-                ))}
-                <th className="px-5 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {monthsLoading ? (
-                <tr><td colSpan={isAllScope ? 9 : 7} className="px-5 py-8 text-center text-sm text-gray-400">Loading month history — this walks six months of Meta and revenue data and can take a while.</td></tr>
-              ) : monthsError ? (
-                <tr><td colSpan={isAllScope ? 9 : 7} className="px-5 py-8 text-center text-sm text-amber-700"><div>{monthsError}</div><button type="button" onClick={load} className="mt-3 rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-medium hover:bg-amber-50">Retry month history</button></td></tr>
-              ) : !months.length ? (
-                <tr><td colSpan={isAllScope ? 9 : 7} className="px-5 py-8 text-center text-sm text-gray-400">No month history available.</td></tr>
-              ) : months.map(row => {
-                const positive = isAllScope ? row.net_profit > 0 : row.gross_profit > 0;
-                return (
-                  <tr key={`${row.date_from}-${row.date_to}`} className="hover:bg-gray-50">
-                    <td className="px-5 py-3 font-medium text-gray-900">
-                      {row.period_label}
-                      {row.from_snapshot ? (
-                        <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">
-                          stored{row.synced_at ? ` ${new Date(row.synced_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
-                        </span>
-                      ) : (
-                        <span className="ml-2 rounded-full bg-green-50 px-2 py-0.5 text-[10px] font-medium text-green-700">live</span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-right">{money(row.spend)}</td>
-                    <td className="px-5 py-3 text-right">{money(row.revenue)}</td>
-                    <td className={`px-5 py-3 text-right font-semibold ${positive ? 'text-green-600' : 'text-red-600'}`}>{money(row.gross_profit)}</td>
-                    {isAllScope && (
-                      <>
-                        <td className="px-5 py-3 text-right">{money(row.other_costs)}</td>
-                        <td className={`px-5 py-3 text-right font-semibold ${positive ? 'text-green-600' : 'text-red-600'}`}>{money(row.net_profit)}</td>
-                      </>
-                    )}
-                    <td className="px-5 py-3 text-right">{pct(row.margin)}</td>
-                    <td className="px-5 py-3 text-right">{row.roas != null ? `${Number(row.roas).toFixed(2)}x` : '--'}</td>
-                    <td className="px-5 py-3 text-right">
-                      {row.from_snapshot && (
-                        <button
-                          onClick={() => resyncMonth(row)}
-                          disabled={resyncing === (row.date_from || '').slice(0, 7)}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-500 hover:bg-gray-50 hover:text-gray-700 disabled:opacity-40"
-                          title={`Re-fetch ${row.period_label} from Meta and the revenue source. Only this month.`}
-                        >
-                          <RefreshCw size={12} className={resyncing === (row.date_from || '').slice(0, 7) ? 'animate-spin' : ''} />
-                          Re-fetch
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {!isAllScope && monthsSection}
 
       {showModal && (
         <CostModal
