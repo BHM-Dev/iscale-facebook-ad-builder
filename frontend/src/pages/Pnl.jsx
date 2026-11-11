@@ -200,17 +200,159 @@ function CampaignBreakdown({ campaigns, adAccounts = [] }) {
   );
 }
 
-function KpiTile({ label, value, caption, tone = 'neutral', badge }) {
-  const toneClass = tone === 'good' ? 'text-green-600' : tone === 'bad' ? 'text-red-600' : 'text-gray-900';
+// The P&L read left to right as an equation that ends on the answer: Revenue − Spend = Gross (− Costs = Net).
+// The last cell is the one number the page exists for, so it is the only one that is large and tinted.
+function ProfitStatement({ cells, loading }) {
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</div>
-        {badge && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">{badge}</span>}
+    <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm" data-testid="pnl-statement">
+      <div className={`grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] ${cells.length === 5 ? 'lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.35fr)]' : 'lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.35fr)]'}`}>
+        {cells.map((cell, idx) => {
+          const last = idx === cells.length - 1;
+          const toneClass = cell.tone === 'good' ? 'text-emerald-700' : cell.tone === 'bad' ? 'text-red-600' : 'text-gray-900';
+          const tint = last ? (cell.tone === 'good' ? 'bg-emerald-50/70' : cell.tone === 'bad' ? 'bg-red-50/70' : 'bg-gray-50') : '';
+          return (
+            <div
+              key={cell.label}
+              className={`relative px-5 py-4 ${tint} ${last ? 'col-span-2 border-t lg:col-span-1 lg:border-t-0' : ''} ${idx > 0 ? 'lg:border-l' : ''} ${idx % 2 === 1 && !last ? 'border-l' : ''} ${idx >= 2 && !last ? 'border-t lg:border-t-0' : ''} border-gray-100`}
+            >
+              {idx > 0 && (
+                <span aria-hidden="true" className="absolute -left-3 top-1/2 z-10 hidden h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border border-gray-200 bg-white text-xs font-semibold text-gray-400 lg:flex">
+                  {cell.op}
+                </span>
+              )}
+              <div className="flex items-center gap-2">
+                <span className={`text-[11px] font-semibold uppercase tracking-wide ${last ? 'text-gray-700' : 'text-gray-500'}`}>{cell.label}</span>
+                {cell.badge && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">{cell.badge}</span>}
+              </div>
+              <div className={`mt-1.5 font-bold tabular-nums ${last ? 'text-3xl' : 'text-xl'} ${toneClass}`}>{loading ? '--' : cell.value}</div>
+              <div className="mt-1 truncate text-xs text-gray-400" title={loading ? undefined : cell.caption}>{loading ? '\u00a0' : cell.caption}</div>
+            </div>
+          );
+        })}
       </div>
-      <div className={`mt-2 text-2xl font-bold ${toneClass}`}>{value}</div>
-      <div className="mt-1 text-xs text-gray-400">{caption}</div>
     </div>
+  );
+}
+
+// Footnotes belong to the statement, so they sit tight under it as small text instead of full-width banners
+// competing with the numbers. Real data problems still get a banner (see data_incomplete in the page).
+function StatementNotes({ notes }) {
+  const shown = notes.filter(Boolean);
+  if (!shown.length) return null;
+  return (
+    <ul className="mt-2 space-y-1 px-1 text-xs leading-5 text-gray-500" data-testid="pnl-notes">
+      {shown.map((note, idx) => (
+        <li key={idx} className={`flex gap-1.5 ${note.tone === 'warn' ? 'text-amber-700' : ''}`}>
+          <span aria-hidden="true" className="text-gray-300">•</span>
+          <span>{note.text}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const COST_TYPE_LABEL = Object.fromEntries(COST_TYPES);
+
+// The ledger behind the Costs cell in the statement. A list, not a 6-column table: in the side column the
+// only things that matter are what it is and what it cost this period.
+function CostsLedger({ costs, total, loading, periodLabel, onAdd, onEdit, onDelete }) {
+  return (
+    <section className="rounded-xl border border-gray-200 bg-white shadow-sm" data-testid="pnl-costs">
+      <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3.5">
+        <div>
+          <h2 className="font-semibold text-gray-900">Monthly costs</h2>
+          <p className="text-xs text-gray-400">Retainers, commissions, tooling, creative.</p>
+        </div>
+        <button onClick={onAdd} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100">
+          <Plus size={13} />
+          Add cost
+        </button>
+      </div>
+      {loading ? (
+        <div className="px-4 py-8 text-center text-sm text-gray-400">Loading costs...</div>
+      ) : costs?.length ? (
+        <>
+          <ul className="divide-y divide-gray-100">
+            {costs.map(entry => (
+              <li key={entry.id} className="group flex items-start gap-3 px-4 py-3">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium text-gray-900" title={entry.label}>{entry.label}</div>
+                  <div className="mt-0.5 text-xs text-gray-400">
+                    <span className="capitalize">{entry.category}</span>
+                    {' · '}
+                    {entry.cost_type.startsWith('pct_') ? `${entry.amount}% ${(COST_TYPE_LABEL[entry.cost_type] || '').replace('% ', '')}` : COST_TYPE_LABEL[entry.cost_type] || entry.cost_type.replaceAll('_', ' ')}
+                    {entry.ad_account_id == null && ' · All accounts'}
+                  </div>
+                  {entry.cost_type === 'pct_of_profit' && entry.profit_threshold > 0 && (
+                    <div className="mt-0.5 text-[11px] text-gray-400">
+                      Above {money(entry.profit_threshold, 0)} net per period
+                      {entry.profit_base != null && ` · this period ${money(entry.profit_base, 2)}`}
+                    </div>
+                  )}
+                </div>
+                <div className="flex shrink-0 flex-col items-end">
+                  <span className="text-sm font-semibold tabular-nums text-gray-900">{money(entry.resolved_amount, 2)}</span>
+                  <div className="mt-1 flex gap-1 opacity-60 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                    <button onClick={() => onEdit(entry)} className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700" title="Edit" aria-label={`Edit ${entry.label}`}><Edit2 size={13} /></button>
+                    <button onClick={() => onDelete(entry)} className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600" title="Delete" aria-label={`Delete ${entry.label}`}><Trash2 size={13} /></button>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50/60 px-4 py-2.5 text-sm">
+            <span className="text-gray-500">Total this period</span>
+            <span className="font-semibold tabular-nums text-gray-900">{money(total, 2)}</span>
+          </div>
+        </>
+      ) : (
+        <div className="px-4 py-8 text-center text-sm text-gray-400">
+          No costs logged for {periodLabel || 'this period'}. Net profit is gross of retainers, tooling, and creative spend.
+        </div>
+      )}
+    </section>
+  );
+}
+
+// Collapsed by default and hidden entirely when there's nothing to show (Joel, 2026-07-29: only if it doesn't
+// clutter). RedTrack accounts return no split, so this only appears for Switchboard-backed accounts.
+function EventBreakdown({ rows, revenue, open, onToggle }) {
+  return (
+    <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
+      <button onClick={onToggle} aria-expanded={open} className="flex w-full items-center justify-between gap-3 rounded-xl px-4 py-3.5 text-left hover:bg-gray-50">
+        <div>
+          <h2 className="flex items-center gap-1.5 font-semibold text-gray-900">
+            {open ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
+            Revenue by event type
+          </h2>
+          <p className="ml-[22px] text-xs text-gray-400">How revenue splits across Switchboard's payable events.</p>
+        </div>
+        <span className="shrink-0 text-xs text-gray-400">{rows.length} types</span>
+      </button>
+      {open && (
+        <ul className="divide-y divide-gray-100 border-t border-gray-100">
+          {rows.map(row => {
+            const share = revenue > 0 ? (row.revenue / revenue) * 100 : null;
+            return (
+              <li key={row.event} className="px-4 py-2.5">
+                <div className="flex items-baseline justify-between gap-3 text-sm">
+                  <span className="truncate font-medium text-gray-900" title={row.event}>{row.event}</span>
+                  <span className="shrink-0 font-semibold tabular-nums text-gray-900">{money(row.revenue, 2)}</span>
+                </div>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100">
+                    <div className="h-full rounded-full bg-indigo-400" style={{ width: `${Math.max(0, Math.min(100, share || 0))}%` }} />
+                  </div>
+                  <span className="w-24 shrink-0 text-right text-[11px] tabular-nums text-gray-400">
+                    {row.events.toLocaleString('en-US')} · {share != null ? `${share.toFixed(1)}%` : '--'}
+                  </span>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -550,6 +692,7 @@ export default function Pnl() {
     URL.revokeObjectURL(url);
   };
 
+  const toggleEvents = () => setShowEvents(v => { try { localStorage.setItem('pnlShowEvents', v ? '0' : '1'); } catch { /* storage blocked */ } return !v; });
   const isIncomplete = summary?.data_incomplete;
   const grossTone = isIncomplete ? 'neutral' : summary?.gross_profit > 0 ? 'good' : summary?.gross_profit < 0 ? 'bad' : 'neutral';
   const netTone = isIncomplete ? 'neutral' : summary?.net_profit > 0 ? 'good' : summary?.net_profit < 0 ? 'bad' : 'neutral';
@@ -661,180 +804,104 @@ export default function Pnl() {
         </div>
       )}
 
-      {!isAllScope && !isIncomplete && (
-        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
-          Monthly costs and net profit are on the All accounts view — they&apos;re business-wide, not per account.
-        </div>
-      )}
-
-      {/* Stepped breakpoints: the old md:grid-cols-5 jumped straight from one
-          column to five, which squeezed the tiles unreadably once the fixed
-          sidebar took its 16rem. */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-        <KpiTile label="Ad Spend" value={loading ? '--' : money(summary?.spend)} caption="Meta" badge={summary?.spend == null && !loading ? 'Unavailable' : null} />
-        <KpiTile label="Billable Revenue" value={loading ? '--' : money(summary?.revenue)} caption={summary?.revenue_source === 'bhm_everflow_live' && !summary?.conversions ? 'BHM Everflow · no conversions yet' : revenueSourceLabel(summary?.revenue_source)} badge={isRevenueFallback(summary?.revenue_source) ? 'Fallback' : null} />
-        <KpiTile label="Gross Profit" value={loading ? '--' : money(summary?.gross_profit)} caption="revenue - spend" tone={grossTone} badge={isIncomplete ? 'Incomplete' : null} />
-        {isAllScope ? (
-          <>
-            <KpiTile label="Monthly Costs" value={loading ? '--' : money(summary?.other_costs)} caption={summary?.has_costs ? `${summary.costs.length} entries` : 'No costs logged'} />
-            <KpiTile label="Net Profit" value={loading ? '--' : money(summary?.net_profit)} caption="gross - costs" tone={netTone} badge={isIncomplete ? 'Incomplete' : null} />
-          </>
-        ) : (
-          <KpiTile label="Gross Margin" value={loading ? '--' : pct(summary?.margin)} caption="gross ÷ revenue" tone={grossTone} badge={isIncomplete ? 'Incomplete' : null} />
-        )}
+      <div>
+        <ProfitStatement
+          loading={loading}
+          cells={[
+            {
+              label: 'Revenue',
+              value: money(summary?.revenue),
+              caption: summary?.revenue_source === 'bhm_everflow_live' && !summary?.conversions ? 'BHM Everflow · no conversions yet' : revenueSourceLabel(summary?.revenue_source),
+              badge: isRevenueFallback(summary?.revenue_source) ? 'Fallback' : null,
+            },
+            {
+              label: 'Ad spend', op: '−',
+              value: money(summary?.spend),
+              caption: summary?.spend > 0 && summary?.revenue != null ? `Meta · ${(summary.revenue / summary.spend).toFixed(2)}x ROAS` : 'Meta',
+              badge: summary?.spend == null && !loading ? 'Unavailable' : null,
+            },
+            {
+              label: 'Gross profit', op: '=',
+              value: money(summary?.gross_profit),
+              caption: summary?.revenue > 0 && summary?.gross_profit != null ? `${((summary.gross_profit / summary.revenue) * 100).toFixed(1)}% of revenue` : 'revenue − spend',
+              tone: grossTone,
+              badge: isIncomplete ? 'Incomplete' : null,
+            },
+            ...(isAllScope ? [
+              {
+                label: 'Monthly costs', op: '−',
+                value: money(summary?.other_costs),
+                caption: summary?.has_costs ? `${summary.costs.length} entries · listed below` : 'No costs logged',
+              },
+              {
+                label: 'Net profit', op: '=',
+                value: money(summary?.net_profit),
+                caption: summary?.revenue > 0 && summary?.net_profit != null ? `${((summary.net_profit / summary.revenue) * 100).toFixed(1)}% of revenue · after costs` : 'gross − costs',
+                tone: netTone,
+                badge: isIncomplete ? 'Incomplete' : null,
+              },
+            ] : []),
+          ]}
+        />
+        <StatementNotes
+          notes={[
+            !isAllScope && { text: <>Monthly costs and net profit are business-wide, so they&apos;re on the <button type="button" onClick={() => setScope('all')} className="font-medium text-indigo-600 hover:underline">All accounts</button> view.</> },
+            summary?.unattributed_revenue > 0 && { text: <>Revenue includes {money(summary.unattributed_revenue, 2)} Switchboard couldn&apos;t tie to a specific ad set. It still counts, so the total matches the Switchboard portal.</> },
+            isAllScope && (summary?.network_revenue > 0 || summary?.foreign_revenue > 0) && {
+              text: (
+                <span data-testid="pnl-excluded-revenue">
+                  Not counted:{' '}
+                  {summary.network_revenue > 0 && <>{money(summary.network_revenue, 2)} of network revenue (third-party traffic through BHM&apos;s network)</>}
+                  {summary.network_revenue > 0 && summary.foreign_revenue > 0 && ' and '}
+                  {summary.foreign_revenue > 0 && <>{money(summary.foreign_revenue, 2)} from Meta ad sets outside these accounts</>}
+                  . The Switchboard portal total runs higher by about this much.
+                </span>
+              ),
+            },
+            // unmapped_adsets is not shown: it counts every ad set ever saved for the account (paused, years old,
+            // no spend) that had no revenue, so it fired on every healthy month and said nothing actionable.
+          ]}
+        />
       </div>
 
-      {summary?.unattributed_revenue > 0 && (
-        <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
-          Billable Revenue above <span className="font-medium">includes</span> {money(summary.unattributed_revenue, 2)} that Switchboard could not tie to a specific ad set. It counts toward this account, so the total matches the Switchboard portal — it just can&apos;t be traced to a single ad set.
-        </div>
-      )}
-
-      {isAllScope && (summary?.network_revenue > 0 || summary?.foreign_revenue > 0) && (
-        <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600" data-testid="pnl-excluded-revenue">
-          <span className="font-medium">Not included in revenue or profit:</span>{' '}
-          {summary.network_revenue > 0 && <>{money(summary.network_revenue, 2)} of network revenue (sub3 not tied to a Meta campaign — third-party traffic sent through BHM's network)</>}
-          {summary.network_revenue > 0 && summary.foreign_revenue > 0 && ' and '}
-          {summary.foreign_revenue > 0 && <>{money(summary.foreign_revenue, 2)} tied to Meta ad sets or campaigns outside these accounts</>}
-          . The Switchboard portal total will be higher than Billable Revenue by about this much.
-        </div>
-      )}
-
-      {summary?.unmapped_adsets > 0 && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          {summary.unmapped_adsets} ad set{summary.unmapped_adsets !== 1 ? 's' : ''} have no revenue rows for this period. Revenue may be incomplete.
-        </div>
-      )}
-
-      {isAllScope && !loading && summary?.campaigns?.length > 0 && (
-        <CampaignBreakdown campaigns={summary.campaigns} adAccounts={adAccounts} />
-      )}
-
+      {/* Middle band: where gross came from (campaigns, wide) next to what came off it (costs, narrow). On the
+          single-account view there are no campaigns or costs, so only the event split shows here. */}
       {isAllScope ? (
-      <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
-          <div>
-            <h2 className="font-semibold text-gray-900">Other Costs</h2>
-            <p className="text-xs text-gray-400">Retainers, commissions, tooling, creative credits, and platform costs.</p>
+        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="min-w-0">
+            {loading ? (
+              <div className="rounded-xl border border-gray-200 bg-white px-5 py-10 text-center text-sm text-gray-400 shadow-sm">Loading campaigns...</div>
+            ) : summary?.campaigns?.length > 0 ? (
+              <CampaignBreakdown campaigns={summary.campaigns} adAccounts={adAccounts} />
+            ) : (
+              <div className="rounded-xl border border-gray-200 bg-white px-5 py-10 text-center text-sm text-gray-400 shadow-sm">No campaign activity for this period.</div>
+            )}
           </div>
-          <button onClick={() => { setModalEntry(null); setShowModal(true); }} className="flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700">
-            <Plus size={14} />
-            Add cost
-          </button>
+          <div className="space-y-6">
+            <CostsLedger
+              costs={summary?.costs}
+              total={summary?.other_costs}
+              loading={loading}
+              periodLabel={summary?.period_label}
+              onAdd={() => { setModalEntry(null); setShowModal(true); }}
+              onEdit={entry => { setModalEntry(entry); setShowModal(true); }}
+              onDelete={entry => setDeleteEntry(entry)}
+            />
+            {summary?.event_breakdown?.length > 0 && (
+              <EventBreakdown rows={summary.event_breakdown} revenue={summary.revenue} open={showEvents} onToggle={toggleEvents} />
+            )}
+          </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="border-b border-gray-100 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
-              <tr>
-                <th className="px-5 py-3 text-left">Label</th>
-                <th className="px-3 py-3 text-left">Category</th>
-                <th className="px-3 py-3 text-left">Type</th>
-                <th className="px-3 py-3 text-right">Amount</th>
-                <th className="px-3 py-3 text-right">This Account</th>
-                <th className="px-5 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {loading ? (
-                <tr><td colSpan={6} className="px-5 py-8 text-center text-sm text-gray-400">Loading costs...</td></tr>
-              ) : summary?.costs?.length ? summary.costs.map(entry => (
-                <tr key={entry.id} className="hover:bg-gray-50">
-                  <td className="px-5 py-3">
-                    <div className="font-medium text-gray-900">{entry.label}</div>
-                    {entry.ad_account_id == null && (
-                      <div className="mt-1 inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-600">
-                        All accounts · full
-                      </div>
-                    )}
-                    {entry.cost_type === 'pct_of_profit' && entry.profit_threshold > 0 && (
-                      <div className="mt-1 text-[11px] text-gray-500">
-                        {entry.amount}% of net profit above {money(entry.profit_threshold, 0)} per period (net = after retainer and all other costs)
-                        {entry.profit_base != null && ` — this period: ${money(entry.profit_base, 2)}`}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-3 py-3 text-gray-600">{entry.category}</td>
-                  <td className="px-3 py-3 text-gray-600">{entry.cost_type.replaceAll('_', ' ')}</td>
-                  <td className="px-3 py-3 text-right text-gray-700">{entry.cost_type.startsWith('pct_') ? `${entry.amount}%` : money(entry.amount, 2)}</td>
-                  <td className="px-3 py-3 text-right font-semibold text-gray-900">{money(entry.resolved_amount, 2)}</td>
-                  <td className="px-5 py-3">
-                    <div className="flex justify-end gap-2">
-                      <button onClick={() => { setModalEntry(entry); setShowModal(true); }} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700" title="Edit"><Edit2 size={14} /></button>
-                      <button onClick={() => setDeleteEntry(entry)} className="rounded-lg p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600" title="Delete"><Trash2 size={14} /></button>
-                    </div>
-                  </td>
-                </tr>
-              )) : (
-                <tr>
-                  <td colSpan={6} className="px-5 py-8 text-center text-sm text-gray-400">
-                    No costs logged for {summary?.period_label || 'this period'}. Net profit above is gross of retainers, tooling, and creative spend.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      ) : (
-        <div className="rounded-xl border border-gray-200 bg-white px-5 py-8 text-center text-sm text-gray-500 shadow-sm">
-          Monthly costs and net profit are on the All accounts view — they&apos;re business-wide, not per account.
-        </div>
-      )}
-
-      {/* Collapsed by default and hidden entirely when there's nothing to show, so
-          the main view is untouched unless Joel goes looking. Approved by Joel
-          2026-07-29 on the condition it doesn't clutter. RedTrack accounts return
-          no split, so this only appears for Switchboard-backed accounts. */}
-      {summary?.event_breakdown?.length > 0 && (
-        <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
-          <button
-            onClick={() => setShowEvents(v => { localStorage.setItem('pnlShowEvents', v ? '0' : '1'); return !v; })}
-            className="flex w-full items-center justify-between px-5 py-4 text-left hover:bg-gray-50"
-          >
-            <div>
-              <h2 className="flex items-center gap-1.5 font-semibold text-gray-900">
-                {showEvents ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
-                Revenue by event type
-              </h2>
-              <p className="ml-[22px] text-xs text-gray-400">
-                How the billable revenue above splits across the payable events Switchboard reports.
-              </p>
-            </div>
-            <span className="text-xs text-gray-400">{summary.event_breakdown.length} types</span>
-          </button>
-          {showEvents && (
-            <div className="overflow-x-auto border-t border-gray-100">
-              <table className="w-full text-sm">
-                <thead className="border-b border-gray-100 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  <tr>
-                    <th className="px-5 py-3 text-left">Event</th>
-                    <th className="px-5 py-3 text-right">Count</th>
-                    <th className="px-5 py-3 text-right">Revenue</th>
-                    <th className="px-5 py-3 text-right">Share</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {summary.event_breakdown.map(row => (
-                    <tr key={row.event} className="hover:bg-gray-50">
-                      <td className="px-5 py-3 font-medium text-gray-900">{row.event}</td>
-                      <td className="px-5 py-3 text-right text-gray-600">{row.events.toLocaleString('en-US')}</td>
-                      <td className="px-5 py-3 text-right font-semibold text-gray-900">{money(row.revenue, 2)}</td>
-                      <td className="px-5 py-3 text-right text-gray-500">
-                        {summary.revenue > 0 ? `${((row.revenue / summary.revenue) * 100).toFixed(1)}%` : '--'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+      ) : summary?.event_breakdown?.length > 0 && (
+        <div className="max-w-xl">
+          <EventBreakdown rows={summary.event_breakdown} revenue={summary.revenue} open={showEvents} onToggle={toggleEvents} />
         </div>
       )}
 
       <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
           <div>
-            <h2 className="font-semibold text-gray-900">Month Over Month</h2>
+            <h2 className="font-semibold text-gray-900">Month over month</h2>
             <p className="text-xs text-gray-400">
               {isAllScope
                 ? 'Closed months store spend and revenue once. Costs stay live, so adding or backdating a cost entry still moves past months\' Net.'

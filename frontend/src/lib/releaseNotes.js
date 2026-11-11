@@ -6,7 +6,7 @@ export const RELEASE_NOTES = [
         id: 6,
         date: '2026-11-11',
         title: 'Profit/Loss by campaign',
-        body: 'The Profit/Loss page (All ad accounts) now has a "By campaign" table: spend, revenue and gross profit for each campaign (Commercial Insurance, Auto Insurance, Trusted Home Service), with the ad accounts running it. Rows with an arrow open to show each account.',
+        body: 'Profit/Loss now reads left to right as revenue − spend − costs = net profit. Below it, a "By campaign" table (All ad accounts) shows spend, revenue and gross profit for Commercial Insurance, Auto Insurance and Trusted Home Service, with monthly costs beside it. Rows with an arrow open to show each ad account.',
     },
     {
         id: 5,
