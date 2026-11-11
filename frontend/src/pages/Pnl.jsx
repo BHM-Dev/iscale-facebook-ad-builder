@@ -742,7 +742,9 @@ export default function Pnl() {
           ) : !months.length ? (
             <tr><td colSpan={isAllScope ? 9 : 7} className="px-5 py-8 text-center text-sm text-gray-400">No month history available.</td></tr>
           ) : months.map(row => {
-            const positive = isAllScope ? row.net_profit > 0 : row.gross_profit > 0;
+            // Gross and net are coloured on their own sign: a profitable-gross month whose costs
+            // pushed net negative (Jul 2026) must not show its gross in red.
+            const tone = value => (value > 0 ? 'text-green-600' : value < 0 ? 'text-red-600' : 'text-gray-900');
             return (
               <tr key={`${row.date_from}-${row.date_to}`} className="hover:bg-gray-50">
                 <td className="whitespace-nowrap py-3 pl-4 pr-3 font-medium text-gray-900">
@@ -757,11 +759,11 @@ export default function Pnl() {
                 </td>
                 <td className="px-3 py-3 text-right tabular-nums">{money(row.spend)}</td>
                 <td className="px-3 py-3 text-right tabular-nums">{money(row.revenue)}</td>
-                <td className={`px-3 py-3 text-right tabular-nums font-semibold ${positive ? 'text-green-600' : 'text-red-600'}`}>{money(row.gross_profit)}</td>
+                <td className={`px-3 py-3 text-right tabular-nums font-semibold ${tone(row.gross_profit)}`}>{money(row.gross_profit)}</td>
                 {isAllScope && (
                   <>
                     <td className="px-3 py-3 text-right tabular-nums">{money(row.other_costs)}</td>
-                    <td className={`px-3 py-3 text-right tabular-nums font-semibold ${positive ? 'text-green-600' : 'text-red-600'}`}>{money(row.net_profit)}</td>
+                    <td className={`px-3 py-3 text-right tabular-nums font-semibold ${tone(row.net_profit)}`}>{money(row.net_profit)}</td>
                   </>
                 )}
                 <td className="px-3 py-3 text-right tabular-nums">{pct(row.margin)}</td>
