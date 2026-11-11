@@ -44,7 +44,11 @@ def _sum_or_none(values):
 
 @router.get("/latest")
 def latest(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
-    accounts = _permitted_close_accounts(db, current_user)
+    return assemble_latest(db, _permitted_close_accounts(db, current_user))
+
+
+def assemble_latest(db, accounts):
+    """Latest close per account plus the combined total; shared by the card and the morning DM."""
     if not accounts:
         return {"accounts": [], "combined": None}
     rows = [r for r in (_latest_for(db, a) for a in accounts) if r]

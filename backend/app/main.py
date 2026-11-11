@@ -643,6 +643,20 @@ async def startup_event():
             finally:
                 db.close()
 
+        def scheduled_morning_digest():
+            """09:00 ET: yesterday's close + top budget raises, to Steve's DM only. Read-only."""
+            from app.services.morning_digest import send_digest
+            db = SessionLocal()
+            try:
+                print(f"🌅 Morning digest sent: {send_digest(db)}")
+            except Exception as exc:
+                print(f"⚠️  Morning digest failed: {exc}")
+            finally:
+                db.close()
+
+        scheduler.add_job(scheduled_morning_digest, 'cron', hour=9, minute=0, timezone='America/New_York',
+                          id='morning_digest', max_instances=1, coalesce=True)
+
         scheduler.add_job(scheduled_health_check, 'interval', minutes=30, id='health_check',
                           start_date=_boot + timedelta(minutes=12), max_instances=1, coalesce=True)
 
