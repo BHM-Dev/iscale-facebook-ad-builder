@@ -192,6 +192,30 @@ DEFAULT_BHM_EVERFLOW_ACCOUNT_OFFERS = {
 }
 DEFAULT_BHM_EVERFLOW_AFFILIATES = "232,125"
 
+# All-accounts view, "By campaign" (Steve, 2026-11-11): the advertiser campaigns we run and the Meta accounts that
+# run each. An account's revenue already comes only from its own mapped offers, so grouping accounts groups revenue.
+# Revenue that can't be placed on an ad set (the all-accounts extras) is placed by the offer's account mapping.
+# An in-scope account missing from this list shows under "Other accounts" rather than disappearing.
+PNL_CAMPAIGNS = (
+    {"key": "commercial", "vertical": "Commercial Insurance", "name": "Get Business Coverage / Fast Business Quote",
+     "accounts": ("act_521142087204815", "act_737291135429748")},
+    {"key": "auto", "vertical": "Auto Insurance", "name": "Fast Auto Quote",
+     "accounts": ("act_949433761196746", "act_1675586233224658")},
+    {"key": "home_services", "vertical": "Trusted Home Service", "name": "Leafguard / Modernize",
+     "accounts": ("act_287925406489877",)},
+    {"key": "home_equity", "vertical": "Home Equity", "name": "Splitero / LoanDepot",
+     "accounts": ("act_994325837966073", "act_375215180951288")},
+)
+UNPLACED_CAMPAIGN_KEY = "unplaced"
+
+
+def _campaign_key_for_account(account_id: str) -> str | None:
+    account_id = normalize_account_id(account_id)
+    for campaign in PNL_CAMPAIGNS:
+        if account_id in campaign["accounts"]:
+            return campaign["key"]
+    return None
+
 
 def _bhm_everflow_offer_map() -> dict[str, set[str]]:
     raw = os.getenv(BHM_EVERFLOW_ACCOUNT_OFFERS_ENV)
@@ -1074,6 +1098,72 @@ def _aggregate_revenue_source(rows: list[dict]) -> str:
     return "mixed"
 
 
+def _campaign_breakdown(account_rows: list[dict], unknown_revenue: Decimal, unknown_by_campaign: dict | None) -> list[dict]:
+    """Group the per-account rows into PNL_CAMPAIGNS. Gross only (costs are business-wide). Lines sum to the totals:
+    any all-accounts extra that couldn't be placed (e.g. a month frozen before this split existed) is its own line."""
+    by_key: dict[str, list[dict]] = {}
+    for row in account_rows:
+        key = _campaign_key_for_account(row.get("ad_account_id") or "") or "other"
+        by_key.setdefault(key, []).append(row)
+    extras = {k: _money(v) for k, v in (unknown_by_campaign or {}).items() if _money(v) != 0}
+    # Per-campaign extras are rounded separately; push a cent or two of rounding onto the largest so the lines
+    # still add up to the total without a "$0.01 not split" line.
+    drift = _money(unknown_revenue) - sum(extras.values(), Decimal("0"))
+    if extras and drift != 0 and abs(drift) <= Decimal("0.05"):
+        biggest = max(extras, key=lambda k: extras[k])
+        extras[biggest] += drift
+    definitions = [*PNL_CAMPAIGNS, {"key": "other", "vertical": "Other accounts", "name": "No campaign assigned"}]
+    out = []
+    placed = Decimal("0")
+    for campaign in definitions:
+        rows = by_key.get(campaign["key"], [])
+        extra = extras.get(campaign["key"], Decimal("0")) if rows else Decimal("0")
+        if not rows:
+            continue
+        placed += extra
+        spend_known = all(r.get("spend") is not None for r in rows)
+        revenue_known = all(r.get("revenue") is not None for r in rows)
+        spend = sum((_money(r.get("spend")) for r in rows if r.get("spend") is not None), Decimal("0"))
+        revenue = sum((_money(r.get("revenue")) for r in rows if r.get("revenue") is not None), Decimal("0")) + extra
+        # No revenue source at all (e.g. Trusted Home Service today): revenue is unknown, not $0, so no profit/ROAS.
+        tracked = extra != 0 or any((r.get("revenue_source") or "none") not in ("none", "not_tracked") for r in rows)
+        revenue_known = revenue_known and tracked
+        out.append({
+            "key": campaign["key"],
+            "vertical": campaign["vertical"],
+            "name": campaign["name"],
+            "spend": _float(spend) if spend_known else None,
+            "revenue": _float(revenue) if revenue_known else None,
+            "gross_profit": _float(revenue - spend) if spend_known and revenue_known else None,
+            "roas": float(revenue / spend) if spend_known and revenue_known and spend > 0 and revenue > 0 else None,
+            "unplaced_revenue": _float(extra),
+            "revenue_tracked": tracked,
+            "data_incomplete": any(r.get("data_incomplete") for r in rows) or not spend_known or (tracked and not revenue_known),
+            "accounts": [
+                {
+                    "ad_account_id": r.get("ad_account_id"),
+                    "spend": r.get("spend"),
+                    "revenue": r.get("revenue"),
+                    "gross_profit": (
+                        _float(_money(r.get("revenue")) - _money(r.get("spend")))
+                        if r.get("spend") is not None and r.get("revenue") is not None else None
+                    ),
+                    "revenue_source": r.get("revenue_source"),
+                }
+                for r in sorted(rows, key=lambda r: -float(r.get("spend") or 0))
+            ],
+        })
+    leftover = _money(unknown_revenue) - placed
+    if leftover != 0:
+        out.append({
+            "key": UNPLACED_CAMPAIGN_KEY, "vertical": "Not split by campaign",
+            "name": "Revenue not tied to an ad set", "spend": 0.0, "revenue": _float(leftover),
+            "gross_profit": _float(leftover), "roas": None, "unplaced_revenue": _float(leftover),
+            "revenue_tracked": True, "data_incomplete": False, "accounts": [],
+        })
+    return out
+
+
 def _all_summary_from_account_rows(
     db: Session,
     account_ids: list[str],
@@ -1085,6 +1175,7 @@ def _all_summary_from_account_rows(
     unknown_ok: bool = True,
     foreign_revenue: Decimal | None = None,
     network_revenue: Decimal | None = None,
+    unknown_by_campaign: dict | None = None,
 ) -> dict:
     spend = sum((_money(row.get("spend")) for row in account_rows if row.get("spend") is not None), Decimal("0"))
     attributed_revenue = sum((_money(row.get("revenue")) for row in account_rows if row.get("revenue") is not None), Decimal("0"))
@@ -1151,6 +1242,7 @@ def _all_summary_from_account_rows(
         "errors": errors,
         "has_costs": len(costs) > 0,
         "costs": costs,
+        "campaigns": _campaign_breakdown(account_rows, unknown_revenue, unknown_by_campaign),
     }
 
 
@@ -1159,6 +1251,7 @@ def _everflow_unknown_revenue(
     account_ids: list[str],
     start: date,
     end: date,
+    by_campaign: dict | None = None,
 ) -> tuple[Decimal, bool, Decimal, Decimal]:
     """Billable Everflow revenue for the period that no scoped ad set can claim.
 
@@ -1203,11 +1296,22 @@ def _everflow_unknown_revenue(
     """
     scope = {normalize_account_id(a) for a in account_ids}
     offer_names: set[str] = set()
-    for account_id in _everflow_account_ids():
+    offer_campaign: dict[str, str] = {}    # offer name (casefold) -> PNL_CAMPAIGNS key, for the "By campaign" split
+    for account_id in sorted(_everflow_account_ids()):
         if normalize_account_id(account_id) in scope:
-            offer_names |= _everflow_offer_names_for_account(account_id)
+            names = _everflow_offer_names_for_account(account_id)
+            offer_names |= names
+            key = _campaign_key_for_account(account_id)
+            for name in names:
+                if key:
+                    offer_campaign.setdefault(name.casefold(), key)
     if not offer_names:
         return Decimal("0"), True, Decimal("0"), Decimal("0")
+    campaign_extra: dict[str, Decimal] = {}
+
+    def _count(row, amount):
+        key = offer_campaign.get(EverflowService._offer_name(row).casefold(), UNPLACED_CAMPAIGN_KEY)
+        campaign_extra[key] = campaign_extra.get(key, Decimal("0")) + amount
 
     try:
         svc = EverflowService()
@@ -1245,12 +1349,14 @@ def _everflow_unknown_revenue(
 
         if UNEXPANDED_META_MACRO_RE.fullmatch(sub3):
             unknown += revenue          # our own Meta click whose {{adset.id}} macro never expanded (see below)
+            _count(row, revenue)
             macro_rows += 1
             continue
         if not META_ID_RE.fullmatch(sub3):
             # Rows from the second (auto-only, Meta-only) Switchboard account are all ours, tag or no tag.
             if row.get("_realm") == 2 or EverflowService._offer_name(row).casefold() in internal_offers:
                 unknown += revenue      # an all-internal offer: every conversion is ours, tag or no tag
+                _count(row, revenue)
             else:
                 network += revenue      # no Meta id on an offer that carries outside traffic — reported, never added
             continue
@@ -1259,11 +1365,15 @@ def _everflow_unknown_revenue(
         owner = campaign_owner.get(sub3)
         if owner and owner in scope:
             unknown += revenue          # campaign id of a scoped account
+            _count(row, revenue)
         else:
             foreign += revenue          # someone else's, or unrecognised
 
     if macro_rows:
         logger.info("P&L %s..%s: %d conversions with an unexpanded {{adset.id}} macro counted in the all-accounts total", start, end, macro_rows)
+    if by_campaign is not None:
+        for key, amount in campaign_extra.items():
+            by_campaign[key] = by_campaign.get(key, Decimal("0")) + amount
     return (
         unknown.quantize(CENT, rounding=ROUND_HALF_UP),
         True,
@@ -1272,20 +1382,28 @@ def _everflow_unknown_revenue(
     )
 
 
-def _bhm_everflow_unplaced_revenue(db: Session, account_ids: list[str], start: date, end: date) -> tuple[Decimal, bool]:
+def _bhm_everflow_unplaced_revenue(
+    db: Session, account_ids: list[str], start: date, end: date, by_campaign: dict | None = None,
+) -> tuple[Decimal, bool]:
     """BHM Everflow revenue from our internal affiliates that no ad set can claim (blank sub3, unrecovered macro, a
     scoped campaign id). The affiliate filter already makes it ours, so it counts in the all-accounts total, the same
     way every conversion on Get Business Coverage / Fast Business Quote does. A Meta id we cannot place in scope is
     left out, since the internal affiliates may also carry other internal buyers' accounts. Returns (revenue, ok)."""
     scope = {normalize_account_id(a) for a in account_ids}
-    offers: set[str] = set()
-    for account, account_offers in _bhm_everflow_offer_map().items():
+    offer_campaign: dict[str, str] = {}
+    for account, account_offers in sorted(_bhm_everflow_offer_map().items()):
         if account in scope:
-            offers |= account_offers
-    if not offers:
+            for offer in account_offers:
+                offer_campaign.setdefault(offer, _campaign_key_for_account(account) or UNPLACED_CAMPAIGN_KEY)
+    if not offer_campaign:
         return Decimal("0"), True
     try:
-        rows = _bhm_everflow_rows(db, offers, start, end)
+        # One pull per offer (the service caches per offer anyway) so each conversion's campaign is known.
+        rows = [
+            {**r, "_pnl_campaign": offer_campaign[offer]}
+            for offer in sorted(offer_campaign)
+            for r in _bhm_everflow_rows(db, {offer}, start, end)
+        ]
         known_adsets = {r[0] for r in db.query(FacebookAdSet.fb_adset_id).filter(FacebookAdSet.fb_adset_id.isnot(None)).all() if r[0]}
         scoped_campaigns = {
             str(r[0]) for r in db.query(FacebookCampaign.fb_campaign_id, FacebookCampaign.fb_account_id)
@@ -1296,13 +1414,19 @@ def _bhm_everflow_unplaced_revenue(db: Session, account_ids: list[str], start: d
         logger.warning("BHM Everflow unplaced-revenue lookup failed for %s..%s: %s", start, end, exc)
         return Decimal("0"), False
     total = Decimal("0")
+    per_campaign: dict[str, Decimal] = {}
     for r in rows:
         sub3 = str(r.get("sub3") or "").strip()
         if sub3 in known_adsets:
             continue                 # already in that account's own row (or an out-of-scope account's)
         if META_ID_RE.fullmatch(sub3) and sub3 not in scoped_campaigns:
             continue                 # a Meta id we can't place in scope (e.g. another team's account) — never added
-        total += Decimal(str(r.get("revenue") or 0))
+        amount = Decimal(str(r.get("revenue") or 0))
+        total += amount
+        per_campaign[r["_pnl_campaign"]] = per_campaign.get(r["_pnl_campaign"], Decimal("0")) + amount
+    if by_campaign is not None:
+        for key, amount in per_campaign.items():
+            by_campaign[key] = by_campaign.get(key, Decimal("0")) + amount
     return total.quantize(CENT, rounding=ROUND_HALF_UP), True
 
 
@@ -1373,6 +1497,7 @@ def _account_snapshots_complete(db: Session, scope: list[str], start: date) -> b
 def _write_all_extras_snapshot(
     db: Session, scope: list[str], start: date, end: date,
     unknown: Decimal, foreign: Decimal, network: Decimal, current_user: User | None,
+    by_campaign: dict | None = None,
 ) -> None:
     snapshot_id = _all_extras_snapshot_id(scope)
     existing = (
@@ -1389,7 +1514,10 @@ def _write_all_extras_snapshot(
     target.conversions = None
     target.revenue_source = "all_extras"
     target.unmapped_adsets = None
-    target.event_breakdown = {"scope": scope, "rule": ALL_EXTRAS_RULE, "foreign_revenue": float(foreign)}
+    target.event_breakdown = {
+        "scope": scope, "rule": ALL_EXTRAS_RULE, "foreign_revenue": float(foreign),
+        "unknown_by_campaign": {k: float(_money(v)) for k, v in (by_campaign or {}).items()},
+    }
     target.synced_by = current_user.id if current_user is not None else None
     target.synced_at = datetime.now(timezone.utc)
     if existing is None:
@@ -1403,7 +1531,7 @@ def _write_all_extras_snapshot(
 
 def _all_extras_for_period(
     db: Session, account_ids: list[str], start: date, end: date,
-    current_user: User | None = None, *, refresh: bool = False,
+    current_user: User | None = None, *, refresh: bool = False, by_campaign: dict | None = None,
 ) -> tuple[Decimal, bool, Decimal, Decimal]:
     """(unknown, ok, foreign, network) for the all-accounts view; frozen for closed full months.
 
@@ -1422,9 +1550,15 @@ def _all_extras_for_period(
         )
         meta = snap.event_breakdown if snap is not None and isinstance(snap.event_breakdown, dict) else None
         if meta and meta.get("scope") == scope and meta.get("rule") == ALL_EXTRAS_RULE:
+            # Months frozen before the campaign split carry no unknown_by_campaign; the P&L shows that part as
+            # "Not split by campaign" until the month is re-fetched.
+            if by_campaign is not None:
+                for key, amount in (meta.get("unknown_by_campaign") or {}).items():
+                    by_campaign[key] = _money(amount)
             return _money(snap.revenue), True, _money(meta.get("foreign_revenue")), _money(snap.unattributed_revenue)
-    unknown, ok, foreign, network = _everflow_unknown_revenue(db, account_ids, start, end)
-    bhm_unplaced, bhm_ok = _bhm_everflow_unplaced_revenue(db, account_ids, start, end)
+    split: dict = {}
+    unknown, ok, foreign, network = _everflow_unknown_revenue(db, account_ids, start, end, by_campaign=split)
+    bhm_unplaced, bhm_ok = _bhm_everflow_unplaced_revenue(db, account_ids, start, end, by_campaign=split)
     unknown += bhm_unplaced
     ok = ok and bhm_ok
     if (
@@ -1432,7 +1566,9 @@ def _all_extras_for_period(
         and _closed_full_month(start, end, ALL_EXTRAS_FREEZE_GRACE_DAYS)
         and _account_snapshots_complete(db, scope, start)
     ):
-        _write_all_extras_snapshot(db, scope, start, end, unknown, foreign, network, current_user)
+        _write_all_extras_snapshot(db, scope, start, end, unknown, foreign, network, current_user, by_campaign=split)
+    if by_campaign is not None:
+        by_campaign.update(split)
     return unknown, ok, foreign, network
 
 
@@ -1455,12 +1591,14 @@ def _summary_all(
         _account_summary_frozen_if_closed(db, account_id, start, end, label, current_user)
         for account_id in account_ids
     ]
-    unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _all_extras_for_period(db, account_ids, start, end, current_user)
+    unknown_by_campaign: dict = {}
+    unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _all_extras_for_period(db, account_ids, start, end, current_user, by_campaign=unknown_by_campaign)
     return _all_summary_from_account_rows(
         db, account_ids, start, end, label, account_rows,
         unknown_revenue=unknown_revenue, unknown_ok=unknown_ok,
         foreign_revenue=foreign_revenue,
         network_revenue=network_revenue,
+        unknown_by_campaign=unknown_by_campaign,
     )
 
 
@@ -1760,12 +1898,14 @@ def _get_months_all(
         # per month shown; the per-account figures may be frozen snapshots, and
         # that is safe here because the unknown segment is derived from raw
         # conversions rather than by subtracting the attributed total.
-        unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _all_extras_for_period(db, account_ids, start, end, current_user)
+        unknown_by_campaign: dict = {}
+        unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _all_extras_for_period(db, account_ids, start, end, current_user, by_campaign=unknown_by_campaign)
         rows.append(_all_summary_from_account_rows(
             db, account_ids, start, end, label, account_rows,
             unknown_revenue=unknown_revenue, unknown_ok=unknown_ok,
             foreign_revenue=foreign_revenue,
             network_revenue=network_revenue,
+            unknown_by_campaign=unknown_by_campaign,
         ))
     return rows
 
@@ -1967,7 +2107,8 @@ def resync_month(
         # Resync returns the same shape as /summary, so it needs the unknown
         # segment too — otherwise a resync would "correct" a month back down to
         # the attributed-only figure it was just fixed from.
-        unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _all_extras_for_period(db, account_ids, start, end, current_user, refresh=True)
+        unknown_by_campaign: dict = {}
+        unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _all_extras_for_period(db, account_ids, start, end, current_user, refresh=True, by_campaign=unknown_by_campaign)
         if not unknown_ok:
             raise HTTPException(
                 status_code=502,
@@ -1979,6 +2120,7 @@ def resync_month(
             unknown_revenue=unknown_revenue, unknown_ok=unknown_ok,
             foreign_revenue=foreign_revenue,
             network_revenue=network_revenue,
+            unknown_by_campaign=unknown_by_campaign,
         )
 
     row = _summary(db, account_id, start, end, label)

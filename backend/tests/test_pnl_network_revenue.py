@@ -101,7 +101,7 @@ def _snap_db(*frozen_accounts_for_months):
 def _patch_pull(monkeypatch, results, today=_date(2026, 10, 25)):
     calls = []
 
-    def fake(db, ids, start, end):
+    def fake(db, ids, start, end, by_campaign=None):
         calls.append((start, end))
         return results.pop(0)
 

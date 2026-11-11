@@ -3,6 +3,12 @@
 // one or two sentences, say where to find it. `id` must only ever increase.
 export const RELEASE_NOTES = [
     {
+        id: 6,
+        date: '2026-11-11',
+        title: 'Profit/Loss by campaign',
+        body: 'The Profit/Loss page (All ad accounts) now has a "By campaign" table: spend, revenue and gross profit for each campaign (Commercial Insurance, Auto Insurance, Trusted Home Service), with the ad accounts running it. Rows with an arrow open to show each account.',
+    },
+    {
         id: 5,
         date: '2026-11-10',
         title: 'Winners in the Drive picker',

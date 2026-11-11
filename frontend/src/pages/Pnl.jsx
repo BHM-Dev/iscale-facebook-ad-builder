@@ -97,6 +97,109 @@ function AccountLabel({ account }) {
   );
 }
 
+function profitClass(value) {
+  if (value == null) return 'text-gray-400';
+  return value >= 0 ? 'text-emerald-700' : 'text-red-600';
+}
+
+// All accounts view: one line per advertiser campaign, with the Meta accounts that run it. Gross only — monthly
+// costs are business-wide and stay in Net Profit above. Lines add up to the tiles.
+function CampaignBreakdown({ campaigns, adAccounts = [] }) {
+  const [open, setOpen] = useState({});
+  const toggle = key => setOpen(prev => ({ ...prev, [key]: !prev[key] }));
+  const nameFor = (id) => {
+    const match = adAccounts.find(account => {
+      const raw = String(account.id || account.account_id || '');
+      return (raw.startsWith('act_') ? raw : `act_${raw}`) === id;
+    });
+    return match?.name || id;
+  };
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white shadow-sm" data-testid="pnl-campaigns">
+      <div className="border-b border-gray-100 px-5 py-4">
+        <h2 className="font-semibold text-gray-900">By campaign</h2>
+        <p className="text-xs text-gray-400">Gross profit per advertiser campaign. Monthly costs come off once, in Net Profit above.</p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px] text-sm">
+          <thead className="border-b border-gray-100 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <tr>
+              <th className="px-5 py-2.5 text-left">Campaign</th>
+              <th className="px-3 py-2.5 text-right">Spend</th>
+              <th className="px-3 py-2.5 text-right">Revenue</th>
+              <th className="px-3 py-2.5 text-right">Gross profit</th>
+              <th className="px-5 py-2.5 text-right">ROAS</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {campaigns.map(campaign => {
+              const active = campaign.accounts.filter(a => (a.spend || 0) > 0 || (a.revenue || 0) > 0);
+              const shown = active.length ? active : campaign.accounts;
+              const idle = campaign.accounts.length - shown.length;
+              const expandable = campaign.accounts.length > 1 || campaign.unplaced_revenue > 0;
+              const isOpen = !!open[campaign.key];
+              return (
+                <React.Fragment key={campaign.key}>
+                  <tr
+                    className={expandable ? 'cursor-pointer hover:bg-gray-50' : ''}
+                    onClick={expandable ? () => toggle(campaign.key) : undefined}
+                    onKeyDown={expandable ? (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(campaign.key); } } : undefined}
+                    tabIndex={expandable ? 0 : undefined}
+                    aria-expanded={expandable ? isOpen : undefined}
+                  >
+                    <td className="px-5 py-3">
+                      <div className="flex items-start gap-1.5">
+                        {expandable ? (isOpen ? <ChevronDown size={14} className="mt-0.5 shrink-0 text-gray-400" /> : <ChevronRight size={14} className="mt-0.5 shrink-0 text-gray-400" />) : <span className="w-3.5 shrink-0" />}
+                        <div>
+                          <div className="font-medium text-gray-900">{campaign.vertical} <span className="font-normal text-gray-500">· {campaign.name}</span></div>
+                          {shown.length > 0 && (
+                            <div className="mt-0.5 text-xs text-gray-400">
+                              {shown.map(a => nameFor(a.ad_account_id)).join(', ')}{idle > 0 ? ` (+${idle} idle)` : ''}
+                            </div>
+                          )}
+                          {campaign.key === 'unplaced' && (
+                            <div className="mt-0.5 text-xs text-gray-400">Counted in the totals above; this period was closed before the campaign split existed.</div>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums">{money(campaign.spend)}</td>
+                    <td className="px-3 py-3 text-right tabular-nums">
+                      {campaign.revenue_tracked ? money(campaign.revenue) : <span className="text-xs text-amber-700" title="No revenue source is connected for this campaign yet, so profit can't be calculated.">Not connected</span>}
+                    </td>
+                    <td className={`px-3 py-3 text-right font-medium tabular-nums ${profitClass(campaign.gross_profit)}`}>{money(campaign.gross_profit)}</td>
+                    <td className="px-5 py-3 text-right tabular-nums text-gray-600">
+                      {campaign.roas != null ? `${campaign.roas.toFixed(2)}x` : '--'}
+                      {campaign.data_incomplete && <span className="ml-1.5 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700" title="Meta spend or revenue for one of these accounts didn't load, so this line is missing part of its numbers.">Incomplete</span>}
+                    </td>
+                  </tr>
+                  {isOpen && campaign.accounts.map(account => (
+                    <tr key={account.ad_account_id} className="bg-gray-50/60 text-xs text-gray-600">
+                      <td className="py-2 pl-11 pr-5">{nameFor(account.ad_account_id)} <span className="font-mono text-[11px] text-gray-400">{account.ad_account_id}</span></td>
+                      <td className="px-3 py-2 text-right tabular-nums">{money(account.spend)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{money(account.revenue)}</td>
+                      <td className={`px-3 py-2 text-right tabular-nums ${profitClass(account.gross_profit)}`}>{money(account.gross_profit)}</td>
+                      <td className="px-5 py-2" />
+                    </tr>
+                  ))}
+                  {isOpen && campaign.unplaced_revenue > 0 && (
+                    <tr className="bg-gray-50/60 text-xs text-gray-500">
+                      <td className="py-2 pl-11 pr-5">Revenue we couldn&apos;t match to an ad set</td>
+                      <td className="px-3 py-2" />
+                      <td className="px-3 py-2 text-right tabular-nums">{money(campaign.unplaced_revenue)}</td>
+                      <td className="px-3 py-2" colSpan={2} />
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function KpiTile({ label, value, caption, tone = 'neutral', badge }) {
   const toneClass = tone === 'good' ? 'text-green-600' : tone === 'bad' ? 'text-red-600' : 'text-gray-900';
   return (
@@ -601,6 +704,10 @@ export default function Pnl() {
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           {summary.unmapped_adsets} ad set{summary.unmapped_adsets !== 1 ? 's' : ''} have no revenue rows for this period. Revenue may be incomplete.
         </div>
+      )}
+
+      {isAllScope && !loading && summary?.campaigns?.length > 0 && (
+        <CampaignBreakdown campaigns={summary.campaigns} adAccounts={adAccounts} />
       )}
 
       {isAllScope ? (
