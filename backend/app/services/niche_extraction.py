@@ -93,7 +93,24 @@ def _has_date_prefixed_hyphen_convention(name: str) -> bool:
     return not _NON_NICHE_RE.match(next_label)
 
 
+# Wave words in front of the niche (`VEHICLE W2 FUNERAL HOMES`, `BREADTH W2T HEAVY HAUL`, `WAVE 8 TOWING`)
+# split one niche into several rows. Max CPL's niche_resolver already strips them; this keeps the
+# Dashboard niche table, Intelligence and the Copy Library consistent with it (2026-11-11).
+_WAVE_PREFIX_RE = re.compile(r"^(?:(?:EXPLORE|VEHICLE|BREADTH)\s+W\d+\w*|WAVE\s+\d+)\s+", re.I)
+
+
+def _strip_wave(niche: str | None) -> str | None:
+    if not niche:
+        return niche
+    stripped = _WAVE_PREFIX_RE.sub("", niche).strip()
+    return stripped or niche
+
+
 def _extract_niche(adset_name: str, campaign_name: str = "", require_separator: bool = False) -> str | None:
+    return _strip_wave(_extract_niche_raw(adset_name, campaign_name, require_separator))
+
+
+def _extract_niche_raw(adset_name: str, campaign_name: str = "", require_separator: bool = False) -> str | None:
     """Extract niche from ad set name pattern '[Date] - [Niche] - [Batch info]'.
 
     Returns None for empty names or when the extracted candidate looks like a

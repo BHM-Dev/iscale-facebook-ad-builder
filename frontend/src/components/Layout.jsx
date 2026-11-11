@@ -2,6 +2,7 @@ import React, { Suspense, useEffect, useState } from 'react';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Wand2, Settings, LogOut, ShoppingBag, Target, ChevronLeft, ChevronRight, UserCog, Search, Library, DollarSign, BriefcaseBusiness } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import WhatsNewModal from './WhatsNewModal';
 import PageErrorBoundary from './PageErrorBoundary';
 import { useToast } from '../context/ToastContext';
 import { useBrands } from '../context/BrandContext';
@@ -384,6 +385,7 @@ export default function Layout() {
                     </PageErrorBoundary>
                 </div>
             </main>
+            <WhatsNewModal user={user} />
             <AskAiWidget />
         </div>
     );
