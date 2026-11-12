@@ -33,6 +33,19 @@ function buildFacebookApiError(errorBody, fallbackMessage) {
     return err;
 }
 
+// Meta codes 1 ("unknown error") and 2 ("service temporarily unavailable") can come back
+// after Meta already committed the write. Treat them like a lost response: the object may
+// exist, so the launch stops for reconciliation instead of offering a retry that duplicates
+// a live campaign / ad set / ad (review S1, 2026-11-12). Uploads and creatives keep the
+// old rule: a repeat only leaves an unused asset behind, nothing that spends. Any other numeric code on a
+// 5xx is a definite Meta rejection and stays retryable.
+const AMBIGUOUS_META_CODES = new Set([1, 2]);
+export function writeOutcomeUnknown(status, metaErrorCode) {
+    if (!(status >= 500)) return false;
+    if (metaErrorCode == null || metaErrorCode === '') return true;
+    return AMBIGUOUS_META_CODES.has(Number(metaErrorCode));
+}
+
 /**
  * Read how much of Meta's rate-limit budget an ad account has used.
  *
@@ -448,7 +461,7 @@ export async function createFacebookCampaign(campaignData, adAccountId) {
             // A 5xx means the VPS failed after receiving our POST. It may have
             // lost Meta's response after Meta committed the campaign, so the
             // browser must treat it as an ambiguous write rather than retry.
-            if (response.status >= 500 && apiError.metaErrorCode == null) apiError.metaMutationStarted = true;
+            if (writeOutcomeUnknown(response.status, apiError.metaErrorCode)) apiError.metaMutationStarted = true;
             throw apiError;
         }
 
@@ -502,7 +515,7 @@ export async function createFacebookAdSet(adsetData, campaignId, adAccountId, bu
             // this function only ever threw a plain Error with no metaErrorCode
             // attached. Caught in Codex's review.
             const apiError = buildFacebookApiError(error, 'Failed to create ad set');
-            if (response.status >= 500 && apiError.metaErrorCode == null) apiError.metaMutationStarted = true;
+            if (writeOutcomeUnknown(response.status, apiError.metaErrorCode)) apiError.metaMutationStarted = true;
             throw apiError;
         }
 
@@ -619,7 +632,7 @@ export async function createFacebookAd(adData, adsetId, creativeId, adAccountId)
         if (!response.ok) {
             const error = await response.json().catch(() => ({}));
             const apiError = buildFacebookApiError(error, 'Failed to create ad');
-            if (response.status >= 500 && apiError.metaErrorCode == null) apiError.metaMutationStarted = true;
+            if (writeOutcomeUnknown(response.status, apiError.metaErrorCode)) apiError.metaMutationStarted = true;
             throw apiError;
         }
 

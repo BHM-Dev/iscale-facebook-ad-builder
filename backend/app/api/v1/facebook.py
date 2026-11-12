@@ -194,14 +194,16 @@ def _positive_cents(value):
 
 def _http_error_from_meta(e):
     """Map a Meta write failure to an HTTP status the UI can act on:
-    throttle -> 429 (retryable); transient/unknown (1, 2, no code) -> 502; token problems
+    throttle -> 429 (retryable); transient/unknown (1, 2, no code) -> 502, outcome unknown; token problems
     (190/102) -> 502 (server config, NOT 401 — authFetch treats 401 as an expired session);
     permission (10, 200-299) -> 403; anything else Meta rejected -> 400 with Meta's message."""
     code = getattr(e, 'code', None)
     if code in _THROTTLE_CODES or code == 341 or (code is not None and 80000 <= code <= 80014):
         return HTTPException(status_code=429, detail=f"Meta is rate-limiting requests — nothing was changed. Try again shortly. ({e})")
     if code is None or code in (1, 2):
-        return HTTPException(status_code=502, detail=f"Meta had a temporary problem — nothing was changed. Try again. ({e})")
+        # Codes 1/2 (and no code) can arrive after Meta already applied the change (review S1),
+        # so don't promise "nothing was changed" — tell the user to look before retrying.
+        return HTTPException(status_code=502, detail=f"Meta had a temporary problem — the change may or may not have gone through. Reload this page to see the current value in Meta; trying again is safe, since it sets the same value. ({e})")
     if code in (190, 102):
         return HTTPException(status_code=502, detail=f"The Meta connection needs attention (token) — nothing was changed. ({e})")
     if code == 10 or 200 <= code <= 299:
