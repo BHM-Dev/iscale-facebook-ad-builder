@@ -471,6 +471,7 @@ async def startup_event():
             """Retry a failed daily sync or its remaining unverified creatives later that day."""
             db = SessionLocal()
             try:
+                from sqlalchemy import text as _text  # was only imported in _run_drive_drift_guard: NameError every run
                 from app.services.drive_sync_service import DriveSyncService
                 row = db.execute(
                     _text(

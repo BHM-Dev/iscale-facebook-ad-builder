@@ -3,14 +3,16 @@ import time
 import app.services.token_monitor as tm
 
 
-def _check(monkeypatch, data):
+def _check(monkeypatch, data, status=200, body=None):
     monkeypatch.setenv("FACEBOOK_ACCESS_TOKEN", "t")
     monkeypatch.setenv("FACEBOOK_APP_ID", "a")
     monkeypatch.setenv("FACEBOOK_APP_SECRET", "s")
 
     class _Resp:
+        status_code = status
+
         def json(self):
-            return {"data": data}
+            return body if body is not None else {"data": data}
 
     monkeypatch.setattr(tm.httpx, "get", lambda *a, **k: _Resp())
     return tm.check_token_expiry()
@@ -39,3 +41,15 @@ def test_a_revoked_token_with_no_expiry_is_invalid_not_never_expires_ok(monkeypa
     r = _check(monkeypatch, {"is_valid": False, "expires_at": 0})
     assert r["is_valid"] is False and r["never_expires"]
 
+
+
+def test_throttled_debug_token_is_unchecked_not_invalid(monkeypatch):
+    # Code 4/17 throttle: no `data` key. This used to read as is_valid=False and DM a false alarm.
+    r = _check(monkeypatch, None, status=400, body={"error": {"message": "(#4) Application request limit reached", "code": 4}})
+    assert r["checked"] is False and r["is_valid"] is None
+    assert "request limit" in r["error"]
+
+
+def test_200_without_data_is_unchecked(monkeypatch):
+    r = _check(monkeypatch, None, body={})
+    assert r["checked"] is False and r["is_valid"] is None

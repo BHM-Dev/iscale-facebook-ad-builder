@@ -1889,7 +1889,10 @@ def _get_months_all(
         for account_id in account_ids:
             snapshot = snapshots.get(account_id) if use_snapshots else None
             row = _summary(db, account_id, start, end, label, snapshot=snapshot, include_costs=False)
-            if snapshot is None and start != current_month and _snapshot_eligible(row):
+            # Same 3-day grace as /summary: freezing on the 1st locked in October before
+            # late Everflow conversions landed (2026-11-01 review, N1).
+            if (snapshot is None and _closed_full_month(start, end, ALL_EXTRAS_FREEZE_GRACE_DAYS)
+                    and _snapshot_eligible(row)):
                 _write_month_snapshot(db, account_id, start, end, row, current_user)
             account_rows.append(row)
         # Same unknown segment as /summary. Without this the trailing-window
@@ -2031,7 +2034,8 @@ def get_months(
         # Freeze a closed month the first time it is fetched cleanly. Never the
         # current month, and never an incomplete result — a frozen bad number is
         # worse than re-fetching a good one.
-        if snapshot is None and s != current_month and _snapshot_eligible(row):
+        # Grace as in /summary (N1): no freezing a month in its first days after close.
+        if snapshot is None and _closed_full_month(s, e, ALL_EXTRAS_FREEZE_GRACE_DAYS) and _snapshot_eligible(row):
             _write_month_snapshot(db, account_id, s, e, row, current_user)
         rows.append(row)
         logger.info(

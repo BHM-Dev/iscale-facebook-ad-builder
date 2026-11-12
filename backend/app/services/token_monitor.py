@@ -57,7 +57,15 @@ def check_token_expiry() -> dict:
             params={"input_token": token, "access_token": f"{app_id}|{app_secret}"},
             timeout=10,
         )
-        data = (resp.json() or {}).get("data", {})
+        body = resp.json() or {}
+        # A throttled or erroring call returns no `data`; reading that as is_valid=False
+        # sent false "token invalid" DMs. Report it as an unchecked run instead.
+        if resp.status_code != 200 or body.get("error") or not isinstance(body.get("data"), dict):
+            err = body.get("error") or {}
+            result["error"] = f"debug_token HTTP {resp.status_code}: {(err.get('message') if isinstance(err, dict) else err) or 'no data'}"[:300]
+            logger.warning("Token expiry check could not run: %s", result["error"])
+            return result
+        data = body["data"]
         token_expires = int(data.get("expires_at", 0) or 0)
         data_access_expires = int(data.get("data_access_expires_at", 0) or 0)
         candidates = [t for t in (token_expires, data_access_expires) if t > 0]

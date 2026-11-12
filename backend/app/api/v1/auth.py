@@ -2,6 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, 
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import os
 
 from app.database import get_db
@@ -44,14 +45,19 @@ class BootstrapRequest(BaseModel):
 
 
 @router.post("/bootstrap", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def bootstrap_admin(body: BootstrapRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+async def bootstrap_admin(request: Request, body: BootstrapRequest, db: Session = Depends(get_db)):
     """
     One-time endpoint to create the first admin/superuser account.
     Protected by SECRET_KEY — pass it as 'secret_key' in the request body.
-    Safe to call repeatedly: raises 400 if an account with that email already exists.
+    Closed (403) as soon as any superuser exists; use User Management after that.
     """
+    # Closes for good once any superuser exists (2026-11-01 review, S6): it was a
+    # permanent "make me an admin" door for anyone holding SECRET_KEY.
+    if db.query(User.id).filter(User.is_superuser.is_(True)).first():
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bootstrap is closed: an admin already exists")
     server_secret = os.getenv("SECRET_KEY", "")
-    if not server_secret or body.secret_key != server_secret:
+    if not server_secret or not hmac.compare_digest(body.secret_key.encode(), server_secret.encode()):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid secret key")
 
     existing = db.query(User).filter(User.email == body.email).first()
