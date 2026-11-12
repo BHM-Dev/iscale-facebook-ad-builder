@@ -94,3 +94,8 @@ Checked live against Meta and Everflow for today, yesterday and MTD (*verified i
 
 ## Layout — 2026-11-11
 Page reads as one statement: Revenue − Ad spend = Gross profit (− Monthly costs = Net profit on All accounts), Net emphasized. Footnotes (unattributed / not-counted revenue) sit under it as small text; data-incomplete stays a banner. Below: left column = By campaign then Month over month; right column (340px) = Monthly costs list + Revenue by event type. Columns flow independently so the shorter one never leaves a gap mid-page. Single-account view: month history full width. The "N ad sets have no revenue rows" warning was removed — it counted every ad set ever saved for the account, so it fired every month. *Verified in production* only as far as the post-deploy check below states.
+
+## Missing data never produces a commission figure — 2026-11-12 (review S7, N1)
+- If an account's Meta spend or its revenue fails to load, the commission (pct_of_profit) row shows **"Withheld: data incomplete"** instead of a dollar figure. It is left out of the costs total, and All-accounts net profit and margin show "--". Before this, the missing source counted as $0. That overstated profit (for example by about $34k if RHO spend failed) and computed the commission on it. *Unit-tested only.*
+- The months table now waits the same 3 days after month end as `/summary` before it freezes a closed month. Previously it froze October on Nov 1, before late conversions landed. *Unit-tested only.*
+- Month history colours gross and net profit each by its own sign. *Not yet checked in a browser.*

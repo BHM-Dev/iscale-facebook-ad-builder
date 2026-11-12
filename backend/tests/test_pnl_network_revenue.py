@@ -70,7 +70,7 @@ def test_non_meta_sub3_is_network_not_unknown(monkeypatch):
 
 
 def test_network_revenue_is_reported_but_not_added_to_profit(monkeypatch):
-    monkeypatch.setattr(pnl, "_resolve_aggregate_costs", lambda db, ids, s, e, spend, revenue: ([], Decimal("0")))
+    monkeypatch.setattr(pnl, "_resolve_aggregate_costs", lambda db, ids, s, e, spend, revenue, **k: ([], Decimal("0")))
     rows = [{"ad_account_id": ACCOUNT, "spend": 100.0, "revenue": 150.0, "conversions": 3}]
     out = pnl._all_summary_from_account_rows(
         None, [ACCOUNT], date(2026, 10, 1), date(2026, 10, 31), "Oct", rows,

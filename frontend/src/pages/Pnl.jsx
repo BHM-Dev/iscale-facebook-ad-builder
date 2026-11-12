@@ -291,7 +291,11 @@ function CostsLedger({ costs, total, loading, periodLabel, onAdd, onEdit, onDele
                   )}
                 </div>
                 <div className="flex shrink-0 flex-col items-end">
-                  <span className="text-sm font-semibold tabular-nums text-gray-900">{money(entry.resolved_amount, 2)}</span>
+                  {entry.withheld ? (
+                    <span className="text-xs font-medium text-amber-700" title="Spend or revenue didn't load for this period, so the profit this is a share of isn't known yet">Withheld: data incomplete</span>
+                  ) : (
+                    <span className="text-sm font-semibold tabular-nums text-gray-900">{money(entry.resolved_amount, 2)}</span>
+                  )}
                   <div className="mt-1 flex gap-1 opacity-60 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                     <button onClick={() => onEdit(entry)} className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700" title="Edit" aria-label={`Edit ${entry.label}`}><Edit2 size={13} /></button>
                     <button onClick={() => onDelete(entry)} className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600" title="Delete" aria-label={`Delete ${entry.label}`}><Trash2 size={13} /></button>

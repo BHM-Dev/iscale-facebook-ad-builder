@@ -854,6 +854,7 @@ def _resolve_costs(
     spend: Decimal,
     revenue: Decimal,
     all_spend: dict[str, Decimal] | None = None,
+    profit_known: bool = True,
 ) -> tuple[list[dict], Decimal]:
     entries = _cost_query(db, account_id, start, end).all()
     needs_allocation = any(entry.ad_account_id is None for entry in entries)
@@ -889,11 +890,14 @@ def _resolve_costs(
 
     profit_base = revenue - spend - non_profit_costs
     for entry, share, allocation_basis in profit_entries:
+        if not profit_known:
+            resolved.append(_withheld_cost(entry, share, allocation_basis))
+            continue
         amount = _money(entry.amount)
         resolved_amount = _profit_share(entry, profit_base, amount)
         resolved.append(_serialize_cost(entry, resolved_amount, share, allocation_basis, profit_base=profit_base))
 
-    total = sum((_money(item["resolved_amount"]) for item in resolved), Decimal("0"))
+    total = sum((_money(item["resolved_amount"]) for item in resolved if item["resolved_amount"] is not None), Decimal("0"))
     return resolved, total
 
 
@@ -904,6 +908,7 @@ def _resolve_aggregate_costs(
     end: date,
     spend: Decimal,
     revenue: Decimal,
+    profit_known: bool = True,
 ) -> tuple[list[dict], Decimal]:
     entries = _aggregate_cost_query(db, account_ids, start, end).all()
 
@@ -935,12 +940,25 @@ def _resolve_aggregate_costs(
 
     profit_base = revenue - spend - non_profit_costs
     for entry, allocation_basis in profit_entries:
+        if not profit_known:
+            resolved.append(_withheld_cost(entry, Decimal("1"), allocation_basis))
+            continue
         amount = _money(entry.amount)
         resolved_amount = _profit_share(entry, profit_base, amount)
         resolved.append(_serialize_cost(entry, resolved_amount, Decimal("1"), allocation_basis, profit_base=profit_base))
 
-    total = sum((_money(item["resolved_amount"]) for item in resolved), Decimal("0"))
+    total = sum((_money(item["resolved_amount"]) for item in resolved if item["resolved_amount"] is not None), Decimal("0"))
     return resolved, total
+
+
+def _withheld_cost(entry: PnlCostEntry, share: Decimal, allocation_basis: str) -> dict:
+    """A profit share (Abel's commission) when spend or revenue failed to load (2026-11-01 review, S7).
+
+    The missing source used to count as $0, so profit was overstated (~$34k if RHO spend failed) and the
+    commission computed on it (~$1.7k too much). No figure beats a wrong one Steve might pay from."""
+    row = _serialize_cost(entry, Decimal("0"), share, allocation_basis)
+    row.update(resolved_amount=None, withheld=True)
+    return row
 
 
 def _serialize_cost(entry: PnlCostEntry, resolved_amount: Decimal, share: Decimal, allocation_basis: str, profit_base: Decimal | None = None) -> dict:
@@ -1187,9 +1205,11 @@ def _all_summary_from_account_rows(
     unknown_revenue = _money(unknown_revenue or 0)
     revenue = attributed_revenue + unknown_revenue
     gross_profit = revenue - spend
-    costs, total_costs = _resolve_aggregate_costs(db, account_ids, start, end, spend, revenue)
+    sources_missing = any(row.get("spend") is None or row.get("revenue") is None for row in account_rows)
+    costs, total_costs = _resolve_aggregate_costs(db, account_ids, start, end, spend, revenue,
+                                                  profit_known=not sources_missing)
     net_profit = gross_profit - total_costs
-    data_incomplete = any(row.get("data_incomplete") or row.get("spend") is None or row.get("revenue") is None for row in account_rows)
+    data_incomplete = sources_missing or any(row.get("data_incomplete") for row in account_rows)
     if not unknown_ok:
         # Couldn't reach Everflow for the unknown segment. Say so — reporting the
         # attributed-only total as if it were complete is how this understated
@@ -1219,8 +1239,9 @@ def _all_summary_from_account_rows(
         "gross_profit": _float(gross_profit),
         "conversions": sum((int(row.get("conversions") or 0) for row in account_rows), 0),
         "other_costs": _float(total_costs),
-        "net_profit": _float(net_profit),
-        "margin": float(net_profit / revenue) if revenue > 0 else None,
+        # A missing source counts as $0 in gross; net would compound that, so leave it blank (S7).
+        "net_profit": None if sources_missing else _float(net_profit),
+        "margin": float(net_profit / revenue) if revenue > 0 and not sources_missing else None,
         "margin_type": "net",
         "roas": float(revenue / spend) if spend > 0 and revenue > 0 else None,
         "revenue_source": _aggregate_revenue_source(account_rows),
@@ -2156,12 +2177,14 @@ def list_costs(
     # _spend_for_account raises on Meta failure by design (so /summary can report
     # data_incomplete instead of a fake $0). The ledger is still worth rendering
     # without it — only the pct_of_spend rows degrade.
+    spend_ok = True
     try:
         spend = _spend_for_account(account_id, start, end)
     except Exception:
-        spend = Decimal("0")
-    revenue, _, _, _, _, _, _ = _revenue_for_account(db, account_id, start, end)
-    costs, _ = _resolve_costs(db, account_id, start, end, spend, revenue)
+        spend, spend_ok = Decimal("0"), False
+    revenue, _, _, _, revenue_incomplete, _, _ = _revenue_for_account(db, account_id, start, end)
+    costs, _ = _resolve_costs(db, account_id, start, end, spend, revenue,
+                              profit_known=spend_ok and not revenue_incomplete)
     return costs
 
 
