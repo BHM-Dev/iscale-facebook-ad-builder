@@ -78,7 +78,11 @@ export function conceptFromFilename(name) {
 // convention on purpose. Use it verbatim (minus extension) so codes, ratio and version survive.
 export function conventionNameFromFilename(name) {
     const base = (String(name || '').split(/[\\/]/).at(-1) || '').replace(/\.[a-z0-9]{2,5}$/i, '').trim();
-    return /^[a-z0-9]{1,8}-[a-z0-9]{2,8}-\d{1,3}-\S+/i.test(base) ? base : null;
+    if (/^[a-z0-9]{1,8}-[a-z0-9]{2,8}-\d{1,3}-\S+/i.test(base)) return base;
+    // Joel's video hook tests: `AUTO-20V-H1-B1-C2-NoTickets-VID-9x16` (hook/body/cut segments, no
+    // number in slot 3). Codes up front plus a trailing media+ratio tag = already a finished name.
+    // A digit in the leading codes (AUTO-20V) keeps plain names like `Summer-Sale-IMG-1x1` on the template.
+    return /^(?=[a-z0-9]*\d|[a-z0-9]+-[a-z0-9]*\d)[a-z0-9]{1,8}-[a-z0-9]{2,8}-\S+-(IMG|VID)-(1x1|4x5|9x16)([_-]v\d+)?$/i.test(base) ? base : null;
 }
 
 export function seqFromFilename(name) {

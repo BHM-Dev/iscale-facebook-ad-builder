@@ -98,4 +98,4 @@ Page reads as one statement: Revenue − Ad spend = Gross profit (− Monthly co
 ## Missing data never produces a commission figure — 2026-11-12 (review S7, N1)
 - If an account's Meta spend or its revenue fails to load, the commission (pct_of_profit) row shows **"Withheld: data incomplete"** instead of a dollar figure. It is left out of the costs total, and All-accounts net profit and margin show "--". Before this, the missing source counted as $0. That overstated profit (for example by about $34k if RHO spend failed) and computed the commission on it. *Unit-tested only.*
 - The months table now waits the same 3 days after month end as `/summary` before it freezes a closed month. Previously it froze October on Nov 1, before late conversions landed. *Unit-tested only.*
-- Month history colours gross and net profit each by its own sign. *Not yet checked in a browser.*
+- Month history colours gross and net profit each by its own sign. *Verified live 2026-11-12: July 2026 gross $2,347 green, net −$1,102 red.*

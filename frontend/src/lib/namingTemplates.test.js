@@ -52,4 +52,17 @@ describe('conventionNameFromFilename', () => {
         expect(conventionNameFromFilename('folder/VW-TREE-05-WhichTruck-IMG-1x1_v2.png')).toBe('VW-TREE-05-WhichTruck-IMG-1x1_v2');
         expect(conventionNameFromFilename('HearseAndStaff.jpg')).toBeNull();
     });
+    it('uses hook-test video names verbatim even without a sequence number', () => {
+        expect(conventionNameFromFilename('AUTO-20V-H1-B1-C2-NoTickets-VID-9x16.mp4')).toBe('AUTO-20V-H1-B1-C2-NoTickets-VID-9x16');
+        expect(conventionNameFromFilename('AUTO-20V-HC-B1-C1-Control-VID-4x5.mp4')).toBe('AUTO-20V-HC-B1-C1-Control-VID-4x5');
+        expect(conventionNameFromFilename('RB3-COUR-05-DoorstepDrop-IMG-9x16.jpg')).toBe('RB3-COUR-05-DoorstepDrop-IMG-9x16');
+    });
+    it('does not treat loose names as finished', () => {
+        expect(conventionNameFromFilename('Kitchen Video Hook Test.mp4')).toBeNull();
+        expect(conventionNameFromFilename('IMG-1x1.jpg')).toBeNull();
+        expect(conventionNameFromFilename('Hook-IMG-1x1.jpg')).toBeNull();
+        expect(conventionNameFromFilename('kitchen video-VID-9x16.mp4')).toBeNull();
+        expect(conventionNameFromFilename('Free-Quote-Hook-VID-9x16.mp4')).toBeNull();
+        expect(conventionNameFromFilename('Summer-Sale-Promo-IMG-1x1.jpg')).toBeNull();
+    });
 });
