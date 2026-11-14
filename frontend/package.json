@@ -23,16 +23,8 @@
     "test:all": "npm run test:unit && npm run test:smoke"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
-    "@supabase/supabase-js": "^2.83.0",
-    "adm-zip": "^0.5.16",
     "axios": "^1.13.2",
-    "better-sqlite3": "^12.4.1",
-    "cors": "^2.8.5",
-    "dotenv": "^17.2.3",
-    "express": "^5.1.0",
     "lucide-react": "^0.554.0",
-    "multer": "^2.0.2",
     "papaparse": "^5.5.4",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileImage, Video, Zap, Shuffle, ArrowRight, HardDrive, Rocket } from 'lucide-react';
+import { FileImage, Zap, Shuffle, ArrowRight, HardDrive, Rocket } from 'lucide-react';
 import { authFetch } from '../lib/facebookApi';
 
 const DRIVE_LAUNCH_TOOL = {
@@ -41,16 +41,6 @@ const TOOLS = [
         ctaColor: 'text-gray-900',
         title: 'Build New Ad',
         description: 'Deconstruct a winning ad into its blueprint and regenerate it with your own brand, product, and copy.',
-    },
-    {
-        path: '/video-ads',
-        icon: Video,
-        iconBg: 'bg-gray-100',
-        iconColor: 'text-gray-700',
-        borderHover: 'hover:border-gray-300',
-        ctaColor: 'text-gray-900',
-        title: 'Video Ad',
-        description: 'Generate video ads from product shots or stock footage. Ideal for Reels, Stories, and in-feed video.',
     },
 ];
 

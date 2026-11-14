@@ -25,7 +25,6 @@ const LibrariesHub = lazyPage(() => import('./pages/LibrariesHub'));
 const FacebookHub = lazyPage(() => import('./pages/FacebookHub'));
 const ImageAds = lazyPage(() => import('./pages/ImageAds'));
 const VideoAds = lazyPage(() => import('./pages/VideoAds'));
-const Reporting = lazyPage(() => import('./pages/Reporting'));
 const Brands = lazyPage(() => import('./pages/Brands'));
 const Products = lazyPage(() => import('./pages/Products'));
 const CustomerProfiles = lazyPage(() => import('./pages/CustomerProfiles'));
@@ -97,7 +96,6 @@ function App() {
                   <Route path="products" element={<Products />} />
                   <Route path="profiles" element={<CustomerProfiles />} />
                   <Route path="ad-remix" element={<AdRemix />} />
-                  <Route path="reporting" element={<Reporting />} />
                   <Route path="settings" element={<Settings />} />
                   <Route
                     path="users"
