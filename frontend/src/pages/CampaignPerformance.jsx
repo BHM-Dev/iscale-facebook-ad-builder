@@ -1141,7 +1141,7 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
       )}
       {refreshCandidate && !sourceStatusUnavailable && !rotationSource && (
         <div role="status" className="border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          <span className="font-semibold">No proven source ad in this period:</span> review the creative breakdown manually before creating a replacement.
+          <span className="font-semibold">No proven source ad in this period:</span> review the creative breakdown manually before creating a replacement. Quick Generate still works on any ad.
         </div>
       )}
       <div className="overflow-x-auto">
@@ -1197,6 +1197,8 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
             // also use the only delivering ad as its source, so keep that source
             // distinction separate from the stronger "winner" presentation.
             const isTop = i === 0 && ads.length > 1 && ad.spend > 0 && ad.leads > 0;
+            // No verified source only means no `refresh=1` replacement path. Quick Generate stays
+            // available: a missing RedTrack match must not block Joel's normal creative path (review N9).
             const rotationReviewRequired = refreshCandidate && !rotationSource;
 
             return (
@@ -1313,9 +1315,8 @@ function AdsBreakdown({ fbAdsetId, fbCampaignId, adsetName, campaignId, adAccoun
                     {/* Quick Generate → Batch Generate pre-filled with this ad */}
                     <button
                       onClick={() => navigate(`/batch-generate?adId=${encodeURIComponent(ad.ad_id)}&adName=${encodeURIComponent(ad.ad_name || ad.ad_id)}&adsetName=${encodeURIComponent(adsetName || '')}&campaignId=${encodeURIComponent(fbCampaignId || '')}&adsetId=${encodeURIComponent(fbAdsetId || '')}${isRotationSource ? '&refresh=1' : ''}`)}
-                      disabled={rotationReviewRequired}
-                      className="flex items-center gap-1 px-2 py-1 rounded text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors text-xs font-medium whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-40"
-                      title={isRotationSource ? 'Create replacement variants from this verified source ad' : rotationReviewRequired ? 'Verify a source ad or review the creative breakdown before generating rotation variants' : 'Generate more creative variants from this ad'}
+                      className="flex items-center gap-1 px-2 py-1 rounded text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors text-xs font-medium whitespace-nowrap"
+                      title={isRotationSource ? 'Create replacement variants from this verified source ad' : rotationReviewRequired ? 'Generate variants from this ad. No source ad is verified for rotation in this period, so check its numbers first.' : 'Generate more creative variants from this ad'}
                     >
                       <Zap size={11} /> {isRotationSource ? 'Create variants' : 'Quick Generate'}
                     </button>
