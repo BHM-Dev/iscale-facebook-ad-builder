@@ -70,6 +70,7 @@ Checked live against Meta and Everflow for today, yesterday and MTD (*verified i
 - **Not measured:** an actual browser page load (no signed-in session).
 
 ## Changelog
+- 2026-11-14 Re-fetch for All accounts is all-or-nothing (review S8): every account and the Everflow extras are fetched first; snapshots are written only if all came back complete, then the extras snapshot is frozen after the accounts. Before, an Everflow or later-account failure left the month half re-fetched. *Unit-tested only.*
 - 2026-11-01 September re-fetched (`POST /months/2026-09/resync`, Steve's OK) after cross-check with Joel's Sheet: revenue $39,605 → $41,096, net $2,331 → $3,822 (frozen Sep predated the 10-26 `{{adset.id}}` rule). Sheet shows $41,066. *Verified in production.* Jul/Aug not re-fetched. Oct sheet vs /pnl: revenue $158,518 vs $158,041 (~$205 is excluded Fast Auto Quote outside traffic, ~$272 unexplained).
 - 2026-10-30 speed: frozen closed months in /summary, account-level spend, parallel Switchboard windows, row cache + 4-min warm job.
 - 2026-10-29 BHM Everflow revenue source for Splitero / LoanDepot.

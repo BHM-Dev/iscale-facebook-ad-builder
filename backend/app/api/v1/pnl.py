@@ -2114,6 +2114,9 @@ def resync_month(
         account_ids = _permitted_active_account_ids(db, current_user)
         if not account_ids:
             raise HTTPException(status_code=400, detail="No active ad accounts are available for P&L.")
+        # All-or-nothing (review S8): fetch every account and the all-accounts extras first,
+        # and only write snapshots once everything came back complete. Writing account by
+        # account left the month half-old, half-new when a later account or Everflow failed.
         account_rows = []
         for scoped_account_id in account_ids:
             row = _summary(db, scoped_account_id, start, end, label, include_costs=False)
@@ -2123,12 +2126,10 @@ def resync_month(
                     detail=(
                         f"{scoped_account_id} re-fetch came back incomplete ("
                         + (", ".join(row.get("errors") or []) or "unknown")
-                        + "), so the stored figures were left alone. Try again shortly."
+                        + "), so none of the stored figures were changed. Try again shortly."
                     ),
                 )
-            _write_month_snapshot(db, scoped_account_id, start, end, row, current_user)
-            row["from_snapshot"] = True
-            account_rows.append(row)
+            account_rows.append((scoped_account_id, row))
         # Resync returns the same shape as /summary, so it needs the unknown
         # segment too — otherwise a resync would "correct" a month back down to
         # the attributed-only figure it was just fixed from.
@@ -2137,9 +2138,19 @@ def resync_month(
         if not unknown_ok:
             raise HTTPException(
                 status_code=502,
-                detail="The per-account figures were re-fetched, but the all-accounts extras (Everflow) came back incomplete, "
-                       "so those were left as they were. Try the re-fetch again shortly.",
+                detail="The all-accounts extras (Everflow) came back incomplete, so none of the stored figures "
+                       "were changed. Try the re-fetch again shortly.",
             )
+        for scoped_account_id, row in account_rows:
+            _write_month_snapshot(db, scoped_account_id, start, end, row, current_user)
+            row["from_snapshot"] = True
+        account_rows = [row for _, row in account_rows]
+        # The extras call above ran before the account snapshots existed, so it may have
+        # skipped its own freeze. Write it now that they do, matching the old end state.
+        scope = sorted(normalize_account_id(a) for a in account_ids)
+        if _closed_full_month(start, end, ALL_EXTRAS_FREEZE_GRACE_DAYS) and _account_snapshots_complete(db, scope, start):
+            _write_all_extras_snapshot(db, scope, start, end, unknown_revenue, foreign_revenue, network_revenue,
+                                       current_user, by_campaign=unknown_by_campaign)
         return _all_summary_from_account_rows(
             db, account_ids, start, end, label, account_rows,
             unknown_revenue=unknown_revenue, unknown_ok=unknown_ok,
