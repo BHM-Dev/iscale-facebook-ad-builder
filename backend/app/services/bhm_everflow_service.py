@@ -38,6 +38,9 @@ CACHE_TTL_SECONDS = 300
 MAX_RETRIES = 3
 _cache: dict[tuple, tuple[float, list[dict]]] = {}
 _cache_lock = threading.Lock()
+_key_locks: dict = {}
+# A refresh that lands while another refresh for the same key just finished reuses its rows.
+REFRESH_DEDUPE_SECONDS = 15
 
 
 class BhmEverflowService:
@@ -86,11 +89,21 @@ class BhmEverflowService:
             hit = _cache.get(key)
             if hit and not refresh and time.time() - hit[0] < CACHE_TTL_SECONDS:
                 return hit[1]
-        rows = self._fetch_offer_rows(date_from, date_to, offer_id, timezone_id)
-        with _cache_lock:
-            if len(_cache) >= 64:
-                _cache.pop(min(_cache, key=lambda k: _cache[k][0]), None)
-            _cache[key] = (time.time(), rows)
+            key_lock = _key_locks.setdefault(key, threading.Lock())
+        # Single flight (review N11): concurrent callers for the same offer/period wait for one
+        # Everflow pull instead of each firing their own (the warm job + a page load = 429s).
+        with key_lock:
+            with _cache_lock:
+                hit = _cache.get(key)
+                if hit:
+                    age = time.time() - hit[0]
+                    if (not refresh and age < CACHE_TTL_SECONDS) or (refresh and age < REFRESH_DEDUPE_SECONDS):
+                        return hit[1]
+            rows = self._fetch_offer_rows(date_from, date_to, offer_id, timezone_id)
+            with _cache_lock:
+                if len(_cache) >= 64:
+                    _cache.pop(min(_cache, key=lambda k: _cache[k][0]), None)
+                _cache[key] = (time.time(), rows)
         return rows
 
     def _post(self, page: int, body: dict) -> httpx.Response:

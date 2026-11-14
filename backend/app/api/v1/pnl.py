@@ -21,7 +21,7 @@ from app.models import FacebookAd, FacebookAdSet, FacebookCampaign, PnlCostEntry
 from app.services.bhm_everflow_service import BhmEverflowService
 from app.services.everflow_service import DEFAULT_TIMEZONE_ID, EVERFLOW_TZ_BY_ID, META_ID_RE, EverflowService
 from app.services.facebook_service import FacebookService
-from app.services.redtrack_service import RedTrackService, today_in_rt_tz
+from app.services.redtrack_service import RedTrackService, _RT_TZ, today_in_rt_tz
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -1472,6 +1472,11 @@ def warm_current_month_cache() -> None:
     """Re-pull the current month's revenue rows in the background so a person opening the P&L reads them from the
     5-minute cache instead of waiting ~10s for Everflow (Steve, 2026-10-30: "90 seconds is way too long"). Runs every
     4 minutes from the scheduler. Only the current month: closed months are frozen and never re-pulled."""
+    # Overnight nobody opens the P&L, so skip 1am-6am reporting time (review N11: ~360 forced
+    # Everflow pulls a day). The first load after 6am pulls live, as the page already does.
+    hour = datetime.now(_RT_TZ).hour
+    if 1 <= hour < 6:
+        return
     start, end, _ = _resolve_period("mtd")
     switchboard = EverflowService()
     if switchboard.is_configured():
@@ -1488,7 +1493,10 @@ def warm_current_month_cache() -> None:
     if service.is_configured():
         for offers in _bhm_everflow_offer_map().values():
             for offer_id in offers:
-                service._offer_rows(start, end, offer_id, 80, refresh=True)
+                try:   # one failing offer must not stop the rest from warming
+                    service._offer_rows(start, end, offer_id, 80, refresh=True)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("P&L cache warm (BHM offer %s) failed: %s", offer_id, exc)
 
 
 def _closed_full_month(start: date, end: date, grace_days: int = 0) -> bool:
