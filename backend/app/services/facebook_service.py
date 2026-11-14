@@ -78,6 +78,45 @@ class FacebookAPIError(RuntimeError):
         self.subcode = subcode
 
 
+_url_tags_alerted_at = 0.0
+
+
+def apply_redtrack_url_tags(params, asset_feed_spec, website_url):
+    """Set RedTrack sub1/2/3 macros on a creative's url_tags (and on the dual-placement
+    asset_feed_spec link, see create_creative). Never blocks a push, and never ships an ad
+    without attribution (review S3, 2026-11-12): if the normal build fails, fall back to all
+    three macros (a correct key appended twice carries the same value, so this is harmless)
+    and DM Steve so the bug gets fixed. Returns the url_tags string that was set ("" = none)."""
+    from app.core.redtrack_macros import REDTRACK_MACROS, build_redtrack_url_tags
+    try:
+        url_tags = build_redtrack_url_tags(website_url)
+    except Exception as exc:  # noqa: BLE001 - a bug here must not cost revenue attribution
+        url_tags = "&".join(f"{k}={v}" for k, v in REDTRACK_MACROS.items())
+        print(f"⚠️  RedTrack url_tags build failed, using full macro set: {exc}")
+        global _url_tags_alerted_at
+        try:
+            if time.time() - _url_tags_alerted_at < 600:
+                raise StopIteration  # one DM per 10 min: a systematic bug must not add ~5s to every creative
+            _url_tags_alerted_at = time.time()
+            from app.services.slack_service import send_launch_alert
+            send_launch_alert("RedTrack url_tags build failed; ad pushed with the full sub1/2/3 macro set",
+                              f"{type(exc).__name__}: {exc}")
+        except Exception:
+            pass
+    if not url_tags:
+        return ""
+    params[AdCreative.Field.url_tags] = url_tags
+    # Belt-and-suspenders: a research report (possibly stale / different SDK) suggested
+    # asset_feed_spec.link_urls + top-level url_tags together don't reliably render the
+    # destination link for dual-placement creatives. Set url_tags in BOTH places for the
+    # dual-placement path until verified live. Do not remove either speculatively.
+    if asset_feed_spec is not None:
+        link_urls = asset_feed_spec.get('link_urls') or []
+        if link_urls and isinstance(link_urls[0], dict):
+            link_urls[0]['url_tags'] = url_tags
+    return url_tags
+
+
 class FacebookService:
     def __init__(self):
         # Try standard names first, then VITE_ prefixed names (common in this project)
@@ -1776,25 +1815,7 @@ class FacebookService:
         # existing macros are not duplicated; wrong existing sub values are
         # overridden by url_tags so RedTrack spend attribution stays keyed to Meta.
         if not lead_gen_form_id and website_url:
-            try:
-                from app.core.redtrack_macros import build_redtrack_url_tags
-                url_tags = build_redtrack_url_tags(website_url)
-                if url_tags:
-                    params[AdCreative.Field.url_tags] = url_tags
-                    # Belt-and-suspenders: a research report (possibly stale /
-                    # different SDK) suggested asset_feed_spec.link_urls +
-                    # top-level url_tags together don't reliably render the
-                    # destination link for dual-placement creatives. We set
-                    # url_tags in BOTH places for the dual-placement path
-                    # (top-level, above, and asset_feed_spec.link_urls[0]
-                    # below) until this is verified live against a real push.
-                    # Remove whichever one turns out unnecessary/wrong once
-                    # confirmed — do not remove either speculatively.
-                    if (secondary_image_hash or secondary_video_id) and not lead_gen_form_id:
-                        asset_feed_spec['link_urls'][0]['url_tags'] = url_tags
-            except Exception as _e:
-                # Never let macro enforcement block a push — flag and continue without url_tags.
-                print(f"⚠️  RedTrack url_tags build skipped: {_e}")
+            apply_redtrack_url_tags(params, asset_feed_spec if (secondary_image_hash or secondary_video_id) else None, website_url)
 
         try:
             return account.create_ad_creative(params=params)
