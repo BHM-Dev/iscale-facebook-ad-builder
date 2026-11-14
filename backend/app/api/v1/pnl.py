@@ -5,6 +5,8 @@ import calendar
 import hashlib
 import logging
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Optional
@@ -573,12 +575,55 @@ def _redtrack_ad_ids_by_click(start: date, end: date) -> dict[str, str]:
     return out
 
 
+# Review N2: the per-account rows and the all-accounts extras each run their own recovery, and the Meta fallback is
+# capped per call, so two calls in one page load could place the same click differently: counted in both, or in
+# neither. Inside pinned_recovery() the first answer for a click (ad set, or "not recoverable") is reused by every
+# later call in that scope.
+_recovery_pin: ContextVar[dict | None] = ContextVar("pnl_recovery_pin", default=None)
+
+
+@contextmanager
+def pinned_recovery():
+    if _recovery_pin.get() is not None:
+        yield                       # already inside a pinned scope: share it
+        return
+    token = _recovery_pin.set({})
+    try:
+        yield
+    finally:
+        _recovery_pin.reset(token)
+
+
 def _recover_macro_adsets(db: Session, rows: list[dict]) -> list[dict]:
     """Return rows with sub3 replaced by the real ad set id wherever it can be recovered, else unchanged.
 
     Never raises: if RedTrack is down or the ad is unknown locally the row keeps its literal macro and is counted
     in the all-accounts bucket exactly as before.
     """
+    pending = [r for r in rows if UNEXPANDED_META_MACRO_RE.fullmatch(str(r.get("sub3") or "").strip()) and str(r.get("sub5") or "").strip()]
+    if not pending:
+        return rows
+    pin = _recovery_pin.get()
+    if pin is not None:
+        unseen = [r for r in pending if str(r.get("sub5")).strip() not in pin]
+        if unseen:
+            resolved = _recover_macro_adsets_unpinned(db, unseen)
+            for before, after in zip(unseen, resolved):
+                click = str(before.get("sub5")).strip()
+                sub3 = str(after.get("sub3") or "").strip()
+                pin.setdefault(click, sub3 if META_ID_RE.fullmatch(sub3) else None)
+        out = []
+        for r in rows:
+            click = str(r.get("sub5") or "").strip()
+            if click and click in pin and UNEXPANDED_META_MACRO_RE.fullmatch(str(r.get("sub3") or "").strip()):
+                if pin[click]:
+                    r = {**r, "sub3": pin[click]}
+            out.append(r)
+        return out
+    return _recover_macro_adsets_unpinned(db, rows)
+
+
+def _recover_macro_adsets_unpinned(db: Session, rows: list[dict]) -> list[dict]:
     pending = [r for r in rows if UNEXPANDED_META_MACRO_RE.fullmatch(str(r.get("sub3") or "").strip()) and str(r.get("sub5") or "").strip()]
     if not pending:
         return rows
@@ -1560,7 +1605,7 @@ def _write_all_extras_snapshot(
 
 def _all_extras_for_period(
     db: Session, account_ids: list[str], start: date, end: date,
-    current_user: User | None = None, *, refresh: bool = False, by_campaign: dict | None = None,
+    current_user: User | None = None, *, refresh: bool = False, by_campaign: dict | None = None, freeze: bool = True,
 ) -> tuple[Decimal, bool, Decimal, Decimal]:
     """(unknown, ok, foreign, network) for the all-accounts view; frozen for closed full months.
 
@@ -1591,7 +1636,8 @@ def _all_extras_for_period(
     unknown += bhm_unplaced
     ok = ok and bhm_ok
     if (
-        ok
+        freeze
+        and ok
         and _closed_full_month(start, end, ALL_EXTRAS_FREEZE_GRACE_DAYS)
         and _account_snapshots_complete(db, scope, start)
     ):
@@ -1599,6 +1645,48 @@ def _all_extras_for_period(
     if by_campaign is not None:
         by_campaign.update(split)
     return unknown, ok, foreign, network
+
+
+def _extras_snapshot_frozen(db: Session, account_ids: list[str], start: date) -> bool:
+    scope = sorted(normalize_account_id(a) for a in account_ids)
+    snap = (
+        db.query(PnlMonthSnapshot)
+        .filter(PnlMonthSnapshot.ad_account_id == _all_extras_snapshot_id(scope), PnlMonthSnapshot.month == start)
+        .first()
+    )
+    meta = snap.event_breakdown if snap is not None and isinstance(snap.event_breakdown, dict) else None
+    return bool(meta and meta.get("scope") == scope and meta.get("rule") == ALL_EXTRAS_RULE)
+
+
+def _freeze_month_in_one_pass(
+    db: Session, account_ids: list[str], start: date, end: date, label: str, current_user: User | None,
+    by_campaign: dict,
+) -> tuple[list[dict], tuple[Decimal, bool, Decimal, Decimal]] | None:
+    """Review N2: freeze a closed month's account rows and its all-accounts extras from ONE pass.
+
+    Used when the month is past its grace period and nothing in scope is frozen yet (the normal case: the first
+    all-accounts load 3+ days after month end). Every account is computed live and the extras alongside, under one
+    pinned recovery. Nothing is written unless every account is eligible and the extras came back complete;
+    then all account snapshots are (re)written and the extras frozen after them. Returns None when the month is not
+    in that state, so callers fall back to their normal path."""
+    if not _closed_full_month(start, end, ALL_EXTRAS_FREEZE_GRACE_DAYS) or _extras_snapshot_frozen(db, account_ids, start):
+        return None
+    # Never overwrite a frozen account figure (a narrower user scope, a newly activated account or a rule bump
+    # would otherwise re-enter here for months that are long closed), and never turn a month whose accounts are
+    # already served from snapshots into a full live recompute on every load.
+    if any(_snapshot_for_account_month(db, a, start) is not None for a in account_ids):
+        return None
+    with pinned_recovery():
+        rows = [(a, _summary(db, a, start, end, label, include_costs=False)) for a in account_ids]
+        extras = _all_extras_for_period(db, account_ids, start, end, current_user, by_campaign=by_campaign, freeze=False)
+    unknown, ok, foreign, network = extras
+    if ok and all(_snapshot_eligible(row) for _, row in rows):
+        for account_id, row in rows:
+            _write_month_snapshot(db, account_id, start, end, row, current_user)
+        scope = sorted(normalize_account_id(a) for a in account_ids)
+        if _account_snapshots_complete(db, scope, start):
+            _write_all_extras_snapshot(db, scope, start, end, unknown, foreign, network, current_user, by_campaign=dict(by_campaign))
+    return [row for _, row in rows], extras
 
 
 def _summary_all(
@@ -1616,12 +1704,17 @@ def _summary_all(
     # an account with no Everflow offer mapping resolves to $0/"not_tracked"
     # with no external call at all, so there's no shared batch pull to make
     # here any more.
-    account_rows = [
-        _account_summary_frozen_if_closed(db, account_id, start, end, label, current_user)
-        for account_id in account_ids
-    ]
     unknown_by_campaign: dict = {}
-    unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _all_extras_for_period(db, account_ids, start, end, current_user, by_campaign=unknown_by_campaign)
+    one_pass = _freeze_month_in_one_pass(db, account_ids, start, end, label, current_user, unknown_by_campaign)
+    if one_pass is not None:
+        account_rows, (unknown_revenue, unknown_ok, foreign_revenue, network_revenue) = one_pass
+    else:
+        with pinned_recovery():
+            account_rows = [
+                _account_summary_frozen_if_closed(db, account_id, start, end, label, current_user)
+                for account_id in account_ids
+            ]
+            unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _all_extras_for_period(db, account_ids, start, end, current_user, by_campaign=unknown_by_campaign)
     return _all_summary_from_account_rows(
         db, account_ids, start, end, label, account_rows,
         unknown_revenue=unknown_revenue, unknown_ok=unknown_ok,
@@ -1908,37 +2001,50 @@ def _get_months_all(
         raise HTTPException(status_code=400, detail="No active ad accounts are available for P&L.")
     current_month = periods[0][0] if periods else today_in_rt_tz().replace(day=1)
     rows = []
-    for start, end, label in periods:
-        snapshots = {
-            account_id: _snapshot_for_account_month(db, account_id, start)
-            for account_id in account_ids
-        } if start != current_month else {}
-        use_snapshots = bool(snapshots) and all(snapshot is not None for snapshot in snapshots.values())
-        account_rows = []
-        for account_id in account_ids:
-            snapshot = snapshots.get(account_id) if use_snapshots else None
-            row = _summary(db, account_id, start, end, label, snapshot=snapshot, include_costs=False)
-            # Same 3-day grace as /summary: freezing on the 1st locked in October before
-            # late Everflow conversions landed (2026-11-01 review, N1).
-            if (snapshot is None and _closed_full_month(start, end, ALL_EXTRAS_FREEZE_GRACE_DAYS)
-                    and _snapshot_eligible(row)):
-                _write_month_snapshot(db, account_id, start, end, row, current_user)
-            account_rows.append(row)
-        # Same unknown segment as /summary. Without this the trailing-window
-        # table keeps understating closed months — which is exactly where the
-        # Aug 2026 $42,191.52-vs-$45,445.51 gap was spotted. One Everflow read
-        # per month shown; the per-account figures may be frozen snapshots, and
-        # that is safe here because the unknown segment is derived from raw
-        # conversions rather than by subtracting the attributed total.
-        unknown_by_campaign: dict = {}
-        unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _all_extras_for_period(db, account_ids, start, end, current_user, by_campaign=unknown_by_campaign)
-        rows.append(_all_summary_from_account_rows(
-            db, account_ids, start, end, label, account_rows,
-            unknown_revenue=unknown_revenue, unknown_ok=unknown_ok,
-            foreign_revenue=foreign_revenue,
-            network_revenue=network_revenue,
-            unknown_by_campaign=unknown_by_campaign,
-        ))
+    with pinned_recovery():
+        for start, end, label in periods:
+            unknown_by_campaign: dict = {}
+            one_pass = _freeze_month_in_one_pass(db, account_ids, start, end, label, current_user, unknown_by_campaign) if start != current_month else None
+            if one_pass is not None:
+                account_rows, (unknown_revenue, unknown_ok, foreign_revenue, network_revenue) = one_pass
+                rows.append(_all_summary_from_account_rows(
+                    db, account_ids, start, end, label, account_rows,
+                    unknown_revenue=unknown_revenue, unknown_ok=unknown_ok,
+                    foreign_revenue=foreign_revenue,
+                    network_revenue=network_revenue,
+                    unknown_by_campaign=unknown_by_campaign,
+                ))
+                continue
+            snapshots = {
+                account_id: _snapshot_for_account_month(db, account_id, start)
+                for account_id in account_ids
+            } if start != current_month else {}
+            use_snapshots = bool(snapshots) and all(snapshot is not None for snapshot in snapshots.values())
+            account_rows = []
+            for account_id in account_ids:
+                snapshot = snapshots.get(account_id) if use_snapshots else None
+                row = _summary(db, account_id, start, end, label, snapshot=snapshot, include_costs=False)
+                # Same 3-day grace as /summary: freezing on the 1st locked in October before
+                # late Everflow conversions landed (2026-11-01 review, N1).
+                if (snapshot is None and _closed_full_month(start, end, ALL_EXTRAS_FREEZE_GRACE_DAYS)
+                        and _snapshot_eligible(row)):
+                    _write_month_snapshot(db, account_id, start, end, row, current_user)
+                account_rows.append(row)
+            # Same unknown segment as /summary. Without this the trailing-window
+            # table keeps understating closed months — which is exactly where the
+            # Aug 2026 $42,191.52-vs-$45,445.51 gap was spotted. One Everflow read
+            # per month shown; the per-account figures may be frozen snapshots, and
+            # that is safe here because the unknown segment is derived from raw
+            # conversions rather than by subtracting the attributed total.
+            unknown_by_campaign: dict = {}
+            unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _all_extras_for_period(db, account_ids, start, end, current_user, by_campaign=unknown_by_campaign)
+            rows.append(_all_summary_from_account_rows(
+                db, account_ids, start, end, label, account_rows,
+                unknown_revenue=unknown_revenue, unknown_ok=unknown_ok,
+                foreign_revenue=foreign_revenue,
+                network_revenue=network_revenue,
+                unknown_by_campaign=unknown_by_campaign,
+            ))
     return rows
 
 
@@ -2125,30 +2231,31 @@ def resync_month(
         # All-or-nothing (review S8): fetch every account and the all-accounts extras first,
         # and only write snapshots once everything came back complete. Writing account by
         # account left the month half-old, half-new when a later account or Everflow failed.
-        account_rows = []
-        for scoped_account_id in account_ids:
-            row = _summary(db, scoped_account_id, start, end, label, include_costs=False)
-            if row.get("data_incomplete"):
+        with pinned_recovery():
+            account_rows = []
+            for scoped_account_id in account_ids:
+                row = _summary(db, scoped_account_id, start, end, label, include_costs=False)
+                if row.get("data_incomplete"):
+                    raise HTTPException(
+                        status_code=502,
+                        detail=(
+                            f"{scoped_account_id} re-fetch came back incomplete ("
+                            + (", ".join(row.get("errors") or []) or "unknown")
+                            + "), so none of the stored figures were changed. Try again shortly."
+                        ),
+                    )
+                account_rows.append((scoped_account_id, row))
+            # Resync returns the same shape as /summary, so it needs the unknown
+            # segment too — otherwise a resync would "correct" a month back down to
+            # the attributed-only figure it was just fixed from.
+            unknown_by_campaign: dict = {}
+            unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _all_extras_for_period(db, account_ids, start, end, current_user, refresh=True, by_campaign=unknown_by_campaign, freeze=False)
+            if not unknown_ok:
                 raise HTTPException(
                     status_code=502,
-                    detail=(
-                        f"{scoped_account_id} re-fetch came back incomplete ("
-                        + (", ".join(row.get("errors") or []) or "unknown")
-                        + "), so none of the stored figures were changed. Try again shortly."
-                    ),
+                    detail="The all-accounts extras (Everflow) came back incomplete, so none of the stored figures "
+                           "were changed. Try the re-fetch again shortly.",
                 )
-            account_rows.append((scoped_account_id, row))
-        # Resync returns the same shape as /summary, so it needs the unknown
-        # segment too — otherwise a resync would "correct" a month back down to
-        # the attributed-only figure it was just fixed from.
-        unknown_by_campaign: dict = {}
-        unknown_revenue, unknown_ok, foreign_revenue, network_revenue = _all_extras_for_period(db, account_ids, start, end, current_user, refresh=True, by_campaign=unknown_by_campaign)
-        if not unknown_ok:
-            raise HTTPException(
-                status_code=502,
-                detail="The all-accounts extras (Everflow) came back incomplete, so none of the stored figures "
-                       "were changed. Try the re-fetch again shortly.",
-            )
         for scoped_account_id, row in account_rows:
             _write_month_snapshot(db, scoped_account_id, start, end, row, current_user)
             row["from_snapshot"] = True
