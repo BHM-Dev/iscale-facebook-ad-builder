@@ -3,6 +3,12 @@
 // one or two sentences, say where to find it. `id` must only ever increase.
 export const RELEASE_NOTES = [
     {
+        id: 7,
+        date: '2026-11-14',
+        title: 'Confirm before launching into a live campaign',
+        body: 'When you add ads or a new ad set to a campaign that is Active in Meta, tick "Yes, deliver now" above the Launch button first. Those ads start spending the moment they are created. Paused, scheduled and brand-new campaigns are unchanged.',
+    },
+    {
         id: 6,
         date: '2026-11-11',
         title: 'Profit/Loss by campaign',

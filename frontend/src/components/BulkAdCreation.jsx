@@ -273,6 +273,9 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const [liveStatusRefresh, setLiveStatusRefresh] = useState({ loading: false, error: null, completedAt: null });
     const [liveStatusRetryNonce, setLiveStatusRetryNonce] = useState(0);
     const [liveStatusAcknowledged, setLiveStatusAcknowledged] = useState(false);
+    // Review S2: launching into a LIVE campaign/ad set spends immediately. The buyer ticks once to
+    // confirm; reset whenever the launch target changes.
+    const [liveSpendAcknowledged, setLiveSpendAcknowledged] = useState(false);
     // The live check applies whenever the campaign already exists on Meta
     // (including a new ad set under it, which is created ACTIVE). Launch is held
     // until it succeeds; after a failure Joel must explicitly acknowledge he
@@ -306,6 +309,15 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         adset: adsetData.isExisting ? { status: adsetData.status, effectiveStatus: adsetData.effectiveStatus } : null,
         scheduledStart: scheduledStartAt,
     });
+    const liveSpendNeedsAck = liveCheckApplicable && liveDeliveryState === 'LIVE' && !liveSpendAcknowledged;
+    const liveSpendAckControl = !liveLaunchHeld && liveCheckApplicable && liveDeliveryState === 'LIVE' ? (
+        <label className="mb-2 flex max-w-sm items-start justify-end gap-1.5 text-right text-xs font-medium text-red-800">
+            <input type="checkbox" className="mt-0.5" checked={liveSpendAcknowledged} onChange={(e) => setLiveSpendAcknowledged(e.target.checked)} />
+            {adsetData.isExisting
+                ? 'Yes, deliver now: this campaign and ad set are Active, so these ads go Active and start spending as soon as they are created.'
+                : 'Yes, deliver now: this campaign is Active and the new ad set is created Active, so these ads start spending as soon as they are created.'}
+        </label>
+    ) : null;
     // Re-render every 30s so the "checked N min ago" label can't make stale data look fresh.
     // (declared above, next to the scheduled-start logic) — ticks while a status check or a pending start needs it
     useEffect(() => {
@@ -335,6 +347,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
         liveRefreshQuietRef.current = false;
         if (!quiet) {
             setLiveStatusAcknowledged(false);
+            setLiveSpendAcknowledged(false);
             setLiveStatusRefresh({ loading: true, error: null, completedAt: null });
         }
         // authFetch has no request timeout of its own; without this a stalled Meta call would hold
@@ -1360,6 +1373,10 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                 : liveStatusRefresh.hardBlock
                     ? 'The selected campaign or ad set is unavailable in Meta. Go back and select an available one.'
                     : 'The live Meta status check failed. Retry the check, or confirm you verified status in Ads Manager.');
+            return;
+        }
+        if (liveSpendNeedsAck) {
+            showWarning('These ads go into a live campaign and will start spending right away. Tick "Yes, deliver now" above the Launch button to continue.');
             return;
         }
         // The Review screen may still be saying "scheduled" for a start time that passed since it last rendered.
@@ -3072,12 +3089,14 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 {isDriveManifest && (requiresReconciliation || metaTouchedCount > 0) ? (
                                     <span className="max-w-md text-sm text-amber-800">Created or uncertain Meta objects require reconciliation before retrying. Check the named rows above in Ads Manager.</span>
                                 ) : <span className="max-w-md text-sm text-amber-800">Review the failure above. No confirmed ad rows were created, so you can retry the remaining ads in this existing campaign/ad set.</span>}
+                                {campaignData?.isExisting && adsetData?.isExisting && liveSpendAckControl}
                                 {campaignData?.isExisting && adsetData?.isExisting && (
-                                    <button type="button" onClick={handleSubmit} disabled={loading || liveLaunchHeld || requiresReconciliation || metaTouchedCount > 0} className="shrink-0 rounded-lg bg-green-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-gray-300">Retry {Math.max(1, (launchOutcome?.total ?? activeAds.length) - metaTouchedCount)} remaining ad{Math.max(1, (launchOutcome?.total ?? activeAds.length) - metaTouchedCount) !== 1 ? 's' : ''}</button>
+                                    <button type="button" onClick={handleSubmit} disabled={loading || liveLaunchHeld || liveSpendNeedsAck || requiresReconciliation || metaTouchedCount > 0} className="shrink-0 rounded-lg bg-green-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-gray-300">Retry {Math.max(1, (launchOutcome?.total ?? activeAds.length) - metaTouchedCount)} remaining ad{Math.max(1, (launchOutcome?.total ?? activeAds.length) - metaTouchedCount) !== 1 ? 's' : ''}</button>
                                 )}
                             </div>
                         ) : (
                             <div className="flex flex-col items-end">
+                                {liveSpendAckControl}
                                 <button
                                     onClick={() => {
                                     const distinctMediaCount = new Set(activeAds.map(ad => ad.creativeId)).size;
@@ -3088,7 +3107,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                         handleSubmit();
                                     }
                                 }}
-                                disabled={loading || activeAds.length === 0 || placementLaunchBlocked || liveLaunchHeld}
+                                disabled={loading || activeAds.length === 0 || placementLaunchBlocked || liveLaunchHeld || liveSpendNeedsAck}
                                 className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                             >
                                 {placementLaunchBlocked
