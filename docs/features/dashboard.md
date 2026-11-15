@@ -31,5 +31,6 @@ This file covers the **money-moving actions**; other cards are documented in the
 - Campaign Performance still has its own inline copy of the confirm modal; fold it onto `BudgetConfirmModal`.
 
 ## Changelog
+- 2026-11-15 speed + labels: the daily trend now starts loading with the core calls instead of after insights-bulk; on the live app the trend finished at 1.8s, against 2.9-5.9s before. The niche summary reads **partial**, not exact, when billable revenue sits on an ad set with no Meta row in the range (no spend), because that revenue can't land in a niche bucket. *Timing measured in production; the label change is unit-tested only.*
 - 2026-11-06 trend leads/CPL/revenue-per-lead and niche-summary leads/CPL now count leads once. Before this, leads were 2× and CPL/RPL about half the real value. See [lead-counting.md](lead-counting.md).
 - 2026-10-07 shared live-budget confirm for all Dashboard budget actions; scale from live budget; keyboard + feedback.
