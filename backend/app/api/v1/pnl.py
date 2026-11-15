@@ -594,6 +594,21 @@ def pinned_recovery():
         _recovery_pin.reset(token)
 
 
+def niche_revenue_status(report: dict, known_adset_ids: set, meta_rows: dict, billable_by_adset: dict) -> str:
+    """'exact_adset_attributed' only when every billable dollar in the report lands in a niche bucket.
+
+    'partial' when Everflow has unattributed events, revenue on ad sets this account doesn't know, or
+    revenue on a known ad set with no Meta row in the range (no spend) — that last case can't land in
+    any niche bucket, so the totals read low while still labelled exact (11/01 review N12).
+    """
+    report_adset_ids = {str(a) for a in (report.get("adsets") or {})}
+    row_ids = {str(k) for k in (meta_rows or {})}
+    orphaned = any((v or 0) > 0 for k, v in billable_by_adset.items() if str(k) not in row_ids)
+    if report.get("unattributed_events") or (report_adset_ids - set(known_adset_ids)) or orphaned:
+        return "partial"
+    return "exact_adset_attributed"
+
+
 def _recover_macro_adsets(db: Session, rows: list[dict]) -> list[dict]:
     """Return rows with sub3 replaced by the real ad set id wherever it can be recovered, else unchanged.
 

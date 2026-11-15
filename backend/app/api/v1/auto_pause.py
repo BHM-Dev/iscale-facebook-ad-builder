@@ -777,7 +777,7 @@ def get_insights_bulk(
         revenue_status = "not_tracked"
         billable_by_adset: dict[str, float] = {}
         if current_user.has_permission("pnl:read"):
-            from app.api.v1.pnl import _everflow_offer_names_for_account, _recover_macro_adsets, _revenue_provider_for_account
+            from app.api.v1.pnl import _everflow_offer_names_for_account, _recover_macro_adsets, _revenue_provider_for_account, niche_revenue_status
             offer_names = _everflow_offer_names_for_account(account_id)
             if _revenue_provider_for_account(account_id) == "everflow" and offer_names:
                 revenue_status = "unavailable"
@@ -792,17 +792,12 @@ def get_insights_bulk(
                             row_transform=lambda rows: _recover_macro_adsets(db, rows),
                         )
                         known_adset_ids = set(context_by_adset)
-                        report_adset_ids = {str(adset_id) for adset_id in (report.get("adsets") or {})}
                         billable_by_adset = {
                             str(adset_id): float(metrics.get("revenue") or 0)
                             for adset_id, metrics in (report.get("adsets") or {}).items()
                             if str(adset_id) in known_adset_ids
                         }
-                        revenue_status = (
-                            "partial"
-                            if report.get("unattributed_events") or (report_adset_ids - known_adset_ids)
-                            else "exact_adset_attributed"
-                        )
+                        revenue_status = niche_revenue_status(report, known_adset_ids, result, billable_by_adset)
                     except Exception as exc:
                         logger.warning("Bulk niche billable revenue unavailable for %s: %s", account_id, exc)
 
