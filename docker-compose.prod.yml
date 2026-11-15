@@ -6,6 +6,7 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: ad-builder-db
+    mem_limit: 1g   # 4GB VPS; caps a runaway so it can't starve the others (peaks 2026-11-15: api ~410MB, db 136MB, web 5MB)
     restart: unless-stopped
     logging:
       driver: json-file
@@ -32,6 +33,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     container_name: ad-builder-api
+    mem_limit: 2g   # 4GB VPS; caps a runaway so it can't starve the others (peaks 2026-11-15: api ~410MB, db 136MB, web 5MB)
     restart: unless-stopped
     # uvicorn drains requests (10s) then the scheduler finishes running jobs (25s) — see backend/Dockerfile.
     stop_grace_period: 40s
@@ -58,6 +60,13 @@ services:
       - "traefik.http.routers.backend.entrypoints=websecure"
       - "traefik.http.routers.backend.tls.certresolver=letsencrypt"
       - "traefik.http.services.backend.loadbalancer.server.port=8000"
+      - "traefik.http.routers.backend-http.rule=Host(`adbuilder-api.velocitymx.io`)"
+      - "traefik.http.routers.backend-http.entrypoints=web"
+      - "traefik.http.routers.backend-http.middlewares=redirect-https"
+      - "traefik.http.routers.backend-http.service=backend"
+      # Same middleware, declared here too so the API redirect doesn't depend on the frontend container.
+      - "traefik.http.middlewares.redirect-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.redirect-https.redirectscheme.permanent=true"
     networks:
       - proxy
 
@@ -73,6 +82,7 @@ services:
         # every deploy. See frontend/Dockerfile for why.
         CACHE_BUST: ${GIT_COMMIT:-unknown}
     container_name: ad-builder-web
+    mem_limit: 256m   # 4GB VPS; caps a runaway so it can't starve the others (peaks 2026-11-15: api ~410MB, db 136MB, web 5MB)
     restart: unless-stopped
     logging:
       driver: json-file
@@ -87,13 +97,14 @@ services:
       - "traefik.http.routers.frontend.entrypoints=websecure"
       - "traefik.http.routers.frontend.tls.certresolver=letsencrypt"
       - "traefik.http.services.frontend.loadbalancer.server.port=80"
-
-      - "traefik.http.routers.frontend.entrypoints=web"
-      - "traefik.http.routers.frontend.middlewares=redirect-https"
+      # HTTP -> HTTPS. Its own router: the old labels re-declared `frontend.entrypoints` three times
+      # (last one wins = websecure), so plain http:// had no router at all and answered 404.
+      - "traefik.http.routers.frontend-http.rule=Host(`adbuilder.velocitymx.io`)"
+      - "traefik.http.routers.frontend-http.entrypoints=web"
+      - "traefik.http.routers.frontend-http.middlewares=redirect-https"
+      - "traefik.http.routers.frontend-http.service=frontend"
       - "traefik.http.middlewares.redirect-https.redirectscheme.scheme=https"
-      # HTTPS
-      - "traefik.http.routers.frontend.entrypoints=websecure"
-      - "traefik.http.routers.frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.middlewares.redirect-https.redirectscheme.permanent=true"
     networks:
       - proxy
 
