@@ -710,6 +710,13 @@ export default function Dashboard() {
         return authFetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(tid));
       };
 
+      // Start the revenue trend now, alongside the core calls, but only read it after them so it still
+      // never blocks the KPIs. It used to start after insights-bulk finished, adding that call's full
+      // 2-5s to the time before the trend chart could fill in.
+      // Revenue trends can make several bounded Switchboard requests on a cold 30-day range — give it
+      // time to finish instead of falsely reading as an unavailable revenue source.
+      const trendPromise = timedFetch(`${API_URL}/dashboard/trend?${insightsParams}`, 45000).catch(() => null);
+
       const [adsetsRes, insightsRes, rulesRes, adStatusRes] = await Promise.all([
         timedFetch(`${API_URL}/facebook/adsets/saved?${insightsParams}`, 10000).catch(() => null),
         timedFetch(`${API_URL}/auto-pause/insights-bulk?${insightsParams}`, 25000).catch(() => null),
@@ -749,16 +756,11 @@ export default function Dashboard() {
       } else {
         setAdStatusError('Live ad delivery status is unavailable — scaling is disabled until Refresh succeeds.');
       }
+      if (!isCurrent()) return;
       setLoading(false);
 
-      // Keep the slower revenue trend secondary so it never blocks operations.
-      const [trendRes] = await Promise.all([
-        // Revenue trends can make several bounded Switchboard requests on a
-        // cold 30-day range. Keep this secondary so it never blocks the core
-        // dashboard, but give it time to finish instead of falsely reading as
-        // an unavailable revenue source.
-        timedFetch(`${API_URL}/dashboard/trend?${insightsParams}`, 45000).catch(() => null),
-      ]);
+      // Secondary: read the trend that has been loading in parallel.
+      const trendRes = await trendPromise;
       if (!isCurrent()) return;
       if (trendRes?.ok) setTrend(await trendRes.json());
       else setTrendError('Daily trend is temporarily unavailable.');

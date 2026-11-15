@@ -2,7 +2,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.v1.facebook import _assert_account_allowed
@@ -130,20 +130,42 @@ class EventBody(BaseModel):
 _CLIENT_EVENTS = {"proposal_viewed", "proposal_evidence_expanded", "ads_manager_opened", "proposal_tab_viewed", "proposal_rail_toggled", "proposal_row_jumped"}
 
 
-@router.post("/events", status_code=204)
-def client_event(body: EventBody, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
-    """UI events (brief §6). Server-side events (created/approved/executed/...) are logged where they happen."""
-    if body.event not in _CLIENT_EVENTS or not ps.can_view(current_user):
-        return None
-    actions = ps.visible_actions(current_user)
+def _record_client_event(db: Session, current_user: User, body: EventBody, actions) -> None:
+    if body.event not in _CLIENT_EVENTS:
+        return
     if body.proposal_id and actions is not None:
         hit = db.query(ActionProposal.action).filter(ActionProposal.id == body.proposal_id).first()
         if not hit or hit[0] not in actions:
-            return None   # no events against proposal types this user can't see
+            return   # no events against proposal types this user can't see
     props = body.props or {}
     if len(str(props)) > 2000:
         props = {"truncated": True}
     ps.log_event(db, body.event, body.proposal_id, current_user.email, props=props)
+
+
+@router.post("/events", status_code=204)
+def client_event(body: EventBody, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    """UI events (brief §6). Server-side events (created/approved/executed/...) are logged where they happen."""
+    if not ps.can_view(current_user):
+        return None
+    _record_client_event(db, current_user, body, ps.visible_actions(current_user))
+    db.commit()
+    return None
+
+
+class EventBatchBody(BaseModel):
+    events: list[EventBody] = Field(..., max_length=100)
+
+
+@router.post("/events/batch", status_code=204)
+def client_events_batch(body: EventBatchBody, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    """Same as /events for many at once — the panel logs one proposal_viewed per proposal on load, which
+    was one request each (~16 on Campaign Performance) competing with the page's real data calls."""
+    if not ps.can_view(current_user):
+        return None
+    actions = ps.visible_actions(current_user)
+    for event in body.events:
+        _record_client_event(db, current_user, event, actions)
     db.commit()
     return None
 

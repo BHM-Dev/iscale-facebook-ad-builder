@@ -202,18 +202,22 @@ export default function ProposalsPanel({ layout = 'panel', onClose, onPendingCou
             setPayload(data);
             window.dispatchEvent(new Event('proposals:changed'));
             setProposals(data.visible ? (data.proposals || []) : []);
-            (data.proposals || []).forEach(proposal => {
-                if (!viewed.current.has(proposal.id)) {
-                    viewed.current.add(proposal.id);
-                    event('proposal_viewed', proposal.id);
-                }
-            });
+            // One request for all newly seen proposals, not one each.
+            const fresh = (data.proposals || []).filter(proposal => !viewed.current.has(proposal.id));
+            fresh.forEach(proposal => viewed.current.add(proposal.id));
+            for (let i = 0; i < fresh.length; i += 100) {
+                authFetch(`${API_BASE}/proposals/events/batch`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ events: fresh.slice(i, i + 100).map(proposal => ({ event: 'proposal_viewed', proposal_id: proposal.id })) }),
+                }).catch(() => {});
+            }
         } catch (error) {
             showError(error.message || 'Failed to load proposals');
         } finally {
             setLoading(false);
         }
-    }, [event, showError]);
+    }, [showError]);
 
     useEffect(() => { loadOpen(); }, [loadOpen]);
 
