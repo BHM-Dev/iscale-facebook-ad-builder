@@ -607,6 +607,24 @@ async def startup_event():
 
         scheduler.add_job(scheduled_pnl_cache_warm, 'interval', minutes=4, id='pnl_cache_warm', max_instances=1, coalesce=True)
 
+        def scheduled_max_cpl_warm():
+            """Keep the Max CPL column warm. Its cache is in memory (1h TTL), so every deploy emptied it and
+            the next person to open Campaign Performance waited ~11s on a cold 30-day Meta + Everflow pull.
+            Closed days only, so the figure changes once a day; a 55-min refresh keeps a good result cached (a failed pull still only caches 2 min)."""
+            from app.services import max_cpl_service, proposal_service
+            db = SessionLocal()
+            try:
+                for account_id in proposal_service.proposal_accounts():
+                    max_cpl_service.compute_max_cpl(db, account_id)   # never raises; failures cache 2 min
+            except Exception as exc:
+                print(f"⚠️  Max CPL warm failed: {exc}")
+            finally:
+                db.close()
+
+        # Boot+5 min (clear of auto-pause +2 and Drive +7), then every 55 min so the 60-min cache never lapses.
+        scheduler.add_job(scheduled_max_cpl_warm, 'interval', minutes=55, id='max_cpl_warm',
+                          start_date=_boot + timedelta(minutes=5), max_instances=1, coalesce=True)
+
         def scheduled_proposal_evaluate():
             """Hourly: approvals-queue proposals from real profit. Writes proposals only, never to Meta."""
             from app.services import proposal_service
