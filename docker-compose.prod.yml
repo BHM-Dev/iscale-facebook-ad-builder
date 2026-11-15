@@ -33,6 +33,10 @@ services:
       dockerfile: backend/Dockerfile
     container_name: ad-builder-api
     restart: unless-stopped
+    # uvicorn drains requests (10s) then the scheduler finishes running jobs (25s) — see backend/Dockerfile.
+    stop_grace_period: 40s
+    # tini as PID 1 reaps orphaned Playwright/Chromium children now that uvicorn is exec'd.
+    init: true
     logging:
       driver: json-file
       options:

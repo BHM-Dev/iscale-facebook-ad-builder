@@ -49,4 +49,7 @@ EXPOSE 8000
 # Create tables from models, seed DB (roles + optional admin), run any pending
 # Alembic migrations (idempotent — baseline skips CREATE TABLE if tables exist),
 # then start the application.
-CMD python init_db.py && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --timeout-keep-alive 300
+# `exec` makes uvicorn PID 1 so Docker's SIGTERM reaches it. Without it sh is PID 1, swallows the
+# signal, the shutdown hook never runs and Docker SIGKILLs mid-job after 10s. Open requests get 10s
+# to finish, then the shutdown hook gives running scheduler jobs up to 25s (stop_grace_period: 40s).
+CMD python init_db.py && alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --timeout-keep-alive 300 --timeout-graceful-shutdown 10

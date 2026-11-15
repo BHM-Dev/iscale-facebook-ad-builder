@@ -753,9 +753,35 @@ async def startup_event():
 async def shutdown_event():
     """Gracefully shut down the background scheduler."""
     scheduler = getattr(app.state, "scheduler", None)
-    if scheduler and scheduler.running:
-        scheduler.shutdown(wait=False)
-        print("🛑 Auto-pause scheduler stopped")
+    if not (scheduler and scheduler.running):
+        return
+    # No new runs start; a job already running (a Meta sync, an auto-pause check) gets to finish instead
+    # of being killed halfway. Bounded so a hung job can't hold the deploy: Docker's stop_grace_period is
+    # 40s and uvicorn has already spent up to 10s draining requests. A daemon thread rather than
+    # asyncio.to_thread, because asyncio.run joins its default executor with no timeout on exit. (A job
+    # that is truly hung still holds interpreter exit until Docker's SIGKILL at 40s — same as before.)
+    import asyncio
+    import threading
+    loop = asyncio.get_running_loop()
+    done = asyncio.Event()
+
+    def _stop():
+        try:
+            scheduler.shutdown(wait=True)
+        except Exception as e:
+            print(f"⚠️  Scheduler shutdown error: {e}")
+        finally:
+            try:
+                loop.call_soon_threadsafe(done.set)
+            except RuntimeError:
+                pass  # loop already closed after a timeout
+
+    threading.Thread(target=_stop, name="scheduler-shutdown", daemon=True).start()
+    try:
+        await asyncio.wait_for(done.wait(), timeout=25)
+        print("🛑 Scheduler stopped (running jobs finished)")
+    except asyncio.TimeoutError:
+        print("⚠️  Scheduler shutdown timed out after 25s — a job was still running")
 
 
 # Include Routers
