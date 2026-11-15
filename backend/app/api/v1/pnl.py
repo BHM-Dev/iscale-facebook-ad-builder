@@ -874,12 +874,38 @@ def _allocation_share(
     return Decimal("1") / Decimal(len(accounts)), "even_no_spend"
 
 
-def _overlap_months(entry: PnlCostEntry, start: date, end: date) -> int:
+def _overlap_months(entry: PnlCostEntry, start: date, end: date, today: date | None = None) -> Decimal:
+    """How many months of a recurring_monthly cost fall in [start, end].
+
+    A whole calendar month counts 1. The current month counted from its 1st
+    (month-to-date) also counts 1, so the "This month" view carries the full
+    retainer, as it always has. Any other partial month is prorated by days
+    (2026-11-01 review): a custom Oct 30-Nov 2 range used to charge two full
+    retainers ($6,000) for four days.
+    """
     overlap_start = max(entry.effective_from, start)
     overlap_end = min(entry.effective_to or end, end)
     if overlap_end < overlap_start:
-        return 0
-    return (overlap_end.year - overlap_start.year) * 12 + overlap_end.month - overlap_start.month + 1
+        return Decimal("0")
+    today = today or today_in_rt_tz()
+    total = Decimal("0")
+    cursor = overlap_start
+    while cursor <= overlap_end:
+        days_in_month = calendar.monthrange(cursor.year, cursor.month)[1]
+        month_last = cursor.replace(day=days_in_month)
+        seg_end = min(month_last, overlap_end)
+        # A cost ending inside this month is prorated even month-to-date.
+        is_current_month = (cursor.year, cursor.month) == (today.year, today.month) and (
+            entry.effective_to is None or entry.effective_to >= month_last
+        )
+        if (cursor.day == 1 and seg_end == month_last) or (
+            is_current_month and cursor.day == 1 and seg_end >= min(today, month_last)
+        ):
+            total += Decimal("1")
+        else:
+            total += Decimal((seg_end - cursor).days + 1) / Decimal(days_in_month)
+        cursor = month_last + timedelta(days=1)
+    return total
 
 
 def _profit_share(entry: PnlCostEntry, profit_base: Decimal, percent: Decimal) -> Decimal:
@@ -926,7 +952,7 @@ def _resolve_costs(
         elif entry.cost_type == "pct_of_gross_profit":
             resolved_amount = max(gross_profit, Decimal("0")) * amount / Decimal("100")
         elif entry.cost_type == "recurring_monthly":
-            resolved_amount = amount * share * Decimal(_overlap_months(entry, start, end))
+            resolved_amount = amount * share * _overlap_months(entry, start, end)
         else:
             resolved_amount = amount * share
         resolved_amount = resolved_amount.quantize(CENT, rounding=ROUND_HALF_UP)
@@ -976,7 +1002,7 @@ def _resolve_aggregate_costs(
         elif entry.cost_type == "pct_of_gross_profit":
             resolved_amount = max(gross_profit, Decimal("0")) * amount / Decimal("100")
         elif entry.cost_type == "recurring_monthly":
-            resolved_amount = amount * Decimal(_overlap_months(entry, start, end))
+            resolved_amount = amount * _overlap_months(entry, start, end)
         else:
             resolved_amount = amount
         resolved_amount = resolved_amount.quantize(CENT, rounding=ROUND_HALF_UP)

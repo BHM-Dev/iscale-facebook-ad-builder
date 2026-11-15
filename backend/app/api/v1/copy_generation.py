@@ -7,6 +7,7 @@ import os
 import json
 from sqlalchemy.orm import Session
 from app.core.deps import get_current_active_user
+from app.core.user_rate_limit import ai_copy_limit
 from app.database import get_db
 from app.models import AdCopyLibrary, Prompt, User
 from app.utils.json_utils import extract_json_from_response
@@ -225,7 +226,7 @@ Return ONLY valid JSON — no markdown, no code fences, no explanatory text:
 }}"""
 
 
-@router.post("/generate")
+@router.post("/generate", dependencies=[Depends(ai_copy_limit)])
 async def generate_copy(request: CopyGenerationRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Generate ad copy variations using Claude AI"""
 
@@ -284,7 +285,7 @@ async def generate_copy(request: CopyGenerationRequest, db: Session = Depends(ge
         print(f"Copy generation error: {e}")
         raise HTTPException(status_code=500, detail=f"Copy generation failed: {str(e)}")
 
-@router.post("/regenerate-field")
+@router.post("/regenerate-field", dependencies=[Depends(ai_copy_limit)])
 async def regenerate_field(request: FieldRegenerationRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Regenerate a specific field (headline, body, or cta)"""
 
@@ -354,7 +355,7 @@ class RemixVariationsRequest(BaseModel):
     vertical: Optional[str] = "commercial_insurance"
 
 
-@router.post("/remix-variations")
+@router.post("/remix-variations", dependencies=[Depends(ai_copy_limit)])
 async def remix_variations(request: RemixVariationsRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Generate 3 remix variations of a winning ad using a new hook and/or niche.
 

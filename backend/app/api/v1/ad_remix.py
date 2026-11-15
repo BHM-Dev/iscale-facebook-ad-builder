@@ -10,6 +10,7 @@ import logging
 import re
 
 from app.core.deps import get_current_active_user
+from app.core.user_rate_limit import ai_remix_limit
 from app.database import get_db
 from app.models import WinningAd, Brand, Product, CustomerProfile, User
 from app.schemas.ad_blueprint import (
@@ -305,7 +306,7 @@ async def _reconstruct_with_similarity_guard(
     return retry_concept
 
 
-@router.post("/deconstruct", response_model=AdBlueprint)
+@router.post("/deconstruct", response_model=AdBlueprint, dependencies=[Depends(ai_remix_limit)])
 async def deconstruct_ad_template(
     request: DeconstructRequest,
     db: Session = Depends(get_db),
@@ -341,7 +342,7 @@ async def deconstruct_ad_template(
         raise HTTPException(status_code=500, detail=f"Deconstruction failed: {str(e)}")
 
 
-@router.post("/reconstruct", response_model=AdConcept, response_model_exclude_none=True)
+@router.post("/reconstruct", response_model=AdConcept, response_model_exclude_none=True, dependencies=[Depends(ai_remix_limit)])
 async def reconstruct_ad_from_blueprint(
     request: ReconstructRequest,
     db: Session = Depends(get_db),
@@ -409,7 +410,7 @@ async def reconstruct_ad_from_blueprint(
         raise HTTPException(status_code=500, detail=f"Reconstruction failed: {str(e)}")
 
 
-@router.post("/reconstruct-from-url", response_model=AdConcept, response_model_exclude_none=True)
+@router.post("/reconstruct-from-url", response_model=AdConcept, response_model_exclude_none=True, dependencies=[Depends(ai_remix_limit)])
 async def reconstruct_from_url(
     request: ReconstructFromUrlRequest,
     db: Session = Depends(get_db),
