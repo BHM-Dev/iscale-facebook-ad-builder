@@ -4,6 +4,8 @@ Brand Scraper Service
 Scrapes all ads from a specific Facebook page and downloads media to R2.
 """
 
+import asyncio
+import logging
 import httpx
 import os
 import re
@@ -70,6 +72,8 @@ def requested_brand_matches_page(brand_name: str, page_name: str | None) -> bool
 
 from app.core.redact import redact_secrets as _redact
 
+
+logger = logging.getLogger(__name__)
 
 class BrandScraperService:
     """Service for scraping brand ads and downloading media to R2."""
@@ -878,22 +882,28 @@ class BrandScraperService:
         media_urls = []
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(snapshot_url, follow_redirects=True)
-                html = response.text
+            # safe_fetch: public hosts only, redirects re-validated, size/time capped
+            # (2026-11-01 review: scraper media fetches bypassed it).
+            from app.services.safe_fetch import fetch_bytes
+            body, _ctype = await asyncio.to_thread(
+                fetch_bytes, snapshot_url, max_bytes=20 * 1024 * 1024, strict_hosts=False,
+                timeout=(5, 20), deadline_seconds=30,
+            )
+            html = body.decode("utf-8", errors="replace")
 
-                # Look for image URLs
-                img_pattern = r'https://[^"\']+\.(?:jpg|jpeg|png|webp)[^"\']*'
-                images = re.findall(img_pattern, html, re.IGNORECASE)
-                media_urls.extend([url for url in images if 'scontent' in url][:5])
+            # Look for image URLs
+            img_pattern = r'https://[^"\']+\.(?:jpg|jpeg|png|webp)[^"\']*'
+            images = re.findall(img_pattern, html, re.IGNORECASE)
+            media_urls.extend([url for url in images if 'scontent' in url][:5])
 
-                # Look for video URLs
-                video_pattern = r'https://[^"\']+\.(?:mp4|webm)[^"\']*'
-                videos = re.findall(video_pattern, html, re.IGNORECASE)
-                media_urls.extend(videos[:3])
+            # Look for video URLs
+            video_pattern = r'https://[^"\']+\.(?:mp4|webm)[^"\']*'
+            videos = re.findall(video_pattern, html, re.IGNORECASE)
+            media_urls.extend(videos[:3])
 
         except Exception as e:
-            print(f"Error extracting media from snapshot: {e}")
+            # Loud, not silent: a refused or oversized snapshot drops all of this ad's media.
+            logger.warning("Brand scraper: snapshot media fetch failed (%s): %s", type(e).__name__, e)
 
         return media_urls
 
@@ -918,10 +928,12 @@ class BrandScraperService:
                 media_type = "image"
 
             # Download media
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.get(media_url, follow_redirects=True)
-                response.raise_for_status()
-                content = response.content
+            from app.services.safe_fetch import fetch_bytes
+            content, _ctype = await asyncio.to_thread(
+                fetch_bytes, media_url,
+                max_bytes=(100 if media_type == "video" else 15) * 1024 * 1024,
+                strict_hosts=False, timeout=(5, 30), deadline_seconds=90,
+            )
 
             if len(content) < 1000:  # Too small, likely error
                 return None, media_type
@@ -933,7 +945,7 @@ class BrandScraperService:
             return r2_url, media_type
 
         except Exception as e:
-            print(f"Download/upload error: {e}")
+            logger.warning("Brand scraper: media download failed (%s): %s", type(e).__name__, e)
             return None, "image"
 
     async def _upload_to_r2(self, content: bytes, filename: str, media_type: str) -> Optional[str]:
