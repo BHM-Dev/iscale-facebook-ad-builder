@@ -4,7 +4,8 @@ from typing import List
 
 from app.database import get_db
 from app.models import User, Role, Permission, UserAdAccount, normalize_account_id
-from app.core.security import get_password_hash
+from app.core.security import get_password_hash, password_problem, verify_password
+from app.api.v1.auth import revoke_refresh_tokens
 from app.core.deps import get_current_superuser, require_role
 from app.schemas.auth import (
     UserResponse,
@@ -32,6 +33,9 @@ async def create_user(
     existing = db.query(User).filter(User.email == user_data.email).first()
     if existing:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+
+    if problem := password_problem(user_data.password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=problem)
 
     new_user = User(
         email=user_data.email,
@@ -101,7 +105,28 @@ async def update_user(
             detail="User not found"
         )
 
+    # Editing your OWN credentials here needs your current password, same as
+    # PUT /auth/me — otherwise a stolen superuser access token is a takeover.
+    # Case-insensitive: EmailStr lowercases the domain, so a plain name edit must
+    # not read as an email change for an address stored with an uppercase domain.
+    if user.id == current_user.id and (
+        (user_update.email is not None and user_update.email.lower() != (user.email or "").lower())
+        or user_update.password is not None
+    ):
+        if not user_update.current_password or not verify_password(
+            user_update.current_password, user.hashed_password
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Enter your current password to change your own email or password",
+            )
+
+    # Any credential change or deactivation ends the user's sessions
+    # (2026-11-01 review, N3).
+    end_sessions = False
+
     if user_update.email is not None and user_update.email != user.email:
+        end_sessions = True
         existing = db.query(User).filter(User.email == user_update.email).first()
         if existing:
             raise HTTPException(
@@ -114,10 +139,18 @@ async def update_user(
         user.name = user_update.name
 
     if user_update.password is not None:
+        if problem := password_problem(user_update.password):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=problem)
         user.hashed_password = get_password_hash(user_update.password)
+        end_sessions = True
 
     if user_update.is_active is not None:
+        if user.is_active and not user_update.is_active:
+            end_sessions = True
         user.is_active = user_update.is_active
+
+    if end_sessions:
+        revoke_refresh_tokens(db, user.id)
 
     db.commit()
     db.refresh(user)

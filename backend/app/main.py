@@ -123,7 +123,13 @@ async def startup_event():
         from app.database import SessionLocal
         from app.api.v1.auto_pause import _run_check
 
-        scheduler = BackgroundScheduler()
+        # APScheduler's default misfire_grace_time is 1 second: a run that starts
+        # more than 1s late (busy thread pool, a slow job ahead of it) is silently
+        # skipped. 15 minutes lets a late run still happen; coalesce collapses a
+        # backlog into one run. Note this does NOT cover a deploy restart — the
+        # jobstore is in memory, so a cron time that passes while the container
+        # is down is simply not run (2026-11-01 review, accepted).
+        scheduler = BackgroundScheduler(job_defaults={"misfire_grace_time": 900, "coalesce": True})
 
         def _meta_backoff_skip(job_name):
             """True (and logs) while Meta is throttling the app, so background jobs add no load."""

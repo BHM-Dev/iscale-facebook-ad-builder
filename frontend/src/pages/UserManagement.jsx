@@ -17,7 +17,7 @@ const UserManagement = () => {
     const [newUser, setNewUser] = useState({ name: '', email: '', password: '', is_superuser: false, role_ids: [] });
     const [addingUser, setAddingUser] = useState(false);
     const [showEditUserModal, setShowEditUserModal] = useState(false);
-    const [editUserFormData, setEditUserFormData] = useState({ id: '', name: '', email: '', password: '' });
+    const [editUserFormData, setEditUserFormData] = useState({ id: '', name: '', email: '', originalEmail: '', password: '', currentPassword: '' });
     const [updatingUser, setUpdatingUser] = useState(false);
     const [accountModalUser, setAccountModalUser] = useState(null);
     const [adAccounts, setAdAccounts] = useState([]);
@@ -205,12 +205,19 @@ const UserManagement = () => {
         }
     };
 
+    // Changing your own email or password needs your current password (backend enforces it).
+    const editingSelfCredentials = editUserFormData.id === currentUser?.id && (
+        !!editUserFormData.password || editUserFormData.email.toLowerCase() !== editUserFormData.originalEmail.toLowerCase()
+    );
+
     const handleEditUserClick = (user) => {
         setEditUserFormData({
             id: user.id,
             name: user.name || '',
             email: user.email,
-            password: '' // Empty by default
+            originalEmail: user.email,
+            password: '', // Empty by default
+            currentPassword: '',
         });
         setShowEditUserModal(true);
     };
@@ -331,6 +338,9 @@ const UserManagement = () => {
             
             if (editUserFormData.password) {
                 body.password = editUserFormData.password;
+            }
+            if (editingSelfCredentials) {
+                body.current_password = editUserFormData.currentPassword;
             }
 
             const response = await authFetch(`${API_URL}/users/${editUserFormData.id}`, {
@@ -719,9 +729,9 @@ const UserManagement = () => {
                                     value={newUser.password}
                                     onChange={(e) => setNewUser(prev => ({ ...prev, password: e.target.value }))}
                                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                                    placeholder="••••••••"
+                                    placeholder="At least 12 characters"
                                     required
-                                    minLength={6}
+                                    minLength={12}
                                 />
                             </div>
 
@@ -869,10 +879,27 @@ const UserManagement = () => {
                                     value={editUserFormData.password}
                                     onChange={(e) => setEditUserFormData(prev => ({ ...prev, password: e.target.value }))}
                                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    placeholder="Leave blank to keep current"
-                                    minLength={6}
+                                    placeholder="Leave blank to keep current (12+ characters)"
+                                    minLength={12}
                                 />
                             </div>
+
+                            {editingSelfCredentials && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Your current password <span className="text-red-500">*</span>
+                                    </label>
+                                    <input
+                                        type="password"
+                                        value={editUserFormData.currentPassword}
+                                        onChange={(e) => setEditUserFormData(prev => ({ ...prev, currentPassword: e.target.value }))}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        required
+                                        autoComplete="current-password"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Needed to change your own email or password. Afterwards you'll be asked to sign in again everywhere, including here, within a few hours.</p>
+                                </div>
+                            )}
 
                             <div className="flex justify-end gap-3 pt-2">
                                 <button

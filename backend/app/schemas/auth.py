@@ -36,11 +36,21 @@ class UserCreateFull(UserBase):
     role_ids: List[str] = []
 
 
+class SelfUpdate(BaseModel):
+    """PUT /auth/me. current_password is required to change email or password."""
+    email: Optional[EmailStr] = None
+    name: Optional[str] = None
+    password: Optional[str] = None
+    current_password: Optional[str] = None
+
+
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     name: Optional[str] = None
     password: Optional[str] = None
     is_active: Optional[bool] = None
+    # Required only when a superuser changes their OWN email or password here.
+    current_password: Optional[str] = None
 
 
 class UserRoleUpdate(BaseModel):

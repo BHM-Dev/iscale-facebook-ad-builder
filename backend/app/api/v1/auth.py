@@ -11,6 +11,7 @@ from app.models import User, RefreshToken, Role
 from app.core.security import (
     verify_password,
     get_password_hash,
+    password_problem,
     create_access_token,
     create_refresh_token,
 )
@@ -20,6 +21,7 @@ from app.schemas.auth import (
     TokenRefresh,
     AccessToken,
     UserCreate,
+    SelfUpdate,
     UserResponse,
     UserLogin,
 )
@@ -34,6 +36,14 @@ def _hash_refresh_token(token: str) -> str:
     gets stored and queried. The client still receives and sends the raw
     token exactly as before; only server-side storage/lookup changed."""
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def revoke_refresh_tokens(db: Session, user_id) -> int:
+    """Delete every refresh token for a user, so all sessions end when their
+    current access token expires. Caller commits."""
+    return db.query(RefreshToken).filter(RefreshToken.user_id == user_id).delete(
+        synchronize_session=False
+    )
 
 
 # ── One-time admin bootstrap ────────────────────────────────────────────────────
@@ -60,6 +70,8 @@ async def bootstrap_admin(request: Request, body: BootstrapRequest, db: Session 
     if not server_secret or not hmac.compare_digest(body.secret_key.encode(), server_secret.encode()):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid secret key")
 
+    if problem := password_problem(body.password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=problem)
     existing = db.query(User).filter(User.email == body.email).first()
     if existing:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
@@ -104,6 +116,8 @@ async def register(
             detail="Email already registered"
         )
 
+    if problem := password_problem(user_data.password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=problem)
     # Create new user
     hashed_password = get_password_hash(user_data.password)
     new_user = User(
@@ -296,13 +310,29 @@ async def get_current_user_info(
 
 @router.put("/me", response_model=UserResponse)
 async def update_current_user(
-    user_update: UserCreate,
+    user_update: SelfUpdate,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Update current user's profile"""
-    # Check if email is being changed and if it's already taken
-    if user_update.email and user_update.email != current_user.email:
+    """Update current user's profile.
+
+    Changing email or password needs the current password, and revokes every
+    refresh token (2026-11-01 review, N3) — otherwise a stolen 8h access token
+    becomes a permanent account takeover.
+    """
+    email_change = bool(user_update.email) and user_update.email != current_user.email
+    password_change = bool(user_update.password)
+
+    if email_change or password_change:
+        if not user_update.current_password or not verify_password(
+            user_update.current_password, current_user.hashed_password
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Current password is incorrect",
+            )
+
+    if email_change:
         existing = db.query(User).filter(User.email == user_update.email).first()
         if existing:
             raise HTTPException(
@@ -311,11 +341,16 @@ async def update_current_user(
             )
         current_user.email = user_update.email
 
+    if password_change:
+        if problem := password_problem(user_update.password):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=problem)
+        current_user.hashed_password = get_password_hash(user_update.password)
+
     if user_update.name is not None:
         current_user.name = user_update.name
 
-    if user_update.password:
-        current_user.hashed_password = get_password_hash(user_update.password)
+    if email_change or password_change:
+        revoke_refresh_tokens(db, current_user.id)
 
     db.commit()
     db.refresh(current_user)

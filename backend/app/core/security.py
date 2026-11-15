@@ -46,3 +46,14 @@ def decode_access_token(token: str) -> Optional[dict]:
         return payload
     except JWTError:
         return None
+
+
+MIN_PASSWORD_LENGTH = 12
+
+
+def password_problem(password: str) -> Optional[str]:
+    """Why a NEW password is unacceptable, or None. Login never calls this —
+    existing shorter passwords keep working until they're changed."""
+    if len(password or "") < MIN_PASSWORD_LENGTH:
+        return f"Password must be at least {MIN_PASSWORD_LENGTH} characters."
+    return None

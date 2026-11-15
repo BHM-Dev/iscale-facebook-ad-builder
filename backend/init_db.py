@@ -36,6 +36,7 @@ def seed_roles_and_permissions():
 
         # Create permissions if they don't exist
         permissions = {}
+        created_this_run = set()
         for name, description in default_permissions:
             existing = db.query(Permission).filter(Permission.name == name).first()
             if not existing:
@@ -43,6 +44,7 @@ def seed_roles_and_permissions():
                 db.add(perm)
                 db.flush()
                 permissions[name] = perm
+                created_this_run.add(name)
                 print(f"  Created permission: {name}")
             else:
                 permissions[name] = existing
@@ -97,13 +99,16 @@ def seed_roles_and_permissions():
                 db.add(role)
                 print(f"  Created role: {role_name}")
             else:
-                # Backfill any permissions added to the definition after the role
-                # was first created — without this, new permissions never reach
-                # existing roles and the feature silently 403s in production.
+                # Backfill permissions that are NEW to the system this run — without
+                # this, a newly added permission never reaches existing roles and the
+                # feature silently 403s in production. Only new ones: a permission an
+                # admin deliberately removed from a role must stay removed, not be
+                # re-granted on every deploy (2026-11-01 review: manager pnl:write).
                 current = {p.name for p in existing.permissions}
                 added = []
                 for perm_name in role_data["permissions"]:
-                    if perm_name not in current and perm_name in permissions:
+                    if (perm_name not in current and perm_name in permissions
+                            and perm_name in created_this_run):
                         existing.permissions.append(permissions[perm_name])
                         added.append(perm_name)
                 if added:
