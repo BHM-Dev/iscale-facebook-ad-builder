@@ -73,7 +73,7 @@ export const AuthProvider = ({ children }) => {
         const initAuth = async () => {
             if (accessToken) {
                 try {
-                    await fetchUser();
+                    await fetchUserRetryingTransient();
                 } catch (err) {
                     // Token might be expired, try to refresh
                     if (refreshToken) {
@@ -131,12 +131,33 @@ export const AuthProvider = ({ children }) => {
         }
 
         if (!response.ok) {
-            throw new Error('Failed to fetch user');
+            const err = new Error('Failed to fetch user');
+            err.status = response.status;
+            throw err;
         }
 
         const userData = await response.json();
         setUser(userData);
         return userData;
+    };
+
+    // At mount, a network error or 5xx almost always means the API is restarting for a deploy (it is
+    // briefly unreachable). Showing the login form there made people think they'd been signed out
+    // even though their tokens were fine. Keep the loading screen and retry (5s apart, 40s deadline); a real
+    // 401/403 still falls straight through to the refresh/logout path below.
+    const fetchUserRetryingTransient = async () => {
+        const deadline = Date.now() + 40000;
+        for (let attempt = 0; ; attempt++) {
+            try {
+                return await fetchUser();
+            } catch (err) {
+                // 404 too: while the API container is down, the proxy answers 404 (no CORS headers, so
+                // it usually surfaces as a network error anyway); /auth/me itself never 404s.
+                const transient = !err.status || err.status === 404 || err.status >= 500;
+                if (!transient || attempt >= 5 || Date.now() + 5000 > deadline) throw err;
+                await new Promise((resolve) => setTimeout(resolve, 5000));
+            }
+        }
     };
 
     const login = async (email, password) => {
