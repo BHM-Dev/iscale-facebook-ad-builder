@@ -33,7 +33,7 @@ cd "$REPO" && git pull --ff-only origin develop >/dev/null 2>&1
 OUT=$(mktemp)
 perl -e 'alarm shift; exec @ARGV' 2400 claude -p "$(cat "$DIR/prompt.md")
 $PENDING" \
-  --permission-mode acceptEdits --max-turns 80 \
+  --model sonnet --permission-mode acceptEdits --max-turns 80 \
   --allowedTools "Read" "Edit" "Write" "Grep" "Glob" "Agent" \
     "Bash(git:*)" "Bash(gh:*)" "Bash(ssh:*)" "Bash(curl:*)" "Bash(npx esbuild:*)" "Bash(python3:*)" "Bash(grep:*)" "Bash(ls:*)" \
   > "$OUT" 2>&1
