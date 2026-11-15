@@ -1702,6 +1702,41 @@ def _release_research_test_claim(db: Session, research_test, request_id: str) ->
     db.commit()
 
 
+def _resolve_push_campaign_id(db: Session, service, adset_id: str, fallback: Optional[str]) -> Optional[str]:
+    """Campaign id for the attribution row written after a push. Never raises.
+
+    The ad already exists on Meta when this runs, so a throttled or failed lookup must not take the
+    whole GeneratedAd row (the revenue join) down with it. Local DB first — an ad set never changes
+    campaign, and it saves a Meta call on the response path; Meta only if the ad set isn't synced.
+    """
+    try:
+        row = (
+            db.query(FacebookCampaign.fb_campaign_id)
+            .join(FacebookAdSet, FacebookAdSet.campaign_id == FacebookCampaign.id)
+            .filter(FacebookAdSet.fb_adset_id == str(adset_id), FacebookCampaign.fb_campaign_id.isnot(None))
+            .first()
+        )
+        if row and row[0]:
+            return row[0]
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        logging.warning("push-to-meta: local campaign lookup for ad set %s failed: %s", adset_id, e)
+    try:
+        cid = AdSet(adset_id, api=service.api).api_get(fields=['campaign_id']).get('campaign_id')
+        if cid:
+            return cid
+    except Exception as e:
+        logging.warning("push-to-meta: Meta campaign lookup for ad set %s failed: %s", adset_id, e)
+        # Don't trust the browser-sent campaign id for a revenue row once Meta couldn't confirm it: the
+        # row is still written (fb_ad_id is the RedTrack join key) with the campaign left blank.
+        logging.warning("push-to-meta: ad set %s campaign unresolved (client sent %s) — stored blank", adset_id, fallback)
+        return None
+    return fallback or None
+
+
 @router.post("/push-to-meta")
 def push_to_meta(
     body: Dict[str, Any],
@@ -1897,7 +1932,7 @@ def push_to_meta(
                 source_ad_id=body.get("source_ad_id") or None,
                 fb_ad_id=ad_id,
                 fb_adset_id=adset_id,
-                fb_campaign_id=(AdSet(adset_id, api=service.api).api_get(fields=['campaign_id']).get('campaign_id') or body.get("campaign_id") or None),
+                fb_campaign_id=_resolve_push_campaign_id(db, service, adset_id, body.get("campaign_id")),
                 fb_creative_id=creative_id,
             )
             db.add(ga)
