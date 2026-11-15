@@ -133,14 +133,17 @@ jobs:
     # `always()` runs this regardless of how the dependencies ended; the
     # condition then reports anything that is not a clean success. A run someone
     # cancelled by hand also pings, which is correct — the commit is not live.
-    # Slack delivery is explicitly paused. Keep the job definition (and its
-    # failure details in the Actions log) but never invoke the webhook.
-    if: ${{ false }}
+    #
+    # Delivery goes to Steve's Slack DM only (Steven, 2026-11-15), via the
+    # Ad Builder bot token — never a team channel. The old SLACK_DEPLOY_WEBHOOK
+    # pointed at #media-buys, which is why this job was paused until now.
+    if: ${{ always() && (needs.deploy.result != 'success' || needs.verify.result != 'success') }}
     runs-on: ubuntu-latest
     steps:
       - name: Announce the failure
         env:
-          WEBHOOK: ${{ secrets.SLACK_DEPLOY_WEBHOOK }}
+          SLACK_TOKEN: ${{ secrets.SLACK_DEPLOY_BOT_TOKEN }}
+          SLACK_CHANNEL: U6M6033G9  # Steve's DM
           # Name which job failed. "deploy failed" and "deploy worked but the API
           # never came back" need different responses, and crying wolf about the
           # deploy when the health poll merely timed out trains people to ignore it.
@@ -148,7 +151,19 @@ jobs:
           VERIFY_RESULT: ${{ needs.verify.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          # `concurrency: cancel-in-progress` cancels a run that a newer push
+          # superseded — either mid-deploy or mid-verify. That is expected, not an
+          # outage: stay quiet unless this commit is still the tip of its branch.
+          # If the lookup itself fails, fall through and alert (fail loud).
+          if [ "$DEPLOY_RESULT" = "cancelled" ] || [ "$VERIFY_RESULT" = "cancelled" ]; then
+            HEAD_SHA="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha 2>/dev/null || true)"
+            if [ -n "$HEAD_SHA" ] && [ "$HEAD_SHA" != "$SHA" ]; then
+              echo "Cancelled because newer commit $HEAD_SHA superseded $SHA; no alert."
+              exit 0
+            fi
+          fi
           if [ "$DEPLOY_RESULT" = "cancelled" ]; then
             # Almost always a runner shortage / Actions incident rather than
             # anything about the code. Say so, so nobody hunts a phantom bug.
@@ -160,15 +175,14 @@ jobs:
           fi
           export TEXT
           echo "::error::$TEXT"
-          if [ -z "$WEBHOOK" ]; then
+          if [ -z "$SLACK_TOKEN" ]; then
             # Never fail the notifier itself — a missing secret must not mask the
             # deploy failure it is reporting.
-            echo "SLACK_DEPLOY_WEBHOOK is not set, so this failure reached the Actions log only."
+            echo "SLACK_DEPLOY_BOT_TOKEN is not set, so this failure reached the Actions log only."
             exit 0
           fi
           # Payload built in python so the message needs no shell quoting
-          # gymnastics; a notifier that breaks on an apostrophe is worse than no
-          # notifier. Kept as a -c one-liner rather than a heredoc so there is no
-          # question about terminator indentation inside a YAML block scalar.
-          python3 -c 'import json, os, urllib.request; body = json.dumps({"text": os.environ["TEXT"]}).encode(); urllib.request.urlopen(urllib.request.Request(os.environ["WEBHOOK"], data=body, headers={"Content-type": "application/json"}), timeout=15); print("Slack notified.")' \
+          # gymnastics. chat.postMessage returns HTTP 200 even on failure, so the
+          # body's "ok" is what counts.
+          python3 -c 'import json, os, urllib.request; body = json.dumps({"channel": os.environ["SLACK_CHANNEL"], "text": os.environ["TEXT"]}).encode(); r = json.load(urllib.request.urlopen(urllib.request.Request("https://slack.com/api/chat.postMessage", data=body, headers={"Content-type": "application/json; charset=utf-8", "Authorization": "Bearer " + os.environ["SLACK_TOKEN"]}), timeout=15)); print("Slack notified." if r.get("ok") else "Slack notify failed: " + str(r.get("error")))' \
             || echo "Slack notify failed; the Actions log above is the record."
