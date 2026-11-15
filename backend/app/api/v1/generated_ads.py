@@ -688,32 +688,6 @@ async def test_kie_connection(current_user: User = Depends(get_current_superuser
 UPLOAD_DIR = settings.upload_dir
 os.makedirs(UPLOAD_DIR, mode=0o755, exist_ok=True)
 
-async def download_and_save_image(image_url: str, prefix: str = "generated") -> str:
-    """
-    Download image from external URL; upload to R2 if configured, else save locally.
-    Returns the public URL (R2 or relative /uploads/...) for use in production and dev.
-    """
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(image_url, timeout=30.0)
-            response.raise_for_status()
-
-            unique_id = str(uuid.uuid4())
-            filename = f"{prefix}_{unique_id}.png"
-            content = response.content
-
-            if settings.r2_enabled:
-                from app.api.v1.uploads import upload_to_r2
-                return await upload_to_r2(content, filename, "image/png")
-            else:
-                file_path = UPLOAD_DIR / filename
-                with open(file_path, "wb") as f:
-                    f.write(content)
-                return f"/uploads/{filename}"
-    except Exception as e:
-        print(f"Error downloading image: {e}")
-        return image_url
-
 async def _kie_generate_image(prompt: str, width: int, height: int,
                               input_image_url: str = None) -> str:
     """

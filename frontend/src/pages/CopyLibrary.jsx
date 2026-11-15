@@ -195,7 +195,7 @@ export default function CopyLibrary() {
     }
   };
 
-  const useInQuickGenerate = (entry) => {
+  const sendToQuickGenerate = (entry) => {
     localStorage.setItem('pendingQuickCopy', JSON.stringify({
       headline: entry.headline || '',
       body: entry.body || '',
@@ -320,7 +320,7 @@ export default function CopyLibrary() {
                     <td className="px-5 py-4 text-center">
                       <button
                         type="button"
-                        onClick={() => useInQuickGenerate(entry)}
+                        onClick={() => sendToQuickGenerate(entry)}
                         className="inline-flex items-center gap-1 rounded-lg bg-indigo-50 px-3 py-2 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
                         title="Open this copy in Quick Generate"
                       >
