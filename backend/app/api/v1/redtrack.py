@@ -13,7 +13,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_current_user, get_db
+from app.core.deps import get_current_active_user, get_current_superuser, get_db
 from app.models import FacebookAd, FacebookAdSet, normalize_account_id
 from app.api.v1.facebook import _assert_adset_allowed, _resolve_scoped_default_account
 from app.services.redtrack_service import RedTrackService
@@ -67,7 +67,7 @@ def _filter_report(data: dict, allowed_ids: set[str] | None) -> dict:
 
 
 @router.get("/status")
-def get_status(current_user=Depends(get_current_user)):
+def get_status(current_user=Depends(get_current_active_user)):
     """Check whether REDTRACK_API_KEY is configured, and which timezone we resolve dates in.
 
     The timezone is reported because it silently decides what "today",
@@ -111,7 +111,7 @@ def get_report(
     date_to: Optional[str] = Query(None),
     ad_account_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_active_user),
 ):
     """Full RedTrack report grouped by Meta ad set ID (sub2).
 
@@ -145,7 +145,7 @@ def get_report_sub1(
     date_to: Optional[str] = Query(None),
     ad_account_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_active_user),
 ):
     """RedTrack report grouped by sub1 (= Meta ad ID).
 
@@ -179,7 +179,7 @@ def get_adset(
     fb_adset_id: str,
     date_preset: str = Query("last_7d"),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_active_user),
 ):
     """RedTrack data for a single Meta ad set ID."""
     svc = _svc()
@@ -203,7 +203,7 @@ def manual_sync(
     date_to: Optional[str] = Query(None),
     ad_account_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_active_user),
 ):
     """Manually trigger a RedTrack cache refresh for the given date preset, or
     an explicit date_from/date_to range (YYYY-MM-DD) — matches /report and
@@ -302,7 +302,7 @@ def manual_sync(
 def sync_ad_performance(
     date_preset: str = Query("last_7d"),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_active_user),
 ):
     """Phase 3: join RedTrack sub1 (Meta ad id) onto generated_ads.fb_ad_id and
     write ad-level revenue / profit / last_synced_at. Ad-grain attribution.
@@ -321,7 +321,7 @@ def sync_ad_performance(
 @router.get("/debug")
 def debug_redtrack(
     date_preset: str = Query("last_7d"),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_superuser),
 ):
     """Return raw RedTrack report grouped by sub2 for diagnosis."""
     import httpx, os
@@ -340,7 +340,10 @@ def debug_redtrack(
         )
         rows = r.json() if r.status_code == 200 else None
     except Exception as e:
-        return {"error": str(e)}
+        # Never echo str(e): httpx errors include the request URL, and the API
+        # key travels in its query string (2026-11-01 review).
+        logger.warning("RedTrack debug call failed: %s", type(e).__name__)
+        return {"error": f"RedTrack request failed ({type(e).__name__})"}
 
     return {
         "status": r.status_code,
@@ -353,11 +356,11 @@ def debug_redtrack(
 
 
 @router.get("/campaigns")
-def get_campaigns(current_user=Depends(get_current_user)):
+def get_campaigns(current_user=Depends(get_current_superuser)):
     """List all RedTrack campaigns — used to validate API connection."""
     svc = _svc()
     if not svc.is_configured():
-        raise HTTPException(400, "REDTRACK_API_KEY not configured. Add it to Railway env vars.")
+        raise HTTPException(400, "REDTRACK_API_KEY not configured. Add it to the VPS .env.")
 
     campaigns = svc.get_campaigns()
     return {

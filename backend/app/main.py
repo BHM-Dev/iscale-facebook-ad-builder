@@ -80,8 +80,20 @@ async def root():
     return {"message": "Welcome to the Facebook Ad Automation API"}
 
 @app.get("/health")
-async def health_check():
-    return {"status": "healthy"}
+def health_check():
+    """Real check, not a static 200 (2026-11-01 review): the DB answers SELECT 1.
+    503 when it doesn't, so an external monitor sees a broken backend."""
+    from fastapi.responses import JSONResponse
+    from sqlalchemy import text as _sql_text
+    from app.database import SessionLocal as _HealthSession
+    db = _HealthSession()
+    try:
+        db.execute(_sql_text("SELECT 1"))
+        return {"status": "healthy", "db": "ok"}
+    except Exception as exc:
+        return JSONResponse(status_code=503, content={"status": "unhealthy", "db": type(exc).__name__})
+    finally:
+        db.close()
 
 @app.get("/api/v1/version")
 async def version():

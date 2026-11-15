@@ -34,7 +34,8 @@ COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright and Chromium browser
-RUN pip install playwright && playwright install chromium
+# playwright itself is pinned in requirements.txt; only the browser is installed here.
+RUN playwright install chromium
 
 # Copy application code
 COPY backend/ .
