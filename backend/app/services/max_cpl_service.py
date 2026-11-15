@@ -69,6 +69,40 @@ def compute_max_cpl(db, account_id: str, days: int = 30, target_roas: float = 1.
         return result
 
 
+def warm(db, account_id: str, refresh_after: int = 1800, days: int = 30, target_roas: float = 1.30) -> str:
+    """Background refresh for the scheduler. Pulls only when there is no good cached result or it is older
+    than `refresh_after` (30 min — two 10-min retry ticks before the 60-min TTL), so page loads don't meet an expired cache. A failed
+    pull never replaces a still-valid good result. Returns what it did, for logging. Never raises."""
+    key = (account_id, float(target_roas), days)
+    item = _CACHE.get(key)
+    now = monotonic()
+    if item and item[2].get("available") and now - item[0] < refresh_after:
+        return "fresh"
+    with _lock(key):
+        item = _CACHE.get(key)   # a page load may have refreshed it while we waited for the lock
+        if item and item[2].get("available") and monotonic() - item[0] < refresh_after:
+            return "fresh"
+        try:
+            result = _compute(db, account_id, days, target_roas)
+        except proposal_service.RevenueUnavailable as exc:
+            result = _unavailable(account_id, str(exc))
+        except Exception as exc:
+            logger.warning("Max CPL warm failed for %s: %s", account_id, exc)
+            try:
+                db.rollback()   # the session is shared across accounts in one tick
+            except Exception:
+                pass
+            result = _unavailable(account_id, "Max CPL unavailable right now")
+        current = _CACHE.get(key)
+        still_good = current and current[2].get("available") and monotonic() - current[0] < current[1]
+        if result.get("available"):
+            _CACHE[key] = (monotonic(), TTL_SECONDS, result)
+            return "refreshed"
+        if not still_good:
+            _CACHE[key] = (monotonic(), FAILURE_TTL_SECONDS, result)
+        return "failed"
+
+
 def _compute(db, account_id, days, target_roas):
     # Complete days only, ending yesterday in Pacific time: today's leads have no revenue yet and would
     # drag revenue per lead (and so Max CPL) down.
