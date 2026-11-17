@@ -2183,7 +2183,8 @@ Commercial Van Insurance for Electricians
 
     import pytest
 
-    with pytest.raises(RuntimeError, match="ambiguous media"):
+    # The ad's 1x1 name matches two files, so the whole ad (both placements) gets no copy.
+    with pytest.raises(RuntimeError, match="more than one file in the folder is named"):
         service._folder_copy_metadata("electrical-v2-package")
 
 
@@ -2211,7 +2212,7 @@ Commercial Van Insurance for Landscapers
 
     import pytest
 
-    with pytest.raises(RuntimeError, match="wrong media aspect"):
+    with pytest.raises(RuntimeError, match="looks like a 9x16 file but is listed under 1X1 IMAGE"):
         service._folder_copy_metadata("landscaping-v2-package")
 
     service._folder_metadata_cache = {}
@@ -2219,8 +2220,9 @@ Commercial Van Insurance for Landscapers
         "04-LAND-V2-AD1-Identity-9x16.jpg\n9X16 IMAGE\n04-LAND-V2-AD1-Identity-1x1.jpg",
         "04-LAND-V2-AD1-Identity-1x1.jpg\n9X16 IMAGE\n04-LAND-V2-AD1-Identity-9x16.jpg",
     )
-    with pytest.raises(RuntimeError, match="inline AD 2 is missing its 1X1 image"):
-        service._folder_copy_metadata("landscaping-v2-package")
+    # A trailing draft heading with no copy and no files is planning material, not an ad: AD1 binds.
+    result = service._folder_copy_metadata("landscaping-v2-package")
+    assert {m["aspect"] for m in result["assets_by_drive_id"].values()} == {"1x1", "9x16"}
 
 
 def test_package_copy_source_priority_ignores_marker_words_embedded_in_other_tokens():

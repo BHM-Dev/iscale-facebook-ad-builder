@@ -104,10 +104,13 @@ def test_missing_headline_names_the_ad_and_the_line():
     assert "CA-PROVEN-01-H1" in errors[0] and errors[0].startswith("Line ") and "HEADLINE" in errors[0]
 
 
-def test_single_placement_is_an_error_because_the_sync_rejects_it():
+def test_single_placement_is_allowed_with_a_warning():
+    # File names are the rule (2026-11-17): an ad may name one placement; it runs there only.
     text = MANIFEST.replace("9X16 VIDEO\nca-proven-02-h1-9x16.mp4\n", "", 1)
+    result = validate_handoff_manifest(text, folder_media_names=[n for n in NAMES if n != "ca-proven-02-h1-9x16.mp4"])
 
-    assert any("CA-PROVEN-02-H1" in e and "9X16 VIDEO" in e for e in _errors(text))
+    assert result["ok"] is True, result["errors"]
+    assert any("CA-PROVEN-02-H1" in w and "only one placement" in w for w in result["warnings"])
 
 
 def test_filename_on_the_same_line_as_its_label_is_an_error():
@@ -162,10 +165,14 @@ def test_capital_letter_difference_with_drive_is_a_warning():
     assert any("capital letters" in w for w in result["warnings"])
 
 
-def test_heading_with_a_digit_that_is_not_read_as_an_ad_is_flagged_not_dropped():
-    text = MANIFEST.replace("## CA-PROVEN-02-H1", "## PKG02", 1)
+def test_any_heading_with_copy_and_files_is_read_as_an_ad():
+    # No heading shape to get right anymore: '## PKG02' with copy + files is an ad like any other.
+    text = MANIFEST.replace("## CA-PROVEN-02-H1", "## PKG02", 1).replace("ca-proven-02-h1", "pkg02-h1")
+    names = [n.replace("ca-proven-02-h1", "pkg02-h1") for n in NAMES]
+    result = validate_handoff_manifest(text, folder_media_names=names)
 
-    assert any("'## PKG02' isn't read as an ad" in e for e in _errors(text))
+    assert result["ok"] is True, result["errors"]
+    assert "PKG02" in result["entries"]
 
 
 def test_unreadable_placement_label_is_flagged():

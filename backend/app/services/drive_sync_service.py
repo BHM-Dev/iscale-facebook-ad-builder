@@ -71,39 +71,215 @@ INLINE_MANIFEST_HEADING_RE = re.compile(
 )
 
 
-def inline_manifest_headings(text: str):
-    """Block headings in an inline handoff manifest.
+_ANY_BLOCK_HEADING_RE = re.compile(r"^[ \t]*##[ \t]+(\S[^\n]*?)[ \t]*$", re.MULTILINE)
+_PLACEMENT_LABEL_LINE_RE = re.compile(r"^[ \t]*(1X1|4X5|9X16|16X9)[ \t]+(IMAGE|VIDEO)[ \t]*:?[ \t]*$", re.IGNORECASE)
+# A copy field whose value is itself a structural label line means a label was left empty and the parser
+# swallowed the next label (an empty HEADLINE reading "DESCRIPTION", a body ending in "16X9 IMAGE").
+_STRUCTURAL_LINE_RE = re.compile(
+    r"^[ \t]*(?:(?:1X1|4X5|9X16|16X9)[ \t]+(?:IMAGE|VIDEO)|PRIMARY\s+TEXT|HEADLINE|DESCRIPTION|CTA|META\s+BUTTON)[ \t]*:?[ \t]*$",
+    re.MULTILINE,   # labels are written in capitals; a headline that is the word "Headline" is still copy
+)
+_PLACEMENT_SAME_LINE_RE = re.compile(r"^[ \t]*(1X1|4X5|9X16|16X9)[ \t]+(IMAGE|VIDEO)[ \t]*:?[ \t]+(\S[^\n]*)$", re.IGNORECASE)
+_VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".webm", ".avi", ".mpeg", ".mpg", ".3gp")
+_PLACEMENT_ASPECTS = {"1x1", "4x5", "9x16", "16x9"}
 
-    An ID-only heading (group 3) counts only when an ad block follows it (a PRIMARY TEXT line before the
-    next heading). Any other ## line of that shape was never read as an ad before ID-only labels were
-    supported, and must keep being ignored rather than suddenly demanding placements.
+
+def _is_video_item(item: Dict[str, Any]) -> bool:
+    mime = (item.get("mimeType") or "").lower()
+    if mime:
+        return mime.startswith("video/")
+    return (item.get("name") or "").lower().endswith(_VIDEO_EXTENSIONS)
+
+
+def bind_handoff_manifest(text, media_items, media_aspect, parse_copy, ad_number_from_file_name, parse_cta=None) -> Dict[str, Any]:
+    """Bind an inline handoff manifest's copy to media by the file names it lists. The one rule.
+
+    Every ``## <name>`` block whose body has ad copy (PRIMARY TEXT) or placement lines is an ad. Each
+    ``<1X1|4X5|9X16|16X9> <IMAGE|VIDEO>`` line has a file name on the line below, and that file gets the
+    block's copy. No ad numbers, heading shapes or required placement pairs: any layout that names its
+    files works (single placements too).
+
+    What still stops a binding (that file gets no copy; every other file still binds):
+      - the named file isn't in the package, or two package files share that name;
+      - the file's size or media type doesn't match its label;
+      - the same file is listed under two blocks;
+      - the file is named for a different block (its name starts with another block's label) or carries
+        another AD number than a numbered heading;
+      - the block's copy can't be read, or two blocks share one name.
+
+    ``media_items`` None means "no folder to check against" (validator without a file list): existence is
+    skipped and the file name stands in for the item. Returns ``{"blocks": [...]}``; each block has
+    label, number, heading, line (1-based), section, placements, files [(item, aspect)], errors [str].
     """
-    matches = list(INLINE_MANIFEST_HEADING_RE.finditer(text or ""))
-    kept = []
-    for index, match in enumerate(matches):
-        if match.group(3):
-            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-            if not re.search(r"^[ \t]*PRIMARY\s+TEXT\b", text[match.end():end], re.IGNORECASE | re.MULTILINE):
+    text = re.sub(r"[\ufeff\u200b\u200c\u200d]", "", text or "").replace("\r\n", "\n").replace("\r", "\n")
+    candidates = list(_ANY_BLOCK_HEADING_RE.finditer(text))
+
+    def _body_after(index: int) -> str:
+        return text[candidates[index].end():candidates[index + 1].start() if index + 1 < len(candidates) else len(text)]
+
+    # An ad heading is a numbered one (old shape: ## CA-PROVEN-01-H1, ## AD 3) or any heading followed by ad
+    # copy. Other ## lines (## Files, ## Notes) stay part of the ad above them, as they always did.
+    headings = []
+    for index, candidate in enumerate(candidates):
+        numbered = INLINE_MANIFEST_HEADING_RE.match(candidate.group(0))
+        if (numbered and (numbered.group(1) or numbered.group(2))) or re.search(
+            r"^[ \t]*PRIMARY\s+TEXT\b", _body_after(index), re.IGNORECASE | re.MULTILINE
+        ):
+            headings.append(candidate)
+    preamble = text[:headings[0].start()] if headings else text
+    # Landing page and Meta button are document-wide (the numbered parser always read them from the whole
+    # file); a block's own value still wins.
+    doc_landing = re.search(r"\b(?:Lander|Landing\s+(?:Page|URL))\s*:?\s*(\S+)", text, re.IGNORECASE) or re.search(
+        r"^\s*Landing\s+(?:Page|URL)\s*\n\s*(\S+)", text, re.IGNORECASE | re.MULTILINE
+    )
+    doc_cta = re.search(r"^\s*Meta\s+Button\s*\n\s*(.+?)\s*$", text, re.IGNORECASE | re.MULTILINE)
+    media_by_name: Dict[str, List[Dict[str, Any]]] = {}
+    for item in media_items or []:
+        media_by_name.setdefault((item.get("name") or "").lower(), []).append(item)
+
+    blocks: List[Dict[str, Any]] = []
+    for index, heading in enumerate(headings):
+        body = text[heading.end():headings[index + 1].start() if index + 1 < len(headings) else len(text)]
+        heading_line = heading.group(0).strip()
+        token = re.match(r"[A-Za-z0-9_-]+", heading.group(1))
+        label = token.group(0) if token else heading.group(1).strip()
+        numbered = INLINE_MANIFEST_HEADING_RE.match(heading.group(0))
+        number_text = numbered and (numbered.group(1) or numbered.group(2))
+        line_no = text.count("\n", 0, heading.start()) + 1
+        body_lines = body.split("\n")
+        placements, errors = [], []
+        for offset, raw in enumerate(body_lines):
+            label_line = _PLACEMENT_LABEL_LINE_RE.match(raw)
+            if not label_line:
+                same_line = _PLACEMENT_SAME_LINE_RE.match(raw)
+                if same_line and "." in same_line.group(3):
+                    errors.append(f"{label}: put the file name on the line UNDER '{same_line.group(1).upper()} {same_line.group(2).upper()}', not on the same line.")
                 continue
-        kept.append(match)
-    return kept
+            under = body_lines[offset + 1].strip() if offset + 1 < len(body_lines) else ""
+            tag = f"{label_line.group(1).upper()} {label_line.group(2).upper()}"
+            if not under or _PLACEMENT_LABEL_LINE_RE.match(under) or under.startswith("#"):
+                errors.append(f"{label}: no file name under '{tag}'.")
+                continue
+            placements.append({"aspect": label_line.group(1).lower(), "kind": label_line.group(2).lower(),
+                               "filename": under, "tag": tag})
+        if not placements and not re.search(r"^[ \t]*PRIMARY\s+TEXT\b", body, re.IGNORECASE | re.MULTILINE):
+            continue   # planning notes, a structure table, etc. -- not an ad
+        sections = parse_copy(f"{preamble}## AD 1{body}")
+        section = dict(next(iter(sections.values()))) if len(sections) == 1 else None
+        if section is not None:
+            if any(_STRUCTURAL_LINE_RE.search(str(section.get(field) or "")) for field in ("primary_text", "headline", "description")):
+                errors.append(f"{label}: a copy label is empty or out of order (a label ended up inside the ad text). Check PRIMARY TEXT, HEADLINE and DESCRIPTION each have text under them.")
+                section = None
+            else:
+                if not section.get("landing_page") and doc_landing:
+                    section["landing_page"] = doc_landing.group(1).strip()
+                if not section.get("cta") and doc_cta and parse_cta:
+                    section["cta"] = parse_cta(doc_cta.group(1))
+        if section is None and not any("label is empty" in e for e in errors):
+            errors.append(f"{label}: the sync can't read this ad's copy. Put PRIMARY TEXT, HEADLINE and DESCRIPTION each on their own line, with the text underneath.")
+        if not placements:
+            errors.append(f"{label}: has copy but lists no files, so nothing gets this copy.")
+        blocks.append({"label": label, "number": int(number_text) if number_text else None, "heading": heading_line,
+                       "line": line_no, "section": section, "placements": placements, "files": [], "errors": errors,
+                       "_ok": []})
 
+    label_counts: Dict[str, int] = {}
+    for block in blocks:
+        label_counts[block["label"].lower()] = label_counts.get(block["label"].lower(), 0) + 1
+    # Judge numbering over the ads that actually list files, so a stray copy-only note can't flip a numbered
+    # manifest into name mode.
+    numbers = [block["number"] for block in blocks if block["placements"]]
+    unique_numbers = bool(numbers) and all(n is not None for n in numbers) and len(set(numbers)) == len(numbers)
+    labels = [block["label"] for block in blocks]
 
-def inline_manifest_placements(block: str):
-    """The two placements an inline manifest block must declare: (label aspect, kind, normalized aspect)."""
-    def has(label):
-        return re.search(rf"^[ \t]*{label}[ \t]+VIDEO\b", block, re.IGNORECASE | re.MULTILINE)
-    if has("16X9"):
-        return ("16X9", "VIDEO", "16x9"), ("9X16", "VIDEO", "9x16")
-    if has("4X5"):
-        return ("4X5", "VIDEO", "4x5"), ("9X16", "VIDEO", "9x16")
-    if has("1X1"):
-        # Square feed video + Stories (AUTO-18 Life Events). Feed accepts 1x1 video like 4x5. 4X5 keeps
-        # priority above so a manifest that also lists a spare 1X1 line binds exactly as before.
-        return ("1X1", "VIDEO", "1x1"), ("9X16", "VIDEO", "9x16")
-    if has("9X16"):
-        return ("4X5", "VIDEO", "4x5"), ("9X16", "VIDEO", "9x16")
-    return ("1X1", "IMAGE", "1x1"), ("9X16", "IMAGE", "9x16")
+    # A file listed under two ads binds to neither -- decided on the raw listing, before any other check, so
+    # one of the two listings being invalid can't hand the file to the other.
+    listed_by: Dict[str, set] = {}
+    for block_index, block in enumerate(blocks):
+        for placement in block["placements"]:
+            listed_by.setdefault(placement["filename"].lower(), set()).add(block_index)
+    for name, owners_of_name in listed_by.items():
+        if len(owners_of_name) > 1:
+            names = ", ".join(blocks[i]["label"] for i in sorted(owners_of_name))
+            for i in owners_of_name:
+                blocks[i]["errors"].append(f"{blocks[i]['label']}: '{name}' is listed under more than one ad ({names}). List each file once.")
+
+    claims: Dict[str, List[Any]] = {}
+    for block_index, block in enumerate(blocks):
+        if label_counts[block["label"].lower()] > 1 and not unique_numbers:
+            block["errors"].append(f"{block['label']}: two ads are both named {block['label']}. Give each ad its own name.")
+            continue
+        seen_in_block = set()
+        for placement in block["placements"]:
+            name = placement["filename"]
+            if name.lower() in seen_in_block:
+                block["errors"].append(f"{block['label']}: the same file ('{name}') is listed for both placements. Each placement needs its own file.")
+                continue
+            seen_in_block.add(name.lower())
+            if len(listed_by.get(name.lower(), ())) > 1:
+                continue   # already reported: listed under more than one ad
+            if "/" in name or "\\" in name:
+                block["errors"].append(f"{block['label']}: '{name}' must be just the file's name, without any folder path.")
+                continue
+            if media_items is not None:
+                matches = media_by_name.get(name.lower(), [])
+                if not matches:
+                    block["errors"].append(f"{block['label']}: '{name}' isn't in the package folder in Drive.")
+                    continue
+                if len(matches) > 1:
+                    block["errors"].append(f"{block['label']}: more than one file in the folder is named '{name}'.")
+                    continue
+                item = matches[0]
+            else:
+                item = {"id": None, "name": name}
+            file_aspect = media_aspect(item)
+            if file_aspect != placement["aspect"]:
+                block["errors"].append(
+                    f"{block['label']}: '{name}' "
+                    + (f"looks like a {file_aspect} file" if file_aspect else "has no size (1x1, 4x5, 9x16, 16x9) in its name")
+                    + f" but is listed under {placement['tag']}."
+                )
+                continue
+            if (placement["kind"] == "video") != _is_video_item(item):
+                block["errors"].append(f"{block['label']}: '{name}' is listed under {placement['tag']} but isn't a {placement['kind']}.")
+                continue
+            file_number = ad_number_from_file_name(item.get("name") or name)
+            if block["number"] is not None and file_number is not None and file_number != block["number"]:
+                block["errors"].append(f"{block['label']}: '{name}' is numbered {file_number:02d} but this ad is number {block['number']:02d}.")
+                continue
+            claims.setdefault(name.lower(), []).append((block_index, placement, item))
+
+    for claimed in claims.values():
+        block_index, placement, item = claimed[0]
+        own = labels[block_index]
+        owners = [other for other in labels if label_owns_file(other, item.get("name") or "")]
+        best = max(owners, key=len) if owners else None
+        # A parent label is fine: AUTO-18-1-VID's files are named for concept AUTO-18-1.
+        if best and best.lower() != own.lower() and not label_owns_file(best, own):
+            blocks[block_index]["errors"].append(f"{own}: '{placement['filename']}' is named for {best}, not this ad.")
+            continue
+        if blocks[block_index]["number"] is None and not best:
+            # An ad with no number has only its name to vouch for its files: the file must be named for it (or
+            # for a parent ad), so AUTO-20V-HC-B1-C1 can't take AUTO-20V-HC-B3-C1-... .
+            blocks[block_index]["errors"].append(f"{own}: '{placement['filename']}' isn't named for this ad (its name should start with '{own}').")
+            continue
+        # Where headings are names rather than unique AD numbers (H1/H2/IMG variants), the heading's last
+        # token must appear in the file name, so CI-CALLOUT-01-H1 can't take CI-CALLOUT-01-P-H2-4x5.mp4.
+        token = re.split(r"[-_]", own)[-1].lower()
+        if not unique_numbers and token and not token.isdigit() and token not in re.split(r"[-_ .]", (item.get("name") or "").lower()):
+            blocks[block_index]["errors"].append(f"{own}: '{placement['filename']}' doesn't look like it belongs to this ad (its name should include '{token.upper()}').")
+            continue
+        blocks[block_index]["_ok"].append((item, placement["aspect"]))
+
+    # All-or-nothing per ad: a typo in one placement must not leave half a Feed/Stories pair launchable.
+    # Every other ad in the package still binds.
+    for block in blocks:
+        ok = block.pop("_ok")
+        if block["section"] is not None and ok and len(ok) == len(block["placements"]):
+            block["files"] = ok
+        elif ok and len(ok) != len(block["placements"]):
+            block["errors"].append(f"{block['label']}: none of its files get copy until the problem above is fixed.")
+    return {"blocks": blocks, "unique_numbers": unique_numbers}
 
 
 def label_owns_file(label: str, file_name: str) -> bool:
@@ -3304,84 +3480,8 @@ class DriveSyncService:
                 # HEADLINE / IMAGE fields rather than a separate copy-file
                 # reference. Parse that real format before treating a no-entry
                 # manifest as a harmless planning draft.
-                inline_blocks = inline_manifest_headings(manifest_text)
-                declared_media = []
-                declared_media_by_ad = {}
-                declared_media_ids = set()
-                declared_blocks = []
-                expected_numbers = set()
-                media_by_name = {}
-                for item in folder_files:
-                    if not self._is_supported_media(item.get("mimeType") or "", item.get("name") or ""):
-                        continue
-                    media_by_name.setdefault((item.get("name") or "").lower(), []).append(item)
-                has_unnumbered_heading = False
-                for index, heading in enumerate(inline_blocks):
-                    # An ID-only heading (AUTO-20V-HC-B1-C1: hook x body x CTA) has no ad number; its
-                    # label is its identity, so it always binds per block (variant path below).
-                    number_text = heading.group(1) or heading.group(2)
-                    heading_number = int(number_text) if number_text else None
-                    ad_ref = heading_number if heading_number is not None else heading.group(3)
-                    has_unnumbered_heading = has_unnumbered_heading or heading_number is None
-                    expected_numbers.add(heading_number if heading_number is not None else heading.group(3).lower())
-                    block = manifest_text[heading.end():inline_blocks[index + 1].start() if index + 1 < len(inline_blocks) else len(manifest_text)]
-                    declared_names = []
-                    placement_fields = inline_manifest_placements(block)
-                    for aspect, media_kind, normalized_aspect in placement_fields:
-                        field = re.search(
-                            rf"^[ \t]*{aspect}[ \t]+{media_kind}[ \t]*\r?\n[ \t]*([^\r\n]+)",
-                            block,
-                            re.IGNORECASE | re.MULTILINE,
-                        )
-                        if not field:
-                            raise RuntimeError(
-                                f"Drive handoff manifest inline AD {ad_ref} is missing its {aspect} {media_kind.lower()}"
-                            ) from exc
-                        declared_names.append((normalized_aspect, field.group(1).strip()))
-                    for aspect, name in declared_names:
-                        matching_media = media_by_name.get(name.lower(), [])
-                        if not matching_media:
-                            raise RuntimeError(f"Drive handoff manifest references missing media {name}") from exc
-                        if len(matching_media) != 1:
-                            raise RuntimeError(f"Drive handoff manifest references ambiguous media {name}") from exc
-                        media = matching_media[0]
-                        media_ad_number = self._ad_number_from_file_name(media.get("name") or "")
-                        if heading_number is not None and media_ad_number is not None and media_ad_number != heading_number:
-                            raise RuntimeError(f"Drive handoff manifest inline AD {ad_ref} references media from another ad") from exc
-                        if self._media_aspect(media) != aspect:
-                            raise RuntimeError(f"Drive handoff manifest inline AD {ad_ref} declares {aspect} with the wrong media aspect") from exc
-                        if media.get("id") in declared_media_ids:
-                            raise RuntimeError(f"Drive handoff manifest declares media more than once: {name}") from exc
-                        declared_media_ids.add(media.get("id"))
-                        declared_media.append(media)
-                    declared_media_by_ad[heading_number] = declared_names and [
-                        media_by_name[name.lower()][0] for _, name in declared_names
-                    ]
-                    declared_blocks.append((
-                        heading.group(0), block,
-                        [media_by_name[name.lower()][0] for _, name in declared_names],
-                    ))
-                if has_unnumbered_heading or len(expected_numbers) != len(inline_blocks):
-                    # Several variants of one concept (H1/H2/H3/IMG of
-                    # CI-CALLOUT-01) legitimately share a number. That is only
-                    # safe when every heading is itself unique and each block
-                    # names its own media, so bind copy per block instead of per
-                    # number. Genuinely repeated headings stay blocked.
-                    variant_metadata = self._inline_variant_manifest_metadata(
-                        folder_id, manifest, manifest_text, declared_blocks, exc,
-                    )
-                    self._folder_metadata_cache[folder_id] = variant_metadata
-                    return variant_metadata
-                inline_sections = self._parse_ad_copy_doc(manifest_text)
-                if inline_blocks and set(inline_sections) != expected_numbers:
-                    raise RuntimeError("Drive handoff manifest has incomplete inline copy sections") from exc
-                inline_metadata = self._ad_numbered_folder_copy_metadata(
-                    folder_id,
-                    declared_media,
-                    manifest_text,
-                    declared_media_by_ad=declared_media_by_ad,
-                )
-                if inline_metadata.get("assets") or inline_metadata.get("assets_by_drive_id"):
+                inline_metadata = self._filename_manifest_metadata(folder_id, folder_files, manifest_text, exc)
+                if inline_metadata:
                     inline_metadata["_copy_source_drive_file_id"] = manifest.get("id")
                     inline_metadata["_copy_source_drive_modified_time"] = manifest.get("modifiedTime")
                     inline_metadata["_copy_source_drive_file_name"] = manifest.get("name")
@@ -3525,74 +3625,51 @@ class DriveSyncService:
         self._folder_metadata_cache[folder_id] = {"assets": {}}
         return self._folder_metadata_cache[folder_id]
 
-    def _inline_variant_manifest_metadata(self, folder_id, manifest, manifest_text, declared_blocks, cause):
-        """Bind inline manifest copy to media one heading at a time.
+    def _filename_manifest_metadata(self, folder_id, folder_files, manifest_text, cause):
+        """Inline handoff manifest -> per-file copy metadata, bound by the file names it lists.
 
-        Used when several headings share one concept number, e.g.
-        ``CI-CALLOUT-01-H1``, ``-H2``, ``-H3`` and ``-IMG``. Each block carries
-        its own copy and names its own Feed/Stories files, so the heading label
-        (not the number) is the copy identity.
+        Returns None when the manifest has no ad blocks at all (planning material: the caller decides
+        whether that is safe to fall back from). Raises only when it has ad blocks yet not one file could
+        be bound; otherwise every file that binds cleanly gets copy and the rest are logged (the nightly
+        Drive check and the validator name them in plain words).
         """
-        def label_of(heading_line: str) -> str:
-            cleaned = re.sub(r"^[#\s]+", "", heading_line).strip()
-            token = re.match(r"[A-Za-z0-9_-]+", cleaned)
-            return token.group(0) if token else cleaned
-
-        labels = [label_of(heading) for heading, _, _ in declared_blocks]
-        if len({label.lower() for label in labels}) != len(labels):
-            raise RuntimeError("Drive handoff manifest declares the same inline AD more than once") from cause
-
-        preamble = manifest_text[:manifest_text.find(declared_blocks[0][0])]
-
+        media = [
+            item for item in folder_files
+            if self._is_supported_media(item.get("mimeType") or "", item.get("name") or "")
+        ]
+        bound = bind_handoff_manifest(
+            manifest_text, media, self._media_aspect, self._parse_ad_copy_doc, self._ad_number_from_file_name,
+            parse_cta=self._normalize_cta,
+        )
+        blocks = bound["blocks"]
+        if not blocks:
+            return None
+        errors = [error for block in blocks for error in block["errors"]]
+        if errors:
+            logger.warning(
+                "Drive handoff manifest in package %s: %s file problem(s): %s",
+                folder_id, len(errors), "; ".join(errors[:5]),
+            )
         assets: Dict[str, Dict[str, Any]] = {}
         assets_by_drive_id: Dict[str, Dict[str, Any]] = {}
-        for (heading_line, block, media_items), label in zip(declared_blocks, labels):
-            heading_match = re.match(INLINE_MANIFEST_HEADING_RE, heading_line)
-            unnumbered = bool(heading_match and heading_match.group(3))
-            # The copy parser keys sections by ad number; an ID-only heading is parsed under a stand-in
-            # number. The label stays the copy identity.
-            parse_heading = "## AD 1" if unnumbered else heading_line
-            sections = self._parse_ad_copy_doc(f"{preamble}{parse_heading}{block}")
-            if len(sections) != 1:
-                raise RuntimeError(
-                    f"Drive handoff manifest has incomplete inline copy section {label}"
-                ) from cause
-            section = next(iter(sections.values()))
-            # Variants share a concept number, so the filename's own variant
-            # token (H1 / IMG) is the only ownership signal left: a block that
-            # names another variant's files must not bind its copy to them.
-            for item in media_items:
-                item_name = item.get("name") or ""
-                # A file named for a block (its stem starts with that block's label) belongs to the LONGEST
-                # such label, unless that label is a parent of this one. Catches B1 claiming B2's files when both share a number and last token
-                # (AUTO-20-HC-B1-C1 vs -B2-C1), and AUTO-20V-HC-B1 claiming AUTO-20V-HC-B1-C1's files.
-                owners = [other for other in labels if label_owns_file(other, item_name)]
-                best = max(owners, key=len) if owners else None
-                # A parent label is fine: AUTO-18-1-VID's files are named for concept AUTO-18-1.
-                if best and best.lower() != label.lower() and not label_owns_file(best, label):
-                    raise RuntimeError(
-                        f"Drive handoff manifest block {label} references media from another variant: {item_name}"
-                    ) from cause
-                if unnumbered and not owners:
-                    # No number and no single variant token to lean on, so the file must be named for
-                    # exactly this block: AUTO-20V-HC-B1-C1-Control-VID-4x5.mp4.
-                    raise RuntimeError(
-                        f"Drive handoff manifest block {label} references media from another variant: {item_name}"
-                    ) from cause
-            variant_token = re.split(r"[-_]", label)[-1].lower()
-            if not unnumbered and not variant_token.isdigit():
-                for item in media_items:
-                    stem_tokens = re.split(r"[-_ .]", (item.get("name") or "").lower())
-                    if variant_token not in stem_tokens:
-                        raise RuntimeError(
-                            f"Drive handoff manifest block {label} references media from another variant: {item.get('name')}"
-                        ) from cause
-            for item in media_items:
+        for block in blocks:
+            if not block["files"]:
+                continue
+            section = block["section"]
+            # Keep the historic AD-01 identity whenever every heading carries its own number, so libraries
+            # imported under the numbered parser keep the same copy_id; otherwise the heading's name is it.
+            if bound["unique_numbers"]:
+                copy_id, category = f"AD-{block['number']:02d}", f"AD {block['number']}"
+            else:
+                copy_id = category = block["label"]
+            aspects = {aspect for _, aspect in block["files"]}
+            paired = len(block["files"]) == 2 and "9x16" in aspects and len(aspects) == 2
+            for item, aspect in block["files"]:
                 file_name = item.get("name") or ""
                 metadata = {
-                    "copy_id": label,
-                    "category": label,
-                    "aspect": self._media_aspect(item) or "unknown",
+                    "copy_id": copy_id,
+                    "category": category,
+                    "aspect": aspect,
                     "copy": {
                         "headline": section["headline"],
                         "primary_text": section["primary_text"],
@@ -3601,7 +3678,7 @@ class DriveSyncService:
                     "landing_page": section["landing_page"],
                     "cta": section["cta"],
                     "source": "ad_numbered_copy_doc",
-                    "copy_pairing_status": "paired" if len(media_items) == 2 else "single",
+                    "copy_pairing_status": "paired" if paired else "single",
                     "drive_file_id": item.get("id"),
                     "package_folder_id": folder_id,
                     "file_name": file_name,
@@ -3609,16 +3686,12 @@ class DriveSyncService:
                 if item.get("id"):
                     assets_by_drive_id[item["id"]] = metadata
                 assets[file_name.lower()] = metadata
-
         if not assets_by_drive_id:
-            raise RuntimeError("Drive handoff manifest has inline copy fields but no complete matching entries") from cause
-        return {
-            "assets": assets,
-            "assets_by_drive_id": assets_by_drive_id,
-            "_copy_source_drive_file_id": manifest.get("id"),
-            "_copy_source_drive_modified_time": manifest.get("modifiedTime"),
-            "_copy_source_drive_file_name": manifest.get("name"),
-        }
+            raise RuntimeError(
+                "Drive handoff manifest has inline copy fields but no complete matching entries"
+                + (f" ({errors[0]})" if errors else "")
+            ) from cause
+        return {"assets": assets, "assets_by_drive_id": assets_by_drive_id}
 
     def _copy_document_kind(self, text_body: str) -> Optional[str]:
         """Return the parser kind for a complete, supported copy source."""
@@ -4051,7 +4124,7 @@ class DriveSyncService:
             if primary_label:
                 primary_body = block[primary_label.end():]
                 primary_body = re.split(
-                    r"^\s*(?:CTA|HEADLINE|DESCRIPTION|(?:1X1|4X5|9X16)\s+(?:IMAGE|VIDEO)|IMAGE)\s*:?.*$",
+                    r"^\s*(?:CTA|HEADLINE|DESCRIPTION|(?:1X1|4X5|9X16|16X9)\s+(?:IMAGE|VIDEO)|IMAGE)\s*:?.*$",
                     primary_body,
                     maxsplit=1,
                     flags=re.IGNORECASE | re.MULTILINE,
@@ -4066,7 +4139,7 @@ class DriveSyncService:
                     # field within this already AD-bounded block.
                     primary_body = block[headline_match.end():]
                     primary_body = re.split(
-                        r"^\s*(?:CTA|DESCRIPTION|(?:1X1|4X5|9X16)\s+(?:IMAGE|VIDEO)|IMAGE)\s*:?.*$",
+                        r"^\s*(?:CTA|DESCRIPTION|(?:1X1|4X5|9X16|16X9)\s+(?:IMAGE|VIDEO)|IMAGE)\s*:?.*$",
                         primary_body,
                         maxsplit=1,
                         flags=re.IGNORECASE | re.MULTILINE,

@@ -5,15 +5,16 @@ HOW TO USE THIS FILE
 1. Save a copy in the package's Drive folder. Name it so it ends in
    HANDOFF-MANIFEST.txt -- for example CA-PROVEN-HANDOFF-MANIFEST.txt
    (use the package/folder name at the front).
-2. Fill in one block per ad. A block = one headline/body + the files that use it.
-   Two sample blocks are below: an IMAGE block (1X1 + 9X16) and a VIDEO block
-   (4X5 + 9X16). Delete the one you don't need, and replace every <placeholder>
-   and every sample filename.
-3. Filenames must match the file in the folder EXACTLY, including the extension.
-   Copy the name from Drive; don't retype it.
-4. Keep each label (PRIMARY TEXT, HEADLINE, DESCRIPTION, 1X1 IMAGE, 4X5 VIDEO ...)
-   in capitals on its own line, with the value on the line(s) below it.
-   Image blocks use 1X1 IMAGE / 9X16 IMAGE; video blocks use 4X5 VIDEO / 9X16 VIDEO.
+2. Fill in one block per ad: a line starting with "## " and the ad's name, then its
+   copy, then the files that use it. Name ads however you like (PKG-01-IMG,
+   AUTO-20V-HC-B1-C1 ...) as long as each name is used once. Two sample blocks are
+   below; replace every <placeholder> and every sample filename.
+3. THE ONE RULE: list every file by its exact name (copy it from Drive, including the
+   extension). Each file gets the copy of the block that lists it. List a file once.
+4. Put each label (PRIMARY TEXT, HEADLINE, DESCRIPTION, and the placement labels) in
+   capitals on its own line, with the value on the line(s) below it. Placement labels:
+   1X1 / 4X5 / 9X16 / 16X9 followed by IMAGE or VIDEO -- any combination, one or more
+   per ad. The size in the label must match the size in the file name (…-9x16.mp4).
 5. One Meta button for the whole file. If one ad needs a different button, put it
    in its own package/file for now.
 6. BEFORE saving to Drive, check it: open the Drive library picker, click the

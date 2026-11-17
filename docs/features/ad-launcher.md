@@ -42,6 +42,25 @@ tools remain available as secondary options for teams that need to create new as
 - Codex working brief: [`CODEX_BRIEF_launcher-ux.md`](../../CODEX_BRIEF_launcher-ux.md).
 
 ## Changelog (newest first)
+- 2026-11-17 **Drive copy: the file name is the only rule** (Steve approved the rewrite). `bind_handoff_manifest()` in `drive_sync_service.py` is now the one inline-manifest binder, and the validator uses it too.
+  - **How it binds:** every `##` ad block attaches its copy to exactly the files it lists, in any layout. Ad numbers, heading shapes and fixed placement pairs are no longer required, and a single placement is fine.
+  - **What still blocks a file:**
+    - the file is missing from the package, or two files share its name;
+    - the size or media type doesn't match its label;
+    - the same file is listed under two ads;
+    - the file is named for another ad, or carries another AD number;
+    - an ID-only ad's file isn't named for it;
+    - the ad's copy is unreadable, or a label was left empty.
+  - **Each ad is all-or-nothing:** a typo never leaves half a pair launchable, and the package's other ads still import. Before this, one bad block blocked the whole package.
+  - **Unchanged:**
+    - Copy IDs stay `AD-NN` when every heading has a unique number.
+    - Landing page and Meta Button are read from anywhere in the document.
+    - A `## Files` or notes sub-heading stays part of the ad above it.
+  - **Also fixed:**
+    - `16X9` labels no longer leak into primary text.
+    - Windows line endings parse.
+  - The template instructions now state the one rule.
+
 - 2026-11-17 Drive copy, two new manifest layouts (Abel: "refresh just hangs" on the AUTO ads):
   - **AUTO-18 Life Events.** The parser only accepted 4X5/16X9 + 9X16 video, so `1X1 VIDEO` + `9X16 VIDEO` blocks rejected the whole package. All 16 files were left out, and 182 files retried on every sync.
   - **AUTO-20V Kitchen Video Hook Test.** ID-only headings like `## AUTO-20V-HC-B1-C1` (hook × body × CTA, no ad number) weren't read, so all 88 videos imported without copy. These headings now bind one block at a time. A file belongs to the longest label it's named for, unless that label is a parent of the block's own label, so B1 can't take B2's files. An ID-only heading with no PRIMARY TEXT under it is still ignored, as before.

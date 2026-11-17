@@ -544,7 +544,7 @@ def test_inline_manifest_still_rejects_a_genuinely_repeated_heading():
     try:
         service._folder_copy_metadata("package", force=True)
     except RuntimeError as exc:
-        assert "more than once" in str(exc)
+        assert "both named CI-CALLOUT-01-H1" in str(exc)
     else:
         raise AssertionError("duplicate inline heading must stay blocked")
 
@@ -562,7 +562,7 @@ def test_inline_manifest_variant_block_cannot_claim_another_variants_files():
     try:
         service._folder_copy_metadata("package", force=True)
     except RuntimeError as exc:
-        assert "another variant" in str(exc)
+        assert "doesn't look like it belongs to this ad" in str(exc)
     else:
         raise AssertionError("cross-variant media claim must stay blocked")
 
@@ -633,15 +633,16 @@ def test_id_only_block_cannot_claim_a_sibling_body_variants_files():
     try:
         service._folder_copy_metadata("package", force=True)
     except RuntimeError as exc:
-        assert "another variant" in str(exc)
+        assert "is named for AUTO-20V-HC-B" in str(exc)
     else:
         raise AssertionError("an ID-only block must not bind copy to another block's files")
 
 
-def test_id_only_heading_without_ad_copy_is_still_ignored():
-    from app.services.drive_sync_service import inline_manifest_headings
-    text = "## CI-AD-01\n\nPRIMARY TEXT\nx\n\n## WAVE-ONE-NOTES\n\nJust planning notes, no ad here.\n"
-    assert [m.group(0).strip() for m in inline_manifest_headings(text)] == ["## CI-AD-01"]
+def test_heading_without_copy_or_files_is_not_an_ad():
+    from app.services.drive_sync_service import bind_handoff_manifest
+    text = "## CI-AD-01\n\nPRIMARY TEXT\nx\n\nHEADLINE\ny\n\n1X1 IMAGE\nci-ad01-1x1.jpg\n\n## WAVE-ONE-NOTES\n\nJust planning notes, no ad here.\n"
+    bound = bind_handoff_manifest(text, None, lambda item: "1x1", lambda t: {1: {"headline": "y"}}, lambda n: 1)
+    assert [b["label"] for b in bound["blocks"]] == ["CI-AD-01"]
 
 
 def test_label_owns_file_needs_a_boundary():
@@ -651,10 +652,17 @@ def test_label_owns_file_needs_a_boundary():
     assert not label_owns_file("AUTO-20V-HC-B1-C1", "AUTO-20V-HC-B2-C1-Control-VID-4x5.mp4")
 
 
-def test_spare_square_video_line_does_not_displace_4x5():
-    from app.services.drive_sync_service import inline_manifest_placements
-    block = "4X5 VIDEO\na-4x5.mp4\n\n1X1 VIDEO\na-1x1.mp4\n\n9X16 VIDEO\na-9x16.mp4\n"
-    assert inline_manifest_placements(block)[0] == ("4X5", "VIDEO", "4x5")
+def test_every_listed_placement_binds_including_a_third_one():
+    names = ["CI-SQ-01-H1-4x5.mp4", "CI-SQ-01-H1-1x1.mp4", "CI-SQ-01-H1-9x16.mp4"]
+    manifest = _variant_manifest([
+        {"label": "CI-SQ-01-H1", "primary": "P", "headline": "H",
+         "aspect_a": "4X5 VIDEO", "file_a": names[0], "aspect_b": "9X16 VIDEO", "file_b": names[2]},
+    ]).replace("9X16 VIDEO", "1X1 VIDEO\n" + names[1] + "\n\n9X16 VIDEO", 1)
+    service = _variant_manifest_service(manifest, names)
+
+    result = service._folder_copy_metadata("package", force=True)
+
+    assert sorted(m["aspect"] for m in result["assets_by_drive_id"].values()) == ["1x1", "4x5", "9x16"]
 
 
 def test_numbered_variant_labels_cannot_swap_files_that_share_a_last_token():
@@ -671,6 +679,121 @@ def test_numbered_variant_labels_cannot_swap_files_that_share_a_last_token():
     try:
         service._folder_copy_metadata("package", force=True)
     except RuntimeError as exc:
-        assert "another variant" in str(exc)
+        assert "is named for AUTO-20-HC-B" in str(exc)
     else:
         raise AssertionError("swapped files between numbered variants must stay blocked")
+
+
+# ---- 2026-11-17: file names are the only rule ------------------------------------------------------------
+
+def test_one_broken_ad_no_longer_blocks_the_rest_of_the_package():
+    good = ["PKG-GOOD-IMG-1x1.jpg", "PKG-GOOD-IMG-9x16.jpg"]
+    manifest = _variant_manifest([
+        {"label": "PKG-GOOD", "primary": "Good", "headline": "Good headline",
+         "aspect_a": "1X1 IMAGE", "file_a": good[0], "aspect_b": "9X16 IMAGE", "file_b": good[1]},
+        {"label": "PKG-TYPO", "primary": "Typo", "headline": "Typo headline",
+         "aspect_a": "1X1 IMAGE", "file_a": "PKG-TYPO-IMG-1x1.jpg", "aspect_b": "9X16 IMAGE", "file_b": "PKG-TYPO-IMG-9x16.jpg"},
+    ])
+    service = _variant_manifest_service(manifest, good)   # the TYPO files were never uploaded
+
+    result = service._folder_copy_metadata("package", force=True)
+
+    assert {m["copy_id"] for m in result["assets_by_drive_id"].values()} == {"PKG-GOOD"}
+    assert {m["copy_pairing_status"] for m in result["assets_by_drive_id"].values()} == {"paired"}
+
+
+def test_half_a_pair_never_gets_copy():
+    names = ["PKG-A-IMG-1x1.jpg", "PKG-A-IMG-9x16.jpg", "PKG-B-IMG-1x1.jpg"]
+    manifest = _variant_manifest([
+        {"label": "PKG-A", "primary": "A", "headline": "A",
+         "aspect_a": "1X1 IMAGE", "file_a": names[0], "aspect_b": "9X16 IMAGE", "file_b": names[1]},
+        {"label": "PKG-B", "primary": "B", "headline": "B",
+         "aspect_a": "1X1 IMAGE", "file_a": names[2], "aspect_b": "9X16 IMAGE", "file_b": "PKG-B-IMG-9x16.jpg"},
+    ])
+    result = _variant_manifest_service(manifest, names)._folder_copy_metadata("package", force=True)
+
+    assert "id-PKG-B-IMG-1x1.jpg" not in result["assets_by_drive_id"]
+    assert len(result["assets_by_drive_id"]) == 2
+
+
+def test_single_placement_ad_binds_as_single():
+    names = ["PKG-S-VID-9x16.mp4"]
+    manifest = _variant_manifest([
+        {"label": "PKG-S", "primary": "S", "headline": "S",
+         "aspect_a": "9X16 VIDEO", "file_a": names[0], "aspect_b": "", "file_b": ""},
+    ])
+    result = _variant_manifest_service(manifest, names)._folder_copy_metadata("package", force=True)
+
+    (only,) = result["assets_by_drive_id"].values()
+    assert (only["copy_id"], only["aspect"], only["copy_pairing_status"]) == ("PKG-S", "9x16", "single")
+
+
+def test_windows_line_endings_parse():
+    names = ["PKG-W-IMG-1x1.jpg", "PKG-W-IMG-9x16.jpg"]
+    manifest = _variant_manifest([
+        {"label": "PKG-W", "primary": "W", "headline": "W headline",
+         "aspect_a": "1X1 IMAGE", "file_a": names[0], "aspect_b": "9X16 IMAGE", "file_b": names[1]},
+    ]).replace("\n", "\r\n")
+    result = _variant_manifest_service(manifest, names)._folder_copy_metadata("package", force=True)
+
+    assert {m["copy"]["headline"] for m in result["assets_by_drive_id"].values()} == {"W headline"}
+
+
+# ---- review cases (2026-11-17) ---------------------------------------------------------------------------
+from app.services.drive_sync_service import DriveSyncService as _DSS, bind_handoff_manifest as _bind
+
+_P = _DSS.__new__(_DSS)
+
+
+def _b(text, names):
+    items = [{"id": n, "name": n, "mimeType": "video/mp4" if n.endswith(".mp4") else "image/jpeg"} for n in names]
+    return _bind(text, items, _P._media_aspect, _P._parse_ad_copy_doc, _P._ad_number_from_file_name, parse_cta=_P._normalize_cta)
+
+
+def _bound_files(result):
+    return {item["name"]: block["label"] for block in result["blocks"] for item, _ in block["files"]}
+
+
+def test_16x9_label_never_leaks_into_primary_text():
+    text = "Meta Button\nGet Quote\n\n## AD 1\n\nHEADLINE\nH\n\nPRIMARY TEXT\nBody text\n16X9 IMAGE\nAD-01-16x9.png\n"
+    (block,) = _b(text, ["AD-01-16x9.png"])["blocks"]
+    assert block["section"]["primary_text"] == "Body text"
+
+
+def test_empty_headline_label_blocks_the_ad_instead_of_launching_a_label_as_copy():
+    text = "Meta Button\nGet Quote\n\n## PKG-01\n\nPRIMARY TEXT\nBody\n\nHEADLINE\n\nDESCRIPTION\nDesc\n\n1X1 IMAGE\nPKG-01-1x1.jpg\n"
+    result = _b(text, ["PKG-01-1x1.jpg"])
+    assert _bound_files(result) == {}
+
+
+def test_id_only_ad_cannot_take_a_file_named_for_an_ad_not_in_the_manifest():
+    text = ("Meta Button\nGet Quote\n\n## AUTO-20V-HC-B1-C1\n\nPRIMARY TEXT\nP\n\nHEADLINE\nH\n\n"
+            "9X16 VIDEO\nAUTO-20V-HC-B3-C1-Control-VID-9x16.mp4\n")
+    assert _bound_files(_b(text, ["AUTO-20V-HC-B3-C1-Control-VID-9x16.mp4"])) == {}
+
+
+def test_button_and_lander_after_the_last_ad_apply_to_every_ad():
+    text = ("## AD 1\n\nPRIMARY TEXT\nP1\n\nHEADLINE\nH1\n\n1X1 IMAGE\nAD-01-1x1.jpg\n\n"
+            "## AD 2\n\nPRIMARY TEXT\nP2\n\nHEADLINE\nH2\n\n1X1 IMAGE\nAD-02-1x1.jpg\n\n"
+            "Meta Button\nGet Quote\nLander: example.com/quote\n")
+    blocks = _b(text, ["AD-01-1x1.jpg", "AD-02-1x1.jpg"])["blocks"]
+    assert [(b["section"]["cta"], b["section"]["landing_page"]) for b in blocks] == [("GET_QUOTE", "example.com/quote")] * 2
+
+
+def test_files_subheading_stays_part_of_its_ad():
+    text = ("Meta Button\nGet Quote\n\n## AD 1\n\nPRIMARY TEXT\nP\n\nHEADLINE\nH\n\n## Files\n\n"
+            "1X1 IMAGE\nAD-01-1x1.jpg\n\n9X16 IMAGE\nAD-01-9x16.jpg\n")
+    assert _bound_files(_b(text, ["AD-01-1x1.jpg", "AD-01-9x16.jpg"])) == {"AD-01-1x1.jpg": "AD", "AD-01-9x16.jpg": "AD"}
+
+
+def test_a_copy_only_note_does_not_flip_a_numbered_manifest():
+    text = ("Meta Button\nGet Quote\n\n## AD-01-IMG\n\nPRIMARY TEXT\nP\n\nHEADLINE\nH\n\n1X1 IMAGE\nAD-01-1x1.png\n\n"
+            "## Alt notes\n\nPRIMARY TEXT\nunused alternative\n\nHEADLINE\nalt\n")
+    result = _b(text, ["AD-01-1x1.png"])
+    assert result["unique_numbers"] is True and _bound_files(result) == {"AD-01-1x1.png": "AD-01-IMG"}
+
+
+def test_file_listed_twice_binds_to_neither_even_if_one_listing_is_invalid():
+    text = ("Meta Button\nGet Quote\n\n## PKG-A\n\nPRIMARY TEXT\nA\n\nHEADLINE\nA\n\n1X1 IMAGE\nPKG-A-1x1.jpg\n\n"
+            "## PKG-B\n\nPRIMARY TEXT\nB\n\nHEADLINE\nB\n\n9X16 IMAGE\nPKG-A-1x1.jpg\n")
+    assert _bound_files(_b(text, ["PKG-A-1x1.jpg"])) == {}
