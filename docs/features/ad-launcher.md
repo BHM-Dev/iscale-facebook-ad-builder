@@ -42,6 +42,18 @@ tools remain available as secondary options for teams that need to create new as
 - Codex working brief: [`CODEX_BRIEF_launcher-ux.md`](../../CODEX_BRIEF_launcher-ux.md).
 
 ## Changelog (newest first)
+- 2026-11-17 Drive copy, two new manifest layouts (Abel: "refresh just hangs" on the AUTO ads):
+  - **AUTO-18 Life Events.** The parser only accepted 4X5/16X9 + 9X16 video, so `1X1 VIDEO` + `9X16 VIDEO` blocks rejected the whole package. All 16 files were left out, and 182 files retried on every sync.
+  - **AUTO-20V Kitchen Video Hook Test.** ID-only headings like `## AUTO-20V-HC-B1-C1` (hook × body × CTA, no ad number) weren't read, so all 88 videos imported without copy. These headings now bind one block at a time. A file belongs to the longest label it's named for, unless that label is a parent of the block's own label, so B1 can't take B2's files. An ID-only heading with no PRIMARY TEXT under it is still ignored, as before.
+  - **Validator.** It shares the parser's heading regex, placement rules and ownership rule.
+  - *Read-only dry run on prod, new code against the real packages:* AUTO-18 matched 16 of 16 files across 8 blocks; AUTO-20V matched 88 of 88 across 44 blocks.
+- 2026-11-17 **Nightly Drive check, 23:00 America/New_York** (`drive_nightly_check`). Covers every package with a file changed in the last 26h:
+  - dry-runs the copy parser and runs the manifest validator;
+  - lists files not yet in the library;
+  - runs the picker's Refresh where the parser resolves copy the library lacks. That re-attaches copy and imports missing package media. It waits for a running sync rather than reporting a false failure.
+  - DMs Steve every night, including when everything is clean. Never writes to Drive or Meta.
+  - *Read-only dry run on prod (48h window):* 10 packages, all ready, about 5 min.
+
 - 2026-11-14 Live-spend confirmation (review S2, Steve approved): launching into an existing campaign whose delivery state is LIVE needs a "Yes, deliver now" tick above Launch (and above "Retry remaining"); resets on target change. Paused / scheduled / new campaigns unaffected. *Build + unit tests only; not exercised in a browser.*
 - 2026-11-14 RedTrack tracking can no longer be silently dropped (review S3): if building the creative's `url_tags` fails, the creative still gets the full `sub1={{ad.id}}&sub2={{adset.id}}&sub3={{campaign.id}}` set and Steve gets a DM (at most one per 10 min). Normal path unchanged. *Unit-tested only.*
 - 2026-11-12 Duplicate-on-retry (review S1): a 5xx carrying Meta code 1 or 2 on campaign / ad set / ad create now counts as "may have been created" (`writeOutcomeUnknown` in `facebookApi.js`), so the launch stops for reconciliation instead of offering a retry. Uploads and creatives keep the old rule (a repeat only leaves an unused asset). Budget/status PATCH errors with code 1/2 no longer claim "nothing was changed". *Unit-tested only — Meta code 1/2 can't be triggered on demand.*

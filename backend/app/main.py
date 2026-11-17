@@ -607,6 +607,28 @@ async def startup_event():
 
         scheduler.add_job(scheduled_pnl_cache_warm, 'interval', minutes=4, id='pnl_cache_warm', max_instances=1, coalesce=True)
 
+        def scheduled_drive_nightly_check():
+            """11 p.m. ET (Steve, 2026-11-17): every Drive package touched in the last day is dry-run through
+            the copy parser + manifest validator, compared with the library, and the picker's Refresh runs where the parser now
+            resolves copy (re-attaches copy, imports missing package media). One DM to Steve, also when clean. Never writes to Drive or Meta."""
+            from app.services.slack_service import send_drive_sync_alert
+            db = None
+            try:
+                from app.services.drive_nightly_check import run_nightly_check, format_report
+                db = SessionLocal()
+                headline, summary, detail = format_report(run_nightly_check(db))
+                send_drive_sync_alert(summary, detail, headline=headline)
+                print(f"🌙 {headline}: {summary}")
+            except Exception as exc:
+                print(f"⚠️  Drive nightly check failed: {exc}")
+                send_drive_sync_alert(f"the nightly check itself failed: {str(exc)[:300]}", headline="Drive nightly check failed")
+            finally:
+                if db is not None:
+                    db.close()
+
+        scheduler.add_job(scheduled_drive_nightly_check, 'cron', hour=23, minute=0, timezone='America/New_York',
+                          id='drive_nightly_check', max_instances=1, coalesce=True)
+
         def scheduled_max_cpl_warm():
             """Keep the Max CPL column warm. Its cache is in memory (1h TTL), so every deploy emptied it and
             the next person to open Campaign Performance waited ~11s on a cold 30-day Meta + Everflow pull.
