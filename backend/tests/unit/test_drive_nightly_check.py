@@ -109,3 +109,25 @@ def test_sync_lock_collision_is_reported_as_skipped_not_failed(monkeypatch):
     r = n.check_package(svc, _db([{"drive_file_id": "a", "soft_tags": "{}"}]), "pkg")
     assert any("a Drive sync was running" in p for p in r["problems"])
     assert not any("refresh failed" in p for p in r["problems"])
+
+
+def test_manifest_mistakes_go_to_joel_and_parser_gaps_do_not(monkeypatch):
+    _patch_validator(monkeypatch, errors=["Line 12 (PKG-01): 'PKG-01-1x1.jpg' isn't in the package folder in Drive."])
+    joel_case = n.check_package(_Svc(_media("a", "b"), mapped={"a"}), _db([{"drive_file_id": "a", "soft_tags": COPY}, {"drive_file_id": "b", "soft_tags": COPY}]), "pkg")
+    assert joel_case["joel"] == ["Line 12 (PKG-01): 'PKG-01-1x1.jpg' isn't in the package folder in Drive."]
+
+    _patch_validator(monkeypatch)   # manifest is fine, our parser fails -> ours, not Joel's
+    ours = n.check_package(_Svc(_media("a"), parse_error="unsupported layout"), _db([{"drive_file_id": "a", "soft_tags": COPY}]), "pkg")
+    assert ours["joel"] == [] and any("unsupported layout" in p for p in ours["problems"])
+
+
+def test_unlisted_files_are_joels_to_list(monkeypatch):
+    _patch_validator(monkeypatch)
+    r = n.check_package(_Svc(_media("a", "b"), mapped={"a"}), _db([{"drive_file_id": "a", "soft_tags": COPY}, {"drive_file_id": "b", "soft_tags": COPY}]), "pkg")
+    assert len(r["joel"]) == 1 and "b-VID-9x16.mp4" in r["joel"][0]
+
+
+def test_joel_message_only_when_there_is_something_for_him():
+    assert n.format_joel_message({"packages": [{"package": "X", "joel": []}]}) is None
+    summary, detail = n.format_joel_message({"packages": [{"package": "AUTO-21 | New", "joel": ["fix A", "fix B"]}]})
+    assert summary.startswith("1 Drive package(s) need a fix") and "*AUTO-21 | New*" in detail and "– fix B" in detail

@@ -614,9 +614,16 @@ async def startup_event():
             from app.services.slack_service import send_drive_sync_alert
             db = None
             try:
-                from app.services.drive_nightly_check import run_nightly_check, format_report
+                from app.services.drive_nightly_check import JOEL_SLACK_ID, format_joel_message, format_report, run_nightly_check
                 db = SessionLocal()
-                headline, summary, detail = format_report(run_nightly_check(db))
+                result = run_nightly_check(db)
+                headline, summary, detail = format_report(result)
+                # Fixes only Joel can make in Drive go to him directly (Steve, 2026-11-17); anything the Ad
+                # Builder can fix itself stays in Steve's DM only.
+                joel = format_joel_message(result)
+                if joel:
+                    sent = send_drive_sync_alert(joel[0], joel[1], headline="Drive check — needs a fix in Drive", channel=JOEL_SLACK_ID)
+                    summary += f" Joel was DMed about {joel[0].split(' ')[0]} package(s)" + ("." if sent else " — but that DM FAILED to send.")
                 send_drive_sync_alert(summary, detail, headline=headline)
                 print(f"🌙 {headline}: {summary}")
             except Exception as exc:

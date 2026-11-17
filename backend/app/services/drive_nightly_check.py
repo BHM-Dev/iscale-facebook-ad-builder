@@ -98,7 +98,9 @@ def check_package(svc, db, package_id: str, repair: bool = True) -> Dict[str, An
     name = drive.files().get(fileId=package_id, fields="name", supportsAllDrives=True).execute().get("name") or package_id
     items = svc._list_folder_subtree(package_id)
     media = [i for i in items if svc._is_supported_media(i.get("mimeType") or "", i.get("name") or "")]
-    report: Dict[str, Any] = {"package": name, "media": len(media), "problems": [], "fixed": None}
+    # "joel": things only a change in Drive fixes (the manifest's wording, names, sizes). Everything else in
+    # "problems" is ours to fix (parser gaps, imports, refresh) and goes to Steve only.
+    report: Dict[str, Any] = {"package": name, "media": len(media), "problems": [], "joel": [], "fixed": None}
 
     # 1. parser dry run
     svc._folder_metadata_cache = {}
@@ -110,13 +112,9 @@ def check_package(svc, db, package_id: str, repair: bool = True) -> Dict[str, An
     except Exception as exc:
         parse_error = str(exc)[:200]
     unmapped = [m for m in media if m["id"] not in mapped]
-    if parse_error:
-        report["problems"].append(f"copy can't be read for {len(media)} file(s): {parse_error}")
-    elif unmapped:
-        sample = ", ".join(m["name"] for m in unmapped[:3])
-        report["problems"].append(f"{len(unmapped)} file(s) aren't in the copy manifest (e.g. {sample})")
 
-    # 2. manifest validator (plain-language reasons)
+    # 2. manifest validator (plain-language reasons, written for the person who edits the manifest)
+    manifest_errors: List[str] = []
     for item in items:
         if svc._is_handoff_manifest_file(item.get("name") or ""):
             try:
@@ -125,10 +123,23 @@ def check_package(svc, db, package_id: str, repair: bool = True) -> Dict[str, An
                     folder_media_names=[m["name"] for m in media],
                     file_name=item.get("name"),
                 )
-                for error in result.get("errors", [])[:3]:
-                    report["problems"].append(f"manifest: {error}")
+                manifest_errors.extend(result.get("errors", []))
             except Exception as exc:
                 report["problems"].append(f"manifest {item.get('name')} couldn't be checked: {str(exc)[:120]}")
+    for error in manifest_errors[:3]:
+        report["problems"].append(f"manifest: {error}")
+    report["joel"].extend(manifest_errors[:5])
+    if parse_error:
+        report["problems"].append(f"copy can't be read for {len(media)} file(s): {parse_error}")
+        # The validator shares the parser's binder: if it finds nothing to fix, the gap is ours, not Joel's.
+    elif unmapped:
+        sample = ", ".join(m["name"] for m in unmapped[:3])
+        report["problems"].append(f"{len(unmapped)} file(s) aren't in the copy manifest (e.g. {sample})")
+        if not manifest_errors:
+            report["joel"].append(
+                f"{len(unmapped)} file(s) aren't listed in the manifest, so they have no copy: "
+                + ", ".join(m["name"] for m in unmapped[:5]) + (" …" if len(unmapped) > 5 else "")
+            )
 
     # 3. library comparison
     ids = [m["id"] for m in media]
@@ -197,7 +208,7 @@ def run_nightly_check(db, since_hours: int = 26, max_packages: int = 40, repair:
             reports.append(check_package(svc, db, pkg, repair=repair))
         except Exception as exc:
             _rollback(db)   # one shared session: an aborted transaction must not fail every later package
-            reports.append({"package": pkg, "media": 0, "problems": [f"check failed: {str(exc)[:150]}"], "fixed": None})
+            reports.append({"package": pkg, "media": 0, "problems": [f"check failed: {str(exc)[:150]}"], "joel": [], "fixed": None})
     return {"since_hours": since_hours, "packages": reports, "skipped_packages": max(0, len(packages) - max_packages),
             "truncated": truncated}
 
@@ -222,3 +233,20 @@ def format_report(result: Dict[str, Any]) -> tuple[str, str, str]:
         lines.append(f"• {result['skipped_packages']} more changed package(s) not checked tonight (cap).")
     headline = "Drive nightly check" if not bad else "Drive nightly check — needs attention"
     return headline, summary, "\n".join(lines)
+
+
+JOEL_SLACK_ID = "U08HPNNGHBJ"
+
+
+def format_joel_message(result: Dict[str, Any]) -> Optional[tuple[str, str]]:
+    """Only the fixes Joel can make in Drive; None when there are none (nothing is sent)."""
+    packages = [r for r in result["packages"] if r.get("joel")]
+    if not packages:
+        return None
+    summary = (f"{len(packages)} Drive package(s) need a fix before those ads can launch. "
+               "Once it's fixed in Drive, the Ad Builder picks it up on its own.")
+    lines = []
+    for r in packages:
+        lines.append(f"• *{r['package']}*")
+        lines.extend(f"    – {issue}" for issue in r["joel"][:5])
+    return summary, "\n".join(lines)
