@@ -6,6 +6,12 @@ import { useToast } from '../context/ToastContext';
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 const STATUS_LABELS = { new: 'New', in_progress: 'In progress', done: 'Done', wont_fix: "Won't fix" };
 const FILTERS = [['open', 'Open'], ['done', 'Done'], ['wont_fix', "Won't fix"], ['all', 'All']];
+const EMPTY_MESSAGES = {
+    open: 'No open feedback.',
+    done: 'No done feedback.',
+    wont_fix: "No won't-fix feedback.",
+    all: 'No feedback yet.',
+};
 
 // Admin list of in-app feedback (2026-11-17). Items are worked in Claude Code sessions and marked Done here.
 export default function Feedback() {
@@ -70,7 +76,7 @@ export default function Feedback() {
             ) : rows === null ? (
                 <div className="text-sm text-gray-500">Loading…</div>
             ) : visible.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-gray-300 p-10 text-center text-sm text-gray-500">Nothing here.</div>
+                <div className="rounded-xl border border-dashed border-gray-300 p-10 text-center text-sm text-gray-500">{EMPTY_MESSAGES[filter] || 'No feedback yet.'}</div>
             ) : (
                 <div className="space-y-3">
                     {visible.map(row => (
