@@ -131,3 +131,26 @@ def test_joel_message_only_when_there_is_something_for_him():
     assert n.format_joel_message({"packages": [{"package": "X", "joel": []}]}) is None
     summary, detail = n.format_joel_message({"packages": [{"package": "AUTO-21 | New", "joel": ["fix A", "fix B"]}]})
     assert summary.startswith("1 Drive package(s) need a fix") and "*AUTO-21 | New*" in detail and "– fix B" in detail
+
+
+def test_our_problems_are_classified_separately_from_joels(monkeypatch):
+    _patch_validator(monkeypatch)   # clean manifest + parser failure -> ours
+    r = n.check_package(_Svc(_media("a"), parse_error="unsupported layout"), _db([{"drive_file_id": "a", "soft_tags": COPY}]), "pkg")
+    assert r["joel"] == [] and len(r["ours"]) == 1 and "unsupported layout" in r["ours"][0]
+    _patch_validator(monkeypatch, errors=["Line 3: missing file"])   # manifest mistake -> Joel, not ours
+    r = n.check_package(_Svc(_media("a"), parse_error="no complete matching entries"), _db([{"drive_file_id": "a", "soft_tags": COPY}]), "pkg")
+    assert r["ours"] == [] and r["joel"]
+
+
+def test_file_our_problems_dedupes_per_package():
+    db = MagicMock()
+    existing = MagicMock(soft_tags={"package_id": "p1"})
+    db.query.return_value.filter.return_value.all.return_value = [existing]
+    result = {"packages": [
+        {"package": "Old", "package_id": "p1", "media": 2, "ours": ["x"]},
+        {"package": "New", "package_id": "p2", "media": 4, "ours": ["parser gap"]},
+        {"package": "Clean", "package_id": "p3", "media": 1, "ours": []},
+    ]}
+    assert n.file_our_problems(db, result) == 1
+    row = db.add.call_args[0][0]
+    assert row.user_email == "drive-nightly-check" and "'New'" in row.message and row.soft_tags["package_id"] == "p2"

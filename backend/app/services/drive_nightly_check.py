@@ -100,7 +100,10 @@ def check_package(svc, db, package_id: str, repair: bool = True) -> Dict[str, An
     media = [i for i in items if svc._is_supported_media(i.get("mimeType") or "", i.get("name") or "")]
     # "joel": things only a change in Drive fixes (the manifest's wording, names, sizes). Everything else in
     # "problems" is ours to fix (parser gaps, imports, refresh) and goes to Steve only.
-    report: Dict[str, Any] = {"package": name, "media": len(media), "problems": [], "joel": [], "fixed": None}
+    # "ours": problems the Ad Builder itself has to fix (parser gaps, refresh failures, uncheckable manifests).
+    # They are filed into the feedback inbox, where the Mac Mini's nightly Claude Code worker picks them up.
+    report: Dict[str, Any] = {"package": name, "package_id": package_id, "media": len(media), "problems": [],
+                              "joel": [], "ours": [], "fixed": None}
 
     # 1. parser dry run
     svc._folder_metadata_cache = {}
@@ -126,11 +129,14 @@ def check_package(svc, db, package_id: str, repair: bool = True) -> Dict[str, An
                 manifest_errors.extend(result.get("errors", []))
             except Exception as exc:
                 report["problems"].append(f"manifest {item.get('name')} couldn't be checked: {str(exc)[:120]}")
+                report["ours"].append(f"manifest {item.get('name')} couldn't be checked: {str(exc)[:200]}")
     for error in manifest_errors[:3]:
         report["problems"].append(f"manifest: {error}")
     report["joel"].extend(manifest_errors[:5])
     if parse_error:
         report["problems"].append(f"copy can't be read for {len(media)} file(s): {parse_error}")
+        if not manifest_errors:
+            report["ours"].append(f"copy can't be read for {len(media)} file(s) although the manifest checks out: {parse_error}")
         # The validator shares the parser's binder: if it finds nothing to fix, the gap is ours, not Joel's.
     elif unmapped:
         sample = ", ".join(m["name"] for m in unmapped[:3])
@@ -171,11 +177,13 @@ def check_package(svc, db, package_id: str, repair: bool = True) -> Dict[str, An
             report["fixed"] = f"copy attached to {fixed} of {len(missing_copy)} file(s)"
             if fixed < len(missing_copy):
                 report["problems"].append(f"{len(missing_copy) - fixed} imported file(s) still have no copy after a refresh")
+                report["ours"].append(f"{len(missing_copy) - fixed} imported file(s) still have no copy after a refresh")
         except _SyncBusy:
             report["problems"].append(f"{len(missing_copy)} imported file(s) have no copy; refresh skipped because a Drive sync was running (will retry tomorrow, or press Refresh)")
         except Exception as exc:
             _rollback(db)
             report["problems"].append(f"copy refresh failed for {len(missing_copy)} file(s): {str(exc)[:150]}")
+            report["ours"].append(f"copy refresh failed for {len(missing_copy)} file(s): {str(exc)[:200]}")
     elif missing_copy:
         report["problems"].append(f"{len(missing_copy)} imported file(s) have no copy (refresh would fix)")
     return report
@@ -208,7 +216,8 @@ def run_nightly_check(db, since_hours: int = 26, max_packages: int = 40, repair:
             reports.append(check_package(svc, db, pkg, repair=repair))
         except Exception as exc:
             _rollback(db)   # one shared session: an aborted transaction must not fail every later package
-            reports.append({"package": pkg, "media": 0, "problems": [f"check failed: {str(exc)[:150]}"], "joel": [], "fixed": None})
+            reports.append({"package": pkg, "package_id": pkg, "media": 0, "problems": [f"check failed: {str(exc)[:150]}"],
+                            "joel": [], "ours": [f"check failed: {str(exc)[:200]}"], "fixed": None})
     return {"since_hours": since_hours, "packages": reports, "skipped_packages": max(0, len(packages) - max_packages),
             "truncated": truncated}
 
@@ -250,3 +259,31 @@ def format_joel_message(result: Dict[str, Any]) -> Optional[tuple[str, str]]:
         lines.append(f"• *{r['package']}*")
         lines.extend(f"    – {issue}" for issue in r["joel"][:5])
     return summary, "\n".join(lines)
+
+
+def file_our_problems(db, result: Dict[str, Any]) -> int:
+    """Put tonight's "ours" problems in the feedback inbox (one row per package, skipped while an open row for
+    that package already exists) so the Mac Mini's nightly Claude Code worker works them with everything else."""
+    from app.models import AppFeedback
+    filed = 0
+    for r in result["packages"]:
+        if not r.get("ours"):
+            continue
+        open_rows = db.query(AppFeedback).filter(
+            AppFeedback.user_email == "drive-nightly-check",
+            AppFeedback.status.in_(("new", "in_progress")),
+        ).all()
+        if any((row.soft_tags or {}).get("package_id") == r.get("package_id") for row in open_rows):
+            continue
+        db.add(AppFeedback(
+            user_email="drive-nightly-check",
+            page_path="/libraries",
+            message=(f"Drive nightly check: package '{r['package']}' ({r['media']} files) has a problem the Ad Builder "
+                     "must fix (not a manifest mistake):\n- " + "\n- ".join(r["ours"][:5])),
+            context={"source": "drive_nightly_check", "package": r["package"]},
+            soft_tags={"source": "drive_nightly_check", "package_id": r.get("package_id")},
+        ))
+        filed += 1
+    if filed:
+        db.commit()
+    return filed

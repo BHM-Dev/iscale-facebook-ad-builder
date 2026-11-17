@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.bhm.adbuilder-feedback-worker</string>
+  <key>ProgramArguments</key><array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/Steve1/Claude/AdBuilder/scripts/ops/feedback_worker/worker.py</string>
+  </array>
+  <!-- 00:30 Puerto Rico time (no DST): 30-90 min after the 11 p.m. ET Drive check on the VPS. -->
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>0</integer><key>Minute</key><integer>30</integer></dict>
+  <key>StandardOutPath</key><string>/Users/Steve1/Library/Logs/adbuilder-feedback-worker.log</string>
+  <key>StandardErrorPath</key><string>/Users/Steve1/Library/Logs/adbuilder-feedback-worker.log</string>
+</dict></plist>

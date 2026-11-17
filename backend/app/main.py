@@ -614,10 +614,18 @@ async def startup_event():
             from app.services.slack_service import send_drive_sync_alert
             db = None
             try:
-                from app.services.drive_nightly_check import JOEL_SLACK_ID, format_joel_message, format_report, run_nightly_check
+                from app.services.drive_nightly_check import JOEL_SLACK_ID, file_our_problems, format_joel_message, format_report, run_nightly_check
                 db = SessionLocal()
                 result = run_nightly_check(db)
                 headline, summary, detail = format_report(result)
+                # Our own problems go to the feedback inbox, worked by the Mac Mini's 00:30 AST Claude Code run.
+                try:
+                    filed = file_our_problems(db, result)
+                    if filed:
+                        summary += f" {filed} filed to the feedback inbox for tonight's fix run."
+                except Exception as file_exc:
+                    db.rollback()
+                    print(f"⚠️  Drive nightly check: couldn't file to the feedback inbox: {file_exc}")
                 # Fixes only Joel can make in Drive go to him directly (Steve, 2026-11-17); anything the Ad
                 # Builder can fix itself stays in Steve's DM only.
                 joel = format_joel_message(result)
