@@ -62,6 +62,58 @@ GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
 DRIVE_HTTP_TIMEOUT_SECONDS = 45
 
 
+# Inline handoff-manifest block heading. Groups: 1 = number after "AD", 2 = trailing number of a prefixed
+# label (lazily the first number, e.g. AUTO-18-1 -> 18), 3 = an ID-only label with no usable number
+# (AUTO-20V-HC-B1-C1). Shared with drive_manifest_validator so "valid" keeps meaning "the sync imports it".
+INLINE_MANIFEST_HEADING_RE = re.compile(
+    r"^[ \t]*##[ \t]+(?:(?:[A-Z0-9]+[-_ \t]+)*AD[-_ \t]?(\d+)\b|(?:[A-Z0-9]+[-_ \t]+)+?(\d+)\b|([A-Z][A-Z0-9]*(?:-[A-Z0-9]+){2,})(?=[ \t]*$))[^\r\n]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def inline_manifest_headings(text: str):
+    """Block headings in an inline handoff manifest.
+
+    An ID-only heading (group 3) counts only when an ad block follows it (a PRIMARY TEXT line before the
+    next heading). Any other ## line of that shape was never read as an ad before ID-only labels were
+    supported, and must keep being ignored rather than suddenly demanding placements.
+    """
+    matches = list(INLINE_MANIFEST_HEADING_RE.finditer(text or ""))
+    kept = []
+    for index, match in enumerate(matches):
+        if match.group(3):
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            if not re.search(r"^[ \t]*PRIMARY\s+TEXT\b", text[match.end():end], re.IGNORECASE | re.MULTILINE):
+                continue
+        kept.append(match)
+    return kept
+
+
+def inline_manifest_placements(block: str):
+    """The two placements an inline manifest block must declare: (label aspect, kind, normalized aspect)."""
+    def has(label):
+        return re.search(rf"^[ \t]*{label}[ \t]+VIDEO\b", block, re.IGNORECASE | re.MULTILINE)
+    if has("16X9"):
+        return ("16X9", "VIDEO", "16x9"), ("9X16", "VIDEO", "9x16")
+    if has("4X5"):
+        return ("4X5", "VIDEO", "4x5"), ("9X16", "VIDEO", "9x16")
+    if has("1X1"):
+        # Square feed video + Stories (AUTO-18 Life Events). Feed accepts 1x1 video like 4x5. 4X5 keeps
+        # priority above so a manifest that also lists a spare 1X1 line binds exactly as before.
+        return ("1X1", "VIDEO", "1x1"), ("9X16", "VIDEO", "9x16")
+    if has("9X16"):
+        return ("4X5", "VIDEO", "4x5"), ("9X16", "VIDEO", "9x16")
+    return ("1X1", "IMAGE", "1x1"), ("9X16", "IMAGE", "9x16")
+
+
+def label_owns_file(label: str, file_name: str) -> bool:
+    """True when the file is named for exactly this block: its stem starts with the label, followed by a
+    separator or the end (so AUTO-18-1 does not own AUTO-18-10-...)."""
+    stem = os.path.splitext(file_name or "")[0].lower()
+    lab = (label or "").lower()
+    return bool(lab) and stem.startswith(lab) and (len(stem) == len(lab) or stem[len(lab)] in "-_ .")
+
+
 @dataclass
 class ResolvedDrivePath:
     brand_folder: str
@@ -3252,11 +3304,7 @@ class DriveSyncService:
                 # HEADLINE / IMAGE fields rather than a separate copy-file
                 # reference. Parse that real format before treating a no-entry
                 # manifest as a harmless planning draft.
-                inline_blocks = list(re.finditer(
-                    r"^[ \t]*##[ \t]+(?:(?:[A-Z0-9]+[-_ \t]+)*AD[-_ \t]?(\d+)|(?:[A-Z0-9]+[-_ \t]+)+?(\d+))\b[^\r\n]*$",
-                    manifest_text,
-                    re.IGNORECASE | re.MULTILINE,
-                ))
+                inline_blocks = inline_manifest_headings(manifest_text)
                 declared_media = []
                 declared_media_by_ad = {}
                 declared_media_ids = set()
@@ -3267,23 +3315,18 @@ class DriveSyncService:
                     if not self._is_supported_media(item.get("mimeType") or "", item.get("name") or ""):
                         continue
                     media_by_name.setdefault((item.get("name") or "").lower(), []).append(item)
+                has_unnumbered_heading = False
                 for index, heading in enumerate(inline_blocks):
-                    heading_number = int(heading.group(1) or heading.group(2))
-                    expected_numbers.add(heading_number)
+                    # An ID-only heading (AUTO-20V-HC-B1-C1: hook x body x CTA) has no ad number; its
+                    # label is its identity, so it always binds per block (variant path below).
+                    number_text = heading.group(1) or heading.group(2)
+                    heading_number = int(number_text) if number_text else None
+                    ad_ref = heading_number if heading_number is not None else heading.group(3)
+                    has_unnumbered_heading = has_unnumbered_heading or heading_number is None
+                    expected_numbers.add(heading_number if heading_number is not None else heading.group(3).lower())
                     block = manifest_text[heading.end():inline_blocks[index + 1].start() if index + 1 < len(inline_blocks) else len(manifest_text)]
                     declared_names = []
-                    has_video_placements = bool(re.search(
-                        r"^[ \t]*(?:4X5|9X16)[ \t]+VIDEO\b",
-                        block,
-                        re.IGNORECASE | re.MULTILINE,
-                    ))
-                    placement_fields = (
-                        (("16X9", "VIDEO", "16x9"), ("9X16", "VIDEO", "9x16"))
-                        if re.search(r"^[ \t]*16X9[ \t]+VIDEO\b", block, re.IGNORECASE | re.MULTILINE)
-                        else (("4X5", "VIDEO", "4x5"), ("9X16", "VIDEO", "9x16"))
-                        if has_video_placements else
-                        (("1X1", "IMAGE", "1x1"), ("9X16", "IMAGE", "9x16"))
-                    )
+                    placement_fields = inline_manifest_placements(block)
                     for aspect, media_kind, normalized_aspect in placement_fields:
                         field = re.search(
                             rf"^[ \t]*{aspect}[ \t]+{media_kind}[ \t]*\r?\n[ \t]*([^\r\n]+)",
@@ -3292,7 +3335,7 @@ class DriveSyncService:
                         )
                         if not field:
                             raise RuntimeError(
-                                f"Drive handoff manifest inline AD {heading_number} is missing its {aspect} {media_kind.lower()}"
+                                f"Drive handoff manifest inline AD {ad_ref} is missing its {aspect} {media_kind.lower()}"
                             ) from exc
                         declared_names.append((normalized_aspect, field.group(1).strip()))
                     for aspect, name in declared_names:
@@ -3303,10 +3346,10 @@ class DriveSyncService:
                             raise RuntimeError(f"Drive handoff manifest references ambiguous media {name}") from exc
                         media = matching_media[0]
                         media_ad_number = self._ad_number_from_file_name(media.get("name") or "")
-                        if media_ad_number is not None and media_ad_number != heading_number:
-                            raise RuntimeError(f"Drive handoff manifest inline AD {heading_number} references media from another ad") from exc
+                        if heading_number is not None and media_ad_number is not None and media_ad_number != heading_number:
+                            raise RuntimeError(f"Drive handoff manifest inline AD {ad_ref} references media from another ad") from exc
                         if self._media_aspect(media) != aspect:
-                            raise RuntimeError(f"Drive handoff manifest inline AD {heading_number} declares {aspect} with the wrong media aspect") from exc
+                            raise RuntimeError(f"Drive handoff manifest inline AD {ad_ref} declares {aspect} with the wrong media aspect") from exc
                         if media.get("id") in declared_media_ids:
                             raise RuntimeError(f"Drive handoff manifest declares media more than once: {name}") from exc
                         declared_media_ids.add(media.get("id"))
@@ -3318,7 +3361,7 @@ class DriveSyncService:
                         heading.group(0), block,
                         [media_by_name[name.lower()][0] for _, name in declared_names],
                     ))
-                if len(expected_numbers) != len(inline_blocks):
+                if has_unnumbered_heading or len(expected_numbers) != len(inline_blocks):
                     # Several variants of one concept (H1/H2/H3/IMG of
                     # CI-CALLOUT-01) legitimately share a number. That is only
                     # safe when every heading is itself unique and each block
@@ -3504,7 +3547,12 @@ class DriveSyncService:
         assets: Dict[str, Dict[str, Any]] = {}
         assets_by_drive_id: Dict[str, Dict[str, Any]] = {}
         for (heading_line, block, media_items), label in zip(declared_blocks, labels):
-            sections = self._parse_ad_copy_doc(f"{preamble}{heading_line}{block}")
+            heading_match = re.match(INLINE_MANIFEST_HEADING_RE, heading_line)
+            unnumbered = bool(heading_match and heading_match.group(3))
+            # The copy parser keys sections by ad number; an ID-only heading is parsed under a stand-in
+            # number. The label stays the copy identity.
+            parse_heading = "## AD 1" if unnumbered else heading_line
+            sections = self._parse_ad_copy_doc(f"{preamble}{parse_heading}{block}")
             if len(sections) != 1:
                 raise RuntimeError(
                     f"Drive handoff manifest has incomplete inline copy section {label}"
@@ -3513,8 +3561,26 @@ class DriveSyncService:
             # Variants share a concept number, so the filename's own variant
             # token (H1 / IMG) is the only ownership signal left: a block that
             # names another variant's files must not bind its copy to them.
+            for item in media_items:
+                item_name = item.get("name") or ""
+                # A file named for a block (its stem starts with that block's label) belongs to the LONGEST
+                # such label, unless that label is a parent of this one. Catches B1 claiming B2's files when both share a number and last token
+                # (AUTO-20-HC-B1-C1 vs -B2-C1), and AUTO-20V-HC-B1 claiming AUTO-20V-HC-B1-C1's files.
+                owners = [other for other in labels if label_owns_file(other, item_name)]
+                best = max(owners, key=len) if owners else None
+                # A parent label is fine: AUTO-18-1-VID's files are named for concept AUTO-18-1.
+                if best and best.lower() != label.lower() and not label_owns_file(best, label):
+                    raise RuntimeError(
+                        f"Drive handoff manifest block {label} references media from another variant: {item_name}"
+                    ) from cause
+                if unnumbered and not owners:
+                    # No number and no single variant token to lean on, so the file must be named for
+                    # exactly this block: AUTO-20V-HC-B1-C1-Control-VID-4x5.mp4.
+                    raise RuntimeError(
+                        f"Drive handoff manifest block {label} references media from another variant: {item_name}"
+                    ) from cause
             variant_token = re.split(r"[-_]", label)[-1].lower()
-            if not variant_token.isdigit():
+            if not unnumbered and not variant_token.isdigit():
                 for item in media_items:
                     stem_tokens = re.split(r"[-_ .]", (item.get("name") or "").lower())
                     if variant_token not in stem_tokens:

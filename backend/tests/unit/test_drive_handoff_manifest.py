@@ -565,3 +565,112 @@ def test_inline_manifest_variant_block_cannot_claim_another_variants_files():
         assert "another variant" in str(exc)
     else:
         raise AssertionError("cross-variant media claim must stay blocked")
+
+
+# ---- 2026-11-17: AUTO-18 (1x1 video) and AUTO-20V (ID-only hook x body x CTA headings) ----------------------
+
+def test_inline_manifest_accepts_square_feed_video_with_stories():
+    # AUTO-18 Life Events: image blocks and video blocks share a concept number; videos are 1x1 + 9x16.
+    names = [
+        "AUTO-18-1-JustMarried-IMG-1x1.jpg", "AUTO-18-1-JustMarried-IMG-9x16.jpg",
+        "AUTO-18-1-JustMarried-VID-1x1.mp4", "AUTO-18-1-JustMarried-VID-9x16.mp4",
+    ]
+    manifest = _variant_manifest([
+        {"label": "AUTO-18-1", "primary": "Newlyweds image", "headline": "Img headline",
+         "aspect_a": "1X1 IMAGE", "file_a": names[0], "aspect_b": "9X16 IMAGE", "file_b": names[1]},
+        {"label": "AUTO-18-1-VID", "primary": "Newlyweds video", "headline": "Vid headline",
+         "aspect_a": "1X1 VIDEO", "file_a": names[2], "aspect_b": "9X16 VIDEO", "file_b": names[3]},
+    ])
+    service = _variant_manifest_service(manifest, names)
+
+    result = service._folder_copy_metadata("package", force=True)
+
+    assert len(result["assets_by_drive_id"]) == 4
+    vid = result["assets"]["auto-18-1-justmarried-vid-1x1.mp4"]
+    assert (vid["copy_id"], vid["aspect"], vid["copy"]["headline"]) == ("AUTO-18-1-VID", "1x1", "Vid headline")
+    assert result["assets"]["auto-18-1-justmarried-img-9x16.jpg"]["copy"]["headline"] == "Img headline"
+    assert {m["copy_pairing_status"] for m in result["assets_by_drive_id"].values()} == {"paired"}
+
+
+_AUTO20V = [("HC", "B1", "C1", "Control"), ("HC", "B2", "C1", "Control"), ("H1", "B1", "C2", "NoTickets")]
+
+
+def _auto20v_names(hook, body, cta, slug):
+    stem = f"AUTO-20V-{hook}-{body}-{cta}-{slug}-VID"
+    return f"{stem}-4x5.mp4", f"{stem}-9x16.mp4"
+
+
+def test_inline_manifest_binds_id_only_headings_per_block():
+    names, blocks = [], []
+    for hook, body, cta, slug in _AUTO20V:
+        a, b = _auto20v_names(hook, body, cta, slug)
+        names += [a, b]
+        blocks.append({"label": f"AUTO-20V-{hook}-{body}-{cta}", "primary": f"Primary {hook}{body}{cta}",
+                       "headline": f"Headline {hook}{body}{cta}",
+                       "aspect_a": "4X5 VIDEO", "file_a": a, "aspect_b": "9X16 VIDEO", "file_b": b})
+    service = _variant_manifest_service(_variant_manifest(blocks), names)
+
+    result = service._folder_copy_metadata("package", force=True)
+
+    assert len(result["assets_by_drive_id"]) == 6
+    b2 = result["assets"]["auto-20v-hc-b2-c1-control-vid-9x16.mp4"]
+    assert (b2["copy_id"], b2["aspect"], b2["copy"]["headline"]) == ("AUTO-20V-HC-B2-C1", "9x16", "Headline HCB2C1")
+    assert result["assets"]["auto-20v-h1-b1-c2-notickets-vid-4x5.mp4"]["copy"]["headline"] == "Headline H1B1C2"
+
+
+def test_id_only_block_cannot_claim_a_sibling_body_variants_files():
+    # B1 and B2 share hook HC and CTA C1, so only the full label distinguishes them.
+    b1 = _auto20v_names("HC", "B1", "C1", "Control")
+    b2 = _auto20v_names("HC", "B2", "C1", "Control")
+    manifest = _variant_manifest([
+        {"label": "AUTO-20V-HC-B1-C1", "primary": "P1", "headline": "H1",
+         "aspect_a": "4X5 VIDEO", "file_a": b2[0], "aspect_b": "9X16 VIDEO", "file_b": b2[1]},
+        {"label": "AUTO-20V-HC-B2-C1", "primary": "P2", "headline": "H2",
+         "aspect_a": "4X5 VIDEO", "file_a": b1[0], "aspect_b": "9X16 VIDEO", "file_b": b1[1]},
+    ])
+    service = _variant_manifest_service(manifest, [*b1, *b2])
+
+    try:
+        service._folder_copy_metadata("package", force=True)
+    except RuntimeError as exc:
+        assert "another variant" in str(exc)
+    else:
+        raise AssertionError("an ID-only block must not bind copy to another block's files")
+
+
+def test_id_only_heading_without_ad_copy_is_still_ignored():
+    from app.services.drive_sync_service import inline_manifest_headings
+    text = "## CI-AD-01\n\nPRIMARY TEXT\nx\n\n## WAVE-ONE-NOTES\n\nJust planning notes, no ad here.\n"
+    assert [m.group(0).strip() for m in inline_manifest_headings(text)] == ["## CI-AD-01"]
+
+
+def test_label_owns_file_needs_a_boundary():
+    from app.services.drive_sync_service import label_owns_file
+    assert label_owns_file("AUTO-18-1", "AUTO-18-1-JustMarried-IMG-1x1.jpg")
+    assert not label_owns_file("AUTO-18-1", "AUTO-18-10-Other-IMG-1x1.jpg")
+    assert not label_owns_file("AUTO-20V-HC-B1-C1", "AUTO-20V-HC-B2-C1-Control-VID-4x5.mp4")
+
+
+def test_spare_square_video_line_does_not_displace_4x5():
+    from app.services.drive_sync_service import inline_manifest_placements
+    block = "4X5 VIDEO\na-4x5.mp4\n\n1X1 VIDEO\na-1x1.mp4\n\n9X16 VIDEO\na-9x16.mp4\n"
+    assert inline_manifest_placements(block)[0] == ("4X5", "VIDEO", "4x5")
+
+
+def test_numbered_variant_labels_cannot_swap_files_that_share_a_last_token():
+    # AUTO-20-HC-B1-C1 reads as number 20 (not ID-only), and both blocks' files contain "c1".
+    b1 = ("AUTO-20-HC-B1-C1-Control-VID-4x5.mp4", "AUTO-20-HC-B1-C1-Control-VID-9x16.mp4")
+    b2 = ("AUTO-20-HC-B2-C1-Control-VID-4x5.mp4", "AUTO-20-HC-B2-C1-Control-VID-9x16.mp4")
+    manifest = _variant_manifest([
+        {"label": "AUTO-20-HC-B1-C1", "primary": "P1", "headline": "H1",
+         "aspect_a": "4X5 VIDEO", "file_a": b2[0], "aspect_b": "9X16 VIDEO", "file_b": b2[1]},
+        {"label": "AUTO-20-HC-B2-C1", "primary": "P2", "headline": "H2",
+         "aspect_a": "4X5 VIDEO", "file_a": b1[0], "aspect_b": "9X16 VIDEO", "file_b": b1[1]},
+    ])
+    service = _variant_manifest_service(manifest, [*b1, *b2])
+    try:
+        service._folder_copy_metadata("package", force=True)
+    except RuntimeError as exc:
+        assert "another variant" in str(exc)
+    else:
+        raise AssertionError("swapped files between numbered variants must stay blocked")

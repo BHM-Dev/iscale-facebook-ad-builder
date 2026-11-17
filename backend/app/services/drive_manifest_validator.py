@@ -17,7 +17,13 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
-from app.services.drive_sync_service import DriveSyncService
+from app.services.drive_sync_service import (
+    INLINE_MANIFEST_HEADING_RE,
+    DriveSyncService,
+    inline_manifest_headings,
+    inline_manifest_placements,
+    label_owns_file,
+)
 
 
 META_CTA_OPTIONS = {
@@ -34,11 +40,8 @@ META_CTA_OPTIONS = {
     "DONATE_NOW",
 }
 
-# Same heading pattern as the sync's inline-manifest parser.
-_BLOCK_HEADING_RE = re.compile(
-    r"^[ \t]*##[ \t]+(?:(?:[A-Z0-9]+[-_ \t]+)*AD[-_ \t]?(\d+)|(?:[A-Z0-9]+[-_ \t]+)+?(\d+))\b[^\r\n]*$",
-    re.IGNORECASE,
-)
+# Same heading pattern as the sync's inline-manifest parser (shared, not copied).
+_BLOCK_HEADING_RE = INLINE_MANIFEST_HEADING_RE
 _ANY_HEADING_RE = re.compile(r"^[ \t]*##[ \t]+(.+?)\s*$")
 _VALID_PLACEMENT_LABEL_RE = re.compile(r"^[ \t]*(1X1|4X5|9X16|16X9)[ \t]+(IMAGE|VIDEO)\b", re.IGNORECASE)
 # A mistyped placement label: aspect plus one short word and nothing else ("9x16 IMG").
@@ -110,11 +113,7 @@ def _field_values(lines: List[str], label: str) -> List[str]:
 
 def _required_placements(block_text: str) -> Tuple[Tuple[str, str, str], Tuple[str, str, str]]:
     """The two placements the sync demands for this block (aspect label, kind, normalized)."""
-    if re.search(r"^[ \t]*16X9[ \t]+VIDEO\b", block_text, re.IGNORECASE | re.MULTILINE):
-        return ("16X9", "VIDEO", "16x9"), ("9X16", "VIDEO", "9x16")
-    if re.search(r"^[ \t]*(?:4X5|9X16)[ \t]+VIDEO\b", block_text, re.IGNORECASE | re.MULTILINE):
-        return ("4X5", "VIDEO", "4x5"), ("9X16", "VIDEO", "9x16")
-    return ("1X1", "IMAGE", "1x1"), ("9X16", "IMAGE", "9x16")
+    return inline_manifest_placements(block_text)
 
 
 def validate_handoff_manifest(
@@ -172,14 +171,20 @@ def validate_handoff_manifest(
         warnings.append("This file's name should end in HANDOFF-MANIFEST (for example CA-PROVEN-HANDOFF-MANIFEST.txt) so the sync recognizes it.")
 
     # --- Ad blocks --------------------------------------------------------------
-    block_headings: List[Tuple[int, str, int]] = []  # (line index, heading line, ad number)
+    block_headings: List[Tuple[int, str, Optional[int]]] = []  # (line index, heading line, ad number or None)
+    # Line indexes the sync itself treats as ad headings (an ID-only heading needs ad copy under it).
+    # Rebuilt from `lines` so a line index here is the same line index below (splitlines also splits on
+    # \x0b soft breaks, \r etc.).
+    line_body = "\n".join(lines)
+    kept_heading_lines = {line_body[:m.start()].count("\n") for m in inline_manifest_headings(line_body)}
     for index, line in enumerate(lines):
         any_heading = _ANY_HEADING_RE.match(line)
         if not any_heading:
             continue
         block = _BLOCK_HEADING_RE.match(line)
-        if block:
-            block_headings.append((index, line.strip(), int(block.group(1) or block.group(2))))
+        if block and index in kept_heading_lines:
+            number_text = block.group(1) or block.group(2)
+            block_headings.append((index, line.strip(), int(number_text) if number_text else None))
         elif re.search(r"\d", any_heading.group(1)):
             errors.append(
                 f"Line {index + 1}: '{line.strip()}' isn't read as an ad, so everything under it is skipped. "
@@ -190,7 +195,8 @@ def validate_handoff_manifest(
         errors.append("No ads found. Each ad starts with a line like '## PKG-01-IMG'.")
 
     numbers = [number for _, _, number in block_headings]
-    is_variant_doc = len(set(numbers)) != len(numbers)
+    # ID-only headings (AUTO-20V-HC-B1-C1) have no number and always bind per block, like variants.
+    is_variant_doc = None in numbers or len(set(numbers)) != len(numbers)
     labels = [_label_of(heading) for _, heading, _ in block_headings]
     first_line_for_label: Dict[str, int] = {}
     for (index, _heading, _n), label in zip(block_headings, labels):
@@ -222,7 +228,8 @@ def validate_handoff_manifest(
         block_text = "\n".join(block_lines)
         where = f"Line {line_index + 1} ({label})"
 
-        parsed_sections = parser._parse_ad_copy_doc(f"{preamble}{heading}\n{block_text}")
+        parse_heading = "## AD 1" if number is None else heading   # the copy parser keys sections by number
+        parsed_sections = parser._parse_ad_copy_doc(f"{preamble}{parse_heading}\n{block_text}")
         parsed_entry = next(iter(parsed_sections.values()), {}) if len(parsed_sections) == 1 else {}
         primary_text = parsed_entry.get("primary_text") or "\n".join(_field_values(block_lines, "PRIMARY TEXT")).strip()
         headline = parsed_entry.get("headline") or "\n".join(_field_values(block_lines, "HEADLINE")).strip()
@@ -250,7 +257,7 @@ def validate_handoff_manifest(
             if lookalike and not _VALID_PLACEMENT_LABEL_RE.match(raw) and (not in_copy_body or lookalike.group(1).isupper()):
                 errors.append(
                     f"Line {line_index + 2 + offset}: couldn't read '{raw.strip()[:40]}'. "
-                    "Use labels like 1X1 IMAGE, 9X16 IMAGE, 4X5 VIDEO or 9X16 VIDEO."
+                    "Use labels like 1X1 IMAGE, 9X16 IMAGE, 4X5 VIDEO, 1X1 VIDEO or 9X16 VIDEO."
                 )
 
         required = _required_placements(block_text)
@@ -292,12 +299,19 @@ def validate_handoff_manifest(
             seen_media_in_blocks.setdefault(key, label)
 
             file_number = parser._ad_number_from_file_name(filename)
-            if file_number is not None and file_number != number:
+            if number is not None and file_number is not None and file_number != number:
                 errors.append(f"{where}: '{filename}' is numbered {file_number:02d} but this ad is number {number:02d}.")
             file_aspect = parser._media_aspect({"name": filename})
             if file_aspect and file_aspect != normalized:
                 errors.append(f"{where}: '{filename}' looks like a {file_aspect} file but is listed under {aspect_label} {kind}.")
-            if is_variant_doc:
+            owners = [other for other in labels if label_owns_file(other, filename)]
+            best_owner = max(owners, key=len) if owners else None
+            if best_owner and best_owner.casefold() != label.casefold() and not label_owns_file(best_owner, label):
+                errors.append(f"{where}: '{filename}' is named for {best_owner}, not this ad.")
+            elif number is None:
+                if not label_owns_file(label, filename):
+                    errors.append(f"{where}: '{filename}' doesn't look like it belongs to this ad (its name should start with '{label}').")
+            elif is_variant_doc:
                 variant_token = re.split(r"[-_]", label)[-1].lower()
                 if not variant_token.isdigit() and variant_token not in re.split(r"[-_ .]", filename.lower()):
                     errors.append(f"{where}: '{filename}' doesn't look like it belongs to this ad (its name should include '{variant_token.upper()}').")
