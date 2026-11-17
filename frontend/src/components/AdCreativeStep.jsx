@@ -2678,6 +2678,20 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                         </select>
                     )}
 
+                    {/* Wrong-brand Page check (2026-11-17): Commercial accounts post as DailyInsurance.news.
+                        Any other Page here is usually a leftover from a Home Services launch. Warning only. */}
+                    {!loadingPages && creativeData.pageId && isCommercialAdAccount(selectedAdAccount) && (() => {
+                        const defaultPage = findCommercialDefaultPage(pages);
+                        if (!defaultPage || defaultPage.id === creativeData.pageId) return null;
+                        const chosen = pages.find(p => p.id === creativeData.pageId);
+                        return (
+                            <p role="alert" className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-900">
+                                Commercial ads normally run as {defaultPage.name}, but this launch is set to {chosen ? chosen.name : `Page ${creativeData.pageId}`}.{' '}
+                                <button type="button" onClick={() => handlePageSelection(defaultPage.id)} className="underline">Switch to {defaultPage.name}</button>
+                            </p>
+                        );
+                    })()}
+
                     {!manualPageEntry && pages.length === 0 && !loadingPages && (
                         <div className="mt-2">
                             <p className="text-xs text-red-500 mb-1">

@@ -27,6 +27,8 @@ import {
 import NamingTemplateField from './NamingTemplateField';
 import NamingSettingsDrawer from './NamingSettingsDrawer';
 import useNamingPreset from '../lib/useNamingPreset';
+import { assessLaunchBudget, BUDGET_BASELINE_UNKNOWN, commercialPageWarning, useBudgetBaseline } from '../lib/budgetGuard';
+import MetaFeedMock from './MetaFeedMock';
 import { isValidDestinationUrl, normalizeDestinationUrl } from '../lib/destinationUrl';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -184,6 +186,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
     const { authFetch } = useAuth();
     const { campaignData, setCampaignData, adsetData, setAdsetData, creativeData, setCreativeData, adsData, setAdsData, selectedAdAccount, setLaunchSummary, setLaunchReceipt } = useCampaign();
     const naming = useNamingPreset(selectedAdAccount);
+    const budgetBaseline = useBudgetBaseline(selectedAdAccount);
     const [namingOpen, setNamingOpen] = useState(false);
     const [loading, setLoading] = useState(false);
     const launchInFlightRef = React.useRef(false);
@@ -3101,7 +3104,8 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                     onClick={() => {
                                     const distinctMediaCount = new Set(activeAds.map(ad => ad.creativeId)).size;
                                     const isRiskyLaunch = perMediaModeActive && campaignData.budgetType === 'ABO' && distinctMediaCount > 1;
-                                    if (isRiskyLaunch) {
+                                    const budgetReasons = assessLaunchBudget({ campaignData, adsetData, adsetCount: perMediaModeActive ? distinctMediaCount : (isMixedFormat ? 2 : 1), baseline: budgetBaseline || BUDGET_BASELINE_UNKNOWN, pageWarning: commercialPageWarning(selectedAdAccount, creativeData.pageName) });
+                                    if (isRiskyLaunch || budgetReasons.length > 0) {
                                         setShowLaunchConfirm(true);
                                     } else {
                                         handleSubmit();
@@ -3140,16 +3144,23 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                             : Number(adsetData.dailyBudget || 0);
                         const totalBudget = perAdsetBudget * distinctMediaCount;
                         const unit = adsetData.budgetScheduleType === 'LIFETIME' ? 'total lifetime' : '/day';
+                        const stacksBudgets = perMediaModeActive && campaignData.budgetType === 'ABO' && distinctMediaCount > 1;
+                        const budgetReasons = assessLaunchBudget({ campaignData, adsetData, adsetCount: perMediaModeActive ? distinctMediaCount : (isMixedFormat ? 2 : 1), baseline: budgetBaseline || BUDGET_BASELINE_UNKNOWN, pageWarning: commercialPageWarning(selectedAdAccount, creativeData.pageName) });
                         return (
                             <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
                                 <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md">
-                                    <h2 className="text-lg font-bold text-gray-900 mb-2">Confirm launch</h2>
-                                    <p className="text-sm text-gray-600 mb-4">
+                                    <h2 className="text-lg font-bold text-gray-900 mb-2">{budgetReasons.length > 0 ? 'Check before launching' : 'Confirm launch'}</h2>
+                                    {budgetReasons.length > 0 && (
+                                        <ul className="mb-4 space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                                            {budgetReasons.map(reason => <li key={reason}>{reason}</li>)}
+                                        </ul>
+                                    )}
+                                    {stacksBudgets && <p className="text-sm text-gray-600 mb-4">
                                         This creates <strong>{distinctMediaCount} new ad sets</strong> (one per media file),
                                         each carrying its own <strong>${perAdsetBudget.toFixed(2)}{unit === '/day' ? '/day' : ' lifetime'}</strong> budget —
                                         <strong className="text-amber-700"> ${totalBudget.toFixed(2)}{unit === '/day' ? '/day' : ' total'}</strong> once
                                         every ad set is activated in Ads Manager.
-                                    </p>
+                                    </p>}
                                     <div className="flex gap-3">
                                         <button onClick={() => setShowLaunchConfirm(false)} className="flex-1 px-4 py-2.5 rounded-lg border border-gray-200 text-gray-700 font-medium hover:bg-gray-50">
                                             Back
@@ -3158,7 +3169,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                             onClick={() => { setShowLaunchConfirm(false); handleSubmit(); }}
                                             className="flex-1 px-4 py-2.5 rounded-lg bg-green-600 text-white font-medium hover:bg-green-700"
                                         >
-                                            Launch anyway
+                                            {budgetReasons.length > 0 ? 'This is right, launch' : 'Launch anyway'}
                                         </button>
                                     </div>
                                 </div>
@@ -3314,11 +3325,15 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                     text be the only signal that the drawer's content just swapped
                                     to a different ad (joel-perspective review). */}
                                 <div key={selectedManifestRow.ad.id} className="flex-1 space-y-3 overflow-y-auto p-4 animate-fade-in">
-                                    <div className="flex h-32 gap-1 overflow-hidden rounded-lg bg-gray-100">
-                                        {selectedManifestRow.creative?.previewUrl && <div className="relative w-1/2">{selectedManifestRow.creative.mediaType === 'video' ? <video src={selectedManifestRow.creative.videoUrl || selectedManifestRow.creative.previewUrl} aria-label="Feed video preview" className="h-full w-full object-cover" muted playsInline controls /> : <img src={selectedManifestRow.creative.previewUrl} alt="Feed 1:1 preview" className="h-full w-full object-cover" />}<span className="absolute bottom-1 left-1 rounded bg-blue-600 px-1 py-0.5 text-[9px] font-semibold text-white">Feed</span></div>}
-                                        {selectedManifestRow.creative?.secondaryImageUrl && <div className="relative w-1/2"><img src={selectedManifestRow.creative.secondaryImageUrl} alt="Stories 9:16 preview" className="h-full w-full object-cover" /><span className="absolute bottom-1 left-1 rounded bg-purple-600 px-1 py-0.5 text-[9px] font-semibold text-white">Stories 9:16</span></div>}
-                                        {selectedManifestRow.creative?.secondaryVideoUrl && <div className="relative w-1/2"><video src={selectedManifestRow.creative.secondaryVideoUrl} aria-label="Stories 9:16 video preview" className="h-full w-full object-cover" muted playsInline controls /><span className="absolute bottom-1 left-1 rounded bg-purple-600 px-1 py-0.5 text-[9px] font-semibold text-white">Stories 9:16</span></div>}
-                                    </div>
+                                    <MetaFeedMock
+                                        pageName={creativeData.pageName || (creativeData.pageId ? `Page ${creativeData.pageId}` : '')}
+                                        body={selectedManifestRow.body}
+                                        headline={selectedManifestRow.headline}
+                                        description={selectedManifestRow.description}
+                                        cta={selectedManifestRow.cta ? formatCtaLabel(selectedManifestRow.cta) : ''}
+                                        domain={selectedManifestRow.websiteUrl ? displayDomain(selectedManifestRow.websiteUrl) : ''}
+                                        creative={selectedManifestRow.creative}
+                                    />
                                     <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">This copy belongs only to this ad. A Meta description is optional.</p>
                                     <label className="block text-xs font-semibold text-gray-700">Primary text *<textarea rows="4" value={selectedManifestRow.body} onChange={(event) => updateManifestField(selectedManifestRow, 'body', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
                                     <label className="block text-xs font-semibold text-gray-700">Headline *<input value={selectedManifestRow.headline} onChange={(event) => updateManifestField(selectedManifestRow, 'headline', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>

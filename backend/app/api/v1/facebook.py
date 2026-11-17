@@ -733,6 +733,58 @@ def _run_meta_sync_locked(service: FacebookService, db: Session, ad_account_id: 
     }
 
 
+def _budget_stats(rows):
+    """Median/max/count of daily budgets in dollars, one value per Meta object."""
+    seen, values = set(), []
+    for i, (fb_id, cents) in enumerate(rows):
+        key = fb_id or f"row-{i}"  # unsynced rows have no Meta id; count each once
+        if key in seen or not cents or cents <= 0:
+            continue
+        seen.add(key)
+        values.append(cents / 100)
+    values.sort()
+    n = len(values)
+    median = (values[n // 2] if n % 2 else (values[n // 2 - 1] + values[n // 2]) / 2) if n else None
+    return {"median": median, "max": values[-1] if n else None, "count": n, "total": round(sum(values), 2)}
+
+
+@router.get("/budget-baseline")
+def read_budget_baseline(
+    ad_account_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """What this account normally spends per ACTIVE ad set and CBO campaign (local DB, no Meta call).
+    The launcher uses it to flag a budget that looks like a typo (e.g. 20 typed after a pre-filled 10)."""
+    norm_account = normalize_account_id(ad_account_id)
+    allowed = current_user.allowed_account_ids()
+    if allowed is not None and norm_account not in allowed:
+        raise HTTPException(status_code=403, detail="You don't have access to this ad account.")
+    # Only ad sets that can actually spend: their parent campaign must be ACTIVE too.
+    adsets = db.query(FacebookAdSet.fb_adset_id, FacebookAdSet.daily_budget).join(
+        FacebookCampaign, FacebookAdSet.campaign_id == FacebookCampaign.id
+    ).filter(
+        FacebookAdSet.fb_account_id == norm_account,
+        FacebookAdSet.status == 'ACTIVE',
+        FacebookCampaign.status == 'ACTIVE',
+        FacebookAdSet.daily_budget > 0,
+    ).all()
+    campaigns = db.query(FacebookCampaign.fb_campaign_id, FacebookCampaign.daily_budget).filter(
+        FacebookCampaign.fb_account_id == norm_account,
+        FacebookCampaign.status == 'ACTIVE',
+        FacebookCampaign.daily_budget > 0,
+    ).all()
+    adset_stats = _budget_stats(adsets)
+    cbo_stats = _budget_stats(campaigns)
+    return {
+        "ad_account_id": norm_account,
+        "adset": adset_stats,
+        "cbo": cbo_stats,
+        # Active ABO ad sets + active CBO campaigns: what the account spends per day today.
+        "active_daily_total": round(adset_stats["total"] + cbo_stats["total"], 2),
+    }
+
+
 @router.get("/adsets/saved")
 def read_saved_adsets(
     campaign_id: Optional[str] = None,

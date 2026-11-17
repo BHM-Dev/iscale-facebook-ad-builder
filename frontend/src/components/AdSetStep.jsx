@@ -7,6 +7,7 @@ import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorag
 import NamingTemplateField from './NamingTemplateField';
 import NamingSettingsDrawer from './NamingSettingsDrawer';
 import useNamingPreset from '../lib/useNamingPreset';
+import { assessBudget, useBudgetBaseline } from '../lib/budgetGuard';
 import { resolveNamingTemplate } from '../lib/namingTemplates';
 
 const OPTIMIZATION_GOALS = [
@@ -96,6 +97,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
     const { campaignData, adsetData, setAdsetData, selectedAdAccount, creativeData } = useCampaign();
     const { showError, showWarning } = useToast();
     const naming = useNamingPreset(selectedAdAccount);
+    const budgetBaseline = useBudgetBaseline(selectedAdAccount);
     const [namingOpen, setNamingOpen] = useState(false);
     const isHECRestricted = (campaignData.specialAdCategories || []).some(c => HEC_CATEGORIES.has(c));
     const waveRow = naming.preset.waves.find(row => row.wave === campaignData.namingWave);
@@ -813,6 +815,20 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                             ≈ ${implied}/day over ~{days} days. Facebook paces across all calendar days.
                                         </p>
                                     );
+                                })()}
+                                {(() => {
+                                    const lifetime = adsetData.budgetScheduleType === 'LIFETIME';
+                                    const reason = budgetBaseline && assessBudget({
+                                        amount: lifetime ? adsetData.lifetimeBudget : adsetData.dailyBudget,
+                                        scheduleType: adsetData.budgetScheduleType,
+                                        startTime: adsetData.startTime,
+                                        endTime: adsetData.endTime,
+                                        level: 'adset',
+                                        baseline: budgetBaseline,
+                                    });
+                                    return reason ? (
+                                        <p role="alert" className="mt-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-900">{reason}</p>
+                                    ) : null;
                                 })()}
                             </div>
 

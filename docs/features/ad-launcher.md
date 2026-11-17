@@ -42,6 +42,12 @@ tools remain available as secondary options for teams that need to create new as
 - Codex working brief: [`CODEX_BRIEF_launcher-ux.md`](../../CODEX_BRIEF_launcher-ux.md).
 
 ## Changelog (newest first)
+- 2026-11-17 Launch guardrails from the AdStellar launcher pass: a budget that is unusually high for this account
+  (above 3x its typical active ad-set budget or 1.5x its largest, from `GET /facebook/budget-baseline`, local DB only)
+  shows an amber note on the Campaign/Ad Set step and a confirm before Launch, as does a launch adding more than half
+  the account's current daily spend. A Commercial launch on a Page other than DailyInsurance.news shows a warning
+  with a one-click switch. The Drive review drawer shows a feed-style preview (Page, primary text, media, headline,
+  CTA, paired 9:16 file) that updates while editing. *Unit-tested only*.
 - 2026-11-17 **Drive copy: the file name is the only rule** (Steve approved the rewrite). `bind_handoff_manifest()` in `drive_sync_service.py` is now the one inline-manifest binder, and the validator uses it too.
   - **How it binds:** every `##` ad block attaches its copy to exactly the files it lists, in any layout. Ad numbers, heading shapes and fixed placement pairs are no longer required, and a single placement is fine.
   - **What still blocks a file:**
