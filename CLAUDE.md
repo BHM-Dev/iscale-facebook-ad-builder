@@ -31,6 +31,16 @@ This repo is worked on by both **Claude Code** and **OpenAI Codex**. Use the rig
 
 Codex doesn't get the MCP toolset Claude Code has. This section is the operating manual — read it before doing anything.
 
+### In-app feedback (every Claude Code session, Steve 2026-11-17)
+
+People send feedback from "Send feedback" in the sidebar; it's saved in `app_feedback` and DMed to Steve, with
+no automatic API spend. At the start of each session, list what's open, work it like any other request, and mark
+it done (with a commit hash in the note) at `/feedback`:
+
+```bash
+ssh -i ~/.ssh/id_ed25519 ubuntu@adbuilder.velocitymx.io "docker exec ad-builder-db psql -U postgres -d facebook_ad_builder -c \"SELECT created_at::date, user_email, page_path, left(message, 200) FROM app_feedback WHERE status IN ('new','in_progress') ORDER BY created_at\""
+```
+
 ### Preflight (every session)
 
 ```bash

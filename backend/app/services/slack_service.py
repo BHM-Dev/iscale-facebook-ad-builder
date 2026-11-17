@@ -383,6 +383,12 @@ def send_drive_sync_alert(summary: str, detail: str = "", headline: str = "Googl
         return False
 
 
+def send_feedback_alert(who: str, page: str, message: str, screenshot_url: Optional[str] = None, url: str = "") -> bool:
+    """New in-app feedback -> Steve's DM only (never a team channel)."""
+    detail = message[:900] + (f"\nScreenshot: {screenshot_url}" if screenshot_url else "")
+    return send_drive_sync_alert(f"{who} on {page}" + (f" ({url})" if url else ""), detail, headline="New feedback", channel=STEVE_DM)
+
+
 def send_launch_alert(summary: str, detail: str = "") -> bool:
     """DM Steve about a partial/failed bulk launch. Same DM-only routing as the
     Drive sync alert; never posts to a shared channel."""

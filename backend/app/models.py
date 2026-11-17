@@ -1243,3 +1243,23 @@ class DailyCloseVersion(Base):
     notes = Column(Text, nullable=True)
     posted_at = Column(DateTime(timezone=True), nullable=True)
     posted_by = Column(String, nullable=True)
+
+
+class AppFeedback(Base):
+    """In-app feedback (2026-11-17): one row per submission from the Feedback button on any page. Steve gets
+    a Slack DM; work is picked up in Claude Code sessions (no automatic API spend)."""
+    __tablename__ = "app_feedback"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    user_email = Column(String, nullable=True)
+    page_path = Column(String, nullable=False)
+    message = Column(Text, nullable=False)
+    screenshot_url = Column(String, nullable=True)
+    context = Column(JSON, nullable=True)            # account, viewport, browser, app version
+    status = Column(String, nullable=False, default="new", index=True)   # new | in_progress | done | wont_fix
+    resolution_note = Column(Text, nullable=True)
+    soft_tags = Column(JSON, nullable=True)          # reserved
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    resolved_at = Column(DateTime(timezone=True), nullable=True)

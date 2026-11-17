@@ -1,8 +1,9 @@
 import React, { Suspense, useEffect, useState } from 'react';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Wand2, Settings, LogOut, ShoppingBag, Target, ChevronLeft, ChevronRight, UserCog, Search, Library, DollarSign, BriefcaseBusiness } from 'lucide-react';
+import { LayoutDashboard, Wand2, Settings, LogOut, ShoppingBag, Target, ChevronLeft, ChevronRight, UserCog, Search, Library, DollarSign, BriefcaseBusiness, MessageSquare, Inbox } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import WhatsNewModal from './WhatsNewModal';
+import FeedbackModal from './FeedbackModal';
 import PageErrorBoundary from './PageErrorBoundary';
 import { useToast } from '../context/ToastContext';
 import { useBrands } from '../context/BrandContext';
@@ -60,6 +61,7 @@ export default function Layout() {
     const { showSuccess } = useToast();
     const { activeVerticalFilter, setActiveVerticalFilter } = useBrands();
     const { activeAccountId, setActiveAccountId, adAccounts, activeAccountLoading } = useCampaign();
+    const [feedbackOpen, setFeedbackOpen] = useState(false);
     // Auto-collapse the nav to icons-only while in the ad launch wizard, where
     // every extra pixel of workspace width matters for reviewing 50-100 ad
     // rows at once (Steve's call, 2026-09-23). Restores on exit. Adjusted
@@ -206,6 +208,29 @@ export default function Layout() {
 
                 {/* Bottom Section */}
                 <div className="p-3 border-t border-gray-200 space-y-0.5">
+                    <button
+                        type="button"
+                        onClick={() => setFeedbackOpen(true)}
+                        className={`flex items-center gap-3 px-3 py-2.5 w-full rounded-lg transition-colors text-gray-600 hover:bg-gray-100 hover:text-gray-900 ${isCollapsed ? 'justify-center px-2' : ''}`}
+                        title={isCollapsed ? 'Send feedback' : ''}
+                    >
+                        <MessageSquare size={18} className="flex-shrink-0" />
+                        {!isCollapsed && <span className="text-sm whitespace-nowrap overflow-hidden">Send feedback</span>}
+                    </button>
+                    {hasRole('admin') && (
+                        <Link
+                            to="/feedback"
+                            className={`flex items-center gap-3 px-3 py-2.5 w-full rounded-lg transition-colors group ${
+                                location.pathname === '/feedback'
+                                    ? 'bg-gray-100 text-gray-900 font-medium'
+                                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                            } ${isCollapsed ? 'justify-center px-2' : ''}`}
+                            title={isCollapsed ? 'Feedback inbox' : ''}
+                        >
+                            <Inbox size={18} className="flex-shrink-0" />
+                            {!isCollapsed && <span className="text-sm whitespace-nowrap overflow-hidden">Feedback inbox</span>}
+                        </Link>
+                    )}
                     {hasRole('admin') && (
                         <Link
                             to="/users"
@@ -386,6 +411,7 @@ export default function Layout() {
                 </div>
             </main>
             <WhatsNewModal user={user} />
+            <FeedbackModal isOpen={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
             <AskAiWidget />
         </div>
     );

@@ -18,20 +18,24 @@ _CALLS: Dict[Tuple[str, str], deque] = defaultdict(deque)
 _LOCK = threading.Lock()  # sync deps run in the threadpool; two requests can race
 
 
-def check(bucket: str, user_id: str, max_calls: int, window_seconds: int) -> None:
+def check(bucket: str, user_id: str, max_calls: int, window_seconds: int,
+          message: str = "Too many AI requests in a short time — wait a few minutes and try again.") -> None:
     with _LOCK:
         now = time.monotonic()
         calls = _CALLS[(bucket, user_id)]
         while calls and now - calls[0] > window_seconds:
             calls.popleft()
         if len(calls) >= max_calls:
-            raise HTTPException(429, "Too many AI requests in a short time — wait a few minutes and try again.")
+            raise HTTPException(429, message)
         calls.append(now)
 
 
-def per_user_limit(bucket: str, max_calls: int, window_seconds: int):
+def per_user_limit(bucket: str, max_calls: int, window_seconds: int, message: str | None = None):
     def _dep(current_user: User = Depends(get_current_active_user)) -> None:
-        check(bucket, str(current_user.id), max_calls, window_seconds)
+        if message:
+            check(bucket, str(current_user.id), max_calls, window_seconds, message)
+        else:
+            check(bucket, str(current_user.id), max_calls, window_seconds)
     return _dep
 
 

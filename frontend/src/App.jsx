@@ -44,6 +44,7 @@ const DrivePackageHealth = lazyPage(() => import('./pages/DrivePackageHealth'));
 const Pnl = lazyPage(() => import('./pages/Pnl'));
 const Settings = lazyPage(() => import('./pages/Settings'));
 const UserManagement = lazyPage(() => import('./pages/UserManagement'));
+const Feedback = lazyPage(() => import('./pages/Feedback'));
 
 function DefaultLanding() {
   const { user, hasRole } = useAuth();
@@ -97,6 +98,14 @@ function App() {
                   <Route path="profiles" element={<CustomerProfiles />} />
                   <Route path="ad-remix" element={<AdRemix />} />
                   <Route path="settings" element={<Settings />} />
+                  <Route
+                    path="feedback"
+                    element={
+                      <PrivateRoute requiredRole="admin">
+                        <Feedback />
+                      </PrivateRoute>
+                    }
+                  />
                   <Route
                     path="users"
                     element={

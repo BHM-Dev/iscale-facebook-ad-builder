@@ -128,3 +128,15 @@ Measured first in Steve's Chrome: every page's data finished in under 4s warm. T
 - **Unit-tested:** route shape, the async service running from a worker thread, and the cross-loop cap.
 - **Verified in production 2026-10-30:** a live `POST /research/search` returned 200 with 10 ads in 0.7s. The logs show no event-loop errors.
 - **Not verified:** a Playwright-fallback search, a brand scrape, and a vertical refresh. None of these was run, to avoid spending Meta budget and creating research rows.
+
+
+## In-app feedback (2026-11-17)
+- **Send feedback** (sidebar, every page) opens a short form: free text and an optional screenshot (uploaded to
+  R2 via `/uploads/`). The page path, active ad account, page title, viewport and browser are attached
+  automatically. `POST /api/v1/feedback` (any signed-in user, 20 per 10 min) saves a row in `app_feedback`
+  (migration `d5e6f7a8b9c0`) and DMs Steve. A failed Slack post never loses the row.
+- **Feedback inbox** (`/feedback`, admins) lists items with Open / Done / Won't fix filters and a status
+  dropdown. `GET /api/v1/feedback` and `PATCH /api/v1/feedback/{id}` require a superuser.
+- Items are worked in Claude Code sessions (CLAUDE.md, "In-app feedback"); Steve chose this over a GitHub
+  Action to avoid API spend.
+- *Unit-tested only* until verified live (see changelog).
