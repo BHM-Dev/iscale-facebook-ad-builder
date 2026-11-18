@@ -33,6 +33,16 @@ const DATE_PRESETS  = [
   { value: 'custom',      label: 'Custom Range' },
 ];
 
+// The range to open with: explicit URL dates, else a valid URL/saved preset, else today. A bare 'custom' with no
+// dates (or an unknown value) falls back to today so the picker never shows a range the data doesn't match.
+const KNOWN_PRESETS = new Set(DATE_PRESETS.map(p => p.value));
+function resolveInitialPreset(searchParams, { allowBareCustom = false } = {}) {
+  if (searchParams.get('date_from') && searchParams.get('date_to')) return 'custom';
+  const candidate = searchParams.get('date_preset') || searchParams.get('preset') || localStorage.getItem('bhm_date_preset') || 'today';
+  if (candidate === 'custom') return allowBareCustom ? 'custom' : 'today';   // mid-selection vs. a reload
+  return KNOWN_PRESETS.has(candidate) ? candidate : 'today';
+}
+
 const INTELLIGENCE_PRESETS = [
   { value: 'today',         label: 'Today' },
   { value: 'yesterday',    label: 'Yesterday' },
@@ -1816,10 +1826,7 @@ export default function CampaignPerformance() {
   });
   const lastUrlViewRef = useRef(searchParams.get('view'));
   // Inherit date from Dashboard URL params (preset / date_from / date_to)
-  const [datePreset, setDatePreset] = useState(() => {
-    if (searchParams.get('date_from') && searchParams.get('date_to')) return 'custom';
-    return searchParams.get('date_preset') || searchParams.get('preset') || localStorage.getItem('bhm_date_preset') || 'today';
-  });
+  const [datePreset, setDatePreset] = useState(() => resolveInitialPreset(searchParams));
   const [dateFrom, setDateFrom] = useState(() => searchParams.get('date_from') || '');
   const [dateTo, setDateTo] = useState(() => searchParams.get('date_to') || '');
   const dateRangeLabel = useMemo(() => {
@@ -2158,6 +2165,9 @@ export default function CampaignPerformance() {
   // when the header account switcher changes.
   useEffect(() => {
     if (activeAccountLoading) {
+      // The mount-time date effect bailed (no initial load yet) without consuming this flag; left set, it
+      // swallowed the user's FIRST date change after a cold load (picker moved, numbers didn't).
+      skipNextDateReload.current = false;
       insightsRequestRef.current += 1;
       adsRequestRef.current += 1;
       rtAdsRequestRef.current += 1;
@@ -2168,10 +2178,11 @@ export default function CampaignPerformance() {
       return;
     }
     initialLoadFired.current = true;
-    const initPreset = searchParams.get('preset') || 'today';
-    const initFrom   = searchParams.get('date_from') || null;
-    const initTo     = searchParams.get('date_to')   || null;
-    const resolvedPreset = (initFrom && initTo) ? 'custom' : initPreset;
+    // Load the range the date picker shows (URL, else the saved preset, else today). This used to read only
+    // the URL and default to 'today', so a saved 'Yesterday' showed "Yesterday" over today's numbers (2026-11-18).
+    const initFrom   = datePreset === 'custom' ? (dateFrom || null) : null;
+    const initTo     = datePreset === 'custom' ? (dateTo || null) : null;
+    const resolvedPreset = datePreset === 'custom' && !(initFrom && initTo) ? 'today' : datePreset;
     setAdsets([]);
     setExpandedAdsets(new Set());
     setBulkInsights(null);
@@ -2262,12 +2273,14 @@ export default function CampaignPerformance() {
   }, [proposalCount]);
 
   // Sync Dashboard-provided date params when this component stays mounted across navigations.
+  const firstUrlSync = useRef(true);
   useEffect(() => {
     const nextFrom = searchParams.get('date_from') || '';
     const nextTo = searchParams.get('date_to') || '';
-    const nextPreset = nextFrom && nextTo
-      ? 'custom'
-      : searchParams.get('date_preset') || searchParams.get('preset') || localStorage.getItem('bhm_date_preset') || 'today';
+    // Picking "Custom Range" writes date_preset=custom before dates exist; keep it so the date inputs show.
+    // Not on mount: a reload with a bare custom opens on today (initial state), matching what loads.
+    const nextPreset = resolveInitialPreset(searchParams, { allowBareCustom: !firstUrlSync.current });
+    firstUrlSync.current = false;
 
     setDatePreset(nextPreset);
     setDateFrom(nextFrom);

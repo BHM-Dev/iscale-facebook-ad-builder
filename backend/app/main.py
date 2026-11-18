@@ -655,7 +655,17 @@ async def startup_event():
             try:
                 # The main accounts, plus any account someone opened in the last 24h (in-memory, so a deploy
                 # resets it to the main accounts until the next page load).
-                accounts = list(dict.fromkeys([*proposal_service.proposal_accounts(), *max_cpl_service.recent_accounts()]))
+                # Plus every account with live ad sets (from the DB, so it survives deploys; the in-memory
+                # recent list empties on each restart and the next visitor waited ~13s).
+                from app.models import FacebookAdSet, FacebookCampaign
+                live_accounts = [row[0] for row in (
+                    db.query(FacebookAdSet.fb_account_id)
+                    .join(FacebookCampaign, FacebookAdSet.campaign_id == FacebookCampaign.id)
+                    .filter(FacebookAdSet.status == 'ACTIVE', FacebookCampaign.status == 'ACTIVE',
+                            FacebookAdSet.fb_account_id.isnot(None))
+                    .distinct().limit(8).all()
+                )]
+                accounts = list(dict.fromkeys([*proposal_service.proposal_accounts(), *max_cpl_service.recent_accounts(), *live_accounts]))
                 for account_id in accounts:
                     outcome = max_cpl_service.warm(db, account_id)
                     if outcome not in ("fresh", "settled"):

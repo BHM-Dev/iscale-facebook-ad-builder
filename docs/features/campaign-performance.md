@@ -64,6 +64,11 @@ API: `backend/app/api/v1/{facebook,auto_pause}.py`; Meta calls: `backend/app/ser
 - Status overrides (local optimistic state) are not cleared by Sync.
 
 ## Changelog (newest first)
+- 2026-11-18 Date range fixes (verified bug in production): the first load used 'today' whatever the picker
+  showed, so a saved "Yesterday" displayed today's numbers; the first date change after a cold load was swallowed
+  (picker moved, numbers didn't); a reload on a blank "Custom Range" or an unknown ?preset= now opens on Today.
+  Max CPL warm also covers every account with live ad sets (from the DB, survives deploys; ~13s first visit after
+  a deploy before). *Unit-tested only*.
 - 2026-11-18 Max CPL: "No leads or revenue in the window" is cached 30 min instead of 2 (it re-ran a ~9s pull on
   nearly every load), and the 10-min warm job now also covers any account opened in the last 24h, not just the two
   main ones. Everflow failures still retry after 2 min. *Unit-tested only*.
