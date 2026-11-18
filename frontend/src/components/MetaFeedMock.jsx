@@ -34,7 +34,7 @@ export default function MetaFeedMock({ pageName, body, headline, description, ct
                 </div>
                 <div className="flex items-center justify-between gap-2 border-t border-gray-200 bg-gray-50 px-3 py-2">
                     <div className="min-w-0">
-                        {domain && <div className="truncate text-[11px] uppercase text-gray-400">{domain}</div>}
+                        {domain && <div className="truncate text-[11px] text-gray-400">{domain}</div>}
                         <div className={`truncate text-sm font-semibold ${headline ? 'text-gray-900' : 'italic text-amber-700'}`}>{headline || 'No headline'}</div>
                         {description && <div className="truncate text-[11px] text-gray-500">{description}</div>}
                     </div>

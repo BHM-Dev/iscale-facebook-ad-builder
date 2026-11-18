@@ -355,19 +355,19 @@ export default function DrivePackageHealth() {
             </div>
             {manifestResult.errors?.length > 0 && (
               <div className="mt-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Fix these</p>
+                <p className="text-xs font-semibold text-red-700">Fix these</p>
                 <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-red-800">{manifestResult.errors.map((item) => <li key={item}>{item}</li>)}</ul>
               </div>
             )}
             {manifestResult.warnings?.length > 0 && (
               <div className="mt-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Worth a look (won't stop it importing)</p>
+                <p className="text-xs font-semibold text-amber-700">Worth a look (won't stop it importing)</p>
                 <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-amber-800">{manifestResult.warnings.map((item) => <li key={item}>{item}</li>)}</ul>
               </div>
             )}
             {manifestResult.entries && Object.keys(manifestResult.entries).length > 0 && (
               <div className="mt-4 overflow-x-auto">
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-600">Ads we found</p>
+                <p className="text-xs font-semibold text-gray-600">Ads we found</p>
                 <table className="mt-1 w-full min-w-[540px] text-left text-xs">
                   <thead className="text-gray-500"><tr><th className="py-1 pr-3">Ad</th><th className="py-1 pr-3">Headline</th><th className="py-1">Placements</th></tr></thead>
                   <tbody className="divide-y divide-gray-200">{Object.values(manifestResult.entries).map((entry) => (
@@ -412,12 +412,12 @@ export default function DrivePackageHealth() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-left text-sm">
-              <thead className="bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500"><tr><th className="px-5 py-3">Package</th><th className="px-4 py-3 text-right">Media</th><th className="px-4 py-3">Copy source</th><th className="px-5 py-3">Issues</th></tr></thead>
+              <thead className="bg-gray-50 text-xs font-semibold text-gray-500"><tr><th className="px-5 py-3">Package</th><th className="px-4 py-3 text-right">Media</th><th className="px-4 py-3">Copy source</th><th className="px-5 py-3">Issues</th></tr></thead>
               <tbody className="divide-y divide-gray-100">
                 {packages.map((item) => <tr key={item.folder_id} className="align-top hover:bg-gray-50">
                   <td className="max-w-md break-words px-5 py-4 font-medium text-gray-900">
                     {isArchivedPackage(item) && (
-                      <span className="mr-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Archive</span>
+                      <span className="mr-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">Archive</span>
                     )}
                     {/* folder_id is already in the payload -- naming a problem and then
                         making someone hunt for the folder by hand is how a report
@@ -476,7 +476,7 @@ export default function DrivePackageHealth() {
                       rows, and an unlabelled archive path in a section the
                       reader thinks is scoped to live folders is misleading. */}
                   {isArchivedPath(entry.path) && (
-                    <span className="mr-1 rounded bg-gray-100 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Archive</span>
+                    <span className="mr-1 rounded bg-gray-100 px-1 py-0.5 text-[10px] font-semibold text-gray-500">Archive</span>
                   )}
                   {entry.folder_id
                     ? <a href={driveFolderUrl(entry.folder_id)} target="_blank" rel="noopener noreferrer" className="text-indigo-700 hover:text-indigo-900 hover:underline">{entry.path}</a>

@@ -166,10 +166,10 @@ const Products = () => {
                             <table className="w-full text-left">
                                 <thead className="bg-gray-50 border-b border-gray-200">
                                     <tr>
-                                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Product</th>
-                                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Brand</th>
-                                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Description</th>
-                                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Actions</th>
+                                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 ">Product</th>
+                                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 ">Brand</th>
+                                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 ">Description</th>
+                                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 text-right">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-200">

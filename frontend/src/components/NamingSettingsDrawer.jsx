@@ -15,7 +15,7 @@ const CodeTable = ({ title, rows, setRows, labelKey, limit }) => {
             {rows.map((row, index) => <div key={index} className="rounded-lg border border-gray-200 bg-gray-50 p-2.5">
                 <div className="grid grid-cols-[1fr_92px_28px] gap-2">
                     <input value={row[labelKey] || ''} maxLength={120} onChange={event => update(index, labelKey, event.target.value)} placeholder={labelKey === 'wave' ? 'Vehicle W2' : 'Funeral Homes'} className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm" />
-                    <input value={row.code || ''} maxLength={16} onChange={event => update(index, 'code', event.target.value.toUpperCase())} placeholder="Code" className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm font-semibold uppercase" />
+                    <input value={row.code || ''} maxLength={16} onChange={event => update(index, 'code', event.target.value.toUpperCase())} placeholder="Code" className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm font-semibold " />
                     <button type="button" aria-label={`Remove ${title} row`} onClick={() => setRows(rows.filter((_, rowIndex) => rowIndex !== index))} className="text-gray-400 hover:text-red-600"><Trash2 size={15} /></button>
                 </div>
                 <p className="mt-1 text-[11px] text-gray-400">{row.seen ? `seen in ${row.seen} ad sets` : 'added manually'}</p>

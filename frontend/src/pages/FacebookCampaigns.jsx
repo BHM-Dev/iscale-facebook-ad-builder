@@ -94,7 +94,7 @@ const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaig
                 className={`flex w-full items-center rounded-md py-1 text-left hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-amber-500 ${isExpanded ? 'justify-between px-1 gap-3' : 'justify-center px-0'}`}
                 title={isExpanded ? 'Collapse Launch Plan' : 'Expand Launch Plan'}
             >
-                {isExpanded && <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Launch Plan</span>}
+                {isExpanded && <span className="text-xs font-semibold text-gray-400">Launch Plan</span>}
                 <span className={`flex items-center text-xs font-medium text-gray-500 ${isExpanded ? 'gap-2' : ''}`}>
                     {!isExpanded ? <ChevronDown size={18} /> : null}
                     {isExpanded && <>
@@ -824,7 +824,7 @@ const FacebookCampaignWizardInner = () => {
                 <div className="contents lg:flex lg:flex-col lg:gap-5 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
                     {/* Desktop step rail */}
                     <div className="hidden lg:block bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-                        <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Launch Steps</div>
+                        <div className="text-xs font-semibold text-gray-400 mb-3">Launch Steps</div>
                         <ol className="space-y-1">
                             {steps.map((step) => {
                                 const isVisited = step.id <= furthestStepReached;
@@ -994,7 +994,7 @@ const FacebookCampaignWizardInner = () => {
                         <div className="mx-auto max-w-2xl py-8">
                             <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-center">
                                 <CheckCircle2 className="mx-auto mb-4 text-emerald-600" size={56} />
-                                <p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">Launch receipt</p>
+                                <p className="text-xs font-bold tracking-[0.16em] text-emerald-700">Launch receipt</p>
                                 <h2 className="mt-2 text-3xl font-bold text-gray-900">Launch completed</h2>
                                 <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-gray-700">
                                     For a new campaign, the campaign is requested paused while new ad sets and ads are ready beneath it. Existing campaigns and ad sets preserve their selected delivery state. Verify the hierarchy in Ads Manager before spending.
@@ -1004,7 +1004,7 @@ const FacebookCampaignWizardInner = () => {
                             <div className="mt-5 rounded-xl border border-gray-200 bg-white p-5">
                                 <div className="grid gap-4 sm:grid-cols-2">
                                     <div>
-                                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Created</p>
+                                        <p className="text-xs font-semibold text-gray-400">Created</p>
                                         <p className="mt-1 text-2xl font-bold text-gray-900">{launchReceipt?.createdAdCount ?? launchSummary.totalAds ?? '—'} ads</p>
                                         <p className="mt-1 text-xs text-gray-500">
                                             {launchReceipt?.createdAdSetCount != null
@@ -1013,22 +1013,22 @@ const FacebookCampaignWizardInner = () => {
                                         </p>
                                     </div>
                                     <div>
-                                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Target</p>
+                                        <p className="text-xs font-semibold text-gray-400">Target</p>
                                         <p className="mt-1 truncate text-sm font-semibold text-gray-900" title={launchReceipt?.accountName || selectedAdAccount?.name}>{launchReceipt?.accountName || selectedAdAccount?.name || 'Selected ad account'}</p>
                                         <p className="mt-1 truncate text-xs text-gray-600" title={launchReceipt?.campaignName || campaignData?.name}>{launchReceipt?.campaignName || campaignData?.name || 'Campaign not recorded'}{launchReceipt?.campaignId ? ` · ${launchReceipt.campaignId}` : ''}</p>
                                     </div>
                                 </div>
                                 {receiptCreatedAt && <p className="mt-4 border-t border-gray-100 pt-4 text-xs text-gray-500">Created {receiptCreatedAt} · Requested delivery states were sent to Meta; verify effective campaign, ad-set, and ad status in Ads Manager.</p>}
-                                {(receiptPageName || receiptDestinationUrl) && <div className="mt-4 grid gap-3 border-t border-gray-100 pt-4 text-xs sm:grid-cols-2"><div><p className="font-semibold uppercase tracking-wide text-gray-400">Facebook Page</p><p className="mt-1 break-words font-medium text-gray-800">{receiptPageName || 'Not recorded'}{launchReceipt?.pageId && launchReceipt.pageId !== receiptPageName ? ` · ${launchReceipt.pageId}` : ''}</p></div><div><p className="font-semibold uppercase tracking-wide text-gray-400">Destination URL</p><p className="mt-1 break-all font-medium text-gray-800">{receiptDestinationUrl || 'Not recorded'}</p></div></div>}
+                                {(receiptPageName || receiptDestinationUrl) && <div className="mt-4 grid gap-3 border-t border-gray-100 pt-4 text-xs sm:grid-cols-2"><div><p className="font-semibold text-gray-400">Facebook Page</p><p className="mt-1 break-words font-medium text-gray-800">{receiptPageName || 'Not recorded'}{launchReceipt?.pageId && launchReceipt.pageId !== receiptPageName ? ` · ${launchReceipt.pageId}` : ''}</p></div><div><p className="font-semibold text-gray-400">Destination URL</p><p className="mt-1 break-all font-medium text-gray-800">{receiptDestinationUrl || 'Not recorded'}</p></div></div>}
                                 <div className="mt-4 border-t border-gray-100 pt-4">
-                                    <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ad sets to verify</p><button type="button" onClick={copyLaunchReceipt} className="text-xs font-semibold text-amber-700 hover:text-amber-900">Copy full receipt</button></div>
+                                    <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold text-gray-400">Ad sets to verify</p><button type="button" onClick={copyLaunchReceipt} className="text-xs font-semibold text-amber-700 hover:text-amber-900">Copy full receipt</button></div>
                                     <div className="mt-2 space-y-1.5">
                                         {receiptAdSetTargets.map(target => <div key={`${target.id || 'no-id'}-${target.name}`} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 rounded-md bg-gray-50 px-3 py-2 text-xs"><span className="font-medium text-gray-800">{target.name}</span>{target.id && <span className="font-mono text-gray-500">{target.id}</span>}</div>)}
                                     </div>
                                 </div>
                                 {receiptCreatedAds.length > 0 && (
                                     <div className="mt-4 border-t border-gray-100 pt-4">
-                                        <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ads created</p><span className="text-xs text-gray-500">{receiptCreatedAds.length}</span></div>
+                                        <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold text-gray-400">Ads created</p><span className="text-xs text-gray-500">{receiptCreatedAds.length}</span></div>
                                         <div className="mt-2 max-h-52 space-y-1.5 overflow-y-auto pr-1">
                                             {receiptVisibleAds.map((ad, index) => <div key={`${ad.id || ad.name || 'ad'}-${index}`} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 rounded-md bg-gray-50 px-3 py-2 text-xs"><span className="min-w-0 font-medium text-gray-800">{ad.name || `Ad ${index + 1}`}</span><span className="text-gray-500">{ad.placement || 'Placement not recorded'}</span>{ad.id && <span className="font-mono text-gray-500">{ad.id}</span>}</div>)}
                                         </div>

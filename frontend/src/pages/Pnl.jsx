@@ -122,7 +122,7 @@ function CampaignBreakdown({ campaigns, adAccounts = [] }) {
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] text-sm">
-          <thead className="border-b border-gray-100 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <thead className="border-b border-gray-100 bg-gray-50 text-xs font-semibold text-gray-500">
             <tr>
               <th className="px-5 py-2.5 text-left">Campaign</th>
               <th className="px-3 py-2.5 text-right">Spend</th>
@@ -221,8 +221,8 @@ function ProfitStatement({ cells, loading }) {
                 </span>
               )}
               <div className="flex items-center gap-2">
-                <span className={`text-[11px] font-semibold uppercase tracking-wide ${last ? 'text-gray-700' : 'text-gray-500'}`}>{cell.label}</span>
-                {cell.badge && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">{cell.badge}</span>}
+                <span className={`text-[11px] font-semibold   ${last ? 'text-gray-700' : 'text-gray-500'}`}>{cell.label}</span>
+                {cell.badge && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">{cell.badge}</span>}
               </div>
               <div className={`mt-1.5 font-bold tabular-nums ${last ? 'text-3xl' : 'text-xl'} ${toneClass}`}>{loading ? '--' : cell.value}</div>
               <div className="mt-1 truncate text-xs text-gray-400" title={loading ? undefined : cell.caption}>{loading ? '\u00a0' : cell.caption}</div>
@@ -436,27 +436,27 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
         </div>
         <div className="grid gap-4 p-5 sm:grid-cols-2">
           <label className="sm:col-span-2">
-            <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Label</span>
+            <span className="text-xs font-semibold text-gray-500">Label</span>
             <input value={form.label} onChange={e => setForm({ ...form, label: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </label>
           <label>
-            <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Category</span>
+            <span className="text-xs font-semibold text-gray-500">Category</span>
             <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
               {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </label>
           <label>
-            <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Cost type</span>
+            <span className="text-xs font-semibold text-gray-500">Cost type</span>
             <select value={form.cost_type} onChange={e => setForm({ ...form, cost_type: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
               {COST_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
           </label>
           <label>
-            <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{isPercent ? 'Percent' : 'Amount'}</span>
+            <span className="text-xs font-semibold text-gray-500">{isPercent ? 'Percent' : 'Amount'}</span>
             <input type="number" min="0" max={isPercent ? 100 : undefined} step="0.01" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
           </label>
           <label>
-            <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Applies to</span>
+            <span className="text-xs font-semibold text-gray-500">Applies to</span>
             <select value={form.ad_account_id || ''} onChange={e => setForm({ ...form, ad_account_id: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
               <option value="">All ad accounts</option>
               {activeAccountId && <option value={activeAccountId}>Active account only</option>}
@@ -464,7 +464,7 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
           </label>
           {isAllAccounts && (
             <label>
-              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Allocation</span>
+              <span className="text-xs font-semibold text-gray-500">Allocation</span>
               <select value={form.allocation_method} onChange={e => setForm({ ...form, allocation_method: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
                 <option value="full">Full amount (don&apos;t split)</option>
                 <option value="by_spend">Split by spend share</option>
@@ -478,16 +478,16 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
             </label>
           )}
           <label>
-            <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{form.cost_type === 'one_off' ? 'Date' : 'Effective from'}</span>
+            <span className="text-xs font-semibold text-gray-500">{form.cost_type === 'one_off' ? 'Date' : 'Effective from'}</span>
             <input type="date" value={form.effective_from} onChange={e => setForm({ ...form, effective_from: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
           </label>
           {form.cost_type !== 'one_off' && <label>
-            <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Effective to</span>
+            <span className="text-xs font-semibold text-gray-500">Effective to</span>
             <input type="date" value={form.effective_to} onChange={e => setForm({ ...form, effective_to: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
           </label>}
           {isProfitShare && (
             <label className="sm:col-span-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Net profit threshold (commission applies above this)</span>
+              <span className="text-xs font-semibold text-gray-500">Net profit threshold (commission applies above this)</span>
               <input type="number" min="0" step="0.01" placeholder="0 = always pays" value={form.profit_threshold} onChange={e => setForm({ ...form, profit_threshold: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
               <span className="mt-1 block text-[11px] text-gray-400">
                 Each period, the percent applies only to net profit (after retainer and all other costs) above this amount. At or below it the cost is $0.
@@ -495,7 +495,7 @@ function CostModal({ entry, summary, activeAccountId, onClose, onSaved }) {
             </label>
           )}
           <label className="sm:col-span-2">
-            <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Notes</span>
+            <span className="text-xs font-semibold text-gray-500">Notes</span>
             <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={3} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
           </label>
           <div className="sm:col-span-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-800">
@@ -727,7 +727,7 @@ export default function Pnl() {
     </div>
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
-        <thead className="border-b border-gray-100 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
+        <thead className="border-b border-gray-100 bg-gray-50 text-xs font-semibold text-gray-500">
           <tr>
             {(isAllScope
               ? ['Month', 'Spend', 'Billable Revenue', 'Gross', 'Costs', 'Net', 'Net Margin', 'ROAS']

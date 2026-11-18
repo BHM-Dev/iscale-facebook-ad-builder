@@ -2659,15 +2659,15 @@ export function ImageGenerationStep({ generatedImages, wizardData, selectedCopy,
                                         </h4>
                                         <div className="space-y-3">
                                             <div>
-                                                <label className="text-xs font-medium text-amber-700 uppercase">Headline</label>
+                                                <label className="text-xs font-medium text-amber-700 ">Headline</label>
                                                 <p className="font-bold text-gray-900 mt-1">{displayCopy.headline}</p>
                                             </div>
                                             <div>
-                                                <label className="text-xs font-medium text-amber-700 uppercase">Body Text</label>
+                                                <label className="text-xs font-medium text-amber-700 ">Body Text</label>
                                                 <p className="text-gray-700 text-sm whitespace-pre-line mt-1">{displayCopy.body}</p>
                                             </div>
                                             <div>
-                                                <label className="text-xs font-medium text-amber-700 uppercase">Call to Action</label>
+                                                <label className="text-xs font-medium text-amber-700 ">Call to Action</label>
                                                 <div className="mt-1">
                                                     <span className="inline-block px-3 py-1 bg-amber-600 text-white rounded-full text-sm font-medium">
                                                         {displayCopy.cta}

@@ -37,7 +37,7 @@ const AnalysisField = ({ label, value, fullWidth = false }) => {
     return (
         <div className={`bg-gray-50 rounded-lg p-4 border border-gray-200 ${fullWidth ? 'col-span-full' : ''}`}>
             <div className="flex justify-between items-start mb-2">
-                <h3 className="font-semibold text-gray-900 text-sm uppercase tracking-wide">{label}</h3>
+                <h3 className="font-semibold text-gray-900 text-sm ">{label}</h3>
                 {displayValue && <CopyButton text={displayValue} label={label} />}
             </div>
             <p className={`text-gray-700 text-sm leading-relaxed whitespace-pre-wrap ${typeof value === 'object' ? 'font-mono text-xs' : ''}`}>

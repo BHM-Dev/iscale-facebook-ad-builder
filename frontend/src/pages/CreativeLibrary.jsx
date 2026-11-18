@@ -267,7 +267,7 @@ export default function CreativeLibrary() {
                     <h2 className="text-base font-semibold text-gray-900">{group.brandName}</h2>
                     <p className="text-sm text-gray-500">{breadcrumb(group.folderPath)}</p>
                   </div>
-                  <span className="text-xs font-semibold uppercase text-gray-400">{group.assets.length} assets</span>
+                  <span className="text-xs font-semibold text-gray-400">{group.assets.length} assets</span>
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">

@@ -172,7 +172,7 @@ const AdCard = ({ ad, onSave }) => {
             <div className="px-3 py-2 bg-gray-50 border-t border-gray-100">
                 <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                        <p className="text-xs text-gray-500 uppercase tracking-wide truncate">
+                        <p className="text-xs text-gray-500 truncate">
                             {ad.platform || 'facebook'}.com
                         </p>
                         <p className="text-sm font-medium text-gray-900 truncate">

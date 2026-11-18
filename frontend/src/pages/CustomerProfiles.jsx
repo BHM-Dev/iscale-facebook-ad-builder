@@ -164,7 +164,7 @@ const CustomerProfiles = () => {
                                             </div>
                                             <p className="text-sm text-gray-500 line-clamp-2 mb-2">{profile.demographics}</p>
                                             <div className="space-y-1">
-                                                <p className="text-xs text-gray-400 uppercase font-semibold">Pain Points</p>
+                                                <p className="text-xs text-gray-400 font-semibold">Pain Points</p>
                                                 <p className="text-sm text-gray-600 line-clamp-2">{profile.painPoints}</p>
                                             </div>
                                         </div>
@@ -177,10 +177,10 @@ const CustomerProfiles = () => {
                             <table className="w-full text-left">
                                 <thead className="bg-gray-50 border-b border-gray-200">
                                     <tr>
-                                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Profile Name</th>
-                                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Linked Brands</th>
-                                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Demographics</th>
-                                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Actions</th>
+                                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 ">Profile Name</th>
+                                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 ">Linked Brands</th>
+                                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 ">Demographics</th>
+                                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 text-right">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-200">

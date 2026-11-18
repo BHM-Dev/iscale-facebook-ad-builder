@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: Geist, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
@@ -20,6 +20,11 @@
 @layer base {
   body {
     @apply text-gray-900 bg-gray-50;
+  }
+
+  /* Numbers line up in columns (spend, CPL, leads). */
+  td {
+    font-variant-numeric: tabular-nums;
   }
 
   *:focus-visible {

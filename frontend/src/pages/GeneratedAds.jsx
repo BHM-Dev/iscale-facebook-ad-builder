@@ -645,7 +645,7 @@ export default function GeneratedAds() {
                         <h2 className="text-base font-bold text-gray-900">Top Angles by Profit</h2>
                         <p className="text-sm text-gray-500 mt-0.5">Updates as pushed ads match RedTrack ad-level revenue.</p>
                     </div>
-                    <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                    <span className="text-xs font-semibold text-gray-400 ">
                         {topAngles.length ? `${topAngles.length} tracked` : 'Waiting for data'}
                     </span>
                 </div>
@@ -803,7 +803,7 @@ export default function GeneratedAds() {
                                             {bundle.map((ad, i) => (
                                                 <span
                                                     key={i}
-                                                    className="text-xs font-semibold text-gray-600 bg-gray-100 rounded px-2 py-0.5 tracking-wide"
+                                                    className="text-xs font-semibold text-gray-600 bg-gray-100 rounded px-2 py-0.5 "
                                                 >
                                                     {sizeRatio(ad)}
                                                 </span>
@@ -832,15 +832,15 @@ export default function GeneratedAds() {
                                             )}
                                         </button>
                                     </th>
-                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Ad Creative</th>
-                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Headline</th>
-                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Body</th>
-                                    <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Angle</th>
-                                    <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-right">Revenue</th>
-                                    <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-right">Profit</th>
-                                    <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Tracking</th>
-                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
-                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-right">Actions</th>
+                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 ">Ad Creative</th>
+                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 ">Headline</th>
+                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 ">Body</th>
+                                    <th className="px-4 py-3 text-xs font-medium text-gray-500 ">Angle</th>
+                                    <th className="px-4 py-3 text-xs font-medium text-gray-500 text-right">Revenue</th>
+                                    <th className="px-4 py-3 text-xs font-medium text-gray-500 text-right">Profit</th>
+                                    <th className="px-4 py-3 text-xs font-medium text-gray-500 ">Tracking</th>
+                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 ">Created</th>
+                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 text-right">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
@@ -895,7 +895,7 @@ export default function GeneratedAds() {
                                                     </div>
                                                     <div className="flex gap-1 flex-wrap">
                                                         {bundle.map((ad, i) => (
-                                                            <span key={i} className="text-xs font-semibold text-gray-600 bg-gray-100 px-2 py-0.5 rounded tracking-wide">
+                                                            <span key={i} className="text-xs font-semibold text-gray-600 bg-gray-100 px-2 py-0.5 rounded ">
                                                                 {sizeRatio(ad)}
                                                             </span>
                                                         ))}
@@ -1104,19 +1104,19 @@ export default function GeneratedAds() {
                                             <div className="space-y-3">
                                                 {viewedImage.headline ? (
                                                     <div>
-                                                        <label className="text-xs font-medium text-amber-700 uppercase">Headline</label>
+                                                        <label className="text-xs font-medium text-amber-700 ">Headline</label>
                                                         <p className="font-bold text-gray-900 mt-1">{viewedImage.headline}</p>
                                                     </div>
                                                 ) : null}
                                                 {viewedImage.body ? (
                                                     <div>
-                                                        <label className="text-xs font-medium text-amber-700 uppercase">Body Text</label>
+                                                        <label className="text-xs font-medium text-amber-700 ">Body Text</label>
                                                         <p className="text-gray-700 text-sm whitespace-pre-line mt-1">{viewedImage.body}</p>
                                                     </div>
                                                 ) : null}
                                                 {viewedImage.cta ? (
                                                     <div>
-                                                        <label className="text-xs font-medium text-amber-700 uppercase">Call to Action</label>
+                                                        <label className="text-xs font-medium text-amber-700 ">Call to Action</label>
                                                         <div className="mt-1">
                                                             <span className="inline-block px-3 py-1 bg-amber-600 text-white rounded-full text-sm font-medium">
                                                                 {viewedImage.cta}

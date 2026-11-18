@@ -354,7 +354,7 @@ export default function Layout() {
                                     <BriefcaseBusiness size={18} />
                                 </div>
                                 <div>
-                                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Meta account</p>
+                                    <p className="text-xs font-semibold text-gray-500">Meta account</p>
                                     <p className="text-sm text-gray-600">Primary data scope for performance and dashboard views.</p>
                                 </div>
                             </div>
@@ -388,7 +388,7 @@ export default function Layout() {
                     {['/image-ads', '/batch-generate', '/ad-remix', '/copy-library'].includes(location.pathname) && (
                         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
                             <div>
-                                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Vertical filter</p>
+                                <p className="text-xs font-semibold text-gray-400">Vertical filter</p>
                                 <p className="text-sm text-gray-600">Scopes the brand list for this workflow.</p>
                             </div>
                             <div className="flex flex-wrap gap-2">

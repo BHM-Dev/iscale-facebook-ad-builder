@@ -405,12 +405,12 @@ const UserManagement = () => {
                 <table className="w-full text-left">
                     <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
-                            <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">User</th>
-                            <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-                            <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Roles</th>
-                            <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Ad Accounts</th>
-                            <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Created</th>
-                            <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Actions</th>
+                            <th className="px-6 py-4 text-xs font-semibold text-gray-500 ">User</th>
+                            <th className="px-6 py-4 text-xs font-semibold text-gray-500 ">Status</th>
+                            <th className="px-6 py-4 text-xs font-semibold text-gray-500 ">Roles</th>
+                            <th className="px-6 py-4 text-xs font-semibold text-gray-500 ">Ad Accounts</th>
+                            <th className="px-6 py-4 text-xs font-semibold text-gray-500 ">Created</th>
+                            <th className="px-6 py-4 text-xs font-semibold text-gray-500 text-right">Actions</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">

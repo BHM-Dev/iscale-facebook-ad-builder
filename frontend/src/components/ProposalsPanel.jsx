@@ -121,7 +121,7 @@ function ProposalCard({ proposal, accountName, dismissReasons, onApprove, onDism
     return (
         <article className={`border-b border-gray-100 last:border-b-0 ${isRail ? 'p-3' : 'p-4'}`} data-testid={`proposal-${proposal.id}`}>
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold tracking-wide ${pause ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold  ${pause ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
                     {pause ? 'PAUSE' : 'RAISE BUDGET'}
                 </span>
                 {isRail ? <button type="button" className="min-w-0 text-left font-semibold text-gray-900 hover:text-indigo-700 hover:underline" onClick={() => onAdsetJump?.(proposal)}>{proposal.adset_name}</button> : <span className="font-semibold text-gray-900">{proposal.adset_name}</span>}

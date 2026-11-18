@@ -216,14 +216,14 @@ function BestTimesGrid({ data }) {
         return <section className={`rounded-xl p-4 ${confident ? 'border-2 border-green-200 bg-green-50/60' : recommendation.status === 'none' ? 'border border-amber-200 bg-amber-50/60' : 'border border-gray-200 bg-gray-50'}`}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">{confident ? 'Recommended Meta Schedule' : isRun ? 'Directional Schedule — Not Yet Confident' : 'Meta Schedule'}</p>
+            <p className="text-[10px] font-bold text-gray-500">{confident ? 'Recommended Meta Schedule' : isRun ? 'Directional Schedule — Not Yet Confident' : 'Meta Schedule'}</p>
             <h4 className={`mt-1 font-bold text-gray-900 ${confident ? 'text-lg' : 'text-base'}`}>{isRun ? recommendation.label : recommendation.status === 'none' ? 'No repeatable schedule yet' : 'Timing recommendation unavailable'}</h4>
           </div>
-          <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase ${confidenceStyle[recommendation.confidence] || confidenceStyle.low}`}>{recommendation.confidence || 'low'} confidence</span>
+          <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold capitalize ${confidenceStyle[recommendation.confidence] || confidenceStyle.low}`}>{recommendation.confidence || 'low'} confidence</span>
         </div>
         {allocated && isRun && <p className="mt-2 text-[11px] font-semibold text-amber-800">Directional: RedTrack-shaped timing on allocated Everflow billing — treat as a scheduling test, not confirmed exact attribution.</p>}
         {!confident && isRun && <p className="mt-2 text-[11px] text-gray-500">{recommendation.confidence === 'medium' ? 'Medium' : 'Low'} confidence — do not apply this schedule in Meta yet; keep watching for more evidence.</p>}
-        {(hasRunWindows || isRun || recommendation.status === 'none') && <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">{hasRunWindows && <div className="rounded-lg bg-white/80 p-3"><p className="text-[10px] font-bold uppercase text-green-700">Test first</p><p className="mt-1 text-sm font-semibold text-gray-900">{scheduleLine(recommendation.run_windows)}</p></div>}{(isRun || recommendation.status === 'none') && <div className="rounded-lg bg-white/80 p-3"><p className="text-[10px] font-bold uppercase text-red-700">When to avoid</p><p className={`mt-1 text-sm font-semibold ${hasAvoidWindows ? 'text-gray-900' : 'text-gray-600'}`}>{avoidSummary}</p>{!hasAvoidWindows && <p className="mt-1 text-[10px] leading-snug text-gray-500">Negative ROI blocks exist, but none has enough repeatable evidence to change the schedule.</p>}</div>}</div>}
+        {(hasRunWindows || isRun || recommendation.status === 'none') && <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">{hasRunWindows && <div className="rounded-lg bg-white/80 p-3"><p className="text-[10px] font-bold text-green-700">Test first</p><p className="mt-1 text-sm font-semibold text-gray-900">{scheduleLine(recommendation.run_windows)}</p></div>}{(isRun || recommendation.status === 'none') && <div className="rounded-lg bg-white/80 p-3"><p className="text-[10px] font-bold text-red-700">When to avoid</p><p className={`mt-1 text-sm font-semibold ${hasAvoidWindows ? 'text-gray-900' : 'text-gray-600'}`}>{avoidSummary}</p>{!hasAvoidWindows && <p className="mt-1 text-[10px] leading-snug text-gray-500">Negative ROI blocks exist, but none has enough repeatable evidence to change the schedule.</p>}</div>}</div>}
         {watchBlocks.length > 0 && <p className="mt-3 text-[11px] leading-snug text-amber-800"><span className="font-semibold">Also watch:</span> {watchBlocks.map(block => `${block.label} (${block.roi >= 0 ? '+' : ''}${Math.round(block.roi * 100)}% ROI)`).join(' · ')} — profitable overall, but not repeatable enough to schedule yet.</p>}
         {recommendation.profit != null && <p className="mt-3 text-xs font-medium text-gray-700">{allocated ? '≈' : ''}{formatMoney(recommendation.profit)} profit · {recommendation.roi != null ? `${recommendation.roi >= 0 ? '+' : ''}${Math.round(recommendation.roi * 100)}% ROI` : 'ROI unavailable'} · {recommendation.positive_bucket_count || 0} of {recommendation.evidence_bucket_count || 0} evidence buckets positive</p>}
         <p className="mt-2 text-xs leading-relaxed text-gray-600">{recommendation.reason}</p>
@@ -851,7 +851,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
 
               {panelData.action_queue && intelligenceView === 'niche' && (
                 <div className="mb-4">
-                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Action Queue</div>
+                  <div className="text-xs font-semibold text-gray-500 mb-2">Action Queue</div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                     {[
                       { key: 'scale', label: 'Scale', hdrBg: 'bg-green-50', border: 'border-green-200', text: 'text-green-800' },
@@ -863,7 +863,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                       if (!items?.length) return null;
                       return (
                         <div key={lane.key} className={`rounded-lg border ${lane.border} overflow-hidden bg-white ${lane.key === 'tracking_check' ? 'sm:col-span-2 md:col-span-3' : ''}`}>
-                          <div className={`${lane.hdrBg} px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide ${lane.text}`}>
+                          <div className={`${lane.hdrBg} px-3 py-1.5 text-[10px] font-semibold   ${lane.text}`}>
                             {lane.label}
                           </div>
                           <ul className="px-3 py-2 space-y-1">
@@ -899,7 +899,7 @@ function CampaignIntelligencePanel({ adAccountId, pageDatePreset, pageDateFrom, 
                 <div className="overflow-x-auto rounded-xl border border-gray-100">
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 border-b border-gray-100">
-                      <tr className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
+                      <tr className="text-left text-xs font-medium text-gray-500 ">
                         <th className="px-4 py-3">Performance group</th>
                         <th className="px-4 py-3 text-right">Spend</th>
                         <th className="px-4 py-3 text-right">Revenue</th>
@@ -1621,7 +1621,7 @@ function RemixDrawer({ creative, brands, onClose, onLaunchWizard }) {
         <div className="p-5 space-y-5 flex-1">
           {/* Source ad reference */}
           <div className="bg-gray-50 rounded-lg p-3 border border-gray-100 text-sm">
-            <p className="font-medium text-gray-700 mb-1 text-xs uppercase tracking-wide text-gray-400">Source ad copy</p>
+            <p className="font-medium text-gray-700 mb-1 text-xs text-gray-400">Source ad copy</p>
             {creative.headline && <p className="font-semibold text-gray-800 mb-1">"{creative.headline}"</p>}
             {creative.body && <p className="text-gray-600 text-xs line-clamp-3">{creative.body}</p>}
           </div>
@@ -1695,7 +1695,7 @@ function RemixDrawer({ creative, brands, onClose, onLaunchWizard }) {
           {/* Variations output */}
           {variations.length > 0 && (
             <div className="space-y-3">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Variations</p>
+              <p className="text-xs font-semibold text-gray-500 ">Variations</p>
               {variations.map((v, i) => (
                 <div key={i} className="border border-gray-200 rounded-lg p-3 bg-white hover:border-purple-300 transition-colors">
                   <p className="font-semibold text-gray-900 text-sm mb-1">{v.headline}</p>
@@ -3195,7 +3195,7 @@ export default function CampaignPerformance() {
           </div>
         ) : (
           <div>
-            <div className="sticky top-0 z-10 grid min-w-[1000px] grid-cols-[minmax(300px,1fr)_96px_84px_96px_96px_96px_86px_124px] border-b border-slate-200 bg-slate-50 px-6 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+            <div className="sticky top-0 z-10 grid min-w-[1000px] grid-cols-[minmax(300px,1fr)_96px_84px_96px_96px_96px_86px_124px] border-b border-slate-200 bg-slate-50 px-6 py-1.5 text-[10px] font-semibold text-gray-400">
               <div />
               {['Spend', 'Leads', 'CPL', 'ROAS', 'Profit'].map(col => (
                 <div key={col} className="border-l border-slate-200 px-3 text-right">{col}</div>
@@ -3226,7 +3226,7 @@ export default function CampaignPerformance() {
                 <span className="text-sm font-bold text-gray-900">
                   {bulkInsightsLoading ? '--' : formatMoneyCell(visibleSummary.dailyBudget)}
                 </span>
-                <div className="text-[10px] text-gray-400 uppercase tracking-wide">Daily</div>
+                <div className="text-[10px] text-gray-400 ">Daily</div>
               </div>
             </div>
             {renderedGroups.map(group => {
@@ -3331,7 +3331,7 @@ export default function CampaignPerformance() {
                               <div className="text-xs font-semibold text-gray-700 mb-3">Campaign Budget Settings</div>
 
                               <div className="mb-3">
-                                <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-1.5">Budget Type</div>
+                                <div className="text-[10px] text-gray-400 mb-1.5">Budget Type</div>
                                 <div className="grid grid-cols-2 gap-1 bg-gray-100 rounded-lg p-0.5">
                                   {['CBO', 'ABO'].map(type => (
                                     <button
@@ -3354,7 +3354,7 @@ export default function CampaignPerformance() {
 
                               {campaignBudgetType === 'CBO' && (
                                 <div className="mb-3">
-                                  <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Daily Budget</div>
+                                  <div className="text-[10px] text-gray-400 mb-1">Daily Budget</div>
                                   <div className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-2.5 py-1.5 focus-within:ring-1 focus-within:ring-indigo-400 focus-within:border-indigo-300">
                                     <span className="text-gray-400 text-xs">$</span>
                                     <input
@@ -3408,7 +3408,7 @@ export default function CampaignPerformance() {
                     <div>
                       <table className="w-full min-w-[960px] text-sm">
                         <thead className="bg-white border-b border-gray-100 sticky top-0 z-10">
-                          <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                          <tr className="text-left text-[11px] font-semibold text-gray-400">
                             <th className="sticky left-0 z-20 min-w-[220px] max-w-[280px] bg-white px-6 py-2.5">Ad Set Name</th>
                             <th className="px-3 py-2.5">Status</th>
                             <th className="px-3 py-2.5">
@@ -3657,7 +3657,7 @@ export default function CampaignPerformance() {
                                       {/* Adset-level diagnostic strip */}
                                       {d && (
                                         <div className="mb-3 flex flex-wrap gap-x-5 gap-y-1.5 pb-3 border-b border-gray-100">
-                                          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide self-center w-8">Meta</span>
+                                          <span className="text-[10px] font-semibold text-gray-400 self-center w-8">Meta</span>
                                           {[
                                             { l: 'Reach', v: d.reach?.toLocaleString() ?? '—' },
                                             { l: 'Impressions', v: d.impressions?.toLocaleString() ?? '—' },
@@ -3672,7 +3672,7 @@ export default function CampaignPerformance() {
                                           ))}
                                           {rt && (
                                             <>
-                                              <span className="text-[10px] font-semibold text-blue-400 uppercase tracking-wide self-center w-8 ml-2">RT</span>
+                                              <span className="text-[10px] font-semibold text-blue-400 self-center w-8 ml-2">RT</span>
                                               {[
                                                 { l: 'Convs', v: rt.conversions ?? '—' },
                                                 { l: 'Quality', v: rt.quality_rate != null ? `${(rt.quality_rate * 100).toFixed(0)}%` : d.leads > 0 ? `${((rt.conversions / d.leads) * 100).toFixed(0)}%` : '—', bad: (rt.quality_rate ?? 1) < 0.5 },

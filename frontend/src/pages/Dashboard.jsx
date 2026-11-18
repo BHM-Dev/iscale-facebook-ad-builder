@@ -55,7 +55,7 @@ function KpiCard({ label, value, sub, delta, deltaGoodWhen = 'up', highlight, wa
     : (delta > 0 ? 'text-green-600' : delta < 0 ? 'text-red-600' : 'text-gray-400');
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-      <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">{label}</div>
+      <div className="text-xs font-medium text-gray-500 mb-1">{label}</div>
       <div className={`text-2xl font-bold ${highlight ? 'text-red-600' : warn ? 'text-orange-500' : 'text-gray-900'}`}>
         {value}
       </div>
@@ -573,7 +573,7 @@ function DateFilter({ preset, setPreset, dateFrom, setDateFrom, dateTo, setDateT
             </button>
           ))}
           <div className="border-t border-gray-100 mt-1 pt-1 px-3 pb-3">
-            <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2 pt-1">Custom range</div>
+            <div className="text-xs font-medium text-gray-500 mb-2 pt-1">Custom range</div>
             <div className="flex flex-col gap-1.5">
               <input
                 type="date"
@@ -1337,7 +1337,7 @@ export default function Dashboard() {
             >
               <div className="text-xs font-semibold text-gray-700 mb-3">Campaign Budget Settings</div>
               <div className="mb-3">
-                <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Daily Budget</div>
+                <div className="text-[10px] text-gray-400 mb-1">Daily Budget</div>
                 <div className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-2.5 py-1.5 focus-within:ring-1 focus-within:ring-indigo-400">
                   <span className="text-gray-400 text-xs">$</span>
                   <input
@@ -1569,13 +1569,13 @@ export default function Dashboard() {
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
-                  <thead><tr className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100"><th className="px-5 py-2 text-left">Ad Set</th><th className="px-3 py-2 text-left">Issue</th><th className="hidden sm:table-cell px-3 py-2 text-right">Spend</th><th className="hidden sm:table-cell px-3 py-2 text-right">CPL</th><th className="hidden sm:table-cell px-3 py-2 text-left">Budget</th><th className="px-3 py-2 text-left">Action</th></tr></thead>
+                  <thead><tr className="text-[11px] font-semibold text-gray-400 border-b border-gray-100"><th className="px-5 py-2 text-left">Ad Set</th><th className="px-3 py-2 text-left">Issue</th><th className="hidden sm:table-cell px-3 py-2 text-right">Spend</th><th className="hidden sm:table-cell px-3 py-2 text-right">CPL</th><th className="hidden sm:table-cell px-3 py-2 text-left">Budget</th><th className="px-3 py-2 text-left">Action</th></tr></thead>
                   <tbody className="divide-y divide-gray-50">
                     {visibleAttentionList.map(item => {
                       const isPausing = item.fb_adset_id && pausingAdsets.has(item.fb_adset_id);
                       const ins = bulkInsights[item.fb_adset_id] || {};
                       return <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-5 py-3"><Link to={perfLink('attention', item.fb_adset_id)} className="block"><div className="flex items-center gap-2"><div className={`w-2 h-2 rounded-full flex-shrink-0 ${item.severity === 'red' ? 'bg-red-500' : 'bg-orange-400'}`} /><div className="font-medium text-gray-900 truncate max-w-[220px]" title={item.label}>{item.label}</div></div>{item.campaignName && <div className="text-xs text-gray-400 truncate max-w-[220px] pl-4">{item.campaignName}</div>}{item.statusUnknown ? <div className="text-[10px] text-amber-600 uppercase tracking-wide pl-4 mt-1">Status unavailable</div> : item.adset && !item.isActive && <div className="text-[10px] text-gray-500 uppercase tracking-wide pl-4 mt-1">Paused · historical issue</div>}</Link></td>
+                        <td className="px-5 py-3"><Link to={perfLink('attention', item.fb_adset_id)} className="block"><div className="flex items-center gap-2"><div className={`w-2 h-2 rounded-full flex-shrink-0 ${item.severity === 'red' ? 'bg-red-500' : 'bg-orange-400'}`} /><div className="font-medium text-gray-900 truncate max-w-[220px]" title={item.label}>{item.label}</div></div>{item.campaignName && <div className="text-xs text-gray-400 truncate max-w-[220px] pl-4">{item.campaignName}</div>}{item.statusUnknown ? <div className="text-[10px] text-amber-600 pl-4 mt-1">Status unavailable</div> : item.adset && !item.isActive && <div className="text-[10px] text-gray-500 pl-4 mt-1">Paused · historical issue</div>}</Link></td>
                         <td className="px-3 py-3"><div className="flex flex-col gap-0.5">{item.reasons.slice(0, 2).map((r, i) => <span key={i} className={`text-xs ${r.severity === 'red' ? 'text-red-600' : 'text-orange-500'}`}>{r.text}</span>)}{item.reasons.length > 2 && <span className="text-[11px] text-gray-400">+{item.reasons.length - 2} more in Performance</span>}</div></td>
                         <td className="hidden sm:table-cell px-3 py-3 text-right font-medium text-gray-800">{ins.spend != null ? `$${ins.spend.toFixed(0)}` : '—'}</td>
                         <td className="hidden sm:table-cell px-3 py-3 text-right text-red-600 font-semibold">{ins.cpl != null ? `$${ins.cpl.toFixed(2)}` : '—'}</td>
@@ -1630,7 +1630,7 @@ export default function Dashboard() {
               )}
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100">
+                  <tr className="text-[11px] font-semibold text-gray-400 border-b border-gray-100">
                     <th className="px-5 py-2 text-left">Ad Set</th>
                     <th className="px-3 py-2 text-right">Spend</th>
                     <th className="px-3 py-2 text-right">CPL</th>
@@ -1651,7 +1651,7 @@ export default function Dashboard() {
                           {a.campaignName && (
                             <div className="text-xs text-gray-400 truncate max-w-[280px]">{a.campaignName}</div>
                           )}
-                          <span className={`inline-flex mt-1 text-[10px] font-semibold uppercase tracking-wide ${a.isActive ? 'text-green-600' : 'text-gray-500'}`}>
+                          <span className={`inline-flex mt-1 text-[10px] font-semibold   ${a.isActive ? 'text-green-600' : 'text-gray-500'}`}>
                             {a.statusUnknown ? (adStatusPending ? 'Checking status…' : 'Status unavailable') : a.isActive ? 'Active' : 'Paused · historical'}
                           </span>
                         </Link>
@@ -1770,7 +1770,7 @@ export default function Dashboard() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-100">
-                <tr className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
+                <tr className="text-left text-xs font-medium text-gray-500 ">
                   <th className="px-5 py-3">Niche</th>
                   <th className="px-5 py-3 text-right">Ad Sets</th>
                   <th className="px-5 py-3 text-right">Spend</th>

@@ -76,7 +76,7 @@ function SourceAdReferenceCard({ researchInspiration, uploadedInspiration, onDis
     return (
         <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-3 space-y-3">
             <div className="flex items-center justify-between gap-2">
-                <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">{researchInspiration ? 'Research reference' : 'Source ad'}</div>
+                <div className="text-xs font-semibold text-indigo-700">{researchInspiration ? 'Research reference' : 'Source ad'}</div>
                 <div className="flex items-center gap-2">
                     {source.adLink && <a href={source.adLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800" title="Open original ad"><ExternalLink size={11} />Open</a>}
                     {/* Only dismiss/clear control for this card — the old
@@ -103,7 +103,7 @@ function SourceAdReferenceCard({ researchInspiration, uploadedInspiration, onDis
                 {source.headline && <div className="mt-1 text-sm font-semibold leading-snug text-gray-900">{source.headline}</div>}
                 {source.body && <div className="mt-1 max-h-28 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-gray-600">{source.body}</div>}
             </div>
-            {strategy.length > 0 && <div className="border-t border-indigo-100 pt-2 space-y-1"><div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-500">Strategy notes</div>{strategy.map(([label, value]) => <div key={label} className="text-xs leading-snug text-gray-700"><span className="font-semibold text-gray-500">{label}:</span> {value}</div>)}</div>}
+            {strategy.length > 0 && <div className="border-t border-indigo-100 pt-2 space-y-1"><div className="text-[10px] font-semibold text-indigo-500">Strategy notes</div>{strategy.map(([label, value]) => <div key={label} className="text-xs leading-snug text-gray-700"><span className="font-semibold text-gray-500">{label}:</span> {value}</div>)}</div>}
             {researchInspiration && <div className="border-t border-indigo-100 pt-2 text-[10px] leading-4 text-indigo-700"><span className="font-semibold">Evidence:</span> {(researchInspiration.creative_tags || []).length ? researchInspiration.creative_tags.map(tag => tag.replaceAll('_', ' ')).join(', ') : 'No controlled theme'} · CTA {researchInspiration.cta_type?.replaceAll('_', ' ') || 'unknown'} · {researchInspiration.taxonomy_source || 'taxonomy unknown'}<br /><span className="text-indigo-500">Capture: {researchInspiration.creativeIntel?.capture_source?.replaceAll('_', ' ') || 'catalog source'}</span></div>}
             {researchInspiration && <div className="text-[10px] text-indigo-600">Reference only — the source image is analyzed for structure; it is never placed in the generated ad.</div>}
         </div>
@@ -1033,7 +1033,7 @@ export default function AdRemix() {
                 information shouldn't require a buyer to notice and click to reveal it. */}
             {(hasCopyContent(wizardData.template?.copy_analysis) || hasCopyContent(wizardData.template?.copy_patterns)) && (
                 <details open className="mb-4 rounded-xl border border-amber-200 bg-amber-50/60 p-3 text-sm">
-                    <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-amber-700">
+                    <summary className="cursor-pointer text-xs font-semibold text-amber-700">
                         Reference copy notes
                     </summary>
                     <div className="mt-3 space-y-3 text-xs leading-relaxed text-amber-900">
@@ -1319,20 +1319,20 @@ export default function AdRemix() {
                                             </div>
                                         )}
                                         <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-                                            <p className="text-xs font-semibold text-purple-700 uppercase tracking-wide mb-1">Headline</p>
+                                            <p className="text-xs font-semibold text-purple-700 mb-1">Headline</p>
                                             <p className="text-lg font-bold text-gray-900">{concept.headline_remix}</p>
                                         </div>
                                         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                                            <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-1">Body Copy</p>
+                                            <p className="text-xs font-semibold text-blue-700 mb-1">Body Copy</p>
                                             <p className="text-gray-700 whitespace-pre-line text-sm">{concept.body_copy}</p>
                                         </div>
                                         <div className="flex gap-4">
                                             <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex-1">
-                                                <p className="text-xs font-semibold text-green-700 uppercase tracking-wide mb-2">CTA</p>
+                                                <p className="text-xs font-semibold text-green-700 mb-2">CTA</p>
                                                 <span className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-bold">{concept.cta_button}</span>
                                             </div>
                                             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex-[2]">
-                                                <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">Visual Direction</p>
+                                                <p className="text-xs font-semibold text-amber-700 mb-1">Visual Direction</p>
                                                 <p className="text-gray-700 text-sm">{concept.visual_description}</p>
                                             </div>
                                         </div>
@@ -1375,7 +1375,7 @@ export default function AdRemix() {
                         ['Key Messaging', wizardData.campaignDetails.messaging],
                     ].map(([label, value]) => (
                         <div key={label} className="space-y-0.5">
-                            <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{label}</div>
+                            <div className="text-[10px] font-semibold text-gray-400">{label}</div>
                             <div className={`text-sm leading-snug break-words ${value ? 'text-gray-800' : 'text-gray-300'}`}>
                                 {value || '—'}
                             </div>
