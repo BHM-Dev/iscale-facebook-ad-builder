@@ -249,6 +249,7 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError, class
 
   useEffect(() => { load(); }, [load]);
 
+  const loadedPerfPresetRef = useRef(null);   // which range the open card has loaded (see effect below)
   const loadPerformance = useCallback(async (preset) => {
     setPerfLoading(true);
     setPerfError(null);
@@ -260,10 +261,18 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError, class
       setPerfRange(data.date_from && data.date_to ? { from: data.date_from, to: data.date_to } : null);
     } catch (error) {
       setPerfError(error.message || 'Failed to load CAPI performance');
+      loadedPerfPresetRef.current = null;   // re-opening the card retries a failed load
     } finally { setPerfLoading(false); }
   }, [apiUrl, authFetch]);
 
-  useEffect(() => { loadPerformance(perfPreset); }, [loadPerformance, perfPreset]);
+  // Pull only once the card is opened (Steve, 2026-11-18): it is collapsed by default, and this call pulls Meta
+  // spend + RedTrack per pixel (13-17s measured), which ran on every Dashboard load for data nobody saw and
+  // competed with the page's own calls on the single backend worker. Re-opening doesn't re-pull the same range.
+  useEffect(() => {
+    if (!isExpanded || loadedPerfPresetRef.current === perfPreset) return;
+    loadedPerfPresetRef.current = perfPreset;
+    loadPerformance(perfPreset);
+  }, [isExpanded, loadPerformance, perfPreset]);
 
   const sync = useCallback(async () => {
     setSyncing(true);
