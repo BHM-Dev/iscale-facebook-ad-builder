@@ -17,7 +17,9 @@ pixel now lists every account that sends to it, so it's structurally
 impossible to mistake one pixel counted twice for a real two-pixel
 comparison.
 """
-from datetime import date, timedelta
+import threading
+import time
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, literal
@@ -26,7 +28,7 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_current_active_user, require_permission
 from app.database import get_db
 from app.models import CapiQualitySnapshot, User, normalize_account_id
-from app.services.capi_quality_service import get_pixel_performance, sync_capi_quality
+from app.services.capi_quality_service import _PERFORMANCE_PRESETS, get_pixel_performance, sync_capi_quality
 
 router = APIRouter()
 
@@ -181,9 +183,52 @@ def get_history(
     }
 
 
+# Account Health "Performance by pixel" (Steve, 2026-11-18): each pull is live Meta + RedTrack per pixel, 13-21s
+# measured. Fresh for 30 min; after that the last result (up to 24h old) is served at once and refreshed in the
+# background, the same pattern as /facebook/accounts. Keyed by range + account scope + known pixels, so a restricted
+# user never sees another scope's numbers. Errors are never cached.
+PERF_FRESH_SECONDS = 30 * 60
+PERF_STALE_SECONDS = 24 * 3600
+PERF_MAX_ENTRIES = 32
+_perf_cache: dict[tuple, tuple[float, dict]] = {}
+_perf_refreshing: set[tuple] = set()
+_perf_lock = threading.Lock()
+_perf_key_locks: dict[tuple, threading.Lock] = {}
+
+
+def _pull_performance(key: tuple, date_preset: str, restrict_to, known_pixels: list[dict]) -> dict:
+    result = get_pixel_performance(date_preset=date_preset, restrict_to_account_ids=restrict_to, known_pixels=known_pixels)
+    if not result.get("skipped_reason"):
+        result = {**result, "pulled_at": datetime.now(timezone.utc).isoformat()}
+        with _perf_lock:
+            if len(_perf_cache) >= PERF_MAX_ENTRIES and key not in _perf_cache:
+                _perf_cache.pop(min(_perf_cache, key=lambda k: _perf_cache[k][0]), None)
+            _perf_cache[key] = (time.monotonic(), result)
+    return result
+
+
+def _refresh_in_background(key: tuple, date_preset: str, restrict_to, known_pixels: list[dict]) -> None:
+    with _perf_lock:
+        if key in _perf_refreshing:
+            return
+        _perf_refreshing.add(key)
+
+    def run():
+        try:
+            _pull_performance(key, date_preset, restrict_to, known_pixels)
+        except Exception:  # noqa: BLE001 — the stale copy stays; the next open tries again
+            pass
+        finally:
+            with _perf_lock:
+                _perf_refreshing.discard(key)
+
+    threading.Thread(target=run, daemon=True).start()
+
+
 @router.get("/performance")
 def get_performance(
-    date_preset: str = Query(default="last_30d"),
+    date_preset: str = Query(default="last_30d", max_length=40),
+    refresh: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -192,9 +237,8 @@ def get_performance(
     window (see capi_quality_service module docstring for why those two
     numbers can't be perfectly time-aligned).
 
-    Live Meta/RedTrack calls, not the stored snapshot table — not cached,
-    since this is meant to be checked occasionally with different date
-    ranges, not polled on every Dashboard load. Account-scoped the same way
+    Live Meta/RedTrack calls, not the stored snapshot table; cached as described above `PERF_FRESH_SECONDS`
+    (the response's `pulled_at` says how old). `refresh=true` pulls live. Account-scoped the same way
     as /latest: a restricted user only sees performance for pixels tied to
     their own allowed accounts.
     """
@@ -212,11 +256,28 @@ def get_performance(
         {"pixel_id": row.pixel_id, "pixel_name": row.pixel_name}
         for row in known_query.all()
     ]
-    result = get_pixel_performance(
-        date_preset=date_preset,
-        restrict_to_account_ids=restrict_to,
-        known_pixels=known_pixels,
+    if date_preset not in _PERFORMANCE_PRESETS:
+        date_preset = "last_30d"   # the service's own fallback; done here so junk ranges share one cache entry
+    key = (
+        date_preset,
+        tuple(sorted(restrict_to)) if restrict_to is not None else None,
+        tuple(sorted(p["pixel_id"] for p in known_pixels)),
     )
+    hit = None if refresh else _perf_cache.get(key)
+    if hit:
+        age = time.monotonic() - hit[0]
+        if age < PERF_FRESH_SECONDS:
+            return hit[1]
+        if age < PERF_STALE_SECONDS:
+            _refresh_in_background(key, date_preset, restrict_to, known_pixels)
+            return hit[1]
+    with _perf_lock:
+        key_lock = _perf_key_locks.setdefault(key, threading.Lock())
+    with key_lock:   # two people opening the card cold share one pull instead of each waiting 13-21s
+        hit = None if refresh else _perf_cache.get(key)
+        if hit and time.monotonic() - hit[0] < PERF_FRESH_SECONDS:
+            return hit[1]
+        result = _pull_performance(key, date_preset, restrict_to, known_pixels)
     if result.get("skipped_reason"):
         raise HTTPException(status_code=503, detail=result["skipped_reason"])
     return result

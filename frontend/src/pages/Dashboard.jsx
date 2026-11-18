@@ -226,6 +226,7 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError, class
   const [perfError, setPerfError] = useState(null);
   const [perfPreset, setPerfPreset] = useState('last_30d');
   const [perfRange, setPerfRange] = useState(null);
+  const [perfPulledAt, setPerfPulledAt] = useState(null);
   const [expandedPerfPixels, setExpandedPerfPixels] = useState({});
   const [isExpanded, setIsExpanded] = useState(false);
   // Keyed by pixel_id, not a single shared value — the toggle buttons render
@@ -259,6 +260,7 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError, class
       const data = await response.json();
       setPerfPixels((data.pixels || []).slice().sort((a, b) => (a.pixel_name || '').localeCompare(b.pixel_name || '')));
       setPerfRange(data.date_from && data.date_to ? { from: data.date_from, to: data.date_to } : null);
+      setPerfPulledAt(data.pulled_at || null);
     } catch (error) {
       setPerfError(error.message || 'Failed to load CAPI performance');
       loadedPerfPresetRef.current = null;   // re-opening the card retries a failed load
@@ -414,7 +416,7 @@ function CapiMatchQualityCard({ apiUrl, authFetch, showSuccess, showError, class
         </div>
       </div>
       <p className="mt-1 mb-2 text-[11px] text-gray-500">
-        This is a real, explicit date range{perfRange ? ` (${perfRange.from} to ${perfRange.to})` : ''} — a different window than the EMQ scores above, which Meta always computes on its own rolling default (see the note at the top). Don't read these two sections as measuring the identical period; this is the actual cost/ROAS answer, EMQ above is Meta's own match-quality trend.
+        This is a real, explicit date range{perfRange ? ` (${perfRange.from} to ${perfRange.to})` : ''}{perfPulledAt ? `, pulled ${new Date(perfPulledAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''} — a different window than the EMQ scores above, which Meta always computes on its own rolling default (see the note at the top). Don't read these two sections as measuring the identical period; this is the actual cost/ROAS answer, EMQ above is Meta's own match-quality trend.
       </p>
       {perfLoading ? <div className="py-3 text-center text-xs text-gray-400">Loading performance...</div>
         : perfError ? <div className="py-2 text-xs text-red-600">{perfError}</div>
