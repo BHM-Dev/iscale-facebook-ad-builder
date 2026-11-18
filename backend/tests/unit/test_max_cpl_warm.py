@@ -58,3 +58,26 @@ def test_failure_on_cold_cache_is_cached_briefly_and_retried(monkeypatch):
     assert m.warm(None, "act_1") == "failed"
     assert m._CACHE[KEY][1] == m.FAILURE_TTL_SECONDS
     assert m.warm(None, "act_1") == "failed" and len(calls) == 2   # next run retries, not "fresh"
+
+
+def test_settled_unavailable_is_cached_long_and_warm_skips_it(monkeypatch):
+    m._CACHE.clear()
+    calls = []
+
+    def compute(db, account_id, days, target_roas):
+        calls.append(account_id)
+        return m._unavailable(account_id, "No leads or revenue in the window", settled=True)
+
+    monkeypatch.setattr(m, "_compute", compute)
+    first = m.compute_max_cpl(None, "act_quiet")
+    assert first["settled"] is True
+    key = ("act_quiet", 1.30, 30)
+    assert m._CACHE[key][1] == m.SETTLED_TTL_SECONDS
+    assert m.warm(None, "act_quiet") == "fresh"      # no re-pull for a settled answer
+    assert calls == ["act_quiet"]
+
+
+def test_recent_accounts_are_remembered():
+    m._RECENT.clear()
+    m.note_request("act_1")
+    assert m.recent_accounts() == ["act_1"]

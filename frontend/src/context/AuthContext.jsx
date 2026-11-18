@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { clearPageCache } from '../lib/pageCache';
 import {
     authFetch as sharedAuthFetch,
     refreshAccessToken as sharedRefreshAccessToken,
@@ -243,6 +244,7 @@ export const AuthProvider = ({ children }) => {
 
         setUser(null);
         clearTokens();
+        clearPageCache();
     }, [accessToken, refreshToken]);
 
     // Both the token refresh and the authenticated-fetch wrapper live in

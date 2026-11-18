@@ -653,9 +653,12 @@ async def startup_event():
             from app.services import max_cpl_service, proposal_service
             db = SessionLocal()
             try:
-                for account_id in proposal_service.proposal_accounts():
+                # The main accounts, plus any account someone opened in the last 24h (in-memory, so a deploy
+                # resets it to the main accounts until the next page load).
+                accounts = list(dict.fromkeys([*proposal_service.proposal_accounts(), *max_cpl_service.recent_accounts()]))
+                for account_id in accounts:
                     outcome = max_cpl_service.warm(db, account_id)
-                    if outcome != "fresh":
+                    if outcome not in ("fresh", "settled"):
                         print(f"Max CPL warm {account_id}: {outcome}")
             except Exception as exc:
                 print(f"⚠️  Max CPL warm failed: {exc}")
@@ -844,7 +847,7 @@ async def shutdown_event():
 
 
 # Include Routers
-from app.api.v1 import feedback, brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence, creative_angles, pnl, drive_assets, drive_health, drive_sync_runs, capi_quality, launch_packs, launch_outcomes, proposals, insights, daily_close, naming_presets, winners
+from app.api.v1 import feedback, brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence, creative_angles, pnl, drive_assets, drive_health, drive_sync_runs, capi_quality, launch_packs, launch_outcomes, proposals, insights, daily_close, naming_presets, winners, usage
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
@@ -880,6 +883,7 @@ app.include_router(insights.router, prefix="/api/v1/insights", tags=["insights"]
 app.include_router(daily_close.router, prefix="/api/v1/daily-close", tags=["daily-close"])
 app.include_router(naming_presets.router, prefix="/api/v1/naming-presets", tags=["naming-presets"])
 app.include_router(winners.router, prefix="/api/v1/winners", tags=["winners"])
+app.include_router(usage.router, prefix="/api/v1/usage", tags=["usage"])
 
 # Mount static files for uploads (same path as generated_ads save location)
 uploads_dir = str(settings.upload_dir)

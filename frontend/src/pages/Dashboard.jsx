@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { minutesAgo, readPageCache, writePageCache } from '../lib/pageCache';
 import { budgetErrorMessage } from '../lib/budgetErrors';
 import { fetchLiveBudgetCents, budgetPercentChange } from '../lib/liveBudget';
 import BudgetConfirmModal from '../components/BudgetConfirmModal';
@@ -624,6 +625,11 @@ export default function Dashboard() {
   const [trendError, setTrendError] = useState(null);
   const [trendMetric, setTrendMetric] = useState('spend');
   const loadGeneration = useRef(0);
+  // Showing the last load's data while fresh data loads (pageCache). Writes to Meta wait for fresh data.
+  const [cachedAt, setCachedAt] = useState(null);
+  const [cacheRefreshFailed, setCacheRefreshFailed] = useState(false);
+  const showingCachedRef = useRef(false);
+  const cacheFailedRef = useRef(false);
   const [nicheSummary, setNicheSummary] = useState([]);
   const [nicheError, setNicheError] = useState(null);
   const [nicheLoading, setNicheLoading] = useState(true);
@@ -666,6 +672,7 @@ export default function Dashboard() {
       setNicheLoading(false);
       setInsightsError(null); setAdsetsError(null); setNicheError(null); setRulesError(null); setAdStatusError(null); setTrendError(null);
       setLoading(false); setTrendLoading(false);
+      setCachedAt(null); setCacheRefreshFailed(false); showingCachedRef.current = false;
       return;
     }
     if (noActiveAccount) {
@@ -676,22 +683,49 @@ export default function Dashboard() {
       setTrendLoading(false);
       setLoading(false);
       setInsightsError('No active ad account is available — choose an account and retry.');
+      setCachedAt(null); setCacheRefreshFailed(false); showingCachedRef.current = false;
       return;
     }
-    setLoading(true);
+    const cacheKey = `dashboard:v1:${activeAccountId || 'all'}:${df && dt ? `${df}_${dt}` : (p || 'today')}`;
+    const cached = forceRefresh ? null : readPageCache(cacheKey);
     setInsightsError(null);
     setAdsetsError(null);
     setRulesError(null);
     setAdStatusError(null);
-    setBulkInsights({}); // clear stale data so KPIs show — while loading
-    setAdsets([]);
-    setNicheSummary([]);
     setNicheError(null);
-    setNicheLoading(true);
-    setTrend(null);
-    setTrendLoading(true);
     setTrendError(null);
-    setAdStatusByAdset({});
+    if (cached) {
+      // Paint last time's numbers now; the fetch below replaces them in place.
+      const c = cached.data;
+      setAdsets(c.adsets || []);
+      setBulkInsights(c.bulkInsights || {});
+      setNicheSummary(c.nicheSummary || []);
+      setRules(c.rules || []);
+      setAdStatusByAdset(c.adStatusByAdset || {});
+      setTrend(c.trend || null);
+      setNicheLoading(false);
+      setTrendLoading(false);
+      setLoading(false);
+      setCachedAt(cached.at);
+      setCacheRefreshFailed(false);
+      cacheFailedRef.current = false;
+      showingCachedRef.current = true;
+    } else {
+      setLoading(true);
+      setBulkInsights({}); // clear stale data so KPIs show — while loading
+      setAdsets([]);
+      setNicheSummary([]);
+      setNicheLoading(true);
+      setTrend(null);
+      setTrendLoading(true);
+      setAdStatusByAdset({});
+      setCachedAt(null);
+      setCacheRefreshFailed(false);
+      showingCachedRef.current = false;
+    }
+    const fresh = {};
+    let complete = false;
+    let threw = false;
     try {
       const insightsParams = new URLSearchParams();
       if (activeAccountId) insightsParams.set('ad_account_id', activeAccountId);
@@ -725,15 +759,18 @@ export default function Dashboard() {
       ]);
       if (!isCurrent()) return;
       if (adsetsRes?.ok) {
-        setAdsets(await adsetsRes.json());
+        fresh.adsets = await adsetsRes.json();
+        setAdsets(fresh.adsets);
       } else {
         const err = await adsetsRes?.json().catch(() => ({}));
         setAdsetsError(err?.detail || `Ad set list unavailable${adsetsRes ? ` (${adsetsRes.status})` : ''}`);
       }
       if (insightsRes?.ok) {
         const insights = await insightsRes.json();
+        fresh.bulkInsights = insights;
+        fresh.nicheSummary = summarizeNiches(insights);
         setBulkInsights(insights);
-        setNicheSummary(summarizeNiches(insights));
+        setNicheSummary(fresh.nicheSummary);
         setNicheLoading(false);
       } else {
         const err = await insightsRes?.json().catch(() => ({}));
@@ -742,14 +779,16 @@ export default function Dashboard() {
         setNicheLoading(false);
       }
       if (rulesRes?.ok) {
-        setRules(await rulesRes.json());
+        fresh.rules = await rulesRes.json();
+        setRules(fresh.rules);
       } else {
         setRules([]);
         setRulesError('Auto-pause rules are unavailable — refresh to retry.');
       }
       if (adStatusRes?.ok) {
         try {
-          setAdStatusByAdset(await adStatusRes.json());
+          fresh.adStatusByAdset = await adStatusRes.json();
+          setAdStatusByAdset(fresh.adStatusByAdset);
         } catch {
           setAdStatusError('Live ad delivery status is unavailable — scaling is disabled until Refresh succeeds.');
         }
@@ -758,14 +797,28 @@ export default function Dashboard() {
       }
       if (!isCurrent()) return;
       setLoading(false);
+      // Cache only a complete, successful load; only then is cached data fully replaced and actions safe again.
+      complete = Boolean(fresh.adsets && fresh.bulkInsights && fresh.adStatusByAdset && fresh.rules);
+      if (complete) {
+        showingCachedRef.current = false;
+        setCachedAt(null);
+        // The cached trend must not linger unlabelled: show the trend's own loading state until fresh.
+        if (cached) { setTrend(null); setTrendLoading(true); }
+        writePageCache(cacheKey, { ...fresh, trend: null });
+      }
 
       // Secondary: read the trend that has been loading in parallel.
       const trendRes = await trendPromise;
       if (!isCurrent()) return;
-      if (trendRes?.ok) setTrend(await trendRes.json());
-      else setTrendError('Daily trend is temporarily unavailable.');
+      if (trendRes?.ok) {
+        fresh.trend = await trendRes.json();
+        setTrend(fresh.trend);
+        if (complete) writePageCache(cacheKey, fresh);
+      } else setTrendError('Daily trend is temporarily unavailable.');
     } catch (e) {
+      threw = true;
       if (isCurrent() && e.name !== 'AbortError') {
+        setCachedAt(null); showingCachedRef.current = false;
         setAdsets([]);
         setAdsetsError('Ad set list unavailable — check your connection and try again');
         setInsightsError('Request timed out — check your connection and try again');
@@ -774,6 +827,9 @@ export default function Dashboard() {
       if (isCurrent()) {
         setLoading(false);
         setTrendLoading(false);
+        // A cached view whose refresh didn't fully succeed keeps its label (and blocked actions)
+        // so stale numbers never pass as live.
+        if (cached && !complete && !threw) { setCacheRefreshFailed(true); cacheFailedRef.current = true; }
       }
     }
   }, [activeAccountId, activeAccountLoading, noActiveAccount]);
@@ -882,6 +938,7 @@ export default function Dashboard() {
   }, [buildBatchGenerateUrl, buildPerformanceParams, navigate, showError]);
 
   const pauseAdset = useCallback(async (fb_adset_id) => {
+    // Pausing never waits for a refresh: it's a single status write that doesn't depend on the numbers shown.
     setPausingAdsets(prev => new Set(prev).add(fb_adset_id));
     try {
       const res = await authFetch(`${API_URL}/facebook/adsets/${fb_adset_id}/status`, {
@@ -912,6 +969,13 @@ export default function Dashboard() {
   const checkingBudgetRef = useRef(false); // ref guard: state updates are async, two clicks in one tick would both pass
 
   const openBudgetConfirm = async ({ type, id, name, dollars, cachedCents, budgetType, scale, scaleKey }) => {
+    if (showingCachedRef.current) {
+      showWarning(cacheFailedRef.current
+        ? "Budget changes are held because the numbers couldn't refresh. Click Refresh, then try again."
+        : 'Budget changes wait for live numbers. Try again in a few seconds.');
+      if (scaleKey) setScalingAdset(prev => { const next = new Set(prev); next.delete(scaleKey); return next; });
+      return;
+    }
     if (checkingBudgetRef.current) return;
     checkingBudgetRef.current = true;
     setCheckingBudget(true);
@@ -1362,6 +1426,7 @@ export default function Dashboard() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
           <p className="text-gray-500 text-sm mt-0.5">{rangeLabel} · {activeCount} active ad sets · Meta range data{latestRtSync ? ` · RedTrack synced ${new Date(latestRtSync).toLocaleString()}` : ''}</p>
+          {cachedAt && <p className="mt-1 inline-block rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800" role="status">Numbers from {minutesAgo(cachedAt)} · {cacheRefreshFailed ? "couldn't refresh. Budget changes are held until Refresh works." : 'refreshing…'}</p>}
         </div>
         <div className="flex items-center gap-2">
           <DateFilter
@@ -1420,8 +1485,8 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* KPI Row */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+      {/* KPI Row — dimmed while it shows the last load's numbers */}
+      <div className={`grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 transition-opacity ${cachedAt ? 'opacity-60' : ''}`} title={cachedAt ? `Numbers from ${minutesAgo(cachedAt)}, refreshing` : undefined}>
         <KpiCard
           label="Total Spend"
           value={loading ? '—' : `$${totalSpend.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`}

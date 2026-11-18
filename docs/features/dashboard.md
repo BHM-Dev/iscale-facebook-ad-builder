@@ -31,6 +31,11 @@ This file covers the **money-moving actions**; other cards are documented in the
 - Campaign Performance still has its own inline copy of the confirm modal; fold it onto `BudgetConfirmModal`.
 
 ## Changelog
+- 2026-11-18 Opening the Dashboard again (same account and date range, within 30 min, same tab) shows the last
+  numbers immediately with "Showing data from N min ago · refreshing…", then swaps in fresh data. Pause and budget
+  actions wait until fresh data is in; if the refresh fails the label stays. Refresh always loads fresh.
+  Sidebar is flat: Campaign Performance, Launch Ads and Auto-Pause Rules are top-level (the Facebook hub page still
+  works by URL). Page views are recorded for the admin usage table on the Feedback inbox. *Unit-tested only*.
 - 2026-11-15 speed + labels: the daily trend now starts loading with the core calls instead of after insights-bulk; on the live app the trend finished at 1.8s, against 2.9-5.9s before. The niche summary reads **partial**, not exact, when billable revenue sits on an ad set with no Meta row in the range (no spend), because that revenue can't land in a niche bucket. *Timing measured in production; the label change is unit-tested only.*
 - 2026-11-06 trend leads/CPL/revenue-per-lead and niche-summary leads/CPL now count leads once. Before this, leads were 2× and CPL/RPL about half the real value. See [lead-counting.md](lead-counting.md).
 - 2026-10-07 shared live-budget confirm for all Dashboard budget actions; scale from live budget; keyboard + feedback.

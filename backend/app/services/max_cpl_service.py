@@ -15,6 +15,11 @@ _LOCKS: dict[tuple, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 TTL_SECONDS = 3600
 FAILURE_TTL_SECONDS = 120     # a failing account must not re-pull Meta + Everflow on every page load
+# "No leads or revenue in the window" is an answer, not an error (Everflow failures stay on the short TTL). Caching it for 2 min meant an
+# account like that re-ran the ~9s pull on nearly every Campaign Performance load (seen 2026-11-18).
+SETTLED_TTL_SECONDS = 3600   # outlives the warm job's 30-min recheck, like TTL_SECONDS
+RECENT_WINDOW_SECONDS = 24 * 3600
+_RECENT: dict[str, float] = {}   # account_id -> last time someone opened Max CPL for it
 META_TIMEOUT_SECONDS = 30
 MIN_NICHE_LEADS = 40
 
@@ -29,8 +34,35 @@ def _lock(key):
         return _LOCKS.setdefault(key, threading.Lock())
 
 
-def _unavailable(account_id, reason):
-    return {"available": False, "account_id": account_id, "reason": reason}
+def _unavailable(account_id, reason, settled=False):
+    out = {"available": False, "account_id": account_id, "reason": reason}
+    if settled:
+        out["settled"] = True
+    return out
+
+
+def _ttl(result):
+    if result.get("available"):
+        return TTL_SECONDS
+    return SETTLED_TTL_SECONDS if result.get("settled") else FAILURE_TTL_SECONDS
+
+
+def note_request(account_id: str) -> None:
+    """Remember accounts people actually open so the warm job keeps them warm too."""
+    _RECENT[account_id] = monotonic()
+
+
+MAX_RECENT_WARM = 6   # each cold pull is ~9s of Meta + Everflow; keep the extra warm load bounded
+
+
+def recent_accounts() -> list[str]:
+    cutoff = monotonic() - RECENT_WINDOW_SECONDS
+    snapshot = list(_RECENT.items())   # copy: request threads add to _RECENT concurrently
+    for account_id, t in snapshot:
+        if t < cutoff:
+            _RECENT.pop(account_id, None)
+    fresh = sorted(((t, a) for a, t in snapshot if t >= cutoff), reverse=True)
+    return [a for _, a in fresh[:MAX_RECENT_WARM]]
 
 
 def _pull_rows(account_id, since, until):
@@ -59,9 +91,10 @@ def compute_max_cpl(db, account_id: str, days: int = 30, target_roas: float = 1.
             return cached
         try:
             result = _compute(db, account_id, days, target_roas)
-            ttl = TTL_SECONDS if result.get("available") else FAILURE_TTL_SECONDS
+            ttl = _ttl(result)
         except proposal_service.RevenueUnavailable as exc:
-            result, ttl = _unavailable(account_id, str(exc)), FAILURE_TTL_SECONDS
+            result = _unavailable(account_id, str(exc))
+            ttl = _ttl(result)
         except Exception:
             logger.exception("Max CPL failed for %s", account_id)
             result, ttl = _unavailable(account_id, "Max CPL unavailable right now"), FAILURE_TTL_SECONDS
@@ -76,11 +109,11 @@ def warm(db, account_id: str, refresh_after: int = 1800, days: int = 30, target_
     key = (account_id, float(target_roas), days)
     item = _CACHE.get(key)
     now = monotonic()
-    if item and item[2].get("available") and now - item[0] < refresh_after:
+    if item and (item[2].get("available") or item[2].get("settled")) and now - item[0] < refresh_after:
         return "fresh"
     with _lock(key):
         item = _CACHE.get(key)   # a page load may have refreshed it while we waited for the lock
-        if item and item[2].get("available") and monotonic() - item[0] < refresh_after:
+        if item and (item[2].get("available") or item[2].get("settled")) and monotonic() - item[0] < refresh_after:
             return "fresh"
         try:
             result = _compute(db, account_id, days, target_roas)
@@ -99,8 +132,8 @@ def warm(db, account_id: str, refresh_after: int = 1800, days: int = 30, target_
             _CACHE[key] = (monotonic(), TTL_SECONDS, result)
             return "refreshed"
         if not still_good:
-            _CACHE[key] = (monotonic(), FAILURE_TTL_SECONDS, result)
-        return "failed"
+            _CACHE[key] = (monotonic(), _ttl(result), result)
+        return "settled" if result.get("settled") else "failed"
 
 
 def _compute(db, account_id, days, target_roas):
@@ -126,7 +159,7 @@ def _compute(db, account_id, days, target_roas):
     total_leads = sum(v["leads"] for v in niches.values())
     total_revenue = sum(v["revenue"] for v in niches.values())
     if total_leads <= 0 or total_revenue <= 0:
-        return _unavailable(account_id, "No leads or revenue in the window")
+        return _unavailable(account_id, "No leads or revenue in the window", settled=True)
     account_rpl = total_revenue / total_leads
     for niche, bucket in niches.items():
         small = bucket["leads"] < MIN_NICHE_LEADS or niche == "Unmapped"

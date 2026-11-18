@@ -305,6 +305,24 @@ def get_ad_accounts(
 
     data, ts, backoff_until = _snapshot()
     raw = data if _fresh(data, ts, backoff_until) else None
+    if raw is None and _stale_ok(data, ts):
+        # Serve the cached list now and refresh it in the background (2026-11-18): the account list
+        # rarely changes, and a blocking refresh added ~2.3s to whichever page load hit the 2-min expiry.
+        raw = data
+        if _accounts_refresh_lock.acquire(blocking=False):
+            def _background_refresh():
+                try:
+                    fresh = service.get_ad_accounts()
+                    with _accounts_cache_lock:
+                        _accounts_cache.update(data=fresh, ts=time.monotonic(), backoff_until=0.0)
+                except Exception as e:
+                    if _is_meta_throttle(e):
+                        with _accounts_cache_lock:
+                            _accounts_cache["backoff_until"] = time.monotonic() + _ACCOUNTS_THROTTLE_BACKOFF_SECONDS
+                    logger.warning("Background /accounts refresh failed: %s", e)
+                finally:
+                    _accounts_refresh_lock.release()
+            threading.Thread(target=_background_refresh, daemon=True).start()
     if raw is None:
         with _accounts_refresh_lock:  # single-flight: concurrent mounts wait, then reuse
             data, ts, backoff_until = _snapshot()

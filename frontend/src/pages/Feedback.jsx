@@ -13,6 +13,48 @@ const EMPTY_MESSAGES = {
     all: 'No feedback yet.',
 };
 
+// Which pages people actually open (2026-11-18), from /usage/summary. Collapsed by default.
+function UsagePanel() {
+    const [open, setOpen] = useState(false);
+    const [data, setData] = useState(null);
+    const [error, setError] = useState(null);
+    useEffect(() => {
+        if (!open || data) return;
+        authFetch(`${API_BASE}/usage/summary?days=14`)
+            .then(res => (res.ok ? res.json() : Promise.reject(new Error('Usage could not be loaded.'))))
+            .then(setData)
+            .catch(err => setError(err instanceof TypeError ? "Couldn't reach the Ad Builder." : err.message));
+    }, [open, data]);
+    return (
+        <div className="mb-6 rounded-xl border border-gray-200 bg-white">
+            <button type="button" onClick={() => setOpen(v => !v)} aria-expanded={open} className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold text-gray-900">
+                Page usage, last 14 days <span className="text-xs font-normal text-gray-500">{open ? 'Hide' : 'Show'}</span>
+            </button>
+            {open && (
+                <div className="border-t border-gray-100 px-4 py-3 text-sm">
+                    {error ? <p className="text-red-700">{error}</p> : !data ? <p className="text-gray-500">Loading…</p> : data.pages.length === 0 ? (
+                        <p className="text-gray-500">No page views recorded yet. Tracking started 2026-11-18.</p>
+                    ) : (
+                        <div className="grid gap-4 md:grid-cols-2">
+                            <table className="w-full text-left text-xs">
+                                <thead className="text-gray-500"><tr><th className="py-1">Page</th><th className="py-1 text-right">Views</th><th className="py-1 text-right">People</th><th className="py-1 text-right">Minutes</th></tr></thead>
+                                <tbody>{data.pages.slice(0, 20).map(row => (
+                                    <tr key={row.path} className="border-t border-gray-100"><td className="py-1 font-mono">{row.path}</td><td className="py-1 text-right tabular-nums">{row.views}</td><td className="py-1 text-right tabular-nums">{row.people}</td><td className="py-1 text-right tabular-nums">{row.minutes}</td></tr>
+                                ))}</tbody>
+                            </table>
+                            <div className="space-y-3 text-xs">
+                                {Object.entries(data.people).map(([email, pages]) => (
+                                    <div key={email}><div className="font-semibold text-gray-800">{email}</div><div className="text-gray-600">{pages.map(p => `${p.path} (${p.views})`).join(' · ')}</div></div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
 // Admin list of in-app feedback (2026-11-17). Items are worked in Claude Code sessions and marked Done here.
 export default function Feedback() {
     const { showError } = useToast();
@@ -70,6 +112,8 @@ export default function Feedback() {
                 </div>
                 </div>
             </div>
+
+            <UsagePanel />
 
             {loadError ? (
                 <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{loadError} <button onClick={load} className="underline">Try again</button></div>
