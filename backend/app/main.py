@@ -605,7 +605,10 @@ async def startup_event():
             except Exception as exc:
                 print(f"⚠️  P&L cache warm failed: {exc}")   # the page still works, it just pulls live
 
-        scheduler.add_job(scheduled_pnl_cache_warm, 'interval', minutes=4, id='pnl_cache_warm', max_instances=1, coalesce=True)
+        # Boot+1 min: without a start date the first run came 4 min after each deploy, and a P&L opened in that
+        # window waited ~7s on cold Everflow + RedTrack + Meta pulls (measured 2026-11-18).
+        scheduler.add_job(scheduled_pnl_cache_warm, 'interval', minutes=4, id='pnl_cache_warm',
+                          start_date=_boot + timedelta(minutes=1), max_instances=1, coalesce=True)
 
         def scheduled_drive_nightly_check():
             """11 p.m. ET (Steve, 2026-11-17): every Drive package touched in the last day is dry-run through

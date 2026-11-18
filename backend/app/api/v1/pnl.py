@@ -684,13 +684,29 @@ def _recover_macro_adsets_unpinned(db: Session, rows: list[dict]) -> list[dict]:
     return out
 
 
-def _spend_for_account(account_id: str, start: date, end: date) -> Decimal:
+# Live (still-open) ranges only: each P&L load pulled spend for every account one after another (~0.4s each, ~2s of
+# a 1.8s-2s page once revenue was warm; measured 2026-11-18). Now pulled in parallel and kept 5 minutes, the same
+# tolerance as the Everflow revenue rows. Not warmed in the background: nobody needs Meta polled every 4 min for a
+# page opened a few times a day. Closed ranges (frozen months, resync, daily close) always pull live.
+SPEND_CACHE_TTL_SECONDS = 300
+_SPEND_CACHE: dict[tuple[str, str, str], tuple[float, Decimal]] = {}
+
+
+def _spend_for_account(account_id: str, start: date, end: date, refresh: bool = False) -> Decimal:
     """Total Meta spend for the account over [start, end], in the account's own timezone.
 
     One ACCOUNT-level Insights row instead of every ad set's: RHO has ~570 ad sets, so the ad-set-level pull paged
     ~23 times and took ~14s per load (measured 2026-10-30). The account-level total matched the ad-set sum to the
-    cent on 2026-10-26 (both $1,364.31 for the day). Raises on failure, so the P&L marks spend unavailable."""
+    cent on 2026-10-26 (both $1,364.31 for the day). Raises on failure, so the P&L marks spend unavailable
+    (failures are never cached)."""
     from concurrent.futures import ThreadPoolExecutor
+
+    cacheable = end >= today_in_rt_tz()
+    key = (normalize_account_id(account_id), start.isoformat(), end.isoformat())
+    if cacheable and not refresh:
+        hit = _SPEND_CACHE.get(key)
+        if hit and time.monotonic() - hit[0] < SPEND_CACHE_TTL_SECONDS:
+            return hit[1]
 
     def pull():
         account = FacebookService()._get_account(account_id)
@@ -705,7 +721,28 @@ def _spend_for_account(account_id: str, start: date, end: date) -> Decimal:
         rows = pool.submit(pull).result(timeout=20)
     finally:
         pool.shutdown(wait=False)   # a timed-out pull is abandoned (read-only), never waited on
-    return sum((_money(row.get("spend")) for row in rows), Decimal("0"))
+    total = sum((_money(row.get("spend")) for row in rows), Decimal("0"))
+    if cacheable:
+        now = time.monotonic()
+        for stale in [k for k, (at, _) in list(_SPEND_CACHE.items()) if now - at >= SPEND_CACHE_TTL_SECONDS]:
+            _SPEND_CACHE.pop(stale, None)
+        _SPEND_CACHE[key] = (now, total)
+    return total
+
+
+def _prefetch_spend(account_ids: list[str], start: date, end: date, refresh: bool = False) -> None:
+    """Pull several accounts' spend in parallel so the per-account rows that follow read it from the cache.
+    Only useful for live ranges (closed ranges aren't cached). Never raises: a failed account is pulled again,
+    and reported, by the row that needs it."""
+    if end < today_in_rt_tz() or not account_ids:
+        return
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(5, len(account_ids))) as pool:
+        for future in [pool.submit(_spend_for_account, a, start, end, refresh) for a in account_ids]:
+            try:
+                future.result()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def _spend_map(db: Session, start: date, end: date, known: dict[str, Decimal] | None = None) -> tuple[dict[str, Decimal], bool]:
@@ -1750,6 +1787,7 @@ def _summary_all(
     if one_pass is not None:
         account_rows, (unknown_revenue, unknown_ok, foreign_revenue, network_revenue) = one_pass
     else:
+        _prefetch_spend(account_ids, start, end)
         with pinned_recovery():
             account_rows = [
                 _account_summary_frozen_if_closed(db, account_id, start, end, label, current_user)
@@ -2056,6 +2094,8 @@ def _get_months_all(
                     unknown_by_campaign=unknown_by_campaign,
                 ))
                 continue
+            if start == current_month:
+                _prefetch_spend(account_ids, start, end)
             snapshots = {
                 account_id: _snapshot_for_account_month(db, account_id, start)
                 for account_id in account_ids
