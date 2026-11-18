@@ -46,7 +46,8 @@ tools remain available as secondary options for teams that need to create new as
   (selected cards, primary buttons, step list, links, focus rings); amber is kept only where it means a warning
   (budget guard, reconciliation, missing copy, "multiplies budget"). The wizard skips the Account page when it
   restores the account used last time (once per visit; Back still reaches it; first-time users and Quick Ad /
-  Launch Pack / Drive flows unchanged). *Not verified live yet*.
+  Launch Pack / Drive flows unchanged). *Verified in production*: first visit shows Account, Next saves it, the
+  next fresh visit opens on Campaign with "Launching into <account>", Back stays on Account.
 - 2026-11-17 Launch guardrails from the AdStellar launcher pass: a budget that is unusually high for this account
   (above 3x its typical active ad-set budget or 1.5x its largest, from `GET /facebook/budget-baseline`, local DB only)
   shows an amber note on the Campaign/Ad Set step and a confirm before Launch, as does a launch adding more than half
