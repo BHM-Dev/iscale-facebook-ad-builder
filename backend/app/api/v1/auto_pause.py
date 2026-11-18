@@ -24,7 +24,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -74,11 +74,20 @@ INSIGHTS_BULK_CACHE_MAX_ENTRIES = 32
 _insights_bulk_cache: dict[tuple, tuple[float, float, dict]] = {}
 
 
+# Keys kept warm by the scheduler (warm_dashboard_insights) may be served for longer than the default 60s:
+# 'today' up to 6 min (re-warmed every 5, inside Meta's own reporting delay), 'yesterday' up to 70 min.
+_insights_bulk_ttl: dict[tuple, int] = {}
+_insights_bulk_pulled_at: dict[tuple, str] = {}     # key -> ISO wall time the payload was built (X-Meta-Pulled-At)
+_recent_dashboard_accounts: dict[str, float] = {}   # account -> last Dashboard insights request (monotonic)
+_warm_backoff_until: dict[str, float] = {}          # account -> monotonic time to skip warming until (Meta throttle)
+WARM_THROTTLE_BACKOFF_SECONDS = 30 * 60
+
+
 def _read_insights_bulk_cache(key: tuple, refresh: bool):
     if refresh:
         return None
     entry = _insights_bulk_cache.get(key)
-    if entry and time.monotonic() - entry[0] < INSIGHTS_BULK_CACHE_TTL_SECONDS:
+    if entry and time.monotonic() - entry[0] < _insights_bulk_ttl.get(key, INSIGHTS_BULK_CACHE_TTL_SECONDS):
         return deepcopy(entry[2])
     if entry:
         _insights_bulk_cache.pop(key, None)
@@ -600,6 +609,7 @@ def get_insights(
 
 @router.get("/insights-bulk")
 def get_insights_bulk(
+    response: Response,
     ad_account_id: Optional[str] = Query(None),
     date_preset: str = Query("last_7d"),
     date_from: Optional[str] = Query(None),
@@ -616,6 +626,25 @@ def get_insights_bulk(
     Use this instead of calling /insights/{id} per row — dramatically faster.
     """
     ad_account_id = _resolve_scoped_default_account(current_user, ad_account_id)
+    can_read_pnl = current_user.has_permission("pnl:read") if include_niche_summary else None
+    if include_niche_summary and ad_account_id:
+        norm = normalize_account_id(ad_account_id)
+        # Only accounts we actually have ad sets for are worth warming (an arbitrary id would just fail every 5 min).
+        if norm not in _recent_dashboard_accounts and db.query(FacebookAdSet.id).filter(FacebookAdSet.fb_account_id == norm).first() is None:
+            pass
+        else:
+            _recent_dashboard_accounts[norm] = time.monotonic()
+    result, pulled_at = build_insights_bulk(db, ad_account_id, date_preset, date_from, date_to, refresh, include_niche_summary, can_read_pnl, with_pulled_at=True)
+    if response is not None and pulled_at:
+        response.headers["X-Meta-Pulled-At"] = pulled_at
+    return result
+
+
+def build_insights_bulk(db, ad_account_id, date_preset="last_7d", date_from=None, date_to=None, refresh=False,
+                        include_niche_summary=False, can_read_pnl=None, warm_ttl: Optional[int] = None,
+                        with_pulled_at: bool = False):
+    """The insights-bulk payload, shared by the endpoint and the Dashboard warm job. `warm_ttl` (scheduler
+    only) refreshes the cache entry and lets it be served for that many seconds."""
     # Resolve before the Meta pull so an identical account/range can be served
     # from the short-lived cache without making any external request.
     from app.models import RedTrackCache
@@ -627,15 +656,15 @@ def get_insights_bulk(
         date_from_str, date_to_str = RedTrackService.preset_to_dates(date_preset)
 
     cache_key = (
-        ad_account_id,
+        normalize_account_id(ad_account_id) if ad_account_id else ad_account_id,   # same key for "123" and "act_123"
         date_from_str,
         date_to_str,
         include_niche_summary,
-        current_user.has_permission("pnl:read") if include_niche_summary else None,
+        can_read_pnl if include_niche_summary else None,
     )
-    cached = _read_insights_bulk_cache(cache_key, refresh)
+    cached = _read_insights_bulk_cache(cache_key, refresh or warm_ttl is not None)
     if cached is not None:
-        return cached
+        return (cached, _insights_bulk_pulled_at.get(cache_key)) if with_pulled_at else cached
     request_started_at = time.monotonic()
 
     svc = FacebookService()
@@ -776,7 +805,7 @@ def get_insights_bulk(
 
         revenue_status = "not_tracked"
         billable_by_adset: dict[str, float] = {}
-        if current_user.has_permission("pnl:read"):
+        if can_read_pnl:
             from app.api.v1.pnl import _everflow_offer_names_for_account, _recover_macro_adsets, _revenue_provider_for_account, niche_revenue_status
             offer_names = _everflow_offer_names_for_account(account_id)
             if _revenue_provider_for_account(account_id) == "everflow" and offer_names:
@@ -815,7 +844,50 @@ def get_insights_bulk(
             row["niche_revenue_status"] = revenue_status
 
     _write_insights_bulk_cache(cache_key, result, request_started_at)
-    return result
+    pulled_at = datetime.now(timezone.utc).isoformat()
+    _insights_bulk_pulled_at[cache_key] = pulled_at
+    if warm_ttl is not None:
+        _insights_bulk_ttl[cache_key] = warm_ttl
+    else:
+        _insights_bulk_ttl.pop(cache_key, None)   # long TTLs only for entries the warm job keeps refreshing
+    return (result, pulled_at) if with_pulled_at else result
+
+
+def recent_dashboard_accounts(window_seconds: int = 24 * 3600, limit: int = 4) -> list[str]:
+    cutoff = time.monotonic() - window_seconds
+    snapshot = list(_recent_dashboard_accounts.items())
+    for account_id, t in snapshot:
+        if t < cutoff:
+            _recent_dashboard_accounts.pop(account_id, None)
+    return [a for t, a in sorted(((t, a) for a, t in snapshot if t >= cutoff), reverse=True)[:limit]]
+
+
+def warm_dashboard_insights(db, accounts: list[str], presets: list[tuple[str, int]]) -> dict:
+    """Scheduler: pre-build the Dashboard's insights for each account and (preset, ttl), for both
+    revenue-permission variants (the Meta pull is shared between them via FacebookService's cache).
+    Never raises; returns per-key outcomes for the log."""
+    out = {}
+    for account_id in accounts:
+        if _warm_backoff_until.get(account_id, 0) > time.monotonic():
+            out[f"{account_id}:*"] = "skipped: Meta throttled recently"
+            continue
+        for preset, ttl in presets:
+            for can_read_pnl in (True, False):
+                key = f"{account_id}:{preset}:{'pnl' if can_read_pnl else 'nopnl'}"
+                try:
+                    build_insights_bulk(db, account_id, preset, None, None, False, True, can_read_pnl, warm_ttl=ttl)
+                    out[key] = "ok"
+                except Exception as exc:
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                    text = str(exc)
+                    out[key] = f"failed: {text[:120]}"
+                    if any(m in text.lower() for m in ("request limit", "too many calls", "(#17)", "(#4)", "code 17", "rate limit")):
+                        # Never keep poking a throttled account: Campaign Performance and pauses need that budget.
+                        _warm_backoff_until[account_id] = time.monotonic() + WARM_THROTTLE_BACKOFF_SECONDS
+    return out
 
 
 @router.get('/state-performance')

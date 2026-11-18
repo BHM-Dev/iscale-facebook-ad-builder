@@ -619,6 +619,8 @@ export default function Dashboard() {
   const [adsets, setAdsets] = useState([]);
   const [adStatusByAdset, setAdStatusByAdset] = useState({});
   const [adStatusError, setAdStatusError] = useState(null);
+  const [adStatusPending, setAdStatusPending] = useState(false);
+  const [metaPulledAt, setMetaPulledAt] = useState(null);   // when the server built the Meta numbers (X-Meta-Pulled-At)
   const [bulkInsights, setBulkInsights] = useState({});
   const [trend, setTrend] = useState(null);
   const [trendLoading, setTrendLoading] = useState(true);
@@ -672,7 +674,7 @@ export default function Dashboard() {
       setNicheLoading(false);
       setInsightsError(null); setAdsetsError(null); setNicheError(null); setRulesError(null); setAdStatusError(null); setTrendError(null);
       setLoading(false); setTrendLoading(false);
-      setCachedAt(null); setCacheRefreshFailed(false); showingCachedRef.current = false;
+      setCachedAt(null); setCacheRefreshFailed(false); showingCachedRef.current = false; setAdStatusPending(false);
       return;
     }
     if (noActiveAccount) {
@@ -683,7 +685,7 @@ export default function Dashboard() {
       setTrendLoading(false);
       setLoading(false);
       setInsightsError('No active ad account is available — choose an account and retry.');
-      setCachedAt(null); setCacheRefreshFailed(false); showingCachedRef.current = false;
+      setCachedAt(null); setCacheRefreshFailed(false); showingCachedRef.current = false; setAdStatusPending(false);
       return;
     }
     const cacheKey = `dashboard:v1:${activeAccountId || 'all'}:${df && dt ? `${df}_${dt}` : (p || 'today')}`;
@@ -703,6 +705,7 @@ export default function Dashboard() {
       setRules(c.rules || []);
       setAdStatusByAdset(c.adStatusByAdset || {});
       setTrend(c.trend || null);
+      setMetaPulledAt(c.metaPulledAt || null);
       setNicheLoading(false);
       setTrendLoading(false);
       setLoading(false);
@@ -719,6 +722,7 @@ export default function Dashboard() {
       setTrend(null);
       setTrendLoading(true);
       setAdStatusByAdset({});
+      setMetaPulledAt(null);
       setCachedAt(null);
       setCacheRefreshFailed(false);
       showingCachedRef.current = false;
@@ -751,11 +755,14 @@ export default function Dashboard() {
       // time to finish instead of falsely reading as an unavailable revenue source.
       const trendPromise = timedFetch(`${API_URL}/dashboard/trend?${insightsParams}`, 45000).catch(() => null);
 
-      const [adsetsRes, insightsRes, rulesRes, adStatusRes] = await Promise.all([
+      // Live ad status (~1.4s, uncached Meta read) only gates the active count and the pause/scale
+      // controls, so the numbers no longer wait for it (2026-11-18).
+      const adStatusPromise = timedFetch(`${API_URL}/facebook/ads/status-bulk?${new URLSearchParams({ ...(activeAccountId ? { ad_account_id: activeAccountId } : {}), ...(forceRefresh ? { refresh: 'true' } : {}) })}`, 15000).catch(() => null);
+      if (!cached) setAdStatusPending(true);
+      const [adsetsRes, insightsRes, rulesRes] = await Promise.all([
         timedFetch(`${API_URL}/facebook/adsets/saved?${insightsParams}`, 10000).catch(() => null),
         timedFetch(`${API_URL}/auto-pause/insights-bulk?${insightsParams}`, 25000).catch(() => null),
         timedFetch(`${API_URL}/auto-pause/rules`, 10000).catch(() => null),
-        timedFetch(`${API_URL}/facebook/ads/status-bulk?${new URLSearchParams({ ...(activeAccountId ? { ad_account_id: activeAccountId } : {}), ...(forceRefresh ? { refresh: 'true' } : {}) })}`, 15000).catch(() => null),
       ]);
       if (!isCurrent()) return;
       if (adsetsRes?.ok) {
@@ -768,6 +775,8 @@ export default function Dashboard() {
       if (insightsRes?.ok) {
         const insights = await insightsRes.json();
         fresh.bulkInsights = insights;
+        fresh.metaPulledAt = insightsRes.headers?.get?.('X-Meta-Pulled-At') || null;
+        setMetaPulledAt(fresh.metaPulledAt);
         fresh.nicheSummary = summarizeNiches(insights);
         setBulkInsights(insights);
         setNicheSummary(fresh.nicheSummary);
@@ -785,6 +794,12 @@ export default function Dashboard() {
         setRules([]);
         setRulesError('Auto-pause rules are unavailable — refresh to retry.');
       }
+      if (!isCurrent()) return;
+      setLoading(false);
+
+      const adStatusRes = await adStatusPromise;
+      if (!isCurrent()) return;
+      setAdStatusPending(false);
       if (adStatusRes?.ok) {
         try {
           fresh.adStatusByAdset = await adStatusRes.json();
@@ -795,8 +810,6 @@ export default function Dashboard() {
       } else {
         setAdStatusError('Live ad delivery status is unavailable — scaling is disabled until Refresh succeeds.');
       }
-      if (!isCurrent()) return;
-      setLoading(false);
       // Cache only a complete, successful load; only then is cached data fully replaced and actions safe again.
       complete = Boolean(fresh.adsets && fresh.bulkInsights && fresh.adStatusByAdset && fresh.rules);
       if (complete) {
@@ -827,6 +840,7 @@ export default function Dashboard() {
       if (isCurrent()) {
         setLoading(false);
         setTrendLoading(false);
+        setAdStatusPending(false);
         // A cached view whose refresh didn't fully succeed keeps its label (and blocked actions)
         // so stale numbers never pass as live.
         if (cached && !complete && !threw) { setCacheRefreshFailed(true); cacheFailedRef.current = true; }
@@ -1200,7 +1214,7 @@ export default function Dashboard() {
 
       if (issues.length === 0) return;
 
-      const statusUnknown = !!adStatusError && normalizeStatus(a.status) === 'ACTIVE';
+      const statusUnknown = (!!adStatusError || adStatusPending) && normalizeStatus(a.status) === 'ACTIVE';
       attentionMap.set(a.fb_adset_id, {
         id: `adset-${a.id}`,
         adset: a,
@@ -1278,7 +1292,7 @@ export default function Dashboard() {
         rtConvs: rt?.conversions || 0,
         frequency: ins?.frequency ?? null,
         isActive: isActiveDelivery(a),
-        statusUnknown: !!adStatusError && normalizeStatus(a.status) === 'ACTIVE',
+        statusUnknown: (!!adStatusError || adStatusPending) && normalizeStatus(a.status) === 'ACTIVE',
       };
     })
     // Historical winners remain useful after Joel pauses a batch. Keep them in
@@ -1425,7 +1439,7 @@ export default function Dashboard() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-gray-500 text-sm mt-0.5">{rangeLabel} · {activeCount} active ad sets · Meta range data{latestRtSync ? ` · RedTrack synced ${new Date(latestRtSync).toLocaleString()}` : ''}</p>
+          <p className="text-gray-500 text-sm mt-0.5">{rangeLabel} · {adStatusPending ? '…' : activeCount} active ad sets · {metaPulledAt ? <span className={activeRange.preset === 'today' && Date.now() - new Date(metaPulledAt).getTime() > 10 * 60 * 1000 ? 'text-amber-700' : ''}>Meta pulled {new Date(metaPulledAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span> : 'Meta range data'}{latestRtSync ? ` · RedTrack synced ${new Date(latestRtSync).toLocaleString()}` : ''}</p>
           {cachedAt && <p className="mt-1 inline-block rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800" role="status">Numbers from {minutesAgo(cachedAt)} · {cacheRefreshFailed ? "couldn't refresh. Budget changes are held until Refresh works." : 'refreshing…'}</p>}
         </div>
         <div className="flex items-center gap-2">
@@ -1638,7 +1652,7 @@ export default function Dashboard() {
                             <div className="text-xs text-gray-400 truncate max-w-[280px]">{a.campaignName}</div>
                           )}
                           <span className={`inline-flex mt-1 text-[10px] font-semibold uppercase tracking-wide ${a.isActive ? 'text-green-600' : 'text-gray-500'}`}>
-                            {a.statusUnknown ? 'Status unavailable' : a.isActive ? 'Active' : 'Paused · historical'}
+                            {a.statusUnknown ? (adStatusPending ? 'Checking status…' : 'Status unavailable') : a.isActive ? 'Active' : 'Paused · historical'}
                           </span>
                         </Link>
                         <div className="sm:hidden flex flex-wrap gap-1.5 mt-2">
@@ -1647,7 +1661,7 @@ export default function Dashboard() {
                             const hasBudget = isCBO ? !!a.adset.campaign_daily_budget : !!a.adset.daily_budget;
                             const scaleKey = isCBO ? `cbo-${a.fb_campaign_id}` : a.fb_adset_id;
                             const isScaling = scalingAdset.has(scaleKey);
-                            return <button onClick={() => scaleAdset(a)} disabled={isScaling || !hasBudget || !a.isActive} title={a.isActive ? 'Increase the live budget by 20%' : 'Activate this ad set in Meta before scaling'} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-green-700 border border-green-200 bg-green-50 disabled:opacity-40">{isScaling ? <RefreshCw size={10} className="animate-spin" /> : '+20%'} Scale</button>;
+                            return <button onClick={() => scaleAdset(a)} disabled={isScaling || !hasBudget || !a.isActive} title={a.isActive ? 'Increase the live budget by 20%' : a.statusUnknown ? 'Checking live status…' : 'Activate this ad set in Meta before scaling'} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-green-700 border border-green-200 bg-green-50 disabled:opacity-40">{isScaling ? <RefreshCw size={10} className="animate-spin" /> : '+20%'} Scale</button>;
                           })()}
                           <button onClick={() => handleQuickGenerate(a)} disabled={quickGeneratingAdsets.has(a.fb_adset_id || a.id)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-indigo-600 border border-indigo-100 bg-indigo-50 disabled:opacity-40"><Zap size={10} /> Quick Generate</button>
                         </div>
@@ -1678,7 +1692,7 @@ export default function Dashboard() {
                               <button
                                 onClick={() => scaleAdset(a)}
                                 disabled={isScaling || !hasBudget || !a.isActive}
-                                title={!a.isActive ? 'Activate this ad set in Meta before scaling' : hasBudget ? (isCBO ? '+20% campaign budget - affects all ad sets in this campaign' : '+20% ad set budget') : 'Set budget first'}
+                                title={!a.isActive ? (a.statusUnknown ? 'Checking live status…' : 'Activate this ad set in Meta before scaling') : hasBudget ? (isCBO ? '+20% campaign budget - affects all ad sets in this campaign' : '+20% ad set budget') : 'Set budget first'}
                                 className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-green-700 border border-green-200 bg-green-50 hover:bg-green-100 transition-colors disabled:opacity-40"
                               >
                                 {isScaling ? <RefreshCw size={11} className="animate-spin" /> : '+20%'}

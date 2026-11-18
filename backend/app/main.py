@@ -67,7 +67,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
-    expose_headers=["X-Total-Count"],
+    expose_headers=["X-Total-Count", "X-Meta-Pulled-At"],
     max_age=600,
 )
 
@@ -668,6 +668,32 @@ async def startup_event():
         # Boot+5 min (clear of auto-pause +2 and Drive +7), then every 10 min.
         scheduler.add_job(scheduled_max_cpl_warm, 'interval', minutes=10, id='max_cpl_warm',
                           start_date=_boot + timedelta(minutes=5), max_instances=1, coalesce=True)
+
+        def _warm_dashboard(presets):
+            """Keep the Dashboard's first load instant (Steve, 2026-11-18): its insights call took ~4.5s cold
+            (Meta ~2.2s + RedTrack/Everflow merge) whenever nobody had opened it in the last minute."""
+            from zoneinfo import ZoneInfo
+            if not 6 <= datetime.now(ZoneInfo("America/New_York")).hour < 23:
+                return
+            from app.api.v1 import auto_pause as ap
+            from app.services import proposal_service
+            db = SessionLocal()
+            try:
+                accounts = list(dict.fromkeys([*proposal_service.proposal_accounts(), *ap.recent_dashboard_accounts()]))
+                result = ap.warm_dashboard_insights(db, accounts, presets)
+                failed = {k: v for k, v in result.items() if v != "ok"}
+                if failed:
+                    print(f"Dashboard warm failures: {failed}")
+            except Exception as exc:
+                print(f"⚠️  Dashboard warm failed: {exc}")
+            finally:
+                db.close()
+
+        # 'today' every 5 min (served up to 6 min); 'yesterday' hourly (served up to 70 min). Starts boot+3 min.
+        scheduler.add_job(lambda: _warm_dashboard([("today", 360)]), 'interval', minutes=5, id='dashboard_warm_today',
+                          start_date=_boot + timedelta(minutes=3), max_instances=1, coalesce=True)
+        scheduler.add_job(lambda: _warm_dashboard([("yesterday", 4200)]), 'interval', minutes=60, id='dashboard_warm_yesterday',
+                          start_date=_boot + timedelta(minutes=4), max_instances=1, coalesce=True)
 
         def scheduled_proposal_evaluate():
             """Hourly: approvals-queue proposals from real profit. Writes proposals only, never to Meta."""

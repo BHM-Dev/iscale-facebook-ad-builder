@@ -31,6 +31,13 @@ This file covers the **money-moving actions**; other cards are documented in the
 - Campaign Performance still has its own inline copy of the confirm modal; fold it onto `BudgetConfirmModal`.
 
 ## Changelog
+- 2026-11-18 First load of the day: a scheduler job keeps the Dashboard's insights warm for the main accounts
+  (plus up to 4 accounts opened in the last 24h), 6 a.m. to 11 p.m. ET. 'Today' is re-pulled every 5 min and served
+  for up to 6 min (plus Meta's own 60s cache); 'yesterday' hourly (late conversions still move it, so the header
+  shows "Meta pulled 2:47 PM", amber when today's pull is over 10 min old). Refresh always pulls live. About one Meta
+  insights call per warmed account per 5 min; a throttled account is skipped for 30 min. The numbers no longer wait
+  for the live ad-status read (~1.4s, worst case its 15s timeout); the active count shows "…" and pause/scale stay
+  off until it lands. Measured before: insights-bulk ~4.5s cold (Meta ~2.2s, Everflow ~0.5s). *Unit-tested only*.
 - 2026-11-18 Opening the Dashboard again (same account and date range, within 30 min, same tab) shows the last
   numbers immediately with "Showing data from N min ago · refreshing…", then swaps in fresh data. Pause and budget
   actions wait until fresh data is in; if the refresh fails the label stays. Refresh always loads fresh.
